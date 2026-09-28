@@ -3848,7 +3848,6 @@ version = "0.1.0"
 dependencies = [
  "gethostname",
  "libc",
- "semver",
  "serde",
  "serde_yaml",
  "thiserror 2.0.20",

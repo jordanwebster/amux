@@ -1,3 +1,14 @@
+2026-09-28 — **Every setting does something.** The installation file lost the
+keys nothing read: `reports_dir` (dumps always go to `<root>/reports`),
+`keymaps_dir` (terminal Claude's keymaps are built in), `minimum_client_versions`
+(hosts agree on the protocol version when they link) and
+`agent.facts_ring_segments` (the ring keeps two). Each is in the retired-key
+table, so an old file names the key and why it went. The server and per-device
+config types nothing constructed are gone with their tests; the leader-key and
+host-name checks now live on the installation config. The facts ring and own
+retention budget comments say what the code counts, and an agent whose spec
+leaves the drain deadline unset uses the same five minutes the setting does.
+
 2026-09-28 — **docs/ describes the system as it ships, for a reader who never
 saw another.** The tree is 28 pages in reader order, mapped one line each by
 docs/README.md and each opening with who it is for: how amux works for its

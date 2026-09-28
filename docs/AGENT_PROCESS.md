@@ -471,7 +471,7 @@ terminal. `amux agent` exits 0 whatever the cause; 1 means it could not start
 | Parameter | Default | Where it is set |
 |---|---|---|
 | Grace after the daemon leaves | 5 minutes | `agent.grace_secs` in settings, copied into the spec's `grace_ms`; 5 minutes if the spec leaves it unset |
-| Drain deadline for an orphaned ask | 5 minutes | `agent.drain_secs`, copied into `drain_ms`; 10 minutes if the spec leaves it unset |
+| Drain deadline for an orphaned ask | 5 minutes | `agent.drain_secs`, copied into `drain_ms`; the same 5 minutes if the spec leaves it unset |
 | Facts ring size, across its two segments | 4 MiB | `agent.facts_ring_mib`, copied into `facts_ring_bytes` |
 | Journal segment size | 1 MiB | the spec's `journal_segment_bytes` |
 | Terminal log | 4 segments of 256 KiB | constants in `host.rs` |

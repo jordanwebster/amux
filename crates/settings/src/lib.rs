@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -42,16 +41,6 @@ fn amux_xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
 }
 
 #[cfg(not(target_os = "ios"))]
-fn default_state_path() -> PathBuf {
-    amux_xdg_dir("XDG_STATE_HOME", ".local/state").join("state.yaml")
-}
-
-#[cfg(target_os = "ios")]
-fn default_state_path() -> PathBuf {
-    ios_application_support_dir().join("state.yaml")
-}
-
-#[cfg(not(target_os = "ios"))]
 fn default_data_dir() -> PathBuf {
     amux_xdg_dir("XDG_DATA_HOME", ".local/share")
 }
@@ -59,10 +48,6 @@ fn default_data_dir() -> PathBuf {
 #[cfg(target_os = "ios")]
 fn default_data_dir() -> PathBuf {
     ios_application_support_dir()
-}
-
-fn keymap_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join("keymaps")
 }
 
 #[cfg(target_os = "ios")]
@@ -111,25 +96,6 @@ impl Clone for ConfigError {
 
 /// The amux account service a profile signs in to unless told otherwise.
 pub const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
-
-/// Local-network listener settings for a device profile.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
-pub struct LanConfig {
-    /// Whether this profile accepts direct connections from the LAN.
-    pub listen: bool,
-    /// Listener port. Zero asks the operating system for an ephemeral port.
-    pub port: u16,
-}
-
-impl Default for LanConfig {
-    fn default() -> Self {
-        Self {
-            listen: true,
-            port: 0,
-        }
-    }
-}
 
 /// The host name a configuration falls back to when none is written: the
 /// system hostname without its mDNS `.local` suffix. This runs on every default
@@ -185,10 +151,6 @@ pub fn validate_host_name(host_name: &str) -> Result<(), ConfigError> {
         )));
     }
     Ok(())
-}
-
-fn default_cloud_url() -> String {
-    DEFAULT_CLOUD_URL.to_string()
 }
 
 /// Per-user runtime directory for the amux socket on Unix.
@@ -331,8 +293,9 @@ pub enum Channel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RetentionSettings {
-    /// Per profile, for the agents this host runs: rows, directories and
-    /// their blobs. Basis: a generous multiple of the largest transcripts
+    /// Per profile, for the agents this host runs, counted as the bytes of
+    /// their stored rows; an agent's directory and blobs go with its row.
+    /// Basis: a generous multiple of the largest transcripts
     /// seen so far, pending measurement against typical sizes.
     pub own_budget_mib: u64,
     /// Per runtime, for rows replicated from other hosts. Basis: the bound
@@ -376,11 +339,10 @@ pub struct AgentSettings {
     /// How long an orphaned agent waits on an open ask while draining.
     /// Basis: minutes, the same order as the grace.
     pub drain_secs: u64,
-    /// The interpreter's facts ring: bytes per segment and segments kept.
-    /// Basis: 2–4 MB and two segments, enough to replay recent history into
-    /// a dump without keeping a second transcript.
+    /// The interpreter's facts ring: its whole size, split across the two
+    /// segments it keeps. Basis: 2–4 MB, enough to replay recent history
+    /// into a dump without keeping a second transcript.
     pub facts_ring_mib: u64,
-    pub facts_ring_segments: u32,
 }
 
 impl Default for AgentSettings {
@@ -389,7 +351,6 @@ impl Default for AgentSettings {
             grace_secs: 300,
             drain_secs: 300,
             facts_ring_mib: 4,
-            facts_ring_segments: 2,
         }
     }
 }
@@ -481,12 +442,9 @@ pub struct InstallationConfig {
     pub agent: AgentSettings,
     pub keybinds: Keybinds,
     pub ui: UiSettings,
-    pub reports_dir: Option<PathBuf>,
-    pub keymaps_dir: PathBuf,
     /// Where channel manifests live: the supervisor reads
     /// `<releases_url>/<channel>.json`.
     pub releases_url: String,
-    pub minimum_client_versions: HashMap<String, String>,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -507,10 +465,7 @@ impl Default for InstallationConfig {
             agent: AgentSettings::default(),
             keybinds: Keybinds::default(),
             ui: UiSettings::default(),
-            reports_dir: None,
-            keymaps_dir: keymap_dir(&default_data_dir()),
             releases_url: format!("{DEFAULT_CLOUD_URL}/releases"),
-            minimum_client_versions: HashMap::new(),
             path: None,
         }
     }
@@ -550,12 +505,6 @@ impl InstallationConfig {
         let base = path.parent().unwrap();
         config.root = absolute_path(&config.root, base)?;
         config.front_door_socket = absolute_path(&config.front_door_socket, base)?;
-        config.keymaps_dir = absolute_path(&config.keymaps_dir, base)?;
-        config.reports_dir = config
-            .reports_dir
-            .as_deref()
-            .map(|path| absolute_path(path, base))
-            .transpose()?;
         if let ThemeSetting::File(theme) = &mut config.ui.theme {
             *theme = absolute_path(theme, base)?;
         }
@@ -564,15 +513,18 @@ impl InstallationConfig {
         Ok(config)
     }
 
+    /// Checks what parsing alone cannot: the supervisor and updates pair,
+    /// the leader key and the host name.
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.updates()?;
-        Config {
-            host_name: self.host_name.clone(),
-            keybinds: self.keybinds.clone(),
-            minimum_client_versions: self.minimum_client_versions.clone(),
-            ..Config::default()
+        // Leader key must be ctrl+<a-z>
+        let ch = self.keybinds.leader.char;
+        if !ch.is_ascii_lowercase() {
+            return Err(ConfigError::Invalid(format!(
+                "invalid leader key: byte 0x{ch:02x} is not a lowercase letter (expected ctrl+<a-z>)"
+            )));
         }
-        .validate()
+        validate_host_name(&self.host_name)
     }
 
     /// The manifest the supervisor follows for the configured channel.
@@ -589,52 +541,6 @@ impl InstallationConfig {
             .clone()
             .unwrap_or_else(|| self.root.join("config.yaml"))
     }
-}
-
-/// The per-device file named by AMUX_CONFIG. Its installation is explicit.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProfileConfig {
-    pub installation_config: PathBuf,
-    pub socket_path: PathBuf,
-    pub data_dir: PathBuf,
-    pub state_path: PathBuf,
-    #[serde(default = "default_cloud_url")]
-    pub cloud_url: String,
-    #[serde(default)]
-    pub lan: LanConfig,
-    /// Debug/test override for free-tier entitlement refreshes. Release
-    /// runtimes parse the key for config compatibility but never use it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cloud_refresh_secs: Option<u64>,
-}
-
-impl ProfileConfig {
-    pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
-        let mut config: Self = read_yaml(path)?;
-        if !config.installation_config.is_absolute() {
-            return Err(ConfigError::Invalid(
-                "installation_config must be an absolute path".into(),
-            ));
-        }
-        let base = path.parent().ok_or_else(|| {
-            ConfigError::Invalid("profile config must have a parent directory".into())
-        })?;
-        config.installation_config = absolute_path(&config.installation_config, base)?;
-        config.socket_path = absolute_path(&config.socket_path, base)?;
-        config.data_dir = absolute_path(&config.data_dir, base)?;
-        config.state_path = absolute_path(&config.state_path, base)?;
-        #[cfg(not(any(debug_assertions, test)))]
-        if !config.cloud_url.starts_with("https://") {
-            return Err(ConfigError::Invalid("cloud_url must use HTTPS".into()));
-        }
-        Ok(config)
-    }
-}
-
-fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
-    parse_yaml(&std::fs::read_to_string(path)?)
-        .map_err(|error| ConfigError::Invalid(format!("{}: {error}", path.display())))
 }
 
 /// Keys that used to exist, each with what replaced it, so an old config
@@ -659,6 +565,22 @@ const RETIRED_KEYS: &[(&[&str], &str)] = &[
     (
         &["claude", "driver"],
         "every new agent names its kind: claude_pty (Claude in a terminal) or claude_sdk (headless Claude)",
+    ),
+    (
+        &["reports_dir"],
+        "dumps are written to the reports directory under root",
+    ),
+    (
+        &["keymaps_dir"],
+        "terminal Claude's keymaps are built into amux",
+    ),
+    (
+        &["minimum_client_versions"],
+        "hosts agree on the protocol version when they link",
+    ),
+    (
+        &["agent", "facts_ring_segments"],
+        "the facts ring always keeps two segments; agent.facts_ring_mib sets its whole size",
     ),
 ];
 
@@ -708,155 +630,13 @@ fn absolute_path(path: &Path, base: &Path) -> Result<PathBuf, ConfigError> {
     }
 }
 
-/// Server configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Config {
-    /// Human-readable hostname for generating link names.
-    #[serde(default = "default_host_name")]
-    pub host_name: String,
-
-    /// Cloud API URL for authentication and connection routing
-    #[serde(default = "default_cloud_url")]
-    pub cloud_url: String,
-
-    /// Path to Unix socket for local connections
-    #[serde(default = "default_socket_path")]
-    pub socket_path: PathBuf,
-
-    /// TCP port for server-to-server connections (None = don't listen)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tcp_port: Option<u16>,
-
-    /// UDP port for the cloud relay's QUIC listener (None = don't listen).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub udp_port: Option<u16>,
-
-    /// Local-network listener settings when this config runs a device.
-    #[serde(default)]
-    pub lan: LanConfig,
-
-    /// Path to state file.
-    #[serde(default = "default_state_path")]
-    pub state_path: PathBuf,
-
-    /// Data directory for device identity, trust, and runtime artifacts.
-    #[serde(default = "default_data_dir")]
-    pub data_dir: PathBuf,
-
-    /// Directory where diagnostic report bundles are written. Defaults to the
-    /// `reports` directory beneath `data_dir`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reports_dir: Option<PathBuf>,
-
-    /// Per-auth-client minimum version requirements (e.g. {"cli": "0.2.0"}).
-    /// Cloud peers whose token client_id matches a key and whose host version
-    /// is below the value are refused as a version mismatch.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub minimum_client_versions: HashMap<String, String>,
-
-    /// Directories searched for Git repositories when clients create agents. Empty by default.
-    #[serde(default)]
-    pub repository_roots: Vec<PathBuf>,
-
-    /// Keybind configuration
-    #[serde(default)]
-    pub keybinds: Keybinds,
-
-    /// Client UI configuration
-    #[serde(default)]
-    pub ui: UiSettings,
-
-    #[serde(skip)]
-    pub path: Option<PathBuf>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            host_name: default_host_name(),
-            cloud_url: default_cloud_url(),
-            socket_path: default_socket_path(),
-            tcp_port: None,
-            udp_port: None,
-            lan: LanConfig::default(),
-            state_path: default_state_path(),
-            data_dir: default_data_dir(),
-            reports_dir: None,
-            minimum_client_versions: HashMap::new(),
-            repository_roots: Vec::new(),
-            keybinds: Keybinds::default(),
-            ui: UiSettings::default(),
-            path: None,
-        }
-    }
-}
-
-impl Config {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The configured diagnostic report directory, or `data_dir/reports`.
-    pub fn reports_dir(&self) -> PathBuf {
-        self.reports_dir
-            .clone()
-            .unwrap_or_else(|| self.data_dir.join("reports"))
-    }
-
-    /// Default config file path: `$XDG_CONFIG_HOME/amux/config.yaml`,
-    /// falling back to `~/.config/amux/config.yaml`.
-    pub fn default_path() -> PathBuf {
-        amux_xdg_dir("XDG_CONFIG_HOME", ".config").join("config.yaml")
-    }
-
-    /// Validate config. Call early to surface errors before any work begins.
-    pub fn validate(&self) -> std::result::Result<(), ConfigError> {
-        // Leader key must be ctrl+<a-z>
-        let ch = self.keybinds.leader.char;
-        if !ch.is_ascii_lowercase() {
-            return Err(ConfigError::Invalid(format!(
-                "invalid leader key: byte 0x{ch:02x} is not a lowercase letter (expected ctrl+<a-z>)"
-            )));
-        }
-
-        validate_host_name(&self.host_name)?;
-
-        // Release builds must use HTTPS for cloud URLs to protect tokens in transit
-        #[cfg(not(any(debug_assertions, test)))]
-        if !self.cloud_url.starts_with("https://") {
-            return Err(ConfigError::Invalid("cloud_url must use HTTPS".into()));
-        }
-
-        // Validate all minimum_client_versions values are valid semver
-        for (name, version) in &self.minimum_client_versions {
-            if semver::Version::parse(version).is_err() {
-                return Err(ConfigError::Invalid(format!(
-                    "invalid minimum_client_versions['{name}']: '{version}' is not valid semver (e.g. \"0.2.0\")"
-                )));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Parses server YAML, rejecting retired keys by name.
-    pub fn from_yaml(yaml: &str) -> std::result::Result<Self, ConfigError> {
-        parse_yaml(yaml)
-    }
-
-    /// Load config from a YAML file
-    pub fn from_file(path: &Path) -> std::result::Result<Self, ConfigError> {
-        let contents = std::fs::read_to_string(path)?;
-        let mut config = Self::from_yaml(&contents)?;
-        config.path = Some(path.to_path_buf());
-        Ok(config)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn installation(yaml: &str) -> Result<InstallationConfig, ConfigError> {
+        InstallationConfig::from_yaml(yaml)
+    }
 
     /// Verify serde_yaml round-trips Windows-style backslash paths correctly.
     /// serde_yaml serializes paths unquoted, which YAML parses literally.
@@ -864,59 +644,21 @@ mod tests {
     /// invalid YAML escape sequences.)
     #[test]
     fn yaml_windows_path_roundtrip() {
-        let config = Config {
-            socket_path: PathBuf::from(r"\\.\pipe\amux-test"),
-            state_path: PathBuf::from(r"C:\Users\me\state.yaml"),
-            data_dir: PathBuf::from(r"C:\Users\me\amux-data"),
-            ..Config::default()
+        let config = InstallationConfig {
+            front_door_socket: PathBuf::from(r"\\.\pipe\amux-test"),
+            root: PathBuf::from(r"C:\Users\me\amux-data"),
+            ..InstallationConfig::default()
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(parsed.socket_path, config.socket_path);
-        assert_eq!(parsed.state_path, config.state_path);
-        assert_eq!(parsed.data_dir, config.data_dir);
+        let parsed = installation(&yaml).unwrap();
+        assert_eq!(parsed.front_door_socket, config.front_door_socket);
+        assert_eq!(parsed.root, config.root);
     }
 
     #[test]
-    fn data_dir_defaults_to_default_data_dir() {
-        assert_eq!(Config::default().data_dir, default_data_dir());
-        let config: Config = serde_yaml::from_str("tcp_port: 9999\n").unwrap();
-        assert_eq!(config.data_dir, default_data_dir());
-    }
-
-    #[test]
-    fn data_dir_yaml_roundtrip() {
-        let yaml = "data_dir: /srv/amux-dev/data\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.data_dir, PathBuf::from("/srv/amux-dev/data"));
-
-        let serialized = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
-        assert_eq!(parsed.data_dir, PathBuf::from("/srv/amux-dev/data"));
-    }
-
-    #[test]
-    fn reports_dir_defaults_beneath_data_dir() {
-        let config: Config = serde_yaml::from_str("data_dir: /srv/amux-dev/data\n").unwrap();
-
-        assert_eq!(config.reports_dir, None);
-        assert_eq!(
-            config.reports_dir(),
-            PathBuf::from("/srv/amux-dev/data/reports")
-        );
-    }
-
-    #[test]
-    fn reports_dir_yaml_roundtrip() {
-        let yaml = "data_dir: /srv/amux-dev/data\nreports_dir: /srv/amux-reports\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-
-        assert_eq!(config.reports_dir(), PathBuf::from("/srv/amux-reports"));
-
-        let serialized = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
-        assert_eq!(parsed.reports_dir, Some(PathBuf::from("/srv/amux-reports")));
-        assert_eq!(parsed.reports_dir(), PathBuf::from("/srv/amux-reports"));
+    fn root_defaults_to_the_data_dir() {
+        assert_eq!(InstallationConfig::default().root, default_data_dir());
+        assert_eq!(installation("{}\n").unwrap().root, default_data_dir());
     }
 
     #[test]
@@ -970,143 +712,85 @@ mod tests {
 
     #[test]
     fn config_with_keybinds() {
-        let yaml = "keybinds:\n  leader: ctrl+b\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config = installation("keybinds:\n  leader: ctrl+b\n").unwrap();
         assert_eq!(config.keybinds.leader.char, b'b');
     }
 
     #[test]
     fn config_without_keybinds_uses_default() {
-        let yaml = "tcp_port: 9999\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.tcp_port, Some(9999));
+        let config = installation("host_name: test\n").unwrap();
         assert_eq!(config.keybinds.leader.char, b'a');
     }
 
     #[test]
     fn ui_theme_and_color_defaults_are_terminal_and_auto() {
-        let config = Config::default();
+        let config = InstallationConfig::default();
         assert_eq!(config.ui.theme, ThemeSetting::Terminal);
         assert_eq!(config.ui.color, ColorSetting::Auto);
 
-        let parsed: Config = serde_yaml::from_str("ui: {}\n").unwrap();
+        let parsed = installation("ui: {}\n").unwrap();
         assert_eq!(parsed.ui.theme, ThemeSetting::Terminal);
         assert_eq!(parsed.ui.color, ColorSetting::Auto);
     }
 
     #[test]
     fn ui_theme_and_color_yaml_roundtrip() {
-        let yaml = "ui:\n  theme: light\n  color: ansi\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config = installation("ui:\n  theme: light\n  color: ansi\n").unwrap();
         assert_eq!(config.ui.theme, ThemeSetting::Light);
         assert_eq!(config.ui.color, ColorSetting::Ansi);
 
-        let serialized = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        let parsed = installation(&serde_yaml::to_string(&config).unwrap()).unwrap();
         assert_eq!(parsed.ui.theme, ThemeSetting::Light);
         assert_eq!(parsed.ui.color, ColorSetting::Ansi);
     }
 
     #[test]
     fn ui_theme_file_path_yaml_roundtrip() {
-        let yaml = "ui:\n  theme: themes/forest.yaml\n  color: truecolor\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config =
+            installation("ui:\n  theme: themes/forest.yaml\n  color: truecolor\n").unwrap();
         assert_eq!(
             config.ui.theme,
             ThemeSetting::File(PathBuf::from("themes/forest.yaml"))
         );
         assert_eq!(config.ui.color, ColorSetting::TrueColor);
 
-        let serialized = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        let parsed = installation(&serde_yaml::to_string(&config).unwrap()).unwrap();
         assert_eq!(parsed.ui.theme, config.ui.theme);
         assert_eq!(parsed.ui.color, config.ui.color);
     }
 
     #[test]
     fn unknown_ui_color_is_rejected() {
-        let error = serde_yaml::from_str::<Config>("ui:\n  color: millions\n").unwrap_err();
+        let error = installation("ui:\n  color: millions\n").unwrap_err();
         assert!(error.to_string().contains("unknown variant"));
     }
 
     #[test]
-    fn ports_default_to_none() {
-        let config = Config::default();
-        assert_eq!(config.tcp_port, None);
-        assert_eq!(config.udp_port, None);
-        assert_eq!(config.lan, LanConfig::default());
-    }
-
-    #[test]
-    fn lan_defaults_to_an_ephemeral_listener_and_parses_overrides() {
-        let defaulted: Config = serde_yaml::from_str("host_name: test\n").unwrap();
-        assert_eq!(defaulted.lan, LanConfig::default());
-
-        let configured: Config =
-            serde_yaml::from_str("lan:\n  listen: false\n  port: 4242\n").unwrap();
-        assert_eq!(
-            configured.lan,
-            LanConfig {
-                listen: false,
-                port: 4242,
-            }
-        );
-    }
-
-    #[test]
-    fn config_split_rejects_retired_cloud_mode() {
-        let error = serde_yaml::from_str::<Config>("enable_cloud_mode: false\n").unwrap_err();
-        assert!(error.to_string().contains("unknown field"));
-    }
-
-    #[test]
     fn unknown_config_field_is_rejected() {
-        let error = serde_yaml::from_str::<Config>("check_for_updates: false\n").unwrap_err();
-        assert!(error.to_string().contains("unknown field"));
+        for yaml in ["enable_cloud_mode: false\n", "check_for_updates: false\n"] {
+            let error = installation(yaml).unwrap_err();
+            assert!(error.to_string().contains("unknown field"), "{error}");
+        }
     }
 
     #[test]
     fn validate_default_config_ok() {
-        let config = Config::default();
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn validate_with_relay_ports() {
-        let config = Config {
-            tcp_port: Some(9001),
-            udp_port: Some(9001),
-            ..Config::default()
-        };
-        assert!(config.validate().is_ok());
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(parsed.tcp_port, Some(9001));
-        assert_eq!(parsed.udp_port, Some(9001));
+        assert!(InstallationConfig::default().validate().is_ok());
     }
 
     #[test]
     fn validate_leader_key_bad_char() {
-        let mut config = Config::default();
+        let mut config = InstallationConfig::default();
         config.keybinds.leader = LeaderKey { char: b'1' };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("leader key"));
     }
 
     #[test]
-    fn validate_minimum_client_versions_valid() {
-        let config = Config {
-            minimum_client_versions: HashMap::from([("cli".to_string(), "0.2.0".to_string())]),
-            ..Config::default()
-        };
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
     fn validate_rejects_empty_host_name() {
-        let config = Config {
+        let config = InstallationConfig {
             host_name: String::new(),
-            ..Config::default()
+            ..InstallationConfig::default()
         };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("host_name"));
@@ -1114,18 +798,18 @@ mod tests {
 
     #[test]
     fn validate_accepts_long_host_name() {
-        let config = Config {
+        let config = InstallationConfig {
             host_name: "a".repeat(MAX_HOST_NAME_BYTES),
-            ..Config::default()
+            ..InstallationConfig::default()
         };
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn validate_rejects_oversized_host_name() {
-        let config = Config {
+        let config = InstallationConfig {
             host_name: "a".repeat(MAX_HOST_NAME_BYTES + 1),
-            ..Config::default()
+            ..InstallationConfig::default()
         };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("host_name"));
@@ -1138,21 +822,6 @@ mod tests {
             "Jordans-MacBook"
         );
         assert_eq!(fallback_host_name("build-host"), "build-host");
-    }
-
-    #[test]
-    fn validate_minimum_client_versions_invalid() {
-        let config = Config {
-            minimum_client_versions: HashMap::from([("cli".to_string(), "v0.2.0".to_string())]),
-            ..Config::default()
-        };
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("minimum_client_versions"));
-        assert!(err.to_string().contains("cli"));
-    }
-
-    fn installation(yaml: &str) -> Result<InstallationConfig, ConfigError> {
-        InstallationConfig::from_yaml(yaml)
     }
 
     #[test]
@@ -1225,12 +894,13 @@ mod tests {
         assert_eq!(defaults.retention.replica_rows_mib, 256);
         assert_eq!(defaults.discovery.scope, "");
         assert_eq!(defaults.agent, AgentSettings::default());
-        assert_eq!(defaults.agent.facts_ring_segments, 2);
+        assert_eq!(defaults.agent.grace_secs, 300);
+        assert_eq!(defaults.agent.drain_secs, 300);
 
         let set = installation(
             "retention:\n  own_budget_mib: 100\n  replica_rows_mib: 10\n  replica_blobs_mib: 20\n\
              discovery:\n  scope: rearchitect\n\
-             agent:\n  grace_secs: 60\n  drain_secs: 30\n  facts_ring_mib: 2\n  facts_ring_segments: 3\n",
+             agent:\n  grace_secs: 60\n  drain_secs: 30\n  facts_ring_mib: 2\n",
         )
         .unwrap();
         assert_eq!(
@@ -1248,7 +918,6 @@ mod tests {
                 grace_secs: 60,
                 drain_secs: 30,
                 facts_ring_mib: 2,
-                facts_ring_segments: 3,
             }
         );
         assert!(installation("retention:\n  budget: 1\n").is_err());
@@ -1280,17 +949,24 @@ mod tests {
                 "always opens the chat",
             ),
             ("claude:\n  driver: sdk\n", "claude.driver", "claude_sdk"),
+            ("reports_dir: null\n", "reports_dir", "under root"),
+            ("keymaps_dir: /k\n", "keymaps_dir", "built into amux"),
+            (
+                "minimum_client_versions: {}\n",
+                "minimum_client_versions",
+                "protocol version",
+            ),
+            (
+                "agent:\n  facts_ring_segments: 3\n",
+                "agent.facts_ring_segments",
+                "facts_ring_mib",
+            ),
         ] {
-            for error in [
-                installation(yaml).unwrap_err().to_string(),
-                Config::from_yaml(yaml).unwrap_err().to_string(),
-            ] {
-                assert!(
-                    error.contains(&format!("`{key}` is no longer a setting"))
-                        && error.contains(why),
-                    "{error}"
-                );
-            }
+            let error = installation(yaml).unwrap_err().to_string();
+            assert!(
+                error.contains(&format!("`{key}` is no longer a setting")) && error.contains(why),
+                "{error}"
+            );
         }
     }
 

@@ -38,7 +38,7 @@ embedded runtime reads no configuration file and runs with the defaults.
 | Journal segment size | agent | 1 MiB | Reasoned. Large enough that rotation, and the store flush that reclaiming a segment costs, is rare; small enough that reclaiming frees disk promptly. The flood workload's backlog ceiling assumes twenty agents each filling a segment a second. Not measured. | `DEFAULT_SEGMENT_BYTES` in [`crates/agent/src/host.rs`](../crates/agent/src/host.rs), used when the spec's `EffectiveConfig.journal_segment_bytes` is zero; the daemon sets that from `Launch.journal_segment_bytes` (zero by default, not a configuration key) |
 | Terminal log segments kept | agent | 4 segments of 256 KiB | Reasoned: enough bytes to rebuild one full screen for a terminal that attaches late. Not measured. Only terminal Claude keeps a terminal log. | `PTY_SEGMENT_BYTES` and `PTY_SEGMENTS_KEPT` in [`crates/agent/src/host.rs`](../crates/agent/src/host.rs) |
 | Grace after control-socket end of stream | agent, from spec | 5 minutes | Reasoned: minutes, enough to ride out a daemon update or crash restart, whose supervisor limits are 60 s to start and 30 s of backoff. | `agent.grace_secs` (`AgentSettings`), copied to `EffectiveConfig.grace_ms`; `DEFAULT_GRACE_MS` in [`crates/agent/src/host.rs`](../crates/agent/src/host.rs) when the spec leaves it zero |
-| Drain deadline for an orphaned ask | agent, from spec | 5 minutes | Reasoned: the same order as the grace. | `agent.drain_secs`, copied to `EffectiveConfig.drain_ms`; the agent falls back to `DEFAULT_DRAIN_MS` (10 minutes) only when the spec leaves it zero |
+| Drain deadline for an orphaned ask | agent, from spec | 5 minutes | Reasoned: the same order as the grace. | `agent.drain_secs`, copied to `EffectiveConfig.drain_ms`; the agent falls back to `DEFAULT_DRAIN_MS`, the same 5 minutes, only when the spec leaves it zero |
 | Facts ring size and segments kept | agent, from spec | 4 MiB across 2 segments | Reasoned: enough recent provider history to replay into a dump without keeping a second transcript. Not measured. | `agent.facts_ring_mib`, copied to `EffectiveConfig.facts_ring_bytes`; `DEFAULT_RING_BYTES` in [`crates/agent/src/host.rs`](../crates/agent/src/host.rs); the segment count is `KEEP = 2` in [`crates/agent/src/ring.rs`](../crates/agent/src/ring.rs) (see note 1) |
 | Fan-out ring capacity | daemon | 512 events per agent; 1,024 for the inventory | Reasoned: hundreds of records, so a reader that pauses briefly keeps up while a stalled one is closed with `Lagged` and re-tails. The flood workload's ingest-lag budget (p99 under 250 ms) is stated as one ring's worth of work; that metric has no recorded baseline yet. | `Launch.fanout_capacity` and `Launch.inventory_capacity` in [`crates/node/src/runtime.rs`](../crates/node/src/runtime.rs); not a configuration key |
 | Push notification delay | daemon | 30 s | Reasoned: tens of seconds, long enough that an answer from the desktop removes the notification before it is sent. | `Launch.notify_delay_ms` in [`crates/node/src/runtime.rs`](../crates/node/src/runtime.rs) (see note 2) |
@@ -66,9 +66,8 @@ embedded runtime reads no configuration file and runs with the defaults.
 
 ## Notes
 
-1. **Facts ring segments.** `agent.facts_ring_segments` is accepted in the
-   configuration file, but the agent does not read it: the ring always keeps
-   two segments, each half of `facts_ring_mib`.
+1. **Facts ring segments.** The ring always keeps two segments, each half of
+   `facts_ring_mib`; the count is not a setting.
 
 2. **Push delay.** The shipped daemon and the phone runtime install
    `NoopSender` as their push sender, so notification rows fall due after this

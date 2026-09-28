@@ -15,7 +15,6 @@ content = """
 host_name: {{name_short()}}
 root: {{root()}}/.wt/amux
 front_door_socket: {{root()}}/.wt/amux/amux.sock
-keymaps_dir: {{root()}}/.wt/amux/keymaps
 keep_awake: off
 discovery:
   scope: {{name()}}

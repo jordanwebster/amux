@@ -36,8 +36,9 @@ use crate::{AgentError, ExitCause, VERSION, attach, ctl};
 
 /// Grace after the daemon leaves, when the spec leaves it unset.
 const DEFAULT_GRACE_MS: i64 = 5 * 60 * 1000;
-/// Drain deadline for an orphaned ask, when the spec leaves it unset.
-const DEFAULT_DRAIN_MS: i64 = 10 * 60 * 1000;
+/// Drain deadline for an orphaned ask, when the spec leaves it unset: the
+/// installation setting's own default.
+const DEFAULT_DRAIN_MS: i64 = 5 * 60 * 1000;
 /// How long a provider asked to finish gets before its group is killed.
 const PROVIDER_STOP_MS: i64 = 10 * 1000;
 /// Journal segment size, when the spec leaves it unset.
