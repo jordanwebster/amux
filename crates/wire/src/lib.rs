@@ -171,11 +171,12 @@ mod tests {
             )
         );
 
-        // The peer surface is the client surface minus name resolution and
-        // dumps, over the same request and response messages.
+        // The peer surface is the client surface minus name resolution, over
+        // the same request and response messages. A peer's Dump answers
+        // for the agents the called host runs, so a dump taken elsewhere
+        // holds their host-side parts.
         let mut peer_expected = client.clone();
         peer_expected.remove("ResolveAgent");
-        peer_expected.remove("Dump");
         assert_eq!(methods(&set, "PeerService"), peer_expected);
 
         let installation = methods(&set, "InstallationService");
