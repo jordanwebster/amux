@@ -140,4 +140,37 @@ final class ChatWordsTests: XCTestCase {
         let removed = DiffLine(kind: .removed, text: "    Busy,", comments: [], newLine: nil, oldLine: 13)
         XCTAssertEqual(ChatWords.spoken(removed), "Removed line 13, Busy,")
     }
+
+    /// The chip names the model the way the settings card lists it: by the
+    /// offered display name, else the id the agent reports.
+    func testTheModelChipReadsTheNameTheSettingsCardGivesTheModel() {
+        let strip = Strip(
+            failedServers: [], background: nil, context: nil, effort: nil, mode: "acceptEdits",
+            model: "claude-sonnet-5", signIn: nil, tasks: nil, usage: nil, workingOn: nil)
+        let mode = ModeChoice(value: .claude("acceptEdits"), current: true, reported: false, stopsAsking: false)
+        func settings(_ models: [ModelChoice]) -> SettingsView {
+            SettingsView(
+                models: models, efforts: [], modes: [mode], cycleMode: false, commands: [],
+                changeByTyping: nil, effortRefusal: nil, modeRefusal: nil, modelRefusal: nil)
+        }
+        let offered = settings([
+            ModelChoice(
+                value: "opus", displayName: "Opus 5.5", description: "", efforts: [], current: false,
+                reported: false, defaultEffort: nil),
+            ModelChoice(
+                value: "sonnet", displayName: "Sonnet 5", description: "", efforts: [], current: true,
+                reported: false, defaultEffort: nil),
+        ])
+        let chip = ChatWords.chip(strip, offered)
+        XCTAssertEqual(chip?.model, "Sonnet 5")
+        XCTAssertEqual(chip?.detail, "Accept edits")
+
+        let reported = settings([
+            ModelChoice(
+                value: "claude-sonnet-5", displayName: "", description: "", efforts: [], current: true,
+                reported: true, defaultEffort: nil),
+        ])
+        XCTAssertEqual(ChatWords.chip(strip, reported)?.model, "claude-sonnet-5")
+        XCTAssertEqual(ChatWords.chip(strip, nil)?.model, "claude-sonnet-5")
+    }
 }

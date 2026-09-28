@@ -395,16 +395,23 @@ public enum ChatWords {
 
     // MARK: - Settings
 
-    /// The model chip's two lines: the model, then the effort and the mode
-    /// by the name the settings card gives it. Nil when nothing is reported.
+    /// The model chip's two lines: the model and the mode by the names the
+    /// settings card gives them, the effort beside the mode. Nil when
+    /// nothing is reported.
     public static func chip(_ strip: Strip, _ settings: SettingsView?) -> (model: String, detail: String)? {
         let current = settings?.modes.first { $0.current }
         let mode = current.map { self.mode($0.value) } ?? strip.mode
         let detail = [strip.effort, mode].compactMap { $0 }.filter { !$0.isEmpty }
             .joined(separator: " · ")
-        let model = strip.model ?? ""
+        let model = settings?.models.first { $0.current }.map(self.model) ?? strip.model ?? ""
         if model.isEmpty && detail.isEmpty { return nil }
         return (model, detail)
+    }
+
+    /// A model by the name its agent offers it under, else the id the agent
+    /// reports.
+    public static func model(_ choice: ModelChoice) -> String {
+        choice.displayName.isEmpty ? choice.value : choice.displayName
     }
 
     /// A permission mode by the name a person reads.

@@ -74,14 +74,14 @@ struct SettingsCard: View {
                 ForEach(view.models, id: \.value) { choice in
                     radio(
                         id: "chat.settings.model.\(choice.value)",
-                        title: choice.displayName.isEmpty ? choice.value : choice.displayName,
+                        title: ChatWords.model(choice),
                         detail: choice.reported ? String(localized: "Reported by the agent") : choice.description,
                         current: choice.current, warn: false
                     ) { change(.model(choice.value)) }
                 }
             } else {
                 if let current = view.models.first(where: { $0.current }) {
-                    fact(current.displayName.isEmpty ? current.value : current.displayName, id: "chat.settings.model")
+                    fact(ChatWords.model(current), id: "chat.settings.model")
                 }
                 if let refusal = view.modelRefusal { sentence(refusal, id: "chat.settings.model.refusal") }
             }

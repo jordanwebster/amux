@@ -1,3 +1,11 @@
+2026-09-28 — **The phone's model chip names the model as the settings card does.**
+The chip read the id the agent reports ("claude-opus-5-5") while the card
+listed the same model by its offered display name. Both now use one rule:
+the offered display name, else the reported id, so headless Claude and
+Codex chips read "Opus" or "GPT-6-Astra" and terminal Claude, which offers
+nothing, keeps the id. Snapshots composer.chip-stops-asking and
+composer.slash re-recorded.
+
 2026-09-28 — **The debug door taps and scrolls only what is on screen.**
 When a door tap could not activate its element it fell back to the smallest
 accessibility element under that point on any screen the app retains, so a
