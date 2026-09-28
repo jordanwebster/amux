@@ -10,10 +10,10 @@ chat.header | /t/a/n/d/work · desk | live | 18,64,298,98
 chat.back | Back |  | 16,90,42,46
 chat.title | decision-sdk | decision-sdk | 51,72,252,82
 chat.more | More |  | 344,91,44,44
-chat.field | Message decision-sdk |  | 26,734,350,43
-chat.attach | Attach |  | 13,780,44,44
-chat.dictate | Dictate | idle | 57,780,44,44
-chat.send | Send |  | 337,780,44,44 (disabled)
+chat.field | Message decision-sdk |  | 28,727,346,47
+chat.attach | Attach | closed | 23,779,44,44
+chat.dictate | Dictate | idle | 287,779,44,44
+chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,118,54
 hosts.subtitle |  | 1 reachable | 18,127,205,40
@@ -38,9 +38,9 @@ you.help.caption |  |  | 18,1124,366,161
  | Back |  | 16,90,42,46
  | decision-sdk, /t/a/n/d/work · desk |  | 51,72,252,82
  | More |  | 344,91,44,44
- | Attach |  | 13,780,44,44
- | Dictate |  | 57,780,44,44
- | Send |  | 337,780,44,44 (disabled)
+ | Attach |  | 23,779,44,44
+ | Dictate |  | 287,779,44,44
+ | Send |  | 335,779,44,44 (disabled)
  | Hosts |  | 18,72,118,54
  | 1 reachable |  | 18,127,205,40
  | ON THIS NETWORK |  | 20,183,276,39

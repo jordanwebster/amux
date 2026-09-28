@@ -1462,6 +1462,7 @@ fn strips() -> Vec<(&'static str, &'static str, Strip)> {
                     done: 2,
                     total: 5,
                     current: "Update the specs".into(),
+                    entries: Vec::new(),
                 }),
                 context: Some(ContextView {
                     used_tokens: 164_000,

@@ -28,12 +28,12 @@ chat.header | desk · away | detached | 18,64,147,54
 chat.back | Back |  | 16,68,42,46
 chat.title | keeper | keeper | 51,72,102,38
 chat.more | More |  | 344,69,44,44
-chat.field | desk is out of reach · your draft is kept | Pick up where we left off. | 26,757,350,20
-chat.attach | Attach |  | 13,780,44,44
-chat.dictate | Dictate | idle | 57,780,44,44
-chat.clear | Clear |  | 101,780,44,44
-chat.model | claude-fake-1 · Default |  | 145,780,114,44
-chat.send | Send |  | 337,780,44,44 (disabled)
+chat.field | desk is out of reach · your draft is kept | Pick up where we left off. | 28,750,318,24
+chat.clear | Clear |  | 342,738,44,43
+chat.attach | Attach | closed | 23,779,44,44
+chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.dictate | Dictate | idle | 287,779,44,44
+chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 offline | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 offline | 18,105,65,16
@@ -63,11 +63,11 @@ you.help.caption |  |  | 18,599,354,31
  | Remember this recovery turn. |  | 139,166,245,40
  | The recovery state is safely stored. |  | 18,217,366,20
  | Worked <t> · $0.00 |  | 48,245,130,16
- | Attach |  | 13,780,44,44
- | Dictate |  | 57,780,44,44
- | Clear |  | 101,780,44,44
- | claude-fake-1, Default |  | 145,780,114,44
- | Send |  | 337,780,44,44 (disabled)
+ | Clear |  | 342,738,44,43
+ | Attach |  | 23,779,44,44
+ | claude-fake-1 |  | 71,779,139,44
+ | Dictate |  | 287,779,44,44
+ | Send |  | 335,779,44,44 (disabled)
  | Hosts |  | 18,72,69,32
  | 1 offline |  | 18,105,65,16
  | OFFLINE |  | 20,137,49,14

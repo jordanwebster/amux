@@ -262,27 +262,36 @@ public enum ChatWords {
 
     // MARK: - The activity line
 
-    /// "Running cargo test · 12s". `subject` names the call a Running line
-    /// points at, when the chat holds it.
+    /// "Running cargo test · 12s", as one sentence to hear. `subject` names
+    /// the call a Running line points at, when the chat holds it.
     public static func activity(_ kind: ActivityKind, elapsedMs: Int64, subject: String?) -> String {
+        let parts = activityParts(kind, elapsedMs: elapsedMs, subject: subject)
+        return [[parts.words, parts.subject].compactMap { $0 }.joined(separator: " "), parts.time]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The activity line in its three drawn parts: the words, the subject a
+    /// Running line names (set in mono), and the elapsed time at the end.
+    /// Only the busy states that last a while are timed.
+    public static func activityParts(
+        _ kind: ActivityKind, elapsedMs: Int64, subject: String?
+    ) -> (words: String, subject: String?, time: String?) {
         let elapsed = duration(elapsedMs / 1_000 * 1_000)
         switch kind {
-        case .working: return String(localized: "Working · \(elapsed)")
-        case .thinking: return String(localized: "Thinking · \(elapsed)")
+        case .working: return (String(localized: "Working"), nil, elapsed)
+        case .thinking: return (String(localized: "Thinking"), nil, nil)
         case .running:
-            guard let subject, !subject.isEmpty else {
-                return String(localized: "Running · \(elapsed)")
-            }
-            return String(localized: "Running \(subject) · \(elapsed)")
+            let named = subject.flatMap { $0.isEmpty ? nil : $0 }
+            return (String(localized: "Running"), named, elapsed)
         case .subagents(let count):
-            return count == 1
-                ? String(localized: "1 subagent working · \(elapsed)")
-                : String(localized: "\(count) subagents working · \(elapsed)")
-        case .compacting: return String(localized: "Compacting · \(elapsed)")
+            return (count == 1
+                ? String(localized: "1 subagent working")
+                : String(localized: "\(count) subagents working"), nil, nil)
+        case .compacting: return (String(localized: "Compacting"), nil, nil)
         case .retrying(let attempt, let most, _):
-            return most > 0
+            return (most > 0
                 ? String(localized: "Retrying · attempt \(attempt) of \(most)")
-                : String(localized: "Retrying · attempt \(attempt)")
+                : String(localized: "Retrying · attempt \(attempt)"), nil, nil)
         }
     }
 
@@ -379,14 +388,10 @@ public enum ChatWords {
 
     // MARK: - The strip
 
-    /// The facts strip's parts, in order; each only while it is true.
+    /// The facts strip's parts, in order; each only while it is true. The
+    /// task list is not one of them: it docks as its own card.
     public static func strip(_ strip: Strip) -> [(text: String, warn: Bool)] {
         var parts: [(String, Bool)] = []
-        if let tasks = strip.tasks {
-            var words = String(localized: "Tasks \(tasks.done)/\(tasks.total)")
-            if !tasks.current.isEmpty { words += " · \(tasks.current)" }
-            parts.append((words, false))
-        }
         if let context = strip.context, context.inStrip, let percent = context.percent {
             parts.append((String(localized: "\(percent)% context"), true))
         }
@@ -413,16 +418,51 @@ public enum ChatWords {
         return parts
     }
 
+    // MARK: - The dock
+
+    /// The task the dock's head names: the one in progress, else the next
+    /// to do, else the last one done.
+    public static func headTask(_ tasks: TasksView) -> String {
+        let pick = tasks.entries.first { $0.mark == .current }
+            ?? tasks.entries.first { $0.mark == .todo }
+            ?? tasks.entries.last
+        return pick?.subject ?? tasks.current
+    }
+
+    /// The dock's head when the agent started others but keeps no list.
+    public static func started(_ count: Int) -> String {
+        count == 1 ? String(localized: "Started 1 agent") : String(localized: "Started \(count) agents")
+    }
+
+    /// A started agent's state under its name.
+    public static func childState(_ card: FleetCard) -> String {
+        if card.hostPresence == .offline { return String(localized: "\(card.host) offline") }
+        switch card.attention {
+        case .needsYou: return String(localized: "needs you")
+        case .working: return String(localized: "working")
+        case .starting: return String(localized: "starting")
+        case .idle: return String(localized: "idle")
+        case .exited:
+            guard let cause = card.exitCause, !cause.isEmpty else { return String(localized: "exited") }
+            return String(localized: "exited · \(cause)")
+        }
+    }
+
+    /// The exited agent's head in the composer.
+    public static func exited(_ cause: String?) -> String {
+        guard let cause, !cause.isEmpty else { return String(localized: "Exited") }
+        return String(localized: "Exited · \(cause)")
+    }
+
     // MARK: - Settings
 
-    /// The model chip's two lines: the model and the mode by the names the
-    /// settings card gives them, the effort beside the mode. Nil when
-    /// nothing is reported.
+    /// The model chip: the model by the name the settings card gives it,
+    /// then the effort, or the mode when the agent reports no effort. Nil
+    /// when nothing is reported.
     public static func chip(_ strip: Strip, _ settings: SettingsView?) -> (model: String, detail: String)? {
         let current = settings?.modes.first { $0.current }
         let mode = current.map { self.mode($0.value) } ?? strip.mode
-        let detail = [strip.effort, mode].compactMap { $0 }.filter { !$0.isEmpty }
-            .joined(separator: " · ")
+        let detail = [strip.effort, mode].compactMap { $0 }.first { !$0.isEmpty } ?? ""
         let model = settings?.models.first { $0.current }.map(self.model) ?? strip.model ?? ""
         if model.isEmpty && detail.isEmpty { return nil }
         return (model, detail)

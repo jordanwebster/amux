@@ -24,15 +24,15 @@ chat.back | Back |  | 16,68,42,46
 chat.title | reviewer | reviewer | 51,72,156,38
 chat.changes | +2 −1 | shown | 280,73,60,36
 chat.more | More |  | 344,69,44,44
-chat.attachment | Pasted text · 12 lines |  | 26,723,215,26
-chat.attachment.remove | Remove |  | 211,721,31,30
-chat.attachment | Review · 1 comment |  | 247,723,189,26
-chat.attachment.remove | Remove |  | 405,721,31,30
-chat.field | Message reviewer | Please check against | 26,757,350,20
-chat.attach | Attach |  | 13,780,44,44
-chat.dictate | Dictate | idle | 57,780,44,44
-chat.clear | Clear |  | 101,780,44,44
-chat.send | Send |  | 337,780,44,44
+chat.attachment | Pasted text · 12 lines |  | 28,683,215,26
+chat.attachment.remove | Remove |  | 213,680,31,30
+chat.attachment | Review · 1 comment |  | 28,714,189,26
+chat.attachment.remove | Remove |  | 187,712,31,30
+chat.field | Message reviewer | Please check against | 28,750,318,24
+chat.clear | Clear |  | 342,738,44,43
+chat.attach | Attach | closed | 23,779,44,44
+chat.dictate | Dictate | idle | 287,779,44,44
+chat.send | Send |  | 335,779,44,44
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 reachable | 18,105,79,16
@@ -58,16 +58,16 @@ you.help.caption |  |  | 18,599,354,31
  | reviewer, /t/a/n/d/work · desk |  | 51,72,156,38
  | 1 file, 2 added, 1 removed |  | 280,73,60,36
  | More |  | 344,69,44,44
- | Plain Text |  | 36,730,10,13
- | Pasted text · 12 lines |  | 55,728,159,16
- | Remove |  | 211,721,31,30
- | Comment Lines |  | 257,730,13,13
- | Review · 1 comment |  | 279,728,130,16
- | Remove |  | 405,721,31,30
- | Attach |  | 13,780,44,44
- | Dictate |  | 57,780,44,44
- | Clear |  | 101,780,44,44
- | Send |  | 337,780,44,44
+ | Plain Text |  | 38,689,10,13
+ | Pasted text · 12 lines |  | 57,688,159,16
+ | Remove |  | 213,680,31,30
+ | Comment Lines |  | 38,721,13,13
+ | Review · 1 comment |  | 60,719,130,16
+ | Remove |  | 187,712,31,30
+ | Clear |  | 342,738,44,43
+ | Attach |  | 23,779,44,44
+ | Dictate |  | 287,779,44,44
+ | Send |  | 335,779,44,44
  | Hosts |  | 18,72,69,32
  | 1 reachable |  | 18,105,79,16
  | ON THIS NETWORK |  | 20,137,105,14

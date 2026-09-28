@@ -37,6 +37,22 @@ pub struct TasksView {
     pub total: u32,
     /// The task in progress, in its active form.
     pub current: String,
+    /// Every task in the agent's order.
+    pub entries: Vec<TaskLine>,
+}
+
+/// One task of the list, by its subject.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct TaskLine {
+    pub subject: String,
+    pub mark: TaskMark,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum TaskMark {
+    Done,
+    Current,
+    Todo,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
@@ -101,10 +117,24 @@ pub fn session_strip(state: &SessionState) -> Strip {
                 }
             })
             .unwrap_or_default();
+        let entries = agent
+            .tasks
+            .entries
+            .iter()
+            .map(|task| TaskLine {
+                subject: task.subject.clone(),
+                mark: match task.status() {
+                    TaskListStatus::Completed => TaskMark::Done,
+                    TaskListStatus::InProgress => TaskMark::Current,
+                    _ => TaskMark::Todo,
+                },
+            })
+            .collect();
         TasksView {
             done,
             total,
             current,
+            entries,
         }
     });
     let tasks = tasks.filter(|tasks| tasks.total > 0);

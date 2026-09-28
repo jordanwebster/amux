@@ -9,14 +9,15 @@ public enum AttachChoice: String, Equatable, Sendable {
     case file
 }
 
-/// The composer: the activity line while the agent works, the draft's
-/// attachments, the field, and one round button that sends, stops, or on an
-/// exited agent resumes it with the draft. Drafting never waits; sending
-/// waits for the rows to be current and the agent live.
+/// The composer: the activity line while the agent works, or the exited
+/// agent's head; the draft's attachments; the field; and under it the plus,
+/// the model chip, the microphone and one round button that sends, stops,
+/// or on an exited agent resumes it with the draft. Drafting never waits;
+/// sending waits for the rows to be current and the agent live.
 struct ComposerBox: View {
     /// The side of every control's target in the row under the field.
     static let slot: CGFloat = 44
-    /// The drawn send, stop and resume controls, centred in their slots.
+    /// The drawn plus, send, stop and resume controls, centred in their slots.
     static let round: CGFloat = 34
 
     @Environment(\.design) private var design
@@ -24,46 +25,73 @@ struct ComposerBox: View {
     let placeholder: String
     let activity: Activity?
     let activitySubject: String?
-    let attach: (AttachChoice) -> Void
+    /// Where the exited agent ran, for its head.
+    let host: String
+    /// Whether the plus card stands open above the composer.
+    let plusOpen: Bool
+    let togglePlus: () -> Void
     /// Dictation's two acts: `.dictate` and `.dictationSettings`.
     let dictate: (ChatAction) -> Void
-    /// Opens the settings card, from the model chip or the plus menu.
+    /// Opens the settings card, from the model chip or the plus card.
     let openSettings: () -> Void
     var focused: FocusState<Bool>.Binding
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if let activity {
                 ActivityLine(activity: activity, subject: activitySubject)
+            } else if case .exited(let cause)? = model.frame?.phase {
+                exitedHead(cause)
             }
             if let sentence = model.dictation.sentence { dictationLine(sentence) }
             if !model.attachments.isEmpty || model.uploading > 0 { attachments }
-            TextField(placeholder, text: Binding(get: { model.draft }, set: { model.type($0) }), axis: .vertical)
-                .lineLimit(1...8)
-                .designFont(.body, design)
-                .foregroundStyle(design.ink.color)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.sentences)
-                .focused(focused)
-                .identified("chat.field", label: placeholder, value: model.draft)
-            // Every control here is a 44 pt slot, side by side rather than grown
-            // over each other: the icons are drawn closer than two thumbs are
-            // wide. The row then gives back the slack around the glyphs at its
-            // edges, so the plus lines up with the field and the send circle
-            // sits where the padding puts it.
-            HStack(spacing: 0) {
-                MenuButton(
-                    name: String(localized: "Attach"), identifier: "chat.attach", items: attachItems
-                ) {
+            HStack(alignment: .top, spacing: 8) {
+                TextField(placeholder, text: Binding(get: { model.draft }, set: { model.type($0) }), axis: .vertical)
+                    .lineLimit(1...8)
+                    .designFont(.body, design)
+                    .foregroundStyle(design.ink.color)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.sentences)
+                    .focused(focused)
+                    .padding(.vertical, 2)
+                    .identified("chat.field", label: placeholder, value: model.draft)
+                if !model.draft.isEmpty || !model.attachments.isEmpty {
+                    Button { model.clearDraft() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 17))
+                            .foregroundStyle(design.inkFaint.color)
+                            .thumbTarget(x: 12, y: 12)
+                    }
+                    .buttonStyle(.amuxControl)
+                    .accessibilityLabel("Clear")
+                    .identified("chat.clear", label: "Clear")
+                    .reclaimingThumbTarget(x: 12, y: 12)
+                }
+            }
+            // Every control here keeps a 44 pt slot, side by side rather than
+            // grown over each other. The row then gives back the slack around
+            // the drawn circles at its edges, so they sit on the card's padding.
+            HStack(spacing: 4) {
+                Button(action: togglePlus) {
                     Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(design.inkMuted.color)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(design.ink.color)
+                        .rotationEffect(.degrees(plusOpen ? 45 : 0))
+                        .frame(width: ComposerBox.round, height: ComposerBox.round)
+                        .background(Circle().fill(design.sunken.color))
                         .frame(width: ComposerBox.slot, height: ComposerBox.slot)
                         .contentShape(Rectangle())
                 }
+                .buttonStyle(.amuxControl)
+                .accessibilityLabel("Attach")
+                .identified("chat.attach", label: String(localized: "Attach"), value: plusOpen ? "open" : "closed")
+                if let strip = model.strip, let chip = ChatWords.chip(strip, model.settings) {
+                    modelChip(chip)
+                }
+                Spacer(minLength: 4)
                 Button { dictate(.dictate) } label: {
                     Image(systemName: model.dictation.active ? "stop.circle.fill" : "mic")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 17, weight: .regular))
                         .foregroundStyle(model.dictation.active ? design.accent.color : design.inkMuted.color)
                         .frame(width: ComposerBox.slot, height: ComposerBox.slot)
                         .contentShape(Rectangle())
@@ -72,72 +100,77 @@ struct ComposerBox: View {
                 .accessibilityLabel(dictationLabel)
                 .identified("chat.dictate", label: dictationLabel,
                             value: model.dictation.active ? "listening" : "idle")
-                if !model.draft.isEmpty || !model.attachments.isEmpty {
-                    Button { model.clearDraft() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 15))
-                            .foregroundStyle(design.inkFaint.color)
-                            .frame(width: ComposerBox.slot, height: ComposerBox.slot)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.amuxControl)
-                    .accessibilityLabel("Clear")
-                    .identified("chat.clear", label: "Clear")
-                }
-                if let strip = model.strip, let chip = ChatWords.chip(strip, model.settings) {
-                    modelChip(chip)
-                }
-                Spacer(minLength: 4)
                 primary
             }
-            .padding(.leading, -13)
-            .padding(.trailing, -(ComposerBox.slot - ComposerBox.round) / 2)
+            .padding(.horizontal, -(ComposerBox.slot - ComposerBox.round) / 2)
             .padding(.vertical, -(ComposerBox.slot - ComposerBox.round) / 2)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .onDisappear { if model.dictation.active { model.dictation.stop() } }
     }
 
-    private var attachItems: [MenuItem] {
-        var items = [
-            MenuItem(title: String(localized: "Photo"), systemImage: "photo") { attach(.photo) },
-            MenuItem(title: String(localized: "File"), systemImage: "doc") { attach(.file) },
-        ]
-        if let settings = model.settings, !settings.modes.isEmpty || settings.cycleMode {
-            items.append(MenuItem(
-                title: ChatWords.permissionsItem(settings), systemImage: "hand.raised",
-                action: openSettings))
+    /// The exited agent's state where the activity line stands while it
+    /// works: that the process ended, why, and where.
+    private func exitedHead(_ cause: String?) -> some View {
+        let title = ChatWords.exited(cause)
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "stop.circle")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(design.inkMuted.color)
+            Text(title)
+                .designFont(.bodyEmphasis, design)
+                .foregroundStyle(design.ink.color)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if !host.isEmpty {
+                Text(verbatim: host)
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
+                    .lineLimit(1)
+            }
         }
-        return items
+        .accessibilityElement(children: .combine)
+        .identified("chat.exited", label: title, value: host)
     }
 
-    /// The model on one line, the effort and mode under it, so a long model
-    /// id never pushes the mode out of sight. The mode that stops asking
-    /// reads in red. A tap opens the settings card.
+    /// The model and its effort, or its mode, as one mono pill. A mode that
+    /// stops asking reads in red. A tap opens the settings card.
     private func modelChip(_ chip: (model: String, detail: String)) -> some View {
-        let warn = model.settings?.modes.first { $0.current }?.stopsAsking == true
-        let label = [chip.model, chip.detail].filter { !$0.isEmpty }.joined(separator: " · ")
+        let stopping = model.settings?.modes.first { $0.current && $0.stopsAsking }
+            .map { ChatWords.mode($0.value) }
+        let words = [chip.model, chip.detail].filter { !$0.isEmpty }.joined(separator: " · ")
+        // The effort took the detail's place: the stopping mode follows it.
+        let warn = stopping.flatMap { $0 == chip.detail ? nil : $0 }
+        let label = [words, warn ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+        let red = stopping != nil && warn == nil
         return Button(action: openSettings) {
-            HStack(spacing: 4) {
-                VStack(alignment: .leading, spacing: 0) {
-                    if !chip.model.isEmpty {
-                        Text(chip.model)
+            HStack(spacing: 5) {
+                // Where the row is tight the effort goes first, then the
+                // model name shortens; a mode that stops asking stays.
+                ViewThatFits(in: .horizontal) {
+                    chipWords(chip.model, detail: chip.detail, red: red, warn: warn)
+                    chipWords(chip.model, detail: red ? chip.detail : "", red: red, warn: warn)
+                    HStack(spacing: 0) {
+                        Text(verbatim: chip.model)
                             .foregroundStyle(design.inkMuted.color)
-                    }
-                    if !chip.detail.isEmpty {
-                        Text(chip.detail)
-                            .foregroundStyle(warn ? design.removed.color : design.inkFaint.color)
+                            .truncationMode(.tail)
+                            .frame(minWidth: 52, alignment: .leading)
+                        chipWords("", detail: red ? chip.detail : "", red: red, warn: warn, after: true)
+                            .layoutPriority(1)
                     }
                 }
                 .designFont(.monoSmall, design)
                 .lineLimit(1)
-                .truncationMode(.middle)
-                Image(systemName: "chevron.up.chevron.down")
+                Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(design.inkFaint.color)
             }
+            .padding(.horizontal, 11)
+            .frame(height: 30)
+            .background(Capsule().fill(design.sunken.color))
             .frame(minHeight: ComposerBox.slot)
             .contentShape(Rectangle())
         }
@@ -145,6 +178,21 @@ struct ComposerBox: View {
         .layoutPriority(1)
         .disabled(model.settings == nil)
         .identified("chat.model", label: label)
+    }
+
+    /// The chip's words; `after` when they follow a name drawn apart.
+    private func chipWords(
+        _ name: String, detail: String, red: Bool, warn: String?, after: Bool = false
+    ) -> some View {
+        let head = Text(verbatim: name).foregroundStyle(design.inkMuted.color)
+        let tail = detail.isEmpty
+            ? Text(verbatim: "")
+            : Text(verbatim: (name.isEmpty && !after ? "" : " · ") + detail)
+                .foregroundStyle(red ? design.removed.color : design.inkMuted.color)
+        let led = after || !name.isEmpty || !detail.isEmpty
+        let stop = warn.map { Text(verbatim: (led ? " · " : "") + $0).foregroundStyle(design.removed.color) }
+            ?? Text(verbatim: "")
+        return (head + tail + stop).truncationMode(.tail)
     }
 
     private var dictationLabel: String {
@@ -174,22 +222,19 @@ struct ComposerBox: View {
     }
 
     private var attachments: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                ForEach(Array(model.attachments.enumerated()), id: \.offset) { index, attached in
-                    AttachmentChip(view: attached.view, bytes: model.bytes(of:)) {
-                        model.removeAttachment(at: index)
-                    }
-                }
-                if model.uploading > 0 {
-                    Text("Attaching…")
-                        .designFont(.caption, design)
-                        .foregroundStyle(design.inkFaint.color)
-                        .identified("chat.attaching")
+        ChipFlow(spacing: 6) {
+            ForEach(Array(model.attachments.enumerated()), id: \.offset) { index, attached in
+                AttachmentChip(view: attached.view, bytes: model.bytes(of:)) {
+                    model.removeAttachment(at: index)
                 }
             }
+            if model.uploading > 0 {
+                Text("Attaching…")
+                    .designFont(.caption, design)
+                    .foregroundStyle(design.inkFaint.color)
+                    .identified("chat.attaching")
+            }
         }
-        .scrollIndicators(.hidden)
     }
 
     private var working: Bool {
@@ -200,20 +245,22 @@ struct ComposerBox: View {
     @ViewBuilder
     private var primary: some View {
         if model.frame?.composer.mode == .resume {
+            let enabled = model.canResume && model.hasDraft
             Button { model.resume() } label: {
                 Text("Resume")
                     .designFont(.bodyEmphasis, design)
-                    .foregroundStyle(design.ground.color)
-                    .padding(.horizontal, 14)
+                    .foregroundStyle(enabled ? design.ground.color : design.inkFaint.color)
+                    .padding(.horizontal, 16)
                     .frame(height: ComposerBox.round)
-                    .background(Capsule().fill(design.ink.color))
+                    .background(Capsule().fill(enabled ? design.ink.color : design.sunken.color))
                     .padding(.horizontal, (ComposerBox.slot - ComposerBox.round) / 2)
                     .frame(height: ComposerBox.slot)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.amuxControl)
-            .disabled(!(model.canResume && model.hasDraft))
-            .identified("chat.resume", label: "Resume", enabled: model.canResume && model.hasDraft)
+            .fixedSize()
+            .disabled(!enabled)
+            .identified("chat.resume", label: "Resume", enabled: enabled)
         } else if !model.hasDraft && working {
             round("stop.fill", label: String(localized: "Stop"), id: "chat.stop", enabled: true) {
                 model.interrupt()
@@ -248,6 +295,58 @@ struct ComposerBox: View {
     }
 }
 
+/// The draft's attachment chips, wrapped onto as many lines as they need
+/// so none is cut off at the composer's edge.
+struct ChipFlow: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        let lines = arrange(width: width, subviews: subviews)
+        let height = lines.last.map { $0.y + $0.height } ?? 0
+        let used = lines.map(\.width).max() ?? 0
+        return CGSize(width: proposal.width ?? used, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for line in arrange(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for index in line.members {
+                let size = subviews[index].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+                subviews[index].place(
+                    at: CGPoint(x: x, y: bounds.minY + line.y), proposal: ProposedViewSize(width: min(size.width, bounds.width), height: size.height))
+                x += min(size.width, bounds.width) + spacing
+            }
+        }
+    }
+
+    private struct Line {
+        var members: [Int] = []
+        var y: CGFloat = 0
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> [Line] {
+        var lines: [Line] = []
+        var line = Line()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(ProposedViewSize(width: width, height: nil))
+            let chip = min(size.width, width)
+            if !line.members.isEmpty, line.width + spacing + chip > width {
+                let y = line.y + line.height + spacing
+                lines.append(line)
+                line = Line(y: y)
+            }
+            line.width += (line.members.isEmpty ? 0 : spacing) + chip
+            line.height = max(line.height, size.height)
+            line.members.append(index)
+        }
+        if !line.members.isEmpty { lines.append(line) }
+        return lines
+    }
+}
+
 extension DraftAttachment {
     var view: AttachmentView {
         switch self {
@@ -259,9 +358,18 @@ extension DraftAttachment {
     }
 }
 
-/// "Running cargo test · 12s", with the moving bar. It is not a row: it
-/// says what is happening now and goes when it stops.
+/// "Running cargo test · 12s" over a moving bar. It is not a row: it says
+/// what is happening now and goes when it stops. The words carry the subject
+/// in mono and the elapsed time at the right end; the bar slides along a
+/// track as wide as the composer, and stands still under reduced motion.
 struct ActivityLine: View {
+    /// The bar's share of the track.
+    static let bar: CGFloat = 0.35
+    /// One pass of the bar along the track, in seconds.
+    static let pass: Double = 1.6
+    /// Where a still bar starts, as a share of the track.
+    static let still: CGFloat = 0.32
+
     @Environment(\.design) private var design
     @Environment(\.photographed) private var photographed
     @Environment(\.reducesMotion) private var reducesMotion
@@ -270,148 +378,422 @@ struct ActivityLine: View {
 
     var body: some View {
         if photographed {
-            line(elapsed: activity.elapsedMs, phase: 0.5)
+            line(elapsed: activity.elapsedMs, start: Self.still)
         } else {
-            TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                let now = Int64(context.date.timeIntervalSince1970 * 1_000)
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reducesMotion)) { context in
+                let seconds = context.date.timeIntervalSince1970
+                let now = Int64(seconds * 1_000)
                 let elapsed = activity.sinceMs > 0 ? max(0, now - activity.sinceMs) : activity.elapsedMs
                 line(
                     elapsed: elapsed,
-                    phase: reducesMotion ? 0.5 : context.date.timeIntervalSince1970.truncatingRemainder(dividingBy: 1.2) / 1.2)
+                    start: reducesMotion
+                        ? Self.still
+                        : -Self.bar + (1 + Self.bar) * Self.ease(seconds.truncatingRemainder(dividingBy: Self.pass) / Self.pass))
             }
         }
     }
 
-    private func line(elapsed: Int64, phase: Double) -> some View {
-        let words = ChatWords.activity(activity.kind, elapsedMs: elapsed, subject: subject)
-        return HStack(spacing: 8) {
-            GeometryReader { geometry in
-                Capsule().fill(design.hairline.color)
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(design.accent.color)
-                            .frame(width: geometry.size.width * 0.35)
-                            .offset(x: geometry.size.width * 0.65 * phase)
-                    }
+    /// `start` is where the bar's leading edge stands, as a share of the track.
+    private func line(elapsed: Int64, start: CGFloat) -> some View {
+        let parts = ChatWords.activityParts(activity.kind, elapsedMs: elapsed, subject: subject)
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(parts.words)
+                    .designFont(.detail, design)
+                    .foregroundStyle(design.inkMuted.color)
+                    .lineLimit(1)
+                    .layoutPriority(2)
+                if let subject = parts.subject {
+                    Text(verbatim: subject)
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkMuted.color)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 8)
+                if let time = parts.time {
+                    Text(verbatim: time)
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkMuted.color)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
             }
-            .frame(width: 26, height: 3)
-            Text(words)
-                .designFont(.detail, design)
-                .foregroundStyle(design.inkMuted.color)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            GeometryReader { geometry in
+                Capsule().fill(design.inkMuted.color)
+                    .frame(width: geometry.size.width * Self.bar, height: 2)
+                    .offset(x: geometry.size.width * start)
+            }
+            .frame(height: 2)
+            .clipped()
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(ChatWords.activity(activity.kind, elapsedMs: elapsed, subject: subject))
         .identified("chat.activity", label: ChatWords.activity(activity.kind, elapsedMs: 0, subject: subject))
+    }
+
+    /// Ease in and out: the bar speeds up across the middle of the track.
+    private static func ease(_ t: Double) -> CGFloat {
+        CGFloat(t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2)
     }
 }
 
-/// Queued prompts and this phone's prompts not yet in the chat, under the
-/// rows and above the composer.
-struct ChatTray: View {
+/// What docks above the composer: the agent's task list as one chip that
+/// opens to the list and the agents this one started, then the queued
+/// prompts and this phone's prompts not yet in the chat. Parts stack in one
+/// card with hairlines between them; the card goes when all are empty.
+struct ChatDock: View {
     @Environment(\.design) private var design
     let model: ChatModel
+    /// The agents this one started.
+    let children: [FleetCard]
+    let open: (AgentKey) -> Void
+    @State private var expanded: Bool
+
+    init(model: ChatModel, children: [FleetCard], expanded: Bool = false, open: @escaping (AgentKey) -> Void) {
+        self.model = model
+        self.children = children
+        self.open = open
+        _expanded = State(initialValue: expanded)
+    }
 
     var body: some View {
+        let tasks = model.strip?.tasks
         let queue = model.frame?.queue ?? []
         let outbox = model.frame?.outbox ?? []
-        if !queue.isEmpty || !outbox.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(queue.enumerated()), id: \.offset) { index, row in
-                    trayRow(
-                        text: ChatWords.text(of: row.text), state: ChatWords.queued(row),
-                        warn: false, id: "chat.queued.\(index)"
-                    ) {
-                        if row.canSendNow {
-                            small(String(localized: "Send now"), id: "chat.queued.\(index).sendNow") {
-                                model.sendNow(row)
-                            }
+        let head = tasks != nil || !children.isEmpty
+        if head || !queue.isEmpty || !outbox.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                if head {
+                    if expanded {
+                        if let tasks, !tasks.entries.isEmpty {
+                            taskList(tasks.entries)
+                            rule
                         }
-                        if row.canWithdraw {
-                            small(String(localized: "Withdraw"), id: "chat.queued.\(index).withdraw") {
-                                model.withdraw(row)
-                            }
+                        if !children.isEmpty {
+                            started
+                            rule
                         }
                     }
+                    chip(tasks)
+                }
+                ForEach(Array(queue.enumerated()), id: \.offset) { index, row in
+                    if head || index > 0 { rule }
+                    queued(row, index: index)
                 }
                 ForEach(Array(outbox.enumerated()), id: \.offset) { index, row in
-                    trayRow(
-                        text: ChatWords.text(of: row.text), state: ChatWords.outbox(row.state),
-                        warn: row.state != .sending, id: "chat.outbox.\(index)"
-                    ) {
-                        switch row.state {
-                        case .sending:
-                            EmptyView()
-                        case .notConfirmed:
-                            small(String(localized: "Resend"), id: "chat.outbox.\(index).resend") {
-                                model.resend(row.inputId)
-                            }
-                            small(String(localized: "Discard"), id: "chat.outbox.\(index).discard") {
-                                model.discard(row.inputId)
-                            }
-                        case .rejected:
-                            small(String(localized: "Edit"), id: "chat.outbox.\(index).edit") {
-                                model.edit(row)
-                            }
-                            small(String(localized: "Discard"), id: "chat.outbox.\(index).discard") {
-                                model.discard(row.inputId)
-                            }
-                        }
-                    }
+                    if head || !queue.isEmpty || index > 0 { rule }
+                    unconfirmed(row, index: index)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
             .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+            .identified("chat.dock", value: expanded ? "expanded" : "folded")
         }
     }
 
-    private func trayRow<Actions: View>(
-        text: String, state: String, warn: Bool, id: String,
-        @ViewBuilder actions: () -> Actions
-    ) -> some View {
-        let message = Text(text)
-            .designFont(.detail, design)
-            .foregroundStyle(design.ink.color)
-        let status = Text(state)
-            .designFont(.caption, design)
-            .foregroundStyle(warn ? design.accent.color : design.inkFaint.color)
-        return VStack(alignment: .leading, spacing: 6) {
-            // The state sits beside the message while both fit on one line. A long reason
-            // moves under the message instead of pushing the message out of the row.
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    message.lineLimit(1)
-                    Spacer(minLength: 6)
-                    status.lineLimit(1)
+    private var rule: some View {
+        Rectangle().fill(design.hairline.color).frame(height: design.metrics.hairline)
+    }
+
+    // MARK: The chip
+
+    private func chip(_ tasks: TasksView?) -> some View {
+        let count = children.count
+        let title = tasks.map(ChatWords.headTask) ?? ChatWords.started(count)
+        let label = tasks.map { "\($0.done)/\($0.total) \(title)" } ?? title
+        return Button { expanded.toggle() } label: {
+            HStack(spacing: 10) {
+                if let tasks {
+                    Text(verbatim: "\(tasks.done)/\(tasks.total)")
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkMuted.color)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    message.lineLimit(2)
-                    status.lineLimit(2)
+                Text(verbatim: title)
+                    .designFont(.body, design)
+                    .foregroundStyle(design.ink.color)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                if count > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(verbatim: "\(count)")
+                            .designFont(.monoSmall, design)
+                    }
+                    .foregroundStyle(design.onAccent.color)
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .background(Capsule().fill(design.accent.color))
                 }
+                Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(design.inkMuted.color)
+                    .frame(width: 20)
             }
-            HStack(spacing: 14) {
-                actions()
-                Spacer(minLength: 0)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.amuxControl)
+        .accessibilityLabel(count > 0 ? "\(label), \(ChatWords.started(count))" : label)
+        .accessibilityValue(expanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
+        .identified("chat.tasks", label: label, value: expanded ? "expanded" : "folded")
+    }
+
+    private func taskList(_ entries: [TaskLine]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Image(systemName: glyph(entry.mark))
+                        .font(.system(size: 13, weight: entry.mark == .done ? .semibold : .regular))
+                        .foregroundStyle(entry.mark == .todo ? design.inkMuted.color : design.inkFaint.color)
+                        .frame(width: 18)
+                    Text(verbatim: entry.subject)
+                        .designFont(entry.mark == .current ? .bodyEmphasis : .body, design)
+                        .foregroundStyle(entry.mark == .done ? design.inkFaint.color : design.ink.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                .identified("chat.tasks.\(index)", label: entry.subject, value: "\(entry.mark)")
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+    }
+
+    private func glyph(_ mark: TaskMark) -> String {
+        switch mark {
+        case .done: "checkmark"
+        case .current: "circle.inset.filled"
+        case .todo: "circle"
+        }
+    }
+
+    private var started: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("STARTED")
+                .designFont(.sectionTitle, design)
+                .foregroundStyle(design.inkFaint.color)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+            ForEach(children, id: \.agent) { child in
+                Button { open(child.agent) } label: {
+                    HStack(spacing: 10) {
+                        Group {
+                            if child.attention == .needsYou || child.familyAttention == .needsYou {
+                                NeedsYouDot()
+                            } else {
+                                Color.clear
+                            }
+                        }
+                        .frame(width: 18, height: 8)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(verbatim: child.name)
+                                .designFont(.identifier, design)
+                                .foregroundStyle(design.ink.color)
+                                .lineLimit(1)
+                            Text(verbatim: ChatWords.childState(child))
+                                .designFont(.monoSmall, design)
+                                .foregroundStyle(
+                                    child.attention == .needsYou ? design.accent.color : design.inkFaint.color)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 6)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(design.inkFaint.color)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.amuxControl)
+                .accessibilityLabel("\(child.name), \(ChatWords.childState(child))")
+                .identified(
+                    "chat.family.\(child.name)", label: child.name,
+                    value: child.attention == .needsYou ? "needs-you" : nil)
+            }
+        }
+        .padding(.bottom, 6)
+    }
+
+    // MARK: Prompts on their way
+
+    private func queued(_ row: QueuedRow, index: Int) -> some View {
+        let id = "chat.queued.\(index)"
+        return trayRow(
+            text: ChatWords.text(of: row.text), state: ChatWords.queued(row), warn: false, id: id
+        ) {
+            Image(systemName: "clock")
+                .font(.system(size: 14))
+                .foregroundStyle(design.inkMuted.color)
+        } actions: {
+            if row.canSendNow {
+                icon("arrow.up.circle", String(localized: "Send now"), id: "\(id).sendNow") { model.sendNow(row) }
+            }
+            if row.canWithdraw {
+                icon("pencil", String(localized: "Withdraw"), id: "\(id).withdraw") { model.withdraw(row) }
+            }
+        }
+    }
+
+    private func unconfirmed(_ row: OutboxRow, index: Int) -> some View {
+        let id = "chat.outbox.\(index)"
+        return trayRow(
+            text: ChatWords.text(of: row.text), state: ChatWords.outbox(row.state),
+            warn: row.state != .sending, id: id
+        ) {
+            if row.state == .sending {
+                Image(systemName: "paperplane")
+                    .font(.system(size: 13))
+                    .foregroundStyle(design.inkMuted.color)
+            } else {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(design.accent.color)
+            }
+        } actions: {
+            switch row.state {
+            case .sending:
+                EmptyView()
+            case .notConfirmed:
+                icon("arrow.clockwise", String(localized: "Resend"), id: "\(id).resend") { model.resend(row.inputId) }
+                icon("xmark", String(localized: "Discard"), id: "\(id).discard") { model.discard(row.inputId) }
+            case .rejected:
+                icon("pencil", String(localized: "Edit"), id: "\(id).edit") { model.edit(row) }
+                icon("xmark", String(localized: "Discard"), id: "\(id).discard") { model.discard(row.inputId) }
+            }
+        }
+    }
+
+    /// A prompt on one line after its glyph, its state under it, and its
+    /// acts as glyphs at the end of the row.
+    private func trayRow<Glyph: View, Actions: View>(
+        text: String, state: String, warn: Bool, id: String,
+        @ViewBuilder glyph: () -> Glyph, @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            glyph().frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(text)
+                    .designFont(.body, design)
+                    .foregroundStyle(design.ink.color)
+                    .lineLimit(1)
+                Text(state)
+                    .designFont(.caption, design)
+                    .foregroundStyle(warn ? design.accent.color : design.inkFaint.color)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            HStack(spacing: 0) { actions() }
+                .padding(.trailing, -10)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 16)
+        .padding(.vertical, 8)
+        .frame(minHeight: 52)
         .accessibilityElement(children: .contain)
         .identified(id, label: text, value: state)
     }
 
-    private func small(_ title: String, id: String, action: @escaping () -> Void) -> some View {
+    private func icon(_ glyph: String, _ title: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title)
-                .designFont(.bodyEmphasis, design)
-                .foregroundStyle(design.accent.color)
-                .thumbTarget(x: 6, y: 10)
+            Image(systemName: glyph)
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(design.inkMuted.color)
+                .frame(width: 40, height: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.amuxControl)
+        .accessibilityLabel(title)
         .identified(id, label: title)
-        .reclaimingThumbTarget(x: 6, y: 10)
     }
 }
 
-/// The facts strip above the composer: tasks, context near its end, what
-/// runs in the background, a usage limit coming, a tool server that failed.
+/// What the plus offers: a photo or a file to attach, and the permission
+/// mode, each one tap from the composer.
+struct PlusCard: View {
+    @Environment(\.design) private var design
+    let settings: SettingsView?
+    let attach: (AttachChoice) -> Void
+    let openSettings: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                tile(String(localized: "Photo"), glyph: "photo", id: "chat.attach.photo") { attach(.photo) }
+                tile(String(localized: "File"), glyph: "doc", id: "chat.attach.file") { attach(.file) }
+            }
+            if let settings, !settings.modes.isEmpty || settings.cycleMode {
+                permissions(settings)
+            }
+        }
+        .padding(10)
+        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .identified("chat.plus")
+    }
+
+    private func permissions(_ settings: SettingsView) -> some View {
+        let current = settings.modes.first { $0.current }.map { ChatWords.mode($0.value) }
+        return Button(action: openSettings) {
+            HStack(spacing: 12) {
+                Image(systemName: "lock")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(design.ink.color)
+                    .frame(width: 20)
+                Text("Permissions")
+                    .designFont(.body, design)
+                    .foregroundStyle(design.ink.color)
+                    .lineLimit(1)
+                    .layoutPriority(2)
+                Spacer(minLength: 8)
+                if let current {
+                    Text(verbatim: current)
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkMuted.color)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(design.inkFaint.color)
+            }
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(
+                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                    .fill(design.sunken.color))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.amuxControl)
+        .identified("chat.permissions", label: ChatWords.permissionsItem(settings))
+    }
+
+    private func tile(_ title: String, glyph: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Image(systemName: glyph)
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(design.ink.color)
+                Text(title)
+                    .designFont(.detail, design)
+                    .foregroundStyle(design.inkMuted.color)
+            }
+            .frame(maxWidth: .infinity, minHeight: 84)
+            .background(
+                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                    .fill(design.sunken.color))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.amuxControl)
+        .identified(id, label: title)
+    }
+}
+
+/// The facts strip above the composer: context near its end, what runs in
+/// the background, a usage limit coming, a tool server that failed.
 /// Each part shows only while it is true.
 ///
 /// The parts are one run of text that wraps rather than a row of labels that

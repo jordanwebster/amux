@@ -346,7 +346,7 @@
     },
     {
       "id": "composer.strip",
-      "shows": "The session strip with every fact at once: tasks, context, model, effort, mode and background work."
+      "shows": "The task chip docked above the composer, and the strip with context and background work; the model chip reads the model and its effort."
     },
     {
       "id": "composer.strip-claude-pty",
@@ -359,6 +359,14 @@
     {
       "id": "composer.strip-codex",
       "shows": "The session strip with the facts Codex reports."
+    },
+    {
+      "id": "composer.strip-expanded",
+      "shows": "The task chip opened: the task list with done, current and to-do marks, the agents this one started, then a queued prompt."
+    },
+    {
+      "id": "composer.plus",
+      "shows": "The plus card: Photo and File tiles, then the permission mode one tap away."
     },
     {
       "id": "composer.dictation-denied",

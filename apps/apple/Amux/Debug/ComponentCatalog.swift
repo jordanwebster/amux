@@ -309,7 +309,8 @@ enum ComponentCatalog {
     private static func composer(
         _ id: String, height: CGFloat = 260, rows: [Row] = [], frame: ChatFrame,
         strip: Strip = ScriptedChat.strip(model: "opus 4.6", effort: "high"), draft: String = "",
-        settings: SettingsView? = nil, showing: ChatOverlay? = nil,
+        settings: SettingsView? = nil, showing: ChatOverlay? = nil, children: [FleetCard] = [],
+        dockExpanded: Bool = false,
         subject: ChatSubject = CatalogFixtures.subject, setUp: @escaping @MainActor (ChatModel) -> Void = { _ in }
     ) -> ComponentExample {
         ComponentExample(
@@ -318,7 +319,9 @@ enum ComponentCatalog {
             CatalogChat(source: ScriptedChat(
                 rows: rows, frame: frame, strip: strip, settings: settings, images: CatalogFixtures.images
             )) { model in
-                ChatStanding(model: model, subject: subject, showing: .constant(showing))
+                ChatStanding(
+                    model: model, subject: subject, children: children, dockExpanded: dockExpanded,
+                    showing: .constant(showing))
                     .onAppear {
                         model.draft = draft
                         setUp(model)
@@ -366,16 +369,20 @@ enum ComponentCatalog {
             composer("detached", height: 180, frame: ScriptedChat.frame(mode: .disabled(.detached), caughtUp: false, waiting: .detached),
                      draft: "Also add a test for the new string."),
             composer("catching-up", height: 160, frame: ScriptedChat.frame(mode: .disabled(.catchingUp), caughtUp: false, waiting: .catchingUp)),
-            composer("strip", height: 220, frame: ScriptedChat.frame(phase: .working, activity: Activity(kind: .working, sinceMs: 0, elapsedMs: 94_000)),
+            composer("strip", height: 280, frame: ScriptedChat.frame(phase: .working, activity: Activity(kind: .working, sinceMs: 0, elapsedMs: 94_000)),
                      strip: ScriptedChat.strip(
-                        tasks: TasksView(done: 3, total: 7, current: "Updating the pairing copy"),
+                        tasks: F.pairingTasks,
                         context: ContextView(usedTokens: 168_000, inStrip: true, percent: 84, windowTokens: 200_000),
                         model: "opus 4.6", effort: "high", mode: "plan", background: 2)),
             // The strip once per provider kind, carrying the facts that
             // kind's interpreter reports: the renderer never sees the kind,
             // so these differ only in which facts are present.
             composer("strip-claude-pty", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
-                tasks: TasksView(done: 1, total: 3, current: "Resuming from the live checklist"),
+                tasks: TasksView(done: 1, total: 3, current: "Resuming from the live checklist", entries: [
+                    TaskLine(subject: "Read the live checklist", mark: .done),
+                    TaskLine(subject: "Resume from the live checklist", mark: .current),
+                    TaskLine(subject: "Report what changed", mark: .todo),
+                ]),
                 context: ContextView(usedTokens: 171_000, inStrip: true, percent: 86, windowTokens: 200_000),
                 model: "claude-sonnet-5", mode: "acceptEdits", background: 2)),
             composer("strip-claude-sdk", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
@@ -385,10 +392,26 @@ enum ComponentCatalog {
                 failedServers: [ServerView(name: "claude.ai Google Drive", error: "", needsAuth: true)],
                 background: 3)),
             composer("strip-codex", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
-                tasks: TasksView(done: 1, total: 3, current: "Split the lexer"),
+                tasks: TasksView(done: 1, total: 3, current: "Split the lexer", entries: [
+                    TaskLine(subject: "Read the parser", mark: .done),
+                    TaskLine(subject: "Split the lexer", mark: .current),
+                    TaskLine(subject: "Run the parser tests", mark: .todo),
+                ]),
                 context: ContextView(usedTokens: 16_447, inStrip: false, percent: 6, windowTokens: 258_400),
                 model: "gpt-5.6-luna", effort: "high", mode: "on-request",
                 failedServers: [ServerView(name: "docs", error: "connection refused", needsAuth: false)])),
+            // The dock opened: the task list, the agents this one started,
+            // then the chip and a queued prompt.
+            composer("strip-expanded", height: 1000, frame: ScriptedChat.frame(
+                phase: .working, activity: Activity(kind: .working, sinceMs: 0, elapsedMs: 8_000),
+                queue: [
+                    QueuedRow(inputId: [1], text: [.text("Once the suite is green, squash it into one commit.")], mine: true, steered: false, canWithdraw: true, canSendNow: true, fromAgent: nil),
+                ]),
+                     strip: ScriptedChat.strip(tasks: F.pairingTasks, model: "opus 4.6", effort: "high"),
+                     children: F.family.children + [F.docsSweep], dockExpanded: true),
+            composer("plus", height: 360, frame: ScriptedChat.frame(kind: .claudeSdk),
+                     strip: ScriptedChat.strip(model: "claude-opus-5-5", effort: "low", mode: "acceptEdits"),
+                     settings: F.claudeSdkSettings(mode: "acceptEdits"), showing: .plus),
             composer("dictation-denied", height: 240, frame: ScriptedChat.frame(phase: .idle),
                      draft: "Also check the Windows path.") {
                 $0.dictation.prepare(speech: .denied, microphone: .notAsked, available: true)
@@ -862,6 +885,24 @@ enum CatalogFixtures {
             r("c11", 11, .turnEnd(failed: false, costUsd: nil, durationMs: 102_000)),
         ]
     }()
+
+    static let pairingTasks = TasksView(
+        done: 3, total: 7, current: "Updating the three spec tests",
+        entries: [
+            TaskLine(subject: "Find every call site that maps a status to a string", mark: .done),
+            TaskLine(subject: "Collapse the match in pairing.rs onto one arm", mark: .done),
+            TaskLine(subject: "Delete the three unused error constants", mark: .done),
+            TaskLine(subject: "Update the three spec tests that assert on the old strings", mark: .current),
+            TaskLine(subject: "Run the spec suite", mark: .todo),
+            TaskLine(subject: "Check nothing in docs asserts on the old copy", mark: .todo),
+            TaskLine(subject: "Write the changelog line", mark: .todo),
+        ])
+
+    static let docsSweep = FleetCard(
+        agent: AgentKey(host: Array(repeating: 1, count: 16), agent: Array(repeating: 5, count: 16)),
+        name: "docs-sweep", kind: .claudeSdk, attention: .exited, cwd: "", lastActivityMs: 0,
+        host: "Studio", hostPresence: .online, children: 0, familyAttention: .exited,
+        members: 1, membersNeedYou: 0, exitCause: "finished", workingOn: nil)
 
     static let family = FamilyHeader(
         children: [

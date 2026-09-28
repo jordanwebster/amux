@@ -25,11 +25,11 @@ chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
 chat.title | asker | asker | 51,72,156,38
 chat.more | More |  | 344,69,44,44
-chat.field | Message asker |  | 26,757,350,20
-chat.attach | Attach |  | 13,780,44,44
-chat.dictate | Dictate | idle | 57,780,44,44
-chat.model | claude-fake-1 · Default |  | 101,780,114,44
-chat.send | Send |  | 337,780,44,44 (disabled)
+chat.field | Message asker |  | 28,750,346,24
+chat.attach | Attach | closed | 23,779,44,44
+chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.dictate | Dictate | idle | 287,779,44,44
+chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 reachable | 18,105,79,16
@@ -62,10 +62,10 @@ you.help.caption |  |  | 18,599,354,31
  | Allowed, deploy --prod, <t>, deployed |  | 18,326,366,40
  | Deployed to production. |  | 18,380,366,20
  | Worked <t> · $0.00 |  | 48,408,130,16
- | Attach |  | 13,780,44,44
- | Dictate |  | 57,780,44,44
- | claude-fake-1, Default |  | 101,780,114,44
- | Send |  | 337,780,44,44 (disabled)
+ | Attach |  | 23,779,44,44
+ | claude-fake-1 |  | 71,779,139,44
+ | Dictate |  | 287,779,44,44
+ | Send |  | 335,779,44,44 (disabled)
  | Hosts |  | 18,72,69,32
  | 1 reachable |  | 18,105,79,16
  | ON THIS NETWORK |  | 20,137,105,14

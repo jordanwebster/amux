@@ -101,10 +101,36 @@ final class ChatWordsTests: XCTestCase {
         XCTAssertEqual(
             ChatWords.activity(.running(key: "k"), elapsedMs: 12_400, subject: "cargo test"),
             "Running cargo test · 12s")
-        XCTAssertEqual(ChatWords.activity(.subagents(count: 3), elapsedMs: 5_000, subject: nil), "3 subagents working · 5s")
+        XCTAssertEqual(ChatWords.activity(.working, elapsedMs: 24_000, subject: nil), "Working · 24s")
+        XCTAssertEqual(ChatWords.activity(.thinking, elapsedMs: 24_000, subject: nil), "Thinking")
+        XCTAssertEqual(ChatWords.activity(.subagents(count: 3), elapsedMs: 5_000, subject: nil), "3 subagents working")
+        XCTAssertEqual(ChatWords.activity(.compacting, elapsedMs: 5_000, subject: nil), "Compacting")
         XCTAssertEqual(
             ChatWords.activity(.retrying(attempt: 2, maxAttempts: 10, retryAtMs: nil), elapsedMs: 0, subject: nil),
             "Retrying · attempt 2 of 10")
+    }
+
+    /// The line draws its subject in mono and its time at the right end, so
+    /// the parts come apart.
+    func testTheActivityLineComesInWordsSubjectAndTime() {
+        let parts = ChatWords.activityParts(.running(key: "k"), elapsedMs: 12_400, subject: "cargo test")
+        XCTAssertEqual(parts.words, "Running")
+        XCTAssertEqual(parts.subject, "cargo test")
+        XCTAssertEqual(parts.time, "12s")
+        XCTAssertNil(ChatWords.activityParts(.running(key: "k"), elapsedMs: 0, subject: "").subject)
+    }
+
+    /// The dock's head names the task in progress, else the next one to do.
+    func testTheTaskChipNamesTheTaskInProgress() {
+        let tasks = TasksView(done: 1, total: 3, current: "Splitting the lexer", entries: [
+            TaskLine(subject: "Read the parser", mark: .done),
+            TaskLine(subject: "Split the lexer", mark: .current),
+            TaskLine(subject: "Run the tests", mark: .todo),
+        ])
+        XCTAssertEqual(ChatWords.headTask(tasks), "Split the lexer")
+        var waiting = tasks
+        waiting.entries[1].mark = .done
+        XCTAssertEqual(ChatWords.headTask(waiting), "Run the tests")
     }
 
     func testTheEmptyFieldSaysWhoAMessageGoesToOrWhySendingWaits() {
@@ -190,6 +216,9 @@ final class ChatWordsTests: XCTestCase {
         let chip = ChatWords.chip(strip, offered)
         XCTAssertEqual(chip?.model, "Sonnet 5")
         XCTAssertEqual(chip?.detail, "Accept edits")
+        var effort = strip
+        effort.effort = "high"
+        XCTAssertEqual(ChatWords.chip(effort, offered)?.detail, "high", "the effort, when reported, stands for the mode")
 
         let reported = settings([
             ModelChoice(

@@ -36,11 +36,12 @@ chat.header | Exited · while the daemon was away | live | 18,64,311,54
 chat.back | Back |  | 16,68,42,46
 chat.title | keeper | keeper | 51,72,265,38
 chat.more | More |  | 344,69,44,44
-chat.field | keeper has exited · a message resumes it |  | 26,757,350,20
-chat.attach | Attach |  | 13,780,44,44
-chat.dictate | Dictate | idle | 57,780,44,44
-chat.model | claude-fake-1 · Default |  | 101,780,114,44
-chat.resume | Resume |  | 282,780,99,44 (disabled)
+chat.exited | Exited · while the daemon was away | desk | 28,720,346,20
+chat.field | keeper has exited · a message resumes it |  | 28,750,346,24
+chat.attach | Attach | closed | 23,779,44,44
+chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.dictate | Dictate | idle | 228,779,44,44
+chat.resume | Resume |  | 276,779,103,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 reachable | 18,105,79,16
@@ -75,10 +76,11 @@ you.help.caption |  |  | 18,599,354,31
  | Pick up where we left off. |  | 174,384,210,40
  | Back after the restart. |  | 18,435,366,20
  | Worked <t> · $0.00 |  | 48,463,130,16
- | Attach |  | 13,780,44,44
- | Dictate |  | 57,780,44,44
- | claude-fake-1, Default |  | 101,780,114,44
- | Resume |  | 282,780,99,44 (disabled)
+ | Exited · while the daemon was away, desk |  | 29,720,345,20
+ | Attach |  | 23,779,44,44
+ | claude-fake-1 |  | 71,779,139,44
+ | Dictate |  | 228,779,44,44
+ | Resume |  | 276,779,103,44 (disabled)
  | Hosts |  | 18,72,69,32
  | 1 reachable |  | 18,105,79,16
  | ON THIS NETWORK |  | 20,137,105,14

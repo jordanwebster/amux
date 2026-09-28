@@ -277,6 +277,18 @@
         }
       }
     },
+    "Check nothing in docs asserts on the old copy": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check nothing in docs asserts on the old copy"
+          }
+        }
+      }
+    },
     "Check the dev server": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -369,6 +381,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Closest to where the copy is used"
+          }
+        }
+      }
+    },
+    "Collapse the match in pairing.rs onto one arm": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapse the match in pairing.rs onto one arm"
           }
         }
       }
@@ -493,6 +517,18 @@
         }
       }
     },
+    "Delete the three unused error constants": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete the three unused error constants"
+          }
+        }
+      }
+    },
     "Done. The three arms are **one** now:\n\n- `Code::NotFound` and `Code::InvalidPin` share one string\n- the new test asserts on it\n\n```rust\n_ => \"could not pair, check the code\",\n```": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -597,6 +633,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Find every INVALID_PIN reader"
+          }
+        }
+      }
+    },
+    "Find every call site that maps a status to a string": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Find every call site that maps a status to a string"
           }
         }
       }
@@ -829,6 +877,18 @@
         }
       }
     },
+    "Once the suite is green, squash it into one commit.": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Once the suite is green, squash it into one commit."
+          }
+        }
+      }
+    },
     "One card per host": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -997,6 +1057,30 @@
         }
       }
     },
+    "Read the live checklist": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read the live checklist"
+          }
+        }
+      }
+    },
+    "Read the parser": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read the parser"
+          }
+        }
+      }
+    },
     "Read wire/src/codes.rs": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -1009,6 +1093,18 @@
         }
       }
     },
+    "Report what changed": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Report what changed"
+          }
+        }
+      }
+    },
     "Resets Monday": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -1017,6 +1113,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Resets Monday"
+          }
+        }
+      }
+    },
+    "Resume from the live checklist": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume from the live checklist"
           }
         }
       }
@@ -1089,6 +1197,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Run the focused tests."
+          }
+        }
+      }
+    },
+    "Run the parser tests": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run the parser tests"
           }
         }
       }
@@ -1345,6 +1465,18 @@
         }
       }
     },
+    "Update the three spec tests that assert on the old strings": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update the three spec tests that assert on the old strings"
+          }
+        }
+      }
+    },
     "Updating the pairing copy": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -1353,6 +1485,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Updating the pairing copy"
+          }
+        }
+      }
+    },
+    "Updating the three spec tests": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updating the three spec tests"
           }
         }
       }
@@ -1437,6 +1581,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Why does this fail? "
+          }
+        }
+      }
+    },
+    "Write the changelog line": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write the changelog line"
           }
         }
       }
@@ -2485,6 +2641,18 @@
         }
       }
     },
+    "docs-sweep": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "docs-sweep"
+          }
+        }
+      }
+    },
     "draft": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -3325,6 +3493,18 @@
         }
       }
     },
+    "plus": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "plus"
+          }
+        }
+      }
+    },
     "prompt": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -3921,6 +4101,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "strip-codex"
+          }
+        }
+      }
+    },
+    "strip-expanded": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "strip-expanded"
           }
         }
       }

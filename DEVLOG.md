@@ -1,3 +1,28 @@
+2026-09-28 — **The phone composer is laid out as it was before the
+rearchitecture.** The activity line is words over a moving bar: `Working`,
+`Running` with the command in mono, `Thinking`, `3 subagents working`,
+`Compacting` or `Retrying · attempt 2 of 10`, the elapsed time at the right
+end where the state is timed, and under the words a 2 pt track as wide as the
+composer whose 35% bar slides and stands still under reduced motion. Under
+the field the button row is the plus in a sunken circle, the model as one
+mono pill (`opus 4.6 · high`: the model, then the effort, or the mode when
+no effort is reported; a mode that stops asking stays in red while the
+effort gives way first on a tight row), then the microphone and the send,
+stop or Resume button on the right; the clear button moved beside the field.
+An exited agent's composer opens with `Exited · <cause>` and its host. The
+plus opens a card above the composer with Photo and File tiles and a
+Permissions row naming the current mode, with the chat dimmed behind it. The
+task list left the facts strip: it docks as its own card above the composer,
+`3/7 <task in progress>` with a pill counting the agents this one started and
+a chevron that opens the list (done, current and to-do marks) and a STARTED
+section of those agents, each a tap from its chat; queued prompts and this
+phone's unconfirmed prompts are rows of the same card with their acts as
+glyphs. The strip keeps context, background work, usage and failed tool
+servers. The chat header keeps only the agent's parent. `ui_view::TasksView`
+now carries every task with its mark. Attachment chips wrap instead of
+scrolling sideways. Component snapshots, whole-screen goldens and the phone
+journey frames are re-recorded.
+
 2026-09-28 — **Phone chat rows sit on one grid again.** Every row that is
 not the person's prompt, the agent's prose, a rule or the turn footer is
 drawn by one primitive: a 20 pt glyph cell, then one line — the verb in the

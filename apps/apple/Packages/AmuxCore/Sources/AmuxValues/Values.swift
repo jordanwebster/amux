@@ -3856,22 +3856,48 @@ public struct Strip: Codable, Hashable, Sendable {
     }
 }
 
+/// One task of the list, by its subject.
+public struct TaskLine: Codable, Hashable, Sendable {
+    public var subject: String
+    public var mark: TaskMark
+
+    public init(subject: String, mark: TaskMark) {
+        self.subject = subject
+        self.mark = mark
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case subject
+        case mark
+    }
+}
+
+public enum TaskMark: String, Codable, Hashable, Sendable, CaseIterable {
+    case done = "Done"
+    case current = "Current"
+    case todo = "Todo"
+}
+
 public struct TasksView: Codable, Hashable, Sendable {
     public var done: UInt32
     public var total: UInt32
     /// The task in progress, in its active form.
     public var current: String
+    /// Every task in the agent's order.
+    public var entries: [TaskLine]
 
-    public init(done: UInt32, total: UInt32, current: String) {
+    public init(done: UInt32, total: UInt32, current: String, entries: [TaskLine]) {
         self.done = done
         self.total = total
         self.current = current
+        self.entries = entries
     }
 
     private enum CodingKeys: String, CodingKey {
         case done
         case total
         case current
+        case entries
     }
 }
 

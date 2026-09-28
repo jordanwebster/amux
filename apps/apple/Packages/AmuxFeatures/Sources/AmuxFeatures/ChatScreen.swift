@@ -67,6 +67,8 @@ public enum ChatOverlay: String, Equatable, Sendable {
     case delete
     /// The model, effort and permission mode.
     case settings
+    /// What the plus offers, above the composer.
+    case plus
 }
 
 /// One agent's chat.
@@ -113,6 +115,14 @@ public struct ChatScreen: View {
         ZStack(alignment: .bottom) {
             Ground()
             feed
+            if showing == .plus {
+                // The plus card is a choice about the composer: the rows step
+                // back behind it, and a tap on them puts it away.
+                Color.black.opacity(0.22)
+                    .ignoresSafeArea()
+                    .onTapGesture { showing = nil }
+                    .accessibilityHidden(true)
+            }
             if model.newActivity {
                 Button { model.jumpToNewest() } label: {
                     HStack(spacing: 6) {
@@ -133,8 +143,8 @@ public struct ChatScreen: View {
         .safeAreaInset(edge: .top, spacing: 0) { header }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatStanding(
-                model: model, subject: subject, descendants: descendants, showing: $showing,
-                putDown: putDown, actions: actions)
+                model: model, subject: subject, children: family?.children ?? [],
+                descendants: descendants, showing: $showing, putDown: putDown, actions: actions)
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityElement(children: .contain)
@@ -242,8 +252,8 @@ public struct ChatScreen: View {
                 }
                 overflow
             }
-            if let family, family.parent != nil || !family.children.isEmpty {
-                FamilyLine(family: family) { actions(.open($0)) }
+            if let parent = family?.parent {
+                FamilyLine(parent: parent) { actions(.open($0)) }
             }
         }
         .padding(.horizontal, design.metrics.gutter)
@@ -418,6 +428,10 @@ public struct ChatStanding: View {
     @Environment(\.photographed) private var photographed
     let model: ChatModel
     let subject: ChatSubject
+    /// The agents this one started, for the dock.
+    let children: [FleetCard]
+    /// Whether the dock opens with its list showing.
+    let dockExpanded: Bool
     /// The agents a delete takes with this one.
     let descendants: Int
     @Binding var showing: ChatOverlay?
@@ -426,12 +440,14 @@ public struct ChatStanding: View {
     @FocusState private var focused: Bool
 
     public init(
-        model: ChatModel, subject: ChatSubject, descendants: Int = 0,
-        showing: Binding<ChatOverlay?> = .constant(nil), putDown: Int = 0,
+        model: ChatModel, subject: ChatSubject, children: [FleetCard] = [], dockExpanded: Bool = false,
+        descendants: Int = 0, showing: Binding<ChatOverlay?> = .constant(nil), putDown: Int = 0,
         actions: @escaping (ChatAction) -> Void = { _ in }
     ) {
         self.model = model
         self.subject = subject
+        self.children = children
+        self.dockExpanded = dockExpanded
         self.descendants = descendants
         _showing = showing
         self.putDown = putDown
@@ -479,6 +495,16 @@ public struct ChatStanding: View {
                 } else {
                     composerStack
                 }
+            case .plus?:
+                PlusCard(settings: model.settings, attach: { choice in
+                    showing = nil
+                    focused = false
+                    actions(.attach(choice))
+                }, openSettings: {
+                    focused = false
+                    showing = .settings
+                })
+                composerStack
             case nil:
                 if let ask = model.ask, ask.state != .dismissed {
                     AskCardView(card: ask, questions: keeping(ask), act: answer)
@@ -495,8 +521,10 @@ public struct ChatStanding: View {
 
     @ViewBuilder
     private var composerStack: some View {
-        ChatTray(model: model)
-        if let strip = model.strip { StripLine(strip: strip) }
+        if showing != .plus {
+            ChatDock(model: model, children: children, expanded: dockExpanded) { actions(.open($0)) }
+            if let strip = model.strip { StripLine(strip: strip) }
+        }
         let matches = model.slashMatches
         if !matches.isEmpty { SlashRows(commands: matches, codex: model.frame?.kind == .codex, pick: model.pick) }
         if let signIn = model.strip?.signIn {
@@ -508,9 +536,10 @@ public struct ChatStanding: View {
         } else {
             ComposerBox(
                 model: model, placeholder: placeholder, activity: model.frame?.composer.activity,
-                activitySubject: activitySubject, attach: { choice in
+                activitySubject: activitySubject, host: subject.host, plusOpen: showing == .plus,
+                togglePlus: {
                     focused = false
-                    actions(.attach(choice))
+                    showing = showing == .plus ? nil : .plus
                 }, dictate: { actions($0) }, openSettings: {
                     focused = false
                     showing = .settings
@@ -572,51 +601,40 @@ private struct RowCellView: View {
     }
 }
 
-/// The chat's family: who started this agent and whom it started, each one
-/// tap from its own chat, with a mark on any that needs the person.
+/// Who started this agent, one tap from its own chat, with a mark when it
+/// needs the person. The agents this one started dock above the composer.
 private struct FamilyLine: View {
     @Environment(\.design) private var design
-    let family: FamilyHeader
+    let parent: FleetCard
     let open: (AgentKey) -> Void
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                if let parent = family.parent {
-                    chip(String(localized: "From \(parent.name)"), parent, glyph: "arrow.up.left")
+        HStack(spacing: 0) {
+            Button { open(parent.agent) } label: {
+                HStack(spacing: 5) {
+                    if parent.familyAttention == .needsYou || parent.attention == .needsYou {
+                        NeedsYouDot()
+                    } else {
+                        Image(systemName: "arrow.up.left")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(design.inkFaint.color)
+                    }
+                    Text("From \(parent.name)")
+                        .designFont(.caption, design)
+                        .foregroundStyle(design.ink.color)
+                        .lineLimit(1)
                 }
-                ForEach(family.children, id: \.agent) { child in
-                    chip(child.name, child, glyph: "arrow.turn.down.right")
-                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frosted(Capsule(), as: .glass)
             }
+            .buttonStyle(.amuxControl)
+            .identified(
+                "chat.family.\(parent.name)", label: String(localized: "From \(parent.name)"),
+                value: parent.attention == .needsYou ? "needs-you" : nil)
+            Spacer(minLength: 0)
         }
-        .scrollIndicators(.hidden)
-        .identified("chat.family", value: "\(family.children.count)")
-    }
-
-    private func chip(_ title: String, _ card: FleetCard, glyph: String) -> some View {
-        Button { open(card.agent) } label: {
-            HStack(spacing: 5) {
-                if card.familyAttention == .needsYou || card.attention == .needsYou {
-                    NeedsYouDot()
-                } else {
-                    Image(systemName: glyph)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(design.inkFaint.color)
-                }
-                Text(title)
-                    .designFont(.caption, design)
-                    .foregroundStyle(design.ink.color)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .frosted(Capsule(), as: .glass)
-        }
-        .buttonStyle(.amuxControl)
-        .identified(
-            "chat.family.\(card.name)", label: title,
-            value: card.attention == .needsYou ? "needs-you" : nil)
+        .identified("chat.family", value: "parent")
     }
 }
 
