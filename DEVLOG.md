@@ -1,3 +1,34 @@
+2026-09-28 — **Every golden and evidence picture was looked at; the blemishes are fixed.**
+A pass over the phone's component snapshots and whole screens, the phone and
+terminal journey goldens, the terminal vocabulary renders and the captured
+evidence found these and fixed them. A disabled primary button is dimmed
+once, by its style, not again by the view. A divider's label outranks its
+trailing rule, so "Resumed · after an update" is no longer cut. Prose
+subjects and the chat header's status line keep their opening words; only
+paths keep both ends. Markdown list items hang their wrapped lines under the
+text, not the marker. Six effort stops leave room inside each stop. Claude
+SDK usage windows read "5h" and "7d", as Codex's do. A rejected message keeps
+its own text when the reason is long, the reason moving under it. Terminal
+questions with nothing to pick offer "Type the answer…". A waiting terminal
+composer's placeholder names only the cause; the hint under it says the draft
+is kept and what sending waits for. The journey mask no longer pads a
+duration flowing in a sentence.
+
+The phone chat header fades the rows scrolled up behind it into the ground
+with a drawn gradient, and its pill may grow up to the buttons' ordinary
+spacing. A safe-area bar's system edge effect was tried first and dropped:
+its blur drew a few levels differently run to run and made the component
+snapshots flaky. Re-recording also caught a live defect that predated the
+pass: when the keyboard, the settings card or an ask changed the space under
+a short chat, its rows jumped under the header and out of the gutter, in
+about three live runs of four. The rows were scroll targets and the scroll
+position put a tracked row back at the scroll view's bare corner; they are no
+longer targets, and a tall chat still opens at and follows its newest row.
+The accessibility and push-wake journey goldens had recorded the shifted
+rows and are re-recorded; the in-process snapshots of the asking and
+settings chats now show those tall chats from the top, since that render
+happens before the feed follows.
+
 2026-09-28 — **The phone's whole-screen goldens are reached through the served door.**
 The golden manifest now has two parts, each picture with a sentence saying
 what it shows. Its components are the 112 examples the component catalogue
