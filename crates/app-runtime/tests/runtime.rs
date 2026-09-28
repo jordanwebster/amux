@@ -77,8 +77,11 @@ async fn open(net: &Net) -> (AppRuntime, Host) {
     let (sender, wakes) = mpsc::unbounded_channel();
     let count = Arc::new(Mutex::new(Vec::new()));
     let seen = count.clone();
+    // Counted and queued under one lock, so what is counted is always
+    // exactly what has been queued.
     let wake = Arc::new(move |wake: Wake| {
-        seen.lock().unwrap().push(wake);
+        let mut seen = seen.lock().unwrap();
+        seen.push(wake);
         let _ = sender.send(wake);
     });
     let local = net.host("desk").unwrap().host_id.as_bytes().to_vec();
@@ -100,6 +103,18 @@ impl Host {
         })
         .await
         .unwrap_or_else(|_| panic!("never woken for {wanted:?}"))
+    }
+
+    /// Consumes every wake queued so far and takes what they brought, then
+    /// counts the wakes that named `chat`: from here each new one is a turn.
+    /// No wake can land in between, so none counted is left unconsumed.
+    fn settle(&mut self, runtime: &AppRuntime, chat: &Chat) -> usize {
+        let count = self.count.lock().unwrap();
+        while self.wakes.try_recv().is_ok() {}
+        runtime.take_fleet_changes();
+        chat.take_changes();
+        let wanted = Wake::Chat(chat.id());
+        count.iter().filter(|wake| **wake == wanted).count()
     }
 
     fn wakes_for(&self, wanted: Wake) -> usize {
@@ -167,8 +182,7 @@ async fn changes_wait_for_the_hosts_turn_and_rows_are_read_by_key() {
     assert_eq!(chat.keys_above("no such key"), None);
 
     // No wake is owed while nothing moves: the host took everything.
-    chat.take_changes();
-    let woken = host.wakes_for(Wake::Chat(chat.id()));
+    let woken = host.settle(&runtime, &chat);
 
     let sent = chat
         .send(&Draft {

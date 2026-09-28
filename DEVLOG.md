@@ -1,3 +1,12 @@
+2026-09-28 — **app-runtime's wake-count test takes its baseline with nothing owed.**
+The test counted the chat's wakes as its baseline while a wake could still
+sit unconsumed in its queue (a change landing between the last take and the
+check), so every later turn read one behind (seen 1 in 7 runs beside
+another build). The test's wake now counts and queues under one lock, and
+the baseline is read under that lock after draining the queue and taking
+what it brought. The product's wake contract is unchanged; the case passed
+ten runs in a row under six `yes` loops.
+
 2026-09-28 — **`amux pair` catches its end signals before pairing opens.**
 The SIGINT/SIGTERM/SIGHUP listeners were installed only after the
 invitation printed, so a signal in between took the default action and left
