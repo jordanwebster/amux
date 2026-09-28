@@ -1176,15 +1176,17 @@ impl State {
                     Streamed::WorkingNote => codex_item::Kind::WorkingNote(complete(completed)),
                     _ => codex_item::Kind::Message(complete(completed)),
                 };
-                let text = match self.shared.open_item(&id) {
-                    Some(open) if !completed => open.text.clone(),
-                    _ => text(item, "text").to_owned(),
+                let (text, attachments) = match self.shared.open_item(&id) {
+                    Some(open) if !completed => (open.text.clone(), Vec::new()),
+                    _ if completed => crate::shared::parse_reply(text(item, "text").to_owned()),
+                    _ => (text(item, "text").to_owned(), Vec::new()),
                 };
                 self.emit_item(
                     emit,
                     ItemDraft {
                         key: id.clone(),
                         text,
+                        attachments,
                         body: item_body(body),
                         at_ms,
                         complete: completed,
@@ -1706,21 +1708,29 @@ impl State {
             let Some(open) = self.shared.open_item(&key).cloned() else {
                 continue;
             };
-            let body = match kind {
-                Streamed::Message => codex_item::Kind::Message(wire::Text { complete: true }),
-                Streamed::WorkingNote => {
-                    codex_item::Kind::WorkingNote(wire::Text { complete: true })
-                }
-                Streamed::Reasoning(summary) => codex_item::Kind::Reasoning(wire::Reasoning {
-                    complete: true,
-                    summary,
-                }),
+            let (body, (text, attachments)) = match kind {
+                Streamed::Message => (
+                    codex_item::Kind::Message(wire::Text { complete: true }),
+                    crate::shared::parse_reply(open.text),
+                ),
+                Streamed::WorkingNote => (
+                    codex_item::Kind::WorkingNote(wire::Text { complete: true }),
+                    crate::shared::parse_reply(open.text),
+                ),
+                Streamed::Reasoning(summary) => (
+                    codex_item::Kind::Reasoning(wire::Reasoning {
+                        complete: true,
+                        summary,
+                    }),
+                    (open.text, Vec::new()),
+                ),
             };
             self.shared.item(
                 emit,
                 ItemDraft {
                     key,
-                    text: open.text,
+                    text,
+                    attachments,
                     body: item_body(body),
                     at_ms: Some(open.at_ms),
                     complete: true,

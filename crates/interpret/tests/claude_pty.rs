@@ -154,3 +154,48 @@ fn the_fixture_vocabulary_maps_to_terminal_inputs() {
     };
     assert!(claude_pty_input(b"k".to_vec(), &key).is_some());
 }
+
+/// The attach tool's element in a reply's transcript row becomes an
+/// attachment at its place; a malformed element stays text.
+#[test]
+fn an_attachment_element_in_a_reply_becomes_an_item_attachment() {
+    let attachment = wire::Attachment {
+        of: Some(wire::attachment::Of::Image(wire::BlobRef {
+            hash: vec![0xab; 32],
+            name: "chart.png".into(),
+            mime: "image/png".into(),
+            size: 42,
+        })),
+    };
+    let path = Path::new("/home/me/agents/a/blobs").join("ab".repeat(32));
+    let element = attachments::element(&attachment, Some(&path));
+    let row = serde_json::json!({
+        "type": "assistant",
+        "uuid": "u1",
+        "timestamp": "2026-09-28T10:00:00Z",
+        "message": {"role": "assistant", "content": [{
+            "type": "text",
+            "text": format!("Here is the chart: {element} and a broken <amux-attachment kind=\"image\"/>."),
+        }]},
+    });
+    let spec = wire::AgentSpec {
+        agent_id: b"agent".to_vec(),
+        ..Default::default()
+    };
+    let (mut state, _) = ClaudePty::initial(&spec, "test");
+    let mut item = None;
+    for event in ClaudePty::recording("transcript_rows", format!("{row}\n").as_bytes()).unwrap() {
+        let step = ClaudePty::step(&mut state, event).step;
+        item = step
+            .items
+            .into_iter()
+            .find(|item| item.key == "u1")
+            .or(item);
+    }
+    let item = item.expect("the reply's item");
+    assert_eq!(
+        item.text,
+        "Here is the chart: \u{FFFC} and a broken <amux-attachment kind=\"image\"/>."
+    );
+    assert_eq!(item.attachments, vec![attachment]);
+}

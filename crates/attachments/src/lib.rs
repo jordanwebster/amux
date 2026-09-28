@@ -131,7 +131,7 @@ pub fn pieces<'a>(p: &'a Positioned, dir: &Path) -> Vec<Piece<'a>> {
         if index > 0
             && let Some(attachment) = attachments.next()
         {
-            let path = blob_of(attachment).map(|blob| dir.join(hex(&blob.hash)));
+            let path = blob_path(attachment, dir);
             pieces.push(Piece::Element {
                 element: element(attachment, path.as_deref()),
                 attachment,
@@ -155,6 +155,12 @@ pub fn format(p: &Positioned, dir: &Path) -> String {
             Piece::Element { element, .. } => element,
         })
         .collect()
+}
+
+/// Where an attachment's bytes are in `dir` (an agent's blobs directory),
+/// for the kinds whose bytes are a blob.
+pub fn blob_path(attachment: &Attachment, dir: &Path) -> Option<PathBuf> {
+    blob_of(attachment).map(|blob| dir.join(hex(&blob.hash)))
 }
 
 fn blob_of(attachment: &Attachment) -> Option<&BlobRef> {

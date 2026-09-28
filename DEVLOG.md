@@ -1,3 +1,15 @@
+2026-09-28 — **A file a model attaches shows as a file.** The attach tool
+stored the blob and handed the model an element to put in its reply, but no
+interpreter read it back, so both clients drew the raw element. Every
+interpreter now parses the elements in a model's finished reply (terminal
+Claude's transcript text, headless Claude's closed text block, Codex's
+completed or turn-closed agent message and working note) into the reply
+item's attachments, with a placeholder at each one's place; a malformed
+element stays text, and a reply still streaming shows its text until it
+completes. A file attached to a Codex prompt now reaches the model as its
+element naming the blob's path, so the model can open it; before, the
+element named no path.
+
 2026-09-28 — **Every setting does something.** The installation file lost the
 keys nothing read: `reports_dir` (dumps always go to `<root>/reports`),
 `keymaps_dir` (terminal Claude's keymaps are built in), `minimum_client_versions`

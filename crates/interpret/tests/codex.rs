@@ -343,3 +343,77 @@ fn offered_lists_keep_what_the_server_named() {
     let refused = last_snapshot("offered_refused");
     assert!(refused.models.is_empty() && refused.commands.is_empty());
 }
+
+/// The attach tool's element in a finished agent message becomes an
+/// attachment at its place, whether the message completes on its own or is
+/// closed by the turn's end; a malformed element stays text.
+#[test]
+fn an_attachment_element_in_a_reply_becomes_an_item_attachment() {
+    let attachment = wire::Attachment {
+        of: Some(wire::attachment::Of::File(wire::BlobRef {
+            hash: vec![0xcd; 32],
+            name: "report.pdf".into(),
+            mime: "application/pdf".into(),
+            size: 7,
+        })),
+    };
+    let path = Path::new("/home/me/agents/a/blobs").join("cd".repeat(32));
+    let element = attachments::element(&attachment, Some(&path));
+    let reply = format!("Report: {element} and <amux-attachment kind=\"file\"/>.");
+    let expected = "Report: \u{FFFC} and <amux-attachment kind=\"file\"/>.";
+
+    for completes in [true, false] {
+        let spec = wire::AgentSpec {
+            agent_id: b"agent".to_vec(),
+            ..Default::default()
+        };
+        let (mut state, _) = Codex::initial(&spec, "test");
+        Codex::step(
+            &mut state,
+            rpc(
+                json!({"id": 2, "result": {"thread": {"id": "t1", "cliVersion": "0.157.0", "turns": []}, "model": "m"}}),
+            ),
+        );
+        Codex::step(&mut state, prompt(b"p1", "the report"));
+        Codex::step(
+            &mut state,
+            rpc(
+                json!({"method": "turn/started", "params": {"threadId": "t1", "turn": {"id": "turn-1"}}}),
+            ),
+        );
+        let item = json!({"type": "agentMessage", "id": "m1", "text": ""});
+        Codex::step(
+            &mut state,
+            rpc(
+                json!({"method": "item/started", "params": {"threadId": "t1", "turnId": "turn-1", "item": item}}),
+            ),
+        );
+        Codex::step(
+            &mut state,
+            rpc(
+                json!({"method": "item/agentMessage/delta", "params": {"threadId": "t1", "turnId": "turn-1", "itemId": "m1", "delta": reply}}),
+            ),
+        );
+        let last = if completes {
+            let item = json!({"type": "agentMessage", "id": "m1", "text": reply});
+            rpc(
+                json!({"method": "item/completed", "params": {"threadId": "t1", "turnId": "turn-1", "item": item}}),
+            )
+        } else {
+            rpc(
+                json!({"method": "turn/completed", "params": {"threadId": "t1", "turn": {"id": "turn-1", "status": "completed"}}}),
+            )
+        };
+        let items = Codex::step(&mut state, last).step.items;
+        let item = items
+            .iter()
+            .find(|item| item.key == "m1")
+            .unwrap_or_else(|| panic!("the finished message (completes: {completes})"));
+        assert_eq!(item.text, expected, "completes: {completes}");
+        assert_eq!(
+            item.attachments,
+            vec![attachment.clone()],
+            "completes: {completes}"
+        );
+    }
+}

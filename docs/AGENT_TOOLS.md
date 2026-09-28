@@ -135,9 +135,10 @@ hashes it, writes it into `<dir>/blobs/<sha256>`, and returns the canonical
 (the file's own name when omitted) and a mime type from the file's extension.
 PNG, JPEG, GIF, WebP and SVG are images; everything else is a file. No daemon
 call is made, so it works while the daemon is away. The model is told to put
-the element in its reply exactly as returned. [Attachments](ATTACHMENTS.md)
-describes blobs and the element syntax, including what the interpreters do
-with an element in a reply.
+the element in its reply exactly as returned; when the reply completes, the
+interpreter makes the element an attachment on the reply's item, which both
+clients draw as the image or file. [Attachments](ATTACHMENTS.md) describes
+blobs and the element syntax.
 
 ## What the interpreter makes of the calls
 

@@ -338,3 +338,52 @@ fn the_initialize_answer_lists_models_with_efforts_and_commands_with_sources() {
         .unwrap();
     assert_eq!(own.source, "");
 }
+
+/// The attach tool's element in a finished reply becomes an attachment at
+/// its place; a malformed element stays text.
+#[test]
+fn an_attachment_element_in_a_reply_becomes_an_item_attachment() {
+    let (element, attachment) = attached_chart();
+    let reply =
+        format!("Here is the chart: {element} and a broken <amux-attachment kind=\"image\"/>.");
+    let mut state = started();
+    let mut item = None;
+    for event in [
+        stream(
+            json!({"type": "stream_event", "event": {"type": "message_start", "message": {"id": "msg_1"}}}),
+        ),
+        block_start(0, "text"),
+        delta(0, "text", &reply[..20]),
+        delta(0, "text", &reply[20..]),
+        block_stop(0),
+    ] {
+        let step = ClaudeSdk::step(&mut state, event).step;
+        item = step
+            .items
+            .into_iter()
+            .rev()
+            .find(|item| item.key == "msg_1:0")
+            .or(item);
+    }
+    let item = item.expect("the reply's item");
+    assert_eq!(
+        item.text,
+        "Here is the chart: \u{FFFC} and a broken <amux-attachment kind=\"image\"/>."
+    );
+    assert_eq!(item.attachments, vec![attachment]);
+}
+
+/// What the attach tool answers for an image: its element, naming the blob
+/// by hash and the file's path on this host.
+fn attached_chart() -> (String, wire::Attachment) {
+    let attachment = wire::Attachment {
+        of: Some(wire::attachment::Of::Image(wire::BlobRef {
+            hash: vec![0xab; 32],
+            name: "chart.png".into(),
+            mime: "image/png".into(),
+            size: 42,
+        })),
+    };
+    let path = Path::new("/home/me/agents/a/blobs").join("ab".repeat(32));
+    (attachments::element(&attachment, Some(&path)), attachment)
+}

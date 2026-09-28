@@ -96,11 +96,12 @@ with U+FFFD and reported. The parser never drops text.
 `attachments::validate` checks a positioned value's shape: one placeholder
 per attachment, every attachment set, every blob named by a 32-byte hash.
 
-The agent side formats elements when it hands a prompt to a provider. The
-interpreters do not parse elements back out of what a provider reports: a
-reply in which a model wrote an element reaches clients as that text, with no
-attachment on the item. The blob the element names is still in the agent's
-directory, where `GetBlob` reads it by hash.
+The agent side formats elements when it hands a prompt to a provider, and
+the interpreters parse them back out of a model's finished reply
+(`parse_reply` in [`shared.rs`](../crates/interpret/src/shared.rs), for every kind): each element becomes the
+placeholder and an attachment on the reply's item, so clients draw the file
+where the model put it. A reply still streaming shows its text as written
+until it completes. A malformed element stays text.
 
 ## Bytes and metadata
 
@@ -138,7 +139,9 @@ refused on an agent's tools socket, since it is a person's act.
 
 **A model's attachment.** The `attach` tool reads a file on the agent's host,
 hashes it, writes it into the agent's directory and returns the element that
-names it ([agent tools](AGENT_TOOLS.md#attach)); no daemon call is made. An
+names it ([agent tools](AGENT_TOOLS.md#attach)); no daemon call is made. The
+model puts the element in its reply, and the interpreter turns it into an
+attachment on the reply's item when the reply completes. An
 image inside a Claude tool result takes the same lane without a tool: the
 interpreter decodes the base64 image block, hashes it, and emits a blob write
 with the step; the agent process writes the blob before it journals the step,
@@ -185,7 +188,7 @@ that provider reads (`crates/agent/src/provider.rs`):
 | --- | --- |
 | `claude_pty` | The prompt typed into the terminal with each placeholder replaced by its element, blob paths included. |
 | `claude_sdk` | A user message whose text carries the elements with paths. When the prompt has images, the content is blocks instead: the text split at each image's element, with the image's bytes as a native image block right after it. |
-| `codex` | The turn's input with each attachment appended after the text: an image as a `localImage` item naming its blob's path, anything else as its element text. |
+| `codex` | The turn's input with each attachment appended after the text: an image as a `localImage` item naming its blob's path, anything else as its element text naming the same path. |
 
 An agent message carries text only; attachments travel in prompts and items.
 

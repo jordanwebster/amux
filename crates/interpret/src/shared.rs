@@ -268,6 +268,20 @@ pub struct ItemDraft {
     pub complete: bool,
 }
 
+/// A finished reply's text and attachments. The attach tool answers a model
+/// with an attachment element to put in its reply; each element that
+/// parses becomes the placeholder and an attachment, so clients draw the
+/// file where the model put it and fetch its bytes by hash. An element that
+/// does not parse stays text as written, and a reply with none is returned
+/// untouched.
+pub fn parse_reply(text: String) -> (String, Vec<Attachment>) {
+    let parsed = attachments::parse(&text);
+    if parsed.positioned.attachments.is_empty() {
+        return (text, Vec::new());
+    }
+    (parsed.positioned.text, parsed.positioned.attachments)
+}
+
 /// One step's output as it is assembled.
 #[derive(Debug, Default)]
 pub struct Emit {

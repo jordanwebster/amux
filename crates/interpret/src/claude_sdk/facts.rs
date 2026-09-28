@@ -472,16 +472,23 @@ impl State {
     }
 
     fn close_block(&mut self, emit: &mut Emit, key: String, text: String, thinking: bool) {
-        let body = if thinking {
-            item_body(Kind::Thinking(wire::Thinking { complete: true }))
+        let (body, (text, attachments)) = if thinking {
+            (
+                item_body(Kind::Thinking(wire::Thinking { complete: true })),
+                (text, Vec::new()),
+            )
         } else {
-            item_body(Kind::Message(wire::Text { complete: true }))
+            (
+                item_body(Kind::Message(wire::Text { complete: true })),
+                crate::shared::parse_reply(text),
+            )
         };
         self.shared.item(
             emit,
             ItemDraft {
                 key: key.clone(),
                 text,
+                attachments,
                 body,
                 complete: true,
                 ..Default::default()

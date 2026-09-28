@@ -1121,11 +1121,14 @@ impl State {
             };
             match text(block, "type") {
                 "text" => {
+                    let (text, attachments) =
+                        crate::shared::parse_reply(text(block, "text").to_owned());
                     self.shared.item(
                         emit,
                         ItemDraft {
                             key: key.clone(),
-                            text: text(block, "text").to_owned(),
+                            text,
+                            attachments,
                             body: item_body(Kind::Message(wire::Text { complete: true })),
                             at_ms,
                             complete: true,

@@ -806,7 +806,8 @@ impl Drop for Provider {
 
 /// A Codex turn request with its attachments appended to `params.input`:
 /// an image as a local image by its blob's path, anything else as the
-/// element text the model reads.
+/// element text the model reads, naming the file's path so the model can
+/// open it.
 fn codex_turn_input(
     request: &[u8],
     attachments: &[Attachment],
@@ -828,7 +829,10 @@ fn codex_turn_input(
             }),
             _ => serde_json::json!({
                 "type": "text",
-                "text": attachments::element(attachment, None),
+                "text": attachments::element(
+                    attachment,
+                    attachments::blob_path(attachment, blobs).as_deref(),
+                ),
                 "text_elements": [],
             }),
         });
@@ -1144,6 +1148,58 @@ fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    /// A file reaches Codex as its element naming where the file is, so the
+    /// model can open it; an image goes as a local image by the same path.
+    #[test]
+    fn codex_attachments_name_their_blob_paths() {
+        let blob = |hash: u8, name: &str, mime: &str| wire::BlobRef {
+            hash: vec![hash; 32],
+            name: name.into(),
+            mime: mime.into(),
+            size: 3,
+        };
+        let attachments = [
+            wire::Attachment {
+                of: Some(wire::attachment::Of::File(blob(
+                    0xcd,
+                    "report.pdf",
+                    "application/pdf",
+                ))),
+            },
+            wire::Attachment {
+                of: Some(wire::attachment::Of::Image(blob(
+                    0xab,
+                    "chart.png",
+                    "image/png",
+                ))),
+            },
+        ];
+        let blobs = Path::new("/agents/a/blobs");
+        let request =
+            br#"{"method":"turn/start","params":{"input":[{"type":"text","text":"read these"}]}}"#;
+        let written = super::codex_turn_input(request, &attachments, blobs).unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&written).unwrap();
+        let input = written["params"]["input"].as_array().unwrap();
+        let file = blobs.join("cd".repeat(32));
+        assert_eq!(
+            input[1]["text"],
+            attachments::element(&attachments[0], Some(&file))
+        );
+        assert!(
+            input[1]["text"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("path=\"{}\"", file.display()))
+        );
+        assert_eq!(input[2]["type"], "localImage");
+        assert_eq!(
+            input[2]["path"],
+            blobs.join("ab".repeat(32)).display().to_string()
+        );
+    }
+
     #[test]
     fn base64_pads_as_the_standard_does() {
         assert_eq!(super::base64(b""), "");
