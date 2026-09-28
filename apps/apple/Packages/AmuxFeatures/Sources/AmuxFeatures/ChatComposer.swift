@@ -14,6 +14,11 @@ public enum AttachChoice: String, Equatable, Sendable {
 /// exited agent resumes it with the draft. Drafting never waits; sending
 /// waits for the rows to be current and the agent live.
 struct ComposerBox: View {
+    /// The side of every control's target in the row under the field.
+    static let slot: CGFloat = 44
+    /// The drawn send, stop and resume controls, centred in their slots.
+    static let round: CGFloat = 34
+
     @Environment(\.design) private var design
     @Bindable var model: ChatModel
     let placeholder: String
@@ -41,7 +46,12 @@ struct ComposerBox: View {
                 .textInputAutocapitalization(.sentences)
                 .focused(focused)
                 .identified("chat.field", label: placeholder, value: model.draft)
-            HStack(spacing: 10) {
+            // Every control here is a 44 pt slot, side by side rather than grown
+            // over each other: the icons are drawn closer than two thumbs are
+            // wide. The row then gives back the slack around the glyphs at its
+            // edges, so the plus lines up with the field and the send circle
+            // sits where the padding puts it.
+            HStack(spacing: 0) {
                 Menu {
                     Button { attach(.photo) } label: {
                         Label(String(localized: "Photo"), systemImage: "photo")
@@ -55,10 +65,12 @@ struct ComposerBox: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "plus")
+                    Label("Attach", systemImage: "plus")
+                        .labelStyle(.iconOnly)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(design.inkMuted.color)
-                        .thumbTarget(x: 10, y: 10)
+                        .frame(width: ComposerBox.slot, height: ComposerBox.slot)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Attach")
                 .identified("chat.attach", label: "Attach")
@@ -66,25 +78,24 @@ struct ComposerBox: View {
                     Image(systemName: model.dictation.active ? "stop.circle.fill" : "mic")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(model.dictation.active ? design.accent.color : design.inkMuted.color)
-                        .thumbTarget(x: 8, y: 10)
+                        .frame(width: ComposerBox.slot, height: ComposerBox.slot)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.amuxControl)
                 .accessibilityLabel(dictationLabel)
                 .identified("chat.dictate", label: dictationLabel,
                             value: model.dictation.active ? "listening" : "idle")
-                .reclaimingThumbTarget(x: 8, y: 10)
-                .reclaimingThumbTarget(x: 10, y: 10)
                 if !model.draft.isEmpty || !model.attachments.isEmpty {
                     Button { model.clearDraft() } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 15))
                             .foregroundStyle(design.inkFaint.color)
-                            .thumbTarget(x: 10, y: 10)
+                            .frame(width: ComposerBox.slot, height: ComposerBox.slot)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.amuxControl)
                     .accessibilityLabel("Clear")
                     .identified("chat.clear", label: "Clear")
-                    .reclaimingThumbTarget(x: 10, y: 10)
                 }
                 if let strip = model.strip, let chip = ChatWords.chip(strip, model.settings) {
                     modelChip(chip)
@@ -92,6 +103,9 @@ struct ComposerBox: View {
                 Spacer(minLength: 4)
                 primary
             }
+            .padding(.leading, -13)
+            .padding(.trailing, -(ComposerBox.slot - ComposerBox.round) / 2)
+            .padding(.vertical, -(ComposerBox.slot - ComposerBox.round) / 2)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -124,6 +138,7 @@ struct ComposerBox: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(design.inkFaint.color)
             }
+            .frame(minHeight: ComposerBox.slot)
             .contentShape(Rectangle())
         }
         .buttonStyle(.amuxControl)
@@ -190,8 +205,11 @@ struct ComposerBox: View {
                     .designFont(.bodyEmphasis, design)
                     .foregroundStyle(design.ground.color)
                     .padding(.horizontal, 14)
-                    .frame(height: 34)
+                    .frame(height: ComposerBox.round)
                     .background(Capsule().fill(design.ink.color))
+                    .padding(.horizontal, (ComposerBox.slot - ComposerBox.round) / 2)
+                    .frame(height: ComposerBox.slot)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.amuxControl)
             .disabled(!(model.canResume && model.hasDraft))
@@ -218,8 +236,10 @@ struct ComposerBox: View {
             Image(systemName: glyph)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(enabled ? design.ground.color : design.inkFaint.color)
-                .frame(width: 34, height: 34)
+                .frame(width: ComposerBox.round, height: ComposerBox.round)
                 .background(Circle().fill(enabled ? design.ink.color : design.sunken.color))
+                .frame(width: ComposerBox.slot, height: ComposerBox.slot)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.amuxControl)
         .disabled(!enabled)

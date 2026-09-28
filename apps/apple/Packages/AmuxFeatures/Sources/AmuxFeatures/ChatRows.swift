@@ -237,7 +237,9 @@ struct RailRow: View {
     var body: some View {
         Group {
             if opens {
-                Button(action: toggle) { layout }
+                // A one-line row is under 20 pt: its target reaches into the
+                // gaps around it, which leaves the chat drawn as it was.
+                Button(action: toggle) { layout.thumbTarget(y: RailRow.reach) }
                     .buttonStyle(.amuxRow)
             } else {
                 layout
@@ -248,7 +250,10 @@ struct RailRow: View {
             "chat.row.\(kind)",
             label: [verb, subject, meta].filter { !$0.isEmpty }.joined(separator: ", "),
             value: opens ? (open ? "open" : "folded") : nil)
+        .reclaimingThumbTarget(y: opens ? RailRow.reach : 0)
     }
+
+    private static let reach: CGFloat = 13
 
     @ViewBuilder private var verbText: some View {
         if !verb.isEmpty {

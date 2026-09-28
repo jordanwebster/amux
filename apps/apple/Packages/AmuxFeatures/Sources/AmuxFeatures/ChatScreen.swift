@@ -280,6 +280,7 @@ public struct ChatScreen: View {
         } label: {
             GlassIcon(glyph: "ellipsis", size: 36)
                 .thumbTarget(x: 4, y: 4)
+                .accessibilityLabel("More")
         }
         .simultaneousGesture(TapGesture().onEnded { putDown += 1 })
         .accessibilityLabel("More")

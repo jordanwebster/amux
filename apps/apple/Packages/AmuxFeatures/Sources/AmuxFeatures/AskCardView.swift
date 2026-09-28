@@ -134,11 +134,19 @@ public struct AskCardView: View {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(design.inkMuted.color)
-                    .thumbTarget(x: 12, y: 12)
+                    .thumbTarget(x: 14, y: 20)
             }
-            .accessibilityLabel("More")
+            .accessibilityRepresentation {
+                Menu {
+                    Button(role: .destructive) { act(.stop) } label: {
+                        Text("Stop the turn")
+                    }
+                } label: {
+                    Text("More")
+                }
+            }
             .identified("ask.more", label: "More")
-            .reclaimingThumbTarget(x: 12, y: 12)
+            .reclaimingThumbTarget(x: 14, y: 20)
         }
     }
 
