@@ -25,18 +25,6 @@
         }
       }
     },
-    "%@ has no recorded view state to replay": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Amux/Debug/ReportFreeze.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ has no recorded view state to replay"
-          }
-        }
-      }
-    },
     "%@ saying %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Amux/Debug/DoorHost.swift.",
       "extractionState": "manual",
@@ -205,18 +193,6 @@
         }
       }
     },
-    "Asked relay-cleanup and started reading the tests while we wait. Nothing in amux-ui matches on the name itself, so if it is holding nothing this is a one-file change.": {
-      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Asked relay-cleanup and started reading the tests while we wait. Nothing in amux-ui matches on the name itself, so if it is holding nothing this is a one-file change."
-          }
-        }
-      }
-    },
     "Asks": {
       "comment": "Debug component gallery family heading.",
       "extractionState": "manual",
@@ -361,18 +337,6 @@
         }
       }
     },
-    "Clear. Collapsing them now.": {
-      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Clear. Collapsing them now."
-          }
-        }
-      }
-    },
     "Closest to where the copy is used": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -429,42 +393,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Composer"
-          }
-        }
-      }
-    },
-    "Controls": {
-      "comment": "Debug component gallery family heading.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Controls"
-          }
-        }
-      }
-    },
-    "Conversation facts": {
-      "comment": "Debug component gallery family heading.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Conversation facts"
-          }
-        }
-      }
-    },
-    "Conversation status": {
-      "comment": "Debug component gallery family heading.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Conversation status"
           }
         }
       }
@@ -577,18 +505,6 @@
         }
       }
     },
-    "Draw a box around each problem and add a note.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Draw a box around each problem and add a note."
-          }
-        }
-      }
-    },
     "Every client already depends on it": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -645,18 +561,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Find every call site that maps a status to a string"
-          }
-        }
-      }
-    },
-    "Finished in 3.8s": {
-      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Finished in 3.8s"
           }
         }
       }
@@ -837,18 +741,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Logging"
-          }
-        }
-      }
-    },
-    "Moved it. The shared crate no longer exports the three constants.": {
-      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Moved it. The shared crate no longer exports the three constants."
           }
         }
       }
@@ -1393,18 +1285,6 @@
         }
       }
     },
-    "This agent is not taking messages.": {
-      "comment": "English app copy. Used in ios/Amux/Debug/DoorHost.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This agent is not taking messages."
-          }
-        }
-      }
-    },
     "Three readers: pairing.rs, codes.rs and the pairing spec. All read the same string.": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -1473,18 +1353,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Update the three spec tests that assert on the old strings"
-          }
-        }
-      }
-    },
-    "Updating the pairing copy": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Updating the pairing copy"
           }
         }
       }
@@ -4033,18 +3901,6 @@
         }
       }
     },
-    "spec-suite updated three assertions": {
-      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "spec-suite updated three assertions"
-          }
-        }
-      }
-    },
     "stopped": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -4245,30 +4101,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "the machine could not be asked"
-          }
-        }
-      }
-    },
-    "the page on screen": {
-      "comment": "English app copy. Used in ios/Amux/Debug/ReportFreeze.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the page on screen"
-          }
-        }
-      }
-    },
-    "the view-state recording could not be written: %@": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Amux/Debug/ReportFreeze.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the view-state recording could not be written: %@"
           }
         }
       }

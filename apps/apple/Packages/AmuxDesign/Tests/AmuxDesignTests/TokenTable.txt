@@ -20,14 +20,11 @@ controlRadius   12
 floatRadius     26
 rowPadding      14
 gutter          18
-rowGap          1
 feedGap         16
 hairline        0.5
 glassWash       0.78
-glassOpenWash   0.88
 
 role             face                size  weight    scales with
-display         Instrument Sans     38    bold      largeTitle  tracking -0.4
 screenTitle     Instrument Sans     26    semibold  title  tracking -0.4
 sectionTitle    Geist Mono          11    medium    caption2  tracking 0.4
 identifier      Geist Mono          15.5  medium    subheadline

@@ -72,13 +72,12 @@ public struct Design: Sendable, Equatable {
         public let floatRadius: CGFloat
         public let rowPadding: CGFloat
         public let gutter: CGFloat
-        public let rowGap: CGFloat
         public let feedGap: CGFloat
         public let hairline: CGFloat
 
         public init(
             cardRadius: CGFloat, controlRadius: CGFloat, floatRadius: CGFloat,
-            rowPadding: CGFloat, gutter: CGFloat, rowGap: CGFloat,
+            rowPadding: CGFloat, gutter: CGFloat,
             feedGap: CGFloat, hairline: CGFloat
         ) {
             self.cardRadius = cardRadius
@@ -86,7 +85,6 @@ public struct Design: Sendable, Equatable {
             self.floatRadius = floatRadius
             self.rowPadding = rowPadding
             self.gutter = gutter
-            self.rowGap = rowGap
             self.feedGap = feedGap
             self.hairline = hairline
         }
@@ -162,7 +160,7 @@ public struct Design: Sendable, Equatable {
         faces: .instrument,
         metrics: Metrics(
             cardRadius: 16, controlRadius: 12, floatRadius: 26,
-            rowPadding: 14, gutter: 18, rowGap: 1, feedGap: 16,
+            rowPadding: 14, gutter: 18, feedGap: 16,
             hairline: 0.5),
         type: Typography(
             identifierIsMono: true, titleWeight: .semibold,

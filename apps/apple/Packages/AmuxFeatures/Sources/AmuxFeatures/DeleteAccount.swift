@@ -35,11 +35,11 @@ struct DeleteAccountCard: View {
                 .foregroundStyle(design.ink.color)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 9) {
-                consequence("checkmark", kept: true,
+                Consequence("checkmark", kept: true,
                             "Your agents and files stay on your hosts.")
-                consequence("xmark", kept: false, "This phone can no longer reach them.")
+                Consequence("xmark", kept: false, "This phone can no longer reach them.")
                 if let billing {
-                    consequence("xmark", kept: false, billing)
+                    Consequence("xmark", kept: false, billing)
                 }
             }
             trouble
@@ -183,49 +183,19 @@ struct DeleteAccountCard: View {
     }
 
     private var buttons: some View {
-        HStack(spacing: 10) {
-            Button { actions(.cancel) } label: {
-                ActionLabel("Cancel", kind: .quiet, fill: true)
-            }
-            .buttonStyle(.amuxControl)
-            .identified("delete.cancel", label: "Cancel")
-            Button { actions(.confirm) } label: {
-                Text(model.working ? "Deleting…" : "Delete")
-                    .designFont(.bodyEmphasis, design)
-                    .foregroundStyle(Color.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
-                    .frame(minHeight: 44)
-                    .background {
-                        RoundedRectangle(
-                            cornerRadius: design.metrics.controlRadius, style: .continuous)
-                            .fill(design.removed.color)
-                    }
-            }
-            .buttonStyle(.amuxControl)
+        ButtonPair {
+            choiceButton(String(localized: "Cancel"), kind: .outline, id: "delete.cancel") { actions(.cancel) }
             // Until the address is this account's, the one press that cannot
             // be undone is not available at all — greyed rather than hidden,
             // so what the field is for is obvious from the button it unlocks.
-            .disabled(!confirmed)
-            .identified("delete.confirm", label: "Delete", enabled: confirmed)
+            choiceButton(
+                model.working ? String(localized: "Deleting…") : String(localized: "Delete"),
+                kind: .destructive, id: "delete.confirm", enabled: confirmed
+            ) { actions(.confirm) }
         }
         .padding(.top, 2)
     }
 
-    private func consequence(_ glyph: String, kept: Bool, _ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Image(systemName: glyph)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(kept ? design.inkMuted.color : design.removed.color)
-                .frame(width: 14)
-            Text(text)
-                .designFont(.detail, design)
-                .foregroundStyle(design.inkMuted.color)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .accessibilityElement(children: .combine)
-    }
 }
 
 /// The question over the page it was asked from.

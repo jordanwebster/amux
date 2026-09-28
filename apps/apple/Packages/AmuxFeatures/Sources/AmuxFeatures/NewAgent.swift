@@ -85,7 +85,7 @@ public struct NewAgent: View {
             }
             .padding(.horizontal, design.metrics.gutter)
             .padding(.top, 8)
-            // Clear of the tray at the foot, which floats over this.
+            // Clear of the bar at the foot, which floats over this.
             .padding(.bottom, 130)
         }
         .scrollIndicators(.hidden)
@@ -364,7 +364,7 @@ private struct LayerCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Image(systemName: glyph)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(chosen ? design.accent.color : design.inkMuted.color)
+                .foregroundStyle(chosen ? design.ink.color : design.inkMuted.color)
             Text(provider.title)
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
@@ -378,7 +378,7 @@ private struct LayerCard: View {
             ZStack {
                 shape.fill(design.raised.color)
                 shape.strokeBorder(
-                    chosen ? design.accent.color : design.hairline.color,
+                    chosen ? design.ink.color : design.hairline.color,
                     lineWidth: chosen ? 1.5 : 1)
             }
         }

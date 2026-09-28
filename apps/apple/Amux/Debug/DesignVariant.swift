@@ -49,7 +49,6 @@ enum DesignVariant: String, CaseIterable {
                 floatRadius: source.metrics.floatRadius,
                 rowPadding: source.metrics.rowPadding,
                 gutter: gutter,
-                rowGap: source.metrics.rowGap,
                 feedGap: source.metrics.feedGap,
                 hairline: source.metrics.hairline),
             type: Design.Typography(

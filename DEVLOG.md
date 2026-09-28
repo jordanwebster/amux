@@ -1,3 +1,23 @@
+2026-09-28 — **The phone spends its accent only on what waits for you, and
+drops what nothing drew.** A look at every screen beside the last release's
+goldens and the chat vocabulary page found the accent filling buttons and
+selections: the review page's Attach Review, Comment on N lines and Add to
+Review, the agent delete card's Delete, the settings card's effort pick, the
+task chip's started-agents count, and the New Agent and paywall radios. Primary
+buttons are ink, as everywhere else; deleting an agent, deleting an account and
+removing an account share one destructive button kind in the colour of what a
+change takes away, with Cancel outlined beside it, and one consequence line;
+the agent delete card's title is screen-title size again. The agent settings
+card draws its choices as list rows with hairline rules under one ink radio,
+and its efforts as the You tab's segmented track, instead of boxed options.
+A command row keeps the start of the command when it truncates, and its meta
+may take three fifths of a contested line, so `12s · this session` beside a
+long command stays whole and the command gives way first, as in the terminal.
+Removed as unused: the Scrim view, the status and needs-you marks, the probe
+screen, the display type role, the open-wash and row-gap tokens, the breathing
+tempo, the appearance-resolved colour helpers, and 173 catalogue strings no
+source uses. The component snapshots that show these are re-recorded.
+
 2026-09-28 — **The terminal client drops styling and code nothing used.** The
 theme's `gutter` token painted nothing since the review page stopped drawing
 a numbered gutter, so it is gone from the token set, the imported-scheme

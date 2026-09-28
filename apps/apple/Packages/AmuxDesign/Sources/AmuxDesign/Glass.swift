@@ -102,11 +102,8 @@ extension View {
 }
 
 public enum Glass {
-    /// How much ground is washed in under the material by default. Raised for
-    /// a surface that opens over the whole screen, where more of the backdrop
-    /// would otherwise show through.
+    /// How much ground is washed in under the material.
     public static let wash: Double = 0.78
-    public static let openWash: Double = 0.88
     /// How far back the content goes when something opens over it.
     ///
     /// Black rather than a colour resolved per appearance, and the same amount
@@ -118,38 +115,6 @@ public enum Glass {
     /// six slightly different amounts, which nobody chose — it is the kind of
     /// difference that only shows up when two of them open in the same minute.
     public static let scrim: Double = 0.25
-}
-
-/// Content pushed back because something has opened over it.
-///
-/// It is a view of its own rather than a modifier because it is also the way
-/// out: everything in this app that opens over the conversation closes by a
-/// press anywhere else, and a card with no visible dismissal and no dimmed
-/// ground is a trap.
-///
-/// It fades. A whole screen changing brightness between two frames is the one
-/// thing in a set of menus that reads as a fault rather than as a style, and
-/// the reason it used to cut — that a fade is a clock, and these screens are
-/// photographed — is answered by holding it still in front of a camera rather
-/// than by never moving at all. The caller supplies the curve by animating
-/// whatever decides the scrim is there.
-public struct Scrim: View {
-    private let dismiss: () -> Void
-
-    public init(dismiss: @escaping () -> Void) {
-        self.dismiss = dismiss
-    }
-
-    public var body: some View {
-        Color.black
-            .opacity(Glass.scrim)
-            .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture(perform: dismiss)
-            .accessibilityLabel("Close")
-            .accessibilityAddTraits(.isButton)
-            .transition(.opacity)
-    }
 }
 
 /// A raised surface. How it separates from the ground is a decision about the

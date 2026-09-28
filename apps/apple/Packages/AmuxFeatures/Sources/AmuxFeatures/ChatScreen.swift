@@ -674,7 +674,7 @@ private struct RenameCard: View {
                         .fill(design.sunken.color)
                 }
                 .identified("chat.rename.field", value: name)
-            HStack(spacing: 10) {
+            ButtonPair {
                 choiceButton(String(localized: "Cancel"), kind: .outline, id: "chat.rename.cancel", action: cancel)
                 choiceButton(
                     String(localized: "Rename"), kind: .primary, id: "chat.rename.confirm",
@@ -699,48 +699,25 @@ private struct DeleteCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(String(localized: "Delete \(name)?"))
-                .designFont(.bodyEmphasis, design)
+                .designFont(.screenTitle, design)
                 .foregroundStyle(design.ink.color)
-            consequence("checkmark", String(localized: "Its edits stay. Nothing is reverted."), kept: true)
-            consequence("xmark", String(localized: "Its session ends. Unfinished work stops."), kept: false)
-            consequence("xmark", String(localized: "The chat is deleted on every device."), kept: false)
+            Consequence("checkmark", kept: true, String(localized: "Its edits stay. Nothing is reverted."))
+            Consequence("xmark", kept: false, String(localized: "Its session ends. Unfinished work stops."))
+            Consequence("xmark", kept: false, String(localized: "The chat is deleted on every device."))
             if descendants == 1 {
-                consequence("xmark", String(localized: "Its child agent is deleted too."), kept: false)
+                Consequence("xmark", kept: false, String(localized: "Its child agent is deleted too."))
             } else if descendants > 1 {
-                consequence(
-                    "xmark", String(localized: "Its \(descendants) child agents are deleted too."),
-                    kept: false)
+                Consequence("xmark", kept: false, String(localized: "Its \(descendants) child agents are deleted too."))
             }
-            HStack(spacing: 10) {
+            ButtonPair {
                 choiceButton(String(localized: "Cancel"), kind: .outline, id: "chat.delete.cancel", action: cancel)
-                Button(action: confirm) {
-                    Text("Delete")
-                        .designFont(.bodyEmphasis, design)
-                        .foregroundStyle(design.onAccent.color)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background {
-                            RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                                .fill(design.accent.color)
-                        }
-                }
-                .buttonStyle(.amuxControl)
-                .identified("chat.delete.confirm", label: "Delete")
+                choiceButton(String(localized: "Delete"), kind: .destructive, id: "chat.delete.confirm", action: confirm)
             }
         }
         .padding(16)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
     }
 
-    private func consequence(_ glyph: String, _ text: String, kept: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: glyph)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(kept ? design.inkMuted.color : design.accent.color)
-            Text(text)
-                .designFont(.detail, design)
-                .foregroundStyle(design.inkMuted.color)
-        }
-    }
 }
 
 /// The host, directory and address in full, to read or copy.

@@ -128,12 +128,10 @@ public struct Paywall: View {
         let chosen = plan.period == model.chosen
         return Button { actions(.choose(plan.period)) } label: {
             HStack(spacing: 14) {
-                // The mark is the system's radio, drawn rather than a check:
+                // The mark is a radio rather than a check:
                 // these two are alternatives, and a check would read as two
                 // things that could both be on.
-                Image(systemName: chosen ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 21, weight: .regular))
-                    .foregroundStyle(chosen ? design.accent.color : design.inkFaint.color)
+                Radio(chosen: chosen)
                     .frame(width: 26)
                 Text(plan.period.title)
                     .designFont(.body, design)

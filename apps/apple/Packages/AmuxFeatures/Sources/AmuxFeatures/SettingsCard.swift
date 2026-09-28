@@ -68,10 +68,11 @@ struct SettingsCard: View {
 
     @ViewBuilder
     private var models: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             heading(String(localized: "MODEL"))
             if picksModel {
-                ForEach(view.models, id: \.value) { choice in
+                ForEach(Array(view.models.enumerated()), id: \.element.value) { index, choice in
+                    if index > 0 { rule }
                     radio(
                         id: "chat.settings.model.\(choice.value)",
                         title: ChatWords.model(choice),
@@ -119,7 +120,7 @@ struct SettingsCard: View {
 
     @ViewBuilder
     private var modes: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             heading(ChatWords.permissionsHeading(kind))
             if view.cycleMode {
                 HStack(alignment: .center, spacing: 10) {
@@ -146,7 +147,8 @@ struct SettingsCard: View {
             } else if let refusal = view.modeRefusal {
                 sentence(refusal, id: "chat.settings.mode.refusal")
             } else {
-                ForEach(Array(view.modes.enumerated()), id: \.offset) { _, choice in
+                ForEach(Array(view.modes.enumerated()), id: \.offset) { index, choice in
+                    if index > 0 { rule }
                     radio(
                         id: "chat.settings.mode.\(Self.key(choice.value))",
                         title: ChatWords.mode(choice.value), detail: ChatWords.modeDetail(choice.value),
@@ -165,6 +167,14 @@ struct SettingsCard: View {
         case .claude(let mode): mode
         case .codex(let approval, let sandbox, let preset): preset ?? "\(approval).\(sandbox)"
         }
+    }
+
+    /// The hairline between two choices, from the text column to the edge.
+    private var rule: some View {
+        Rectangle()
+            .fill(design.hairline.color)
+            .frame(height: design.metrics.hairline)
+            .padding(.leading, 30)
     }
 
     private func heading(_ text: String) -> some View {
@@ -188,7 +198,8 @@ struct SettingsCard: View {
             .identified(id, label: text)
     }
 
-    /// One choice: the current one filled; the one that stops asking in red.
+    /// One choice as a list row: the current one's radio filled; the one
+    /// that stops asking in red.
     private func radio(
         id: String, title: String, detail: String, current: Bool, warn: Bool,
         pick: @escaping () -> Void
@@ -196,12 +207,12 @@ struct SettingsCard: View {
         Button {
             if !current { pick() }
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Image(systemName: current ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(current ? design.ink.color : design.inkFaint.color)
+            HStack(alignment: .center, spacing: 10) {
+                Radio(chosen: current)
+                    .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .designFont(.bodyEmphasis, design)
+                        .designFont(.body, design)
                         .foregroundStyle(warn ? design.removed.color : design.ink.color)
                     if !detail.isEmpty, detail != title {
                         Text(detail)
@@ -213,53 +224,54 @@ struct SettingsCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(10)
+            .padding(.vertical, 9)
             .frame(minHeight: 44)
-            .background {
-                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                    .fill(current ? design.sunken.color : .clear)
-                    .strokeBorder(design.hairline.color, lineWidth: 1)
-            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.amuxControl)
+        .accessibilityAddTraits(current ? [.isSelected] : [])
         .identified(id, label: title, value: current ? "current" : nil)
     }
 }
 
-/// The current model's efforts as stops on one axis, lowest first: a tap
-/// picks one, there is nothing to drag.
+/// The current model's efforts as one segmented track, lowest first, drawn
+/// as the You tab draws Appearance: a tap picks one, there is nothing to drag.
 private struct EffortAxis: View {
     @Environment(\.design) private var design
     let efforts: [EffortChoice]
     let pick: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 0) {
             ForEach(efforts, id: \.value) { effort in
                 Button {
                     if !effort.current { pick(effort.value) }
                 } label: {
                     Text(effort.value)
-                        .designFont(.monoSmall, design)
-                        .foregroundStyle(effort.current ? design.onAccent.color : design.ink.color)
+                        .designFont(.caption, design)
+                        .foregroundStyle(effort.current ? design.ground.color : design.inkMuted.color)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         // Room inside each stop, so a long level shrinks before it
                         // reaches the stop's edge when six share the row.
                         .padding(.horizontal, 5)
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .padding(.vertical, 7)
+                        .frame(maxWidth: .infinity)
                         .background {
-                            RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                                .fill(effort.current ? design.accent.color : design.sunken.color)
+                            if effort.current { Capsule().fill(design.ink.color) }
                         }
+                        .thumbTarget(y: 7)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.amuxControl)
+                .accessibilityAddTraits(effort.current ? [.isSelected] : [])
                 .identified(
                     "chat.settings.effort.\(effort.value)", label: effort.value,
                     value: effort.current ? "current" : nil)
+                .reclaimingThumbTarget(y: 7)
             }
         }
+        .padding(2)
+        .background(Capsule().fill(design.sunken.color))
     }
 }

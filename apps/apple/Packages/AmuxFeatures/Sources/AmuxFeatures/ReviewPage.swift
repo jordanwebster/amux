@@ -229,10 +229,10 @@ public struct ReviewPage: View {
                 } label: {
                     Text(ChatWords.commentOn(lines: lines(in: selection)))
                         .designFont(.bodyEmphasis, design)
-                        .foregroundStyle(design.onAccent.color)
+                        .foregroundStyle(design.ground.color)
                         .padding(.horizontal, 18)
                         .frame(height: 44)
-                        .background(Capsule().fill(design.accent.color))
+                        .background(Capsule().fill(design.ink.color))
                 }
                 .buttonStyle(.amuxControl)
                 .identified("review.comment", label: ChatWords.commentOn(lines: lines(in: selection)))
@@ -246,10 +246,10 @@ public struct ReviewPage: View {
             Button { actions(.attach) } label: {
                 Text(ChatWords.attachReview(model.count))
                     .designFont(.bodyEmphasis, design)
-                    .foregroundStyle(design.onAccent.color)
+                    .foregroundStyle(design.ground.color)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
-                    .background(Capsule().fill(design.accent.color))
+                    .background(Capsule().fill(design.ink.color))
             }
             .buttonStyle(.amuxControl)
             .identified("review.attach", label: ChatWords.attachReview(model.count))
@@ -511,10 +511,10 @@ private struct CommentSheet: View {
                 Button(action: add) {
                     Text("Add to Review")
                         .designFont(.bodyEmphasis, design)
-                        .foregroundStyle(design.onAccent.color)
+                        .foregroundStyle(design.ground.color)
                         .padding(.horizontal, 18)
                         .frame(height: 44)
-                        .background(Capsule().fill(design.accent.color))
+                        .background(Capsule().fill(design.ink.color))
                 }
                 .buttonStyle(.amuxControl)
                 .disabled(blank)

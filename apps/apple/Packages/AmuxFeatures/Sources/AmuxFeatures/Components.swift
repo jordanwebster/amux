@@ -2,76 +2,33 @@ import AmuxCore
 import AmuxDesign
 import SwiftUI
 
-/// The status mark.
-///
-/// One mark, because a glyph nobody can read is worse than no glyph: it
-/// occupies the place a reader looks for meaning and returns nothing. There
-/// used to be three, and two of them did exactly that.
-///
-/// A sweep ring stood for "working" and never swept — the angle was fixed for
-/// the sake of a capture, so a working agent showed a frozen ring on a real
-/// phone. Setting it turning was the wrong repair. The mark answers "is this
-/// worth opening", and working is the state where the answer is no; drawn at
-/// the same size and weight as a demand, it made the least actionable rows the
-/// most eye-catching, and a fleet of a dozen agents a screen of pinwheels.
-///
-/// A dashed circle stood for "unknown", hollow so that it would not claim
-/// knowledge the app lacks. Good instinct, wired to almost nothing: the phone
-/// is sent an attention the core has already degraded, and it degrades to
-/// unknown when the machine is offline or when a Claude turn's working
-/// inference has expired. So the circle meant "your machine is offline" and
-/// declined to say so.
-///
-/// What is left is the demand, in the one colour this app reserves for it.
-/// Every other state is a word on the row — `Idle`, `Working`,
-/// `Finished · 4 files · +118 −40`, `studio offline` — which is more precise
-/// than a glyph and readable without having learnt a vocabulary first.
-public struct AttentionMark: View {
-    private let attention: Attention
-    private let size: CGFloat
-
-    public init(attention: Attention, size: CGFloat = 19) {
-        self.attention = attention
-        self.size = size
-    }
-
-    public var body: some View {
-        // The space is held whatever the state, so a row with nothing to
-        // demand lines its name up with the rows that do.
-        switch attention {
-        case .exited, .idle, .starting, .working:
-            Color.clear.frame(width: size, height: size)
-        case .needsYou:
-            NeedsYouMark(glyph: "hand.raised.fill", size: size)
-        }
-    }
-}
-
-/// The accent disc with a glyph in it: the one thing on a screen allowed to be
-/// coloured, because it is the one thing that is waiting for you.
-///
-/// The list draws it small on a row and an ask panel draws it larger at the
-/// head of the thing being asked. It is one mark either way — a person who has
-/// learnt what it means on the home should not have to learn it again inside a
-/// conversation.
-public struct NeedsYouMark: View {
+/// One line of what a destructive act does: a check for what stays, a cross
+/// in the colour of what a change takes away for what goes.
+struct Consequence: View {
     @Environment(\.design) private var design
-    private let glyph: String
-    private let size: CGFloat
+    let glyph: String
+    let kept: Bool
+    let text: String
 
-    public init(glyph: String, size: CGFloat = 19) {
+    init(_ glyph: String, kept: Bool, _ text: String) {
         self.glyph = glyph
-        self.size = size
+        self.kept = kept
+        self.text = text
     }
 
-    public var body: some View {
-        ZStack {
-            Circle().fill(design.accent.color)
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
             Image(systemName: glyph)
-                .font(.system(size: size * 0.5, weight: .bold))
-                .foregroundStyle(design.onAccent.color)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(kept ? design.inkMuted.color : design.removed.color)
+                .frame(width: 14)
+            Text(text)
+                .designFont(.detail, design)
+                .foregroundStyle(design.inkMuted.color)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-        .frame(width: size, height: size)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -248,8 +205,10 @@ public struct ActionLabel: View {
 
     /// `primary` is ink, not accent. Three waiting agents on one screen means
     /// three primary buttons, and filling those with the accent floods a
-    /// screen whose whole rule is that colour means attention.
-    public enum Kind: Sendable { case primary, quiet, outline, plain }
+    /// screen whose whole rule is that colour means attention. `destructive`
+    /// is the one press that cannot be undone, in the colour of what a change
+    /// takes away.
+    public enum Kind: Sendable { case primary, destructive, quiet, outline, plain }
 
     public init(_ title: String, kind: Kind = .primary, fill: Bool = false) {
         self.title = title
@@ -270,6 +229,7 @@ public struct ActionLabel: View {
                     cornerRadius: design.metrics.controlRadius, style: .continuous)
                 switch kind {
                 case .primary: shape.fill(design.ink.color)
+                case .destructive: shape.fill(design.removed.color)
                 case .quiet: shape.fill(design.sunken.color)
                 case .outline: shape.strokeBorder(design.hairline.color, lineWidth: 1)
                 case .plain: shape.fill(.clear)
@@ -280,6 +240,7 @@ public struct ActionLabel: View {
     private var foreground: Color {
         switch kind {
         case .primary: design.ground.color
+        case .destructive: Color.white
         case .quiet, .outline: design.ink.color
         case .plain: design.accent.color
         }
@@ -428,14 +389,14 @@ public enum Fingerprint {
     }
 }
 
-/// One choice of several, chosen or not.
+/// One choice of several, chosen or not, in ink: choosing is not something
+/// waiting on you, so it does not take the accent.
 struct Radio: View {
     @Environment(\.design) private var design
     let chosen: Bool
-    var mark: Ramp?
 
     var body: some View {
-        let mark = (mark ?? design.accent).color
+        let mark = design.ink.color
         return ZStack {
             Circle()
                 .strokeBorder(

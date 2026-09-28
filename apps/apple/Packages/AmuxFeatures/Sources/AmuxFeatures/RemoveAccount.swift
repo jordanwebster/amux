@@ -31,10 +31,10 @@ struct RemoveAccountCard: View {
                 .designFont(.monoSmall, design)
                 .foregroundStyle(design.inkMuted.color)
             VStack(alignment: .leading, spacing: 9) {
-                consequence("checkmark", kept: true,
+                Consequence("checkmark", kept: true,
                             "Your amux.sh account and subscription stay as they are.")
-                consequence("checkmark", kept: true, "Your agents and files stay on your hosts.")
-                consequence("xmark", kept: false,
+                Consequence("checkmark", kept: true, "Your agents and files stay on your hosts.")
+                Consequence("xmark", kept: false,
                             "This phone signs out and forgets the hosts it paired for this account.")
             }
             buttons
@@ -49,45 +49,13 @@ struct RemoveAccountCard: View {
     }
 
     private var buttons: some View {
-        HStack(spacing: 10) {
-            Button { actions(.cancel) } label: {
-                ActionLabel("Cancel", kind: .quiet, fill: true)
-            }
-            .buttonStyle(.amuxControl)
-            .identified("remove.cancel", label: "Cancel")
-            Button { actions(.confirm) } label: {
-                Text("Remove")
-                    .designFont(.bodyEmphasis, design)
-                    .foregroundStyle(Color.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
-                    .frame(minHeight: 44)
-                    .background {
-                        RoundedRectangle(
-                            cornerRadius: design.metrics.controlRadius, style: .continuous)
-                            .fill(design.removed.color)
-                    }
-            }
-            .buttonStyle(.amuxControl)
-            .identified("remove.confirm", label: "Remove")
+        ButtonPair {
+            choiceButton(String(localized: "Cancel"), kind: .outline, id: "remove.cancel") { actions(.cancel) }
+            choiceButton(String(localized: "Remove"), kind: .destructive, id: "remove.confirm") { actions(.confirm) }
         }
         .padding(.top, 2)
     }
 
-    private func consequence(_ glyph: String, kept: Bool, _ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Image(systemName: glyph)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(kept ? design.inkMuted.color : design.removed.color)
-                .frame(width: 14)
-            Text(text)
-                .designFont(.detail, design)
-                .foregroundStyle(design.inkMuted.color)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .accessibilityElement(children: .combine)
-    }
 }
 
 /// The question over the page it was asked from, the way deleting one is.

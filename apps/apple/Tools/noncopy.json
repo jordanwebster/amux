@@ -556,13 +556,9 @@
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift": [
       {"literal": "\"\\(fingerprint.prefix(4))…\\(fingerprint.suffix(4))\"", "context": "return \"\\(fingerprint.prefix(4))…\\(fingerprint.suffix(4))\"", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"chevron.right\"", "context": "Image(systemName: \"chevron.right\")", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
-      {"literal": "\"chevron.left\"", "context": "Image(systemName: \"chevron.left\")", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
-      {"literal": "\"hand.raised.fill\"", "context": "NeedsYouMark(glyph: \"hand.raised.fill\", size: size)", "reason": "SF Symbol name, not interface copy.", "count": 1}
+      {"literal": "\"chevron.left\"", "context": "Image(systemName: \"chevron.left\")", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/DeleteAccount.swift": [
-      {"literal": "\"checkmark\"", "context": "consequence(\"checkmark\", kept: true,", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"xmark\"", "context": "consequence(\"xmark\", kept: false, \"This phone can no longer reach them.\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"xmark\"", "context": "consequence(\"xmark\", kept: false, billing)", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"delete\"", "context": ".identified(\"delete\", value: state)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"asking\"", "context": "case .asking: \"asking\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"deleting\"", "context": "case .working: \"deleting\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -573,8 +569,11 @@
       {"literal": "\"delete.blocked\"", "context": ".identified(\"delete.blocked\", value: source.named)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"delete.failed\"", "context": ".identified(\"delete.failed\", value: reason)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"delete.email\"", "context": ".identified(\"delete.email\", label: \"Your email\", value: model.typed)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"delete.cancel\"", "context": ".identified(\"delete.cancel\", label: \"Cancel\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"delete.confirm\"", "context": ".identified(\"delete.confirm\", label: \"Delete\", enabled: confirmed)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
+      {"literal": "\"delete.confirm\"", "context": "kind: .destructive, id: \"delete.confirm\", enabled: confirmed", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"delete.cancel\"", "context": "choiceButton(String(localized: \"Cancel\"), kind: .outline, id: \"delete.cancel\") { actions(.cancel) }", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"checkmark\"", "context": "Consequence(\"checkmark\", kept: true,", "reason": "SF Symbol name, not interface copy.", "count": 1},
+      {"literal": "\"xmark\"", "context": "Consequence(\"xmark\", kept: false, \"This phone can no longer reach them.\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
+      {"literal": "\"xmark\"", "context": "Consequence(\"xmark\", kept: false, billing)", "reason": "SF Symbol name, not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift": [
       {"literal": "\"hosts\"", "context": ".identified(\"hosts\", value: subtitle)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -691,8 +690,6 @@
       {"literal": "\"failed\"", "context": "case .failed: \"failed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"paywall.title\"", "context": ".identified(\"paywall.title\", value: \"Reach your agents anywhere\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"paywall.explanation\"", "context": ".identified(\"paywall.explanation\", value: explanation)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"largecircle.fill.circle\"", "context": "Image(systemName: chosen ? \"largecircle.fill.circle\" : \"circle\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"circle\"", "context": "Image(systemName: chosen ? \"largecircle.fill.circle\" : \"circle\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"paywall.\\(plan.period.rawValue)\"", "context": "\"paywall.\\(plan.period.rawValue)\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"paywall.terms\"", "context": ".identified(\"paywall.terms\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"paywall.subscribed\"", "context": ".identified(\"paywall.subscribed\", value: grant.named)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -721,22 +718,13 @@
       {"literal": "\".\"", "context": "if part.hasPrefix(\".\"), part.count > 1 { return String(part.prefix(2)) }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"/\"", "context": "return root + (parents + [last]).joined(separator: \"/\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1}
     ],
-    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ProbeScreen.swift": [
-      {"literal": "\"probe.title\"", "context": ".identified(\"probe.title\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"amux/probe\"", "context": "Text(\"amux/probe\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"probe.identifier\"", "context": ".identified(\"probe.identifier\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"probe.body\"", "context": ".identified(\"probe.body\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"probe.accent\"", "context": ".identified(\"probe.accent\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"probe.mono\"", "context": ".identified(\"probe.mono\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"probe\"", "context": ".identified(\"probe\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
-    ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/RemoveAccount.swift": [
-      {"literal": "\"remove.confirm\"", "context": ".identified(\"remove.confirm\", label: \"Remove\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"remove.cancel\"", "context": ".identified(\"remove.cancel\", label: \"Cancel\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"remove\"", "context": ".identified(\"remove\", value: entry.account.email)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"xmark\"", "context": "consequence(\"xmark\", kept: false,", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
-      {"literal": "\"checkmark\"", "context": "consequence(\"checkmark\", kept: true, \"Your agents and files stay on your hosts.\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
-      {"literal": "\"checkmark\"", "context": "consequence(\"checkmark\", kept: true,", "reason": "SF Symbol asset name, not a displayed label.", "count": 1}
+      {"literal": "\"remove.confirm\"", "context": "choiceButton(String(localized: \"Remove\"), kind: .destructive, id: \"remove.confirm\") { actions(.confirm) }", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"remove.cancel\"", "context": "choiceButton(String(localized: \"Cancel\"), kind: .outline, id: \"remove.cancel\") { actions(.cancel) }", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"checkmark\"", "context": "Consequence(\"checkmark\", kept: true,", "reason": "SF Symbol name, not interface copy.", "count": 1},
+      {"literal": "\"checkmark\"", "context": "Consequence(\"checkmark\", kept: true, \"Your agents and files stay on your hosts.\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
+      {"literal": "\"xmark\"", "context": "Consequence(\"xmark\", kept: false,", "reason": "SF Symbol name, not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Report.swift": [
       {"literal": "\"report.signed-out\"", "context": ".identified(\"report.signed-out\", label: \"Sign in to send a report\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1329,7 +1317,7 @@
       {"literal": "\"chat.rename.cancel\"", "context": "choiceButton(String(localized: \"Cancel\"), kind: .outline, id: \"chat.rename.cancel\", action: cancel)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.rename.confirm\"", "context": "String(localized: \"Rename\"), kind: .primary, id: \"chat.rename.confirm\",", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.delete.cancel\"", "context": "choiceButton(String(localized: \"Cancel\"), kind: .outline, id: \"chat.delete.cancel\", action: cancel)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.delete.confirm\"", "context": ".identified(\"chat.delete.confirm\", label: \"Delete\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.delete.confirm\"", "context": "choiceButton(String(localized: \"Delete\"), kind: .destructive, id: \"chat.delete.confirm\", action: confirm)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.place\"", "context": ".identified(\"chat.place\", label: subject.address)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift": [
@@ -1409,7 +1397,6 @@
       {"literal": "\"chat.settings.mode.refusal\"", "context": "if let refusal = view.modeRefusal { sentence(refusal, id: \"chat.settings.mode.refusal\") }", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.settings.mode.refusal\"", "context": "sentence(refusal, id: \"chat.settings.mode.refusal\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.settings.mode.\\(Self.key(choice.value))\"", "context": "id: \"chat.settings.mode.\\(Self.key(choice.value))\",", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"largecircle.fill.circle\"", "context": "Image(systemName: current ? \"largecircle.fill.circle\" : \"circle\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"\\(approval).\\(sandbox)\"", "context": "case .codex(let approval, let sandbox, let preset): preset ?? \"\\(approval).\\(sandbox)\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift": [

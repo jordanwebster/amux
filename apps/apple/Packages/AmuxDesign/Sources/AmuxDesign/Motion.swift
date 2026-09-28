@@ -19,12 +19,6 @@ public enum Motion {
     /// Following a reader somewhere they already asked to go — a scroll to a
     /// row they pressed. Shorter than `standard`: the destination is not news.
     public static let quick: Animation = .easeOut(duration: 0.18)
-
-    /// One leg of the working line's travel. Not a transition: this is the
-    /// tempo of the only thing in the app that moves while nothing is
-    /// happening, so it is slow enough to read as breathing rather than as
-    /// progress.
-    public static let breath: TimeInterval = 1.1
 }
 
 private struct Moving<V: Equatable>: ViewModifier {

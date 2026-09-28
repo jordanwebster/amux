@@ -3,7 +3,6 @@ import SwiftUI
 extension Design {
     /// Type roles, so a screen asks for meaning rather than a point size.
     public enum Role: String, Sendable, CaseIterable {
-        case display            // the one number a screen exists to report
         case screenTitle
         case sectionTitle
         case identifier         // an agent or host name — something you could type
@@ -31,9 +30,6 @@ extension Design {
     public func spec(_ role: Role) -> FontSpec {
         let body = type.bodySize
         return switch role {
-        case .display:
-            FontSpec(family: faces.display, size: type.titleSize + 12,
-                     weight: .bold, relativeTo: .largeTitle, tracking: type.tightTracking)
         case .screenTitle:
             FontSpec(family: faces.display, size: type.titleSize,
                      weight: type.titleWeight, relativeTo: .title, tracking: type.tightTracking)

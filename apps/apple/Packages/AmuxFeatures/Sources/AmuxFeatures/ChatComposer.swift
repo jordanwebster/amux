@@ -520,10 +520,10 @@ struct ChatDock: View {
                         Text(verbatim: "\(count)")
                             .designFont(.monoSmall, design)
                     }
-                    .foregroundStyle(design.onAccent.color)
+                    .foregroundStyle(design.ink.color)
                     .padding(.horizontal, 10)
                     .frame(height: 26)
-                    .background(Capsule().fill(design.accent.color))
+                    .background(Capsule().fill(design.sunken.color))
                 }
                 Image(systemName: expanded ? "chevron.down" : "chevron.up")
                     .font(.system(size: 13, weight: .semibold))

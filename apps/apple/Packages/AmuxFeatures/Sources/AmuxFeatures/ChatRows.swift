@@ -394,8 +394,9 @@ struct GridRow: View {
     var subject = ""
     var subjectFace = SubjectFace.mono
     var meta = RowMeta()
-    /// Which end of a long subject is kept: a path keeps its file name.
-    var truncation: Text.TruncationMode = .middle
+    /// Which end of a long subject is kept: a path keeps its file name, a
+    /// command its start.
+    var truncation: Text.TruncationMode = .tail
     var note: String?
     var quote: String?
     var output: [String] = []
@@ -546,8 +547,9 @@ struct GridRow: View {
 /// priority, and the other is squeezed to nothing. Neither can afford that
 /// here: a tool's meta can be a whole sentence, and a long command must not
 /// push off the "exit 1" that says how it went. So the subject is served
-/// first and the meta gives up width until it is down to under half of the
-/// contested line; below that the two truncate together.
+/// first and the meta gives up width until it is down to three fifths of the
+/// contested line; below that the two truncate together, the subject giving
+/// way first as it does in the terminal.
 struct RowLine: Layout {
     enum Role: Int { case verb, subject, meta }
 
@@ -556,8 +558,8 @@ struct RowLine: Layout {
     }
 
     /// The most of a contested line the trailing meta may hold: enough for
-    /// "exit 101 · 4.2s" beside a long command.
-    static let metaShare: CGFloat = 0.5
+    /// "exit 101 · 4.2s" or "12s · this session" beside a long command.
+    static let metaShare: CGFloat = 0.6
     /// Between the verb and the subject.
     private let spacing: CGFloat = 7
     /// The clear space between the subject and the meta.

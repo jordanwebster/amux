@@ -69,11 +69,9 @@ final class TokenTableTests: XCTestCase {
             "\(pad("floatRadius", 16))\(number(metrics.floatRadius))",
             "\(pad("rowPadding", 16))\(number(metrics.rowPadding))",
             "\(pad("gutter", 16))\(number(metrics.gutter))",
-            "\(pad("rowGap", 16))\(number(metrics.rowGap))",
             "\(pad("feedGap", 16))\(number(metrics.feedGap))",
             "\(pad("hairline", 16))\(number(metrics.hairline))",
             "\(pad("glassWash", 16))\(number(Glass.wash))",
-            "\(pad("glassOpenWash", 16))\(number(Glass.openWash))",
             "",
             "role             face                size  weight    scales with",
         ]
