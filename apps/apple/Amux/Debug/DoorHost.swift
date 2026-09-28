@@ -627,16 +627,12 @@ final class DoorHost {
         return .ack
     }
 
-    /// The list under the middle of the window, moved the way a swipe moves
-    /// it: a page is most of what shows, so a row near the edge stays in
-    /// sight as the reader's anchor.
+    /// The list on top, moved the way a swipe moves it: a page is most of
+    /// what shows, so a row near the edge stays in sight as the reader's
+    /// anchor.
     private func scroll(_ direction: String) -> DoorReply {
         guard let window = DoorWindow.current else { return .error("no window on screen") }
-        var view = window.hitTest(CGPoint(x: window.bounds.midX, y: window.bounds.midY), with: nil)
-        while let candidate = view, !(candidate is UIScrollView) || candidate is UITextView {
-            view = candidate.superview
-        }
-        guard let list = view as? UIScrollView else { return .error("nothing scrolls there") }
+        guard let list = VisibleTree.list(in: window) else { return .error("nothing scrolls there") }
         let inset = list.adjustedContentInset
         let top = -inset.top
         let bottom = max(top, list.contentSize.height + inset.bottom - list.bounds.height)

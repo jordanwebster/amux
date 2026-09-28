@@ -27,21 +27,36 @@ enum VisibleTree {
         return found
     }
 
-    /// The smallest accessibility element whose frame holds `point`, in
-    /// window coordinates. SwiftUI does not show an element's identifier to
-    /// the process that drew it, so a control a screen declared is found
-    /// again by where it was drawn.
+    /// The smallest accessibility element on show whose frame holds
+    /// `point`, in window coordinates. SwiftUI does not show an element's
+    /// identifier to the process that drew it, so a control a screen
+    /// declared is found again by where it was drawn.
     ///
-    /// Retained screens that are not on show still hold elements at the same
-    /// points, so when the declaration names a label, an element saying it
-    /// is preferred over a smaller one that does not.
+    /// Only what a touch at that point reaches counts: the views on its way
+    /// down to the view it lands on, and what that view draws. Retained
+    /// screens that are not on show (a hidden tab, the page under a pushed
+    /// one) still hold elements at the same point, and acting on one of
+    /// those opens something the person never touched. Of what is on show,
+    /// an element saying the declared label is preferred over a smaller one
+    /// that does not.
     @MainActor
     static func element(at point: CGPoint, in window: UIWindow, saying label: String? = nil) -> NSObject? {
+        guard let hit = window.hitTest(point, with: nil) else { return nil }
+        var path = Set<ObjectIdentifier>()
+        var step: UIView? = hit
+        while let view = step {
+            path.insert(ObjectIdentifier(view))
+            step = view.superview
+        }
         var best: (NSObject, CGFloat)?
         var said: (NSObject, CGFloat)?
         var seen = Set<ObjectIdentifier>()
         func visit(_ node: NSObject) {
             guard seen.insert(ObjectIdentifier(node)).inserted else { return }
+            if let view = node as? UIView, !path.contains(ObjectIdentifier(view)),
+               !view.isDescendant(of: hit) {
+                return
+            }
             if node.isAccessibilityElement {
                 let frame = window.convert(node.accessibilityFrame, from: nil)
                 let area = frame.width * frame.height
@@ -58,6 +73,43 @@ enum VisibleTree {
         }
         visit(window)
         return said?.0 ?? best?.0
+    }
+
+    /// The list a swipe would move: of the lists that scroll up and down and
+    /// that a touch at their middle reaches, the one drawn last, which is the
+    /// card or sheet on top. With none, the list under the middle of the
+    /// window, whether or not it has anywhere to go.
+    @MainActor
+    static func list(in window: UIWindow) -> UIScrollView? {
+        var found: UIScrollView?
+        func visit(_ view: UIView) {
+            if let list = view as? UIScrollView, !(list is UITextView), !list.isHidden,
+               scrollsVertically(list), reached(list, in: window) {
+                found = list
+            }
+            for subview in view.subviews { visit(subview) }
+        }
+        visit(window)
+        if let found { return found }
+        var view = window.hitTest(CGPoint(x: window.bounds.midX, y: window.bounds.midY), with: nil)
+        while let candidate = view, !(candidate is UIScrollView) || candidate is UITextView {
+            view = candidate.superview
+        }
+        return view as? UIScrollView
+    }
+
+    @MainActor
+    private static func scrollsVertically(_ list: UIScrollView) -> Bool {
+        let inset = list.adjustedContentInset
+        return list.contentSize.height + inset.top + inset.bottom > list.bounds.height + 1
+    }
+
+    @MainActor
+    private static func reached(_ list: UIScrollView, in window: UIWindow) -> Bool {
+        let shown = list.convert(list.bounds, to: window).intersection(window.bounds)
+        guard !shown.isNull, shown.width > 0, shown.height > 0 else { return false }
+        return window.hitTest(CGPoint(x: shown.midX, y: shown.midY), with: nil)?
+            .isDescendant(of: list) == true
     }
 
     @MainActor

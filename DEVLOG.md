@@ -1,3 +1,14 @@
+2026-09-28 — **The debug door taps and scrolls only what is on screen.**
+When a door tap could not activate its element it fell back to the smallest
+accessibility element under that point on any screen the app retains, so a
+fleet-row tap once opened the hidden You tab's Sign In page and an ask
+option opened a host page from the Hosts tab's stack. The fallback now
+considers only what a touch there reaches: the views on the hit-test path
+and what the view it lands on draws. The scroll verb moves the topmost list
+that can scroll up and down (a long settings card over its chat), falling
+back to the list under the middle of the window. AmuxAppTests
+DoorTargetTests pins both.
+
 2026-09-28 — **The phone's delete card counts the agents deleted with it.**
 Deleting an agent deletes every agent below it in its family, on any host,
 but the phone's confirmation said nothing about them. The card now adds
