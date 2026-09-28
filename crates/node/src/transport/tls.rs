@@ -91,24 +91,58 @@ fn add_debug_cloud_root(_root_store: &mut rustls::RootCertStore) -> Result<()> {
     Ok(())
 }
 
+/// A channel to a host's pairing service over a QUIC connection of its own.
+pub(crate) struct PairingQuic {
+    pub(crate) channel: Channel,
+    connection: quinn::Connection,
+}
+
+impl PairingQuic {
+    /// Whether the host closed this connection for having no pairing window
+    /// open. Its dispatcher decides that only once the handshake completes,
+    /// so the refusal can land after the dial succeeded and fail the first
+    /// call on the channel instead: a failed call asks this.
+    pub(crate) fn refused(&self) -> bool {
+        self.connection
+            .close_reason()
+            .is_some_and(|error| no_pairing_window(&error))
+    }
+}
+
+fn no_pairing_window(error: &quinn::ConnectionError) -> bool {
+    matches!(
+        error,
+        quinn::ConnectionError::ApplicationClosed(close)
+            if close.reason.as_ref() == crate::dispatcher::NO_PAIRING_WINDOW
+    )
+}
+
+fn pairing_dial_error(error: quinn::ConnectionError) -> TransportError {
+    if no_pairing_window(&error) {
+        TransportError::NoPairingWindow
+    } else {
+        TransportError::Config(error.to_string())
+    }
+}
+
 pub(crate) async fn pairing_quic_channel(
     endpoint: &quinn::Endpoint,
     addr: SocketAddr,
-) -> Result<Channel> {
+) -> Result<PairingQuic> {
     let connection = endpoint
         .connect_with(pairing_quic_client_config()?, addr, "amux-pairing.local")
         .map_err(|error| TransportError::Config(error.to_string()))?
         .await
-        .map_err(|error| TransportError::Config(error.to_string()))?;
-    let (send, recv) = connection
-        .open_bi()
-        .await
-        .map_err(|error| TransportError::Config(error.to_string()))?;
-    Ok(channel_from_single_io(
-        configure_tonic_endpoint_keepalive(Endpoint::from_static("https://pairing")),
-        "pairing QUIC stream",
-        crate::link::accepted_quic_bidi_stream(send, recv),
-    ))
+        .map_err(pairing_dial_error)?;
+    let (send, recv) = connection.open_bi().await.map_err(pairing_dial_error)?;
+    Ok(PairingQuic {
+        channel: channel_from_single_io(
+            configure_tonic_endpoint_keepalive(Endpoint::from_static("https://pairing")),
+            "pairing QUIC stream",
+            crate::link::accepted_quic_bidi_stream(send, recv),
+        ),
+        connection,
+    })
 }
 
 pub(crate) async fn pairing_channel_from_io<IO>(io: IO) -> Result<Channel>

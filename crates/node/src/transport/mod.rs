@@ -43,6 +43,8 @@ pub enum TransportError {
     Io(#[from] std::io::Error),
     #[error("Transport config error: {0}")]
     Config(String),
+    #[error("no pairing window is open")]
+    NoPairingWindow,
 }
 
 pub(crate) fn configure_tonic_endpoint_keepalive(endpoint: Endpoint) -> Endpoint {

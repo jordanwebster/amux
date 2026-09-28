@@ -1,3 +1,20 @@
+2026-09-29 — **A closed pairing window answers a PIN with INVALID_PIN,
+however the refusal lands.** A host with no pairing window open (the PIN
+was used, five guesses closed it, or it expired) closes a certificate-less
+QUIC connection as soon as its handshake completes, before any secret is
+read. The initiator never recognised that refusal: when it arrived after
+the dial resolved, the pairing call failed as an unknown transport error
+and the generic mapping happened to turn that into INVALID_PIN; when it
+arrived first, under load on a Linux runner, the dial itself failed and the
+right PIN after the attempt cap came back as "connection is not admitted"
+(Unavailable). The dispatcher now closes those connections with a reason
+of their own, and the initiator reads it, at the dial or on the call that
+follows, as the same INVALID_PIN the responder already gives a pairing
+stream that reaches it after its window closed. With the dial held 300 ms
+so the refusal always lands first, the old code fails with the Linux
+message and the new code passes; certificates a host no longer trusts
+keep the old close.
+
 2026-09-28 — **Component snapshots wait out larger Liquid Glass's second
 pass.** Larger glass (the review page, the list over the composer) does
 not track luma, and nothing about it that the app can see changes, but the

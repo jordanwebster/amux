@@ -327,14 +327,20 @@ impl Edge {
         let identity = LocalPairingIdentity::from_device_identity(&self.identity);
         let mut last_unreachable = None;
         let mut selected = None;
+        // A host with no pairing window open refuses the connection before
+        // reading the secret; that refusal answers like any other secret
+        // failure, whether it ends the dial or the call that follows it.
         for addr in direct_addrs {
-            let channel = match tokio::time::timeout(
+            let dial = match tokio::time::timeout(
                 PAIRING_QUIC_DIAL_TIMEOUT,
                 crate::transport::pairing_quic_channel(&self.quic_endpoint, addr),
             )
             .await
             {
-                Ok(Ok(channel)) => channel,
+                Ok(Ok(dial)) => dial,
+                Ok(Err(crate::transport::TransportError::NoPairingWindow)) => {
+                    return Err(invalid_pin());
+                }
                 Ok(Err(error)) => {
                     last_unreachable = Some(error.to_string());
                     continue;
@@ -345,13 +351,14 @@ impl Edge {
                 }
             };
             let result = begin_pair_initiator(
-                &mut wire::pairing_service_client::PairingServiceClient::new(channel),
+                &mut wire::pairing_service_client::PairingServiceClient::new(dial.channel.clone()),
                 &identity,
                 &self.host_name,
                 &secret,
             )
             .await;
             match result {
+                Err(_) if dial.refused() => return Err(invalid_pin()),
                 Ok(pending) => {
                     selected = Some((
                         pending,

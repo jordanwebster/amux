@@ -111,9 +111,16 @@ pub(crate) struct TunnelDispatcher {
     link_ctx: Option<LinkCtx>,
 }
 
+/// What the dispatcher says, as a QUIC close reason, to a connection that
+/// presents no certificate while no pairing window is open. Nothing on this
+/// host reads the secret then, so this refusal is a closed window's whole
+/// answer to a pairing attempt.
+pub(crate) const NO_PAIRING_WINDOW: &[u8] = b"no pairing window is open";
+
 pub(crate) enum DispatchTarget {
     Trusted(HostId),
     Pairing,
+    NoPairingWindow,
     Close,
 }
 
@@ -318,6 +325,10 @@ impl TunnelDispatcher {
                     .await
                     .map_err(|_| DispatchError::ChannelClosed)
             }
+            DispatchTarget::NoPairingWindow => {
+                connection.close(0_u32.into(), NO_PAIRING_WINDOW);
+                Ok(())
+            }
             DispatchTarget::Close => {
                 connection.close(0_u32.into(), b"connection is not admitted");
                 Ok(())
@@ -371,7 +382,7 @@ impl TunnelDispatcher {
                 ))
                 .await
                 .map_err(|_| DispatchError::ChannelClosed),
-            DispatchTarget::Close => Ok(()),
+            DispatchTarget::NoPairingWindow | DispatchTarget::Close => Ok(()),
         }
     }
 
@@ -446,7 +457,7 @@ impl TunnelDispatcher {
             audit::auth_mtls_handshake_failure(
                 "missing client certificate and pairing mode inactive",
             );
-            Ok(DispatchTarget::Close)
+            Ok(DispatchTarget::NoPairingWindow)
         }
     }
 }

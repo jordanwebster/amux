@@ -273,7 +273,10 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
     .await;
 
     // The first success consumes the PIN: the window closes and a second
-    // machine cannot race in on it.
+    // machine cannot race in on it. A host with no window open refuses the
+    // connection before reading any PIN, and the initiator answers that
+    // refusal with the same INVALID_PIN as a wrong guess, whether it lands
+    // during the dial or on the call after it.
     assert!(!edge(&net, "desk").pairing_active());
     let late = begin_pair(
         &net,
@@ -288,8 +291,8 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
     assert!(!edge(&net, "desk").is_trusted(host_id(&net, "intruder")));
     println!("the PIN paired the laptop once; the intruder's late try: {late:?}");
 
-    // Five wrong guesses close the window; after that the right PIN fails
-    // too until someone opens a new one.
+    // Five wrong guesses close the window; after that the right PIN is
+    // refused like the consumed one until someone opens a new window.
     let started = start_pairing(&net, "shed", pin_mode()).await.unwrap();
     let pin = pin_of(&started);
     for _ in 0..5 {

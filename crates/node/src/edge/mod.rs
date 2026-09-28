@@ -737,6 +737,7 @@ impl Edge {
     ) -> Result<tonic::transport::Channel, String> {
         crate::transport::pairing_quic_channel(&self.quic_endpoint, addr)
             .await
+            .map(|dial| dial.channel)
             .map_err(|error| error.to_string())
     }
 
