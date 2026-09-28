@@ -746,6 +746,9 @@ impl TaskState {
     }
 }
 
+/// Claude's own words for a tool use the person rejected.
+const REJECTED: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).";
+
 /// The control response an answer sends and the decision it puts on the
 /// call's row, or None when the answer does not fit the ask.
 fn sdk_answer(
@@ -760,10 +763,18 @@ fn sdk_answer(
             note: note.to_owned(),
         })
     };
+    // Claude hands the message to the model as the tool's error. A bare
+    // note there reads as a hook's refusal; worded as Claude words a
+    // person's rejection in its own terminal, it reads as the person's.
     let deny = |note: &str, stop: bool| {
+        let mut message = REJECTED.to_owned();
+        if !note.is_empty() {
+            message.push_str(" To tell you how to proceed, the user said:\n");
+            message.push_str(note);
+        }
         json!({
             "behavior": "deny",
-            "message": if note.is_empty() { "The person denied this." } else { note },
+            "message": message,
             "interrupt": stop,
         })
     };

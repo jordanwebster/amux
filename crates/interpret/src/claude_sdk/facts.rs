@@ -722,7 +722,13 @@ impl State {
         } else {
             ToolState::Succeeded
         } as i32;
-        tool.outcome_text = output;
+        // A denial's result is the rejection amux wrote; the person's note
+        // is on the decision.
+        tool.outcome_text = if denied && output.starts_with(super::REJECTED) {
+            String::new()
+        } else {
+            output
+        };
         let images = result_images(block.get("content").unwrap_or(&Value::Null));
         if !images.is_empty() {
             tool.images = Vec::new();

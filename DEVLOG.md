@@ -1,3 +1,12 @@
+2026-09-28 — **Headless Claude hears a denial as the person's, with their note.**
+A deny sent the person's bare note as the permission response's message,
+which Claude hands the model as the tool's error, so the model credited "a
+hook" with the refusal. The message is now Claude's own wording for a
+rejection by the user, followed by "To tell you how to proceed, the user
+said:" and the note; with no note, the rejection alone. A plan sent back uses
+the same words. The denied row no longer repeats that text under the call;
+the note stays on its decision.
+
 2026-09-28 — **Headless Claude's "started" rule sits above the prompt that began the session.**
 Headless Claude reports its init only after it reads the first message, so
 its session boundary landed below the first prompt, unlike terminal Claude
