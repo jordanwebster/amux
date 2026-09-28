@@ -1,3 +1,18 @@
+2026-09-28 — **The first push of this branch's CI found three things that
+only fail off a Mac or under load.** Windows checked every text file out with
+CRLF endings, so each interpreter golden (under `fixtures/`, which the old
+per-directory attributes missed) differed from its LF rendering; every text
+file now checks out LF on every platform. The terminal-Claude journey's
+permission golden held `/private/tmp/...`: the fake reads its working directory
+from `getcwd`, which on macOS returns the physical path behind the `/tmp` link,
+while Linux prints `/tmp`. The journey driver now spells the scratch root as it
+named it, dropping the prefix's cells as if the shorter path had been printed.
+The MCP tools test that swaps its fake daemon dropped the first one by aborting
+its task; the listener it owned was dropped later on a worker thread and, as a
+listener does, unlinked `tools.sock` — by then the replacement's socket — so
+every dial found no daemon. The test now waits for the old daemon to stop
+before binding the new one.
+
 2026-09-28 — **`just ci-remote` pushes the branch and waits for its GitHub
 run.** It refuses to start off the `rearchitect` branch or with uncommitted
 changes, pushes the head without force (a remote that moved on is a failed

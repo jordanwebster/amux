@@ -188,6 +188,30 @@ def normalize(text: str) -> str:
 DURATION = re.compile(r"(?<= )(\d+m \d+s|\d+(?:\.\d+)?(?:ms|s))(?= · |$)")
 
 
+def logical_paths(
+    texts: list[str], styles: list[list[str]], physical: str, logical: str
+) -> tuple[list[str], list[list[str]]]:
+    """Spell the scratch root as the driver named it wherever a program
+    printed its physical path instead. A program reading its own working
+    directory gets the physical path, and on macOS /tmp is a link to
+    /private/tmp: without this a frame recorded there would never match one
+    from Linux. The dropped prefix's cells leave the row, as they would had
+    the program printed the shorter path."""
+    if physical == logical or not physical.endswith(logical[1:]):
+        return texts, styles
+    drop = len(physical) - len(logical)
+    out_texts, out_styles = [], []
+    for text, row in zip(texts, styles):
+        row = list(row)
+        while (start := text.find(physical)) >= 0:
+            cell = sum(_cell_width(c) for c in text[:start])
+            row = row[:cell] + row[cell + drop :] + [row[-1]] * drop
+            text = text[:start] + text[start + drop :]
+        out_texts.append(text)
+        out_styles.append(row)
+    return out_texts, out_styles
+
+
 def mask_durations(
     texts: list[str], styles: list[list[str]]
 ) -> tuple[list[str], list[list[str]]]:
@@ -426,6 +450,9 @@ class TerminalJourney:
         reviewed golden."""
         dump = self.tmux("capture-pane", "-p", "-e", "-t", pane).stdout
         texts, styles = parse_styled(dump.removesuffix("\n"), COLS)
+        texts, styles = logical_paths(
+            texts, styles, os.path.realpath(self.scratch), str(self.scratch)
+        )
         texts, styles = mask_durations(texts, styles)
         text = normalize("\n".join(texts) + "\n")
         frame = Frame(label, text, style_map(styles))

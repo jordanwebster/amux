@@ -352,6 +352,14 @@ impl Daemon {
         });
         Self { task }
     }
+
+    /// Stops listening and waits until the socket is gone. Aborting alone
+    /// drops the listener later on a worker thread, and its unbinding would
+    /// then remove a successor's socket bound at the same path.
+    async fn stop(mut self) {
+        self.task.abort();
+        let _ = (&mut self.task).await;
+    }
 }
 
 impl Drop for Daemon {
@@ -750,7 +758,7 @@ async fn stop_interrupts_the_named_child_its_own_kinds_way() {
     fleet.reject_input = Some("not your child".into());
     fleet.calls = Default::default();
     let mcp_dir = mcp.dir.clone();
-    drop(_daemon);
+    _daemon.stop().await;
     let _daemon = Daemon::listen(&mcp_dir, fleet);
     assert_eq!(
         mcp.refused("stop", json!({ "name": "reviewer" })).await,

@@ -27,7 +27,7 @@
   ● Wants to run a command
     $ deploy --check
   › 1. Allow once
-    2. Allow access to /private/tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work for this session
+    2. Allow access to /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work for this session
     3. Deny and stop…
     4. Stop the turn
     ↑↓/1-9 select · enter confirm · f open · ctrl+x stop
