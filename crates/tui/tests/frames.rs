@@ -47,35 +47,55 @@ fn topology() -> Topology {
         .host("desk")
         .host("laptop")
         .link("desk", "laptop")
-        .agent(
-            AgentDecl::new("scout", "desk")
-                .kind(FakeKind::ClaudePty)
-                .steps(vec![
-                    text("pty.sock is named in crates/agent-dir/src/lib.rs."),
-                    Step::TurnEnd,
-                ])
-                .prompt("Find where the attach socket is named."),
+}
+
+/// The served agents, least recently active first. The fleet lists the most
+/// recently active first, so each starts once the one before it has gone
+/// idle: started together, their first turns race and so would the rows.
+fn agents() -> [AgentDecl; 3] {
+    [
+        AgentDecl::new("coder", "desk")
+            .kind(FakeKind::Codex)
+            .steps(vec![text("Hello from Codex."), Step::TurnEnd])
+            .prompt("Say hello."),
+        AgentDecl::new("worker", "desk")
+            .kind(FakeKind::ClaudeSdk)
+            .steps(vec![
+                text("Ready when you are."),
+                Step::TurnEnd,
+                text("Working on the relay tests."),
+                Step::WaitFor {
+                    path: "hold".into(),
+                },
+                Step::TurnEnd,
+            ])
+            .prompt("Get ready."),
+        AgentDecl::new("scout", "desk")
+            .kind(FakeKind::ClaudePty)
+            .steps(vec![
+                text("pty.sock is named in crates/agent-dir/src/lib.rs."),
+                Step::TurnEnd,
+            ])
+            .prompt("Find where the attach socket is named."),
+    ]
+}
+
+/// Spawns `decl` and returns once `host`'s inventory lists it idle after
+/// its first turn.
+async fn spawn_settled(net: &mut Net, host: &str, decl: AgentDecl) {
+    let id = net.spawn(decl).await.unwrap().agent_id;
+    let mut inventory = net.observe_inventory(host).await.unwrap();
+    inventory
+        .observe_until(
+            |events| {
+                testnet::observe::inventory_agents(events)
+                    .iter()
+                    .any(|agent| agent.agent_id == id && agent.phase() == wire::Phase::Idle)
+            },
+            PATIENCE,
         )
-        .agent(
-            AgentDecl::new("coder", "desk")
-                .kind(FakeKind::Codex)
-                .steps(vec![text("Hello from Codex."), Step::TurnEnd])
-                .prompt("Say hello."),
-        )
-        .agent(
-            AgentDecl::new("worker", "desk")
-                .kind(FakeKind::ClaudeSdk)
-                .steps(vec![
-                    text("Ready when you are."),
-                    Step::TurnEnd,
-                    text("Working on the relay tests."),
-                    Step::WaitFor {
-                        path: "hold".into(),
-                    },
-                    Step::TurnEnd,
-                ])
-                .prompt("Get ready."),
-        )
+        .await
+        .unwrap();
 }
 
 /// The fleet as `host`'s inventory says it once every agent is idle.
@@ -225,7 +245,10 @@ fn frame(name: &str, buffer: &Buffer) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn served_frames_match_their_goldens() {
-    let net = Net::start(topology()).await.unwrap();
+    let mut net = Net::start(topology()).await.unwrap();
+    for decl in agents() {
+        spawn_settled(&mut net, "laptop", decl).await;
+    }
     let worker = net.agent("worker").unwrap().id;
     let fleet = fleet_at(&net, "laptop").await;
     let mut chat = net.observe("laptop", "worker", 20).await.unwrap();
@@ -252,7 +275,6 @@ async fn served_frames_match_their_goldens() {
     // A terminal Claude on the desk shows a tool server's dialog in its own
     // terminal: the laptop's chat docks the escape where the composer was,
     // with the conversation still above it.
-    let mut net = net;
     let gatekeeper = net
         .spawn(
             AgentDecl::new("gatekeeper", "desk")

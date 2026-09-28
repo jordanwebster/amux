@@ -1,3 +1,12 @@
+2026-09-28 — **The served fleet frame starts its agents in order.** The
+fleet lists the most recently active agent first, and the frame test's
+three agents ran their first turns at once on wall time, so the golden
+held one outcome of that race; the macOS runner once finished Codex's turn
+after headless Claude's and swapped two rows. The agents now start one
+after another, each once the one before is idle, in the order the golden
+shows. Slowing Codex's first turn reproduces the swap under the old setup
+and leaves the new one unchanged.
+
 2026-09-28 — **Windows runs every test target clean.** With Windows
 sockets rebinding past lingering connections, the fake Codex view reading
 its console, and terminal Claude's suites Unix-only, the Windows test job
