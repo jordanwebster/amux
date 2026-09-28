@@ -1,3 +1,16 @@
+2026-09-28 — **The phone's accessibility audit walks live pages again.**
+The audit asked the door for fixture states this build no longer draws, so
+`just ios accessibility` could not pass while the journeys manifest leaned
+on it for VoiceOver names and hit sizes. `scripts/ios-accessibility.py` now
+serves the goldens' topology and takes the goldens' own way through the app
+(pairing by code, hosts, the fleet, a chat's composer, a question card, the
+unanswerable escape) plus You and New Agent; at each page it asks the
+running XCUITest, through files in a shared directory, to audit what is on
+screen. Its first live run audited 148 controls on 8 pages and found real
+faults, left failing on purpose: the composer's attach, dictate, model and
+send targets are under 44 pt, the attach, More and ask-card menus reach
+VoiceOver unnamed, and the unanswerable row is 20 pt tall.
+
 2026-09-28 — **The phone's whole-screen goldens notice a small mark.**
 The screen goldens had silently inherited the journeys' loose thresholds
 (12 per channel, 600 pixels), under which the fleet's needs-you dot (484

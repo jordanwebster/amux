@@ -12,9 +12,14 @@ import XCTest
 /// from a label. XCUITest is that client, so the element kind, the name and
 /// the rectangle read here are the ones VoiceOver and a thumb would get.
 ///
-/// The states it sweeps are whatever the build draws today — asked of the door
-/// rather than listed here, so a screen that lands tomorrow is audited the day
-/// it lands and nobody has to remember to add it.
+/// The pages it audits are live ones, reached the way a person reaches them:
+/// `scripts/ios-accessibility.py` serves machines with agents that act, pairs
+/// the app with one by its code and taps through to each page, then asks this
+/// test to audit what is on screen. The two take turns through files in a
+/// directory both can see, named in `AMUX_AUDIT_DIRECTORY`: the driver writes
+/// `page-N.json` saying which page is up and where the app's door listens,
+/// this test audits it and answers `page-N.done`, and `end` says there are no
+/// more.
 ///
 /// One kind of thing is judged on its name and not on its size: a link the
 /// markdown parser made out of a run of an agent's prose. That is not a control
@@ -48,30 +53,36 @@ final class AccessibilityAuditTests: XCTestCase {
     /// of a run of a sentence, not drawn by this app as a control.
     static let proseBlocks = ["transcript.prose"]
 
+    /// The app the driver launched and navigates; this test only reads it.
+    static let bundle = "sh.amux.app"
+
+    /// How long the driver may take to bring the next page up: launching the
+    /// app, pairing a machine and waiting on its agents come first.
+    static let patience: TimeInterval = 600
+
     func testEveryControlIsNamedAndBigEnoughToHit() throws {
-        let port = ProcessInfo.processInfo.environment["AMUX_DOOR_PORT"] ?? "8790"
-        let app = XCUIApplication()
-        app.launchArguments = ["-amux-door-port", port, "-amux-scripted-cloud"]
-        app.launch()
+        let path = try XCTUnwrap(
+            ProcessInfo.processInfo.environment["AMUX_AUDIT_DIRECTORY"],
+            "the audit audits live pages the driver reaches: run it with just ios accessibility")
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try Data().write(to: directory.appendingPathComponent("ready"))
 
-        let door = try DoorLines(address: "127.0.0.1:\(port)")
-        let answered = try door.ask(["kind": "states"])
-        let states = try XCTUnwrap(
-            answered["states"] as? [[String: Any]],
-            "the door did not say which states this build draws: \(answered)")
-        XCTAssertFalse(states.isEmpty, "the door says this build draws nothing")
-
+        var pages: [String] = []
         var audited = 0
         var complaints: [String] = []
         var inlineLinks: [[String: String]] = []
-        for state in states {
-            guard let screen = state["screen"] as? String,
-                  let name = state["state"] as? String else { continue }
-            _ = try door.ask(["kind": "open", "screen": screen, "fixture": name])
+        while let page = try next(pages.count, in: directory) {
+            guard let name = page["page"] as? String, let port = page["port"] as? Int else {
+                throw DoorLines.Failure("page \(pages.count) does not say its name and port: \(page)")
+            }
+            let app = XCUIApplication(bundleIdentifier: Self.bundle)
+            app.activate()
+            let door = try DoorLines(address: "127.0.0.1:\(port)")
             _ = try door.ask(["kind": "settle"])
             let laidOut = try laidOut(door)
+            var found = 0
             for control in controls(app) {
-                audited += 1
+                found += 1
                 let inline = inlineProseLink(control, laidOut: laidOut)
                 if inline {
                     inlineLinks.append([
@@ -84,19 +95,41 @@ final class AccessibilityAuditTests: XCTestCase {
                 complaints += fault(
                     control, on: name, laidOut: laidOut, judgeSize: !inline)
             }
+            XCTAssertGreaterThan(found, 0, "\(name) has no controls at all")
+            audited += found
+            try JSONSerialization.data(withJSONObject: ["controls": found])
+                .write(to: directory.appendingPathComponent("page-\(pages.count).done"))
+            pages.append(name)
         }
 
-        XCTAssertGreaterThan(
-            audited, 0, "the audit swept \(states.count) states and found no controls at all")
-        record["states"] = states.count
+        XCTAssertFalse(pages.isEmpty, "the driver brought no page up")
+        record["states"] = pages.count
+        record["pages"] = pages
         record["controls"] = audited
         record["faults"] = complaints
         record["inlineLinks"] = inlineLinks
         write(record, to: "accessibility-audit.json")
         XCTAssertTrue(
             complaints.isEmpty,
-            "\(complaints.count) of \(audited) controls across \(states.count) states are "
+            "\(complaints.count) of \(audited) controls across \(pages.count) pages are "
             + "unusable without sight or without a steady thumb:\n" + complaints.joined(separator: "\n"))
+    }
+
+    /// The page the driver brought up next, or nothing once it says it is
+    /// done.
+    private func next(_ index: Int, in directory: URL) throws -> [String: Any]? {
+        let page = directory.appendingPathComponent("page-\(index).json")
+        let end = directory.appendingPathComponent("end")
+        let deadline = Date().addingTimeInterval(Self.patience)
+        while Date() < deadline {
+            if let data = try? Data(contentsOf: page),
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return object
+            }
+            if FileManager.default.fileExists(atPath: end.path) { return nil }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        throw DoorLines.Failure("the driver brought no page \(index) up within \(Int(Self.patience)) s")
     }
 
     // MARK: - Reading the tree
