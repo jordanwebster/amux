@@ -153,6 +153,7 @@ final class DoorHost {
         case .perform(let identifier, let action): return perform(action, on: identifier)
         case .type(let identifier, let text): return type(text, into: identifier)
         case .clear(let identifier): return clear(identifier)
+        case .scroll(let direction): return scroll(direction)
         case .paste(let identifier, let text): return paste(text, into: identifier)
         case .pair(let qr): return await pair(link: qr)
         case .pairByCode(let host, let pin): return await pair(pin: pin, on: host)
@@ -623,6 +624,32 @@ final class DoorHost {
             return .error("\(identifier) does not take text")
         }
         input.insertText(text)
+        return .ack
+    }
+
+    /// The list under the middle of the window, moved the way a swipe moves
+    /// it: a page is most of what shows, so a row near the edge stays in
+    /// sight as the reader's anchor.
+    private func scroll(_ direction: String) -> DoorReply {
+        guard let window = DoorWindow.current else { return .error("no window on screen") }
+        var view = window.hitTest(CGPoint(x: window.bounds.midX, y: window.bounds.midY), with: nil)
+        while let candidate = view, !(candidate is UIScrollView) || candidate is UITextView {
+            view = candidate.superview
+        }
+        guard let list = view as? UIScrollView else { return .error("nothing scrolls there") }
+        let inset = list.adjustedContentInset
+        let top = -inset.top
+        let bottom = max(top, list.contentSize.height + inset.bottom - list.bounds.height)
+        let page = list.bounds.height * 0.8
+        let y: CGFloat
+        switch direction {
+        case "up": y = max(top, list.contentOffset.y - page)
+        case "down": y = min(bottom, list.contentOffset.y + page)
+        case "top": y = top
+        case "bottom": y = bottom
+        default: return .error("scroll goes up, down, top or bottom, not \(direction)")
+        }
+        list.setContentOffset(CGPoint(x: list.contentOffset.x, y: y), animated: true)
         return .ack
     }
 

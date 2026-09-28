@@ -149,6 +149,10 @@ public enum DoorRequest: Sendable, Equatable {
     /// last thing out of it first, exactly as the person whose typo it was
     /// would.
     case clear(identifier: String)
+    /// Move the scrolling list under the middle of the screen one page `up`
+    /// (towards older rows) or `down`, or to its `top` or `bottom`, as a
+    /// person's swipe does.
+    case scroll(direction: String)
     /// Put this text on the system's clipboard and paste it into the named
     /// field, which is the message the system's own Paste menu item sends.
     ///
@@ -635,7 +639,7 @@ extension DoorRequest: Codable {
         case note, marks
         case motion, transparency
         case permission, tier
-        case bytes, label, action
+        case bytes, label, action, direction
     }
 
     public init(from decoder: any Decoder) throws {
@@ -716,6 +720,8 @@ extension DoorRequest: Codable {
                 text: try fields.decode(String.self, forKey: .text))
         case "clear":
             self = .clear(identifier: try fields.decode(String.self, forKey: .identifier))
+        case "scroll":
+            self = .scroll(direction: try fields.decode(String.self, forKey: .direction))
         case "paste":
             self = .paste(
                 identifier: try fields.decode(String.self, forKey: .identifier),
@@ -890,6 +896,9 @@ extension DoorRequest: Codable {
         case .clear(let identifier):
             try fields.encode("clear", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)
+        case .scroll(let direction):
+            try fields.encode("scroll", forKey: .kind)
+            try fields.encode(direction, forKey: .direction)
         case .paste(let identifier, let text):
             try fields.encode("paste", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)

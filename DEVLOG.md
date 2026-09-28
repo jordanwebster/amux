@@ -1,3 +1,11 @@
+2026-09-28 — **The debug door can scroll the list under the middle of the screen.**
+Phone recordings of a chat under a flood and of a long family chat need to page
+through history as a person's swipe does, and the door had no way to move a
+list. `{"kind":"scroll","direction":"up|down|top|bottom"}` finds the scroll view
+under the middle of the window and moves it by most of a page, animated, so the
+chat's own paging (a larger page asked for when the top rows appear) runs
+exactly as it does under a finger.
+
 2026-09-28 — **Every golden and evidence picture was looked at; the blemishes are fixed.**
 A pass over the phone's component snapshots and whole screens, the phone and
 terminal journey goldens, the terminal vocabulary renders and the captured

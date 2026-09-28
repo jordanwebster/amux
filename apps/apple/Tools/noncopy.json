@@ -7,6 +7,12 @@
       {"literal": "\"context-band\"", "context": "case contextBand = \"context-band\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorHost.swift": [
+      {"literal": "\"nothing scrolls there\"", "context": "guard let list = view as? UIScrollView else { return .error(\"nothing scrolls there\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"up\"", "context": "case \"up\": y = max(top, list.contentOffset.y - page)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"down\"", "context": "case \"down\": y = min(bottom, list.contentOffset.y + page)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"top\"", "context": "case \"top\": y = top", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"bottom\"", "context": "case \"bottom\": y = bottom", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"scroll goes up, down, top or bottom, not \\(direction)\"", "context": "default: return .error(\"scroll goes up, down, top or bottom, not \\(direction)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"no menu offers \\(label)\"", "context": "return .error(\"no menu offers \\(label)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"\\(identifier) offers no action named \\(action)\"", "context": "return .error(\"\\(identifier) offers no action named \\(action)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"amux-cloud-script\"", "context": "if let json = Self.said(\"amux-cloud-script\"),", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1},
@@ -22,7 +28,7 @@
       {"literal": "\"finish \\(transaction)\"", "context": "case .finish(let transaction): \"finish \\(transaction)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"unfinished\"", "context": "case .unfinished: \"unfinished\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"-\\(name)\"", "context": "guard let flag = arguments.firstIndex(of: \"-\\(name)\"),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"no window on screen\"", "context": "guard let window = DoorWindow.current else { return .error(\"no window on screen\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 7},
+      {"literal": "\"no window on screen\"", "context": "guard let window = DoorWindow.current else { return .error(\"no window on screen\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 8},
       {"literal": "\"capture failed: the window would not draw\"", "context": "return .error(\"capture failed: the window would not draw\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"no element named \\(identifier)\"", "context": "return .error(\"no element named \\(identifier)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 4},
       {"literal": "\"\\(identifier) did not activate\"", "context": "return .error(\"\\(identifier) did not activate\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -839,6 +845,8 @@
       {"literal": "\"review.empty\"", "context": ".identified(\"review.empty\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Door.swift": [
+      {"literal": "\"scroll\"", "context": "case \"scroll\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"scroll\"", "context": "try fields.encode(\"scroll\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"amux-element-geometry\"", "context": "public static let elementGeometryArgument = \"amux-element-geometry\"", "reason": "Debug launch protocol spelling shared by the app and its UI-test driver, not displayed copy.", "count": 1},
       {"literal": "\"open\"", "context": "case \"open\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"cloud\"", "context": "case \"cloud\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
