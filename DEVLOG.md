@@ -1,3 +1,19 @@
+2026-09-28 — **A push moves the phone to another account only when it has to, and never under somebody.**
+A push used to put the oldest account whose profile trusted the host on
+screen, so a laptop paired under both a signed-out account and the one on
+screen pulled the signed-out one forward (no relay link, the chat left
+behind), and an unbound oldest profile made the push report an unknown host.
+It also swapped accounts while the app was in use, and a push's switch left
+the previous account's pages on the stacks. Now the runtime lists every
+profile trusting a host; the account on screen stays whenever its profile
+is one of them, otherwise the first signed-in account that trusts it (else
+a signed-out one) comes forward, and only in the background: in the
+foreground a push for another account's host changes nothing and the
+notification's tap brings that account. Any change of account on screen
+empties the stacks of pages about the account left (sign-in and the account
+list stay). Coordinator tests cover the shared host, the foreground push
+and the switch's notice; a router test covers the stacks.
+
 2026-09-28 — **A closed profile or chat never wakes the phone again.**
 Acts still in flight (a dump waiting on a host that does not answer, a
 send waiting on a remote agent) hold the phone runtime and its chats past

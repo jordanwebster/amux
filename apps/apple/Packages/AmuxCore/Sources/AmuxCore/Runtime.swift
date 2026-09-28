@@ -140,11 +140,11 @@ public final class Runtime: @unchecked Sendable {
         }
     }
 
-    /// The profile whose trust store holds a machine, if any does.
-    public func trusting(_ host: HostId) async -> Result<String?, RuntimeFailure> {
-        await act(String?.self) { live, callback, context in
+    /// Every profile whose trust store holds a machine, oldest first.
+    public func trusting(_ host: HostId) async -> Result<[String], RuntimeFailure> {
+        await act([String].self) { live, callback, context in
             Bridge.json(host.bytes).withCString {
-                amux_runtime_trusting_profile(live, $0, callback, context)
+                amux_runtime_trusting_profiles(live, $0, callback, context)
             }
         }
     }

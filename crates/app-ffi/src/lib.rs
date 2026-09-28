@@ -703,15 +703,15 @@ pub unsafe extern "C" fn amux_runtime_resume(
     }
 }
 
-/// The profile whose trust store holds a host, by its id as a JSON byte
-/// array; the callback gets `{"Ok": "<profile id>"}`, `{"Ok": null}` when
-/// none does, or `{"Err": ..}`.
+/// Every profile whose trust store holds a host, by its id as a JSON byte
+/// array, oldest first; the callback gets `{"Ok": ["<profile id>", ..]}` or
+/// `{"Err": ..}`.
 ///
 /// # Safety
 /// `runtime` is from `amux_runtime_start`; `host_id` is a NUL-terminated
 /// string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_runtime_trusting_profile(
+pub unsafe extern "C" fn amux_runtime_trusting_profiles(
     runtime: *const AmuxRuntime,
     host_id: *const c_char,
     callback: AmuxCallback,
@@ -729,12 +729,12 @@ pub unsafe extern "C" fn amux_runtime_trusting_profile(
             let Some(host_id) = host_id else {
                 return Answered::Err("the host id is not a byte array".into());
             };
-            Answered::from(
-                embedded
-                    .trusting(&host_id)
-                    .await
-                    .map(|profile| profile.map(|profile| profile.to_string())),
-            )
+            Answered::from(embedded.trusting(&host_id).await.map(|profiles| {
+                profiles
+                    .iter()
+                    .map(ProfileId::to_string)
+                    .collect::<Vec<_>>()
+            }))
         });
     });
 }

@@ -225,4 +225,27 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(Route.host(HostId(UUID())).tab, .hosts)
         XCTAssertEqual(Route.accounts.tab, .you)
     }
+
+    /// A different account on screen leaves none of the last one's pages on
+    /// any stack, so a later tap or a return to the app never shows them;
+    /// signing in and the list of accounts stay.
+    func testLeavingAnAccountDropsItsPagesFromEveryStack() {
+        let loader = RecordingLoader()
+        let router = Router(loader: loader)
+        let agent = agent()
+        router.open(.conversation(agent))
+        router.open(.changes(agent))
+        router.open(.host(machine))
+        router.open(.accounts)
+        router.open(.signIn(.you))
+
+        router.leaveAccount()
+
+        XCTAssertEqual(router.path(.agents), [])
+        XCTAssertEqual(router.path(.hosts), [])
+        XCTAssertEqual(router.path(.you), [.accounts, .signIn(.you)])
+        XCTAssertEqual(
+            loader.abandoned, [.conversation(agent), .changes(agent), .host(machine)],
+            "what the pages held open is let go")
+    }
 }

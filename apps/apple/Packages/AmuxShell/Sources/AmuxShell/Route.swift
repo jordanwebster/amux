@@ -65,6 +65,16 @@ public enum Route: Hashable, Sendable {
         }
     }
 
+    /// Whether the page stays when the account on screen changes: it shows no
+    /// one account's machines or agents.
+    public var outlivesAccount: Bool {
+        switch self {
+        case .signIn, .accounts: true
+        case .conversation, .changes, .newAgent, .pairByCode, .pairConfirmation, .host, .paywall:
+            false
+        }
+    }
+
     /// What this page is called where a page is named by a word: a trace of
     /// what somebody was looking at, a journey's assertion, a report.
     public var name: String {

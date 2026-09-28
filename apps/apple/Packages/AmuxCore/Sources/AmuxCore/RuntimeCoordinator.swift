@@ -51,6 +51,9 @@ public final class RuntimeCoordinator {
         didSet { if storeFailure != oldValue { storeFailureChanged?(storeFailure) } }
     }
     @ObservationIgnored public var storeFailureChanged: (@MainActor (String?) -> Void)?
+    /// Told when a different account's stores go on screen, however that
+    /// came about: a person choosing one, a sign-in, a removal, a push.
+    @ObservationIgnored public var accountChanged: (@MainActor () -> Void)?
     public let deviceName: String
 
     /// The phone's own browser; only the system may look at the network.
@@ -75,6 +78,8 @@ public final class RuntimeCoordinator {
     @ObservationIgnored private var found: [FoundHost] = []
     @ObservationIgnored private var permission: LocalNetworkPermission = .unknown
     @ObservationIgnored private var fed: StoreBundle?
+    /// The stores on screen as last told to `accountChanged`.
+    @ObservationIgnored private var shown: StoreBundle?
     /// Which opening of a profile the wakes belong to.
     @ObservationIgnored private var opening = 0
     @ObservationIgnored private var waiting: [CheckedContinuation<Runtime?, Never>] = []
@@ -99,7 +104,17 @@ public final class RuntimeCoordinator {
         self.signedOutStores = signedOut
         self.options = options
         self.starter = starter
-        registry.switching = { [weak self] _ in self?.place() }
+        shown = registry.stores ?? signedOut
+        registry.switching = { [weak self] _ in self?.switched() }
+    }
+
+    private func switched() {
+        let now = stores
+        if shown !== now {
+            shown = now
+            accountChanged?()
+        }
+        place()
     }
 
     /// The stores on screen.
@@ -268,19 +283,31 @@ public final class RuntimeCoordinator {
         while let run = steering { await run.value }
     }
 
-    /// Puts the account whose profile trusts `host` on screen, as a push or
-    /// a tap on one naming that host asks. False when no profile trusts it.
+    /// Makes sure an account whose profile trusts `host` is on screen, as a
+    /// push in the background or a tap on one naming that host asks. The
+    /// account on screen stays when its profile trusts the host; otherwise
+    /// the first signed-in account whose profile does comes forward, else
+    /// the first signed-out one. False when no account's profile trusts it.
     @discardableResult
     public func bringForward(_ host: HostId) async -> Bool {
-        guard let runtime = await started(),
-              case .success(let trusting?) = await runtime.trusting(host) else { return false }
-        if trusting != registry.profile {
-            guard let account = registry.accounts.first(where: { $0.profile == trusting })
+        let trusting = await trusting(host)
+        guard let onScreen = registry.profile, trusting.contains(onScreen) else {
+            let accounts = registry.accounts.filter { trusting.contains($0.profile) }
+            guard let account = accounts.first(where: \.signedIn) ?? accounts.first
             else { return false }
             registry.select(account.id)
+            await settled()
+            return profile?.id == account.profile
         }
         await settled()
-        return profile?.id == trusting
+        return profile?.id == onScreen
+    }
+
+    /// Every profile whose trust store holds `host`, oldest first.
+    private func trusting(_ host: HostId) async -> [String] {
+        guard let runtime = await started(),
+              case .success(let trusting) = await runtime.trusting(host) else { return [] }
+        return trusting
     }
 
     /// Closes the fleet on screen, and every chat on it first.
@@ -381,19 +408,32 @@ public final class RuntimeCoordinator {
         }
     }
 
-    /// Brings one agent's chat current for a push, under the account whose
-    /// profile trusts the agent's host: that account goes on screen first,
-    /// its relay link resumed after the previous one is paused. In the
-    /// background the profile is put under the on-demand policy, so the
+    /// Brings one agent's chat current for a push, under an account whose
+    /// profile trusts the agent's host. In the background that account goes
+    /// on screen first when the one there does not trust the host (see
+    /// `bringForward`), its relay link resumed after the previous one is
+    /// paused, and the profile is put under the on-demand policy, so the
     /// chat's own open is the only source that runs; coming to the
-    /// foreground lists every agent again. A host no profile trusts is left
-    /// alone.
+    /// foreground lists every agent again. In front of somebody the account
+    /// on screen never changes under them: only its own hosts' chats are
+    /// warmed, and a tap on the notification brings another forward. A host
+    /// no profile trusts is left alone.
     public func warm(
         _ agent: AgentKey, inBackground: Bool, within limit: Duration = .seconds(25)
     ) async -> Warmed {
         if inBackground { setActive(false) }
         start()
-        guard let host = agent.hostId, await bringForward(host) else { return .unknownHost }
+        guard let host = agent.hostId else { return .unknownHost }
+        if inBackground {
+            guard await bringForward(host) else { return .unknownHost }
+        } else {
+            let trusting = await trusting(host)
+            guard !trusting.isEmpty else { return .unknownHost }
+            guard let onScreen = registry.profile, trusting.contains(onScreen) else {
+                return .offScreen
+            }
+            await settled()
+        }
         return await stores.warm(agent, within: limit) ? .current : .behind
     }
 
@@ -444,4 +484,7 @@ public enum Warmed: Sendable, Equatable {
     case behind
     /// No profile on this phone trusts the host the push named.
     case unknownHost
+    /// Another account's host, pushed while somebody was using the app: the
+    /// account on screen stays, and the notification's tap brings the other.
+    case offScreen
 }

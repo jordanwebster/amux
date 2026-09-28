@@ -120,6 +120,9 @@ final class Composition {
         #endif
         storeFailure = runtime.storeFailure
         runtime.storeFailureChanged = { [weak self] in self?.storeFailure = $0 }
+        // A page pushed under the account just left is about that account's
+        // machines and agents, however the account on screen changed.
+        runtime.accountChanged = { [weak router] in router?.leaveAccount() }
         router.loads(with: self)
         // Starting the runtime reads this phone's own store before it dials,
         // so the first frame has rows and needs no network.
@@ -149,13 +152,8 @@ final class Composition {
     /// What the shell asks for that it cannot do itself.
     func handle(_ action: ShellAction) {
         switch action {
-        // Changing which account is on screen empties every stack behind it:
-        // a page pushed under the account just left is about that account's
-        // machines and agents.
         case .selectAccount(let id):
-            guard accounts.selected != id else { break }
             accounts.select(id)
-            resetTabs()
         case .addAccount:
             signIn.begin(.adding)
             router.open(.signIn(router.tab))
@@ -220,10 +218,8 @@ final class Composition {
         case .confirmRemoval:
             guard let id = removal.account else { break }
             removal.dismiss()
-            let wasSelected = accounts.selected == id
             Task { [cloud] in try? await cloud.forgetSession(id) }
             forget(id)
-            if wasSelected { resetTabs() }
         case .wear(let wanted):
             appearance = wanted
         case .deleteAccount(let id):
@@ -240,14 +236,8 @@ final class Composition {
     /// Opens the chat a notification names, putting the account whose
     /// profile trusts its host on screen first.
     func open(pushed agent: AgentKey) async {
-        let before = accounts.selected
         if let host = agent.hostId { await runtime.bringForward(host) }
-        if accounts.selected != before { resetTabs() }
         router.open(.conversation(agent))
-    }
-
-    private func resetTabs() {
-        for tab in Tab.allCases { router.setPath([], for: tab) }
     }
 
     private func forget(_ id: AccountId) {

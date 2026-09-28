@@ -207,9 +207,9 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
         .unwrap();
     assert_eq!(
         embedded.trusting(desk.host_id.as_bytes()).await.unwrap(),
-        Some(phone)
+        vec![phone]
     );
-    assert_eq!(embedded.trusting(&[7; 16]).await.unwrap(), None);
+    assert!(embedded.trusting(&[7; 16]).await.unwrap().is_empty());
     assert_ne!(
         embedded.host_id(other).unwrap(),
         embedded.host_id(phone).unwrap()
@@ -223,13 +223,13 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
         .await
         .unwrap();
     let other_host = embedded.host_id(other).unwrap();
-    assert_eq!(embedded.trusting(&other_host).await.unwrap(), Some(phone));
+    assert_eq!(embedded.trusting(&other_host).await.unwrap(), vec![phone]);
     assert_eq!(
         embedded
             .trusting(&embedded.host_id(phone).unwrap())
             .await
             .unwrap(),
-        Some(other)
+        vec![other]
     );
     embedded.delete_profile(other).await.unwrap();
     assert_eq!(embedded.profiles().await.unwrap().len(), 1);

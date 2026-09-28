@@ -321,20 +321,18 @@ impl EmbeddedRuntime {
         Ok(profile_view(&info))
     }
 
-    /// The first profile, oldest first, whose trust store holds `host_id`.
-    pub async fn trusting(&self, host_id: &[u8]) -> Result<Option<ProfileId>, EmbeddedError> {
+    /// Every profile whose trust store holds `host_id`, oldest first.
+    pub async fn trusting(&self, host_id: &[u8]) -> Result<Vec<ProfileId>, EmbeddedError> {
         let Ok(host) = node::HostId::from_slice(host_id) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
-        for view in self.profiles().await? {
-            let Ok(profile) = view.id.parse::<ProfileId>() else {
-                continue;
-            };
-            if self.edge(profile).is_ok_and(|edge| edge.is_trusted(host)) {
-                return Ok(Some(profile));
-            }
-        }
-        Ok(None)
+        Ok(self
+            .profiles()
+            .await?
+            .into_iter()
+            .filter_map(|view| view.id.parse::<ProfileId>().ok())
+            .filter(|profile| self.edge(*profile).is_ok_and(|edge| edge.is_trusted(host)))
+            .collect())
     }
 
     // --- one profile ---------------------------------------------------------

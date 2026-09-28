@@ -108,7 +108,8 @@ final class RuntimeCoordinatorTests: XCTestCase {
         runtime.discovered([FoundHost(
             host: HostId(UUID()), name: "elsewhere", version: 1, addrs: ["127.0.0.1:9"],
             scope: "another-scope").found])
-        guard case .success(nil) = await runtime.trusting(HostId(UUID())) else {
+        guard case .success(let trusting) = await runtime.trusting(HostId(UUID())),
+              trusting.isEmpty else {
             return XCTFail("a profile trusts a machine nobody paired")
         }
     }
@@ -297,48 +298,72 @@ final class RuntimeCoordinatorTests: XCTestCase {
     /// the previous account's relay link paused before its own resumes,
     /// under the on-demand policy; on screen, nothing moves; a host nobody
     /// trusts is left alone.
-    func testAPushWakesTheAccountWhoseProfileTrustsItsHost() async throws {
-        let service = try await FakeAccountService.start()
-        defer { service.stop() }
+    /// A coordinator whose stores open every pushed chat caught up, with ada
+    /// and then bob signed in: bob is on screen and ada paused.
+    private func twoAccounts(
+        _ service: FakeAccountService
+    ) async throws -> (RuntimeCoordinator, AccountRegistry, Runtime, ada: String, bob: String) {
         let registry = AccountRegistry(makeStores: { account in
             StoreBundle(account: account, opener: { agent in CaughtUpSession(id: 1, agent: agent) })
         })
         let coordinator = coordinator(registry)
-        defer { coordinator.stop() }
         coordinator.start()
         guard let runtime = await coordinator.started() else {
-            return XCTFail("the runtime did not start")
+            coordinator.stop()
+            throw Refused("the runtime did not start")
         }
         await sign(coordinator, in: "ada", at: service)
         let ada = try XCTUnwrap(registry.profile)
         await sign(coordinator, in: "bob", at: service)
         let bob = try XCTUnwrap(registry.profile)
         await coordinator.settled()
+        return (coordinator, registry, runtime, ada, bob)
+    }
 
-        // A machine only ada's profile trusts: another profile of this
-        // installation, which ada's pairs with by its link.
-        guard case .success(let desk) = await runtime.createProfile(),
-              case .success(let link) = await runtime.offerPairing(desk.id) else {
-            return XCTFail("no pairing link offered")
+    /// A machine the named profiles trust: another profile of this
+    /// installation, which each pairs with by a link it offers.
+    private func desk(
+        _ coordinator: RuntimeCoordinator, _ runtime: Runtime, trustedBy profiles: [String]
+    ) async throws -> HostId {
+        guard case .success(let desk) = await runtime.createProfile() else {
+            throw Refused("no desk profile")
         }
-        let adaFleet = try runtime.open(ada) { _ in }
-        guard case .success(let pending) = await adaFleet.beginPair(.link(link)),
-              case .success(let paired) = await adaFleet.confirmPair(pending) else {
-            return XCTFail("ada's profile did not pair")
+        var host: HostId?
+        for profile in profiles {
+            guard case .success(let link) = await runtime.offerPairing(desk.id) else {
+                throw Refused("no pairing link offered")
+            }
+            let fleet = try runtime.open(profile) { _ in }
+            defer { fleet.close() }
+            guard case .success(let pending) = await fleet.beginPair(.link(link)),
+                  case .success(let paired) = await fleet.confirmPair(pending) else {
+                throw Refused("\(profile) did not pair")
+            }
+            host = HostId(bytes: paired.hostId)
         }
-        adaFleet.close()
-        let host = try XCTUnwrap(HostId(bytes: paired.hostId))
         coordinator.profilesMoved()
         await coordinator.settled()
+        return try XCTUnwrap(host)
+    }
+
+    func testAPushWakesTheAccountWhoseProfileTrustsItsHost() async throws {
+        let service = try await FakeAccountService.start()
+        defer { service.stop() }
+        let (coordinator, registry, runtime, ada, bob) = try await twoAccounts(service)
+        defer { coordinator.stop() }
+        let host = try await desk(coordinator, runtime, trustedBy: [ada])
         XCTAssertEqual(registry.selected, AccountId("bob"))
+        var changed = 0
+        coordinator.accountChanged = { changed += 1 }
         let live = { coordinator.profiles.filter { $0.account.binding == .signedIn }.map(\.id) }
 
-        // The host of an account off screen.
+        // The host of an account off screen, pushed in the background.
         let work = AgentKey(host: host, agent: UUID())
         let offScreen = await coordinator.warm(work, inBackground: true, within: .seconds(5))
         XCTAssertEqual(offScreen, .current)
         XCTAssertEqual(registry.selected, AccountId("ada"))
         XCTAssertEqual(coordinator.profile?.id, ada)
+        XCTAssertEqual(changed, 1, "the pages of the account left are dropped")
         XCTAssertEqual(live(), [ada], "one relay link is live")
         XCTAssertEqual(binding(coordinator, bob), .paused)
         XCTAssertFalse(runtime.listsSources(ada), "a background wake opens only its chat")
@@ -348,6 +373,7 @@ final class RuntimeCoordinatorTests: XCTestCase {
         let onScreen = await coordinator.warm(again, inBackground: true, within: .seconds(5))
         XCTAssertEqual(onScreen, .current)
         XCTAssertEqual(registry.selected, AccountId("ada"))
+        XCTAssertEqual(changed, 1)
         XCTAssertEqual(live(), [ada])
 
         // A host nobody here trusts.
@@ -358,6 +384,56 @@ final class RuntimeCoordinatorTests: XCTestCase {
         XCTAssertEqual(live(), [ada])
         XCTAssertEqual(binding(coordinator, bob), .paused, "nothing was resumed")
         XCTAssertFalse(coordinator.stores.holds(stranger))
+    }
+
+    /// A host the account on screen trusts keeps it there, even when an
+    /// older account's profile trusts it too.
+    func testAPushKeepsTheAccountOnScreenWhenItsProfileTrustsTheHost() async throws {
+        let service = try await FakeAccountService.start()
+        defer { service.stop() }
+        let (coordinator, registry, runtime, ada, bob) = try await twoAccounts(service)
+        defer { coordinator.stop() }
+        let host = try await desk(coordinator, runtime, trustedBy: [ada, bob])
+        guard case .success(let trusting) = await runtime.trusting(host) else {
+            return XCTFail("the runtime did not answer")
+        }
+        XCTAssertEqual(trusting, [ada, bob], "oldest first")
+        var changed = 0
+        coordinator.accountChanged = { changed += 1 }
+
+        let work = AgentKey(host: host, agent: UUID())
+        let warmed = await coordinator.warm(work, inBackground: true, within: .seconds(5))
+        XCTAssertEqual(warmed, .current)
+        XCTAssertEqual(registry.selected, AccountId("bob"))
+        XCTAssertEqual(coordinator.profile?.id, bob)
+        XCTAssertEqual(changed, 0)
+        XCTAssertEqual(binding(coordinator, ada), .paused)
+    }
+
+    /// In front of somebody, a push for another account's host changes
+    /// nothing; the tap on its notification brings that account forward.
+    func testAForegroundPushNeverChangesTheAccountOnScreen() async throws {
+        let service = try await FakeAccountService.start()
+        defer { service.stop() }
+        let (coordinator, registry, runtime, ada, bob) = try await twoAccounts(service)
+        defer { coordinator.stop() }
+        let host = try await desk(coordinator, runtime, trustedBy: [ada])
+        var changed = 0
+        coordinator.accountChanged = { changed += 1 }
+
+        let work = AgentKey(host: host, agent: UUID())
+        let warmed = await coordinator.warm(work, inBackground: false, within: .seconds(5))
+        XCTAssertEqual(warmed, .offScreen)
+        XCTAssertEqual(registry.selected, AccountId("bob"))
+        XCTAssertEqual(coordinator.profile?.id, bob)
+        XCTAssertEqual(changed, 0)
+        XCTAssertEqual(binding(coordinator, ada), .paused)
+        XCTAssertTrue(runtime.listsSources(bob), "still in front of somebody")
+
+        let tapped = await coordinator.bringForward(host)
+        XCTAssertTrue(tapped)
+        XCTAssertEqual(registry.selected, AccountId("ada"))
+        XCTAssertEqual(changed, 1)
     }
 
     func testAStoreThatCannotOpenStopsTheApp() async {
@@ -373,6 +449,11 @@ final class RuntimeCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.storeFailure, "the store is damaged")
         XCTAssertEqual(told, ["the store is damaged"])
     }
+}
+
+private struct Refused: Error, CustomStringConvertible {
+    let description: String
+    init(_ description: String) { self.description = description }
 }
 
 /// An account service on loopback that knows every account: a refresh

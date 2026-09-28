@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject,
         case .behind:
             Signposts.emit(.pushBehind)
             return .failed
-        case .unknownHost:
+        case .unknownHost, .offScreen:
             Signposts.emit(.pushBehind)
             return .noData
         }

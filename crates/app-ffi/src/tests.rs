@@ -298,10 +298,14 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     let host = c(&json!(desk.host_id.as_bytes().to_vec()).to_string());
     // SAFETY: the runtime is live; the strings live for the call.
     unsafe {
-        amux_runtime_trusting_profile(phone.runtime, host.as_ptr(), on_result, phone.context())
+        amux_runtime_trusting_profiles(phone.runtime, host.as_ptr(), on_result, phone.context())
     };
     let trusting = phone.result();
-    assert_eq!(trusting["Ok"], phone.id.to_str().unwrap(), "{trusting}");
+    assert_eq!(
+        trusting["Ok"],
+        json!([phone.id.to_str().unwrap()]),
+        "{trusting}"
+    );
 
     // The roster names this phone and the desk by the same fingerprint.
     // SAFETY: the runtime is live.
@@ -777,10 +781,10 @@ fn the_profile_registry_through_the_c_abi() {
     let host = c(&json!(vec![7u8; 16]).to_string());
     // SAFETY: as above.
     unsafe {
-        amux_runtime_trusting_profile(phone.runtime, host.as_ptr(), on_result, phone.context())
+        amux_runtime_trusting_profiles(phone.runtime, host.as_ptr(), on_result, phone.context())
     };
     let trusting = phone.result();
-    assert!(trusting["Ok"].is_null(), "{trusting}");
+    assert_eq!(trusting["Ok"], json!([]), "{trusting}");
     // A profile id that does not parse is refused.
     let nonsense = c("not a profile");
     // SAFETY: as above.

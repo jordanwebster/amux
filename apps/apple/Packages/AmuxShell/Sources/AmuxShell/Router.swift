@@ -128,6 +128,16 @@ public final class Router {
         arrived?()
     }
 
+    /// Empties every stack of the pages about the account that just left the
+    /// screen: its conversations, machines, pairings and subscription. Signing
+    /// in is about the account arriving and the list of accounts about none,
+    /// so those stay.
+    public func leaveAccount() {
+        for tab in Tab.allCases {
+            setPath(path(tab).filter(\.outlivesAccount), for: tab)
+        }
+    }
+
     public func pop() {
         guard !path.isEmpty else { return }
         setPath(Array(path.dropLast()), for: tab)
