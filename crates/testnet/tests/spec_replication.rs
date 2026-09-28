@@ -1385,3 +1385,115 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     found
 }
+
+/// A dump taken where another host's agent is only a replica asks that
+/// host for its side: the agent's journal tail, facts ring, checkpoint and
+/// specs land beside the replica's row and slice, with that host's own row,
+/// slice, manifest and log; planted secrets stay out of every file. A host
+/// that cannot be reached is named in the manifest's errors.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dump_gathers_the_host_side_of_a_peers_agents() {
+    const TOKEN: &str = "ghp_PLANTEDgathertoken0001abcdef";
+    const KEY: &str = "sk-ant-api03-PLANTEDgatherkey0002";
+    let topology = desk_and_laptop().agent(
+        AgentDecl::new("worker", "desk")
+            .steps(vec![text(&format!("pushed with {TOKEN}")), Step::TurnEnd])
+            .prompt(&format!("deploy using {KEY}")),
+    );
+    let mut net = Net::start_with(topology, NetOptions::default())
+        .await
+        .unwrap();
+    wait_origin_says(&net, "worker", "pushed with").await;
+    wait_current(&net, "laptop", "worker").await;
+    let worker = net.agent("worker").unwrap().clone();
+    let request = wire::DumpRequest {
+        agent_ids: Vec::new(),
+        reason: "gathered".to_owned(),
+        automatic: false,
+    };
+
+    let bundle = net
+        .runtime("laptop")
+        .unwrap()
+        .dump(request.clone())
+        .await
+        .unwrap();
+    let agent = bundle.join("agents").join(worker.id.to_string());
+    let files: Vec<String> = walk(&bundle)
+        .iter()
+        .map(|path| {
+            path.strip_prefix(&bundle)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    let has = |prefix: &str| files.iter().any(|file| file.starts_with(prefix));
+    let at = format!("agents/{}", worker.id);
+    for (what, prefix) in [
+        ("the replica's own row", format!("{at}/row.pb")),
+        ("the replica's own slice", format!("{at}/store.pb")),
+        ("the host's journal tail", format!("{at}/journal/")),
+        ("the host's facts ring", format!("{at}/part/facts/")),
+        ("the spec", format!("{at}/part/spec.")),
+        ("the host's row", format!("{at}/host/row.pb")),
+        ("the host's slice", format!("{at}/host/store.pb")),
+        (
+            "the host's manifest",
+            format!("hosts/{}/manifest.json", worker.host_id),
+        ),
+    ] {
+        assert!(
+            has(&prefix),
+            "{what} ({prefix}) is in the bundle: {files:#?}"
+        );
+    }
+    assert!(
+        files
+            .iter()
+            .any(|file| file.starts_with(&format!("{at}/part/facts/"))
+                && file.ends_with(".checkpoint")),
+        "the host's facts checkpoint is in the bundle: {files:#?}"
+    );
+    for path in walk(&bundle) {
+        let bytes = std::fs::read(&path).unwrap();
+        for secret in [TOKEN, KEY] {
+            let hex = interpret::to_hex(secret.as_bytes());
+            assert!(
+                !bytes.windows(secret.len()).any(|w| w == secret.as_bytes())
+                    && !bytes.windows(hex.len()).any(|w| w == hex.as_bytes()),
+                "{secret} is in {}",
+                path.display()
+            );
+        }
+    }
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(bundle.join("manifest.json")).unwrap()).unwrap();
+    let entry = &manifest["agents"][0];
+    assert_eq!(entry["gathered_from"], worker.host_id.to_string());
+    assert!(
+        entry["part"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|part| part.as_str().unwrap().starts_with("facts/")),
+        "{manifest:#}"
+    );
+    assert!(agent.join("journal").is_dir());
+    println!(
+        "the laptop's dump holds the desk's side of its worker: {} files",
+        files.len()
+    );
+
+    // The desk away: its side is missing, and the manifest says why.
+    sever(&mut net).await;
+    let bundle = net.runtime("laptop").unwrap().dump(request).await.unwrap();
+    assert!(!bundle.join(&at).join("journal").exists());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(bundle.join("manifest.json")).unwrap()).unwrap();
+    let errors = manifest["errors"].to_string();
+    assert!(errors.contains("desk cannot be reached"), "{manifest:#}");
+    println!("with the desk away the manifest says: {errors}");
+
+    net.shutdown().await.unwrap();
+}

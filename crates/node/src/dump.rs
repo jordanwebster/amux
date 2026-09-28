@@ -29,10 +29,27 @@
 //!                            redacted by the daemon
 //! ```
 //!
+//! An agent another host runs has only its row and store slice here; the
+//! dump asks that host for its side over the link, and its answer, a
+//! bundle of its own packed into one `wire.DumpPart`, lands beside them:
+//!
+//! ```text
+//!   agents/<agent_id>/
+//!     journal/..., part/...  as that host's dump holds them
+//!     host/row.pb, host/store.pb
+//!                            that host's row and store slice
+//!   hosts/<host_id>/
+//!     manifest.json, daemon.log
+//!                            that host's own manifest and log tail
+//! ```
+//!
+//! A host that cannot be reached is named in the manifest's errors, and so
+//! is anything its own dump could not gather.
+//!
 //! Everything protobuf is encoded without a length prefix except journal
 //! segments, which keep the journal's own framing. [`pack`] turns a bundle
 //! into one `wire.DumpPart` whose files carry these relative paths, for a
-//! client on another machine.
+//! caller on another machine.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -91,16 +108,49 @@ impl DumpError {
 
 impl ProfileRuntime {
     /// Writes one bundle for the request's agents (every agent of the
-    /// profile when it names none) and returns its directory. What cannot
-    /// be gathered is named in the manifest, never included unredacted.
+    /// profile when it names none), with the host-side parts of the ones
+    /// other hosts run, and returns its directory. What cannot be gathered
+    /// is named in the manifest, never included unredacted.
     pub async fn dump(&self, request: DumpRequest) -> Result<PathBuf, DumpError> {
+        let rows = self.dump_rows(&request.agent_ids).await?;
+        self.write_dump(&request, rows, true).await
+    }
+
+    /// A paired host's call for its dump: this host's own agents among the
+    /// ones it names (every own agent when it names none), as one packed
+    /// bundle. It gathers nothing from other hosts, and the bundle is not
+    /// kept here.
+    pub async fn dump_for_peer(&self, request: DumpRequest) -> Result<DumpPart, DumpError> {
+        let rows = self
+            .store
+            .lock()
+            .await
+            .agents()?
+            .into_iter()
+            .filter(|row| {
+                row.agent.host == self.host().as_bytes()
+                    && (request.agent_ids.is_empty()
+                        || request.agent_ids.contains(&row.agent.agent))
+            })
+            .collect();
+        let bundle = self.write_dump(&request, rows, false).await?;
+        let part = pack(&bundle)?;
+        std::fs::remove_dir_all(&bundle)?;
+        Ok(part)
+    }
+
+    async fn write_dump(
+        &self,
+        request: &DumpRequest,
+        rows: Vec<AgentRow>,
+        gather: bool,
+    ) -> Result<PathBuf, DumpError> {
         let dump_id = Uuid::new_v4();
         let created_at_ms = self.clock_now();
         let name = format!(
             "dump-{created_at_ms}-{}",
             &dump_id.simple().to_string()[..8]
         );
-        let rows = self.dump_rows(&request.agent_ids).await?;
 
         std::fs::create_dir_all(&self.reports)?;
         let partial = self.reports.join(format!(".{name}"));
@@ -112,6 +162,10 @@ impl ProfileRuntime {
             let (entry, mut failed) = self.dump_agent(row, dump_id.as_bytes(), &partial).await?;
             agents.push(entry);
             errors.append(&mut failed);
+        }
+        if gather {
+            self.gather_hosts(request, &rows, &partial, &mut agents, &mut errors)
+                .await?;
         }
         match self.dump_log(&partial) {
             Ok(Some(bytes)) => log_cut_note(&mut errors, bytes),
@@ -137,6 +191,59 @@ impl ProfileRuntime {
         let bundle = self.reports.join(&name);
         std::fs::rename(&partial, &bundle)?;
         Ok(bundle)
+    }
+
+    /// Asks every other host that runs one of `rows` for its side of them,
+    /// all at once, and writes what each sends into the bundle.
+    async fn gather_hosts(
+        &self,
+        request: &DumpRequest,
+        rows: &[AgentRow],
+        bundle: &Path,
+        agents: &mut [serde_json::Value],
+        errors: &mut Vec<String>,
+    ) -> Result<(), DumpError> {
+        let mut by_host: BTreeMap<Vec<u8>, Vec<Vec<u8>>> = BTreeMap::new();
+        for row in rows {
+            if row.agent.host != self.host().as_bytes() {
+                by_host
+                    .entry(row.agent.host.clone())
+                    .or_default()
+                    .push(row.agent.agent.clone());
+            }
+        }
+        let asked = by_host.into_iter().map(|(host, ids)| {
+            let request = DumpRequest {
+                agent_ids: ids.clone(),
+                reason: request.reason.clone(),
+                automatic: request.automatic,
+            };
+            async move {
+                let host = Uuid::from_slice(&host).unwrap_or_default();
+                let answer = self
+                    .on_peer(host, |mut client| async move { client.dump(request).await })
+                    .await;
+                (host, ids, answer)
+            }
+        });
+        for (host, ids, answer) in futures_util::future::join_all(asked).await {
+            let part = answer
+                .map_err(|error| error.to_string())
+                .and_then(|answer| {
+                    DumpPart::decode(answer.bundle.as_slice())
+                        .map_err(|error| format!("its dump could not be read: {error}"))
+                });
+            match part {
+                Ok(part) => unpack_host(host, &ids, part, bundle, agents, errors)?,
+                Err(error) => {
+                    for id in &ids {
+                        let id = Uuid::from_slice(id).unwrap_or_default();
+                        errors.push(format!("{id} host part: {error}"));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The rows a dump covers, own and replica.
@@ -297,6 +404,67 @@ impl ProfileRuntime {
         std::fs::write(bundle.join(DAEMON_LOG), text)?;
         Ok((skipped > 0).then_some(skipped))
     }
+}
+
+/// Writes one host's packed answer into the bundle: each asked agent's
+/// journal and part beside its row, that host's row and slice under
+/// `host/`, and its manifest and log under `hosts/<host_id>/`. The host's
+/// own errors join the bundle's.
+fn unpack_host(
+    host: Uuid,
+    asked: &[Vec<u8>],
+    part: DumpPart,
+    bundle: &Path,
+    agents: &mut [serde_json::Value],
+    errors: &mut Vec<String>,
+) -> io::Result<()> {
+    let asked: Vec<String> = asked
+        .iter()
+        .map(|id| Uuid::from_slice(id).unwrap_or_default().to_string())
+        .collect();
+    let hosts = bundle.join("hosts").join(host.to_string());
+    for file in part.files {
+        let Some(path) = safe_relative(&file.name) else {
+            errors.push(format!("host {host} sent a file named {:?}", file.name));
+            continue;
+        };
+        let mut parts = file.name.splitn(3, '/');
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some("agents"), Some(id), Some(rest)) if asked.iter().any(|asked| asked == id) => {
+                let out = bundle.join("agents").join(id);
+                if rest.starts_with("journal/") || rest.starts_with("part/") {
+                    write_under(&out, rest, &file.contents)?;
+                    if let Some(name) = rest.strip_prefix("part/")
+                        && let Some(entry) = agents.iter_mut().find(|entry| entry["agent_id"] == id)
+                    {
+                        if let Some(files) = entry["part"].as_array_mut() {
+                            files.push(name.into());
+                        }
+                        entry["gathered_from"] = host.to_string().into();
+                    }
+                } else {
+                    write_under(&out.join("host"), rest, &file.contents)?;
+                }
+            }
+            (Some("agents"), ..) => {}
+            _ => {
+                if file.name == MANIFEST
+                    && let Ok(manifest) =
+                        serde_json::from_slice::<serde_json::Value>(&file.contents)
+                    && let Some(theirs) = manifest["errors"].as_array()
+                {
+                    errors.extend(
+                        theirs
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(|error| format!("on host {host}: {error}")),
+                    );
+                }
+                write_under(&hosts, path, &file.contents)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn log_cut_note(errors: &mut Vec<String>, skipped: u64) {

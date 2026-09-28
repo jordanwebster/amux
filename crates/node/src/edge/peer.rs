@@ -5,6 +5,7 @@
 use std::sync::Weak;
 
 use futures_util::stream;
+use prost::Message as _;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tonic::{Request, Response, Status};
@@ -12,10 +13,10 @@ use wire::client_service_server::ClientService;
 use wire::peer_service_server::PeerService;
 use wire::{
     Agent, BlobRef, CreateAgentRequest, DeleteAgentRequest, DeleteAgentResponse, DiffRequest,
-    Empty, Envelope, FetchRequest, FetchResponse, GetBlobRequest, GetBlobResponse, GetRequest,
-    Item, ListRepositoriesRequest, ListRepositoriesResponse, PutBlobRequest, RenameAgentRequest,
-    ResumeAgentRequest, SendInputRequest, SendInputResponse, SendMessageResponse, SessionEvent,
-    StopAgentRequest, SubscribeRequest, subscribe_request,
+    DumpRequest, DumpResponse, Empty, Envelope, FetchRequest, FetchResponse, GetBlobRequest,
+    GetBlobResponse, GetRequest, Item, ListRepositoriesRequest, ListRepositoriesResponse,
+    PutBlobRequest, RenameAgentRequest, ResumeAgentRequest, SendInputRequest, SendInputResponse,
+    SendMessageResponse, SessionEvent, StopAgentRequest, SubscribeRequest, subscribe_request,
 };
 
 use crate::HostId;
@@ -231,5 +232,23 @@ impl PeerService for PeerApi {
     ) -> Result<Response<ListRepositoriesResponse>, Status> {
         caller(&request)?;
         self.client.list_repositories(request).await
+    }
+
+    /// A paired host's dump asks for this host's side of the agents it
+    /// runs: the bundle travels in the answer.
+    async fn dump(&self, request: Request<DumpRequest>) -> Result<Response<DumpResponse>, Status> {
+        caller(&request)?;
+        let runtime = self
+            .runtime
+            .upgrade()
+            .ok_or_else(|| Status::unavailable("the profile is no longer running"))?;
+        let part = runtime
+            .dump_for_peer(request.into_inner())
+            .await
+            .map_err(|error| status(error.to_wire()))?;
+        Ok(Response::new(DumpResponse {
+            report_path: String::new(),
+            bundle: part.encode_to_vec(),
+        }))
     }
 }

@@ -428,6 +428,9 @@ service PeerService {
   rpc GetBlob(GetBlobRequest) returns (GetBlobResponse);
   rpc Diff(DiffRequest) returns (amux.v1.Diff);
   rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse);
+  // The host-side parts of the caller's dump for agents this host runs:
+  // the bundle travels packed in the response.
+  rpc Dump(DumpRequest) returns (DumpResponse);
 }
 
 message ResolveAgentRequest {
@@ -601,7 +604,10 @@ message DumpRequest {
 }
 
 message DumpResponse {
+  // Where the bundle was written, for a caller on the same machine.
   string report_path = 1;
+  // An encoded DumpPart holding the whole bundle, for a paired host's
+  // call; empty for a local caller.
   bytes bundle = 2;
 }
 

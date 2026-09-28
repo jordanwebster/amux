@@ -5231,8 +5231,11 @@ impl ::prost::Name for DumpRequest {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DumpResponse {
+    /// Where the bundle was written, for a caller on the same machine.
     #[prost(string, tag = "1")]
     pub report_path: ::prost::alloc::string::String,
+    /// An encoded DumpPart holding the whole bundle, for a paired host's
+    /// call; empty for a local caller.
     #[prost(bytes = "vec", tag = "2")]
     pub bundle: ::prost::alloc::vec::Vec<u8>,
 }
@@ -8817,6 +8820,26 @@ pub mod peer_service_client {
                 .insert(GrpcMethod::new("amux.v1.PeerService", "ListRepositories"));
             self.inner.unary(req, path, codec).await
         }
+        /// The host-side parts of the caller's dump for agents this host runs:
+        /// the bundle travels packed in the response.
+        pub async fn dump(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DumpRequest>,
+        ) -> std::result::Result<tonic::Response<super::DumpResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/amux.v1.PeerService/Dump");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("amux.v1.PeerService", "Dump"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -8919,6 +8942,12 @@ pub mod peer_service_server {
             tonic::Response<super::ListRepositoriesResponse>,
             tonic::Status,
         >;
+        /// The host-side parts of the caller's dump for agents this host runs:
+        /// the bundle travels packed in the response.
+        async fn dump(
+            &self,
+            request: tonic::Request<super::DumpRequest>,
+        ) -> std::result::Result<tonic::Response<super::DumpResponse>, tonic::Status>;
     }
     /// Daemon to daemon, over the link's application streams. Replication is a
     /// daemon being a client of its peer; every request and response is the one
@@ -9654,6 +9683,49 @@ pub mod peer_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ListRepositoriesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.PeerService/Dump" => {
+                    #[allow(non_camel_case_types)]
+                    struct DumpSvc<T: PeerService>(pub Arc<T>);
+                    impl<T: PeerService> tonic::server::UnaryService<super::DumpRequest>
+                    for DumpSvc<T> {
+                        type Response = super::DumpResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DumpRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as PeerService>::dump(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DumpSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

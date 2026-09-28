@@ -1,3 +1,14 @@
+2026-09-28 — **A dump gathers the host side of another host's agents.**
+A dump taken on the phone, or on any host that only replicates an agent,
+held the replica's row and slice and nothing from the host that runs it.
+Paired hosts now answer a Dump call over the link with their own bundle for
+the agents they run, packed into one message and not kept on their side. The
+dump writes each agent's journal tail and process part (facts ring,
+checkpoint, specs) beside the replica's row, the host's own row and slice
+under `host/`, and the host's manifest and log under `hosts/<host id>/`. A
+host that cannot be reached, and anything its own dump could not gather, is
+named in the manifest's errors.
+
 2026-09-28 — **`amux pair` closes pairing mode however it ends.**
 Only Ctrl+C closed pairing mode: a closed terminal or a kill left it open
 until it expired, and the next `amux pair` printed
