@@ -21,9 +21,9 @@
 
 
 
-▎   Please check [pasted-1 · 12 lines] against [review · 1 comment]
-
   ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+▎   Please check [pasted-1 · 12 lines] against [review · 1 comment]
 
     I read the review.
 

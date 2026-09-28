@@ -15,9 +15,9 @@
 
 
 
-▎   Remember this recovery turn.
-
   ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+▎   Remember this recovery turn.
 
     The recovery state is safely stored.
 

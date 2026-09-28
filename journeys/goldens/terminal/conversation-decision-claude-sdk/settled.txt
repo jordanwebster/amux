@@ -18,9 +18,9 @@
 
 
 
-▎   Check the deployment once.
-
   ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+▎   Check the deployment once.
 
   ✔ Ran deploy --check                                                                           <t> · allowed
     deploy check: ok

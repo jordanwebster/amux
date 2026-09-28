@@ -16,9 +16,9 @@
 
 
 
-▎   Check the deployment once.
-
   ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+▎   Check the deployment once.
 
 ▌ ▸ Wants to run deploy --check
 
