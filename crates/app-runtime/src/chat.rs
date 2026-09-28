@@ -34,11 +34,13 @@ impl Chat {
         clock: Arc<dyn client::Clock>,
     ) -> Arc<Chat> {
         Arc::new_cyclic(|chat: &std::sync::Weak<Chat>| {
+            // Subscribed here, the receiver has seen the opening: its rows
+            // are the host's first read, not news. Anything after is, even
+            // a change that lands before the watcher first runs, so the
+            // watcher must not mark the channel seen itself.
             let mut changed = session.changed();
             let watched = chat.clone();
             let watcher = tokio::spawn(async move {
-                // The opening's rows are the host's first read, not news.
-                changed.borrow_and_update();
                 while changed.changed().await.is_ok() {
                     let Some(chat) = watched.upgrade() else {
                         return;

@@ -973,6 +973,69 @@ async fn on_demand_warms_one_chat_listed_sweeps_the_rest_and_exited_agents_close
     net.shutdown().await.unwrap();
 }
 
+/// A runtime switched to OnDemand with its link still up, as a phone put
+/// away while it still runs is, closes every source no client is
+/// subscribed to at once and keeps the watched one: work at the origin
+/// reaches only the watched chat until the runtime is Listed again. The
+/// watched chat's source opens again when its host comes back, without the
+/// client subscribing again.
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_to_on_demand_closes_every_source_no_client_watches() {
+    const K: u32 = 6;
+    let topology = desk_and_laptop()
+        .agent(
+            AgentDecl::new("named", "desk")
+                .steps(turns(4, 1))
+                .prompt("go"),
+        )
+        .agent(
+            AgentDecl::new("quiet", "desk")
+                .steps(turns(4, 1))
+                .prompt("go"),
+        );
+    let mut net = Net::start_with(topology, options(K, |_, _| {}))
+        .await
+        .unwrap();
+    let named = net.agent("named").unwrap().key();
+    for agent in ["named", "quiet"] {
+        wait_origin_says(&net, agent, "t0-0").await;
+        wait_current(&net, "laptop", agent).await;
+    }
+    let laptop = net.runtime("laptop").unwrap();
+    assert_eq!(laptop.open_sources().len(), 2);
+
+    let chat = net.observe("laptop", "named", 10).await.unwrap();
+    laptop.set_source_policy(SourcePolicy::OnDemand);
+    observe::eventually("the unwatched source to close", PATIENCE, || async {
+        laptop.open_sources() == vec![named.clone()]
+    })
+    .await
+    .unwrap();
+    for agent in ["named", "quiet"] {
+        net.send(agent, "two").await.unwrap();
+        wait_origin_says(&net, agent, "t1-0").await;
+    }
+    wait_current(&net, "laptop", "named").await;
+    let stale = replica_state(&net, "laptop", "quiet").await.unwrap();
+    assert!(
+        stale.0 < origin_revision(&net, "quiet").await,
+        "quiet was left alone"
+    );
+
+    sever(&mut net).await;
+    net.send("named", "three").await.unwrap();
+    wait_origin_says(&net, "named", "t2-0").await;
+    restore(&mut net).await;
+    wait_current(&net, "laptop", "named").await;
+    assert_eq!(laptop.open_sources(), vec![named.clone()]);
+
+    laptop.set_source_policy(SourcePolicy::Listed);
+    wait_current(&net, "laptop", "quiet").await;
+    drop(chat);
+    drop(laptop);
+    net.shutdown().await.unwrap();
+}
+
 /// A replica of a host that lost power holds rows the host no longer has.
 /// No source of that host opens before its generation is compared, not
 /// even for a chat a client opens while the host is away, so the laptop

@@ -30,11 +30,14 @@ public final class StoreBundle {
     @ObservationIgnored public private(set) var profile: Profile?
     /// Open chats by the id the profile's wake names them with.
     @ObservationIgnored private var chats: [UInt64: (chat: OpenChat, woke: @MainActor () -> Void)] = [:]
-    /// The chat sessions held open, by agent: every chat a page shows and
-    /// chats viewed within the retention.
+    /// The chat sessions held open, by agent: every chat a page shows,
+    /// chats viewed within the retention, and a chat a push is bringing
+    /// current.
     @ObservationIgnored private var models: [AgentKey: (chat: OpenChat, model: ChatModel)] = [:]
     /// The agents whose chat a page shows.
     @ObservationIgnored private var shown: Set<AgentKey> = []
+    /// The agents whose chat a push is bringing current.
+    @ObservationIgnored private var warming: Set<AgentKey> = []
     /// When a page last stopped showing each chat.
     @ObservationIgnored private var viewed: [AgentKey: Date] = [:]
     /// How long a chat nobody shows stays open after it was last viewed.
@@ -186,14 +189,15 @@ public final class StoreBundle {
 
     /// Which chat sessions exist, after every read of the fleet. A shown
     /// chat keeps its own; a chat viewed within the retention keeps its
-    /// own; nothing else is opened or kept, not even for an agent that
+    /// own; a chat a push is bringing current keeps its own until it is;
+    /// nothing else is opened or kept, not even for an agent that
     /// needs the person, because the runtime keeps every listed agent's
     /// rows current without a session and a chat opens from those rows.
     func keepSessions() {
         let at = now()
         let retention = Double(sessionRetention.components.seconds)
             + Double(sessionRetention.components.attoseconds) / 1e18
-        for (agent, open) in models where !shown.contains(agent) {
+        for (agent, open) in models where !shown.contains(agent) && !warming.contains(agent) {
             if let last = viewed[agent], at.timeIntervalSince(last) < retention { continue }
             models.removeValue(forKey: agent)
             viewed.removeValue(forKey: agent)
@@ -210,11 +214,15 @@ public final class StoreBundle {
     @discardableResult
     public func warm(_ agent: AgentKey, within limit: Duration = .seconds(25)) async -> Bool {
         guard let model = try? model(agent) else { return false }
+        // Every read of the fleet asks which sessions to keep; the one
+        // catching up must survive them until it is current.
+        warming.insert(agent)
         let deadline = ContinuousClock.now + limit
         while model.frame?.caughtUp != true, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(100))
         }
         let current = model.frame?.caughtUp == true
+        warming.remove(agent)
         keepSessions()
         return current
     }

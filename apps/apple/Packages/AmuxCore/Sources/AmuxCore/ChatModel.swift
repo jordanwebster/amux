@@ -128,10 +128,12 @@ public final class ChatModel {
     ///   saying it is loading; zero says so from the first frame.
     public init(source: ChatSource, loadingHintAfter: Duration = ChatModel.loadingHintDelay) {
         self.source = source
+        // Taken before reading, so a change that lands while the chat is
+        // read wakes it again rather than being taken with the rest.
+        _ = source.takeChanges()
         ids = source.keys()
         held = Set(ids)
         readSession()
-        _ = source.takeChanges()
         if ids.isEmpty { waitForRows(loadingHintAfter) }
     }
 

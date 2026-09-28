@@ -25,7 +25,8 @@
 //! Which agents get a source is the runtime's [`SourcePolicy`], read by
 //! one sweep after every inventory catch-up and change and once when the
 //! policy changes; a client's Subscribe opens one for any agent the policy
-//! skipped.
+//! skipped. Under `OnDemand` the sweep keeps exactly the agents a client is
+//! subscribed to.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -501,14 +502,35 @@ impl ProfileRuntime {
     }
 
     /// Opens a source for every replica agent the policy wants and none is
-    /// open for, and settles the ones for exited agents.
+    /// open for, and settles the ones for exited agents. Under `OnDemand`
+    /// the policy wants only agents a client is subscribed to: the sweep
+    /// closes every other source, so a runtime switched to it keeps nothing
+    /// current but what is being watched, and opens one for a watched agent
+    /// whose host was not ready when the client subscribed.
     pub(crate) async fn sweep_sources(&self) {
-        let store = self.store.lock().await;
+        let mut store = self.store.lock().await;
         let Ok(rows) = store.agents() else { return };
         let own = self.host().as_bytes().to_vec();
         let mut settle = Vec::new();
+        let mut unwatched = Vec::new();
         {
             let mut sources = self.sources.lock().unwrap();
+            if sources.policy == SourcePolicy::OnDemand {
+                // Sources absorb only under the store lock, which this
+                // holds, so none is midway through a catch-up.
+                let idle: Vec<AgentKey> = sources
+                    .open
+                    .keys()
+                    .filter(|key| !sources.settling.contains(*key) && !self.fanout.watched(key))
+                    .cloned()
+                    .collect();
+                for key in idle {
+                    if let Some((_, task)) = sources.open.remove(&key) {
+                        task.abort();
+                    }
+                    unwatched.push(key);
+                }
+            }
             for row in rows.iter().filter(|row| row.agent.host != own) {
                 let key = &row.agent;
                 let exited = row.lifecycle == wire::Lifecycle::Exited as i32;
@@ -519,7 +541,8 @@ impl ProfileRuntime {
                     }
                     continue;
                 }
-                if sources.policy == SourcePolicy::Listed && !sources.settled.contains(key) {
+                let wanted = sources.policy == SourcePolicy::Listed || self.fanout.watched(key);
+                if wanted && !sources.settled.contains(key) {
                     self.open_source(&mut sources, key);
                 }
             }
@@ -536,6 +559,9 @@ impl ProfileRuntime {
                 self.open_source(&mut sources, &key);
                 sources.settling.insert(key);
             }
+        }
+        for key in unwatched {
+            self.detach(&mut store, &key);
         }
     }
 

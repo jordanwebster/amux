@@ -4,11 +4,13 @@ import XCTest
 @testable import AmuxCore
 
 /// A session the bundle opened: it catches up the moment it opens, as the
-/// runtime's does once the agent's host answers, and says when it closed.
+/// runtime's does once the agent's host answers, unless a test holds it
+/// behind, and says when it closed.
 final class CaughtUpSession: OpenChat, @unchecked Sendable {
     let id: UInt64
     let agent: AgentKey
     var closed = false
+    var current = true
 
     init(id: UInt64, agent: AgentKey) {
         self.id = id
@@ -26,10 +28,10 @@ final class CaughtUpSession: OpenChat, @unchecked Sendable {
     func frame() -> ChatFrame? {
         ChatFrame(
             agent: agent, name: "a", kind: .claudeSdk, phase: .needsYou,
-            composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: true,
+            composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: current,
             hasOlder: false, queue: [], outbox: [], askInput: nil, ended: nil, waiting: nil)
     }
-    func takeChanges() -> ChatChanges { ChatChanges(keys: [], reloaded: false, session: false) }
+    func takeChanges() -> ChatChanges { ChatChanges(keys: [], reloaded: false, session: true) }
     func send(_ draft: Draft) async -> Result<SendOutcome, RuntimeFailure> { .failure(RuntimeFailure("no")) }
     func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome? { nil }
     func answer(_ ask: String, picks: [Pick], note: String?) async -> ActOutcome? { nil }
@@ -53,6 +55,7 @@ final class CaughtUpSession: OpenChat, @unchecked Sendable {
 final class StoreBundleSessionTests: XCTestCase {
     private var clock = Cards.now
     private var opened: [CaughtUpSession] = []
+    private var current = true
 
     private func bundle() -> StoreBundle {
         StoreBundle(
@@ -60,6 +63,7 @@ final class StoreBundleSessionTests: XCTestCase {
             sessionRetention: .seconds(300),
             opener: { [unowned self] agent in
                 let session = CaughtUpSession(id: UInt64(opened.count + 1), agent: agent)
+                session.current = current
                 opened.append(session)
                 return session
             })
@@ -122,5 +126,24 @@ final class StoreBundleSessionTests: XCTestCase {
         clock = Cards.now.addingTimeInterval(3600)
         stores.keepSessions()
         XCTAssertTrue(stores.holds(shown))
+    }
+
+    func testAChatAPushIsWarmingOutlivesTheFleetReadsUntilItIsCurrent() async {
+        current = false
+        let stores = bundle()
+        let pushed = Cards.key(1)
+        stores.fleet.show([Cards.row(1, "asking", attention: .needsYou)], hosts: [Cards.host()])
+        let warming = Task { await stores.warm(pushed, within: .seconds(10)) }
+        while opened.isEmpty { await Task.yield() }
+
+        // The fleet is read while the chat is still catching up.
+        stores.keepSessions()
+        XCTAssertFalse(opened[0].closed, "the chat a push is bringing current keeps its session")
+
+        opened[0].current = true
+        stores.woke(opened[0].id)
+        let warmed = await warming.value
+        XCTAssertTrue(warmed)
+        XCTAssertTrue(opened[0].closed, "once current it is kept or closed like any other chat")
     }
 }

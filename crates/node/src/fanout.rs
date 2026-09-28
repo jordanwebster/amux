@@ -54,6 +54,15 @@ impl Fanout {
         }
     }
 
+    /// Whether any client is subscribed to an agent now.
+    pub(crate) fn watched(&self, agent: &AgentKey) -> bool {
+        self.agents
+            .lock()
+            .unwrap()
+            .get(agent)
+            .is_some_and(|sender| sender.receiver_count() > 0)
+    }
+
     /// Ends every subscription on an agent that no longer exists.
     pub(crate) fn close(&self, agent: &AgentKey) {
         self.agents.lock().unwrap().remove(agent);

@@ -1,3 +1,16 @@
+2026-09-28 — **A push brings exactly its one chat current on a phone put away.**
+Three faults kept the background wake from doing what it says. Switching a
+runtime to OnDemand left every source opened in the foreground running, so a
+phone put away but still alive kept every agent current; the sweep now
+closes each source no client is subscribed to, and opens one for a watched
+agent whose host was not ready when the client subscribed. The chat a push
+was warming had no page showing it, so the next read of the fleet closed its
+session while it waited; it is now kept until it is current. And a chat's
+change watcher marked the session seen when it first ran, swallowing a
+catch-up that landed between the chat opening and that first poll, so the
+phone was never woken for it; the watcher now counts from the opening
+itself. ChatModel also takes pending changes before reading, not after.
+
 2026-09-28 — **The proto check's scratch files no longer collide between threads.**
 Its temporary descriptor file was named by process and clock, which ticks in
 microseconds on macOS, so two of its tests compiling in the same tick shared
