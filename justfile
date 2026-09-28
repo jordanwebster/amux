@@ -158,6 +158,11 @@ tests-list:
 tests-check:
     {{bounded}} 120 scripts/python -B scripts/tests-catalog.py check
 
+# Fail when a contract in tests/contracts.toml names no test or a test that
+# does not exist; `--table PATH` also writes the coverage table as Markdown.
+contracts-check *ARGS:
+    {{bounded}} 300 scripts/python -B scripts/contracts-check.py "$@"
+
 # Fail when code, config, protos, recipes, scripts, workflows or docs still
 # name a mechanism amux removed.
 deletion-ledger-check:
@@ -169,7 +174,7 @@ no-update-flags:
     scripts/no-update-flags.sh
 
 # Run the same task sequence exercised across continuous-integration jobs.
-ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy deletion-ledger-check tests-check test doctest release-check embedded-check embedded-test mobile-check
+ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy deletion-ledger-check tests-check test contracts-check doctest release-check embedded-check embedded-test mobile-check
 
 # Run the live provider compatibility lane for one kind (claude_pty,
 # claude_sdk or codex) and scenario (initialize, respond, decide, interrupt,

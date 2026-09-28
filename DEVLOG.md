@@ -1,3 +1,21 @@
+2026-09-28 — **Every design contract names the tests that hold it, and CI
+checks the names.** tests/contracts.toml lists 72 contracts: the ten worked
+failure sequences, each clause of the invariants table by owner (interpreter,
+daemon, runtime, session state, agent and supervisor), and what the testing
+strategy promises per boundary, for the harness, for time and absence, for
+the shared and native journeys, and the contracts carried over from the CI
+repair. Each names one or more tests: a Cargo test by package, target and
+path, an XCTest method, or a journey in journeys/manifest.json. `just
+contracts-check` (now in `just ci`) builds the named Cargo targets with the
+features tests/catalog.toml gives them, lists each binary's tests, reads the
+XCTest methods from the phone test sources, and fails on a contract with no
+test or a name that does not exist; `--table PATH` writes the coverage table
+as Markdown. Mapping them found one worked failure no test held: a daemon
+restarted under an agent waiting on an open ask. A new replication spec now
+kills and restarts the origin's daemon with the ask open, checks that the new
+daemon and a peer's replica hold the same ask, and answers it from the peer to
+the same incarnation, which then finishes its turn.
+
 2026-09-28 — Phone journey frames re-recorded for the ink radios (paywall),
 tail-truncated commands (Codex settled row) and ink review buttons.
 

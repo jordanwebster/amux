@@ -7,8 +7,9 @@
 //! a stream that dies right after its Snapshot while a page lands a newer
 //! revision of an old row, a link back before the follower looks, an exit
 //! whose records arrive after its Exited row, pages from the origin,
-//! trimming after a Reset, the source policy and a rewound origin; and they
-//! hold the markers in sequence with the rows they cover.
+//! trimming after a Reset, the source policy, a rewound origin and an ask
+//! held open across its daemon's restart; and they hold the markers in
+//! sequence with the rows they cover.
 
 #![cfg(unix)]
 
@@ -17,10 +18,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use node::{Launch, SourcePolicy, SourceVerdict};
-use provider_fakes::script::Step;
+use prost::Message as _;
+use provider_fakes::script::{Ask, Question, Step};
 use store::{AgentKey, CommitClock, Marker, PageEnd, Store as _};
 use testnet::observe::{self, Mark, holds_for, marks};
 use testnet::{AgentDecl, JournalCut, Net, NetOptions, PATIENCE, Topology};
+use wire::client_service_server::ClientService as _;
 use wire::{
     FetchRequest, InventoryEvent, Item, SessionEvent, StopMode, inventory_event, session_event,
 };
@@ -1495,6 +1498,105 @@ async fn a_dump_gathers_the_host_side_of_a_peers_agents() {
     let errors = manifest["errors"].to_string();
     assert!(errors.contains("desk cannot be reached"), "{manifest:#}");
     println!("with the desk away the manifest says: {errors}");
+
+    net.shutdown().await.unwrap();
+}
+
+/// The open ask in `host`'s held snapshot of headless Claude `agent`: its
+/// key and the snapshot's phase.
+async fn held_ask(net: &Net, host: &str, agent: &str) -> (Option<String>, Option<wire::Phase>) {
+    let key = net.agent(agent).unwrap().key();
+    let runtime = net.runtime(host).unwrap();
+    let Some(snapshot) = runtime.store().await.cut(&key, 0).unwrap().snapshot else {
+        return (None, None);
+    };
+    let body = wire::ClaudeSdkSnapshot::decode(snapshot.body.as_slice()).unwrap();
+    (
+        body.asks.first().map(|ask| ask.key.clone()),
+        wire::Phase::try_from(snapshot.phase).ok(),
+    )
+}
+
+/// A daemon restarted while its agent waits on an open ask, as an update
+/// restarts it: the agent process keeps the ask through the gap, the new
+/// daemon reads it back from the journal, a peer holding the replica sees
+/// the same ask open once it has caught up again, and an answer sent after
+/// the restart reaches the same incarnation, which finishes its turn.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ask_open_across_a_daemon_restart_is_the_same_ask_and_is_answered_after_it() {
+    let topology = desk_and_laptop().agent(
+        AgentDecl::new("worker", "desk")
+            .prompt("Run the suite you think best.")
+            .steps(vec![
+                Step::Ask(Ask::Question {
+                    questions: vec![Question {
+                        question: "Which suite should I run?".into(),
+                        header: "Suite".into(),
+                        options: vec!["unit".into(), "full".into()],
+                        multi_select: false,
+                    }],
+                }),
+                text("running unit"),
+                Step::TurnEnd,
+            ]),
+    );
+    let mut net = Net::start(topology).await.unwrap();
+    let worker = net.agent("worker").unwrap().clone();
+    observe::eventually("the laptop to hold worker's open ask", PATIENCE, || async {
+        held_ask(&net, "laptop", "worker").await.0.is_some()
+    })
+    .await
+    .unwrap();
+    wait_current(&net, "laptop", "worker").await;
+    let before = held_ask(&net, "laptop", "worker").await;
+    assert_eq!(before.1, Some(wire::Phase::NeedsYou));
+
+    net.kill_daemon("desk").await.unwrap();
+    net.wait_link("desk", "laptop", false).await.unwrap();
+    net.restart_daemon("desk").await.unwrap();
+    net.wait_link("desk", "laptop", true).await.unwrap();
+    wait_current(&net, "laptop", "worker").await;
+    assert_eq!(
+        held_ask(&net, "desk", "worker").await,
+        before,
+        "the new daemon reads the same open ask back"
+    );
+    assert_eq!(
+        held_ask(&net, "laptop", "worker").await,
+        before,
+        "the replica shows the same open ask after the restart"
+    );
+
+    let answer = interpret::claude_sdk_input(
+        uuid::Uuid::new_v4().as_bytes().to_vec(),
+        &interpret::FixtureInput::Answer {
+            ask: before.0.clone().unwrap(),
+            answer: serde_json::json!({ "selected": [0] }),
+        },
+    )
+    .unwrap();
+    let verdict = net
+        .client("laptop")
+        .unwrap()
+        .send_input(tonic::Request::new(wire::SendInputRequest {
+            agent_id: worker.id.as_bytes().to_vec(),
+            input: Some(answer),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(
+        matches!(verdict.of, Some(wire::send_input_response::Of::Accepted(_))),
+        "{verdict:?}"
+    );
+    wait_origin_says(&net, "worker", "running unit").await;
+    wait_current(&net, "laptop", "worker").await;
+    assert_eq!(held_ask(&net, "laptop", "worker").await.0, None);
+    let row = net.runtime("desk").unwrap().agent(worker.id).await.unwrap();
+    assert_eq!(
+        row.incarnation, 1,
+        "the same process answered, never restarted"
+    );
 
     net.shutdown().await.unwrap();
 }
