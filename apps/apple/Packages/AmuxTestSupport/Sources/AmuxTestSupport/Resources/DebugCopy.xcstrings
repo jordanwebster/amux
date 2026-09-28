@@ -2389,6 +2389,18 @@
         }
       }
     },
+    "delete-family": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "delete-family"
+          }
+        }
+      }
+    },
     "detached": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",

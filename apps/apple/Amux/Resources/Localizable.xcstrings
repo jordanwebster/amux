@@ -3481,6 +3481,18 @@
         }
       }
     },
+    "Its %@ child agents are deleted too.": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatScreen.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its %@ child agents are deleted too."
+          }
+        }
+      }
+    },
     "Its agents are on the Agents tab.": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
       "extractionState": "manual",
@@ -3489,6 +3501,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Its agents are on the Agents tab."
+          }
+        }
+      }
+    },
+    "Its child agent is deleted too.": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatScreen.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its child agent is deleted too."
           }
         }
       }

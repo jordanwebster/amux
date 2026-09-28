@@ -453,6 +453,10 @@
       "shows": "Deleting the agent from its chat."
     },
     {
+      "id": "chat.delete-family",
+      "shows": "Deleting an agent that started others: the card counts the child agents deleted with it."
+    },
+    {
       "id": "chat.settings",
       "shows": "A chat with the settings card open."
     },

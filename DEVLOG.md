@@ -1,3 +1,10 @@
+2026-09-28 — **The phone's delete card counts the agents deleted with it.**
+Deleting an agent deletes every agent below it in its family, on any host,
+but the phone's confirmation said nothing about them. The card now adds
+"Its 2 child agents are deleted too." (or the singular) when the agent has
+any, counted from the chat's family header; an agent without children keeps
+the three lines it had. New component snapshot `chat.delete-family`.
+
 2026-09-28 — **A dump gathers the host side of another host's agents.**
 A dump taken on the phone, or on any host that only replicates an agent,
 held the replica's row and slice and nothing from the host that runs it.

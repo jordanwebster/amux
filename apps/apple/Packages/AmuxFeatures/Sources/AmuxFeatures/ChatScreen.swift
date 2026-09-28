@@ -103,6 +103,12 @@ public struct ChatScreen: View {
         _showing = State(initialValue: showing)
     }
 
+    /// Everyone below this agent in its family, on any host: a delete takes
+    /// them all with it.
+    private var descendants: Int {
+        family?.children.reduce(0) { $0 + Int($1.members) } ?? 0
+    }
+
     public var body: some View {
         ZStack(alignment: .bottom) {
             Ground()
@@ -127,8 +133,8 @@ public struct ChatScreen: View {
         .safeAreaInset(edge: .top, spacing: 0) { header }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatStanding(
-                model: model, subject: subject, showing: $showing, putDown: putDown,
-                actions: actions)
+                model: model, subject: subject, descendants: descendants, showing: $showing,
+                putDown: putDown, actions: actions)
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityElement(children: .contain)
@@ -412,17 +418,21 @@ public struct ChatStanding: View {
     @Environment(\.photographed) private var photographed
     let model: ChatModel
     let subject: ChatSubject
+    /// The agents a delete takes with this one.
+    let descendants: Int
     @Binding var showing: ChatOverlay?
     let putDown: Int
     let actions: (ChatAction) -> Void
     @FocusState private var focused: Bool
 
     public init(
-        model: ChatModel, subject: ChatSubject, showing: Binding<ChatOverlay?> = .constant(nil),
-        putDown: Int = 0, actions: @escaping (ChatAction) -> Void = { _ in }
+        model: ChatModel, subject: ChatSubject, descendants: Int = 0,
+        showing: Binding<ChatOverlay?> = .constant(nil), putDown: Int = 0,
+        actions: @escaping (ChatAction) -> Void = { _ in }
     ) {
         self.model = model
         self.subject = subject
+        self.descendants = descendants
         _showing = showing
         self.putDown = putDown
         self.actions = actions
@@ -450,7 +460,7 @@ public struct ChatStanding: View {
                     actions(.rename(name))
                 }
             case .delete?:
-                DeleteCard(name: subject.name, cancel: { showing = nil }) {
+                DeleteCard(name: subject.name, descendants: descendants, cancel: { showing = nil }) {
                     showing = nil
                     actions(.delete)
                 }
@@ -653,6 +663,7 @@ private struct RenameCard: View {
 private struct DeleteCard: View {
     @Environment(\.design) private var design
     let name: String
+    let descendants: Int
     let cancel: () -> Void
     let confirm: () -> Void
 
@@ -664,6 +675,13 @@ private struct DeleteCard: View {
             consequence("checkmark", String(localized: "Its edits stay. Nothing is reverted."), kept: true)
             consequence("xmark", String(localized: "Its session ends. Unfinished work stops."), kept: false)
             consequence("xmark", String(localized: "The chat is deleted on every device."), kept: false)
+            if descendants == 1 {
+                consequence("xmark", String(localized: "Its child agent is deleted too."), kept: false)
+            } else if descendants > 1 {
+                consequence(
+                    "xmark", String(localized: "Its \(descendants) child agents are deleted too."),
+                    kept: false)
+            }
             HStack(spacing: 10) {
                 choiceButton(String(localized: "Cancel"), kind: .outline, id: "chat.delete.cancel", action: cancel)
                 Button(action: confirm) {

@@ -490,6 +490,9 @@ enum ComponentCatalog {
             }),
             chat("rename", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .rename),
             chat("delete", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .delete),
+            chat("delete-family", chat: {
+                ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame())
+            }, family: F.family, showing: .delete),
             chat("settings", chat: {
                 ScriptedChat(
                     rows: F.conversation, frame: ScriptedChat.frame(kind: .claudePty),
