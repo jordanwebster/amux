@@ -25,7 +25,7 @@ chat.back | Back |  | 16,68,42,46
 chat.title | decision-pty | decision-pty | 51,72,156,38
 chat.more | More |  | 344,69,44,44
 ask | Wants to run a command | open | 12,588,378,242
-ask.more | More |  | 345,599,41,30
+ask.more | More |  | 343,591,45,46
 ask.subject | deploy --check |  | 28,636,118,18
 ask.choice.0 | Allow once |  | 28,666,346,44
 ask.choice.1 | Allow access to /private/tmp/amux-phone-journey/net/desk/work for this session |  | 28,718,346,44
@@ -57,7 +57,7 @@ you.help.caption |  |  | 18,599,354,31
  | Started |  | 18,132,366,16
  | Check the deployment once. |  | 145,160,239,40
  | Wants to run a command |  | 46,604,189,20
- | More |  | 345,599,41,30
+ | More |  | 343,591,45,46
  | deploy --check |  | 28,636,118,18
  | Allow once |  | 28,666,346,44
  | Allow access to /private/tmp/amux-phone-journey/net/desk/work for this session |  | 28,718,346,44

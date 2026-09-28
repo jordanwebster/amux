@@ -26,7 +26,7 @@ chat.back | Back |  | 16,68,42,46
 chat.title | decision-codex | decision-codex | 51,72,156,38
 chat.more | More |  | 344,69,44,44
 ask | Wants to run a command | open | 12,487,378,343
-ask.more | More |  | 345,498,41,30
+ask.more | More |  | 343,490,45,46
 ask.subject | /bin/zsh -lc 'deploy --check' |  | 28,535,244,18
 ask.choice.0 | Allow once |  | 28,614,346,44
 ask.choice.1 | Allow for this session |  | 28,666,346,44
@@ -60,7 +60,7 @@ you.help.caption |  |  | 18,599,354,31
  | Check the deployment once. |  | 145,160,239,40
  | Wants to run, /bin/zsh -lc 'deploy --check' |  | 18,211,366,20
  | Wants to run a command |  | 46,503,189,20
- | More |  | 345,498,41,30
+ | More |  | 343,490,45,46
  | /bin/zsh -lc 'deploy --check' |  | 28,535,244,18
  | The script asks before running this. · in /tmp/amux-phone-journey/net/desk/work |  | 28,565,302,37
  | Allow once |  | 28,614,346,44

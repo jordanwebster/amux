@@ -52,28 +52,15 @@ struct ComposerBox: View {
             // edges, so the plus lines up with the field and the send circle
             // sits where the padding puts it.
             HStack(spacing: 0) {
-                Menu {
-                    Button { attach(.photo) } label: {
-                        Label(String(localized: "Photo"), systemImage: "photo")
-                    }
-                    Button { attach(.file) } label: {
-                        Label(String(localized: "File"), systemImage: "doc")
-                    }
-                    if let settings = model.settings, !settings.modes.isEmpty || settings.cycleMode {
-                        Button(action: openSettings) {
-                            Label(ChatWords.permissionsItem(settings), systemImage: "hand.raised")
-                        }
-                    }
-                } label: {
-                    Label("Attach", systemImage: "plus")
-                        .labelStyle(.iconOnly)
+                MenuButton(
+                    name: String(localized: "Attach"), identifier: "chat.attach", items: attachItems
+                ) {
+                    Image(systemName: "plus")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(design.inkMuted.color)
                         .frame(width: ComposerBox.slot, height: ComposerBox.slot)
                         .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Attach")
-                .identified("chat.attach", label: "Attach")
                 Button { dictate(.dictate) } label: {
                     Image(systemName: model.dictation.active ? "stop.circle.fill" : "mic")
                         .font(.system(size: 16, weight: .semibold))
@@ -111,6 +98,19 @@ struct ComposerBox: View {
         .padding(.vertical, 11)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .onDisappear { if model.dictation.active { model.dictation.stop() } }
+    }
+
+    private var attachItems: [MenuItem] {
+        var items = [
+            MenuItem(title: String(localized: "Photo"), systemImage: "photo") { attach(.photo) },
+            MenuItem(title: String(localized: "File"), systemImage: "doc") { attach(.file) },
+        ]
+        if let settings = model.settings, !settings.modes.isEmpty || settings.cycleMode {
+            items.append(MenuItem(
+                title: ChatWords.permissionsItem(settings), systemImage: "hand.raised",
+                action: openSettings))
+        }
+        return items
     }
 
     /// The model on one line, the effort and mode under it, so a long model

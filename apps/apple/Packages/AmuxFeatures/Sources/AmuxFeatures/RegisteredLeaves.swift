@@ -32,4 +32,9 @@ public enum RegisteredLeaves: String, CaseIterable, Sendable {
     /// point up among them, so nothing here needs a second layout system.
     /// `docs/IOS.md` has the reasoning and what would reopen it.
     case diffSelection
+    /// Built, and measured by the live accessibility audit rather than a
+    /// frame time: SwiftUI's `Menu` presents through a UIKit button that
+    /// reaches VoiceOver without the menu's name or identifier. The leaf owns
+    /// that button so it carries both. `docs/IOS.md` has the detail.
+    case menuButton
 }

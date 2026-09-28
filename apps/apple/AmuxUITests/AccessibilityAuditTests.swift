@@ -237,8 +237,6 @@ final class AccessibilityAuditTests: XCTestCase {
         let named = control.identifier.isEmpty ? "an unnamed control" : control.identifier
         var faults: [String] = []
         if control.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            try? XCUIApplication(bundleIdentifier: Self.bundle).debugDescription
-                .write(toFile: NSTemporaryDirectory() + "DIAG-\(state).txt", atomically: true, encoding: .utf8)
             faults.append(
                 "\(state): \(named) has nothing for VoiceOver to read out; it is at "
                 + "\(rectangle(control.frame))")

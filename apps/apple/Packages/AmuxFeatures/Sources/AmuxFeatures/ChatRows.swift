@@ -253,7 +253,7 @@ struct RailRow: View {
         .reclaimingThumbTarget(y: opens ? RailRow.reach : 0)
     }
 
-    private static let reach: CGFloat = 13
+    private static let reach: CGFloat = 14
 
     @ViewBuilder private var verbText: some View {
         if !verb.isEmpty {

@@ -24,13 +24,13 @@ chat.back | Back |  | 16,68,42,46
 chat.title | reviewer | reviewer | 51,72,156,38
 chat.changes | +2 −1 | shown | 280,73,60,36
 chat.more | More |  | 344,69,44,44
-chat.attachment | Pasted text · 12 lines |  | 26,721,215,26
-chat.attachment.remove | Remove |  | 211,719,31,30
-chat.field | Message reviewer | Please check against | 26,755,350,20
-chat.attach | Attach |  | 26,783,37,36
-chat.dictate | Dictate | idle | 55,781,33,40
-chat.clear | Clear |  | 73,782,38,37
-chat.send | Send |  | 342,784,34,34
+chat.attachment | Pasted text · 12 lines |  | 26,723,215,26
+chat.attachment.remove | Remove |  | 211,721,31,30
+chat.field | Message reviewer | Please check against | 26,757,350,20
+chat.attach | Attach |  | 13,780,44,44
+chat.dictate | Dictate | idle | 57,780,44,44
+chat.clear | Clear |  | 101,780,44,44
+chat.send | Send |  | 337,780,44,44
 review |  | 0 | 0,62,402,778
 review.file.0 | deploy.sh | open | 0,153,402,41
 review.files | All Files |  | 299,153,77,40

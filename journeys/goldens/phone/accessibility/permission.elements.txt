@@ -14,7 +14,7 @@ chat.back | Back |  | 16,90,42,46
 chat.title | decision-sdk | decision-sdk | 51,72,252,82
 chat.more | More |  | 344,91,44,44
 ask | Wants to run a command | open | 12,364,378,466
-ask.more | More |  | 345,408,41,30
+ask.more | More |  | 343,400,45,46
 ask.subject | deploy --check |  | 28,478,261,40
 ask.choice.0 | Allow once |  | 28,530,346,65
 ask.choice.1 | Always allow Bash in this project |  | 28,603,346,65
@@ -48,7 +48,7 @@ you.help.caption |  |  | 18,1124,366,161
  | Check the deployment once. |  | 67,191,317,106
  | Wants to run, deploy --check |  | 18,309,366,43
  | Wants to run a command |  | 46,380,218,86
- | More |  | 345,408,41,30
+ | More |  | 343,400,45,46
  | deploy --check |  | 28,478,261,40
  | Allow once |  | 28,530,346,65
  | Always allow Bash in this project |  | 28,603,346,65

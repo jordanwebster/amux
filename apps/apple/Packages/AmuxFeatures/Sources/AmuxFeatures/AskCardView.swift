@@ -126,26 +126,18 @@ public struct AskCardView: View {
                     .designFont(.caption, design)
                     .foregroundStyle(design.inkFaint.color)
             }
-            Menu {
-                Button(role: .destructive) { act(.stop) } label: {
-                    Label(String(localized: "Stop the turn"), systemImage: "stop.circle")
-                }
-            } label: {
+            MenuButton(
+                name: String(localized: "More"), identifier: "ask.more",
+                items: [MenuItem(
+                    title: String(localized: "Stop the turn"), systemImage: "stop.circle",
+                    destructive: true
+                ) { act(.stop) }]
+            ) {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(design.inkMuted.color)
                     .thumbTarget(x: 14, y: 20)
             }
-            .accessibilityRepresentation {
-                Menu {
-                    Button(role: .destructive) { act(.stop) } label: {
-                        Text("Stop the turn")
-                    }
-                } label: {
-                    Text("More")
-                }
-            }
-            .identified("ask.more", label: "More")
             .reclaimingThumbTarget(x: 14, y: 20)
         }
     }

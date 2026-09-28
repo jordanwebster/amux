@@ -262,29 +262,28 @@ public struct ChatScreen: View {
     }
 
     private var overflow: some View {
-        Menu {
-            Button { showing = .rename } label: {
-                Label(String(localized: "Rename"), systemImage: "pencil")
-            }
-            Button { actions(.copyAddress) } label: {
-                Label(String(localized: "Copy Address"), systemImage: "doc.on.doc")
-            }
-            if model.frame.map({ if case .exited = $0.phase { false } else { true } }) ?? false {
-                Button { actions(.stopAgent) } label: {
-                    Label(String(localized: "Stop Agent"), systemImage: "stop.circle")
-                }
-            }
-            Button(role: .destructive) { showing = .delete } label: {
-                Label(String(localized: "Delete Agent"), systemImage: "trash")
-            }
-        } label: {
+        let running = model.frame.map({ if case .exited = $0.phase { false } else { true } }) ?? false
+        var items = [
+            MenuItem(title: String(localized: "Rename"), systemImage: "pencil") { showing = .rename },
+            MenuItem(title: String(localized: "Copy Address"), systemImage: "doc.on.doc") {
+                actions(.copyAddress)
+            },
+        ]
+        if running {
+            items.append(MenuItem(title: String(localized: "Stop Agent"), systemImage: "stop.circle") {
+                actions(.stopAgent)
+            })
+        }
+        items.append(MenuItem(
+            title: String(localized: "Delete Agent"), systemImage: "trash", destructive: true
+        ) { showing = .delete })
+        return MenuButton(
+            name: String(localized: "More"), identifier: "chat.more", items: items,
+            opened: { putDown += 1 }
+        ) {
             GlassIcon(glyph: "ellipsis", size: 36)
                 .thumbTarget(x: 4, y: 4)
-                .accessibilityLabel("More")
         }
-        .simultaneousGesture(TapGesture().onEnded { putDown += 1 })
-        .accessibilityLabel("More")
-        .identified("chat.more", label: "More")
         .reclaimingThumbTarget(x: 4, y: 4)
     }
 

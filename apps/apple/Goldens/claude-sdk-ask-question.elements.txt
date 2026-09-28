@@ -8,7 +8,7 @@ chat.back | Back |  | 16,68,42,46
 chat.title | asker | asker | 51,72,156,38
 chat.more | More |  | 344,69,44,44
 ask | Question | open | 12,604,378,226
-ask.more | More |  | 345,615,41,30
+ask.more | More |  | 343,607,45,46
 ask.question | Which changes should the release notes keep? |  | 28,651,343,20
 ask.option.0 | Only what users will notice |  | 28,683,346,40
 ask.option.1 | Every change |  | 28,729,346,40
@@ -20,7 +20,7 @@ ask.option.other |  |  | 28,774,346,40
  | Tidy the release notes. |  | 192,160,192,40
  | Asking, Which changes should the release notes keep? |  | 18,211,366,20
  | Question |  | 46,620,70,20
- | More |  | 345,615,41,30
+ | More |  | 343,607,45,46
  | Which changes should the release notes keep? |  | 28,651,343,20
  | Only what users will notice |  | 28,683,346,40
  | Every change |  | 28,729,346,40

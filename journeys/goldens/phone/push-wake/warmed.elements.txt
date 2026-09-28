@@ -22,7 +22,7 @@ chat.back | Back |  | 16,68,42,46
 chat.title | asker | asker | 51,72,102,38
 chat.more | More |  | 344,69,44,44
 ask | Wants to run a command | open | 12,536,378,294
-ask.more | More |  | 345,547,41,30
+ask.more | More |  | 343,539,45,46
 ask.subject | deploy --prod |  | 28,584,109,18
 ask.choice.0 | Allow once |  | 28,614,346,44
 ask.choice.1 | Always allow Bash in this project |  | 28,666,346,44
@@ -60,7 +60,7 @@ you.help.caption |  |  | 18,599,354,31
  | Deploy it. |  | 287,271,97,40
  | Wants to run, deploy --prod |  | 18,322,366,20
  | Wants to run a command |  | 46,552,189,20
- | More |  | 345,547,41,30
+ | More |  | 343,539,45,46
  | deploy --prod |  | 28,584,109,18
  | Allow once |  | 28,614,346,44
  | Always allow Bash in this project |  | 28,666,346,44

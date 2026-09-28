@@ -31,11 +31,11 @@ chat.back | Back |  | 16,68,42,46
 chat.title | reviewer | reviewer | 51,72,156,38
 chat.changes | +2 −1 | shown | 280,73,60,36
 chat.more | More |  | 344,69,44,44
-chat.field | Message reviewer |  | 26,755,350,20
-chat.attach | Attach |  | 26,783,37,36
-chat.dictate | Dictate | idle | 55,781,33,40
-chat.model | claude-fake-1 · Default |  | 83,784,114,34
-chat.send | Send |  | 342,784,34,34 (disabled)
+chat.field | Message reviewer |  | 26,757,350,20
+chat.attach | Attach |  | 13,780,44,44
+chat.dictate | Dictate | idle | 57,780,44,44
+chat.model | claude-fake-1 · Default |  | 101,780,114,44
+chat.send | Send |  | 337,780,44,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 reachable | 18,105,79,16
@@ -65,10 +65,10 @@ you.help.caption |  |  | 18,599,354,31
  | Please check against, Pasted text · 12 lines, Review · 1 comment |  | 159,160,225,103
  | I read the review. |  | 18,275,366,20
  | Worked <t> · $0.00 |  | 45,306,130,16
- | Attach |  | 26,783,37,36
- | Dictate |  | 55,781,33,40
- | claude-fake-1, Default |  | 83,784,114,34
- | Send |  | 342,784,34,34 (disabled)
+ | Attach |  | 13,780,44,44
+ | Dictate |  | 57,780,44,44
+ | claude-fake-1, Default |  | 101,780,114,44
+ | Send |  | 337,780,44,44 (disabled)
  | Hosts |  | 18,72,69,32
  | 1 reachable |  | 18,105,79,16
  | ON THIS NETWORK |  | 20,137,105,14

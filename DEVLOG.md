@@ -1,3 +1,19 @@
+2026-09-28 — **The phone's menus, composer controls and unanswerable row pass
+the live accessibility audit.** SwiftUI's `Menu` presents through a UIKit
+button that VoiceOver and XCUITest reach without the menu's name or
+identifier, so the chat's More, the composer's attach and the ask card's
+More read as unnamed buttons. They are now one registered UIKit leaf,
+`MenuButton`: an owned `UIButton` showing its `UIMenu` as its primary action,
+laid transparent over the SwiftUI-drawn label, carrying the name and
+identifier, and opening its menu for an accessibility activation too
+(UIKit's own button declines one). The composer's attach, dictate, clear,
+model and send controls each get a 44 pt slot side by side rather than
+overlapping grown targets; the ask card's More and a foldable one-line rail
+row reach 44 pt without moving anything drawn. `just ios accessibility`
+reports no faults across its eight live pages; composer and chat snapshots,
+the whole-screen goldens and the phone journey goldens were re-recorded and
+looked at.
+
 2026-09-28 — **The phone's runtime keeps a log, and a peer's dump answer
 leaves the daemon log out.** The app named `<installation>/runtime.log` as
 the embedded runtime's log, but nothing in the phone's process wrote

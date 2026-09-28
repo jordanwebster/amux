@@ -668,3 +668,27 @@ for the home and the transcript and nothing here — so what would settle the
 question properly has not been run. `diffSelection` therefore stays a candidate
 on the same footing as `transcriptList`: named, unbuilt, and the first thing to
 reconsider if a real patch on a real phone drops frames under a finger.
+
+## Menus are presented by a UIKit button
+
+`RegisteredLeaves` carries `menuButton`, and it has a file behind it:
+`AmuxFeatures/Leaves/MenuButton.swift`. Every control on the phone that opens
+a menu — the chat's More, the composer's attach, the ask card's More — is one.
+
+SwiftUI's `Menu` presents through a UIKit button it lays over its own label,
+and that button is what VoiceOver and XCUITest reach. The name and identifier
+given to the `Menu` stay on SwiftUI's side and never get to it, so the live
+accessibility audit (`just ios accessibility`) read all three as buttons with
+nothing to say. `accessibilityLabel`, `accessibilityRepresentation`, and a
+`Label` in place of a bare image were each tried on the `Menu` and none
+reached the button.
+
+The leaf keeps that button but owns it: a `UIButton` that shows its `UIMenu`
+as its primary action, laid transparent over a label SwiftUI still draws and
+hides from accessibility, carrying the control's name and identifier itself.
+It gives under the thumb the way `.amuxControl` does. Its rows are plain
+values — a title, a symbol, whether it destroys, an action — so a screen still
+describes its menu from its state.
+
+What would reopen it: a SwiftUI `Menu` whose accessibility modifiers reach the
+button it presents through.
