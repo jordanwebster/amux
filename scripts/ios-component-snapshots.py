@@ -24,6 +24,9 @@ SCHEME = "AmuxComponentSnapshots"
 TARGET = "AmuxComponentSnapshotTests"
 NEGATIVE_DEFAULT = "row.prompt"
 MISMATCH = "does not match reference"
+# Hang detector for one test-without-building batch (startup and every
+# example), not a target: the batch's honest duration sits well under it.
+BATCH_BOUND = 300
 
 
 def arguments(argv: list[str]) -> Namespace:
@@ -113,13 +116,21 @@ def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool =
     )
     with forwarded(udid, values | {"AMUX_SNAPSHOT_RUNNER_STARTED": str(time.monotonic())}):
         started = time.monotonic()
-        completed = subprocess.run(
-            [*command("test-without-building", udid), "-resultBundlePath", str(RESULT)],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=300,
-        )
+        try:
+            completed = subprocess.run(
+                [*command("test-without-building", udid), "-resultBundlePath", str(RESULT)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=BATCH_BOUND,
+            )
+        except subprocess.TimeoutExpired as expired:
+            # What the batch printed up to the bound (each example's timing,
+            # each mismatch) is the evidence of where it stood.
+            output = expired.stdout or ""
+            output = output.decode(errors="replace") if isinstance(output, bytes) else output
+            completed = subprocess.CompletedProcess(expired.cmd, 124, output)
+            print(f"component snapshot batch passed its {BATCH_BOUND}s bound", file=sys.stderr)
     elapsed = time.monotonic() - started
     if completed.returncode:
         export_failure_attachments()
