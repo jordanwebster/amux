@@ -176,8 +176,9 @@ def normalize(text: str) -> str:
 
 
 # Durations measured on the run's own clock ("380ms", "1.2s", "1m 4s") are
-# volatile: each becomes "<t>", and the blank run before it absorbs the
-# difference so right-aligned meta keeps its place.
+# volatile: each becomes "<t>". Right-aligned meta (a run of blanks before it)
+# keeps its place, the blanks absorbing the difference; a duration flowing in
+# a sentence after one space just takes the mask's own width.
 DURATION = re.compile(r"(?<= )(\d+m \d+s|\d+(?:\.\d+)?(?:ms|s))(?= · |$)")
 
 
@@ -192,7 +193,7 @@ def mask_durations(
             blank = start
             while blank > 0 and text[blank - 1] == " ":
                 blank -= 1
-            extra = (end - start) - 3
+            extra = (end - start) - 3 if start - blank > 1 else 0
             if start - blank + extra < 1:
                 continue
             # Cell positions: every character before a duration in these

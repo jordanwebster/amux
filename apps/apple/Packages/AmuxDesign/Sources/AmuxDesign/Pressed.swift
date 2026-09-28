@@ -106,6 +106,8 @@ public struct AmuxControlButtonStyle: ButtonStyle {
             } else if isEnabled {
                 configuration.label
             } else {
+                // The only dimming a disabled control gets. A label that dims
+                // itself as well multiplies with this and its words vanish.
                 configuration.label.opacity(0.5)
             }
         }

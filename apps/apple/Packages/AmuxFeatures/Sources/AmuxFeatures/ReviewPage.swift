@@ -515,7 +515,6 @@ private struct CommentSheet: View {
                         .padding(.horizontal, 18)
                         .frame(height: 44)
                         .background(Capsule().fill(design.accent.color))
-                        .opacity(blank ? 0.4 : 1)
                 }
                 .buttonStyle(.amuxControl)
                 .disabled(blank)

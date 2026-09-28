@@ -162,7 +162,6 @@ func choiceButton(
     Button(action: action) { ActionLabel(title, kind: kind, fill: true) }
         .buttonStyle(.amuxControl)
         .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.45)
         .identified(id, label: title, enabled: enabled)
 }
 

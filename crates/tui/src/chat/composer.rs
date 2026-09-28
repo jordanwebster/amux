@@ -209,16 +209,14 @@ pub fn placeholder(mode: &Composer, name: &str, host: &str, away: Away) -> Strin
         Composer::Send => format!("Message {name}"),
         Composer::Resume => format!("{name} has exited · type to resume it with a message"),
         Composer::Disabled(Waiting::CatchingUp) => "Catching up · your draft is kept".into(),
+        // The hint under the composer says what sending waits for, so the placeholder
+        // only names the cause and that the draft is safe: said once, it fits the line.
         Composer::Disabled(Waiting::Detached) => match away {
-            Away::Plain => {
-                format!("{host} is away · your draft is kept; sending waits until it is back")
+            Away::Plain => format!("{host} is away · your draft is kept"),
+            Away::Revoked => format!("{host} no longer trusts this machine · your draft is kept"),
+            Away::SignedOut => {
+                format!("{host} is away · this machine is signed out · your draft is kept")
             }
-            Away::Revoked => format!(
-                "{host} no longer trusts this machine · your draft is kept; sending waits until you pair again"
-            ),
-            Away::SignedOut => format!(
-                "{host} is away · this machine is signed out · your draft is kept; sending waits until you sign in again"
-            ),
         },
         Composer::Disabled(Waiting::Reconnecting) => {
             "Reconnecting to amux · your draft is kept".into()

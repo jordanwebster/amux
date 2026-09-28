@@ -227,7 +227,8 @@ struct RailRow: View {
     /// How many lines of the detail show; all of it when nil.
     var detailLines: Int?
     var detailInk = false
-    /// Which end of a long subject is kept: a path keeps its file name.
+    /// Which end of a long mono subject is kept: a path keeps its file name. A prose
+    /// subject always keeps its opening words, so it still reads as a sentence.
     var truncation: Text.TruncationMode = .middle
     var opens = false
     var open = false
@@ -264,7 +265,7 @@ struct RailRow: View {
             Text(subject)
                 .designFont(mono ? .monoSmall : .detail, design)
                 .foregroundStyle(design.inkMuted.color)
-                .truncationMode(truncation)
+                .truncationMode(mono ? truncation : .tail)
         }
     }
 
@@ -561,11 +562,22 @@ private struct MarkdownBlockView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         case .list(_, let items):
-            Text(list(items))
-                .designFont(.body, design)
-                .foregroundStyle(ink)
-                .lineSpacing(6)
-                .fixedSize(horizontal: false, vertical: true)
+            // Each item is its own row so a wrapped line hangs under the item's text, not
+            // under its marker.
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(items) { item in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(item.marker)
+                            .foregroundStyle(design.inkFaint.color)
+                        Text(inline(item.text))
+                            .foregroundStyle(ink)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.leading, CGFloat(item.depth) * 16)
+                }
+            }
+            .designFont(.body, design)
         case .code(let language, let text):
             VStack(alignment: .leading, spacing: 0) {
                 if let language, !language.isEmpty {
@@ -654,20 +666,6 @@ private struct MarkdownBlockView: View {
             }
         }
         return text
-    }
-
-    private func list(_ items: [MarkdownBlock.Item]) -> AttributedString {
-        var result = AttributedString()
-        for (index, item) in items.enumerated() {
-            if index > 0 { result.append(AttributedString("\n")) }
-            var marker = AttributedString(
-                String(repeating: "\u{00A0}", count: item.depth * 4) + item.marker
-                    + "\u{00A0}\u{00A0}")
-            marker.foregroundColor = design.inkFaint.color
-            result.append(marker)
-            result.append(inline(item.text))
-        }
-        return result
     }
 
     private func heading(_ level: Int) -> Font {
@@ -759,10 +757,12 @@ private struct FeedRule: View {
     var body: some View {
         HStack(spacing: 8) {
             Rectangle().fill(design.hairline.color).frame(width: 14, height: design.metrics.hairline)
+            // The label wins the width over the trailing rule, which only fills what is left.
             Text(label)
                 .designFont(.caption, design)
                 .foregroundStyle(design.inkFaint.color)
                 .lineLimit(1)
+                .layoutPriority(1)
             Rectangle().fill(design.hairline.color).frame(height: design.metrics.hairline)
         }
         .accessibilityElement(children: .combine)

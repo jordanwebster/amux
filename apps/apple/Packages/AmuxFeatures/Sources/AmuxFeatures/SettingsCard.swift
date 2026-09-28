@@ -245,6 +245,9 @@ private struct EffortAxis: View {
                         .foregroundStyle(effort.current ? design.onAccent.color : design.ink.color)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
+                        // Room inside each stop, so a long level shrinks before it
+                        // reaches the stop's edge when six share the row.
+                        .padding(.horizontal, 5)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background {
                             RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)

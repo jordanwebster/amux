@@ -341,7 +341,6 @@ public struct NewAgent: View {
                 }
                 .buttonStyle(.amuxControl)
                 .disabled(!model.ready)
-                .opacity(model.ready ? 1 : 0.4)
                 .identified(
                     "new-agent.start", label: "Start on \(machineName)",
                     value: model.starting ? "starting" : "ready", enabled: model.ready)

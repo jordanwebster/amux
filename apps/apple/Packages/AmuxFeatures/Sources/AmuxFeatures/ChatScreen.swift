@@ -124,7 +124,10 @@ public struct ChatScreen: View {
                 .identified("chat.newActivity", label: String(localized: "New activity"), value: "shown")
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) { header }
+        // A bar rather than an inset: the feed's scroll edge effect only reaches under a
+        // bar, so rows scrolled up soften behind the header and the status bar instead of
+        // showing through beside the header's pill.
+        .safeAreaBar(edge: .top, spacing: 0) { header }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatStanding(
                 model: model, subject: subject, showing: $showing, putDown: putDown,
@@ -150,6 +153,14 @@ public struct ChatScreen: View {
             return [String(localized: "Exited"), cause].compactMap { $0 }.joined(separator: " · ")
         }
         return subject.place
+    }
+
+    /// The place line is a path unless it states why the chat cannot be reached; a path keeps
+    /// its ends and a sentence keeps its opening words.
+    private var placeIsPath: Bool {
+        if detached, subject.reachable { return false }
+        if case .exited? = model.frame?.phase { return false }
+        return true
     }
 
     private var header: some View {
@@ -188,7 +199,7 @@ public struct ChatScreen: View {
                                     .designFont(.monoSmall, design)
                                     .foregroundStyle(design.inkFaint.color)
                                     .lineLimit(1)
-                                    .truncationMode(.middle)
+                                    .truncationMode(placeIsPath ? .middle : .tail)
                             }
                         }
                     }

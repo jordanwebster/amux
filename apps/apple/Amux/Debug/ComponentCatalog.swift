@@ -378,7 +378,7 @@ enum ComponentCatalog {
             composer("strip-claude-sdk", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
                 context: ContextView(usedTokens: 30_513, inStrip: false, percent: 16, windowTokens: 200_000),
                 model: "claude-opus-5-5", effort: "low", mode: "plan",
-                usage: UsageView(blocked: false, windows: [UsageWindowView(name: "five_hour", usedPercent: 83, resetsAtMs: nil)], credits: nil),
+                usage: UsageView(blocked: false, windows: [UsageWindowView(name: "5h", usedPercent: 83, resetsAtMs: nil)], credits: nil),
                 failedServers: [ServerView(name: "claude.ai Google Drive", error: "", needsAuth: true)],
                 background: 3)),
             composer("strip-codex", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(

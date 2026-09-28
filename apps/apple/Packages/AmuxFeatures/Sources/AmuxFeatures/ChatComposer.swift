@@ -192,7 +192,6 @@ struct ComposerBox: View {
                     .padding(.horizontal, 14)
                     .frame(height: 34)
                     .background(Capsule().fill(design.ink.color))
-                    .opacity(model.canResume && model.hasDraft ? 1 : 0.4)
             }
             .buttonStyle(.amuxControl)
             .disabled(!(model.canResume && model.hasDraft))
@@ -349,18 +348,25 @@ struct ChatTray: View {
         text: String, state: String, warn: Bool, id: String,
         @ViewBuilder actions: () -> Actions
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(text)
-                    .designFont(.detail, design)
-                    .foregroundStyle(design.ink.color)
-                    .lineLimit(2)
-                Spacer(minLength: 6)
-                Text(state)
-                    .designFont(.caption, design)
-                    .foregroundStyle(warn ? design.accent.color : design.inkFaint.color)
-                    .lineLimit(1)
-                    .fixedSize()
+        let message = Text(text)
+            .designFont(.detail, design)
+            .foregroundStyle(design.ink.color)
+        let status = Text(state)
+            .designFont(.caption, design)
+            .foregroundStyle(warn ? design.accent.color : design.inkFaint.color)
+        return VStack(alignment: .leading, spacing: 6) {
+            // The state sits beside the message while both fit on one line. A long reason
+            // moves under the message instead of pushing the message out of the row.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    message.lineLimit(1)
+                    Spacer(minLength: 6)
+                    status.lineLimit(1)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    message.lineLimit(2)
+                    status.lineLimit(2)
+                }
             }
             HStack(spacing: 14) {
                 actions()

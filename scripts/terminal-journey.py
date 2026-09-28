@@ -489,7 +489,7 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     journey.wait_terms(signed_out, "Signed default out", "AMUX_EXIT_0")
     # The reason named is this machine's sign-out, never a claim about the
     # desk, and the hosts overlay says the same.
-    journey.wait_terms(pane, "desk away · this machine is signed out", "until you sign in again")
+    journey.wait_terms(pane, "desk away · this machine is signed out", "until this machine signs in")
     journey.keys(pane, "C-a", "s")
     journey.wait(pane, lambda frame: frame.startswith("  amux ·"), "the fleet")
     journey.keys(pane, "h")

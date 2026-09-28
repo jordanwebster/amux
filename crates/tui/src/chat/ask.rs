@@ -1211,15 +1211,21 @@ impl AskUi {
         let mut next = question.options.len();
         let mut cursor = None;
         if question.allow_other {
+            // With no options to pick, typing is the only answer, not something else.
+            let (typed, prompt) = if question.options.is_empty() {
+                ("Answer", "Type the answer…")
+            } else {
+                ("Something else", "Something else…")
+            };
             if self.stage == Stage::Other {
-                let (line, column) = editor_line(&self.other, "Something else: ", width, theme);
+                let (line, column) = editor_line(&self.other, &format!("{typed}: "), width, theme);
                 cursor = Some((lines.len(), column));
                 lines.push(line);
             } else {
                 let label = match &pick.other {
-                    Some(other) if !question.secret => format!("Something else: \"{other}\""),
-                    Some(_) => "Something else: (hidden)".to_owned(),
-                    None => "Something else…".to_owned(),
+                    Some(other) if !question.secret => format!("{typed}: \"{other}\""),
+                    Some(_) => format!("{typed}: (hidden)"),
+                    None => prompt.to_owned(),
                 };
                 lines.push(menu_line(
                     next + 1,

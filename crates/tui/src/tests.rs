@@ -1953,7 +1953,7 @@ fn a_paste_into_a_secret_answer_shows_as_bullets() {
         })
         .collect();
     let screen = screen.join("\n");
-    assert!(screen.contains("Something else: ••••••"), "{screen}");
+    assert!(screen.contains("Answer: ••••••"), "{screen}");
     assert!(!screen.contains("s3cret"), "{screen}");
 }
 

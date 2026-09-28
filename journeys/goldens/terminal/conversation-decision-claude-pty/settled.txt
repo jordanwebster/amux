@@ -27,7 +27,7 @@
 
     The deploy check passed.
 
-    Worked   <t>
+    Worked <t>
 
 
 ▎ Message decision-pty

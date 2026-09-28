@@ -207,7 +207,6 @@ struct DeleteAccountCard: View {
             // be undone is not available at all — greyed rather than hidden,
             // so what the field is for is obvious from the button it unlocks.
             .disabled(!confirmed)
-            .opacity(confirmed ? 1 : 0.4)
             .identified("delete.confirm", label: "Delete", enabled: confirmed)
         }
         .padding(.top, 2)

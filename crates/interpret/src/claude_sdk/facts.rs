@@ -307,7 +307,7 @@ impl State {
                 windows
                     .iter()
                     .map(|(name, window)| UsageWindow {
-                        name: name.clone(),
+                        name: window_name(name),
                         used_percent: window
                             .get("utilization")
                             .and_then(Value::as_f64)
@@ -1115,5 +1115,35 @@ fn server_health(servers: &[Value]) -> ToolServerHealth {
             HealthState::Healthy
         } as i32,
         servers,
+    }
+}
+
+/// A usage window by the short name Codex windows carry too ("5h", "7d"), so both
+/// providers' limits read alike; a window this build does not know keeps its own
+/// words.
+fn window_name(name: &str) -> String {
+    let (span, rest) = match name.split_once('_') {
+        Some(("five", rest)) if rest.starts_with("hour") => ("5h", &rest[4..]),
+        Some(("seven", rest)) if rest.starts_with("day") => ("7d", &rest[3..]),
+        _ => return name.replace('_', " "),
+    };
+    let model = rest.trim_start_matches('_').replace('_', " ");
+    if model.is_empty() {
+        span.to_owned()
+    } else {
+        format!("{span} {model}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_name;
+
+    #[test]
+    fn usage_windows_read_by_their_short_names() {
+        assert_eq!(window_name("five_hour"), "5h");
+        assert_eq!(window_name("seven_day"), "7d");
+        assert_eq!(window_name("seven_day_opus"), "7d opus");
+        assert_eq!(window_name("overage_budget"), "overage budget");
     }
 }
