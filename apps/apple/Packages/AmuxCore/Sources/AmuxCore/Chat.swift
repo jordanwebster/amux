@@ -180,6 +180,14 @@ public final class Chat: ChatSource, @unchecked Sendable {
         } ?? nil
     }
 
+    public func draft(of input: [UInt8]) -> Draft? {
+        call(nil) { live in
+            Bridge.json(input).withCString {
+                Bridge.read(Draft?.self, amux_session_draft_of(live, $0)) ?? nil
+            }
+        }
+    }
+
     public func discard(_ input: [UInt8]) {
         call(()) { live in Bridge.json(input).withCString { amux_session_discard(live, $0) } }
     }

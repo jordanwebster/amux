@@ -229,6 +229,20 @@ impl Chat {
         }
     }
 
+    /// A queued or sent prompt as the draft it came from: its words and
+    /// every attachment, whole, for a withdraw or an edit to put back.
+    pub fn draft_of(&self, input_id: &[u8]) -> Option<Draft> {
+        let state = self.session.state();
+        if let Some(row) = state
+            .queue()
+            .into_iter()
+            .find(|row| row.entry.input_id == input_id)
+        {
+            return Some(Draft::from_queued(row.entry));
+        }
+        state.inputs().get(input_id).and_then(Draft::from_sent)
+    }
+
     pub async fn withdraw(&self, input_id: &[u8]) -> ActOutcome {
         acted(self.session.withdraw(input_id).await)
     }

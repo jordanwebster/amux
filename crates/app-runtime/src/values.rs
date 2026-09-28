@@ -162,6 +162,49 @@ impl DraftAttachment {
         };
         wire::Attachment { of: Some(of) }
     }
+
+    /// The draft's form of an attachment a prompt carried; None for one
+    /// with nothing in it.
+    pub fn from_wire(attachment: &wire::Attachment) -> Option<DraftAttachment> {
+        use wire::attachment::Of;
+        Some(match attachment.of.as_ref()? {
+            Of::Image(blob) => DraftAttachment::Image(blob.clone()),
+            Of::File(blob) => DraftAttachment::File(blob.clone()),
+            Of::Text(inline) => DraftAttachment::Text {
+                name: inline.name.clone(),
+                text: inline.text.clone(),
+            },
+            Of::Review(review) => DraftAttachment::Review {
+                diff: review.diff.clone()?,
+                comments: review.comments.clone(),
+            },
+        })
+    }
+}
+
+impl Draft {
+    fn of(text: &str, attachments: &[wire::Attachment]) -> Draft {
+        Draft {
+            text: text.to_owned(),
+            attachments: attachments
+                .iter()
+                .filter_map(DraftAttachment::from_wire)
+                .collect(),
+        }
+    }
+
+    /// A queued prompt as a draft: its words and every attachment.
+    pub fn from_queued(entry: &wire::QueuedInput) -> Draft {
+        Draft::of(&entry.text, &entry.attachments)
+    }
+
+    /// A prompt this client sent, as a draft.
+    pub fn from_sent(sent: &ui_state::SentInput) -> Option<Draft> {
+        match &sent.what {
+            ui_state::InputWhat::Prompt { text, attachments } => Some(Draft::of(text, attachments)),
+            _ => None,
+        }
+    }
 }
 
 /// An agent's working-tree diff as its host froze it for a review page, and
@@ -396,4 +439,53 @@ pub enum RelayLink {
 pub struct Bearer {
     pub bearer: String,
     pub expires_at_ms: Option<i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn blob(name: &str) -> BlobRef {
+        BlobRef {
+            hash: name.as_bytes().to_vec(),
+            name: name.to_owned(),
+            mime: "application/octet-stream".to_owned(),
+            size: 3,
+        }
+    }
+
+    /// A prompt's attachments come back into a draft whole, as they were
+    /// sent.
+    #[test]
+    fn every_attachment_comes_back_from_the_wire_as_it_was_sent() {
+        let sent = vec![
+            DraftAttachment::Image(blob("photo")),
+            DraftAttachment::File(blob("notes")),
+            DraftAttachment::Text {
+                name: "Pasted text".into(),
+                text: "one\ntwo\nthree".into(),
+            },
+            DraftAttachment::Review {
+                diff: wire::Diff {
+                    head: "abc".into(),
+                    patch: Some(blob("patch")),
+                    ..Default::default()
+                },
+                comments: vec![wire::ReviewComment {
+                    path: "src/lib.rs".into(),
+                    line: 4,
+                    old_line: 0,
+                    text: "Name this.".into(),
+                }],
+            },
+        ];
+        let wire: Vec<wire::Attachment> = sent.iter().map(DraftAttachment::to_wire).collect();
+        let back = Draft::of("look", &wire);
+        assert_eq!(back.text, "look");
+        assert_eq!(back.attachments, sent);
+        assert_eq!(
+            DraftAttachment::from_wire(&wire::Attachment { of: None }),
+            None
+        );
+    }
 }

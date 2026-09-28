@@ -40,6 +40,7 @@ final class CaughtUpSession: OpenChat, @unchecked Sendable {
     func sendNow(_ input: [UInt8]) async -> ActOutcome? { nil }
     func resend(_ input: [UInt8]) async -> SendOutcome? { nil }
     func discard(_ input: [UInt8]) {}
+    func draft(of input: [UInt8]) -> Draft? { nil }
     func interrupt() async -> ActOutcome? { nil }
     func change(_ setting: SettingChange) async -> ActOutcome? { nil }
     func resume(with draft: Draft) async -> ActOutcome? { nil }

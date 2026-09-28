@@ -19,6 +19,8 @@ public protocol ChatSource: AnyObject, Sendable {
     func answer(_ ask: String, picks: [Pick], note: String?) async -> ActOutcome?
     func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome?
     func withdraw(_ input: [UInt8]) async -> ActOutcome?
+    /// A queued or sent prompt as the draft it came from, attachments whole.
+    func draft(of input: [UInt8]) -> Draft?
     func sendNow(_ input: [UInt8]) async -> ActOutcome?
     func resend(_ input: [UInt8]) async -> SendOutcome?
     func discard(_ input: [UInt8])
@@ -527,7 +529,11 @@ public final class ChatModel {
     }
 
     private func restore(_ sent: Draft) {
-        if draft.isEmpty { draft = sent.text } else { draft = sent.text + "\n" + draft }
+        if draft.isEmpty {
+            draft = sent.text
+        } else if !sent.text.isEmpty {
+            draft = sent.text + "\n" + draft
+        }
         attachments = (sent.attachments ?? []) + attachments
     }
 
@@ -572,22 +578,12 @@ public final class ChatModel {
         attachments.remove(at: index)
     }
 
-    /// Takes a queued prompt back; its words return to the draft.
+    /// Takes a queued prompt back; its words and attachments return to the
+    /// draft. What it held is read before it leaves the queue.
     public func withdraw(_ queued: QueuedRow) {
+        let taken = source.draft(of: queued.inputId)
         act({ await $0.withdraw(queued.inputId) }) { [weak self] in
-            guard let self else { return }
-            let words = queued.text.compactMap { segment -> String? in
-                if case .text(let text) = segment { text } else { nil }
-            }.joined()
-            let kept = queued.text.compactMap { segment -> DraftAttachment? in
-                switch segment {
-                case .attachment(.image(let blob)): .image(blob)
-                case .attachment(.file(let blob)): .file(blob)
-                default: nil
-                }
-            }
-            if draft.isEmpty { draft = words } else if !words.isEmpty { draft = words + "\n" + draft }
-            attachments = kept + attachments
+            if let taken { self?.restore(taken) }
         }
     }
 
@@ -610,12 +606,10 @@ public final class ChatModel {
         woke()
     }
 
-    /// A rejected prompt back into the draft to change and send again.
+    /// A rejected prompt back into the draft, words and attachments, to
+    /// change and send again.
     public func edit(_ outbox: OutboxRow) {
-        let words = outbox.text.compactMap { segment -> String? in
-            if case .text(let text) = segment { text } else { nil }
-        }.joined()
-        if draft.isEmpty { draft = words } else { draft = words + "\n" + draft }
+        if let sent = source.draft(of: outbox.inputId) { restore(sent) }
         discard(outbox.inputId)
     }
 

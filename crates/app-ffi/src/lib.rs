@@ -1758,6 +1758,24 @@ pub unsafe extern "C" fn amux_session_resend(
     }
 }
 
+/// A queued or sent prompt as the `Draft` it came from, its words and every
+/// attachment whole, or null JSON: what a withdraw or an edit puts back in
+/// the composer.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `input_id` is a NUL-terminated JSON
+/// byte array.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_draft_of(
+    chat: *const AmuxChat,
+    input_id: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let id: Vec<u8> = unsafe { parse(input_id) }.unwrap_or_default();
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, |chat| chat.draft_of(&id)) }
+}
+
 /// Forgets a not-confirmed input.
 ///
 /// # Safety

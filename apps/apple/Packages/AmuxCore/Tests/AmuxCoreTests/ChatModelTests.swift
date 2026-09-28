@@ -15,6 +15,9 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     var sent: [Draft] = []
     var resumed: [Draft] = []
     var withdrawn: [[UInt8]] = []
+    var discarded: [[UInt8]] = []
+    /// What each queued or sent prompt held, by input id.
+    var drafts: [[UInt8]: Draft] = [:]
     var interrupts = 0
     var facts: Strip?
     var offered: SettingsView?
@@ -72,7 +75,8 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
 
     func sendNow(_ input: [UInt8]) async -> ActOutcome? { .done }
     func resend(_ input: [UInt8]) async -> SendOutcome? { nil }
-    func discard(_ input: [UInt8]) {}
+    func discard(_ input: [UInt8]) { discarded.append(input) }
+    func draft(of input: [UInt8]) -> Draft? { drafts[input] }
 
     func interrupt() async -> ActOutcome? {
         interrupts += 1
@@ -267,6 +271,7 @@ final class ChatModelTests: XCTestCase {
 
     func testAWithdrawnPromptComesBackToTheDraft() async {
         let source = FakeChat(rows: [], frame: frame(phase: .working))
+        source.drafts[[7]] = Draft(text: "Then run the Windows check.", attachments: nil)
         let model = ChatModel(source: source)
         let queued = QueuedRow(
             inputId: [7], text: [.text("Then run the Windows check.")], mine: true, steered: false,
@@ -275,6 +280,50 @@ final class ChatModelTests: XCTestCase {
         await settle()
         XCTAssertEqual(source.withdrawn, [[7]])
         XCTAssertEqual(model.draft, "Then run the Windows check.")
+    }
+
+    /// Withdrawn, a prompt gives back every attachment whole: a pasted text
+    /// with all its words, a review with its comments and patch, not the
+    /// line count and label its queued row shows.
+    func testAWithdrawnPromptGivesBackItsPastedTextAndReview() async {
+        let source = FakeChat(rows: [], frame: frame(phase: .working))
+        let pasted = DraftAttachment.text(name: "Pasted text", text: "line one\nline two\nline three")
+        let patch = BlobRef(hash: [4, 2], name: "patch", mime: "text/x-diff", size: 120)
+        let review = DraftAttachment.review(
+            diff: Diff(head: "abc123", base: nil, mergeBase: nil, patch: patch),
+            comments: [ReviewComment(path: "src/lib.rs", line: 12, oldLine: 0, text: "Name this.")])
+        source.drafts[[7]] = Draft(text: "Look at these.", attachments: [pasted, review])
+        let model = ChatModel(source: source)
+        model.draft = "half written"
+        let queued = QueuedRow(
+            inputId: [7],
+            text: [
+                .text("Look at these."),
+                .attachment(.text(name: "Pasted text", lines: 3)),
+            ],
+            mine: true, steered: false, canWithdraw: true, canSendNow: true, fromAgent: nil)
+        model.withdraw(queued)
+        await settle()
+        XCTAssertEqual(source.withdrawn, [[7]])
+        XCTAssertEqual(model.draft, "Look at these.\nhalf written")
+        XCTAssertEqual(model.attachments, [pasted, review])
+    }
+
+    /// Editing a rejected prompt gives back its words and its photo, and
+    /// forgets the rejected input.
+    func testEditingARejectedPromptGivesBackItsPhoto() async {
+        let source = FakeChat(rows: [], frame: frame())
+        let photo = BlobRef(hash: [5], name: "screen.png", mime: "image/png", size: 2048)
+        source.drafts[[8]] = Draft(text: "What is this?", attachments: [.image(photo)])
+        let model = ChatModel(source: source)
+        let rejected = OutboxRow(
+            inputId: [8], text: [.text("What is this?"), .attachment(.image(photo))],
+            state: .rejected("the agent is busy"))
+        model.edit(rejected)
+        await settle()
+        XCTAssertEqual(model.draft, "What is this?")
+        XCTAssertEqual(model.attachments, [.image(photo)])
+        XCTAssertEqual(source.discarded, [[8]])
     }
 
     func testAPickIsSentAndTheCurrentValueMovesOnlyWhenTheAgentReportsIt() async {

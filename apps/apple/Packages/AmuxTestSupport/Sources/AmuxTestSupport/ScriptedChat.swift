@@ -157,6 +157,20 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     public func sendNow(_ input: [UInt8]) async -> ActOutcome? { .done }
     public func resend(_ input: [UInt8]) async -> SendOutcome? { nil }
     public func discard(_ input: [UInt8]) {}
+
+    /// The words of the queued or outbox row with this id; a scripted chat
+    /// holds no attachments behind its rows.
+    public func draft(of input: [UInt8]) -> Draft? {
+        let frame = lock.withLock { current }
+        let text = frame.queue.first { $0.inputId == input }?.text
+            ?? frame.outbox.first { $0.inputId == input }?.text
+        return text.map { segments in
+            let words = segments.compactMap { segment -> String? in
+                if case .text(let text) = segment { text } else { nil }
+            }
+            return Draft(text: words.joined(), attachments: nil)
+        }
+    }
     public func interrupt() async -> ActOutcome? { .done }
 
     public func change(_ setting: SettingChange) async -> ActOutcome? {

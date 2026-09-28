@@ -1,3 +1,13 @@
+2026-09-28 — **A withdrawn or edited prompt gives the phone back every attachment.**
+Withdrawing a queued prompt rebuilt the draft from the queue row the chat
+draws, which carries a pasted text only as a line count and a review only
+as a comment count, so both were lost; editing a rejected prompt gave back
+only its words. The chat now answers a queued or sent prompt as the draft
+it came from (`amux_session_draft_of`, read from session state as the
+terminal does), and the phone restores that: words and every photo, file,
+pasted text and review, whole. Model tests pin a withdraw with a pasted
+text and a review and an edit with a photo.
+
 2026-09-28 — **A push moves the phone to another account only when it has to, and never under somebody.**
 A push used to put the oldest account whose profile trusted the host on
 screen, so a laptop paired under both a signed-out account and the one on
