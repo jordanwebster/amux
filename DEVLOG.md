@@ -1,3 +1,11 @@
+2026-09-28 — **`amux pair` closes pairing mode however it ends.**
+Only Ctrl+C closed pairing mode: a closed terminal or a kill left it open
+until it expired, and the next `amux pair` printed
+`amux: PAIR_MODE_ALREADY_ACTIVE`. The command now closes it on SIGTERM and
+SIGHUP too (the console closing on Windows), and a second `amux pair` while
+one is genuinely open says "Pairing is already open on this host; finish it
+or press Ctrl+C where it runs."
+
 2026-09-28 — **Headless Claude hears a denial as the person's, with their note.**
 A deny sent the person's bare note as the permission response's message,
 which Claude hands the model as the tool's error, so the model credited "a

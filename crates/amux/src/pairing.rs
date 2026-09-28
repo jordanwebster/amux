@@ -63,7 +63,8 @@ impl Target {
 }
 
 /// Opens pairing mode on this host and waits until another host pairs, it
-/// expires, or the person presses Ctrl+C, which closes it.
+/// expires, or the command is ended (Ctrl+C, its terminal closing, a kill),
+/// which closes it.
 pub async fn wait(mut door: Door, profile: &ProfileInfo, qr: bool, link: bool) -> Result<()> {
     let mode = if qr {
         start_pairing_request::Mode::Qr
@@ -80,7 +81,15 @@ pub async fn wait(mut door: Door, profile: &ProfileInfo, qr: bool, link: bool) -
             }),
         })
         .await
-        .map_err(plain)?
+        .map_err(|status| {
+            if status.message() == PAIR_MODE_ALREADY_ACTIVE {
+                anyhow!(
+                    "Pairing is already open on this host; finish it or press Ctrl+C where it runs."
+                )
+            } else {
+                plain(status)
+            }
+        })?
         .into_inner();
     match invitation(&started, link) {
         Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
@@ -91,14 +100,11 @@ pub async fn wait(mut door: Door, profile: &ProfileInfo, qr: bool, link: bool) -
     }
     let ttl = Duration::from_secs(started.ttl_seconds);
     let deadline = tokio::time::Instant::now() + ttl;
-    let interrupted = tokio::signal::ctrl_c();
-    tokio::pin!(interrupted);
+    let ended = ended()?;
+    tokio::pin!(ended);
     loop {
         tokio::select! {
-            result = &mut interrupted => {
-                result.context("listening for Ctrl+C")?;
-                return cancel(door, profile).await;
-            }
+            () = &mut ended => return cancel(door, profile).await,
             () = tokio::time::sleep(PAIRING_POLL) => {
                 let active = door
                     .get_pairing_status(ProfilePairingStatusRequest {
@@ -115,6 +121,40 @@ pub async fn wait(mut door: Door, profile: &ProfileInfo, qr: bool, link: bool) -
             }
         }
     }
+}
+
+/// The daemon's refusal to open pairing mode while it is open already.
+const PAIR_MODE_ALREADY_ACTIVE: &str = "PAIR_MODE_ALREADY_ACTIVE";
+
+/// Resolves when the command is asked to end: Ctrl+C, its terminal closing
+/// (SIGHUP) or a kill (SIGTERM). Any of them must close pairing mode, or it
+/// stays open until it expires and refuses the next `amux pair`.
+#[cfg(unix)]
+fn ended() -> Result<impl std::future::Future<Output = ()>> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut interrupt = signal(SignalKind::interrupt()).context("listening for Ctrl+C")?;
+    let mut terminate = signal(SignalKind::terminate()).context("listening for SIGTERM")?;
+    let mut hangup = signal(SignalKind::hangup()).context("listening for SIGHUP")?;
+    Ok(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+            _ = hangup.recv() => {}
+        }
+    })
+}
+
+#[cfg(not(unix))]
+fn ended() -> Result<impl std::future::Future<Output = ()>> {
+    use tokio::signal::windows::{ctrl_c, ctrl_close};
+    let mut interrupt = ctrl_c().context("listening for Ctrl+C")?;
+    let mut close = ctrl_close().context("listening for the console closing")?;
+    Ok(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = close.recv() => {}
+        }
+    })
 }
 
 /// What pairing mode shows the other host's person: the PIN and where this
@@ -196,7 +236,8 @@ pub async fn cancel(mut door: Door, profile: &ProfileInfo) -> Result<()> {
     })
     .await
     .map_err(plain)?;
-    println!("Pairing mode closed.");
+    // The terminal may be gone (SIGHUP): saying so must not fail the close.
+    let _ = writeln!(std::io::stdout(), "Pairing mode closed.");
     Ok(())
 }
 
