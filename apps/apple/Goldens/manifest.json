@@ -24,1095 +24,496 @@
           "height": 21
         }
       ]
-    },
-    "small": {
-      "system_chrome": [
-        {
-          "what": "status bar clock, as on the golden phone",
-          "x": 0,
-          "y": 0,
-          "width": 200,
-          "height": 40
-        },
-        {
-          "what": "status bar indicators, as on the golden phone",
-          "x": 540,
-          "y": 0,
-          "width": 210,
-          "height": 40
-        }
-      ]
     }
   },
+  "topology": "journeys/topologies/phone-goldens.json",
+  "components": [
+    {
+      "id": "row.prompt",
+      "shows": "A prompt the person sent, as a plain row."
+    },
+    {
+      "id": "row.prompt-attachments",
+      "shows": "A prompt carrying an image and a file, drawn as chips under its text."
+    },
+    {
+      "id": "row.prompt-steered",
+      "shows": "A prompt sent while the agent was working, marked as steering the running turn."
+    },
+    {
+      "id": "row.prose",
+      "shows": "The agent's answer as prose, with formatted text."
+    },
+    {
+      "id": "row.prose-working-note",
+      "shows": "A working note, the agent's aside while it works, set apart from its final answer."
+    },
+    {
+      "id": "row.thinking",
+      "shows": "Thinking, folded, with how long it took."
+    },
+    {
+      "id": "row.thinking-open",
+      "shows": "Thinking opened to read what the model reasoned."
+    },
+    {
+      "id": "row.tool-call",
+      "shows": "A tool call that ran and succeeded."
+    },
+    {
+      "id": "row.tool-call-asking",
+      "shows": "A tool call waiting on the person's decision, marked as asking."
+    },
+    {
+      "id": "row.file-change",
+      "shows": "A file change: each file with the lines it added and removed."
+    },
+    {
+      "id": "row.command",
+      "shows": "A command with its exit code, duration and output."
+    },
+    {
+      "id": "row.command-failed",
+      "shows": "A command that exited with a failure code, drawn as failed."
+    },
+    {
+      "id": "row.command-denied",
+      "shows": "A command the person denied, the decision on the command's own row."
+    },
+    {
+      "id": "row.command-allowed",
+      "shows": "A command the person allowed, the decision on the command's own row."
+    },
+    {
+      "id": "row.command-elsewhere",
+      "shows": "A tool server call allowed in the terminal, the decision saying where it was made."
+    },
+    {
+      "id": "row.command-asking",
+      "shows": "A command waiting on the person's decision."
+    },
+    {
+      "id": "row.explore",
+      "shows": "One exploration step: a file read."
+    },
+    {
+      "id": "row.run",
+      "shows": "A run of exploration steps folded into one row."
+    },
+    {
+      "id": "row.run-open-below",
+      "shows": "A run of exploration steps longer than the history held, counted as more than it shows."
+    },
+    {
+      "id": "row.subagent-running",
+      "shows": "A subagent still running, with what it was asked to do."
+    },
+    {
+      "id": "row.subagent-done",
+      "shows": "A subagent that finished, with its result."
+    },
+    {
+      "id": "row.subagent-steps",
+      "shows": "A subagent opened to show the steps it took under it."
+    },
+    {
+      "id": "row.background",
+      "shows": "A background task still running."
+    },
+    {
+      "id": "row.image",
+      "shows": "An image the agent generated."
+    },
+    {
+      "id": "row.slash-output",
+      "shows": "The output of a slash command."
+    },
+    {
+      "id": "row.turn-end",
+      "shows": "The end of a turn, with its cost and duration."
+    },
+    {
+      "id": "row.stopped",
+      "shows": "A turn the person stopped."
+    },
+    {
+      "id": "row.compaction",
+      "shows": "An automatic compaction, with the context before and after."
+    },
+    {
+      "id": "row.error",
+      "shows": "An error the provider reported, folded."
+    },
+    {
+      "id": "row.model-switch",
+      "shows": "The model switched mid-session, with the reason."
+    },
+    {
+      "id": "row.boundary",
+      "shows": "A session boundary: the agent resumed after an update."
+    },
+    {
+      "id": "row.agent-message",
+      "shows": "A message from another agent, delivered."
+    },
+    {
+      "id": "row.agent-message-rejected",
+      "shows": "A message from another agent that was refused."
+    },
+    {
+      "id": "row.auto-review",
+      "shows": "The provider's automatic reviewer's verdict on a call."
+    },
+    {
+      "id": "row.unrecognized",
+      "shows": "An event this build cannot read, named rather than dropped."
+    },
+    {
+      "id": "row.ask-question",
+      "shows": "A question the person answered, kept in the chat as a row."
+    },
+    {
+      "id": "row.ask-questions",
+      "shows": "Several questions the person answered, with each answer."
+    },
+    {
+      "id": "row.ask-secret",
+      "shows": "A question answered with a secret, the answer hidden."
+    },
+    {
+      "id": "row.ask-plan-approved",
+      "shows": "A plan the person approved."
+    },
+    {
+      "id": "row.ask-plan-sent-back",
+      "shows": "A plan the person sent back, with their note."
+    },
+    {
+      "id": "row.ask-plan-open",
+      "shows": "A plan opened to read in full."
+    },
+    {
+      "id": "row.ask-form",
+      "shows": "A tool server's form the person answered."
+    },
+    {
+      "id": "row.ask-link",
+      "shows": "A tool server's link the person opened."
+    },
+    {
+      "id": "row.ask-grant",
+      "shows": "Wider access the person granted, with what was granted."
+    },
+    {
+      "id": "row.ask-unanswerable",
+      "shows": "An ask the phone could not answer, cancelled, as a row."
+    },
+    {
+      "id": "ask.permission-command",
+      "shows": "Permission to run a command, its choices stated as outcomes (allow once, always allow, deny)."
+    },
+    {
+      "id": "ask.permission-deny-note",
+      "shows": "Permission to run a command with Deny chosen and a note being written to the agent."
+    },
+    {
+      "id": "ask.permission-edit",
+      "shows": "Permission to edit a file, with the change's diff and the choice to accept edits for the session."
+    },
+    {
+      "id": "ask.permission-tool",
+      "shows": "Permission to call a tool server's tool, with its arguments."
+    },
+    {
+      "id": "ask.permission-terminal",
+      "shows": "Terminal Claude's permission card, whose deny stops the turn."
+    },
+    {
+      "id": "ask.codex-command",
+      "shows": "Codex's command approval with every outcome it offers, including network access and deny-and-stop, and a second ask waiting."
+    },
+    {
+      "id": "ask.question-single",
+      "shows": "A single-choice question, the recommended option lifted."
+    },
+    {
+      "id": "ask.question-multi",
+      "shows": "A multiple-choice question with one option highlighted."
+    },
+    {
+      "id": "ask.questions-step",
+      "shows": "The first of several questions, stepped through one at a time."
+    },
+    {
+      "id": "ask.questions-review",
+      "shows": "Several questions answered and shown together for review before sending."
+    },
+    {
+      "id": "ask.question-previews",
+      "shows": "A question whose options carry previews, with no write-your-own row."
+    },
+    {
+      "id": "ask.question-other",
+      "shows": "A question answered in the person's own words."
+    },
+    {
+      "id": "ask.question-secret",
+      "shows": "A question whose answer is a secret, typed hidden."
+    },
+    {
+      "id": "ask.plan",
+      "shows": "A plan to approve, with the choice to accept edits automatically afterwards."
+    },
+    {
+      "id": "ask.form",
+      "shows": "A tool server's form, with its fields to fill."
+    },
+    {
+      "id": "ask.link",
+      "shows": "A tool server's request to open a link."
+    },
+    {
+      "id": "ask.access",
+      "shows": "Codex asking for wider access, for the turn or the session."
+    },
+    {
+      "id": "ask.sending",
+      "shows": "An answer on its way to the agent."
+    },
+    {
+      "id": "ask.rejected",
+      "shows": "An answer the agent refused because the ask was already answered elsewhere."
+    },
+    {
+      "id": "ask.not-confirmed",
+      "shows": "An answer sent but not yet confirmed by the agent."
+    },
+    {
+      "id": "ask.dismissed",
+      "shows": "An ask closed without an answer, drawn dismissed."
+    },
+    {
+      "id": "ask.unanswerable",
+      "shows": "The escape from an ask the phone cannot answer: what it is and how to get out of it."
+    },
+    {
+      "id": "composer.empty",
+      "shows": "The composer with nothing written."
+    },
+    {
+      "id": "composer.draft",
+      "shows": "The composer with a draft and an attached image."
+    },
+    {
+      "id": "composer.working",
+      "shows": "The activity line while a command runs, naming the running call and its time."
+    },
+    {
+      "id": "composer.thinking",
+      "shows": "The activity line while the model thinks, with a draft waiting."
+    },
+    {
+      "id": "composer.retrying",
+      "shows": "The activity line while the provider retries, with the attempt count."
+    },
+    {
+      "id": "composer.queued",
+      "shows": "Prompts queued behind the running turn: one that can be withdrawn or sent now, one steering, one from another agent."
+    },
+    {
+      "id": "composer.not-confirmed",
+      "shows": "A prompt sent but not confirmed by the agent, with resend and discard."
+    },
+    {
+      "id": "composer.rejected",
+      "shows": "A prompt the agent refused, with the reason."
+    },
+    {
+      "id": "composer.sending",
+      "shows": "A prompt on its way to the agent."
+    },
+    {
+      "id": "composer.resume",
+      "shows": "The exited agent's composer, whose one tap resumes it with the draft."
+    },
+    {
+      "id": "composer.detached",
+      "shows": "The composer while the chat is out of reach, keeping its draft and not sending."
+    },
+    {
+      "id": "composer.catching-up",
+      "shows": "The composer while the chat catches up, not yet sending."
+    },
+    {
+      "id": "composer.strip",
+      "shows": "The session strip with every fact at once: tasks, context, model, effort, mode and background work."
+    },
+    {
+      "id": "composer.strip-claude-pty",
+      "shows": "The session strip with the facts terminal Claude reports."
+    },
+    {
+      "id": "composer.strip-claude-sdk",
+      "shows": "The session strip with the facts Claude through the SDK reports."
+    },
+    {
+      "id": "composer.strip-codex",
+      "shows": "The session strip with the facts Codex reports."
+    },
+    {
+      "id": "composer.dictation-denied",
+      "shows": "The composer when speech recognition was denied, offering Settings."
+    },
+    {
+      "id": "composer.dictation-listening",
+      "shows": "The composer while dictation listens, the heard words in the draft."
+    },
+    {
+      "id": "composer.review-token",
+      "shows": "The composer carrying a written review as a token."
+    },
+    {
+      "id": "composer.strip-trouble",
+      "shows": "The session strip naming a nearly spent usage window and a tool server that exited."
+    },
+    {
+      "id": "composer.sign-in",
+      "shows": "The session strip saying the provider's sign-in expired on the host."
+    },
+    {
+      "id": "composer.settings-claude-sdk",
+      "shows": "The settings card for Claude through the SDK: model, effort and mode to choose."
+    },
+    {
+      "id": "composer.settings-codex",
+      "shows": "The settings card for Codex."
+    },
+    {
+      "id": "composer.settings-claude-pty",
+      "shows": "The settings card for terminal Claude, which changes model and effort by typing a slash command."
+    },
+    {
+      "id": "composer.chip-stops-asking",
+      "shows": "The settings chip when the agent will no longer ask before acting."
+    },
+    {
+      "id": "composer.slash",
+      "shows": "The slash commands the session offers, filtered by what is typed."
+    },
+    {
+      "id": "composer.pasted-text",
+      "shows": "A long paste folded into a chip."
+    },
+    {
+      "id": "composer.usage-blocked",
+      "shows": "The session strip when usage is spent, with when it resets."
+    },
+    {
+      "id": "chat.conversation",
+      "shows": "A whole chat: rows, composer and strip."
+    },
+    {
+      "id": "chat.asking",
+      "shows": "A whole chat with a permission ask open over the composer."
+    },
+    {
+      "id": "chat.detached",
+      "shows": "A whole chat out of reach, its tail from the phone's own store."
+    },
+    {
+      "id": "chat.loading",
+      "shows": "A chat opening with nothing held yet."
+    },
+    {
+      "id": "chat.away",
+      "shows": "A chat whose host is away, with nothing held."
+    },
+    {
+      "id": "chat.new-activity",
+      "shows": "A chat read above its newest row, offering to jump to new activity."
+    },
+    {
+      "id": "chat.paging-unreachable",
+      "shows": "A chat whose older history cannot be fetched because its host is out of reach."
+    },
+    {
+      "id": "chat.family",
+      "shows": "A chat inside a family of agents, with the family header."
+    },
+    {
+      "id": "chat.changes",
+      "shows": "A chat offering its working-tree changes for review."
+    },
+    {
+      "id": "chat.rename",
+      "shows": "Renaming the agent from its chat."
+    },
+    {
+      "id": "chat.delete",
+      "shows": "Deleting the agent from its chat."
+    },
+    {
+      "id": "chat.settings",
+      "shows": "A chat with the settings card open."
+    },
+    {
+      "id": "review.page",
+      "shows": "The review page with a comment written on a diff."
+    },
+    {
+      "id": "review.selection",
+      "shows": "Lines selected on the review page."
+    },
+    {
+      "id": "review.comment",
+      "shows": "Writing a comment on selected lines."
+    },
+    {
+      "id": "review.folded",
+      "shows": "The review page with its files folded."
+    },
+    {
+      "id": "review.files",
+      "shows": "The list of files a review covers."
+    }
+  ],
   "screens": [
     {
-      "id": "probe",
-      "stage": 4,
-      "screen": "probe",
-      "fixture": "probe",
-      "origin": "added_state",
-      "reason": "the harness's own target: a screen made of the design's tokens, so a capture, a diff and a token change can be proven before any real screen exists",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "home",
-      "stage": 5,
-      "screen": "home",
-      "fixture": "home",
-      "origin": "reference",
-      "capture": "home",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "home-quiet",
-      "stage": 5,
-      "screen": "home-quiet",
-      "fixture": "home-quiet",
-      "origin": "reference",
-      "capture": "home-quiet",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "review-cta",
-      "stage": 6,
-      "screen": "review-cta",
-      "fixture": "review-cta",
-      "origin": "reference",
-      "capture": "review-cta",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "finished",
-      "stage": 7,
-      "screen": "review-cta",
-      "fixture": "finished",
-      "origin": "added_state",
-      "reason": "a finished turn nobody has read, with its review chip and the ordinary composer still available",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "run",
-      "stage": 6,
-      "screen": "run",
-      "fixture": "run",
-      "origin": "reference",
-      "capture": "run",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "run-live",
-      "stage": 6,
-      "screen": "run-live",
-      "fixture": "run-live",
-      "origin": "reference",
-      "capture": "run-live",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "stale",
-      "stage": 6,
-      "screen": "run",
-      "fixture": "host-lost",
-      "origin": "added_state",
-      "reason": "a conversation whose host has gone away, which the design does not picture",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "voices",
-      "stage": 6,
-      "screen": "voices",
-      "fixture": "voices",
-      "origin": "reference",
-      "capture": "voices",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "ask-permission",
-      "stage": 7,
-      "screen": "ask-permission",
-      "fixture": "ask-permission",
-      "origin": "reference",
-      "capture": "ask-permission",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "ask-question",
-      "stage": 7,
-      "screen": "ask-question",
-      "fixture": "ask-question",
-      "origin": "reference",
-      "capture": "ask-question",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "codex-approval",
-      "component_snapshots": ["ask.codex-command"],
-      "stage": 7,
-      "screen": "ask-permission",
-      "fixture": "ask-permission-codex",
-      "origin": "added_state",
-      "reason": "the same ask in Codex's vocabulary rather than Claude's",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "comment",
-      "stage": 7,
-      "screen": "comment",
-      "fixture": "comment",
-      "origin": "reference",
-      "capture": "comment",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "diff",
-      "stage": 7,
-      "screen": "diff",
-      "fixture": "diff",
-      "origin": "reference",
-      "capture": "diff",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "plan",
-      "stage": 7,
-      "screen": "plan",
-      "fixture": "plan",
-      "origin": "reference",
-      "capture": "plan",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "rename",
-      "stage": 8,
-      "screen": "overflow",
-      "fixture": "rename",
-      "origin": "added_state",
-      "reason": "the design names the row that renames an agent but not the card it opens; a name is typed into it, so it is owed a capture of its own",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "agent-delete",
-      "stage": 8,
-      "screen": "agent-delete",
-      "fixture": "agent-delete",
-      "origin": "reference",
-      "capture": "agent-delete",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "overflow",
-      "stage": 8,
-      "screen": "overflow",
-      "fixture": "overflow",
-      "origin": "reference",
-      "capture": "overflow",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "permissions-claude",
-      "stage": 8,
-      "screen": "settings",
-      "fixture": "permissions-claude",
-      "origin": "added_state",
-      "reason": "the permissions sheet in Claude's vocabulary",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "permissions-codex",
-      "stage": 8,
-      "screen": "settings",
-      "fixture": "permissions-codex",
-      "origin": "added_state",
-      "reason": "the permissions sheet in Codex's vocabulary",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "plus",
-      "stage": 8,
-      "screen": "plus",
-      "fixture": "plus",
-      "origin": "reference",
-      "capture": "plus",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "queued",
-      "stage": 8,
-      "screen": "queued",
-      "fixture": "queued",
-      "origin": "reference",
-      "capture": "queued",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "send-refused",
-      "component_snapshots": ["composer.rejected"],
-      "stage": 8,
-      "screen": "working",
-      "fixture": "send-refused",
-      "origin": "added_state",
-      "reason": "a send the gate refuses, which the design does not picture",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "settings",
-      "stage": 8,
-      "screen": "settings",
-      "fixture": "settings",
-      "origin": "reference",
-      "capture": "settings",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "slash-typing",
-      "stage": 8,
-      "screen": "slash-typing",
-      "fixture": "slash-typing",
-      "origin": "reference",
-      "capture": "slash-typing",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "strip",
-      "component_snapshots": ["composer.strip"],
-      "stage": 8,
-      "screen": "run",
-      "fixture": "strip",
-      "origin": "added_state",
-      "reason": "the facts strip under a conversation",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "tokens",
-      "stage": 8,
-      "screen": "typing",
-      "fixture": "tokens",
-      "origin": "added_state",
-      "reason": "a draft carrying attachment tokens",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "typing",
-      "stage": 8,
-      "screen": "typing",
-      "fixture": "typing",
-      "origin": "reference",
-      "capture": "typing",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "working",
-      "stage": 8,
-      "screen": "working",
-      "fixture": "working",
-      "origin": "reference",
-      "capture": "working",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "devices",
-      "stage": 9,
-      "screen": "hosts",
-      "fixture": "devices",
-      "origin": "added_state",
-      "reason": "this phone's identity and the devices paired with it",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "hosts-groups",
-      "stage": 9,
-      "screen": "hosts",
-      "fixture": "hosts-groups",
-      "origin": "added_state",
-      "reason": "the four groups the machines are read in: one on this network, one across the relay, one nowhere, and one more found here and not paired with",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "local-network-refused",
-      "stage": 9,
-      "screen": "hosts",
-      "fixture": "local-network-refused",
-      "origin": "added_state",
-      "reason": "a phone nobody let look at the network it is on, which is indistinguishable from an empty network by the list alone",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "exited",
-      "stage": 9,
-      "screen": "exited",
-      "fixture": "exited",
-      "origin": "reference",
-      "capture": "exited",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
+      "id": "pairing",
+      "shows": "The pairing confirmation after typing the six digits the desk printed: the desk's own name and key before anything is trusted."
     },
     {
       "id": "hosts",
-      "stage": 9,
-      "screen": "hosts",
-      "fixture": "hosts",
-      "origin": "reference",
-      "capture": "hosts",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
+      "shows": "The hosts tab with the paired desk, reached and trusted."
     },
     {
-      "id": "new-agent",
-      "stage": 9,
-      "screen": "new-agent",
-      "fixture": "new-agent",
-      "origin": "reference",
-      "capture": "new-agent",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
+      "id": "fleet",
+      "shows": "The fleet: an agent asking a question first, then the rest by most recent activity."
     },
     {
-      "id": "offline",
-      "stage": 9,
-      "screen": "offline",
-      "fixture": "offline",
-      "origin": "reference",
-      "capture": "offline",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
+      "id": "chat-strip",
+      "shows": "A claude_sdk chat after a turn with an exploration step, its composer and its session strip."
     },
     {
-      "id": "pair-confirm",
-      "stage": 9,
-      "screen": "pair-confirm",
-      "fixture": "pair-confirm",
-      "origin": "added_state",
-      "reason": "the confirmation an amux://pair link arrives at, which never pairs on arrival",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
+      "id": "claude-sdk-ask-question",
+      "shows": "A claude_sdk chat with its question ask open, the options stated as answers."
     },
     {
-      "id": "code-entry",
-      "stage": 9,
-      "screen": "pin",
-      "fixture": "code-entry",
-      "origin": "added_state",
-      "reason": "the six-digit code entry screen on a phone with no account, including the destination machine and its direct route",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
+      "id": "ask-escape",
+      "shows": "A terminal Claude chat whose tool server opened a dialog the phone cannot answer, with the way out of it."
     },
     {
-      "id": "pair-confirmation",
-      "stage": 9,
-      "screen": "pair-confirm",
-      "fixture": "pair-confirmation",
-      "origin": "added_state",
-      "reason": "the confirmation a scanned code lands on with no account signed in at all, which is what pairing on your own network means",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "pin",
-      "stage": 9,
-      "screen": "pin",
-      "fixture": "pin",
-      "origin": "reference",
-      "capture": "pin",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "delete",
-      "stage": 10,
-      "screen": "delete",
-      "fixture": "delete",
-      "origin": "reference",
-      "capture": "delete",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "delete-blocked",
-      "stage": 10,
-      "screen": "delete",
-      "fixture": "delete-blocked",
-      "origin": "added_state",
-      "reason": "account deletion blocked by live billing",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "first-run",
-      "stage": 10,
-      "screen": "first-run",
-      "fixture": "first-run",
-      "origin": "reference",
-      "capture": "first-run",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "found-host",
-      "stage": 10,
-      "screen": "first-run",
-      "fixture": "found-host",
-      "origin": "added_state",
-      "reason": "first launch on a network that already has a host running on it: the machine is offered before anybody has typed or signed in anything",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "first-run-paid",
-      "stage": 10,
-      "screen": "first-run-paid",
-      "fixture": "first-run-paid",
-      "origin": "reference",
-      "capture": "first-run-paid",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "paywall",
-      "stage": 10,
-      "screen": "paywall",
-      "fixture": "paywall",
-      "origin": "reference",
-      "capture": "paywall",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "paywall-unconfirmed",
-      "stage": 10,
-      "screen": "paywall",
-      "fixture": "paywall-unconfirmed",
-      "origin": "added_state",
-      "reason": "a purchase the App Store took and amux.sh has not confirmed: the design has no capture of it, and it is the one paywall state that keeps a purchase without granting a subscription",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "profiles",
-      "stage": 10,
-      "screen": "profiles",
-      "fixture": "profiles",
-      "origin": "reference",
-      "capture": "profiles",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "sign-in",
-      "stage": 10,
-      "screen": "sign-in",
-      "fixture": "sign-in",
-      "origin": "reference",
-      "capture": "sign-in",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "sign-in-failed",
-      "stage": 10,
-      "screen": "sign-in",
-      "fixture": "sign-in-failed",
-      "origin": "added_state",
-      "reason": "a sign-in the cloud refuses",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "sign-in-mismatch",
-      "stage": 10,
-      "screen": "sign-in",
-      "fixture": "sign-in-mismatch",
-      "origin": "added_state",
-      "reason": "signing back into one account and the browser answering as another, which adds nobody until the person chooses",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "you",
-      "stage": 10,
-      "screen": "you",
-      "fixture": "you",
-      "origin": "reference",
-      "capture": "you",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "you-granted",
-      "stage": 10,
-      "screen": "you",
-      "fixture": "you-granted",
-      "origin": "added_state",
-      "reason": "an account whose access was given rather than bought reads differently on this page, and the design catalogue only pictured a bought subscription",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "remove-account",
-      "stage": 10,
-      "screen": "you",
-      "fixture": "remove-account",
-      "origin": "added_state",
-      "reason": "taking an account off the phone, which says the amux.sh account stays before what the phone lets go of",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "dump",
-      "stage": 11,
-      "screen": "dump",
-      "fixture": "dump",
-      "origin": "reference",
-      "capture": "dump",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "shake",
-      "stage": 11,
-      "screen": "shake",
-      "fixture": "shake",
-      "origin": "reference",
-      "capture": "shake",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "upload-failed",
-      "stage": 11,
-      "screen": "dump",
-      "fixture": "upload-failed",
-      "origin": "added_state",
-      "reason": "a report the cloud would not take",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "report-signed-out",
-      "stage": 11,
-      "screen": "dump",
-      "fixture": "report-signed-out",
-      "origin": "added_state",
-      "reason": "a report written on a phone nobody is signed in on, which has no account to send it to and says so before Send",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "ax-conversation",
-      "stage": 12,
-      "screen": "run",
-      "fixture": "run-accessibility",
-      "origin": "added_state",
-      "reason": "a conversation at an accessibility text size",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "ax-composer",
-      "stage": 12,
-      "screen": "typing",
-      "fixture": "composer-accessibility",
-      "origin": "added_state",
-      "reason": "the composer with a message half-written in it, at an accessibility text size",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "reduced-glass",
-      "stage": 12,
-      "screen": "run",
-      "fixture": "run-reduced",
-      "origin": "added_state",
-      "reason": "the conversation for a reader who has asked for less transparency and less motion",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "ax-home",
-      "stage": 12,
-      "screen": "home",
-      "fixture": "home-accessibility",
-      "origin": "added_state",
-      "reason": "the home screen at an accessibility text size",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "unreadable-agent",
-      "stage": 12,
-      "screen": "home",
-      "fixture": "home-unreadable",
-      "origin": "added_state",
-      "reason": "an agent run by a provider this build has no case for: listed under the host's name for it, said to be unreadable and the one row on the home that cannot be opened",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "home-offline",
-      "stage": 12,
-      "screen": "home",
-      "fixture": "home-offline",
-      "origin": "added_state",
-      "reason": "the two row states an ordinary fleet keeps below the fold: an agent whose machine is not answering, which names the machine instead of drawing a mark, and one whose working inference has expired, which is the only row in the app that draws neither a mark nor a state word",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "small-home",
-      "stage": 12,
-      "screen": "home",
-      "fixture": "home",
-      "origin": "added_state",
-      "reason": "the home screen on the narrowest supported display",
-      "simulator": "small",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "small-conversation",
-      "stage": 12,
-      "screen": "run",
-      "fixture": "run",
-      "origin": "added_state",
-      "reason": "a conversation on the narrowest supported display",
-      "simulator": "small",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "dictation-listening",
-      "stage": 8,
-      "screen": "typing",
-      "fixture": "dictation-listening",
-      "origin": "added_state",
-      "reason": "composer speech recognition listening state",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "dictation-permission",
-      "stage": 8,
-      "screen": "typing",
-      "fixture": "dictation-permission",
-      "origin": "added_state",
-      "reason": "composer speech recognition permission state",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "dictation-denied",
-      "component_snapshots": ["composer.dictation-denied"],
-      "stage": 8,
-      "screen": "typing",
-      "fixture": "dictation-denied",
-      "origin": "added_state",
-      "reason": "composer speech recognition denied state",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "dictation-unavailable",
-      "stage": 8,
-      "screen": "typing",
-      "fixture": "dictation-unavailable",
-      "origin": "added_state",
-      "reason": "composer speech recognition unavailable state",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "host-away",
-      "stage": 10,
-      "screen": "home",
-      "fixture": "host-away",
-      "origin": "added_state",
-      "reason": "an account with nothing bought whose machines the relay can see: the agents stay listed from the cache and every row says it is not live, with the one thing that would change that named above them",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "home-signed-out-offline",
-      "stage": 10,
-      "screen": "home",
-      "fixture": "home-signed-out-offline",
-      "origin": "added_state",
-      "reason": "a phone nobody is signed into that has lost sight of one of its machines: the agents stay, the machine is named, and an account is offered as what would find it from elsewhere",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "home-all-reachable",
-      "stage": 10,
-      "screen": "home",
-      "fixture": "home-all-reachable",
-      "origin": "added_state",
-      "reason": "every machine reachable and nothing offered, which is what makes the other two conditional rather than decorative",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "home-no-agents",
-      "stage": 10,
-      "screen": "home",
-      "fixture": "home-no-agents",
-      "origin": "added_state",
-      "reason": "a phone paired with machines that are running nothing yet: the home says there are no agents, counts the hosts and offers New Agent rather than pairing again",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "chat-subscribe",
-      "stage": 10,
-      "screen": "run",
-      "fixture": "chat-subscribe",
-      "origin": "added_state",
-      "reason": "a conversation on a machine the relay can see and will not carry to: the transcript is the cache and the composer's place holds the one thing that would make it live",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "host-offline",
-      "stage": 10,
-      "screen": "offline",
-      "fixture": "host-offline",
-      "origin": "added_state",
-      "reason": "the same unsubscribed account on a machine that is switched off, which is never sold anything: no subscription reaches a machine that is not there",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "host-not-signed-in",
-      "stage": 10,
-      "screen": "hosts",
-      "fixture": "host-not-signed-in",
-      "origin": "added_state",
-      "reason": "a machine nothing can reach that has never had an account, which no subscription would reach either",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "store-failure",
-      "stage": 11,
-      "screen": "store-failure",
-      "fixture": "store-failure",
-      "origin": "added_state",
-      "reason": "an unusable SQLite store stops the runtime and replaces every cached or live screen with its cause, remedy and one relaunch action",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "cached-fleet-unreachable",
-      "stage": 13,
-      "screen": "home",
-      "fixture": "cached-fleet-unreachable",
-      "origin": "added_state",
-      "reason": "a launch drawn from the account's store while a machine is not answering: every remembered agent is listed and waits for its machine",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "cached-fleet-removal",
-      "stage": 13,
-      "screen": "home",
-      "fixture": "cached-fleet-removal",
-      "origin": "added_state",
-      "reason": "a launch drawn from the account's store after a machine said two of its agents were gone: the store no longer remembers them",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "cached-chat",
-      "stage": 13,
-      "screen": "run",
-      "fixture": "cached-chat",
-      "origin": "added_state",
-      "reason": "a conversation opened before anything has connected, painted from the window its store kept",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "cached-chat-gap",
-      "stage": 13,
-      "screen": "run",
-      "fixture": "cached-chat-gap",
-      "origin": "added_state",
-      "reason": "the same stored conversation after a reconnect that could not recover what was said in between: a rule marks the missing history between the rows before and after it",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
+      "id": "origin-rewind",
+      "shows": "A chat through its host losing power back to a checkpoint: the phone's replica is Reset and the rebuilt chat swaps in under the rows on screen.",
+      "frames": [
+        {
+          "name": "before",
+          "shows": "The chat with a turn after the checkpoint, the agent live."
+        },
+        {
+          "name": "after",
+          "shows": "The same rows after the swap, the agent exited and its composer offering Resume."
+        }
       ]
     }
   ]

@@ -1,8 +1,6 @@
 # Component snapshots also run on pull requests. This workflow adds the slower
 # full-display composition checks nightly, and the real interaction journeys,
 # accessibility sweep and performance qualification when dispatched by hand.
-# The manifest names the component coverage replacing redundant display states;
-# `just ios goldens --all` still runs the historical full-screen catalogue.
 name: iOS captures
 
 on:
@@ -19,8 +17,8 @@ jobs:
   captures:
     name: iOS captures
     runs-on: macos-26
-    # The capture suites boot both pinned devices and photograph every
-    # catalogued screen in both appearances. Leave room for the uploads.
+    # The capture suites boot both pinned devices and drive the app through
+    # served networks. Leave room for the uploads.
     timeout-minutes: 270
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +41,7 @@ jobs:
         run: just ios simulator
       - name: Compare native component snapshots
         run: just ios component-snapshots
-      - name: Compare full-screen composition goldens
+      - name: Compare whole-screen goldens
         if: github.event_name == 'schedule'
         run: just ios goldens
       - name: Run the capture suites
@@ -53,9 +51,6 @@ jobs:
         env:
           AMUX_PERF_MACHINE: macos-26
         run: just ios captures
-      - name: Pair preserved design references
-        if: always()
-        run: just ios goldens-reference
       - name: Upload performance results and limits
         if: always()
         uses: actions/upload-artifact@v4
@@ -66,7 +61,7 @@ jobs:
             perf/baselines/phone
           if-no-files-found: warn
           retention-days: 7
-      - name: Upload golden triplets, reference pairs and journeys
+      - name: Upload golden triplets and journeys
         if: always()
         uses: actions/upload-artifact@v4
         with:

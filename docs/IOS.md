@@ -282,8 +282,8 @@ Use the cheapest test that can observe the regression:
 - Component snapshots check the actual native view with a supplied state,
   including its text, sizing and light/dark appearance. They run in one hosted
   test process without navigating or photographing the simulator display.
-- Full-screen goldens check composition, safe areas, large text, narrow phones
-  and render-server materials in representative assembled screens.
+- Full-screen goldens check composition, safe areas and render-server
+  materials in a few whole screens reached through the served door.
 - Journeys check actions and wiring: real taps and typing, routing, persistence,
   and communication with the test network. Injecting a final state is not a
   replacement for proving the actions that produce it.
@@ -323,71 +323,54 @@ and journeys; matching component pixels are not evidence of interaction behavior
 
 ```sh
 just ios goldens
-just ios goldens --all
-just ios goldens dump upload-failed
-just ios goldens-reference
+just ios goldens -- --only origin-rewind
+just ios goldens -- --update
 just ios goldens-perturb
 ```
 
-The manifest preserves the reference screens and added states in light and
-dark. A state with `component_snapshots` names the native examples that now
-cover its visual variation and is omitted from the routine display suite.
-The component tests validate every such reference. `--all` runs the historical
-full catalogue; an explicit screen ID also remains available even after that
-state moves to component coverage. Only migrate a state after inspecting its
-replacement; a matching ID alone does not prove equivalent coverage.
+`apps/apple/Goldens/manifest.json` has two parts, each picture with a sentence
+saying what it shows. `components` is every example the component catalogue
+pins; the snapshot suite checks the two name the same pictures. `screens` is
+the handful of whole screens the phone is held to: pairing, hosts, the fleet,
+a chat with its strip, a question ask, the escape from an ask the phone cannot
+answer, and a chat through its host's power loss before and after the swap.
 
-The door waits for the app's view tree, then the Mac
-captures the simulator's composited display through `simctl io screenshot`,
-checking successive frames for stability. This includes the render server's
-glass and the pinned system status bar. The in-app report capture instead uses
-`drawHierarchy(in:afterScreenUpdates:)` to freeze its own window.
+`scripts/ios-goldens.py` reaches every screen the way a person does, on the
+phone journey driver: it serves `journeys/topologies/phone-goldens.json`,
+installs the debug app fresh, pairs the desk by the code it printed, and taps
+through to each screen while the served net makes the desk's agents act (the
+power loss is the net's Checkpoint and Rewind). Each screen is compared in
+light and dark: the display's pixels with `xtask golden diff` under the
+pinned simulator's system-chrome masks and the masks of volatile surfaces,
+and the door's element geometry, which both appearances share, as
+`<screen>.elements.txt`. Tab pages covered by a pushed page are left out of
+the geometry. `--only` photographs the named screens but still walks the whole
+way, so each is reached in the same state. `--update` rewrites only the
+goldens that differ; inspect both appearances before committing them.
+
+The perturbation recipe reaches the fleet with the accent colour token moved
+and fails unless both appearances come back different with a difference
+image: what proves the comparison would notice a moved token.
 
 A photograph of the display holds the system's chrome as well as the app, so
-the manifest declares each pinned simulator and the chrome it draws over every
-app, and the comparison counts no pixel under it. That is the status bar's
-clock and indicators on both phones and the home indicator on the Face ID
-phone. The status bar is pinned to 9:41 with full bars and a charged battery,
-but SpringBoard draws it in the style the app's scene asks for, and on a
-loaded runner it applies a change of style late enough that a capture taken
-after the screen itself settled still shows the previous appearance's colour.
-The home indicator is drawn when an app launches and withdrawn once
-backboardd's attention timer decides nobody is touching the screen, and that
-timer is not reliable everywhere: on a GitHub runner with both pinned devices
-booted its event reaches a stale client and the bar never leaves. The
-difference image washes every excluded rectangle blue so a reviewer can see
-what was not compared. What the comparison therefore no longer notices is a
-wrong status-bar text colour; everything the app draws, including what sits
-under the status bar, is still compared.
+the manifest declares the pinned simulator and the chrome it draws over every
+app, and the comparison counts no pixel under it: the status bar's clock and
+indicators, and the home indicator. The status bar is pinned to 9:41 with
+full bars and a charged battery, but SpringBoard draws it in the style the
+app's scene asks for, and on a loaded runner it applies a change of style late
+enough that a capture taken after the screen itself settled still shows the
+previous appearance's colour. The home indicator is drawn when an app launches
+and withdrawn once backboardd's attention timer decides nobody is touching the
+screen, and on a GitHub runner with both pinned devices booted its event
+reaches a stale client and the bar never leaves. The difference image washes
+every excluded rectangle blue so a reviewer can see what was not compared.
 
-The simulator recipe pins the rest of what a photograph could vary on: the
-region and 12-hour clock, the light appearance, the status bar, and two things
-a developer's own use of the simulator can leave behind. Every app on the
-device is terminated before the capture app launches, because an app launched
-over another carries that app's name in the status bar as a way back to it.
-And Simulator.app's hardware keyboard is pinned off for both devices, so a
-field that takes focus raises the software keyboard on a Mac exactly as it does
-on a headless runner; Simulator.app reads that when it next opens the device.
-Expected, actual and difference PNGs land in `target/ios/goldens/`; `timings.json`
-separates display capture from PNG comparison for each device. Passing captures
-do not construct a difference image. The reference
-recipe pairs all 66 preserved design images in `apps/apple/Goldens/References/` with
-the app baselines under `target/ios/goldens/reference/`. Reference comparisons support
-visual review; baseline comparisons detect regressions only after a baseline
-has been visually approved. During the direct design port, existing native
-expected images are historical outputs, not visual authority. Compare the
-ported components with the selected design source and references, obtain
-visual approval, and only then establish the replacement goldens. No command
-automatically grants that approval.
-
-Inspect a mismatch before updating anything. A deliberate visual change uses
-`just ios goldens --update SCREEN`, limited to the changed
-screens, followed by an ordinary comparison. Inspect both appearances and
-record the reason in [the baseline notes](../apps/apple/Goldens/BASELINE.md), including
-any departure from the preserved design. Never refresh baselines to conceal
-nondeterminism. The perturbation recipe deliberately changes a visible token
-and must detect a difference. Pixel equality alone does not establish usable
-VoiceOver navigation, gestures, transitions or network behavior.
+Expected, actual and difference PNGs land in `target/ios/goldens/`. A live
+screen's glass resolves a few levels apart from one presentation to the next,
+so the comparison allows what the journeys allow; the geometry compares every
+word and frame exactly. Never refresh baselines to conceal nondeterminism.
+Pixel equality alone does not establish usable VoiceOver navigation, gestures,
+transitions or network behavior.
 
 ## Copy and catalogues
 
@@ -396,7 +379,7 @@ catalogue review process. `just ios lint` checks every Swift app/package
 literal against the English catalogue or an exact, documented non-copy
 exemption. It includes helper/model copy and report views. The debug
 catalogue holds copy only the driving tools use and is excluded from Release. A copy change includes its affected
-light/dark goldens and baseline explanation.
+light/dark goldens.
 
 ## The app icon
 

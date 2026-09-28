@@ -762,21 +762,6 @@
       {"literal": "\"needs-you\"", "context": "case .needsYou: \"needs-you\"", "reason": "State name a driver reads, not interface copy.", "count": 1},
       {"literal": "\"exited\"", "context": "case .exited: \"exited\"", "reason": "State name a driver reads, not interface copy.", "count": 1}
     ],
-    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Screen.swift": [
-      {"literal": "\"home-quiet\"", "context": "case homeQuiet = \"home-quiet\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"run-live\"", "context": "case runLive = \"run-live\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"review-cta\"", "context": "case reviewCta = \"review-cta\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"ask-permission\"", "context": "case askPermission = \"ask-permission\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"ask-question\"", "context": "case askQuestion = \"ask-question\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"slash-typing\"", "context": "case slashTyping = \"slash-typing\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"agent-delete\"", "context": "case agentDelete = \"agent-delete\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"pair-confirm\"", "context": "case pairConfirm = \"pair-confirm\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"new-agent\"", "context": "case newAgent = \"new-agent\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"first-run\"", "context": "case firstRun = \"first-run\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"sign-in\"", "context": "case signIn = \"sign-in\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"first-run-paid\"", "context": "case firstRunPaid = \"first-run-paid\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"store-failure\"", "context": "case storeFailure = \"store-failure\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
-    ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift": [
       {"literal": "\"sign-in\"", "context": ".identified(\"sign-in\", value: state)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"failed\"", "context": "case .failed: \"failed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},

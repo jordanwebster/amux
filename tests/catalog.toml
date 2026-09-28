@@ -761,29 +761,29 @@ journeys = ["reach-host", "conversation-decision-claude-pty", "conversation-deci
 
 [[suite]]
 name = "phone-goldens"
-contract = "Every catalogued phone fixture screen matches its reviewed image baseline in each declared appearance."
-paths = ["apps/apple/Goldens", "scripts/ios-goldens.py"]
+contract = "Every whole phone screen the golden manifest names, reached through the served door, matches its reviewed image and element geometry in light and dark."
+paths = ["apps/apple/Goldens", "scripts/ios-goldens.py", "journeys/topologies/phone-goldens.json"]
 recipe = "just ios goldens"
 boundary = "Native presentation"
-oracle = "Pixel comparison with declared tolerance and system-chrome masks."
-real = ["built phone app", "iOS simulator", "platform rendering"]
-substituted = ["model state", "network", "providers"]
+oracle = "Pixel comparison with declared tolerance, system-chrome and volatile-surface masks, and exact element geometry."
+real = ["built phone app", "iOS simulator", "platform rendering", "served daemons", "direct links"]
+substituted = ["providers"]
 time = "real"
-capabilities = ["macOS", "Xcode 26.6", "golden and small iOS simulators"]
+capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
 lane = "journey"
 evidence = "target/ios/goldens"
-update = "Use the explicit phone golden update mode and review every image diff."
+update = "just ios goldens -- --update, then review every rewritten image in both appearances."
 golden_manifests = ["apps/apple/Goldens/manifest.json"]
 
 [[suite]]
 name = "phone-golden-sensitivity"
-contract = "The phone golden comparator rejects a deliberate one-token visual perturbation."
+contract = "The phone golden comparison rejects a whole screen drawn with one design token moved."
 paths = ["scripts/ios-goldens-perturb.py"]
 recipe = "just ios goldens-perturb"
 boundary = "Native presentation"
 oracle = "An intentional pixel change must produce a failing comparison and difference image."
-real = ["built phone app", "iOS simulator", "golden comparator"]
-substituted = ["model state", "network"]
+real = ["built phone app", "iOS simulator", "golden comparator", "served daemons"]
+substituted = ["providers"]
 time = "real"
 capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
 lane = "journey"

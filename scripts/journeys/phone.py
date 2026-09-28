@@ -10,7 +10,8 @@ net's Chat, Inventory and ProviderInput verbs) and by compared screens: the
 simulator's display PNG against journeys/goldens/phone/<story>/<label>.png
 with `xtask golden diff` under the pinned simulator's system-chrome masks,
 and the door's element geometry against <label>.elements.txt. Stories supply
-the acts and the assertions; UPDATE_JOURNEY_GOLDENS=1 rewrites the goldens.
+the acts and the assertions; UPDATE_JOURNEY_GOLDENS=1 rewrites the goldens
+that differ.
 """
 
 from __future__ import annotations
@@ -110,6 +111,23 @@ def is_volatile(identifier: str, named: tuple[str, ...] = ()) -> bool:
 TAB_ROOTS = {"agents": "home.", "hosts": "hosts.", "you": "you."}
 
 
+# Pages pushed over a tab, which hide the tab's root beneath them.
+PAGES = ("chat", "pin", "pair-confirm")
+
+
+def uncovered(elements: list[dict]) -> list[dict]:
+    """What is drawn, without the tab roots a pushed page covers: they are
+    still laid out underneath, where nobody can see them, and keep changing
+    (a fleet re-sorting behind a chat)."""
+    if not any(element["identifier"] in PAGES for element in elements):
+        return elements
+    roots = tuple(TAB_ROOTS.values())
+    return [
+        element for element in elements
+        if not (element["identifier"].startswith(roots) or element["identifier"] + "." in roots)
+    ]
+
+
 def on_screen(identifier: str, screen: str | None) -> bool:
     root = next((root for root in TAB_ROOTS.values() if identifier.startswith(root)), None)
     return root is None or screen is None or TAB_ROOTS.get(screen) == root
@@ -184,11 +202,19 @@ def simctl(*arguments: str, timeout: float = 120) -> str:
 
 
 class PhoneJourney:
-    def __init__(self, story: dict, topology: Path, udid: str):
+    def __init__(
+        self, story: dict, topology: Path, udid: str, output: Path | None = None, goldens: Path | None = None
+    ):
         self.story = story
         self.name = story["id"]
         self.udid = udid
-        self.output = OUTPUT / self.name
+        self.output = output or OUTPUT / self.name
+        # Where this run's screens are compared, and whether a screen that
+        # no longer matches is rewritten there instead.
+        self.goldens = goldens or GOLDENS / self.name
+        self.update = os.environ.get("UPDATE_JOURNEY_GOLDENS") == "1"
+        # Whether a screen leaves out the tab roots a pushed page covers.
+        self.covered_hidden = False
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
@@ -416,36 +442,54 @@ class PhoneJourney:
 
     # --- screens ----------------------------------------------------------
 
-    def screen(self, label: str, volatile: tuple[str, ...] = ()) -> None:
+    def screen(self, label: str, volatile: tuple[str, ...] = (), geometry: str | None = None) -> None:
         """What the phone shows now, compared with its reviewed golden: the
         display's pixels and the door's element geometry, with `volatile`
         elements masked."""
+        differs = self.compare(label, volatile, geometry)
+        if differs:
+            raise RuntimeError(differs)
+
+    def compare(self, label: str, volatile: tuple[str, ...] = (), geometry_label: str | None = None) -> str | None:
+        """What differs between the phone now and the golden `label`, or
+        None when nothing does. The element geometry is read from
+        `geometry_label` when several pictures share one layout (the same
+        screen in light and dark). With updating on, a golden that differs
+        is rewritten and nothing is reported; one that matches is left
+        alone, so a masked region never churns."""
         self.app({"kind": "settle"})
         state = self.query()
-        elements = state["elements"]
+        elements = uncovered(state["elements"]) if self.covered_hidden else state["elements"]
         actual = self.output / "actual"
-        actual.mkdir(exist_ok=True)
+        actual.mkdir(parents=True, exist_ok=True)
         png = actual / f"{label}.png"
         self._steady_display(png)
         volatile = volatile + OWN_IDENTITY
         ids = {host["host_id"]: host["name"] for host in self.ready["hosts"]}
         ids |= {agent["id"]: agent["name"] for agent in self.ready["agents"]}
         drawn = geometry(elements, volatile, ids)
-        (actual / f"{label}.elements.txt").write_text(drawn)
+        geometry_label = geometry_label or label
+        (actual / f"{geometry_label}.elements.txt").write_text(drawn)
         masks = volatile_masks(elements, volatile, screen=state.get("screen"))
         self.actions.append(f"captured {label}")
-        golden_dir = GOLDENS / self.name
-        update = os.environ.get("UPDATE_JOURNEY_GOLDENS") == "1"
-        if update and os.environ.get("CI"):
-            raise RuntimeError("UPDATE_JOURNEY_GOLDENS is refused in CI")
-        if update:
-            golden_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(png, golden_dir / f"{label}.png")
-            (golden_dir / f"{label}.elements.txt").write_text(drawn)
-            return
-        expected = golden_dir / f"{label}.elements.txt"
-        if not expected.exists() or not (golden_dir / f"{label}.png").exists():
-            raise RuntimeError(f"missing journey golden {golden_dir / label}; review with UPDATE_JOURNEY_GOLDENS=1")
+        if self.update and os.environ.get("CI"):
+            raise RuntimeError("rewriting goldens is refused in CI")
+        golden_png = self.goldens / f"{label}.png"
+        expected = self.goldens / f"{geometry_label}.elements.txt"
+        differs = self._differs(png, golden_png, expected, drawn, masks, label)
+        if differs and self.update:
+            self.goldens.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(png, golden_png)
+            expected.write_text(drawn)
+            self.actions.append(f"rewrote {label}: {differs.splitlines()[0]}")
+            return None
+        return differs
+
+    def _differs(
+        self, png: Path, golden_png: Path, expected: Path, drawn: str, masks: list[str], label: str
+    ) -> str | None:
+        if not expected.exists() or not golden_png.exists():
+            return f"missing golden {golden_png}; review a rewritten one"
         approved = expected.read_text()
         if approved != drawn:
             diff = "\n".join(
@@ -453,11 +497,11 @@ class PhoneJourney:
                     approved.splitlines(), drawn.splitlines(), str(expected), f"actual/{expected.name}", lineterm=""
                 )
             )
-            raise RuntimeError(f"journey geometry differs: {expected}\n{diff}")
+            return f"geometry differs: {expected}\n{diff}"
         compared = subprocess.run(
             [
                 "cargo", "run", "-q", "-p", "xtask", "--", "golden", "diff",
-                "--expected", str(golden_dir / f"{label}.png"),
+                "--expected", str(golden_png),
                 "--actual", str(png),
                 "--out", str(self.output / "diff" / label),
                 "--simulator", SIMULATOR,
@@ -468,10 +512,11 @@ class PhoneJourney:
             cwd=ROOT, text=True, capture_output=True, timeout=600,
         )
         if compared.returncode != 0:
-            raise RuntimeError(
-                f"journey screen {label} differs: {compared.stdout}{compared.stderr}"
+            return (
+                f"screen {label} differs: {compared.stdout}{compared.stderr}"
                 f"; expected, actual and diff are under {self.output / 'diff' / label}"
             )
+        return None
 
     def _steady_display(self, png: Path) -> None:
         """The display once two photographs a moment apart agree: a

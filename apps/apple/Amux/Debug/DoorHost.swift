@@ -27,8 +27,9 @@ final class DoorHost {
         }
     }
 
-    private(set) var appearance: Appearance = .light
-    private(set) var appearances = 0
+    /// The appearance the driver asked for, worn over whatever the app or
+    /// the phone would choose; nothing until it asks.
+    private(set) var appearance: Appearance?
     private(set) var design: Design = .app
     private(set) var designVariant: DesignVariant = .production
     private(set) var typeSize: DynamicTypeSize = .large
@@ -54,6 +55,11 @@ final class DoorHost {
     }
 
     private var stores: StoreBundle? { composition?.stores }
+
+    /// What the app wears: the driver's appearance once it has asked for
+    /// one, else the app's own choice. One preference for both, because the
+    /// driven root's outranks the app's beneath it.
+    var worn: Appearance? { appearance ?? composition?.appearance }
 
     // MARK: - The report's recording
 
@@ -491,12 +497,12 @@ final class DoorHost {
     /// Replaced rather than moved: a material already on screen cross-fades
     /// over a length of time nobody publishes.
     private func wear(_ appearance: Appearance) async {
-        DoorWindow.current?.overrideUserInterfaceStyle = appearance == .dark ? .dark : .light
+        // Worn as a SwiftUI preference above the app's own, not as the
+        // window's interface style: SwiftUI re-applies its preferred scheme to
+        // the window when a page is pushed, which undid a window override
+        // now and then, and the next photograph came out in the other one.
         self.appearance = appearance
-        await DoorFrames.next()
-        var immediately = Transaction()
-        immediately.disablesAnimations = true
-        withTransaction(immediately) { appearances += 1 }
+        for _ in 0..<2 { await DoorFrames.next() }
     }
 
     private func settle() async {
@@ -718,9 +724,9 @@ struct DrivenRoot<Content: View>: View {
 
     var body: some View {
         content
+            .preferredColorScheme(host.worn?.colorScheme)
             .environment(\.design, host.design)
             .modifier(DesignVariantLayout(variant: host.designVariant))
-            .id(host.appearances)
             .dynamicTypeSize(host.typeSize)
             .transformEnvironment(\.reducesMotion) { $0 = $0 || host.reduceMotion }
             .transformEnvironment(\.reducesTransparency) { $0 = $0 || host.reduceTransparency }

@@ -86,8 +86,8 @@ whether externally supplied text is being preserved accurately. Review
 catalogue entries as complete rendered phrases where views combine them.
 
 After a visible change, inspect both appearances and any affected small or
-accessibility layouts, update only the relevant goldens, explain departures
-in `apps/apple/Goldens/BASELINE.md`, and run an ordinary comparison. Report descriptions
+accessibility layouts, update only the relevant goldens, say why in the
+commit message, and run an ordinary comparison. Report descriptions
 must match the bundle's declared parts: this app cannot read its system log
 back, so the contents caption names available session and host records and
 does not promise an app log.

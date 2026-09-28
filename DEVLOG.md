@@ -1,3 +1,30 @@
+2026-09-28 — **The phone's whole-screen goldens are reached through the served door.**
+The golden manifest now has two parts, each picture with a sentence saying
+what it shows. Its components are the 112 examples the component catalogue
+pins, and the snapshot suite fails if the two ever name different pictures.
+Its screens are seven whole screens reached the way a person reaches them:
+`scripts/ios-goldens.py` serves journeys/topologies/phone-goldens.json on the
+phone journey driver, pairs the desk by the code it printed, and taps to the
+pairing confirmation, hosts, the fleet, a chat with its strip, a claude_sdk
+question, terminal Claude's tool-server dialog with its escape, and a chat
+before and after its host loses power to a checkpoint (the served net's
+Checkpoint and Rewind). Each is compared in light and dark by pixels under
+the chrome and volatile masks and by the door's element geometry; tab pages
+hidden under a pushed page are left out of the geometry, since the fleet
+behind a chat re-sorts where nobody can see it. `--only` photographs one
+screen but walks the whole way; `--update` rewrites only goldens that differ,
+which the journeys now also do. The perturbation check reaches the fleet
+with the accent token moved.
+
+The 82 fixture-screen baselines, their notes, the Screen enum and its
+manifest test, and xtask golden's fixture-opening run, perturb and reference
+commands are gone; xtask golden is the pixel comparison and the manifest
+check. The debug door's appearance switch no longer rebuilds the whole view
+tree, which reset whatever was open (the typed pairing code), and it is worn
+as the driven root's preferred colour scheme, falling back to the app's own
+choice, rather than as the window's interface style, which SwiftUI now and
+then put back when a page was pushed, so a dark photograph came out light.
+
 2026-09-28 — **The phone's push-wake story passes.**
 A phone paired with a desk is put away; one agent comes to need the person
 and another answers. `xcrun simctl push` of the payload built from

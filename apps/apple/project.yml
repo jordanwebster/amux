@@ -278,8 +278,8 @@ targets:
     platform: iOS
     sources:
       - AmuxComponentSnapshotTests
-      # The retirement map is part of the snapshot contract: a full-screen
-      # capture may only point at component examples this bundle can render.
+      # The golden manifest describes every component this bundle renders;
+      # the suite checks the two name the same pictures.
       - path: Goldens/manifest.json
         buildPhase: resources
     dependencies:

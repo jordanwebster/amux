@@ -12,7 +12,10 @@ final class ComponentSnapshotTests: XCTestCase {
         ("dark", .dark, .dark),
     ]
 
-    func testRetiredFullScreenSnapshotsHaveComponentCoverage() throws {
+    /// The golden manifest's components are exactly this catalogue, each
+    /// with a sentence saying what it shows, so the index a reviewer reads
+    /// is never missing a picture or naming one that is gone.
+    func testTheManifestSaysWhatEveryComponentShows() throws {
         let catalogIDs = ComponentCatalog.examples.map(\.id)
         XCTAssertFalse(catalogIDs.contains(where: \.isEmpty), "Component catalog IDs must not be empty")
         XCTAssertEqual(
@@ -27,27 +30,25 @@ final class ComponentSnapshotTests: XCTestCase {
         )
         let object = try JSONSerialization.jsonObject(with: Data(contentsOf: manifest))
         let root = try XCTUnwrap(object as? [String: Any])
-        let screens = try XCTUnwrap(root["screens"] as? [[String: Any]])
-        let available = Set(catalogIDs)
-        for screen in screens {
-            guard let replacements = screen["component_snapshots"] else { continue }
-            let screenID = screen["id"] as? String ?? "<unnamed>"
-            let ids = try XCTUnwrap(
-                replacements as? [String],
-                "\(screenID).component_snapshots must be an array of component IDs"
-            )
-            XCTAssertFalse(ids.isEmpty, "\(screenID).component_snapshots must not be empty")
+        let components = try XCTUnwrap(root["components"] as? [[String: Any]])
+        var described: [String] = []
+        for component in components {
+            let id = try XCTUnwrap(component["id"] as? String, "a component without an id")
+            let shows = component["shows"] as? String ?? ""
             XCTAssertFalse(
-                ids.contains(where: \.isEmpty),
-                "\(screenID).component_snapshots contains an empty component ID"
+                shows.trimmingCharacters(in: .whitespaces).isEmpty,
+                "\(id) does not say what it shows"
             )
-            let missing = Set(ids).subtracting(available)
-            XCTAssertTrue(
-                missing.isEmpty,
-                "\(screenID).component_snapshots names absent catalog IDs: "
-                    + missing.sorted().joined(separator: ", ")
-            )
+            described.append(id)
         }
+        XCTAssertEqual(
+            Set(described).subtracting(catalogIDs).sorted(), [],
+            "The manifest describes components the catalogue no longer draws"
+        )
+        XCTAssertEqual(
+            Set(catalogIDs).subtracting(described).sorted(), [],
+            "The catalogue draws components the manifest does not describe"
+        )
     }
 
     func testComponents() async throws {

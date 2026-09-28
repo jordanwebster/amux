@@ -13,12 +13,9 @@ for the nightly display suite. The examples are also available in Xcode's
 component gallery. These in-process pictures check native layout and styling;
 they do not replace full-screen compositor or real-input journey coverage.
 
-`just ios goldens` captures the routine full-screen suite in both appearances.
-States whose variations have moved to native component snapshots name those
-examples in the manifest and are excluded from this default selection. Use
-`--all` to run the historical full catalogue, or name a state explicitly.
-`--built` reports unopened states instead of failing on them; missing baselines
-still fail. See [native visual testing](IOS.md#component-snapshots-and-full-screen-goldens)
+`just ios goldens` reaches the manifest's whole screens through the served
+door and compares each in both appearances; `--only ID` runs one. See
+[native visual testing](IOS.md#component-snapshots-and-full-screen-goldens)
 for coverage responsibilities and deliberate baseline updates. The
 measured run happens only where a number from it would mean something: on a
 machine whose budgets are written down in `docs/IOS_PERFORMANCE.md`, or on one
@@ -28,22 +25,15 @@ the baseline enrols it with no further edit. `AMUX_PERF_MACHINE` names the
 row deliberately; the GitHub runner sets it because no hardware row identifies
 it.
 
-The nightly `iOS captures` workflow compares components and the routine
-full-screen suite on a GitHub runner with both pinned devices booted;
-dispatching it by hand also runs the journeys, accessibility and performance
-suites. Component comparison artifacts and timings are uploaded alongside the
-full-screen evidence. Exact pixels still require the pinned native environment;
-the display comparisons exclude the declared system-chrome rectangles.
+The nightly `iOS captures` workflow compares components and the whole-screen
+goldens on a GitHub runner; dispatching it by hand also runs the journeys,
+accessibility and performance suites. Component comparison artifacts and
+timings are uploaded alongside the full-screen evidence. Exact pixels still
+require the pinned native environment; the display comparisons exclude the
+declared system-chrome rectangles.
 
-No capture is quarantined: the golden manifest is the authoritative capture
-count, and every capture it selects gates on its pixel difference. Three of
-them — `strip.light`, `strip.dark` and `ax-composer.dark` — were, until the
-transcript that drew them was fixed on 2026-09-14, and
-`apps/apple/Goldens/BASELINE.md` says what was wrong with it. The manifest can
-still mark a capture flaky, which keeps it in every run and prints its verdict
-while making only the pixel difference non-gating; a failed capture, a missing
-baseline or a size change fails either way. Marking one is an argument to be
-made in the open and nothing carries the mark today.
+No capture is quarantined: every screen the manifest names gates on its pixel
+difference and its element geometry.
 
 ## The bridge
 

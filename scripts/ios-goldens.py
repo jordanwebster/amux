@@ -1,64 +1,309 @@
 #!/usr/bin/env python3
-"""Capture the manifest's screens through the driving door and compare each
-one with its baseline.
+"""Photograph the phone's whole screens through the served door and compare
+each with its golden, in light and in dark.
 
-The comparison itself lives in `xtask golden`; this recipe's job is the
-devices — creating, pinning and installing on every simulator the selected
-screens name, so a capture is never taken on a device with the wrong width or
-the wrong clock.
+`scripts/ios-goldens.py [--only ID]... [--update] [--perturb TOKEN]`
+
+The screens are the `screens` half of apps/apple/Goldens/manifest.json. Each
+is reached the way a person reaches it, on the phone driver: the manifest's
+topology is served with `testnet serve`, the debug app is installed fresh on
+the leased simulator, the desk is paired by the code it printed, and the app
+is tapped to each screen while the served net makes the desk's agents do
+what the screen needs. A screen is judged by the display's pixels and the
+door's element geometry against apps/apple/Goldens/<screen>.<appearance>.png
+and <screen>.elements.txt (both appearances share one geometry). A screen
+with frames (origin-rewind's before and after) has a golden per frame.
+
+`--only ID` photographs just the screens named; the way through every other
+screen is still taken, so each is reached in the same state. Tab pages a
+pushed page covers are left out of the geometry. `--update` rewrites every
+golden that differs and leaves the rest alone. `--perturb TOKEN` moves one design colour
+token before anything is drawn and fails unless every photograph comes back
+different with a difference image: what proves the comparison would notice.
+
+The components half of the manifest is photographed in-process by
+`just ios component-snapshots`; this script only reads its screens.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
 from argparse import ArgumentParser
+from pathlib import Path
 import json
-import subprocess
+import re
+import signal
 import sys
+import time
 
-sys.path.insert(0, str(Path(__file__).parent))
-import ios_simulators
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ios_simulators  # noqa: E402
+from journeys.phone import ROOT, DoorError, PhoneJourney  # noqa: E402
 
-MANIFEST = Path("apps/apple/Goldens/manifest.json")
-DERIVED_DATA = Path("target/ios/DerivedData")
-APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
-BUNDLE_ID = "sh.amux.app"
+MANIFEST = ROOT / "apps/apple/Goldens/manifest.json"
+GOLDENS = ROOT / "apps/apple/Goldens"
+OUTPUT = ROOT / "target/ios/goldens"
+PERTURBED = ROOT / "target/ios/goldens-perturb"
+SIMULATOR = "golden"
+APPEARANCES = ("light", "dark")
+# A turn's duration and a pairing code's fingerprint and countdown are made
+# fresh by every run.
+TURN = ("chat.row.turn-end",)
+PAIRING = ("pair-confirm.fingerprint", "pair-confirm.expiry")
 
 
-def selected(arguments: list[str]) -> list[dict]:
-    screens = json.loads(MANIFEST.read_text())["screens"]
-    parser = ArgumentParser(add_help=False)
-    parser.add_argument("--all", action="store_true")
+def labelled(drawn: dict, text: str) -> bool:
+    return any(text in (element.get("label") or "") for element in drawn.values())
+
+
+class Goldens:
+    def __init__(self, journey: PhoneJourney, manifest: dict, wanted: set[str]):
+        self.journey = journey
+        self.screens = {screen["id"]: screen for screen in manifest["screens"]}
+        self.wanted = wanted
+        self.outcomes: list[tuple[str, str | None]] = []
+
+    def agent(self, name: str) -> str:
+        return next(item["id"] for item in self.journey.ready["agents"] if item["name"] == name)
+
+    def photograph(self, screen: str, frame: str | None = None, volatile: tuple[str, ...] = ()) -> None:
+        """The screen as it is now, in every appearance, against its golden."""
+        if screen not in self.wanted:
+            return
+        declared = [item["name"] for item in self.screens[screen].get("frames", [])]
+        if (frame is None) != (not declared) or (frame is not None and frame not in declared):
+            raise RuntimeError(f"the manifest does not declare {screen} with frame {frame!r}")
+        label = screen if frame is None else f"{screen}-{frame}"
+        for appearance in APPEARANCES:
+            self.journey.appearance(appearance)
+            name = f"{label}.{appearance}"
+            differs = self.journey.compare(name, volatile, geometry_label=label)
+            self.outcomes.append((name, differs))
+            print(f"{'ok' if differs is None else 'DIFFERS'} {name}", flush=True)
+        self.journey.appearance("light")
+
+    # --- the way through the screens ---------------------------------------
+
+    def prepare_the_desk(self) -> None:
+        """The desk's agents act one turn at a time, so the fleet's order
+        (most recently active first, among agents needing the same
+        attention) is the same on every run."""
+        journey = self.journey
+        for agent, prompt, reply in (
+            ("planner", "Why do the pairing errors disagree?", "share one string"),
+            ("keeper", "Remember this recovery turn.", "safely stored"),
+        ):
+            journey.request({"Send": {"agent": agent, "text": prompt}})
+            journey.wait_chat(
+                "desk", agent,
+                lambda chat, reply=reply: chat["phase"] == "IDLE" and any(reply in i["text"] for i in chat["items"]),
+                f"{agent}-answered",
+            )
+        journey.request({"Send": {"agent": "asker", "text": "Tidy the release notes."}})
+        journey.wait_chat("desk", "asker", lambda chat: chat["phase"] == "NEEDS_YOU", "asker-asking")
+
+    def pairing(self) -> None:
+        """The six digits the desk printed, typed on the keypad, reach the
+        desk's own name and key before anything is trusted."""
+        journey = self.journey
+        desk = journey.host_id("desk")
+        journey.tap("tab.hosts")
+        journey.wait_for(f"hosts.pair.{desk}")
+        process = journey.amux("desk", "pair")
+        pin = printed_pin(process)
+        journey.tap(f"hosts.pair.{desk}")
+        journey.wait_for("pin.key.0")
+        for digit in pin:
+            journey.tap(f"pin.key.{digit}")
+        journey.wait(
+            lambda drawn: "pair-confirm.trust" in drawn and drawn.get("pair-confirm.name", {}).get("value") == "desk",
+            "the desk's confirmation",
+        )
+        self.photograph("pairing", volatile=PAIRING)
+        journey.tap("pair-confirm.trust")
+        journey.wait_for("pair-confirm.done")
+        journey.tap("pair-confirm.done")
+        journey.wait(lambda drawn: f"hosts.row.{desk}" in drawn and "pair-confirm.done" not in drawn, "the desk paired")
+        process.wait(timeout=30)
+
+    def hosts(self) -> None:
+        desk = self.journey.host_id("desk")
+        self.journey.tap("tab.hosts")
+        self.journey.wait(lambda drawn: labelled(drawn, "desk") and f"hosts.row.{desk}" in drawn, "the hosts")
+        self.photograph("hosts")
+
+    def fleet(self) -> None:
+        rows = [f"home.row.{self.agent(name)}" for name in ("planner", "keeper", "asker", "dialog")]
+        self.journey.tap("tab.agents")
+        self.journey.wait(lambda drawn: all(row in drawn for row in rows), "every agent in the fleet")
+        self.photograph("fleet")
+
+    def open(self, agent: str, ready, description: str) -> dict:
+        journey = self.journey
+        journey.tap("tab.agents")
+        journey.wait_for(f"home.row.{self.agent(agent)}")
+        # A row redrawn by an update landing as it is tapped (a fleet row
+        # takes every change to its agent) drops the tap or refuses it; a
+        # person taps again.
+        for attempt in range(3):
+            try:
+                journey.tap(f"home.row.{self.agent(agent)}")
+                journey.wait(lambda drawn: "chat.back" in drawn, "the chat opened", timeout=5)
+                break
+            except (RuntimeError, DoorError):
+                if attempt == 2:
+                    raise
+                journey.app({"kind": "settle"})
+        return journey.wait(lambda drawn: "chat.back" in drawn and ready(drawn), description)
+
+    def back(self) -> None:
+        self.journey.tap("chat.back")
+        self.journey.wait(lambda drawn: "chat.back" not in drawn, "the fleet")
+        # A row tapped while the chat is still leaving does not open.
+        self.journey.app({"kind": "settle"})
+
+    def chat_strip(self) -> None:
+        self.open("planner", lambda drawn: labelled(drawn, "share one string") and TURN[0] in drawn, "the answered chat")
+        self.photograph("chat-strip", volatile=TURN)
+        self.back()
+
+    def question(self) -> None:
+        self.open(
+            "asker",
+            lambda drawn: "ask" in drawn and labelled(drawn, "Only what users will notice"),
+            "the question card",
+        )
+        self.photograph("claude-sdk-ask-question")
+        self.back()
+
+    def escape(self) -> None:
+        """Terminal Claude's tool-server dialog is an ask the phone cannot
+        answer; its card offers the way out."""
+        journey = self.journey
+        journey.request({"Send": {"agent": "dialog", "text": "File the relay bug."}})
+        journey.wait_chat("desk", "dialog", lambda chat: chat["phase"] == "NEEDS_YOU", "dialog-open")
+        self.open("dialog", lambda drawn: "ask" in drawn and labelled(drawn, "github"), "the unanswerable card")
+        self.photograph("ask-escape")
+        self.back()
+
+    def origin_rewind(self) -> None:
+        """The desk checkpoints, moves on a turn the phone sees, then loses
+        power back to the checkpoint: the phone's replica is Reset and the
+        rebuilt chat swaps in under the rows on screen."""
+        journey = self.journey
+        journey.request({"Checkpoint": {"host": "desk"}})
+        journey.request({"Send": {"agent": "keeper", "text": "Carry on."}})
+        journey.wait_chat(
+            "desk", "keeper",
+            lambda chat: chat["phase"] == "IDLE" and any("after the checkpoint" in i["text"] for i in chat["items"]),
+            "keeper-moved-on",
+        )
+        self.open(
+            "keeper", lambda drawn: labelled(drawn, "after the checkpoint") and TURN[0] in drawn, "the chat before"
+        )
+        self.photograph("origin-rewind", "before", volatile=TURN)
+        journey.request({"Rewind": {"host": "desk", "cuts": []}})
+        deadline = time.monotonic() + 60
+        while True:
+            drawn = journey.elements()
+            if not (labelled(drawn, "safely stored") and labelled(drawn, "after the checkpoint")):
+                raise RuntimeError("rows left the screen during the Reset")
+            if labelled(drawn, "Exited"):
+                break
+            if time.monotonic() > deadline:
+                raise RuntimeError("the rebuilt chat never swapped in")
+            time.sleep(0.05)
+        journey.actions.append("the rows stayed on screen until the rebuilt chat swapped in")
+        self.photograph("origin-rewind", "after", volatile=TURN)
+        self.back()
+
+
+def printed_pin(process) -> str:
+    """The six digits a machine's `amux pair` printed."""
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        line = process.stdout.readline()
+        if found := re.search(r"Pairing PIN: (\d{3}) (\d{3})", line):
+            return found.group(1) + found.group(2)
+        if not line and process.poll() is not None:
+            break
+    raise RuntimeError("the machine printed no pairing PIN")
+
+
+# Every screen the manifest may declare, in the order the way through them
+# passes it. origin-rewind comes last: it takes the desk's power.
+WAY = {
+    "pairing": None,
+    "hosts": Goldens.hosts,
+    "fleet": Goldens.fleet,
+    "chat-strip": Goldens.chat_strip,
+    "claude-sdk-ask-question": Goldens.question,
+    "ask-escape": Goldens.escape,
+    "origin-rewind": Goldens.origin_rewind,
+}
+
+
+def main() -> int:
+    parser = ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--only", action="append", default=[], metavar="ID")
     parser.add_argument("--update", action="store_true")
-    parser.add_argument("--built", action="store_true")
-    for flag in ("--simulator", "--bundle-id", "--install"):
-        parser.add_argument(flag)
-    parser.add_argument("ids", nargs="*")
-    options = parser.parse_intermixed_args(arguments)
-    ids = options.ids
-    if not ids:
-        selected_screens = [screen for screen in screens
-                            if options.all or not screen.get("component_snapshots")]
-        if not selected_screens:
-            raise SystemExit("The manifest must retain full-screen composition coverage")
-        return selected_screens
-    known = {screen["id"] for screen in screens}
-    missing = [id for id in ids if id not in known]
-    if missing:
-        raise SystemExit(f"{MANIFEST} has no screen named {', '.join(missing)}")
-    return [screen for screen in screens if screen["id"] in ids]
+    parser.add_argument("--perturb", metavar="TOKEN")
+    options = parser.parse_args()
+    manifest = json.loads(MANIFEST.read_text())
+    declared = [screen["id"] for screen in manifest["screens"]]
+    if sorted(declared) != sorted(WAY):
+        raise SystemExit(f"{MANIFEST} declares {declared}; this driver reaches {list(WAY)}")
+    unknown = [name for name in options.only if name not in declared]
+    if unknown:
+        raise SystemExit(f"{MANIFEST} has no screen named {', '.join(unknown)}")
+    if options.perturb and options.update:
+        raise SystemExit("--perturb moves a token on purpose; its photographs are never goldens")
+    wanted = set(options.only or declared)
 
-
-def main() -> None:
-    arguments = sys.argv[1:]
-    for name in sorted({screen["simulator"] for screen in selected(arguments)}):
-        udid = ios_simulators.ready(name)
-        subprocess.run(
-            ["xcrun", "simctl", "install", udid, str(APPLICATION)],
-            check=True, timeout=600)
-        print(f"{name}: {APPLICATION} installed", flush=True)
-    subprocess.run(
-        ["cargo", "run", "-q", "-p", "xtask", "--", "golden", "run", *arguments],
-        check=True, timeout=2100)
+    udid = ios_simulators.ready(SIMULATOR)
+    began = time.monotonic()
+    output = PERTURBED if options.perturb else OUTPUT
+    journey = PhoneJourney(
+        {"id": "goldens"}, ROOT / manifest["topology"], udid, output=output, goldens=GOLDENS
+    )
+    journey.update = options.update
+    journey.covered_hidden = True
+    goldens = Goldens(journey, manifest, wanted)
+    try:
+        journey.launch()
+        if options.perturb:
+            journey.app({"kind": "perturb", "token": options.perturb})
+        goldens.prepare_the_desk()
+        goldens.pairing()
+        # The whole way every time, photographing only what was asked: a
+        # screen's element geometry includes the pages under it, which hold
+        # whatever the earlier steps left there.
+        for reach in WAY.values():
+            if reach is not None:
+                reach(goldens)
+        journey.finish([name for name, _ in goldens.outcomes])
+    except BaseException as error:
+        journey.fail(error)
+        raise
+    finally:
+        journey.close()
+    print(f"{len(goldens.outcomes)} photographs in {time.monotonic() - began:.1f}s; captures under {output}")
+    if options.perturb:
+        missed = [
+            name for name, differs in goldens.outcomes
+            if differs is None or not (output / "diff" / name / "diff.png").is_file()
+        ]
+        if missed or not goldens.outcomes:
+            print(f"the {options.perturb} token was moved and nothing noticed on {', '.join(missed)}", file=sys.stderr)
+            return 1
+        print(f"every photograph differs with {options.perturb} moved; difference images under {output / 'diff'}")
+        return 0
+    failed = [(name, differs) for name, differs in goldens.outcomes if differs is not None]
+    for name, differs in failed:
+        print(f"FAILED {name}: {differs}", file=sys.stderr)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    # Let the recipe's timeout unwind the served net and the app.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    sys.exit(main())

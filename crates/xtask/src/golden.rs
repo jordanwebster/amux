@@ -1,61 +1,19 @@
 //! Golden captures: what the app draws, compared with what it drew last time.
 //!
-//! A baseline under `apps/apple/Goldens` is a regression baseline — the app's own
-//! output, locked. The design's preserved captures are a separate report:
-//! they are what the app is trying to look like, and a difference from one of
-//! them is a conversation, not a failure.
+//! `apps/apple/Goldens/manifest.json` names every golden the phone is held
+//! to, in two parts. Components are photographed in-process from authored
+//! view data by the component snapshot suite, one sentence each saying what
+//! the picture shows. Screens are whole displays the golden driver
+//! (`scripts/ios-goldens.py`) reaches on a served network through the app's
+//! door, each an image per appearance plus the door's element geometry. This
+//! module is the pixel comparison both the golden driver and the journeys
+//! call, and the check that the manifest and the baselines agree.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-
-use crate::door;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Appearance {
-    Light,
-    Dark,
-}
-
-impl Appearance {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Light => "light",
-            Self::Dark => "dark",
-        }
-    }
-}
-
-impl fmt::Display for Appearance {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.write_str(self.name())
-    }
-}
-
-/// Where a screen in the manifest came from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "origin", rename_all = "snake_case")]
-pub enum GoldenOrigin {
-    /// One of the design's own screens. `capture` names its preserved capture
-    /// in the intake bundle, without the appearance or the extension.
-    Reference { capture: String },
-    /// A state the design does not have a capture for, added by this work.
-    /// The reason is why it is owed at all.
-    AddedState { reason: String },
-}
-
-/// A simulator rendering variation that is still captured, compared and
-/// reported, but whose pixel-difference verdict does not gate CI.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GoldenFlake {
-    pub appearances: Vec<Appearance>,
-    pub reason: String,
-}
 
 /// A region of a simulator's display that the system draws over every app,
 /// which no capture compares.
@@ -92,45 +50,42 @@ pub struct GoldenSimulator {
     pub system_chrome: Vec<SystemChrome>,
 }
 
-/// One row of the manifest: a golden this flight owes.
+/// A picture with a sentence saying what it shows, for whoever reviews it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoldenComponent {
+    pub id: String,
+    pub shows: String,
+}
+
+/// One moment of a screen that is photographed more than once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoldenFrame {
+    pub name: String,
+    pub shows: String,
+}
+
+/// A whole screen reached through the door. A screen with frames has a
+/// golden per frame, named `<id>-<frame>`; one without has one named `<id>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GoldenScreen {
     pub id: String,
-    /// The milestone that builds it.
-    pub stage: u8,
-    /// The app screen it draws, which is the id itself for a reference screen
-    /// and an existing screen for an added state.
-    pub screen: String,
-    /// The named state the screen is filled from.
-    pub fixture: String,
-    #[serde(flatten)]
-    pub origin: GoldenOrigin,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub flaky: Option<GoldenFlake>,
-    pub simulator: String,
-    pub appearances: Vec<Appearance>,
-    /// Native component examples that now own this state's visual variations.
-    /// The historical full-screen capture remains available through `--all`
-    /// or its explicit ID, but is not repeated in the routine display suite.
+    pub shows: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub component_snapshots: Vec<String>,
-}
-
-impl GoldenScreen {
-    fn flaky_reason(&self, appearance: Appearance) -> Option<&str> {
-        self.flaky
-            .as_ref()
-            .filter(|flake| flake.appearances.contains(&appearance))
-            .map(|flake| flake.reason.as_str())
-    }
+    pub frames: Vec<GoldenFrame>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GoldenManifest {
-    /// Every simulator a screen may name, with the chrome it draws over the
-    /// app. Declaring a device is what forces the question of its chrome to
-    /// be answered before a screen is captured on it.
+    /// The simulator every screen is photographed on, with the chrome it
+    /// draws over the app.
     pub simulators: BTreeMap<String, GoldenSimulator>,
+    /// The served topology the screens are reached on.
+    pub topology: String,
+    pub components: Vec<GoldenComponent>,
     pub screens: Vec<GoldenScreen>,
 }
 
@@ -140,51 +95,45 @@ impl GoldenManifest {
             .map_err(|error| GoldenError::Io(format!("{}: {error}", path.display())))?;
         let manifest: Self = serde_json::from_str(&text)
             .map_err(|error| GoldenError::Io(format!("{}: {error}", path.display())))?;
-        for screen in &manifest.screens {
-            if !manifest.simulators.contains_key(&screen.simulator) {
-                return Err(GoldenError::Io(format!(
-                    "{}: screen {} names simulator {}, which the manifest does not declare",
-                    path.display(),
-                    screen.id,
-                    screen.simulator
-                )));
-            }
-            let Some(flake) = &screen.flaky else {
-                continue;
-            };
-            if flake.reason.trim().is_empty() {
-                return Err(GoldenError::Io(format!(
-                    "{}: flaky capture {} needs a reason",
-                    path.display(),
-                    screen.id
-                )));
-            }
-            if flake.appearances.is_empty()
-                || flake
-                    .appearances
+        let mut seen = BTreeSet::new();
+        let pictures = manifest
+            .components
+            .iter()
+            .map(|component| (&component.id, &component.shows))
+            .chain(
+                manifest
+                    .screens
                     .iter()
-                    .any(|appearance| !screen.appearances.contains(appearance))
-            {
+                    .map(|screen| (&screen.id, &screen.shows)),
+            )
+            .chain(manifest.screens.iter().flat_map(|screen| {
+                screen
+                    .frames
+                    .iter()
+                    .map(|frame| (&frame.name, &frame.shows))
+            }));
+        for (id, shows) in pictures {
+            if shows.trim().is_empty() {
                 return Err(GoldenError::Io(format!(
-                    "{}: flaky capture {} must name one of its appearances",
-                    path.display(),
-                    screen.id
+                    "{}: {id} does not say what it shows",
+                    path.display()
+                )));
+            }
+        }
+        for id in manifest
+            .components
+            .iter()
+            .map(|component| &component.id)
+            .chain(manifest.screens.iter().map(|screen| &screen.id))
+        {
+            if !seen.insert(id) {
+                return Err(GoldenError::Io(format!(
+                    "{}: {id} is named twice",
+                    path.display()
                 )));
             }
         }
         Ok(manifest)
-    }
-
-    pub fn screen(&self, id: &str) -> Option<&GoldenScreen> {
-        self.screens.iter().find(|screen| screen.id == id)
-    }
-
-    /// The system chrome a screen's simulator draws over it.
-    pub fn system_chrome(&self, screen: &GoldenScreen) -> &[SystemChrome] {
-        self.simulators
-            .get(&screen.simulator)
-            .map(|simulator| simulator.system_chrome.as_slice())
-            .unwrap_or(&[])
     }
 }
 
@@ -202,8 +151,7 @@ pub enum GoldenVerdict {
     },
     /// Nothing to compare against: the screen has never been locked.
     MissingBaseline,
-    /// The app could not show it. An unimplemented screen answers here rather
-    /// than producing a placeholder image nobody would notice.
+    /// The capture was never written.
     CaptureFailed(String),
 }
 
@@ -237,18 +185,12 @@ impl fmt::Display for GoldenVerdict {
 pub enum GoldenError {
     Io(String),
     Png(String),
-    Door(door::DoorError),
-    /// The manifest names a screen nobody asked about, or the run was asked
-    /// about a screen the manifest does not have.
-    NoSuchScreen(String),
 }
 
 impl fmt::Display for GoldenError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(message) | Self::Png(message) => out.write_str(message),
-            Self::Door(error) => write!(out, "{error}"),
-            Self::NoSuchScreen(id) => write!(out, "the manifest has no screen named {id}"),
         }
     }
 }
@@ -258,12 +200,6 @@ impl std::error::Error for GoldenError {}
 impl From<std::io::Error> for GoldenError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error.to_string())
-    }
-}
-
-impl From<door::DoorError> for GoldenError {
-    fn from(error: door::DoorError) -> Self {
-        Self::Door(error)
     }
 }
 
@@ -436,303 +372,10 @@ pub fn diff(
     Ok(GoldenVerdict::Same)
 }
 
-/// Every reference screen paired with the design's preserved capture.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReferenceReport {
-    pub pairs: Vec<(String, Appearance, PathBuf, PathBuf)>,
-    pub missing_reference: Vec<String>,
-}
-
-/// Pairs what the app draws with what the design drew.
-///
-/// Only screens that have been built are paired: an unbuilt screen has no
-/// baseline to pair, and a pair with an empty half would look like a failure
-/// rather than like work not started. This is a report and never a gate.
-pub fn reference_report(
-    manifest: &GoldenManifest,
-    captures: &Path,
-    baselines: &Path,
-    out: &Path,
-) -> Result<ReferenceReport, GoldenError> {
-    std::fs::create_dir_all(out)?;
-    let mut pairs = Vec::new();
-    let mut missing_reference = Vec::new();
-    for screen in &manifest.screens {
-        let GoldenOrigin::Reference { capture } = &screen.origin else {
-            continue;
-        };
-        for appearance in &screen.appearances {
-            let baseline = baselines.join(format!("{}.{appearance}.png", screen.id));
-            let reference = captures.join(format!("{capture}.only.{appearance}.png"));
-            if !baseline.is_file() {
-                continue;
-            }
-            if !reference.is_file() {
-                missing_reference.push(format!("{}.{appearance}", screen.id));
-                continue;
-            }
-            let mine = out.join(format!("{}.{appearance}.app.png", screen.id));
-            let theirs = out.join(format!("{}.{appearance}.design.png", screen.id));
-            std::fs::copy(&baseline, &mine)?;
-            std::fs::copy(&reference, &theirs)?;
-            pairs.push((screen.id.clone(), *appearance, mine, theirs));
-        }
-    }
-    Ok(ReferenceReport {
-        pairs,
-        missing_reference,
-    })
-}
-
-/// One screen in one appearance, captured and judged.
-pub struct GoldenOutcome {
-    pub id: String,
-    pub appearance: Appearance,
-    pub flaky: Option<String>,
-    pub verdict: GoldenVerdict,
-    /// `--update` wrote this capture over its baseline, because the two did
-    /// not agree. The verdict is what they disagreed about, kept rather than
-    /// swallowed so the run can say which screens it changed.
-    pub rewritten: bool,
-}
-
-/// Captures the named screens through the driving door and compares each one
-/// with its baseline.
-///
-/// Everything is captured in one conversation with one launch: a launch per
-/// screen would triple the run and prove nothing extra.
-#[allow(clippy::too_many_arguments)]
-pub fn run(
-    manifest: &GoldenManifest,
-    ids: &[String],
-    simulator: &str,
-    bundle_id: &str,
-    baselines: &Path,
-    out: &Path,
-    update: bool,
-    tolerance: u8,
-    max_differing_pixels: u64,
-    // A colour token to move before anything is drawn. Only the perturbation
-    // check passes one, and it requires every comparison to fail.
-    perturb: Option<&str>,
-) -> Result<Vec<GoldenOutcome>, GoldenError> {
-    let wanted: Vec<&GoldenScreen> = if ids.is_empty() {
-        manifest.screens.iter().collect()
-    } else {
-        ids.iter()
-            .map(|id| {
-                manifest
-                    .screen(id)
-                    .ok_or_else(|| GoldenError::NoSuchScreen(id.clone()))
-            })
-            .collect::<Result<_, _>>()?
-    };
-
-    // One conversation per simulator: the manifest may name more than one, and
-    // a capture on the wrong device would be the wrong width.
-    let mut by_simulator: BTreeMap<&str, Vec<&GoldenScreen>> = BTreeMap::new();
-    for screen in &wanted {
-        by_simulator
-            .entry(screen.simulator.as_str())
-            .or_default()
-            .push(screen);
-    }
-
-    let mut outcomes = Vec::new();
-    let mut timings = Vec::new();
-    for (device, screens) in by_simulator {
-        let mut requests: Vec<Value> = Vec::new();
-        let mut planned = Vec::new();
-        // Which screen each request belongs to, so a refusal is attributed to
-        // the screen it was about rather than to whatever came next.
-        let mut about: Vec<String> = Vec::new();
-        if let Some(token) = perturb {
-            requests.push(json!({"kind": "perturb", "token": token}));
-            about.push(String::new());
-        }
-        for screen in &screens {
-            requests.push(json!({
-                "kind": "open", "screen": screen.screen, "fixture": screen.fixture
-            }));
-            about.push(screen.id.clone());
-            for appearance in &screen.appearances {
-                let taken = out
-                    .join("actual")
-                    .join(format!("{}.{appearance}.png", screen.id));
-                requests.push(json!({"kind": "appearance", "appearance": appearance.name()}));
-                requests.push(json!({"kind": "settle"}));
-                // Photographed off the simulator's display rather than drawn
-                // by the app into an image: glass is resolved by the render
-                // server, and only the render server's own output is stable
-                // from one run to the next. The app's own frame capture is
-                // still there for a report, which has to freeze what the
-                // person was looking at from inside the process.
-                requests.push(json!({"kind": "display", "path": taken.to_string_lossy()}));
-                about.extend([screen.id.clone(), screen.id.clone(), screen.id.clone()]);
-                planned.push((
-                    screen.id.clone(),
-                    *appearance,
-                    screen.flaky_reason(*appearance).map(str::to_string),
-                    taken,
-                ));
-            }
-        }
-        requests.push(json!({"kind": "shutdown"}));
-        about.push(String::new());
-
-        // The manifest names the device each screen belongs on; the one this
-        // run was pointed at is only the default.
-        let _ = simulator;
-        let capture_started = Instant::now();
-        let replies = door::door(device, bundle_id, requests, Duration::from_secs(300))?;
-        let capture_seconds = capture_started.elapsed().as_secs_f64();
-        let capture_count = planned.len();
-        eprintln!("goldens: {device}: {capture_count} captures in {capture_seconds:.3}s");
-        let comparison_started = Instant::now();
-
-        // Which screens the door refused, and why. A refusal belongs to the
-        // screen it was about, so an unimplemented screen is named rather than
-        // reported as a missing file.
-        let mut refusal: BTreeMap<String, String> = BTreeMap::new();
-        for (index, reply) in replies.iter().enumerate() {
-            if reply.get("kind").and_then(Value::as_str) != Some("error") {
-                continue;
-            }
-            let message = reply
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("the door refused")
-                .to_string();
-            if let Some(id) = about.get(index) {
-                refusal.entry(id.clone()).or_insert(message);
-            }
-        }
-
-        for (id, appearance, flaky, taken) in planned {
-            if let Some(message) = refusal.get(&id) {
-                outcomes.push(GoldenOutcome {
-                    id,
-                    appearance,
-                    flaky,
-                    verdict: GoldenVerdict::CaptureFailed(message.clone()),
-                    rewritten: false,
-                });
-                continue;
-            }
-            let baseline = baselines.join(format!("{id}.{appearance}.png"));
-            let chrome = manifest
-                .screen(&id)
-                .map(|screen| manifest.system_chrome(screen))
-                .unwrap_or(&[]);
-            let verdict = diff(
-                &baseline,
-                &taken,
-                &out.join(format!("{id}.{appearance}")),
-                tolerance,
-                max_differing_pixels,
-                chrome,
-            )?;
-            // Only a baseline that disagrees is replaced. Rewriting the ones
-            // that already agree costs a re-encoded PNG for every screen in
-            // the run, and buries the handful that actually moved among them.
-            let rewritten = update && !verdict.passed();
-            if rewritten {
-                if let Some(directory) = baseline.parent() {
-                    std::fs::create_dir_all(directory)?;
-                }
-                std::fs::copy(&taken, &baseline)?;
-            }
-            outcomes.push(GoldenOutcome {
-                id,
-                appearance,
-                flaky,
-                verdict,
-                rewritten,
-            });
-        }
-        let comparison_seconds = comparison_started.elapsed().as_secs_f64();
-        eprintln!("goldens: {device}: comparisons in {comparison_seconds:.3}s");
-        timings.push(json!({
-            "simulator": device, "captures": capture_count,
-            "capture_seconds": capture_seconds, "comparison_seconds": comparison_seconds,
-        }));
-    }
-    std::fs::create_dir_all(out)?;
-    std::fs::write(
-        out.join("timings.json"),
-        serde_json::to_vec_pretty(&timings).unwrap(),
-    )?;
-    Ok(outcomes)
-}
-
-/// The word the door answers with for a screen nobody has built. A refusal
-/// that starts with it names work still to come rather than a break.
-const UNIMPLEMENTED: &str = "unimplemented: ";
-
-/// What a run amounts to: what broke, and what has not been built yet.
-pub struct GoldenReport {
-    pub failed: Vec<String>,
-    pub flaky: Vec<String>,
-    pub unimplemented: Vec<String>,
-    /// Baselines `--update` replaced, and what each one had disagreed about.
-    pub rewritten: Vec<String>,
-    pub total: usize,
-}
-
-/// Sorts a run's outcomes into what failed and what is not built yet.
-///
-/// Two questions are being asked of the same captures at different points in
-/// the flight. The whole manifest asks whether every screen the flight owes is
-/// drawn and locked, and a screen nobody has built is a failure — that is the
-/// contract that keeps the catalogue honest. `built_only` asks the narrower
-/// question the branch's own verification asks between milestones: of the
-/// screens that exist today, does every one of them still draw what it was
-/// locked as. There, an unimplemented screen is reported and counted, and
-/// only an explicitly declared simulator pixel-difference flake is non-gating.
-/// A missing baseline, failed capture or size change still fails, including on
-/// a capture carrying flaky metadata.
-pub fn judge(outcomes: &[GoldenOutcome], built_only: bool) -> GoldenReport {
-    let mut failed = Vec::new();
-    let mut flaky = Vec::new();
-    let mut unimplemented = Vec::new();
-    let mut rewritten = Vec::new();
-    for outcome in outcomes {
-        let name = format!("{}.{}", outcome.id, outcome.appearance);
-        let unbuilt = matches!(
-            &outcome.verdict, GoldenVerdict::CaptureFailed(why) if why.starts_with(UNIMPLEMENTED));
-        if built_only && unbuilt {
-            unimplemented.push(name);
-        } else if outcome.flaky.is_some()
-            && matches!(outcome.verdict, GoldenVerdict::Different { .. })
-        {
-            flaky.push(name);
-        } else if outcome.rewritten {
-            // Asked for, and done. A baseline the operator has just replaced
-            // is not a failure of the run that replaced it.
-            rewritten.push(name);
-        } else if !outcome.verdict.passed() {
-            failed.push(name);
-        }
-    }
-    GoldenReport {
-        failed,
-        flaky,
-        unimplemented,
-        rewritten,
-        total: outcomes.len(),
-    }
-}
-
 // MARK: - The command
 
 const MANIFEST: &str = "apps/apple/Goldens/manifest.json";
-const BASELINES: &str = "apps/apple/Goldens";
 const OUT: &str = "target/ios/goldens";
-const PERTURBED_OUT: &str = "target/ios/goldens/perturbed";
-/// The screen the perturbation check is run on, and the token it moves. The
-/// probe draws every colour token the design has, so any of them would show.
-const PERTURBED_SCREEN: &str = "probe";
-const PERTURBED_TOKEN: &str = "accent";
 /// A capture of the same screen on the same simulator can differ by a value or
 /// two where a gradient is dithered; anything a person could see differs by
 /// much more than this, in far more than a handful of pixels.
@@ -742,16 +385,11 @@ const MAX_DIFFERING_PIXELS: u64 = 64;
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<String> = std::env::args().skip(2).collect();
     match arguments.first().map(String::as_str) {
-        Some("run") => run_command(&arguments[1..]),
-        Some("perturb") => perturb_command(&arguments[1..]),
         Some("diff") => diff_command(&arguments[1..]),
-        Some("reference") => reference_command(&arguments[1..]),
         _ => {
             eprintln!(
-                "usage: xtask golden <run [--simulator NAME] [--bundle-id ID] [--install APP] \
-                 [--update] [--built] [--all] [IDS...]|perturb [--simulator NAME] [--bundle-id ID] \
-                 [--token NAME] [IDS...]|diff --expected PNG --actual PNG --out DIR|\
-                 reference --captures DIR [--out DIR]>"
+                "usage: xtask golden diff --expected PNG --actual PNG [--out DIR] \
+                 [--simulator NAME] [--tolerance N] [--max-differing N] [--mask X,Y,W,H]..."
             );
             std::process::exit(2);
         }
@@ -764,211 +402,6 @@ fn value(arguments: &[String], name: &str) -> Option<String> {
         .position(|argument| argument == name)
         .and_then(|at| arguments.get(at + 1))
         .cloned()
-}
-
-fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let simulator = value(arguments, "--simulator").unwrap_or_else(|| "golden".into());
-    let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.app".into());
-    let update = arguments.iter().any(|argument| argument == "--update");
-    let built_only = arguments.iter().any(|argument| argument == "--built");
-    // Locking a baseline is a deliberate act about a screen somebody just
-    // looked at. Doing it under a run that forgives unbuilt screens would
-    // quietly write baselines for whatever happened to open.
-    if update && built_only {
-        return Err(
-            "--update rewrites baselines and --built forgives unbuilt screens; \
-                    name the screens to update instead"
-                .into(),
-        );
-    }
-    if let Some(application) = value(arguments, "--install") {
-        let udid = door::simulator_udid(&simulator)?;
-        door::install(&udid, Path::new(&application))?;
-    }
-    // Everything that is not a flag or a flag's value names a screen.
-    let mut ids: Vec<String> = Vec::new();
-    let mut skip_next = false;
-    for argument in arguments {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if argument.starts_with("--") {
-            skip_next = ["--simulator", "--bundle-id", "--install"].contains(&argument.as_str());
-            continue;
-        }
-        ids.push(argument.clone());
-    }
-
-    let manifest = GoldenManifest::read(Path::new(MANIFEST))?;
-    if ids.is_empty() && !arguments.iter().any(|argument| argument == "--all") {
-        ids = manifest
-            .screens
-            .iter()
-            .filter(|screen| screen.component_snapshots.is_empty())
-            .map(|screen| screen.id.clone())
-            .collect();
-        if ids.is_empty() {
-            return Err("the manifest must retain full-screen composition coverage".into());
-        }
-    }
-    let out = Path::new(OUT);
-    let outcomes = run(
-        &manifest,
-        &ids,
-        &simulator,
-        &bundle_id,
-        Path::new(BASELINES),
-        out,
-        update,
-        TOLERANCE,
-        MAX_DIFFERING_PIXELS,
-        None,
-    )?;
-
-    let report = judge(&outcomes, built_only);
-    let unimplemented: std::collections::BTreeSet<&String> = report.unimplemented.iter().collect();
-    let flaky: std::collections::BTreeSet<&String> = report.flaky.iter().collect();
-    for outcome in &outcomes {
-        let name = format!("{}.{}", outcome.id, outcome.appearance);
-        let mark = if outcome.rewritten {
-            "rewrote"
-        } else if outcome.verdict.passed() {
-            "ok"
-        } else if unimplemented.contains(&name) {
-            "not built"
-        } else if flaky.contains(&name) {
-            "FLAKY"
-        } else {
-            "FAILED"
-        };
-        println!("{mark} {name}: {}", outcome.verdict);
-    }
-    println!(
-        "{} captures, {} failed, {} flaky; triplets under {}",
-        report.total,
-        report.failed.len(),
-        report.flaky.len(),
-        out.display()
-    );
-    if !report.rewritten.is_empty() {
-        let count = report.rewritten.len();
-        println!(
-            "{count} baseline{} replaced; every other capture already agreed and was left alone",
-            if count == 1 { "" } else { "s" }
-        );
-    }
-    let declared_flaky: Vec<_> = outcomes
-        .iter()
-        .filter_map(|outcome| {
-            outcome
-                .flaky
-                .as_ref()
-                .map(|reason| (format!("{}.{}", outcome.id, outcome.appearance), reason))
-        })
-        .collect();
-    if !declared_flaky.is_empty() {
-        println!("{} captures are marked flaky:", declared_flaky.len());
-        for (name, reason) in declared_flaky {
-            println!("  {name}: {reason}");
-        }
-    }
-    if built_only {
-        println!(
-            "{} of {} captures unimplemented",
-            report.unimplemented.len(),
-            report.total
-        );
-    }
-    if !report.failed.is_empty() {
-        return Err(format!("goldens failed: {}", report.failed.join(", ")).into());
-    }
-    Ok(())
-}
-
-/// Moves one design token and requires every comparison to notice.
-///
-/// A golden suite that has never been seen to fail proves nothing: the
-/// captures could be of the wrong window, the comparison could be reading the
-/// baseline twice, the tolerance could be swallowing everything. So one
-/// colour token is replaced with a magenta the design never uses, the same
-/// screens are captured the same way, and this command fails unless every one
-/// of them came back different with a difference image beside it.
-fn perturb_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let simulator = value(arguments, "--simulator").unwrap_or_else(|| "golden".into());
-    let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.app".into());
-    let token = value(arguments, "--token").unwrap_or_else(|| PERTURBED_TOKEN.into());
-    let mut ids: Vec<String> = Vec::new();
-    let mut skip_next = false;
-    for argument in arguments {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if argument.starts_with("--") {
-            skip_next = ["--simulator", "--bundle-id", "--token"].contains(&argument.as_str());
-            continue;
-        }
-        ids.push(argument.clone());
-    }
-    if ids.is_empty() {
-        ids.push(PERTURBED_SCREEN.into());
-    }
-
-    let manifest = GoldenManifest::read(Path::new(MANIFEST))?;
-    // Its own directory: this run's captures are wrong on purpose, and
-    // leaving them where an ordinary run writes its triplets would put a
-    // magenta screen in front of whoever looks at the last real failure.
-    let out = Path::new(PERTURBED_OUT);
-    let outcomes = run(
-        &manifest,
-        &ids,
-        &simulator,
-        &bundle_id,
-        Path::new(BASELINES),
-        out,
-        false,
-        TOLERANCE,
-        MAX_DIFFERING_PIXELS,
-        Some(&token),
-    )?;
-
-    let mut unnoticed = Vec::new();
-    for outcome in &outcomes {
-        let image = out
-            .join(format!("{}.{}", outcome.id, outcome.appearance))
-            .join("diff.png");
-        let noticed = matches!(outcome.verdict, GoldenVerdict::Different { .. }) && image.is_file();
-        println!(
-            "{} {}.{}: {}",
-            if noticed { "caught" } else { "MISSED" },
-            outcome.id,
-            outcome.appearance,
-            outcome.verdict
-        );
-        if noticed {
-            println!("  {}", image.display());
-        } else {
-            unnoticed.push(format!("{}.{}", outcome.id, outcome.appearance));
-        }
-    }
-    if outcomes.is_empty() {
-        return Err("the perturbation check captured nothing".into());
-    }
-    if !unnoticed.is_empty() {
-        return Err(format!(
-            "the `{token}` token was moved and the golden run did not fail on {}",
-            unnoticed.join(", ")
-        )
-        .into());
-    }
-    println!(
-        "{} captures, all different with the `{token}` token moved; \
-         difference images under {}",
-        outcomes.len(),
-        out.display()
-    );
-    Ok(())
 }
 
 fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -1042,83 +475,9 @@ fn masks(arguments: &[String]) -> Result<Vec<SystemChrome>, String> {
         .collect()
 }
 
-fn reference_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let captures =
-        value(arguments, "--captures").unwrap_or_else(|| "apps/apple/Goldens/References".into());
-    let out = value(arguments, "--out").unwrap_or_else(|| format!("{OUT}/reference"));
-    let manifest = GoldenManifest::read(Path::new(MANIFEST))?;
-    if !Path::new(&captures).is_dir() {
-        println!(
-            "{captures} is not here, so there is nothing to pair with; \
-             provide the preserved design captures with --captures"
-        );
-        return Ok(());
-    }
-    let report = reference_report(
-        &manifest,
-        Path::new(&captures),
-        Path::new(BASELINES),
-        Path::new(&out),
-    )?;
-    for (id, appearance, mine, theirs) in &report.pairs {
-        println!(
-            "{id}.{appearance}: {} beside {}",
-            mine.display(),
-            theirs.display()
-        );
-    }
-    if !report.missing_reference.is_empty() {
-        println!(
-            "no preserved capture for: {}",
-            report.missing_reference.join(", ")
-        );
-    }
-    println!("{} pairs under {out}", report.pairs.len());
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A local throughput sample, deliberately separate from correctness tests.
-    /// Use the committed images so decoding costs match the real catalogue.
-    #[test]
-    #[ignore = "manual full-resolution image comparison timing"]
-    fn compare_full_resolution_samples() {
-        let room = tempfile::tempdir().expect("a temporary directory");
-        let manifest = GoldenManifest::read(Path::new("../../apps/apple/Goldens/manifest.json"))
-            .expect("the committed manifest");
-        for id in ["home", "typing", "ax-composer"] {
-            let path = PathBuf::from(format!("../../apps/apple/Goldens/{id}.light.png"));
-            let baseline = read_png(&path).expect("the committed image");
-            let tolerated = room.path().join(format!("{id}.png"));
-            let mut pixels = baseline.pixels.clone();
-            for pixel in pixels.as_chunks_mut::<4>().0 {
-                pixel[0] = pixel[0].saturating_add(1);
-            }
-            write_png(&tolerated, &Image { pixels, ..baseline }).expect("a tolerated image");
-            for (kind, actual) in [("identical", &path), ("tolerated", &tolerated)] {
-                for round in 0..3 {
-                    let started = std::time::Instant::now();
-                    let verdict = diff(
-                        &path,
-                        actual,
-                        &room.path().join("out"),
-                        2,
-                        64,
-                        manifest.system_chrome(manifest.screen(id).unwrap()),
-                    )
-                    .expect("a comparison");
-                    assert_eq!(verdict, GoldenVerdict::Same);
-                    println!(
-                        "{id} {kind} round={round} seconds={:.6}",
-                        started.elapsed().as_secs_f64()
-                    );
-                }
-            }
-        }
-    }
 
     fn write(path: &Path, width: u32, height: u32, colour: [u8; 4]) {
         let image = Image {
@@ -1132,128 +491,6 @@ mod tests {
                 .collect(),
         };
         write_png(path, &image).expect("the test image is written");
-    }
-
-    fn outcome(id: &str, verdict: GoldenVerdict) -> GoldenOutcome {
-        GoldenOutcome {
-            id: id.to_string(),
-            appearance: Appearance::Light,
-            flaky: None,
-            verdict,
-            rewritten: false,
-        }
-    }
-
-    fn rewritten_outcome(id: &str, verdict: GoldenVerdict) -> GoldenOutcome {
-        GoldenOutcome {
-            rewritten: true,
-            ..outcome(id, verdict)
-        }
-    }
-
-    #[test]
-    fn a_replaced_baseline_is_reported_rather_than_failed() {
-        let report = judge(
-            &[
-                outcome("probe", GoldenVerdict::Same),
-                rewritten_outcome(
-                    "home",
-                    GoldenVerdict::Different {
-                        pixels: 19_553,
-                        first: (119, 1380),
-                    },
-                ),
-                outcome(
-                    "strip",
-                    GoldenVerdict::Different {
-                        pixels: 8_542,
-                        first: (107, 893),
-                    },
-                ),
-            ],
-            false,
-        );
-        assert_eq!(report.rewritten, ["home.light"]);
-        assert_eq!(report.failed, ["strip.light"]);
-        assert_eq!(report.total, 3);
-    }
-
-    fn flaky_outcome(id: &str, verdict: GoldenVerdict) -> GoldenOutcome {
-        GoldenOutcome {
-            id: id.to_string(),
-            appearance: Appearance::Light,
-            flaky: Some("simulator text can settle two pixels apart".into()),
-            verdict,
-            rewritten: false,
-        }
-    }
-
-    /// Mid-flight, a screen nobody has built yet is work still to come and is
-    /// counted; a screen that opened and has nothing to compare with is a
-    /// baseline somebody forgot to lock, and that still fails.
-    #[test]
-    fn a_run_over_built_screens_counts_the_unbuilt_and_still_fails_the_rest() {
-        let outcomes = [
-            outcome("probe", GoldenVerdict::Same),
-            outcome(
-                "home",
-                GoldenVerdict::CaptureFailed("unimplemented: home".into()),
-            ),
-            outcome("strip", GoldenVerdict::MissingBaseline),
-            outcome(
-                "hosts",
-                GoldenVerdict::Different {
-                    pixels: 900,
-                    first: (1, 2),
-                },
-            ),
-            outcome(
-                "you",
-                GoldenVerdict::CaptureFailed("no window on screen".into()),
-            ),
-        ];
-        let report = judge(&outcomes, true);
-        assert_eq!(report.unimplemented, ["home.light"]);
-        assert_eq!(report.failed, ["strip.light", "hosts.light", "you.light"]);
-        assert_eq!(report.total, 5);
-    }
-
-    /// Over the whole catalogue the question is different: a screen the flight
-    /// owes and nobody has built is exactly what the run is there to name.
-    #[test]
-    fn a_run_over_the_whole_manifest_fails_on_a_screen_nobody_has_built() {
-        let outcomes = [outcome(
-            "home",
-            GoldenVerdict::CaptureFailed("unimplemented: home".into()),
-        )];
-        let report = judge(&outcomes, false);
-        assert!(report.unimplemented.is_empty());
-        assert_eq!(report.failed, ["home.light"]);
-    }
-
-    #[test]
-    fn a_declared_flaky_pixel_difference_is_visible_but_does_not_fail() {
-        let outcomes = [flaky_outcome(
-            "strip",
-            GoldenVerdict::Different {
-                pixels: 900,
-                first: (1, 2),
-            },
-        )];
-        let report = judge(&outcomes, false);
-        assert!(report.failed.is_empty());
-        assert_eq!(report.flaky, ["strip.light"]);
-    }
-
-    #[test]
-    fn flaky_metadata_does_not_forgive_a_broken_capture() {
-        let outcomes = [flaky_outcome(
-            "strip",
-            GoldenVerdict::CaptureFailed("no window on screen".into()),
-        )];
-        let report = judge(&outcomes, false);
-        assert!(report.flaky.is_empty());
-        assert_eq!(report.failed, ["strip.light"]);
     }
 
     #[test]
@@ -1451,216 +688,205 @@ mod tests {
     }
 
     #[test]
-    fn a_screen_on_an_undeclared_simulator_is_refused() {
+    fn a_picture_that_does_not_say_what_it_shows_is_refused() {
         let room = tempfile::tempdir().expect("a temporary directory");
         let path = room.path().join("manifest.json");
         std::fs::write(
             &path,
-            r#"{"simulators": {}, "screens": [{"id": "probe", "stage": 4, "screen": "probe",
-                "fixture": "probe", "origin": "added_state", "reason": "r",
-                "simulator": "golden", "appearances": ["light"]}]}"#,
+            r#"{"simulators": {}, "topology": "t.json",
+                "components": [{"id": "row.prompt", "shows": " "}], "screens": []}"#,
         )
         .expect("a manifest");
-        let error = GoldenManifest::read(&path).expect_err("an undeclared simulator");
-        assert!(error.to_string().contains("does not declare"), "{error}");
+        let error = GoldenManifest::read(&path).expect_err("a silent picture");
+        assert!(error.to_string().contains("does not say"), "{error}");
     }
 
     #[test]
-    fn the_committed_manifest_owes_the_catalogue_and_the_added_states() {
-        let manifest = GoldenManifest::read(Path::new("../../apps/apple/Goldens/manifest.json"))
-            .expect("a manifest");
-        let references: Vec<&GoldenScreen> = manifest
-            .screens
-            .iter()
-            .filter(|screen| matches!(screen.origin, GoldenOrigin::Reference { .. }))
-            .collect();
-        let required_references = [
-            "agent-delete",
-            "ask-permission",
-            "ask-question",
-            "comment",
-            "delete",
-            "diff",
-            "dump",
-            "exited",
-            "first-run",
-            "first-run-paid",
-            "home",
-            "home-quiet",
-            "hosts",
-            "new-agent",
-            "offline",
-            "overflow",
-            "paywall",
-            "pin",
-            "plan",
-            "plus",
-            "profiles",
-            "queued",
-            "review-cta",
-            "run",
-            "run-live",
-            "settings",
-            "shake",
-            "sign-in",
-            "slash-typing",
-            "typing",
-            "voices",
-            "working",
-            "you",
-        ];
-        let reference_ids: std::collections::BTreeSet<_> =
-            references.iter().map(|screen| screen.id.as_str()).collect();
-        assert_eq!(reference_ids, required_references.into_iter().collect());
-        assert_eq!(
-            references.len(),
-            required_references.len(),
-            "no duplicate references"
-        );
-        for id in [
-            "probe",
-            "finished",
-            "stale",
-            "codex-approval",
-            "rename",
-            "permissions-claude",
-            "permissions-codex",
-            "send-refused",
-            "strip",
-            "tokens",
-            "devices",
-            "hosts-groups",
-            "local-network-refused",
-            "code-entry",
-            "pair-confirmation",
-            "found-host",
-            "pair-confirm",
-            "delete-blocked",
-            "paywall-unconfirmed",
-            "sign-in-failed",
-            "you-granted",
-            "upload-failed",
-            "ax-conversation",
-            "ax-composer",
-            "reduced-glass",
-            "ax-home",
-            "unreadable-agent",
-            "small-home",
-            "small-conversation",
-        ] {
-            assert!(
-                matches!(
-                    manifest.screen(id).map(|screen| &screen.origin),
-                    Some(GoldenOrigin::AddedState { .. })
-                ),
-                "missing added state: {id}"
-            );
+    fn a_name_used_twice_is_refused() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let path = room.path().join("manifest.json");
+        std::fs::write(
+            &path,
+            r#"{"simulators": {}, "topology": "t.json", "components": [],
+                "screens": [{"id": "fleet", "shows": "a"}, {"id": "fleet", "shows": "b"}]}"#,
+        )
+        .expect("a manifest");
+        let error = GoldenManifest::read(&path).expect_err("a repeated name");
+        assert!(error.to_string().contains("named twice"), "{error}");
+    }
+
+    const GOLDENS: &str = "../../apps/apple/Goldens";
+    const SNAPSHOTS: &str =
+        "../../apps/apple/AmuxComponentSnapshotTests/__Snapshots__/ComponentSnapshotTests";
+
+    /// Every golden a screen owns, without its appearance, named as the
+    /// golden driver writes them.
+    fn goldens(screen: &GoldenScreen) -> Vec<String> {
+        if screen.frames.is_empty() {
+            vec![screen.id.clone()]
+        } else {
+            screen
+                .frames
+                .iter()
+                .map(|frame| format!("{}-{}", screen.id, frame.name))
+                .collect()
         }
-        let baseline_notes =
-            std::fs::read_to_string("../../apps/apple/Goldens/BASELINE.md").unwrap();
-        for screen in &references {
-            assert!(
-                baseline_notes
-                    .lines()
-                    .any(|line| line == format!("## {}", screen.id)),
-                "{} has no baseline explanation",
-                screen.id
-            );
-            let GoldenOrigin::Reference { capture } = &screen.origin else {
-                unreachable!()
-            };
-            for appearance in &screen.appearances {
-                assert!(
-                    Path::new(&format!(
-                        "../../apps/apple/Goldens/References/{capture}.only.{appearance}.png"
-                    ))
-                    .is_file(),
-                    "missing preserved reference for {}.{appearance}",
-                    screen.id
-                );
-            }
-        }
-        assert!(
-            manifest.screen("notification").is_none(),
-            "notifications are out of scope"
-        );
-        assert!(manifest.screen("probe").is_some(), "the probe is owed");
-        for screen in &manifest.screens {
-            assert_eq!(
-                screen.appearances,
-                [Appearance::Light, Appearance::Dark],
-                "{} requires both appearances exactly once",
-                screen.id
-            );
-            for appearance in &screen.appearances {
-                assert!(
-                    Path::new(&format!(
-                        "../../apps/apple/Goldens/{}.{appearance}.png",
-                        screen.id
-                    ))
-                    .is_file(),
-                    "missing baseline for {}.{appearance}",
-                    screen.id
-                );
-            }
-            assert!(
-                screen.simulator == "golden" || screen.simulator == "small",
-                "{} names an unpinned simulator",
-                screen.id
-            );
-            if let GoldenOrigin::AddedState { reason } = &screen.origin {
-                assert!(!reason.is_empty(), "{} says why it is owed", screen.id);
-            }
-        }
-        // Every checked-in baseline is claimed by the manifest. Everything
-        // above reads the manifest and looks for the file; this reads the
-        // directory and looks for the entry, which is the only direction that
-        // catches a screen dropped from the catalogue with its photographs
-        // left behind, or a stray capture committed by hand.
-        let claimed: std::collections::BTreeSet<String> = manifest
-            .screens
-            .iter()
-            .flat_map(|screen| {
-                screen
-                    .appearances
-                    .iter()
-                    .map(move |appearance| format!("{}.{appearance}.png", screen.id))
-            })
-            .collect();
-        let mut orphans: Vec<String> = std::fs::read_dir("../../apps/apple/Goldens")
+    }
+
+    fn committed() -> GoldenManifest {
+        GoldenManifest::read(&Path::new(GOLDENS).join("manifest.json")).expect("the manifest")
+    }
+
+    fn files(directory: &str, extension: &str) -> BTreeSet<String> {
+        std::fs::read_dir(directory)
             .expect("the baselines")
             .map(|entry| {
                 entry
-                    .expect("a baseline")
+                    .expect("a file")
                     .file_name()
                     .to_string_lossy()
                     .into_owned()
             })
-            .filter(|name| name.ends_with(".png") && !claimed.contains(name))
-            .collect();
-        orphans.sort();
-        assert_eq!(orphans, Vec::<String>::new(), "baselines nothing claims");
-        let mut flaky_captures: Vec<_> = manifest
-            .screens
+            .filter(|name| name.ends_with(extension))
+            .collect()
+    }
+
+    /// The component snapshot suite names a baseline after its example id,
+    /// with every character that is not a letter or digit made a dash.
+    fn snapshot(id: &str, appearance: &str) -> String {
+        format!("components.{}-{appearance}.png", id.replace('.', "-"))
+    }
+
+    /// Every component the catalogue pins has a sentence, and the catalogue
+    /// vocabulary is all there: each row kind, the activity line, each ask
+    /// body, the escape, not-confirmed with resend and discard, the exited
+    /// composer's resume and the strip once per provider kind.
+    #[test]
+    fn the_components_are_the_catalogue_with_a_sentence_each() {
+        let manifest = committed();
+        let named: BTreeSet<String> = manifest
+            .components
             .iter()
-            .flat_map(|screen| {
-                screen.flaky.iter().flat_map(|flake| {
-                    flake
-                        .appearances
-                        .iter()
-                        .map(|appearance| format!("{}.{}", screen.id, appearance))
-                })
+            .flat_map(|component| {
+                ["light", "dark"].map(|appearance| snapshot(&component.id, appearance))
             })
             .collect();
-        flaky_captures.sort();
-        // Nothing is quarantined. A capture that will not repeat itself is a
-        // bug in what it photographs, and the three that used to stand here
-        // were fixed rather than excused; a new entry has to make that same
-        // argument again in the open.
-        assert_eq!(flaky_captures, Vec::<String>::new());
+        assert_eq!(
+            named,
+            files(SNAPSHOTS, ".png"),
+            "components and their baselines disagree"
+        );
+        let ids: BTreeSet<&str> = manifest.components.iter().map(|c| c.id.as_str()).collect();
+        let required = [
+            "row.prompt",
+            "row.prose",
+            "row.prose-working-note",
+            "row.thinking",
+            "row.tool-call",
+            "row.file-change",
+            "row.command",
+            "row.explore",
+            "row.run",
+            "row.subagent-running",
+            "row.subagent-done",
+            "row.background",
+            "row.image",
+            "row.slash-output",
+            "row.turn-end",
+            "row.stopped",
+            "row.compaction",
+            "row.error",
+            "row.model-switch",
+            "row.boundary",
+            "row.agent-message",
+            "row.auto-review",
+            "row.unrecognized",
+            "row.ask-question",
+            "row.ask-plan-approved",
+            "row.ask-form",
+            "row.ask-link",
+            "row.ask-grant",
+            "row.ask-unanswerable",
+            "composer.working",
+            "composer.thinking",
+            "composer.retrying",
+            "ask.permission-command",
+            "ask.permission-edit",
+            "ask.permission-tool",
+            "ask.codex-command",
+            "ask.question-single",
+            "ask.questions-step",
+            "ask.question-secret",
+            "ask.plan",
+            "ask.form",
+            "ask.link",
+            "ask.access",
+            "ask.unanswerable",
+            "composer.not-confirmed",
+            "composer.resume",
+            "composer.strip-claude-pty",
+            "composer.strip-claude-sdk",
+            "composer.strip-codex",
+            "composer.dictation-denied",
+        ];
+        let missing: Vec<&str> = required
+            .into_iter()
+            .filter(|id| !ids.contains(id))
+            .collect();
+        assert!(missing.is_empty(), "the catalogue lost {missing:?}");
+    }
 
-        // Every pinned device is declared with the chrome the comparison
-        // must look past; only the Face ID phone has a home indicator.
+    /// The whole screens the phone is held to, each with an image per
+    /// appearance and one element geometry, and nothing else in the
+    /// directory: a baseline nobody claims is a screen dropped with its
+    /// photographs left behind.
+    #[test]
+    fn the_screens_are_owed_and_every_baseline_is_claimed() {
+        let manifest = committed();
+        let ids: Vec<&str> = manifest
+            .screens
+            .iter()
+            .map(|screen| screen.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "pairing",
+                "hosts",
+                "fleet",
+                "chat-strip",
+                "claude-sdk-ask-question",
+                "ask-escape",
+                "origin-rewind"
+            ]
+        );
+        let rewind = manifest
+            .screens
+            .iter()
+            .find(|screen| screen.id == "origin-rewind")
+            .unwrap();
+        assert_eq!(
+            goldens(rewind),
+            ["origin-rewind-before", "origin-rewind-after"]
+        );
+        let mut claimed = BTreeSet::new();
+        for screen in &manifest.screens {
+            for golden in goldens(screen) {
+                claimed.insert(format!("{golden}.light.png"));
+                claimed.insert(format!("{golden}.dark.png"));
+                claimed.insert(format!("{golden}.elements.txt"));
+            }
+        }
+        let mut present = files(GOLDENS, ".png");
+        present.extend(files(GOLDENS, ".txt"));
+        assert_eq!(present, claimed);
+        assert!(
+            Path::new("../..").join(&manifest.topology).is_file(),
+            "the topology is committed"
+        );
+
+        // The pinned phone is declared with the chrome the comparison must
+        // look past.
         let golden = manifest.simulators.get("golden").expect("the golden phone");
         let named: Vec<&str> = golden
             .system_chrome
@@ -1675,13 +901,10 @@ mod tests {
                 "home indicator"
             ]
         );
-        let bar = &golden.system_chrome[2];
-        assert_eq!((bar.x, bar.y, bar.width, bar.height), (384, 2580, 438, 21));
-        let small = manifest.simulators.get("small").expect("the small phone");
         assert_eq!(
-            small.system_chrome.len(),
-            2,
-            "a home button, so no indicator"
+            manifest.simulators.len(),
+            1,
+            "one pinned phone photographs every screen"
         );
     }
 }
