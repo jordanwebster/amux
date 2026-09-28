@@ -1,3 +1,11 @@
+2026-09-28 — **The component snapshot batch's bound follows its measured
+duration.** Holding each picture until it has not changed for half a
+second doubled the batch, and the 300 s bound set for the old batch was
+never resized: on the CI runner the batch took 246 s in its first clean
+run and passed the bound in another. By the bounds rule in docs/CI.md
+(slowest clean run × 1.5, rounded up to the hundred) the bound is now
+400 s; docs/CI.md records the source run.
+
 2026-09-28 — **The block-invariant test waits for the turn's last row.**
 It checked the desk's block as soon as the turn's last text appeared, but
 the turn-end row lands after that text; on a macOS runner it was committed

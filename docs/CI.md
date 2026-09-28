@@ -101,7 +101,12 @@ half of the phone's verification that building the app can settle.
 `just mobile-check`, then `just ios` `lint`, `script-tests`, `graph-check`,
 `rust`, `simulator golden`, `build`, `component-snapshots`, `loopback-smoke`
 and `unit`. None of it compares a photograph of the whole display, so it
-answers the same on any machine. The job uploads the component snapshot
+answers the same on any machine. The component snapshot batch runs under its
+own bound, sized by the rule above from its slowest clean run: 246 s on the
+CI runner in
+[36467514576](https://github.com/jordanwebster/amux/actions/runs/36467514576)
+(39 s to start, 204 s for the 230 pictures, each held until it has not
+changed for half a second), so 400 s. Locally the same batch takes 180 s. The job uploads the component snapshot
 comparisons and the shipped-scope audit directory to the run, whether it
 passed or not.
 

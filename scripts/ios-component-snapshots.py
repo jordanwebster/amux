@@ -25,8 +25,9 @@ TARGET = "AmuxComponentSnapshotTests"
 NEGATIVE_DEFAULT = "row.prompt"
 MISMATCH = "does not match reference"
 # Hang detector for one test-without-building batch (startup and every
-# example), not a target: the batch's honest duration sits well under it.
-BATCH_BOUND = 300
+# example), sized by docs/CI.md's rule: the slowest clean run (246 s on the
+# CI runner) times 1.5, rounded up to the hundred.
+BATCH_BOUND = 400
 
 
 def arguments(argv: list[str]) -> Namespace:
