@@ -21,13 +21,12 @@ chat.header | desk · away | detached | 18,64,147,54
 chat.back | Back |  | 16,68,42,46
 chat.title | asker | asker | 51,72,102,38
 chat.more | More |  | 344,69,44,44
-ask | Wants to run a command | open | 12,536,378,294
-ask.more | More |  | 343,539,45,46
-ask.subject | deploy --prod |  | 28,584,109,18
-ask.choice.0 | Allow once |  | 28,614,346,44
-ask.choice.1 | Always allow Bash in this project |  | 28,666,346,44
-ask.choice.2 | Deny… |  | 28,718,346,44
-ask.choice.3 | Deny and stop… |  | 28,770,346,44
+ask | Wants to run a command | open | 12,595,378,235
+ask.more | More |  | 338,603,44,44
+ask.subject | deploy --prod |  | 28,651,346,40
+ask.choice.1 | Always allow Bash In this project, from now on |  | 28,703,346,59
+ask.choice.0 | Allow |  | 28,770,169,44
+ask.deny | Deny… |  | 205,770,169,44
 hosts |  | 1 offline | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 offline | 18,105,65,16
@@ -59,13 +58,12 @@ you.help.caption |  |  | 18,599,354,31
  | Worked <t> · $0.00 |  | 48,245,130,16
  | Deploy it. |  | 287,275,97,40
  | Wants to run, deploy --prod |  | 18,326,366,20
- | Wants to run a command |  | 46,552,189,20
- | More |  | 343,539,45,46
- | deploy --prod |  | 28,584,109,18
- | Allow once |  | 28,614,346,44
- | Always allow Bash in this project |  | 28,666,346,44
- | Deny… |  | 28,718,346,44
- | Deny and stop… |  | 28,770,346,44
+ | Wants to run a command |  | 62,615,189,20
+ | More |  | 338,603,44,44
+ | deploy --prod |  | 28,651,346,40
+ | Always allow Bash, In this project, from now on |  | 28,703,346,59
+ | Allow |  | 28,770,169,44
+ | Deny… |  | 205,770,169,44
  | Hosts |  | 18,72,69,32
  | 1 offline |  | 18,105,65,16
  | OFFLINE |  | 20,137,49,14

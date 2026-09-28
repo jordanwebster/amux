@@ -617,6 +617,59 @@ public enum ChatWords {
         return choice.takesNote ? label + "…" : label
     }
 
+    /// A choice on a button: the likely allow reads "Allow" beside Deny,
+    /// and terminal Claude's one deny reads "Deny" though it always stops.
+    public static func button(_ choice: Choice) -> String {
+        switch choice.outcome {
+        case .allowOnce: String(localized: "Allow")
+        case .deny: String(localized: "Deny")
+        default: Self.choice(choice)
+        }
+    }
+
+    /// An offered scope as a row: what it allows, and under it how far it
+    /// reaches.
+    public static func scopeRow(_ choice: Choice) -> (title: String, detail: String?) {
+        switch choice.outcome {
+        case .allowAlways(let subjects, let directories, let mode, let scope, let label):
+            if !subjects.isEmpty {
+                return (String(localized: "Always allow \(subjects.joined(separator: ", "))"), reach(scope))
+            } else if !directories.isEmpty {
+                // The folder is the long part: it goes under the outcome.
+                return (scope == .session
+                            ? String(localized: "Allow access for this session")
+                            : String(localized: "Always allow access"),
+                        String(localized: "in \(directories.joined(separator: ", "))"))
+            } else if mode == "acceptEdits" {
+                return (String(localized: "Allow edits"), reach(scope))
+            } else if !mode.isEmpty {
+                return (String(localized: "Switch to \(mode) mode"), nil)
+            } else if !label.isEmpty {
+                return (label, nil)
+            }
+            return (String(localized: "Always allow"), reach(scope))
+        case .allowSimilar(let prefix):
+            return (String(localized: "Allow similar commands"),
+                    String(localized: "Starting with \(prefix.joined(separator: " "))"))
+        case .allowNetwork(let hosts):
+            return (String(localized: "Allow network access"),
+                    hosts.isEmpty ? nil : String(localized: "To \(hosts.joined(separator: ", "))"))
+        default:
+            return (Self.choice(choice), nil)
+        }
+    }
+
+    /// How far a scope reaches, under its row.
+    static func reach(_ scope: Scope) -> String {
+        switch scope {
+        case .session: String(localized: "For this session")
+        case .project: String(localized: "In this project, from now on")
+        case .projectShared: String(localized: "In this project, for everyone")
+        case .user: String(localized: "In every project, from now on")
+        case .other(let other): other
+        }
+    }
+
     /// "1 of 3" when asks are queued.
     public static func position(_ card: AskCard) -> String? {
         card.count > 1 ? String(localized: "\(card.position) of \(card.count)") : nil

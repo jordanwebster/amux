@@ -44,10 +44,11 @@ public struct QuestionKeeping: Sendable {
     public static let none = QuestionKeeping(kept: nil) { _ in }
 }
 
-/// The head ask, docked where the composer was. One anatomy for every
-/// kind: what it wants and "1 of 3", the subject verbatim, then choices
-/// stated as outcomes with the likely one first. Stop is always one tap
-/// away in the ⋯ menu.
+/// The head ask, docked where the composer was. Every kind fills one
+/// anatomy: the head (an accent mark with the kind's glyph, what it wants,
+/// "1 of 3", and the ⋯ menu that always carries Stop), the subject verbatim
+/// in a sunken box, why it asks, the choices it offers as rows stated as
+/// outcomes, and a pair of buttons with the likely one filled.
 public struct AskCardView: View {
     @Environment(\.design) private var design
     let card: AskCard
@@ -70,17 +71,18 @@ public struct AskCardView: View {
     public var body: some View {
         Group {
             if case .sending = card.state {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     Image(systemName: "arrow.up.circle")
-                        .foregroundStyle(design.inkFaint.color)
+                        .font(.system(size: 15))
+                        .foregroundStyle(design.inkMuted.color)
                     Text(String(localized: "Sending your answer · \(ChatWords.headline(card))"))
                         .designFont(.detail, design)
-                        .foregroundStyle(design.inkMuted.color)
+                        .foregroundStyle(design.ink.color)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.vertical, 13)
                 .identified("ask.sending", label: ChatWords.headline(card))
             } else {
                 VStack(alignment: .leading, spacing: 12) {
@@ -115,7 +117,7 @@ public struct AskCardView: View {
 
     private var head: some View {
         HStack(alignment: .center, spacing: 10) {
-            NeedsYouDot()
+            AskMark(glyph: AskMark.glyph(card.body))
             Text(ChatWords.headline(card))
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
@@ -123,8 +125,10 @@ public struct AskCardView: View {
             Spacer(minLength: 6)
             if let position = ChatWords.position(card) {
                 Text(position)
-                    .designFont(.caption, design)
-                    .foregroundStyle(design.inkFaint.color)
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkMuted.color)
+                    .lineLimit(1)
+                    .fixedSize()
             }
             MenuButton(
                 name: String(localized: "More"), identifier: "ask.more",
@@ -134,11 +138,13 @@ public struct AskCardView: View {
                 ) { act(.stop) }]
             ) {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(design.inkMuted.color)
-                    .thumbTarget(x: 14, y: 20)
+                    .frame(width: 28, height: 28)
+                    .overlay(Circle().strokeBorder(design.hairline.color, lineWidth: 1))
+                    .thumbTarget(x: 8, y: 8)
             }
-            .reclaimingThumbTarget(x: 14, y: 20)
+            .reclaimingThumbTarget(x: 8, y: 8)
         }
     }
 
@@ -149,14 +155,15 @@ public struct AskCardView: View {
             Text(String(localized: "Not sent · \(reason)"))
                 .designFont(.detail, design)
                 .foregroundStyle(design.accent.color)
+                .fixedSize(horizontal: false, vertical: true)
                 .identified("ask.rejected", label: reason)
         case .notConfirmed:
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text("Your answer was not confirmed. The connection dropped before the agent replied.")
                     .designFont(.detail, design)
                     .foregroundStyle(design.inkMuted.color)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 10) {
+                ButtonPair {
                     choiceButton(String(localized: "Resend"), kind: .primary, id: "ask.resend") {
                         act(.resend)
                     }
@@ -169,8 +176,36 @@ public struct AskCardView: View {
             Text("The agent exited with this open. Resume it to carry on.")
                 .designFont(.detail, design)
                 .foregroundStyle(design.inkMuted.color)
+                .fixedSize(horizontal: false, vertical: true)
         case .open, .sending:
             EmptyView()
+        }
+    }
+}
+
+/// The accent circle an ask opens with, carrying its kind's glyph.
+struct AskMark: View {
+    @Environment(\.design) private var design
+    let glyph: String
+
+    var body: some View {
+        Image(systemName: glyph)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(design.onAccent.color)
+            .frame(width: 24, height: 24)
+            .background(Circle().fill(design.accent.color))
+            .accessibilityHidden(true)
+    }
+
+    static func glyph(_ body: AskBody) -> String {
+        switch body {
+        case .command, .edit, .tool: "hand.raised.fill"
+        case .question: "questionmark"
+        case .plan: "list.bullet"
+        case .form: "list.bullet.rectangle"
+        case .link: "link"
+        case .access: "lock.fill"
+        case .unanswerable: "exclamationmark"
         }
     }
 }
@@ -187,7 +222,102 @@ func choiceButton(
         .identified(id, label: title, enabled: enabled)
 }
 
-/// The subject and the choices, per body variant.
+/// A card's buttons side by side, sharing the width equally.
+struct ButtonPair<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        HStack(spacing: 8) { content() }
+    }
+}
+
+/// One offered choice as a row: a check, what happens, and under it how far
+/// it reaches. A tap answers with it.
+struct ChoiceRow: View {
+    @Environment(\.design) private var design
+    let title: String
+    let detail: String?
+    let id: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(design.inkMuted.color)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .designFont(.body, design)
+                        .foregroundStyle(design.ink.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail {
+                        Text(detail)
+                            .designFont(.monoSmall, design)
+                            .foregroundStyle(design.inkMuted.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(design.inkFaint.color)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: design.metrics.controlRadius + 2, style: .continuous)
+                    .strokeBorder(design.hairline.color, lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.amuxControl)
+        .accessibilityLabel([title, detail].compactMap { $0 }.joined(separator: ", "))
+        .identified(id, label: [title, detail].compactMap { $0 }.joined(separator: " "))
+    }
+}
+
+/// What an ask is about, verbatim, in a sunken mono box.
+struct SubjectBox: View {
+    @Environment(\.design) private var design
+    let text: String
+    var lines: Int? = 4
+    /// An edit's added and removed line counts, at the end of its path.
+    var counts: (added: UInt32, removed: UInt32)?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(text)
+                .designFont(.mono, design)
+                .foregroundStyle(design.ink.color)
+                .lineLimit(lines)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            if let counts {
+                Spacer(minLength: 4)
+                HStack(spacing: 5) {
+                    Text(verbatim: "+\(counts.added)").foregroundStyle(design.added.color)
+                    Text(verbatim: "−\(counts.removed)").foregroundStyle(design.removed.color)
+                }
+                .designFont(.monoSmall, design)
+                .fixedSize()
+            }
+        }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                    .fill(design.sunken.color)
+            }
+            .identified("ask.subject", label: text)
+    }
+}
+
+/// The subject, why it asks, the offered choices and the buttons, filled
+/// per body from the one anatomy.
 private struct AskBodyView: View {
     @Environment(\.design) private var design
     @Environment(\.openURL) private var openURL
@@ -195,8 +325,8 @@ private struct AskBodyView: View {
     let preset: AskPreset?
     let questions: QuestionKeeping
     let act: (AskAction) -> Void
-    /// The choice waiting for its note.
-    @State private var noting: Int?
+    /// The deny step is open, with the note it takes.
+    @State private var noting: Bool
     @State private var note = ""
     @State private var wholeDiff = false
     @State private var wholePlan = false
@@ -210,82 +340,66 @@ private struct AskBodyView: View {
         self.preset = preset
         self.questions = questions
         self.act = act
-        if case .noting(let index)? = preset { _noting = State(initialValue: index) }
+        if case .noting? = preset { _noting = State(initialValue: true) } else { _noting = State(initialValue: false) }
         _autoAccept = State(initialValue: preset == .autoAccept)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             subject
-            if let noting {
-                noteField(noting)
+            if noting {
+                noteStep
             } else {
                 choices
             }
         }
     }
 
-    // MARK: The subject
+    // MARK: The subject and why
 
     @ViewBuilder
     private var subject: some View {
         switch card.body {
         case .command(let command, let cwd, let reason, let description):
-            verbatim(command)
+            SubjectBox(text: command)
             let purpose = [description.isEmpty ? reason : description,
                            cwd.isEmpty ? "" : String(localized: "in \(cwd)")]
                 .filter { !$0.isEmpty }.joined(separator: " · ")
-            if !purpose.isEmpty { explain(purpose) }
+            if !purpose.isEmpty { why(purpose) }
         case .edit(let path, _, let added, let removed, let diff, let reason):
-            HStack(alignment: .firstTextBaseline) {
-                verbatim(path)
-                Spacer(minLength: 6)
-                Text("+\(added) −\(removed)")
-                    .designFont(.monoSmall, design)
-                    .foregroundStyle(design.inkFaint.color)
-            }
+            SubjectBox(text: path, lines: 2, counts: (added, removed))
             if !diff.isEmpty { DiffPreview(diff: diff, whole: wholeDiff) }
             if diff.split(separator: "\n").count > DiffPreview.lines {
-                Button { wholeDiff.toggle() } label: {
-                    Text(wholeDiff ? "Show less" : "Show the whole diff")
-                        .designFont(.detail, design)
-                        .foregroundStyle(design.accent.color)
-                }
-                .buttonStyle(.amuxControl)
-                .identified("ask.diff", value: wholeDiff ? "open" : "folded")
+                link(wholeDiff ? String(localized: "Show less") : String(localized: "Show the whole diff"),
+                     id: "ask.diff", value: wholeDiff ? "open" : "folded") { wholeDiff.toggle() }
             }
-            if !reason.isEmpty { explain(reason) }
+            if !reason.isEmpty { why(reason) }
         case .tool(_, _, let arguments):
-            if !arguments.isEmpty { verbatim(arguments, lines: 8) }
+            if !arguments.isEmpty { SubjectBox(text: arguments, lines: 8) }
         case .question:
             EmptyView()
         case .plan(let plan):
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Prose(markdown: plan)
-                    .frame(maxHeight: wholePlan ? 420 : 150, alignment: .top)
+                    .frame(maxHeight: wholePlan ? 420 : 132, alignment: .top)
                     .clipped()
                     .mask {
                         LinearGradient(
-                            stops: [.init(color: .black, location: 0.75),
+                            stops: [.init(color: .black, location: 0.6),
                                     .init(color: wholePlan ? .black : .clear, location: 1)],
                             startPoint: .top, endPoint: .bottom)
                     }
-                Button { wholePlan.toggle() } label: {
-                    Text(wholePlan ? "Fold the plan" : "Read the plan")
-                        .designFont(.detail, design)
-                        .foregroundStyle(design.accent.color)
-                }
-                .buttonStyle(.amuxControl)
-                .identified("ask.plan.read", value: wholePlan ? "open" : "folded")
+                link(wholePlan ? String(localized: "Fold the plan") : String(localized: "Read the plan"),
+                     id: "ask.plan.read", value: wholePlan ? "open" : "folded") { wholePlan.toggle() }
             }
         case .form(_, let message, _):
-            if !message.isEmpty { explain(message) }
+            if !message.isEmpty { why(message) }
         case .link(_, let message, let url):
-            if !message.isEmpty { explain(message) }
-            verbatim(url)
+            if !message.isEmpty { why(message) }
+            SubjectBox(text: url, lines: 2)
         case .access(let reason, let read, let write, let network, let hosts):
-            if !reason.isEmpty { explain(reason) }
-            VStack(alignment: .leading, spacing: 4) {
+            if !reason.isEmpty { why(reason) }
+            VStack(spacing: 0) {
                 ForEach(write, id: \.self) { path in fact(String(localized: "Write to"), path) }
                 ForEach(read, id: \.self) { path in fact(String(localized: "Read"), path) }
                 if network {
@@ -294,40 +408,56 @@ private struct AskBodyView: View {
                         hosts.isEmpty ? String(localized: "Any host") : hosts.joined(separator: ", "))
                 }
             }
+            .padding(.horizontal, 14)
+            .background {
+                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                    .fill(design.sunken.color)
+            }
         case .unanswerable(let reason):
-            explain(reason.isEmpty
+            why(reason.isEmpty
                 ? String(localized: "The agent is showing a menu this build can’t read. Attach from a terminal to answer it, or stop the turn.")
                 : reason)
         }
     }
 
-    private func verbatim(_ text: String, lines: Int? = 4) -> some View {
-        Text(text)
-            .designFont(.mono, design)
-            .foregroundStyle(design.ink.color)
-            .lineLimit(lines)
-            .fixedSize(horizontal: false, vertical: true)
-            .textSelection(.enabled)
-            .identified("ask.subject", label: text)
-    }
-
-    private func explain(_ text: String) -> some View {
+    private func why(_ text: String) -> some View {
         Text(text)
             .designFont(.detail, design)
             .foregroundStyle(design.inkMuted.color)
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    /// One thing an access request asks for, on its own line.
     private func fact(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
-                .designFont(.detail, design)
-                .foregroundStyle(design.inkMuted.color)
+                .designFont(.body, design)
+                .foregroundStyle(design.ink.color)
+            Spacer(minLength: 6)
             Text(value)
                 .designFont(.monoSmall, design)
-                .foregroundStyle(design.ink.color)
+                .foregroundStyle(design.inkMuted.color)
                 .lineLimit(2)
+                .multilineTextAlignment(.trailing)
         }
+        .padding(.vertical, 11)
+    }
+
+    private func link(_ title: String, id: String, value: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title)
+                    .designFont(.bodyEmphasis, design)
+                    .foregroundStyle(design.ink.color)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(design.inkMuted.color)
+            }
+            .thumbTarget(x: 4, y: 12)
+        }
+        .buttonStyle(.amuxControl)
+        .identified(id, label: title, value: value)
+        .reclaimingThumbTarget(x: 4, y: 12)
     }
 
     // MARK: The choices
@@ -351,19 +481,11 @@ private struct AskBodyView: View {
         case .link(_, _, let url):
             linkChoices(url)
         case .unanswerable:
-            choiceButton(String(localized: "Stop the turn"), kind: .primary, id: "ask.stop") {
+            choiceButton(String(localized: "Stop the turn"), kind: .outline, id: "ask.stop") {
                 act(.stop)
             }
         case .command, .edit, .tool:
-            VStack(spacing: 8) {
-                ForEach(Array(card.choices.enumerated()), id: \.offset) { index, choice in
-                    choiceButton(
-                        ChatWords.choice(choice),
-                        kind: choice.primary ? .primary : (isDeny(choice) ? .outline : .quiet),
-                        id: "ask.choice.\(index)"
-                    ) { pick(index) }
-                }
-            }
+            permissionChoices
         }
     }
 
@@ -374,12 +496,40 @@ private struct AskBodyView: View {
         }
     }
 
-    private func pick(_ index: Int) {
-        if card.choices[index].takesNote {
-            noting = index
-            note = ""
-        } else {
-            act(.choose(index, note: nil))
+    /// The scopes the agent offered as rows, then Allow beside Deny. Deny
+    /// opens its own step when there is a note to write or a choice between
+    /// carrying on and stopping; a single deny without a note answers at once.
+    @ViewBuilder
+    private var permissionChoices: some View {
+        let primary = card.choices.firstIndex { $0.primary }
+        let denies = card.choices.indices.filter { isDeny(card.choices[$0]) }
+        let scopes = card.choices.indices.filter { $0 != primary && !denies.contains($0) }
+        VStack(spacing: 8) {
+            ForEach(scopes, id: \.self) { index in
+                let row = ChatWords.scopeRow(card.choices[index])
+                ChoiceRow(title: row.title, detail: row.detail, id: "ask.choice.\(index)") {
+                    act(.choose(index, note: nil))
+                }
+            }
+            ButtonPair {
+                if let primary {
+                    choiceButton(ChatWords.button(card.choices[primary]), kind: .primary, id: "ask.choice.\(primary)") {
+                        act(.choose(primary, note: nil))
+                    }
+                }
+                if let deny = denies.first {
+                    if denies.count == 1 && !card.choices[deny].takesNote {
+                        choiceButton(ChatWords.button(card.choices[deny]), kind: .outline, id: "ask.choice.\(deny)") {
+                            act(.choose(deny, note: nil))
+                        }
+                    } else {
+                        choiceButton(String(localized: "Deny…"), kind: .outline, id: "ask.deny") {
+                            note = ""
+                            noting = true
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -395,7 +545,7 @@ private struct AskBodyView: View {
         let plain = approve.first {
             card.choices[$0].outcome == .approvePlan(autoAcceptEdits: false)
         }
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             if switched != nil, plain != nil {
                 Toggle(isOn: $autoAccept) {
                     VStack(alignment: .leading, spacing: 1) {
@@ -403,14 +553,14 @@ private struct AskBodyView: View {
                             .designFont(.body, design)
                             .foregroundStyle(design.ink.color)
                         Text("Until the plan is done")
-                            .designFont(.caption, design)
-                            .foregroundStyle(design.inkFaint.color)
+                            .designFont(.monoSmall, design)
+                            .foregroundStyle(design.inkMuted.color)
                     }
                 }
-                .tint(design.accent.color)
+                .tint(design.ink.color)
                 .identified("ask.plan.auto", value: autoAccept ? "on" : "off")
             }
-            HStack(spacing: 10) {
+            ButtonPair {
                 if let index = (autoAccept ? switched : plain) ?? approve.first {
                     choiceButton(String(localized: "Approve"), kind: .primary, id: "ask.approve") {
                         act(.choose(index, note: nil))
@@ -431,7 +581,7 @@ private struct AskBodyView: View {
     private var accessChoices: some View {
         let turn = card.choices.firstIndex { $0.outcome == .grantForTurn }
         let session = card.choices.firstIndex { $0.outcome == .grantForSession }
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             if turn != nil, session != nil {
                 Picker(String(localized: "How long"), selection: $forSession) {
                     Text("This turn").tag(false)
@@ -440,7 +590,7 @@ private struct AskBodyView: View {
                 .pickerStyle(.segmented)
                 .identified("ask.grant.length", value: forSession ? "session" : "turn")
             }
-            HStack(spacing: 10) {
+            ButtonPair {
                 if let index = (forSession ? session : turn) ?? turn ?? session {
                     choiceButton(String(localized: "Grant"), kind: .primary, id: "ask.grant") {
                         act(.choose(index, note: nil))
@@ -470,7 +620,7 @@ private struct AskBodyView: View {
                     fields = edited
                 }
             }
-            HStack(spacing: 10) {
+            ButtonPair {
                 ForEach(Array(card.choices.enumerated()), id: \.offset) { index, choice in
                     if choice.outcome == .submit {
                         choiceButton(
@@ -490,57 +640,111 @@ private struct AskBodyView: View {
     /// Open the link, then say it is done.
     @ViewBuilder
     private func linkChoices(_ url: String) -> some View {
+        let done = card.choices.indices.filter { card.choices[$0].outcome == .openLink }
+        let rest = card.choices.indices.filter { !done.contains($0) }
         VStack(spacing: 8) {
-            if let link = URL(string: url) {
-                choiceButton(
-                    String(localized: "Open link"), kind: opened ? .quiet : .primary, id: "ask.open"
-                ) {
+            if let link = URL(string: url), !opened {
+                choiceButton(String(localized: "Open link"), kind: .primary, id: "ask.open") {
                     opened = true
                     openURL(link)
                 }
             }
-            ForEach(Array(card.choices.enumerated()), id: \.offset) { index, choice in
-                choiceButton(
-                    ChatWords.choice(choice),
-                    kind: choice.outcome == .openLink && opened ? .primary : .outline,
-                    id: "ask.choice.\(index)"
-                ) { pick(index) }
+            ButtonPair {
+                ForEach(done, id: \.self) { index in
+                    choiceButton(
+                        ChatWords.choice(card.choices[index]), kind: opened ? .primary : .outline,
+                        id: "ask.choice.\(index)"
+                    ) { pick(index) }
+                }
+                ForEach(rest, id: \.self) { index in
+                    choiceButton(
+                        ChatWords.choice(card.choices[index]), kind: .outline, id: "ask.choice.\(index)"
+                    ) { pick(index) }
+                }
             }
         }
     }
 
-    /// The note a deny or a send-back takes; a send-back needs one.
-    private func noteField(_ index: Int) -> some View {
-        let choice = card.choices[index]
-        let required = choice.outcome == .sendBack
-        let label = ChatWords.choice(choice).replacingOccurrences(of: "…", with: "")
+    private func pick(_ index: Int) {
+        if card.choices[index].takesNote {
+            note = ""
+            noting = true
+        } else {
+            act(.choose(index, note: nil))
+        }
+    }
+
+    /// The deny step, or the note a plan's send-back needs: the note field
+    /// when a choice takes one, then the choices that end it side by side,
+    /// carrying on filled.
+    private var noteStep: some View {
+        let ends = card.choices.indices.filter { isDeny(card.choices[$0]) }
+        let takesNote = ends.contains { card.choices[$0].takesNote }
+        let required = ends.contains { card.choices[$0].outcome == .sendBack }
         return VStack(alignment: .leading, spacing: 10) {
-            TextField(
-                required
-                    ? String(localized: "What should change")
-                    : String(localized: "Tell it why (optional)"),
-                text: $note, axis: .vertical
-            )
-            .lineLimit(2...6)
-            .designFont(.body, design)
-            .padding(10)
-            .background {
-                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                    .fill(design.sunken.color)
-            }
-            .identified("ask.note", value: note)
-            HStack(spacing: 10) {
-                choiceButton(
-                    label, kind: .primary, id: "ask.note.send",
-                    enabled: !required || !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ) {
-                    act(.choose(index, note: note.isEmpty ? nil : note))
+            if takesNote {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(required ? String(localized: "What should change") : String(localized: "Tell it why (optional)"))
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkMuted.color)
+                    Spacer(minLength: 6)
+                    backButton
                 }
-                choiceButton(String(localized: "Back"), kind: .outline, id: "ask.note.back") {
-                    noting = nil
+                TextField("", text: $note, axis: .vertical)
+                    .lineLimit(2...6)
+                    .designFont(.body, design)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background {
+                        RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                            .fill(design.raised.color)
+                            .strokeBorder(design.ink.color, lineWidth: 1)
+                    }
+                    .accessibilityLabel(required ? String(localized: "What should change") : String(localized: "Tell it why (optional)"))
+                    .identified("ask.note", value: note)
+            } else {
+                HStack {
+                    Spacer()
+                    backButton
+                }
+            }
+            ButtonPair {
+                // Stopping first, carrying on filled beside it.
+                ForEach(ends.sorted { stops(card.choices[$0]) && !stops(card.choices[$1]) }, id: \.self) { index in
+                    let choice = card.choices[index]
+                    let blank = note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    choiceButton(
+                        ChatWords.choice(Choice(outcome: choice.outcome, primary: choice.primary, takesNote: false)),
+                        kind: stops(choice) && ends.count > 1 ? .outline : .primary,
+                        id: "ask.choice.\(index)",
+                        enabled: !(choice.outcome == .sendBack && blank)
+                    ) {
+                        act(.choose(index, note: choice.takesNote && !blank ? note : nil))
+                    }
                 }
             }
         }
+    }
+
+    private func stops(_ choice: Choice) -> Bool {
+        switch choice.outcome {
+        case .denyAndStop, .deny(stops: true): true
+        default: false
+        }
+    }
+
+    private var backButton: some View {
+        Button {
+            noting = false
+        } label: {
+            Text("Back")
+                .designFont(.detail, design)
+                .foregroundStyle(design.inkMuted.color)
+                .thumbTarget(x: 6, y: 12)
+        }
+        .buttonStyle(.amuxControl)
+        .identified("ask.note.back", label: String(localized: "Back"))
+        .reclaimingThumbTarget(x: 6, y: 12)
     }
 }
 
@@ -681,7 +885,7 @@ private struct FormFieldView: View {
             Toggle(isOn: Binding(get: { field.value == "true" }, set: { set($0 ? "true" : "false") })) {
                 Text(field.title).designFont(.body, design)
             }
-            .tint(design.accent.color)
+            .tint(design.ink.color)
             .identified("ask.field.\(field.name)", value: field.value)
         case .choice(let options):
             HStack {
@@ -691,21 +895,23 @@ private struct FormFieldView: View {
                     ForEach(options, id: \.self) { Text($0).tag($0) }
                 }
                 .pickerStyle(.menu)
-                .tint(design.accent.color)
+                .tint(design.ink.color)
             }
             .identified("ask.field.\(field.name)", value: field.value)
         case .text, .number:
             VStack(alignment: .leading, spacing: 4) {
                 Text(field.required ? "\(field.title) *" : field.title)
-                    .designFont(.caption, design)
+                    .designFont(.detail, design)
                     .foregroundStyle(design.inkMuted.color)
                 TextField(field.title, text: Binding(get: { field.value }, set: { set($0) }))
                     .keyboardType(field.kind == .text ? .default : .decimalPad)
                     .designFont(.body, design)
-                    .padding(10)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
                     .background {
                         RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                            .fill(design.sunken.color)
+                            .fill(design.raised.color)
+                            .strokeBorder(design.hairline.color, lineWidth: 1)
                     }
                     .identified("ask.field.\(field.name)", value: field.value)
             }
@@ -792,38 +998,55 @@ struct QuestionCard: View {
             reviewing: reviewing, note: note, noting: noting)
     }
 
+    /// The questions' headers as steps: done ones carry a check, the one
+    /// on screen is filled, and the last step is the review.
     private var steps: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 6) {
                 ForEach(Array(questions.enumerated()), id: \.offset) { index, question in
-                    let current = !reviewing && index == step
                     Button {
                         reviewing = false
                         step = index
                     } label: {
-                        Text(question.header.isEmpty ? String(localized: "Question \(index + 1)") : question.header)
-                            .designFont(.caption, design)
-                            .foregroundStyle(current ? design.ground.color : design.inkMuted.color)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(current ? design.ink.color : design.sunken.color))
+                        stepChip(
+                            question.header.isEmpty ? String(localized: "Question \(index + 1)") : question.header,
+                            current: !reviewing && index == step, done: answered(index))
                     }
                     .buttonStyle(.amuxControl)
                     .identified("ask.step.\(index)", value: answered(index) ? "answered" : "open")
                 }
                 Button { reviewing = true } label: {
-                    Text("Review")
-                        .designFont(.caption, design)
-                        .foregroundStyle(reviewing ? design.ground.color : design.inkMuted.color)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(reviewing ? design.ink.color : design.sunken.color))
+                    stepChip(String(localized: "Review"), current: reviewing, done: false)
                 }
                 .buttonStyle(.amuxControl)
                 .identified("ask.step.review")
             }
         }
         .scrollIndicators(.hidden)
+    }
+
+    private func stepChip(_ title: String, current: Bool, done: Bool) -> some View {
+        HStack(spacing: 5) {
+            if done && !current {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            Text(title)
+                .font(.custom(design.faces.body, size: 13, relativeTo: .footnote).weight(.medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(current ? design.ground.color : (done ? design.ink.color : design.inkMuted.color))
+        .padding(.horizontal, 11)
+        .frame(height: 30)
+        .background {
+            if current {
+                Capsule().fill(design.ink.color)
+            } else {
+                Capsule().strokeBorder(design.hairline.color, lineWidth: 1)
+            }
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     private func answered(_ index: Int) -> Bool {
@@ -867,10 +1090,11 @@ struct QuestionCard: View {
         }
         if !tapAnswers || (others.indices.contains(index) && others[index] != nil) {
             let count = picks.indices.contains(index) ? picks[index].count : 0
+            let last = questions.count == 1
             choiceButton(
                 question.multiSelect && count > 0
-                    ? String(localized: "Next · \(count) selected")
-                    : (questions.count == 1 ? String(localized: "Send") : String(localized: "Next")),
+                    ? (last ? String(localized: "Send · \(count) selected") : String(localized: "Next · \(count) selected"))
+                    : (last ? String(localized: "Send") : String(localized: "Next")),
                 kind: .primary, id: "ask.next", enabled: answered(index)
             ) { advance(from: index) }
         }
@@ -883,38 +1107,9 @@ struct QuestionCard: View {
         return Button {
             select(position, in: question, at: index)
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Image(systemName: question.multiSelect
-                    ? (selected ? "checkmark.square.fill" : "square")
-                    : (selected ? "largecircle.fill.circle" : "circle"))
-                    .foregroundStyle(selected ? design.ink.color : design.inkFaint.color)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(option.label)
-                            .designFont(.bodyEmphasis, design)
-                            .foregroundStyle(design.ink.color)
-                        if option.recommended {
-                            Text("RECOMMENDED")
-                                .designFont(.caption, design)
-                                .foregroundStyle(design.inkFaint.color)
-                        }
-                    }
-                    if !option.description.isEmpty, option.description != option.label {
-                        Text(option.description)
-                            .designFont(.detail, design)
-                            .foregroundStyle(design.inkMuted.color)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .background {
-                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                    .fill(selected ? design.sunken.color : .clear)
-                    .strokeBorder(design.hairline.color, lineWidth: 1)
-            }
-            .contentShape(Rectangle())
+            OptionRow(
+                label: option.label, detail: option.description != option.label ? option.description : "",
+                recommended: option.recommended, multi: question.multiSelect, selected: selected)
         }
         .buttonStyle(.amuxControl)
         .identified("ask.option.\(position)", label: option.label, value: selected ? "selected" : nil)
@@ -953,10 +1148,12 @@ struct QuestionCard: View {
                 }
             }
             .designFont(.body, design)
-            .padding(10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
             .background {
                 RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                    .fill(design.sunken.color)
+                    .fill(design.raised.color)
+                    .strokeBorder(design.ink.color, lineWidth: 1)
             }
             .identified("ask.other", value: question.secret ? nil : others[index])
         } else {
@@ -964,14 +1161,9 @@ struct QuestionCard: View {
                 others[index] = ""
                 picks[index] = []
             } label: {
-                HStack {
-                    Text("Something else…")
-                        .designFont(.body, design)
-                        .foregroundStyle(design.inkMuted.color)
-                    Spacer()
-                }
-                .padding(10)
-                .contentShape(Rectangle())
+                OptionRow(
+                    label: String(localized: "Something else…"), detail: "", recommended: false,
+                    multi: question.multiSelect, selected: false, quiet: true)
             }
             .buttonStyle(.amuxControl)
             .identified("ask.option.other")
@@ -1000,7 +1192,7 @@ struct QuestionCard: View {
     /// question is marked and blocks Send.
     @ViewBuilder
     private var review: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(questions.enumerated()), id: \.offset) { index, question in
                 Button {
                     reviewing = false
@@ -1008,8 +1200,8 @@ struct QuestionCard: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(question.header.isEmpty ? question.question : "\(question.header) · \(question.question)")
-                            .designFont(.caption, design)
-                            .foregroundStyle(design.inkFaint.color)
+                            .designFont(.detail, design)
+                            .foregroundStyle(design.inkMuted.color)
                             .lineLimit(2)
                         Text(summary(question, at: index))
                             .designFont(.body, design)
@@ -1026,17 +1218,25 @@ struct QuestionCard: View {
                     TextField(String(localized: "A note for the agent"), text: $note, axis: .vertical)
                         .lineLimit(1...4)
                         .designFont(.body, design)
-                        .padding(10)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
                         .background {
                             RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                                .fill(design.sunken.color)
+                                .fill(design.raised.color)
+                                .strokeBorder(design.hairline.color, lineWidth: 1)
                         }
                         .identified("ask.review.note", value: note)
                 } else {
                     Button { noting = true } label: {
-                        Text("Add a note for the agent")
-                            .designFont(.detail, design)
-                            .foregroundStyle(design.accent.color)
+                        HStack(spacing: 5) {
+                            Text("Add a note for the agent")
+                                .designFont(.bodyEmphasis, design)
+                                .foregroundStyle(design.ink.color)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(design.inkMuted.color)
+                        }
+                        .frame(minHeight: 44)
                     }
                     .buttonStyle(.amuxControl)
                     .identified("ask.review.addNote")
@@ -1060,5 +1260,71 @@ struct QuestionCard: View {
             question.options.indices.contains(Int(position)) ? question.options[Int(position)].label : nil
         }
         return labels.isEmpty ? String(localized: "Not answered") : labels.joined(separator: ", ")
+    }
+}
+
+/// A question's option as a row: its box (round for one pick, square for
+/// several), the label with a RECOMMENDED tag lifted out of it, and the
+/// description under it.
+struct OptionRow: View {
+    @Environment(\.design) private var design
+    let label: String
+    let detail: String
+    let recommended: Bool
+    let multi: Bool
+    let selected: Bool
+    var quiet = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            box.alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(label)
+                        .designFont(quiet ? .body : .bodyEmphasis, design)
+                        .foregroundStyle(quiet ? design.inkMuted.color : design.ink.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if recommended {
+                        Text("RECOMMENDED")
+                            .designFont(.sectionTitle, design)
+                            .foregroundStyle(design.inkMuted.color)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(design.hairline.color, lineWidth: 1))
+                    }
+                }
+                if !detail.isEmpty {
+                    Text(detail)
+                        .designFont(.detail, design)
+                        .foregroundStyle(design.inkMuted.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: design.metrics.controlRadius + 1, style: .continuous)
+                .fill(design.sunken.color)
+                .strokeBorder(selected ? design.ink.color : .clear, lineWidth: 1.5)
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var box: some View {
+        let shape = RoundedRectangle(cornerRadius: multi ? 5 : 9, style: .continuous)
+        return ZStack {
+            if selected {
+                shape.fill(design.ink.color)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(design.raised.color)
+            } else {
+                shape.strokeBorder(design.inkFaint.color, lineWidth: 1.5)
+            }
+        }
+        .frame(width: 18, height: 18)
     }
 }

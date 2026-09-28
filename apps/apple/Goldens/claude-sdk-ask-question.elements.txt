@@ -7,24 +7,24 @@ chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
 chat.title | asker | asker | 51,72,156,38
 chat.more | More |  | 344,69,44,44
-ask | Question | open | 12,604,378,226
-ask.more | More |  | 343,607,45,46
-ask.question | Which changes should the release notes keep? |  | 28,651,343,20
-ask.option.0 | Only what users will notice |  | 28,683,346,40
-ask.option.1 | Every change |  | 28,729,346,40
-ask.option.other |  |  | 28,774,346,40
+ask | Question | open | 12,570,378,260
+ask.more | More |  | 338,578,44,44
+ask.question | Which changes should the release notes keep? |  | 28,626,343,20
+ask.option.0 | Only what users will notice |  | 28,658,346,48
+ask.option.1 | Every change |  | 28,712,346,48
+ask.option.other |  |  | 28,766,346,48
  | Back |  | 16,68,42,46
  | asker, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
  | Started |  | 18,136,366,16
  | Tidy the release notes. |  | 192,166,192,40
  | Asking |  | 18,217,366,20
- | Question |  | 46,620,70,20
- | More |  | 343,607,45,46
- | Which changes should the release notes keep? |  | 28,651,343,20
- | Only what users will notice |  | 28,683,346,40
- | Every change |  | 28,729,346,40
- | Something else… |  | 28,774,346,40
+ | Question |  | 62,590,70,20
+ | More |  | 338,578,44,44
+ | Which changes should the release notes keep? |  | 28,626,343,20
+ | Only what users will notice |  | 28,658,346,48
+ | Every change |  | 28,712,346,48
+ | Something else… |  | 28,766,346,48
  | Hosts |  | 18,72,69,32
  | 1 reachable |  | 18,105,79,16
  | ON THIS NETWORK |  | 20,137,105,14

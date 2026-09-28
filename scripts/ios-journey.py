@@ -210,14 +210,14 @@ def conversation_decision(journey: PhoneJourney, agent: str, provider_logs: bool
     open_agent(journey, agent)
     send(journey, PROMPT)
     card = journey.wait(
-        lambda drawn: "ask" in drawn and labelled(drawn, "deploy --check") and labelled(drawn, "Allow once"),
+        lambda drawn: "ask" in drawn and labelled(drawn, "deploy --check") and labelled(drawn, "Allow"),
         "the permission card",
     )
     sent = journey.wait_chat("desk", agent, lambda chat: len(prompts(chat, PROMPT)) >= 1, "prompt-reflected")
     reflected_once(sent, PROMPT)
     control = negative_control(reflected_once, sent, PROMPT + " (a wrong prompt)")
     journey.screen("permission")
-    journey.tap(choice(card, "Allow once"))
+    journey.tap(choice(card, "Allow"))
     journey.wait(lambda drawn: "ask" not in drawn and labelled(drawn, REPLY), "the settled turn")
     settled = journey.wait_chat(
         "desk",
@@ -229,7 +229,7 @@ def conversation_decision(journey: PhoneJourney, agent: str, provider_logs: bool
     assertions = [
         f"{PROMPT!r} reflected once in the desk's chat",
         control,
-        "the permission card offered its outcomes and Allow once was tapped",
+        "the permission card offered its outcomes and Allow was tapped",
         f"the reply {REPLY!r} arrived and the desk says idle",
     ]
     if provider_logs:
@@ -989,11 +989,11 @@ def accessibility(journey: PhoneJourney) -> list[str]:
     journey.screen("chat")
     send(journey, PROMPT)
     card = journey.wait(
-        lambda drawn: "ask" in drawn and labelled(drawn, "deploy --check") and labelled(drawn, "Allow once"),
+        lambda drawn: "ask" in drawn and labelled(drawn, "deploy --check") and labelled(drawn, "Allow"),
         "the permission card",
     )
     journey.screen("permission")
-    journey.tap(choice(card, "Allow once"))
+    journey.tap(choice(card, "Allow"))
     journey.wait(lambda drawn: "ask" not in drawn and labelled(drawn, REPLY), "the settled turn")
     settled = journey.wait_chat(
         "desk",
@@ -1014,7 +1014,7 @@ def accessibility(journey: PhoneJourney) -> list[str]:
     return [
         f"the app says it draws at {ACCESSIBLE_SIZE}",
         "at that size the desk was paired on the keypad and the agent's chat opened",
-        f"the permission card offered Allow once, which was tapped; the desk holds {PROMPT!r} once and answered",
+        f"the permission card offered Allow, which was tapped; the desk holds {PROMPT!r} once and answered",
         "the provider received exactly one allow",
     ]
 
@@ -1169,8 +1169,8 @@ def push_wake(journey: PhoneJourney) -> list[str]:
     journey.wait(lambda drawn: labelled(drawn, "The logs are quiet."), "the bystander current in the foreground", timeout=90)
     back_to_fleet(journey)
     journey.tap(f"home.row.{asker}")
-    card = journey.wait(lambda drawn: "ask" in drawn and labelled(drawn, "Allow once"), "the ask again")
-    journey.tap(choice(card, "Allow once"))
+    card = journey.wait(lambda drawn: "ask" in drawn and labelled(drawn, "Allow"), "the ask again")
+    journey.tap(choice(card, "Allow"))
     journey.wait(lambda drawn: labelled(drawn, "Deployed to production."), "the deploy reply")
     journey.wait_chat(
         "desk", "asker",
@@ -1188,7 +1188,7 @@ def push_wake(journey: PhoneJourney) -> list[str]:
         " the asker's chat current: with the desk stopped it held the ask",
         "the bystander's chat did not hold the answer it gave while the app was away: only the named chat was brought current",
         "back in the foreground with the desk running again, the bystander caught up without being named",
-        "Allow once from the phone reached the desk, which finished the deploy",
+        "Allow from the phone reached the desk, which finished the deploy",
     ]
 
 

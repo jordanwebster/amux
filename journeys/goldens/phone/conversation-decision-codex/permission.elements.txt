@@ -25,13 +25,12 @@ chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
 chat.title | decision-codex | decision-codex | 51,72,156,38
 chat.more | More |  | 344,69,44,44
-ask | Wants to run a command | open | 12,487,378,343
-ask.more | More |  | 343,490,45,46
-ask.subject | /bin/zsh -lc 'deploy --check' |  | 28,535,244,18
-ask.choice.0 | Allow once |  | 28,614,346,44
-ask.choice.1 | Allow for this session |  | 28,666,346,44
-ask.choice.2 | Deny |  | 28,718,346,44
-ask.choice.3 | Deny and stop |  | 28,770,346,44
+ask | Wants to run a command | open | 12,555,378,275
+ask.more | More |  | 338,563,44,44
+ask.subject | /bin/zsh -lc 'deploy --check' |  | 28,611,346,40
+ask.choice.1 | Allow for this session |  | 28,712,346,50
+ask.choice.0 | Allow |  | 28,770,169,44
+ask.deny | Deny… |  | 205,770,169,44
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 reachable | 18,105,79,16
@@ -59,14 +58,13 @@ you.help.caption |  |  | 18,599,354,31
  | Started |  | 18,136,366,16
  | Check the deployment once. |  | 145,166,239,40
  | Wants to run, /bin/zsh -lc 'deploy --check' |  | 18,217,366,20
- | Wants to run a command |  | 46,503,189,20
- | More |  | 343,490,45,46
- | /bin/zsh -lc 'deploy --check' |  | 28,535,244,18
- | The script asks before running this. · in /tmp/amux-phone-journey/net/desk/work |  | 28,565,302,37
- | Allow once |  | 28,614,346,44
- | Allow for this session |  | 28,666,346,44
- | Deny |  | 28,718,346,44
- | Deny and stop |  | 28,770,346,44
+ | Wants to run a command |  | 62,575,189,20
+ | More |  | 338,563,44,44
+ | /bin/zsh -lc 'deploy --check' |  | 28,611,346,40
+ | The script asks before running this. · in /tmp/amux-phone-journey/net/desk/work |  | 28,663,302,37
+ | Allow for this session |  | 28,712,346,50
+ | Allow |  | 28,770,169,44
+ | Deny… |  | 205,770,169,44
  | Hosts |  | 18,72,69,32
  | 1 reachable |  | 18,105,79,16
  | ON THIS NETWORK |  | 20,137,105,14

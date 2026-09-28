@@ -1,3 +1,25 @@
+2026-09-28 — **Phone ask cards share one anatomy again.** Every ask opens
+with an accent circle carrying its kind's glyph (a hand for permissions, a
+question mark, a list for plans, a form, a link, a lock for access, an alert
+for what the phone cannot answer), then what it wants, `1 of 3` in mono when
+asks are queued, and the ⋯ menu that always carries Stop. The subject sits in
+a sunken mono box (an edit's `+N −N` at the end of its path). A permission
+lists the scopes the agent offered as rows stated as outcomes with how far
+they reach underneath (`Always allow cargo test` / `In this project, from now
+on`; Codex's `Allow similar commands` / `Starting with curl -s`; a folder
+grant reads `Always allow access` / `in <folder>`), then Allow filled beside
+Deny. Deny opens its own step when there is a note to write or a choice
+between carrying on and stopping (`Deny and stop` beside a filled `Deny`);
+terminal Claude's step has its one Deny, and a lone deny without a note
+answers at once. Question options are sunken rows with a round or square
+box, a RECOMMENDED tag and `Something else…` as the last row; several picks
+send as `Send · 2 selected`; step chips are sans pills with a check on
+answered steps. Plans keep the faded body, `Read the plan`, the accept-edits
+switch and Approve beside `Send back…`; forms, links and access grants end on
+the same button pair. Component snapshots, the question and escape goldens
+and the journeys' permission frames are re-recorded; the journeys now tap
+`Allow`.
+
 2026-09-28 — **The phone composer is laid out as it was before the
 rearchitecture.** The activity line is words over a moving bar: `Working`,
 `Running` with the command in mono, `Thinking`, `3 subagents working`,
