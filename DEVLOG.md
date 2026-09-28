@@ -1,3 +1,10 @@
+2026-09-28 — **Testnet does not wait on a LAN port a test holds.**
+Stopping a host now waits for its LAN port to free so a restarted daemon
+can listen where it did, but spec_network's discovery case hands the desk a
+socket it keeps holding (so nothing else answers on the old port), and
+every run stuck on that wait. Net now remembers when a host's LAN socket
+was handed in and leaves that port to the test.
+
 2026-09-28 — **A partly answered question card survives leaving the chat.**
 On the phone, the picks, typed answers, step and note on a multi-question
 card lived in the card's view, so leaving the chat and opening it again

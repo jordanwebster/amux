@@ -194,6 +194,9 @@ struct Host {
     boot: u64,
     /// The store file as of the last checkpoint: what reached the drive.
     checkpoint: Option<Vec<u8>>,
+    /// The running daemon listens on a LAN socket a test handed it, which
+    /// stays bound for as long as the test holds it.
+    lan_handed: bool,
 }
 
 struct Link {
@@ -927,6 +930,7 @@ impl Net {
                 runtime: Weak::new(),
                 boot: 1,
                 checkpoint: None,
+                lan_handed: false,
             },
         );
         Ok(())
@@ -980,6 +984,7 @@ impl Net {
         if let Some(hook) = &self.edge_hook {
             hook(name, &mut edge);
         }
+        let handed = edge.lan.as_ref().is_some_and(|lan| lan.socket.is_some());
         let options = node::StartOptions {
             data_dir: host.info.data_dir.clone(),
             boot_id: Some(format!("boot-{}", host.boot)),
@@ -1005,6 +1010,7 @@ impl Net {
         let host = self.hosts.get_mut(name).expect("the host");
         host.runtime = Arc::downgrade(&runtime);
         host.daemon = Some(std::sync::Mutex::new(daemon));
+        host.lan_handed = handed;
         Ok(())
     }
 
@@ -1140,13 +1146,14 @@ impl Net {
         .await?;
         // A dead daemon's sockets die with its process, and the next one
         // listens where it did. In process, the dropped listener lets go of
-        // its port only once its last task has, so wait for that.
+        // its port only once its last task has, so wait for that. A socket
+        // a test handed in is the test's to hold or let go.
         let lan_port = std::fs::read_to_string(
             node::profile_dir(&host.info.data_dir, host.info.profile).join(node::LAN_PORT_FILE),
         )
         .ok()
         .and_then(|text| text.trim().parse::<u16>().ok())
-        .filter(|_| host.decl.lan);
+        .filter(|_| host.decl.lan && !host.lan_handed);
         if let Some(port) = lan_port {
             observe::eventually(&format!("{name}'s LAN port to be free"), PATIENCE, || {
                 let free = std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok();
