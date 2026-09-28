@@ -18,8 +18,9 @@ with frames (origin-rewind's before and after) has a golden per frame.
 screen is still taken, so each is reached in the same state. Tab pages a
 pushed page covers are left out of the geometry. `--update` rewrites every
 golden that differs and leaves the rest alone. `--perturb TOKEN` moves one design colour
-token before anything is drawn and fails unless every photograph comes back
-different with a difference image: what proves the comparison would notice.
+token (or, named `needs-you-dot`, takes that one small mark away) before
+anything is drawn and fails unless every photograph comes back different
+with a difference image: what proves the comparison would notice.
 
 The components half of the manifest is photographed in-process by
 `just ios component-snapshots`; this script only reads its screens.
@@ -45,6 +46,17 @@ OUTPUT = ROOT / "target/ios/goldens"
 PERTURBED = ROOT / "target/ios/goldens-perturb"
 SIMULATOR = "golden"
 APPEARANCES = ("light", "dark")
+# Whole screens are compared far more tightly than a journey's live pages.
+# Measured over seven runs of every screen in both appearances against the
+# same goldens: inside the chat header's glass (the back and title pill, in
+# the light appearance) the render server moved up to 814 pixels past a
+# tolerance of 2 and 42 still past 16, none past 24; so that pill, with its
+# rim and shadow, is held at 32. With it bounded, three more runs moved at
+# most 3 pixels past 2 anywhere else on any screen. So the screen is held at
+# 2 with a budget of 64: a needs-you dot alone is some 450 pixels.
+TOLERANCE = 2
+MAX_DIFFERING = 64
+GLASS = {"chat.header": 32}
 # A turn's duration and a pairing code's fingerprint and countdown are made
 # fresh by every run.
 TURN = ("chat.row.turn-end",)
@@ -261,12 +273,15 @@ def main() -> int:
 
     udid = ios_simulators.ready(SIMULATOR)
     began = time.monotonic()
-    output = PERTURBED if options.perturb else OUTPUT
+    output = PERTURBED / options.perturb if options.perturb else OUTPUT
     journey = PhoneJourney(
         {"id": "goldens"}, ROOT / manifest["topology"], udid, output=output, goldens=GOLDENS
     )
     journey.update = options.update
     journey.covered_hidden = True
+    journey.tolerance = TOLERANCE
+    journey.max_differing = MAX_DIFFERING
+    journey.glass = GLASS
     goldens = Goldens(journey, manifest, wanted)
     try:
         journey.launch()

@@ -43,6 +43,25 @@ impl SystemChrome {
     }
 }
 
+/// A rectangle compared at a tolerance of its own: glass the render server
+/// resolves a little differently from one presentation of the same page to
+/// the next. Its pixels still count, so a change there is still noticed once
+/// it moves further than the glass ever does by itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Loose {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub tolerance: u8,
+}
+
+impl Loose {
+    fn covers(&self, x: u32, y: u32) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+}
+
 /// What the manifest knows about one pinned simulator.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoldenSimulator {
@@ -288,6 +307,27 @@ pub fn diff(
     max_differing_pixels: u64,
     system_chrome: &[SystemChrome],
 ) -> Result<GoldenVerdict, GoldenError> {
+    diff_with(
+        expected,
+        actual,
+        out,
+        tolerance,
+        max_differing_pixels,
+        system_chrome,
+        &[],
+    )
+}
+
+/// [`diff`], with `loose` rectangles compared at their own tolerance.
+pub fn diff_with(
+    expected: &Path,
+    actual: &Path,
+    out: &Path,
+    tolerance: u8,
+    max_differing_pixels: u64,
+    system_chrome: &[SystemChrome],
+    loose: &[Loose],
+) -> Result<GoldenVerdict, GoldenError> {
     if !actual.is_file() {
         return Ok(GoldenVerdict::CaptureFailed(format!(
             "{} was never written",
@@ -330,6 +370,10 @@ pub fn diff(
         if system_chrome.iter().any(|chrome| chrome.covers(x, y)) {
             continue;
         }
+        let tolerance = loose
+            .iter()
+            .find(|region| region.covers(x, y))
+            .map_or(tolerance, |region| region.tolerance);
         if expected[0].abs_diff(actual[0]) > tolerance
             || expected[1].abs_diff(actual[1]) > tolerance
             || expected[2].abs_diff(actual[2]) > tolerance
@@ -389,7 +433,8 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => {
             eprintln!(
                 "usage: xtask golden diff --expected PNG --actual PNG [--out DIR] \
-                 [--simulator NAME] [--tolerance N] [--max-differing N] [--mask X,Y,W,H]..."
+                 [--simulator NAME] [--tolerance N] [--max-differing N] [--mask X,Y,W,H]... \
+                 [--loose X,Y,W,H,TOLERANCE]..."
             );
             std::process::exit(2);
         }
@@ -430,13 +475,14 @@ fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     // A journey's screen can carry text that moves with the run (an age, a
     // scratch path); the driver names each such rectangle in pixels.
     chrome.extend(masks(arguments)?);
-    let verdict = diff(
+    let verdict = diff_with(
         Path::new(&expected),
         Path::new(&actual),
         Path::new(&out),
         tolerance,
         allowed,
         &chrome,
+        &loose(arguments)?,
     )?;
     println!("{verdict}");
     if verdict.passed() {
@@ -470,6 +516,38 @@ fn masks(arguments: &[String]) -> Result<Vec<SystemChrome>, String> {
                 y,
                 width,
                 height,
+            })
+        })
+        .collect()
+}
+
+/// Every `--loose x,y,width,height,tolerance` rectangle, in the capture's
+/// pixels.
+fn loose(arguments: &[String]) -> Result<Vec<Loose>, String> {
+    arguments
+        .iter()
+        .enumerate()
+        .filter(|(_, argument)| *argument == "--loose")
+        .map(|(at, _)| {
+            let text = arguments
+                .get(at + 1)
+                .ok_or("--loose names x,y,width,height,tolerance")?;
+            let numbers = text
+                .split(',')
+                .map(str::parse)
+                .collect::<Result<Vec<u32>, _>>()
+                .map_err(|_| format!("--loose {text} is not x,y,width,height,tolerance"))?;
+            let [x, y, width, height, tolerance] = numbers[..] else {
+                return Err(format!("--loose {text} is not x,y,width,height,tolerance"));
+            };
+            let tolerance = u8::try_from(tolerance)
+                .map_err(|_| format!("--loose {text}: a tolerance is at most 255"))?;
+            Ok(Loose {
+                x,
+                y,
+                width,
+                height,
+                tolerance,
             })
         })
         .collect()
@@ -521,6 +599,41 @@ mod tests {
             diff(&expected, &actual, &room.path().join("out"), 2, 0, &[]).expect("a verdict"),
             GoldenVerdict::Same
         );
+    }
+
+    /// Inside a loose rectangle a pixel counts only past that rectangle's
+    /// tolerance; outside it the run's own tolerance holds.
+    #[test]
+    fn a_loose_rectangle_is_compared_at_its_own_tolerance() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let expected = room.path().join("expected.png");
+        let actual = room.path().join("actual.png");
+        write(&expected, 4, 4, [10, 20, 30, 255]);
+        write(&actual, 4, 4, [30, 20, 30, 255]);
+        let glass = |tolerance| Loose {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 2,
+            tolerance,
+        };
+        let out = room.path().join("out");
+        match diff_with(&expected, &actual, &out, 2, 0, &[], &[glass(24)]).expect("a verdict") {
+            GoldenVerdict::Different { pixels, first } => {
+                assert_eq!(pixels, 8, "only the half outside the glass counts");
+                assert_eq!(first, (0, 2));
+            }
+            other => panic!("expected a difference, got {other}"),
+        }
+        match diff_with(&expected, &actual, &out, 2, 0, &[], &[glass(12)]).expect("a verdict") {
+            GoldenVerdict::Different { pixels, .. } => {
+                assert_eq!(
+                    pixels, 16,
+                    "a move past the glass's tolerance counts there too"
+                )
+            }
+            other => panic!("expected a difference, got {other}"),
+        }
     }
 
     #[test]

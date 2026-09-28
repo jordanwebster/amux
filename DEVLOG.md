@@ -1,3 +1,15 @@
+2026-09-28 — **The phone's whole-screen goldens notice a small mark.**
+The screen goldens had silently inherited the journeys' loose thresholds
+(12 per channel, 600 pixels), under which the fleet's needs-you dot (484
+pixels, and no element geometry names it) could vanish and still pass.
+Seven runs of every screen showed that only the chat header's glass pill
+moves by itself (up to 814 pixels past 2, none past 24); three more runs
+with it bounded moved at most 3 pixels anywhere else. Whole screens are now
+compared at 2 with a budget of 64, the pill at 32 through a new `xtask
+golden diff --loose` rectangle, and `just ios goldens-perturb` also takes
+the needs-you dot away (a driving build's `needs-you-dot` perturbation) and
+requires both appearances to fail. Three golden runs in a row passed.
+
 2026-09-28 — **A withdrawn or edited prompt gives the phone back every attachment.**
 Withdrawing a queued prompt rebuilt the draft from the queue row the chat
 draws, which carries a pasted text only as a line count and a review only

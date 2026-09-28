@@ -342,15 +342,21 @@ through to each screen while the served net makes the desk's agents act (the
 power loss is the net's Checkpoint and Rewind). Each screen is compared in
 light and dark: the display's pixels with `xtask golden diff` under the
 pinned simulator's system-chrome masks and the masks of volatile surfaces,
-and the door's element geometry, which both appearances share, as
+at a tolerance of 2 per channel with at most 64 pixels past it (the chat
+header's glass pill, which the render server resolves a little differently
+each time, is held at 32 over its frame, rim and shadow; the measurements
+behind these numbers sit beside them in the script), and the door's element
+geometry, which both appearances share, as
 `<screen>.elements.txt`. Tab pages covered by a pushed page are left out of
 the geometry. `--only` photographs the named screens but still walks the whole
 way, so each is reached in the same state. `--update` rewrites only the
 goldens that differ; inspect both appearances before committing them.
 
-The perturbation recipe reaches the fleet with the accent colour token moved
-and fails unless both appearances come back different with a difference
-image: what proves the comparison would notice a moved token.
+The perturbation recipe reaches the fleet twice, once with the accent colour
+token moved and once with only the needs-you dot taken away, and fails unless
+both appearances come back different with a difference image each time: what
+proves the comparison would notice a moved token and one small mark no element
+geometry names.
 
 A photograph of the display holds the system's chrome as well as the app, so
 the manifest declares the pinned simulator and the chrome it draws over every

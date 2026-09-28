@@ -116,9 +116,10 @@ door-smoke: build tools
 goldens *ARGS: build tools
     if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 2400 {{python}} -B scripts/ios-goldens.py "$@"
 
-# Move one design token and require the golden run to fail with a difference
-# image. What proves the golden check would notice a change.
-# Prove the golden comparison notices a moved design token.
+# Move one design token, then take away the needs-you dot, and require the
+# golden run to fail with a difference image each time. What proves the golden
+# check would notice a change, down to one small mark.
+# Prove the golden comparison notices a moved token and a missing small mark.
 goldens-perturb *ARGS: build tools
     if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 1200 {{python}} -B scripts/ios-goldens-perturb.py "$@"
 

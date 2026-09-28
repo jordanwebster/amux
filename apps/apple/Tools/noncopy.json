@@ -112,6 +112,7 @@
       {"literal": "\"capture failed: \\(error.localizedDescription)\"", "context": "return .error(\"capture failed: \\(error.localizedDescription)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/Perturbation.swift": [
+      {"literal": "\"needs-you-dot\"", "context": "static let needsYouDot = \"needs-you-dot\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"ground\"", "context": "ground: ramp(\"ground\", base.ground),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"raised\"", "context": "raised: ramp(\"raised\", base.raised),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"sunken\"", "context": "sunken: ramp(\"sunken\", base.sunken),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},

@@ -84,6 +84,7 @@ public struct NeedsYouMark: View {
 /// became a column of gaps.
 public struct NeedsYouDot: View {
     @Environment(\.design) private var design
+    @Environment(\.hidesNeedsYouDot) private var hidden
 
     public init() {}
 
@@ -91,7 +92,22 @@ public struct NeedsYouDot: View {
         Circle()
             .fill(design.accent.color)
             .frame(width: 8, height: 8)
+            .opacity(hidden ? 0 : 1)
             .accessibilityHidden(true)
+    }
+}
+
+private struct HidesNeedsYouDotKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Whether the needs-you dot is drawn clear. Only a driving build sets
+    /// it, to show that a whole-screen golden notices one small mark gone;
+    /// the dot is too small to be an element the geometry names.
+    public var hidesNeedsYouDot: Bool {
+        get { self[HidesNeedsYouDotKey.self] }
+        set { self[HidesNeedsYouDotKey.self] = newValue }
     }
 }
 

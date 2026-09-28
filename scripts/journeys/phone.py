@@ -46,7 +46,8 @@ SIMULATOR = "golden"
 # photographs a live presentation, and the render server resolves glass up to
 # ten levels apart from one presentation of the same page to the next; a
 # changed word, place or colour moves pixels far further. Colour precision is
-# the whole-screen goldens' job, which photograph fixed screens.
+# the whole-screen goldens' job: scripts/ios-goldens.py compares its fixed
+# screens with thresholds of its own.
 TOLERANCE = 12
 # How many pixels may differ beyond that: the glass header now and then
 # resolves some two hundred pixels of its edge and shadow further apart. The
@@ -152,6 +153,28 @@ def volatile_masks(
     return masks
 
 
+# How far past a glass surface's frame its rim and shadow reach, in points.
+GLASS_MARGIN = 2
+
+
+def glass_regions(elements: list[dict], glass: dict[str, int], scale: int = SCALE, screen: str | None = None) -> list[str]:
+    """Pixel rectangles with their tolerance, as `xtask golden diff --loose`
+    reads them, of every glass surface named in `glass` on the page the door
+    says is on screen, grown by its rim and shadow."""
+    regions = []
+    for element in elements:
+        tolerance = glass.get(element["identifier"])
+        if tolerance is None or not on_screen(element["identifier"], screen):
+            continue
+        frame = element["frame"]
+        x = max(0, int((frame["x"] - GLASS_MARGIN) * scale))
+        y = max(0, int((frame["y"] - GLASS_MARGIN) * scale))
+        width = int((frame["x"] + frame["width"] + GLASS_MARGIN) * scale + 0.999) - x
+        height = int((frame["y"] + frame["height"] + GLASS_MARGIN) * scale + 0.999) - y
+        regions.append(f"{x},{y},{width},{height},{tolerance}")
+    return regions
+
+
 def named_ids(text: str, ids: dict[str, str]) -> str:
     """Every id the net made this run, as the name it was declared by; any
     other id as <id>."""
@@ -215,6 +238,12 @@ class PhoneJourney:
         self.update = os.environ.get("UPDATE_JOURNEY_GOLDENS") == "1"
         # Whether a screen leaves out the tab roots a pushed page covers.
         self.covered_hidden = False
+        # How far a pixel may move, and how many may, before a screen differs.
+        self.tolerance = TOLERANCE
+        self.max_differing = MAX_DIFFERING
+        # Glass surfaces, by element id, compared at a tolerance of their own
+        # (with a margin for their rim and shadow) rather than the screen's.
+        self.glass: dict[str, int] = {}
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
@@ -471,12 +500,13 @@ class PhoneJourney:
         geometry_label = geometry_label or label
         (actual / f"{geometry_label}.elements.txt").write_text(drawn)
         masks = volatile_masks(elements, volatile, screen=state.get("screen"))
+        loose = glass_regions(elements, self.glass, screen=state.get("screen"))
         self.actions.append(f"captured {label}")
         if self.update and os.environ.get("CI"):
             raise RuntimeError("rewriting goldens is refused in CI")
         golden_png = self.goldens / f"{label}.png"
         expected = self.goldens / f"{geometry_label}.elements.txt"
-        differs = self._differs(png, golden_png, expected, drawn, masks, label)
+        differs = self._differs(png, golden_png, expected, drawn, masks, label, loose)
         if differs and self.update:
             self.goldens.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(png, golden_png)
@@ -486,7 +516,14 @@ class PhoneJourney:
         return differs
 
     def _differs(
-        self, png: Path, golden_png: Path, expected: Path, drawn: str, masks: list[str], label: str
+        self,
+        png: Path,
+        golden_png: Path,
+        expected: Path,
+        drawn: str,
+        masks: list[str],
+        label: str,
+        loose: list[str] | None = None,
     ) -> str | None:
         if not expected.exists() or not golden_png.exists():
             return f"missing golden {golden_png}; review a rewritten one"
@@ -505,9 +542,10 @@ class PhoneJourney:
                 "--actual", str(png),
                 "--out", str(self.output / "diff" / label),
                 "--simulator", SIMULATOR,
-                "--tolerance", str(TOLERANCE),
-                "--max-differing", str(MAX_DIFFERING),
+                "--tolerance", str(self.tolerance),
+                "--max-differing", str(self.max_differing),
                 *[argument for mask in masks for argument in ("--mask", mask)],
+                *[argument for region in loose or [] for argument in ("--loose", region)],
             ],
             cwd=ROOT, text=True, capture_output=True, timeout=600,
         )

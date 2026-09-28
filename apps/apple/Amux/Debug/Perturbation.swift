@@ -13,6 +13,11 @@ enum Perturbation {
     /// noticed at all rather than about where the tolerance sits.
     static let moved = Ramp(0xFF00AA, 0xFF00AA)
 
+    /// Not a colour: the name that takes the needs-you dot away instead, one
+    /// mark of some 450 pixels that no element geometry names, so only the
+    /// pixel budget can notice it gone.
+    static let needsYouDot = "needs-you-dot"
+
     /// The design with one named colour token moved, or nothing when the
     /// design has no token by that name.
     static func design(_ base: Design, moving token: String) -> Design? {
