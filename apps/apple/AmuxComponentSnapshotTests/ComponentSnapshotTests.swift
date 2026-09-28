@@ -136,6 +136,12 @@ final class ComponentSnapshotTests: XCTestCase {
             didChange: { readiness.elements = $0 }
         ))
         controller.overrideUserInterfaceStyle = appearance.interfaceStyle
+        // The component is drawn without the window's safe area (the status
+        // bar) and photographed where it stands, on screen. SnapshotTesting's
+        // own answer, moving the view far off screen just before drawing,
+        // stops the render server finishing the glass: its shadow then
+        // appears in some runs and not others.
+        controller.safeAreaRegions = []
         guard let windowScene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first
@@ -153,13 +159,20 @@ final class ComponentSnapshotTests: XCTestCase {
             window.rootViewController = nil
             previousKeyWindow?.makeKey()
         }
+        // UIKit containers inside (a navigation stack) read UIKit's safe area,
+        // not SwiftUI's regions, so the window's inset is cancelled there too.
+        controller.additionalSafeAreaInsets = UIEdgeInsets(
+            top: -window.safeAreaInsets.top, left: -window.safeAreaInsets.left,
+            bottom: -window.safeAreaInsets.bottom, right: -window.safeAreaInsets.right)
         controller.view.frame = window.bounds
         controller.view.layoutIfNeeded()
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
         let becameReady = await waitUntilReady(
             identifier: example.readinessIdentifier,
             value: example.readinessValue,
             readiness: readiness,
-            controller: controller
+            controller: controller,
+            deadline: deadline
         )
         guard becameReady else {
             XCTFail(
@@ -180,6 +193,13 @@ final class ComponentSnapshotTests: XCTestCase {
             UITraitCollection(userInterfaceStyle: appearance.interfaceStyle),
             UITraitCollection(accessibilityContrast: .normal),
         ])
+        guard let settled = await settledPhotograph(of: controller.view, traits: traits, deadline: deadline) else {
+            XCTFail(
+                "Timed out waiting for \(example.id).\(appearance.name) to settle: "
+                    + "its photographs were still changing after 5 s"
+            )
+            return
+        }
         var strategy: Snapshotting<UIViewController, UIImage> = .image(
             drawHierarchyInKeyWindow: true,
             precision: 1,
@@ -188,6 +208,7 @@ final class ComponentSnapshotTests: XCTestCase {
             traits: traits
         )
         strategy.diffing = RoundingImageDiff.allowingChannelRounding(strategy.diffing)
+        strategy.snapshot = { _ in Async(value: settled) }
         let failure = verifySnapshot(
             of: controller,
             as: strategy,
@@ -208,10 +229,10 @@ final class ComponentSnapshotTests: XCTestCase {
         identifier: String?,
         value: String?,
         readiness: SnapshotReadiness,
-        controller: UIViewController
+        controller: UIViewController,
+        deadline: TimeInterval
     ) async -> Bool {
         guard let identifier, let value else { return true }
-        let deadline = ProcessInfo.processInfo.systemUptime + 5
         repeat {
             controller.view.layoutIfNeeded()
             if readiness.contains(identifier: identifier, value: value) {
@@ -220,6 +241,62 @@ final class ComponentSnapshotTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         } while ProcessInfo.processInfo.systemUptime < deadline
         return readiness.contains(identifier: identifier, value: value)
+    }
+
+    /// The picture compared is one the screen has settled on. Liquid Glass
+    /// finishes appearing on the render server after SwiftUI has drawn it: its
+    /// shadow fades in over most of a second, starting up to a third of a
+    /// second after the view last changed, and holds each step for a few
+    /// frames. A photograph taken on readiness, or two a frame apart that agree
+    /// between steps, can catch it half drawn. The picture is taken once
+    /// photographs every frame have stayed identical for a whole quiet window
+    /// longer than any pause in that fade. The comparison is not loosened.
+    private func settledPhotograph(
+        of view: UIView,
+        traits: UITraitCollection,
+        deadline: TimeInterval
+    ) async -> UIImage? {
+        let quiet: TimeInterval = 0.5
+        var settled = photograph(view, traits: traits)
+        var since = ProcessInfo.processInfo.systemUptime
+        repeat {
+            await DisplayFrame.pass()
+            let current = photograph(view, traits: traits)
+            let now = ProcessInfo.processInfo.systemUptime
+            if Self.pixels(of: current) != Self.pixels(of: settled) {
+                settled = current
+                since = now
+            } else if now - since >= quiet {
+                return settled
+            }
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return nil
+    }
+
+    /// Draws the view as SnapshotTesting's key-window strategy does.
+    private func photograph(_ view: UIView, traits: UITraitCollection) -> UIImage {
+        view.layoutIfNeeded()
+        Self.holdCarets(in: view)
+        return UIGraphicsImageRenderer(bounds: view.bounds, format: .init(for: traits)).image { _ in
+            view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
+        }
+    }
+
+    /// A focused field's caret blinks for as long as it is shown, so a screen
+    /// with one would never settle, or would settle on either phase. It is
+    /// held lit instead.
+    private static func holdCarets(in view: UIView) {
+        for case let display as UITextSelectionDisplayInteraction in view.interactions {
+            display.cursorView.isBlinking = false
+        }
+        view.subviews.forEach(holdCarets)
+    }
+
+    /// Both photographs come from the same renderer format, so their bitmaps
+    /// share a layout and equal bytes mean equal pixels. (PNG encodings of
+    /// equal pixels are not always byte-identical.)
+    private static func pixels(of image: UIImage) -> Data? {
+        image.cgImage?.dataProvider?.data as Data?
     }
 
     private static func requestedIDs(_ raw: String?) -> Set<String> {
@@ -237,5 +314,29 @@ private final class SnapshotReadiness {
 
     var description: String {
         elements.map { "\($0.identifier)=\($0.value ?? "<nil>")" }.joined(separator: ", ")
+    }
+}
+
+/// Waits for a whole display frame: the first display-link callback only marks
+/// the next frame boundary, the second comes one full frame after it.
+@MainActor
+private final class DisplayFrame: NSObject {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var ticks = 0
+
+    static func pass() async {
+        let frame = DisplayFrame()
+        await withCheckedContinuation { continuation in
+            frame.continuation = continuation
+            CADisplayLink(target: frame, selector: #selector(tick(_:))).add(to: .main, forMode: .common)
+        }
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        ticks += 1
+        guard ticks == 2 else { return }
+        link.invalidate()
+        continuation?.resume()
+        continuation = nil
     }
 }

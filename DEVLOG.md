@@ -1,3 +1,29 @@
+2026-09-28 — **Component snapshots photograph a settled screen.** The iOS
+gate's component snapshots of `chat.new-activity.dark` and
+`chat.changes.light` failed on the CI runner in the header's glass buttons.
+The snapshot host took one picture right after an example reported ready,
+using SnapshotTesting's key-window strategy, which moves the view far off
+screen just before drawing. Measured locally: Liquid Glass finishes on the
+render server after SwiftUI draws it, fading its shadow in over most of a
+second, starting up to a third of a second later and holding each step for
+a few frames. On screen that fade ran in every capture; off screen it
+usually did not run at all, but sometimes did, so the committed baselines
+showed glass that never finished, and a capture could land anywhere in the
+fade. The host now draws each example on screen, with the safe area removed
+(`safeAreaRegions` for SwiftUI, negative additional insets for UIKit
+containers such as a navigation stack), holds any text caret lit, and
+photographs every frame until the picture has held still for half a second,
+within the existing 5 s deadline; that settled picture is what is compared.
+Precision and the one-level rounding allowance are unchanged. Two full
+catalogue runs agree on all 230 pictures. 54 baselines were re-recorded and
+looked at beside their predecessors: glass shadows now drawn; the chat
+screens 2 pt lower, so the header keeps its 2 pt top padding the old
+capture cut off; `composer.draft` shows its attached image, where the old
+capture caught it still attaching; `chat.asking` and `chat.settings`
+scrolled to the newest row; carets visible in `chat.rename` and
+`review.comment`; `composer.strip-expanded` 17 pt lower, matching every
+other composer's bottom gap. The suite takes about 170 s instead of 85 s.
+
 2026-09-28 — **Terminal Claude is hosted on Unix only, and says so on
 Windows.** On Windows an agent of kind `claude_pty` now ends before spawning
 anything with the cause "terminal Claude is not hosted on Windows in this
