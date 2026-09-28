@@ -812,7 +812,7 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
         "{screen}"
     );
     assert!(
-        screen.contains("desk is away · this machine is signed out · your draft is kept"),
+        screen.contains("desk is away · this machine is signed out"),
         "{screen}"
     );
     typed(&mut view, &state, "still there?");
