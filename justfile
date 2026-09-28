@@ -27,11 +27,11 @@ check:
 
 # Run workspace tests, preserving explicit Cargo target selections.
 test *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; scripts/workspace-test.sh {{desktop_features}} "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/workspace-test.sh "$@"
 
 # Run tests for one named workspace crate.
 test-crate CRATE *ARGS:
-    crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; feature=; if cargo tree --locked -p "$crate" -e normal --prefix none --format '{p}' | grep -q '^store v'; then feature='{{desktop_features}}'; fi; {{bounded}} 900 cargo test --locked -p "$crate" $feature "$@"
+    crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; feature=; if grep -q '^bundled *=' "crates/$crate/Cargo.toml"; then feature='{{desktop_features}}'; fi; {{bounded}} 900 cargo test --locked -p "$crate" $feature "$@"
 
 # Exercise the profile store against both of its implementations.
 test-store *ARGS:
@@ -94,11 +94,11 @@ release-check *ARGS:
 
 # Check the provider-free graph used by embedded clients.
 embedded-check:
-    {{bounded}} 900 cargo check --locked -p node -p client -p ui-state -p ui-runtime {{desktop_features}}
+    {{bounded}} 900 cargo check --locked -p node -p client -p ui-state -p ui-runtime -p app-runtime -p app-embedded
 
 # Exercise the public embedded owner and client boundary.
 embedded-test:
-    {{bounded}} 900 cargo test --locked -p testnet --test embedding {{desktop_features}}
+    {{bounded}} 900 cargo test --locked -p app-embedded --test embedded
 
 # Check the provider-free graph for iOS devices and simulators.
 mobile-check:
@@ -107,7 +107,7 @@ mobile-check:
 
 # Run workspace tests with isolated user configuration and no external network.
 offline-test:
-    {{bounded}} 1500 scripts/offline-check.sh scripts/workspace-test.sh --lib --tests {{desktop_features}}
+    {{bounded}} 1500 scripts/offline-check.sh scripts/workspace-test.sh --lib --tests
 
 # Build the product with the full-debug profile.
 full-debug:

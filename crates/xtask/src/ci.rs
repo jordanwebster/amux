@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "error")]
 enum CiStatusError {
-    WrongBranch { expected: String },
+    DetachedHead,
     DirtyTree,
     NotPushed,
     NoRunForHead,
@@ -63,8 +63,9 @@ struct Jobs {
 }
 
 /// The GitHub job whose verification step gates a commit, as the workflow
-/// names it (`.github/workflows/ci.yml`, job `ios-verify`).
-const IOS_JOB: &str = "iOS verification";
+/// names it (`.github/workflows/ci.yml`, job `ios-gate`), and that step.
+const IOS_JOB: &str = "iOS gate";
+const IOS_STEP: &str = "Run the iOS gate";
 
 fn evaluate(
     head: &str,
@@ -100,9 +101,10 @@ fn evaluate(
         return Err(CiStatusError::StillRunning { run_id: run.id });
     }
     if ios.conclusion.as_deref() != Some("success")
-        || !ios.steps.iter().any(|step| {
-            step.name == "Run iOS verification" && step.conclusion.as_deref() == Some("success")
-        })
+        || !ios
+            .steps
+            .iter()
+            .any(|step| step.name == IOS_STEP && step.conclusion.as_deref() == Some("success"))
     {
         return Err(failure(IOS_JOB));
     }
@@ -168,9 +170,19 @@ fn repository() -> Result<String, CiStatusError> {
     )
 }
 
+/// The checked-out branch: runs are read, and a gate pushes, under its name.
+fn branch() -> Result<String, CiStatusError> {
+    let branch = command("git", &["branch", "--show-current"])?;
+    if branch.is_empty() {
+        return Err(CiStatusError::DetachedHead);
+    }
+    Ok(branch)
+}
+
 fn head_run(repo: &str, head: &str) -> Result<Option<Run>, CiStatusError> {
+    let branch = branch()?;
     let runs: Runs = api(&format!(
-        "repos/{repo}/actions/workflows/ci.yml/runs?branch=nativeapp&event=push&head_sha={head}&per_page=100"
+        "repos/{repo}/actions/workflows/ci.yml/runs?branch={branch}&event=push&head_sha={head}&per_page=100"
     ))?;
     // Retries and re-runs must never allow an older green run to mask the latest failure.
     Ok(runs
@@ -199,7 +211,10 @@ fn run_jobs(repo: &str, run: Option<&Run>) -> Result<Vec<Job>, CiStatusError> {
 }
 
 fn pushed(head: &str) -> Result<(), CiStatusError> {
-    let remote = command("git", &["ls-remote", "origin", "refs/heads/nativeapp"])?;
+    let remote = command(
+        "git",
+        &["ls-remote", "origin", &format!("refs/heads/{}", branch()?)],
+    )?;
     if remote.split_whitespace().next() != Some(head) {
         return Err(CiStatusError::NotPushed);
     }
@@ -375,9 +390,10 @@ impl ObservationSnapshot {
 fn prior_run(repo: &str, head: &str) -> Result<Option<Run>, CiStatusError> {
     // GitHub lists newest runs first. Paginate past repeated runs of this head
     // rather than treating a full first page as evidence there is no prior push.
+    let branch = branch()?;
     for page in 1.. {
         let runs: Runs = api(&format!(
-            "repos/{repo}/actions/workflows/ci.yml/runs?branch=nativeapp&event=push&per_page=100&page={page}"
+            "repos/{repo}/actions/workflows/ci.yml/runs?branch={branch}&event=push&per_page=100&page={page}"
         ))?;
         let count = runs.workflow_runs.len();
         if let Some(run) = runs
@@ -513,11 +529,7 @@ fn observe(head: &str, repo: &str, options: &ObservationOptions) -> Observation 
 
 fn prepare_observation(head: &mut String) -> Result<String, CiStatusError> {
     *head = command("git", &["rev-parse", "HEAD"])?;
-    if command("git", &["branch", "--show-current"])? != "nativeapp" {
-        return Err(CiStatusError::WrongBranch {
-            expected: "nativeapp".into(),
-        });
-    }
+    let branch = branch()?;
     if !command(
         "git",
         &["status", "--porcelain", "--untracked-files=normal"],
@@ -526,7 +538,7 @@ fn prepare_observation(head: &mut String) -> Result<String, CiStatusError> {
     {
         return Err(CiStatusError::DirtyTree);
     }
-    command_timeout("git", &["push", "origin", "HEAD:nativeapp"], "120")?;
+    command_timeout("git", &["push", "origin", &format!("HEAD:{branch}")], "120")?;
     repository()
 }
 
@@ -602,7 +614,7 @@ mod tests {
                 started_at: Some("2026-09-05T00:00:00Z".parse().unwrap()),
                 completed_at: Some("2026-09-05T00:02:00Z".parse().unwrap()),
                 steps: vec![Step {
-                    name: "Run iOS verification".into(),
+                    name: IOS_STEP.into(),
                     conclusion: Some("success".into()),
                 }],
             }],

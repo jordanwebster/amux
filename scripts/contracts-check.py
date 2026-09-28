@@ -12,9 +12,10 @@ tests asserting it:
   journey:<client>/<story>          a journey in journeys/manifest.json
 
 Cargo names are checked against the listing of the built test binaries,
-compiled with the features tests/catalog.toml gives their target. XCTest
-names are read from the test bundles' sources, since the bundles only build
-on macOS with Xcode and this check runs on every CI platform.
+compiled with the features tests/catalog.toml gives their target, so the
+check runs on macOS, where every named test builds: some are Unix-only and
+one is macOS-only. XCTest names are read from the test bundles' sources,
+since building the bundles needs Xcode and a simulator.
 """
 
 from __future__ import annotations

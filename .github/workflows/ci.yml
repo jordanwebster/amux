@@ -9,7 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  AMUX_INVARIANT_FATAL: "1"
 
 jobs:
   check-and-clippy:
@@ -54,12 +53,16 @@ jobs:
       - uses: extractions/setup-just@v2
       - name: Check committed protobuf code
         run: just codegen-check
+      - name: Check the protos only add to the committed baseline
+        run: just proto-check
       - name: Enforce dependency boundaries
         run: just dependency-policy
       - name: Check the test suite catalogue
         run: just tests-check
       - name: Check the documentation's links, figures and map
         run: just docs-check
+      - name: Check nothing names a removed mechanism
+        run: just deletion-ledger-check
 
   test:
     name: Test (${{ matrix.os }})
@@ -80,9 +83,19 @@ jobs:
       - name: Run workspace tests
         # Report every failing test binary, not only the first: a platform
         # that stops early hides the failures behind it until the next run.
+        # This is the fast lane and, on Linux and macOS, the system lane too:
+        # the built amux binary's process, attach, overlap and supervise_cli
+        # suites, node's supervisor suite and the survive-daemon system
+        # journey are ordinary test targets, compiled out on Windows.
         run: just test -- --no-fail-fast
       - name: Run doctests
         run: just doctest
+      - name: Check every design contract names tests that exist
+        # The contracts name tests of Unix processes, PTYs and sockets that
+        # Windows does not build, and the check is the one `just ci` runs on
+        # a Mac, so it runs where that listing matches.
+        if: runner.os == 'macOS'
+        run: just contracts-check
 
   build:
     name: Build (${{ matrix.os }})

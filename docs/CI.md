@@ -25,8 +25,8 @@ Every workflow sets `CARGO_INCREMENTAL=0`, and every job has a
 | --- | --- | --- |
 | Check and Clippy | `ubuntu-latest` | `just check`, `just lint` |
 | Format | `ubuntu-latest` | `just fmt-check` with `nightly-2026-08-30` |
-| Codegen and dependency policy | `ubuntu-latest` | `just codegen-check`, `just dependency-policy`, `just tests-check`, `just docs-check` |
-| Test | `ubuntu-latest`, `macos-latest`, `windows-latest` | `scripts/no-update-flags.sh`, `just test -- --no-fail-fast`, `just doctest` |
+| Codegen and dependency policy | `ubuntu-latest` | `just codegen-check`, `just proto-check`, `just dependency-policy`, `just tests-check`, `just docs-check`, `just deletion-ledger-check` |
+| Test | `ubuntu-latest`, `macos-latest`, `windows-latest` | `scripts/no-update-flags.sh`, `just test -- --no-fail-fast`, `just doctest`; on macOS also `just contracts-check` |
 | Build | `ubuntu-latest`, `macos-latest`, `windows-latest` | `just release-check` |
 | Terminal journeys | `ubuntu-latest`, `macos-latest` | Installs `tmux`, then eight `just journey terminal <name>` runs |
 | Embedded client | `ubuntu-latest` | `just embedded-check`, `just embedded-test` |
@@ -37,7 +37,13 @@ The test job runs with `--no-fail-fast`, so a platform reports every failing
 test binary, not only the first. Its matrix does not fail fast either: a
 failure on one operating system does not cancel the others. The Windows
 runner compiles and runs every test target; suites that need Unix processes,
-PTYs or sockets are compiled out there.
+PTYs or sockets are compiled out there. On Linux and macOS the same run is the
+system lane as well: the built `amux` binary's suites (`process`,
+`supervise_cli`, `overlap`, `attach` and the rest), node's `supervisor` suite
+and the `survive-daemon` system journey are ordinary test targets.
+`contracts-check` runs on the macOS test runner only, after the tests have
+built: the contracts name Unix-only tests and one macOS-only test, so only
+there does every named test exist.
 
 The terminal journeys are `reach-host`,
 `conversation-decision-claude-pty`, `conversation-decision-claude-sdk`,
@@ -119,36 +125,28 @@ stopping at the first failure:
 | `embedded-check`, `embedded-test` | The provider-free client graph and the embedded owner and client boundary |
 | `mobile-check` | The provider-free graph for iOS devices and simulators |
 
-Three of these — `proto-check`, `deletion-ledger-check` and
-`contracts-check` — are in `just ci` but not in any job of `ci.yml`, so only a
-local `just ci` runs them. The terminal journeys and the iOS gate are in
-`ci.yml` but not in `just ci`.
+The terminal journeys and the iOS gate are in `ci.yml` but not in `just ci`.
 
 ## Watching a phone CI run
 
 Three recipes in the phone module read GitHub's record of a push run of
-`ci.yml` for the exact local commit:
+`ci.yml` for the exact local commit, on the checked-out branch, and judge the
+`iOS gate` job by its `Run the iOS gate` step
+([`crates/xtask/src/ci.rs`](../crates/xtask/src/ci.rs)):
 
 - `just ios ci-status [--wait SECS]` reads it and prints one JSON result:
   `run_id`, `url`, `head` and `ios_job_duration_secs` on success, or an
-  `error` of `NotPushed`, `NoRunForHead`, `StillRunning`, `Failed`,
-  `JobAbsent` or `ToolFailure`. A newer failed run cannot be masked by an
+  `error` of `DetachedHead`, `NotPushed`, `NoRunForHead`, `StillRunning`,
+  `Failed`, `JobAbsent` or `ToolFailure`. A newer failed run cannot be masked by an
   older successful one for the same commit.
 - `just ios ci-observe [--settle SECS] [--wait SECS] [--record PATH]`
   tolerates a run still in progress: it exits zero with `status: "pending"`
   unless the previous commit's run failed, in which case it waits for this
   one. The default windows are 180 seconds for the run to appear and 3,000 to
   finish. `--record` appends each JSON line to a file.
-- `just ios ci-gate` requires a clean checkout of the `nativeapp` branch,
-  pushes `HEAD` to `origin/nativeapp` without force, and waits up to 3,000
-  seconds for that commit's run.
-
-All three are written against the `nativeapp` branch and look for a job named
-`iOS verification` with a step `Run iOS verification`
-([`crates/xtask/src/ci.rs`](../crates/xtask/src/ci.rs)). The job in `ci.yml`
-is `iOS gate`, with the step `Run the iOS gate`, so against the current
-workflow they report `JobAbsent` for a completed run. Read the run in GitHub
-directly (`gh run list --workflow ci.yml`) instead.
+- `just ios ci-gate` requires a clean checkout on a branch, pushes `HEAD` to
+  the same branch on `origin` without force, and waits up to 3,000 seconds
+  for that commit's run.
 
 ## Checking Windows from a Mac
 

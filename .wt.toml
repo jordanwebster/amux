@@ -7,7 +7,6 @@ commands = ["amux"]
 [env]
 AMUX_CONFIG = "{{root()}}/.wt/amux/installation.yaml"
 AMUX_LOG = "{{root()}}/.wt/amux/amux.log"
-AMUX_INVARIANT_FATAL = "1"
 
 [files.".wt/amux/installation.yaml"]
 marker = "#"

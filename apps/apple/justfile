@@ -189,12 +189,6 @@ shipping:
 script-tests:
     {{bounded}} 120 {{python}} -m unittest discover -s scripts/tests -p '*_test.py' -t scripts/tests
 
-# Opt-in timing and capture experiments. Build explicitly before capture so
-# build preparation and screenshot latency can be measured independently.
-# Run opt-in timing and capture experiments.
-explore *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone iphone-small -- {{bounded}} 12600 {{python}} -B scripts/ios-explore.py "$@"
-
 # Read-only toward the supplied design checkout; all experimental variants and
 # captures are generated in a fresh ignored output directory.
 # Measure iteration against a design checkout, read-only.

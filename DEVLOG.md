@@ -1,3 +1,20 @@
+2026-09-28 — **CI runs every check `just ci` runs, and the recipes that had
+gone stale work again.** The CI workflow now runs the proto only-add check and
+the deletion-ledger search beside codegen, and the contract-to-test check on
+the macOS test runner, where every test the contracts name is built (some are
+Unix-only, one macOS-only). The test job's comment names the system lane it
+carries on Linux and macOS. `AMUX_INVARIANT_FATAL`, which nothing reads, is
+gone from the workflows and the worktree environment. `just embedded-check` and
+`just embedded-test` named a feature the client crates lack and a test target
+that no longer exists; they now check the client graph with the phone's
+runtime crates and run the embedded owner's suite. `just spec` runs the testnet
+spec targets that exist; `just test -- -p X` tests only X (it always added
+`--workspace`); `just test-crate` passes the SQLite feature only to crates that
+declare it. The phone module's CI status tools read the checked-out branch and
+the `iOS gate` job instead of a retired branch and job name. The capture
+experiment recipe (`just ios explore`) and an unused old-format topology are
+removed: both depended on fixtures and formats that are gone.
+
 2026-09-28 — **A file a model attaches shows as a file.** The attach tool
 stored the blob and handed the model an element to put in its reply, but no
 interpreter read it back, so both clients drew the raw element. Every
