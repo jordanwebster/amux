@@ -366,6 +366,10 @@ impl Provider {
         let launch = interpret::claude_pty::launch_fact(
             keys.as_ref().map_or("", |keys| keys.version.as_str()),
             keys.as_ref().map_or("", Keys::name),
+            &keys
+                .as_ref()
+                .map(Keys::permission_menus)
+                .unwrap_or_default(),
         );
         let _ = events
             .send(ProviderEvent::Fact(Fact {

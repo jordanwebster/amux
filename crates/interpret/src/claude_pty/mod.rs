@@ -204,13 +204,26 @@ impl fmt::Display for TerminalInput {
     }
 }
 
+/// The permission menus the agent's keymap can type, by how many
+/// suggestions the PermissionRequest hook carries. An allowance on any
+/// other menu is refused before it closes the ask; a deny is Escape, which
+/// every menu takes.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionMenus {
+    /// Menus with one scoped entry per suggestion.
+    pub per_suggestion: Vec<u32>,
+    /// Menus that fold every suggestion into one scoped entry.
+    pub folded: Vec<u32>,
+}
+
 /// The launch fact the agent process sends on the agent channel before the
 /// provider's first fact, and again after it relaunches the provider.
-pub fn launch_fact(version: &str, keymap: &str) -> Vec<u8> {
+pub fn launch_fact(version: &str, keymap: &str, permission_menus: &PermissionMenus) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "type": "launch",
         "version": version,
         "keymap": keymap,
+        "permission_menus": permission_menus,
     }))
     .expect("json")
 }
@@ -236,6 +249,8 @@ struct Provider {
     transcript: Option<String>,
     version: Option<String>,
     keymap: String,
+    #[serde(default)]
+    permission_menus: PermissionMenus,
     launches: u32,
     /// Launched again after an earlier launch; the next session start is a
     /// restart whatever its source says.
@@ -342,9 +357,13 @@ struct AskMeta {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum AskShape {
-    /// The destination of each scope choice, in offer order.
     Permission {
+        /// The destination of each scope choice, in offer order.
         scopes: Vec<String>,
+        /// How many suggestions the hook carried: what the keymap reads
+        /// the terminal's menu by.
+        #[serde(default)]
+        suggestions: u32,
     },
     Plan,
     Question {
@@ -358,6 +377,10 @@ enum AskShape {
     /// Claude's folder-trust dialog.
     Trust,
 }
+
+/// Why a scope the terminal's menu has no entry for is refused; the card
+/// shows it.
+const NO_KEY_FOR_ANSWER: &str = "Claude's terminal menu has no entry amux can type for this answer";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct PendingMessage {
@@ -958,12 +981,13 @@ impl State {
         if let Some(AskShape::Trust) = self.asks.get(&key).map(|meta| &meta.shape) {
             return self.answer_trust(emit, id, &key, parsed);
         }
-        let Some((terminal, decision)) = self
-            .asks
-            .get(&key)
-            .and_then(|meta| terminal_answer(&meta.shape, parsed?))
-        else {
-            return self.shared.reject(emit, id, reason::UNSUPPORTED);
+        let answered = match (self.asks.get(&key), parsed) {
+            (Some(meta), Some(parsed)) => terminal_answer(&meta.shape, parsed),
+            _ => Err(reason::UNSUPPORTED),
+        };
+        let (terminal, decision) = match answered {
+            Ok(answered) => answered,
+            Err(why) => return self.shared.reject(emit, id, why),
         };
         self.shared.answer(emit, id, &key);
         self.close(emit, &key, decision);
@@ -1021,11 +1045,12 @@ impl Tool {
 }
 
 /// The keystrokes an answer stands for and the decision it records, or
-/// None when the answer does not fit the ask.
+/// why it is refused: it does not fit the ask, or it names a scope the
+/// terminal's menu has no entry for.
 fn terminal_answer(
     shape: &AskShape,
     answer: claude_answer::Of,
-) -> Option<(TerminalInput, Decision)> {
+) -> Result<(TerminalInput, Decision), &'static str> {
     let decision = |outcome: DecisionOutcome, scope: String, note: String| Decision {
         outcome: outcome as i32,
         scope,
@@ -1033,30 +1058,36 @@ fn terminal_answer(
         elsewhere: false,
     };
     match (shape, answer) {
-        (AskShape::Permission { scopes }, claude_answer::Of::Permission(permission)) => {
-            let suggestions = scopes.len() as u32;
-            match permission.of? {
+        (
+            AskShape::Permission {
+                scopes,
+                suggestions,
+            },
+            claude_answer::Of::Permission(permission),
+        ) => {
+            let suggestions = *suggestions;
+            match permission.of.ok_or(reason::UNSUPPORTED)? {
                 permission_answer::Of::Allow(allow) => match allow.scope {
-                    None => Some((
+                    None => Ok((
                         TerminalInput::Permission {
                             suggestions,
                             choice: PermissionChoice::AllowOnce,
                         },
                         decision(DecisionOutcome::Allowed, String::new(), String::new()),
                     )),
-                    Some(index) => Some((
+                    Some(index) => Ok((
                         TerminalInput::Permission {
                             suggestions,
                             choice: PermissionChoice::AllowScoped { suggestion: index },
                         },
                         decision(
                             DecisionOutcome::Allowed,
-                            scopes.get(index as usize)?.clone(),
+                            scopes.get(index as usize).ok_or(NO_KEY_FOR_ANSWER)?.clone(),
                             String::new(),
                         ),
                     )),
                 },
-                permission_answer::Of::Deny(deny) => Some((
+                permission_answer::Of::Deny(deny) => Ok((
                     TerminalInput::Permission {
                         suggestions,
                         choice: PermissionChoice::Deny {
@@ -1067,26 +1098,28 @@ fn terminal_answer(
                 )),
             }
         }
-        (AskShape::Plan, claude_answer::Of::Plan(plan)) => match plan.of? {
-            plan_answer::Of::Approve(approve) => Some((
-                TerminalInput::Plan(if approve.auto_accept_edits {
-                    PlanChoice::ApproveAutoAcceptEdits
-                } else {
-                    PlanChoice::Approve
-                }),
-                decision(DecisionOutcome::Allowed, String::new(), String::new()),
-            )),
-            plan_answer::Of::SendBack(send_back) => Some((
-                TerminalInput::Plan(PlanChoice::SendBack {
-                    note: send_back.note.clone(),
-                }),
-                decision(DecisionOutcome::Denied, String::new(), send_back.note),
-            )),
-        },
+        (AskShape::Plan, claude_answer::Of::Plan(plan)) => {
+            match plan.of.ok_or(reason::UNSUPPORTED)? {
+                plan_answer::Of::Approve(approve) => Ok((
+                    TerminalInput::Plan(if approve.auto_accept_edits {
+                        PlanChoice::ApproveAutoAcceptEdits
+                    } else {
+                        PlanChoice::Approve
+                    }),
+                    decision(DecisionOutcome::Allowed, String::new(), String::new()),
+                )),
+                plan_answer::Of::SendBack(send_back) => Ok((
+                    TerminalInput::Plan(PlanChoice::SendBack {
+                        note: send_back.note.clone(),
+                    }),
+                    decision(DecisionOutcome::Denied, String::new(), send_back.note),
+                )),
+            }
+        }
         (AskShape::Question { questions }, claude_answer::Of::Question(answer)) => {
             // Claude's form has nowhere to type a note for the answers.
             if answer.answers.len() != questions.len() || !answer.note.trim().is_empty() {
-                return None;
+                return Err(reason::UNSUPPORTED);
             }
             let mut answers = Vec::new();
             for (shape, response) in questions.iter().zip(answer.answers) {
@@ -1096,14 +1129,14 @@ fn terminal_answer(
                     && (shape.multi_select || picks == 1)
                     && !(shape.previews && response.other.is_some());
                 if !fits {
-                    return None;
+                    return Err(reason::UNSUPPORTED);
                 }
                 answers.push(QuestionChoice {
                     selected: response.selected,
                     other: response.other,
                 });
             }
-            Some((
+            Ok((
                 TerminalInput::Question {
                     questions: questions.clone(),
                     answers,
@@ -1111,7 +1144,7 @@ fn terminal_answer(
                 decision(DecisionOutcome::Allowed, String::new(), answer.note),
             ))
         }
-        _ => None,
+        _ => Err(reason::UNSUPPORTED),
     }
 }
 

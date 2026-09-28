@@ -15,7 +15,7 @@ use claude::pty::{
     AskAnswer, AskKind, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionFact,
     QuestionResponse,
 };
-use interpret::claude_pty::{PermissionChoice, PlanChoice, TerminalInput};
+use interpret::claude_pty::{PermissionChoice, PermissionMenus, PlanChoice, TerminalInput};
 use tokio::sync::mpsc;
 use wire::KeyName;
 
@@ -55,6 +55,21 @@ impl Keys {
     /// The name the boundary item records.
     pub fn name(&self) -> &str {
         &self.resolved.keymap.name
+    }
+
+    /// The permission menus this keymap can type an allowance on.
+    pub fn permission_menus(&self) -> PermissionMenus {
+        let shapes = self
+            .keymap
+            .verified_shapes
+            .get(&ProgramName::PermissionMenu)
+            .cloned()
+            .unwrap_or_default();
+        let counts = |counts: Vec<usize>| counts.into_iter().map(|count| count as u32).collect();
+        PermissionMenus {
+            per_suggestion: counts(shapes.permission_suggestions),
+            folded: counts(shapes.permission_folded_suggestions),
+        }
     }
 
     /// The keystrokes for a semantic input.

@@ -1,6 +1,6 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? context=? tasks=? background=?
-## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","type":"launch","version":"2.1.273"}}
+## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","permission_menus":{"folded":[2],"per_suggestion":[1]},"type":"launch","version":"2.1.273"}}
 ## 3 recorded 1: fact Transcript type=assistant uuid=fecf3c49-ef27-43f8-88ca-e3addea98097
 snapshot WORKING queue=[] working_on=- at=1789588946787 asks=[] session=3dcce16f-d19b-43a8-bf2e-14a05759022a model=claude-haiku-4-5-20251001 mode=? context=10492 tasks=? background=?
 ## 5 recorded 3: fact Transcript type=user uuid=a3e51bd9-cb02-4736-88f8-1b4a498d7b2d

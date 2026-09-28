@@ -1,6 +1,6 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? context=? tasks=? background=?
-## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","type":"launch","version":"2.1.251"}}
+## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","permission_menus":{"folded":[2],"per_suggestion":[1]},"type":"launch","version":"2.1.251"}}
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
 effect follow "<MACHINE_PATH>"
 item boundary:1 boundary final at=1788071366223 text="" BOUNDARY_KIND_STARTED session=956edc62-b611-4cbf-ba84-1f7d80eaad0b version=2.1.251 keymap=claude-2.1

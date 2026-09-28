@@ -1652,7 +1652,7 @@ mod tests {
                 .control
                 .send(Intent::Answer {
                     ask_id: AskId("permission-7".to_owned()),
-                    answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+                    answer: AskAnswer::Permission(PermissionAnswer::AllowScoped { suggestion: 0 }),
                 })
                 .await,
             Err(InputError::UnverifiedShape { .. })

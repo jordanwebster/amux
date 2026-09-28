@@ -30,6 +30,10 @@
     body Command { command: "rm -rf build", cwd: "", reason: "", description: "" }
   composer Send activity=None queue=[] outbox=[]
 ## 13 input {"answer":{"answer":{"allow":{"scope":3}},"ask":"ask:2"},"id":"a2"}
+  ask ask:2 -> "" 1/1 Rejected("Claude's terminal menu has no entry amux can type for this answer")
+    choices AllowOnce*, Deny { stops: true }+note
+    body Command { command: "rm -rf build", cwd: "", reason: "", description: "" }
+## 14 input {"answer":{"answer":{"form":{"action":"accept"}},"ask":"ask:2"},"id":"a3"}
   ask ask:2 -> "" 1/1 Rejected("unsupported")
     choices AllowOnce*, Deny { stops: true }+note
     body Command { command: "rm -rf build", cwd: "", reason: "", description: "" }

@@ -4,11 +4,13 @@
 use serde_json::Value;
 use wire::claude_pty_item::Kind;
 use wire::{
-    Ask, BoundaryKind, DecisionOutcome, PermissionAsk, PlanAsk, ToolState, Turn, TurnOutcome,
+    Ask, BoundaryKind, DecisionOutcome, PermissionAsk, PlanAsk, ScopeChoice, ToolState, Turn,
+    TurnOutcome,
 };
 
 use super::{
-    AskMeta, AskShape, Decision, PendingMessage, Running, Slash, State, Subagent, Tool, item_body,
+    AskMeta, AskShape, Decision, PendingMessage, PermissionMenus, Running, Slash, State, Subagent,
+    Tool, item_body,
 };
 use crate::claude_common::{
     PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
@@ -110,6 +112,11 @@ impl State {
         let version = text(value, "version");
         provider.version = (!version.is_empty()).then(|| version.to_owned());
         provider.keymap = text(value, "keymap").to_owned();
+        provider.permission_menus = value
+            .get("permission_menus")
+            .cloned()
+            .and_then(|menus| serde_json::from_value(menus).ok())
+            .unwrap_or_default();
         provider.relaunched = provider.launches > 0;
         provider.launches += 1;
     }
@@ -301,7 +308,13 @@ impl State {
                 }),
                 AskShape::Plan,
             ),
-            _ => permission_ask(&server, &tool, &input, hook),
+            _ => permission_ask(
+                &server,
+                &tool,
+                &input,
+                hook,
+                &self.provider.permission_menus,
+            ),
         };
         let seq = self.next_seq();
         self.next_ask += 1;
@@ -1170,23 +1183,37 @@ impl State {
     }
 }
 
+/// A permission ask offering the scoped entries the terminal's menu holds
+/// and the agent's keymap can type: one per suggestion, or all of them as
+/// one where Claude folds them.
 fn permission_ask(
     server: &str,
     tool: &str,
     input: &Value,
     hook: &Value,
+    menus: &PermissionMenus,
 ) -> (wire::ask::Body, AskShape) {
     let suggestions = hook
         .get("permission_suggestions")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let scopes = scope_choices(&suggestions);
+    let count = suggestions.len() as u32;
+    // A menu the keymap does not know offers no scope: its Yes and its
+    // deny are still typed.
+    let scopes = if menus.per_suggestion.contains(&count) {
+        scope_choices(&suggestions)
+    } else if menus.folded.contains(&count) {
+        vec![folded(scope_choices(&suggestions))]
+    } else {
+        Vec::new()
+    };
     let shape = AskShape::Permission {
         scopes: scopes
             .iter()
             .map(|scope| scope.destination.clone())
             .collect(),
+        suggestions: count,
     };
     (
         wire::ask::Body::Permission(PermissionAsk {
@@ -1201,6 +1228,23 @@ fn permission_ask(
         }),
         shape,
     )
+}
+
+/// Every suggestion as the one entry a folded menu offers: choosing it
+/// applies them all, where the first one says.
+fn folded(choices: Vec<ScopeChoice>) -> ScopeChoice {
+    let mut all = ScopeChoice::default();
+    for (at, choice) in choices.into_iter().enumerate() {
+        if at == 0 {
+            all.destination = choice.destination;
+        }
+        all.rules.extend(choice.rules);
+        all.directories.extend(choice.directories);
+        if all.mode.is_empty() {
+            all.mode = choice.mode;
+        }
+    }
+    all
 }
 
 #[cfg(test)]

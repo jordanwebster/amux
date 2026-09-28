@@ -10,7 +10,15 @@
         "json": {
           "type": "launch",
           "version": "2.1.282",
-          "keymap": "claude-2.1"
+          "keymap": "claude-2.1",
+          "permission_menus": {
+            "per_suggestion": [
+              1
+            ],
+            "folded": [
+              2
+            ]
+          }
         }
       }
     },
@@ -250,13 +258,13 @@
         }
       },
       "expect": {
-        "reply": "rejected:unsupported",
+        "reply": "rejected:Claude's terminal menu has no entry amux can type for this answer",
         "asks": [
           "ask:2"
         ],
         "silent": true
       },
-      "note": "no such scope choice"
+      "note": "no such scope choice: the terminal's menu has no entry for it"
     },
     {
       "input": {

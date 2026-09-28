@@ -1,6 +1,6 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] session=? model=? mode=? context=? tasks=? background=?
-## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","type":"launch","version":"2.1.283"}}
+## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","permission_menus":{"folded":[2],"per_suggestion":[1]},"type":"launch","version":"2.1.283"}}
 ## 2 fact {"channel":"agent","json":{"type":"ready"}}
 snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] session=? model=? mode=? context=? tasks=? background=?
 ## 3 input {"id":"p1","prompt":{"text":"clean up"}}

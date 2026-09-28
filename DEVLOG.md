@@ -1,3 +1,15 @@
+2026-09-28 — **A terminal Claude permission card offers only what its menu can take.**
+Claude 2.1.283 folds a directory and a mode suggestion into one "Yes, and
+always allow access to <dir> from this project" entry. The card offered each
+suggestion on its own; the agent's keymap refused to type either, yet the ask
+had already closed as "allowed · session" while Claude sat at its menu. The
+agent now reports at launch which permission menus its keymap can type a scope
+on, and the ask offers exactly those entries: one per suggestion, one entry
+carrying all of them where Claude folds them (typed as 2), none on a menu no
+keymap knows. Yes is the first entry of every menu, so allow-once is typed on
+any menu. A scope the menu has no entry for is refused with a reason the card
+shows, and the ask stays open.
+
 2026-09-28 — **The phone's fleet subtitle counts the agents inside a folded family.**
 The phone QA pass found a folded family flagged "an agent it started needs
 you" under a subtitle reading "Nothing needs you · 0 running": the subtitle
