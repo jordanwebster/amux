@@ -9,7 +9,9 @@ branch and job names; and the replication test of an exited agent held only
 the first source stream it met, so when the exit replaced the live source
 with a settling one the second stream landed the exit's records before the
 test looked (3 in 25 runs under load, now 0 in 40). The Swift mirror check
-lists the terminal-only patch values as staying in Rust.
+lists the terminal-only patch values as staying in Rust. `amux --help` no
+longer says "debug" (the dump verb gathers "a dump"), which the release
+policy check refuses as a sign of a debug command.
 
 2026-09-28 — **CI runs every check `just ci` runs, and the recipes that had
 gone stale work again.** The CI workflow now runs the proto only-add check and

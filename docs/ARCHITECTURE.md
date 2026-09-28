@@ -252,7 +252,7 @@ The rest of the installation:
   installation.lock           one daemon per data directory
   registry                    which profiles exist
   generation                  boot id, clean-shutdown flag and a counter a replica compares
-  reports/                    debug bundles, unless the config names another directory
+  reports/                    dumps (debug bundles)
   profiles/<profile_id>/
     host_id, device.key       this profile's identity; the key never leaves the machine
     trust.json                the hosts this profile has paired with

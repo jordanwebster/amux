@@ -91,7 +91,8 @@ enum Command {
     /// Delete an agent, its history and its children.
     #[command(alias = "rm")]
     Delete { agent: String },
-    /// Write a debug bundle for the named agents, or all of them.
+    /// Gather a dump of the named agents, or all of them, into one
+    /// directory.
     Dump {
         agents: Vec<String>,
         #[arg(long)]
