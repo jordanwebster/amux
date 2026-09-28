@@ -38,8 +38,6 @@
 - [iPhone app](IOS.md) — packages, the chat and fleet, driving the app, snapshots, goldens and journeys.
 - [Embedding](EMBEDDED.md) — app-runtime, app-embedded, app-ffi, the generated Swift types and the seams.
 - [iPhone copy](IOS_COPY.md) — the rules the app's words follow and the lint that holds them.
-- [iPhone performance](IOS_PERFORMANCE.md) — measurement definitions, budgets and reviewed baselines for the
-  phone.
 - [Cloud](CLOUD.md) — what the app and daemon ask of amux.sh.
 
 ## Verifying

@@ -62,7 +62,6 @@ const CAPTURES: &[&str] = &[
     "test-store-ios",
     "ios journey",
     "ios accessibility",
-    "ios perf",
 ];
 
 const REQUIRED_JOURNEYS: &[&str] = &[
@@ -182,47 +181,6 @@ fn check_completed_journeys(completed: &BTreeSet<String>) -> Result<(), Box<dyn 
     Ok(())
 }
 
-/// A machine's budget row, as `scripts/ios-perf.py --machine` answers it.
-#[derive(serde::Deserialize)]
-struct PerfMachine {
-    name: String,
-    /// Whether this machine's budgets are absolute rather than relative to a
-    /// recorded run.
-    hard: bool,
-    baseline: String,
-    baseline_present: bool,
-}
-
-// Hard budgets exist independently of a recorded run. Relative budgets need a
-// committed baseline; verification must never create its own comparison data.
-fn measure_perf(machine: &PerfMachine) -> bool {
-    machine.hard || machine.baseline_present
-}
-
-fn report_missing_baseline(machine: &PerfMachine) -> Result<(), Box<dyn Error>> {
-    let output = std::path::Path::new("target/ios/perf");
-    if output.exists() {
-        std::fs::remove_dir_all(output)?;
-    }
-    std::fs::create_dir_all(output)?;
-    let report = format!(
-        "no baseline for this runner: {} ({}). Performance was not measured.\n",
-        machine.name, machine.baseline
-    );
-    eprint!("{report}");
-    std::fs::write(output.join("report.md"), &report)?;
-    std::fs::write(
-        output.join("verdict.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "status": "not_measured",
-            "reason": "no baseline for this runner",
-            "machine": machine.name,
-            "baseline": machine.baseline,
-        }))?,
-    )?;
-    Ok(())
-}
-
 fn is_package_metadata(key: &OsStr) -> bool {
     key.to_str().is_some_and(|key| {
         key == "CARGO_MANIFEST_DIR" || key == "CARGO_MANIFEST_PATH" || key.starts_with("CARGO_PKG_")
@@ -246,25 +204,6 @@ fn recipe_command(program: &str) -> Command {
     command
 }
 
-/// Asks the measurement script which machine this is. The script owns the
-/// answer; nothing here reads the measurement document.
-fn perf_machine() -> Result<PerfMachine, String> {
-    let output = recipe_command(crate::BOUNDED)
-        .args([
-            "120",
-            "scripts/python",
-            "-B",
-            "scripts/ios-perf.py",
-            "--machine",
-        ])
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
-}
-
 pub fn run() -> Result<(), Box<dyn Error>> {
     let argument = std::env::args().nth(2);
     let phases = Phases::parse(argument.as_deref())?;
@@ -279,13 +218,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     }
     eprintln!("iOS verification: {}", selected.join(", "));
     for recipe in selected {
-        if recipe == "ios perf" {
-            let machine = perf_machine()?;
-            if !measure_perf(&machine) {
-                report_missing_baseline(&machine)?;
-                continue;
-            }
-        }
         eprintln!("Running just {recipe}");
         // Recipes own their individual deadlines. The outer deadline also
         // bounds dependencies without cutting off a longer recipe early.
@@ -574,21 +506,6 @@ mod tests {
                     .to_string()
                     .contains(required)
             );
-        }
-    }
-
-    #[test]
-    fn ios_verify_measures_hard_budgets_and_existing_baselines_only() {
-        for hard in [false, true] {
-            for baseline_present in [false, true] {
-                let machine = PerfMachine {
-                    name: "test-machine".into(),
-                    hard,
-                    baseline: "perf/baselines/phone/test-machine.json".into(),
-                    baseline_present,
-                };
-                assert_eq!(measure_perf(&machine), hard || baseline_present);
-            }
         }
     }
 }

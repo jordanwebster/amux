@@ -178,6 +178,5 @@ goldens.
 | Phone goldens | `target/ios/goldens`, perturbation runs in `target/ios/goldens-perturb` |
 | Phone component snapshots | `target/ios/component-snapshots` |
 | Phone accessibility audit | `target/ios/accessibility` |
-| Phone performance | `target/ios/perf` |
 | TUI evidence bundle | `just tui-evidence`; rendered PNGs from `just shot` (see [amux-shot](../crates/shot/README.md)) |
 | Desktop performance | printed report; `--baseline` writes `perf/baselines/desktop/<model>.json` |

@@ -23,7 +23,6 @@ every command goes through `just ios <recipe>` (`just --list ios`).
 | --- | --- |
 | `AmuxCore` | The Swift side of the bridge (`Runtime`, `Profile`, `Chat`), the observable stores screens read (`RuntimeCoordinator`, `StoreBundle`, `ChatModel`, `FleetStore`, `HostsStore`, `AccountRegistry`), the account service and App Store adapters, local-network discovery, report assembly and signposts |
 | `AmuxCore/AmuxValues` | Swift mirrors of every value the bridge carries, generated from the Rust definitions; never edited by hand |
-| `AmuxCore/Instrumentation` | The performance harness: workloads, budgets read from [the performance page](IOS_PERFORMANCE.md), and the verdict |
 | `AmuxCore/LaunchClock` | The one piece of C in the app: an image initialiser that marks the end of dynamic loading for the cold-start split |
 | `AmuxDesign` | Light and dark tokens, bundled faces, type scaling, glass, motion and thumb-target geometry |
 | `AmuxFeatures` | The screens, as functions of the state and actions they are handed, plus the registered UIKit leaves |
@@ -209,11 +208,10 @@ for the golden simulator into
 `target/ios/DerivedData/Build/Products/Debug-iphonesimulator/Amux.app`. The
 generated project is committed: change `project.yml` and commit both.
 
-There are three configurations. `Debug` and `Measured` compile the driving
-tools in (`AMUX_DEBUG_TOOLS`) and link the bridge built with them; `Measured`
-is optimised the way a shipped build is, for the performance suite.
-`Release` excludes `Amux/Debug/`, `AmuxTestSupport` and `Instrumentation`
-from the target and links the shipping bridge. `just ios scope-audit` opens a
+There are two configurations. `Debug` compiles the driving tools in
+(`AMUX_DEBUG_TOOLS`) and links the bridge built with them. `Release` excludes
+`Amux/Debug/` and `AmuxTestSupport` from the target and links the shipping
+bridge. `just ios scope-audit` opens a
 built Release bundle and refuses one that carries a debug surface or an
 excluded platform; there is no Mac, Catalyst or iPad target.
 
@@ -274,7 +272,6 @@ Use the cheapest test that can see the regression:
 | Whole-screen goldens | Composition, safe areas and render-server materials on a few screens of the running app | `just ios goldens` |
 | Journeys | Real taps and typing, routing, persistence and the machines on the other side | `just ios journey` |
 | Accessibility audit | Every control on every drawn state has a VoiceOver name and a 44 pt target | `just ios accessibility` |
-| Performance | The pinned workloads against the budgets | `just ios perf` |
 
 Journeys prove actions; a picture of a final state proves nothing about the
 actions that produce it. How the phone's suites fit the rest of the testing
@@ -454,9 +451,10 @@ iPhone running a Release build before a release:
   draft intact. The simulator covers the denied state only.
 - VoiceOver navigation, Dynamic Type, Reduce Motion, Reduce Transparency and
   the system pickers, on supported phones.
-- The timing checklist on [the performance page](IOS_PERFORMANCE.md): cold
-  start and reconciliation on the oldest supported phone, presented-frame
-  cadence on ProMotion and standard displays, thermal state and battery.
+- Timing on the oldest supported phone: cold start, reaching a paired host's
+  fleet, scrolling a long chat while it streams on ProMotion and standard
+  displays, thermal state and battery. No suite times the app on a
+  simulator; [performance](PERFORMANCE.md) says what is timed instead.
 
 ## Registered UIKit leaves
 
@@ -507,11 +505,10 @@ and the numbers would be about a screen nobody arrives at. The app imposes no
 frame cap of its own, so what the display offers is what it uses.
 
 These figures come from the simulator, which reports 60 Hz and composites
-through the Mac's display, so the frame-rate ones are proxies;
-[the performance page](IOS_PERFORMANCE.md) says which, and holds the
-physical-phone checklist. Take them again with `just ios perf --only
-streaming`. What would reopen the question: a real phone's `XCTHitchMetric`
-disagreeing with the simulator's proxy.
+through the Mac's display, so the frame-rate ones are proxies. They were
+taken by an in-app performance suite on an earlier build of the app, before
+its rows were redrawn, and that suite has since been retired. What would
+reopen the question: a transcript that stutters on a real phone.
 
 ### The composer's field is SwiftUI
 

@@ -114,7 +114,7 @@ passed or not.
 `just ios verify` is the whole sequence a developer runs before pushing a
 phone change: the workspace's `fmt-check`, `lint`, `test` and `spec`, then the
 gate, then the captures (`ios goldens`, `ios goldens-perturb`,
-`test-store-ios`, `ios journey`, `ios accessibility`, `ios perf`), then the
+`test-store-ios`, `ios journey`, `ios accessibility`), then the
 shipping stages (`ios package`, `ios scope-audit`). It refuses to start if
 any stage names a recipe the justfiles no longer declare. `just ios captures`
 and `just ios shipping` run those halves alone.
@@ -123,12 +123,10 @@ and `just ios shipping` run those halves alone.
 
 The nightly workflow boots both pinned simulators on `macos-26`, compares the
 native component snapshots, and compares the whole-screen goldens. Run by
-hand, it instead runs `just ios captures` — goldens, journeys, the
-accessibility sweep and the measured performance run — with
-`AMUX_PERF_MACHINE=macos-26` naming the runner's baseline row. It uploads the
-performance results, the golden comparisons, the journey evidence and the
-component snapshots. [The iPhone app](IOS.md) and
-[iPhone performance](IOS_PERFORMANCE.md) explain what those compare.
+hand, it instead runs `just ios captures` — goldens, journeys and the
+accessibility sweep. It uploads the golden comparisons, the journey evidence
+and the component snapshots. [The iPhone app](IOS.md) explains what those
+compare.
 
 ## Lanes
 

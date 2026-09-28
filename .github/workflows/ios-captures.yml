@@ -44,22 +44,8 @@ jobs:
         if: github.event_name == 'schedule'
         run: just ios goldens
       - name: Run the capture suites
-        # The runner uses its own recorded baseline when one is committed.
-        # Without one, the measured run records that it was not measured.
         if: github.event_name != 'schedule'
-        env:
-          AMUX_PERF_MACHINE: macos-26
         run: just ios captures
-      - name: Upload performance results and limits
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-performance
-          path: |
-            target/ios/perf
-            perf/baselines/phone
-          if-no-files-found: warn
-          retention-days: 7
       - name: Upload golden triplets and journeys
         if: always()
         uses: actions/upload-artifact@v4

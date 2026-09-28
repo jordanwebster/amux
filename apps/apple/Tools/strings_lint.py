@@ -150,8 +150,7 @@ def swift_sources(root):
 
 def debug_source(path):
     return (path.startswith("apps/apple/Amux/Debug/")
-            or path.startswith("apps/apple/Packages/AmuxTestSupport/Sources/")
-            or path.startswith("apps/apple/Packages/AmuxCore/Sources/Instrumentation/"))
+            or path.startswith("apps/apple/Packages/AmuxTestSupport/Sources/"))
 
 
 def read_json(path):

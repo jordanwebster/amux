@@ -38,7 +38,6 @@
 		1D781306E2D8F3F1598E925C /* components.review-selection-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 19FA93FC03403F8D85761C44 /* components.review-selection-light.png */; };
 		1E11F7357D26207C9D0E89B0 /* components.composer-dictation-denied-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 3C6C8784C0632DEFCA3AD0B1 /* components.composer-dictation-denied-dark.png */; };
 		1E2B4C7B70AB064B384D2E2C /* components.row-prose-working-note-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 6DC382D14B822E4462F58F77 /* components.row-prose-working-note-dark.png */; };
-		1EB380BBF813E1A744D85210 /* Workloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B661BE2402BC7D004818A5 /* Workloads.swift */; };
 		1F71DC755174214F60A5E1B2 /* AccessibilityAuditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */; };
 		20034EEB0AB2A54C9462F0C0 /* components.composer-not-confirmed-light.png in Resources */ = {isa = PBXBuildFile; fileRef = ACFB6BA5C91F806AB9A49DDF /* components.composer-not-confirmed-light.png */; };
 		2059794073CA049A654AC4A9 /* components.composer-empty-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 7CE6A81789B041D9C9A246B7 /* components.composer-empty-dark.png */; };
@@ -53,13 +52,11 @@
 		2B33D37BE105D726D9651DEC /* components.chat-changes-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 0BD5021F3FE99EA1720EEC9F /* components.chat-changes-light.png */; };
 		2B9C31952A79620723D1C2F5 /* components.row-subagent-done-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 59101FEE4BF571E4449289EB /* components.row-subagent-done-light.png */; };
 		2E49C100DA41D6D25A3EC027 /* components.chat-rename-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 87EFD78A921E2C906FC1D8ED /* components.chat-rename-dark.png */; };
-		2F0347A6EA4A7731721003EE /* Budgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001566356B6645AB41CE39B /* Budgets.swift */; };
 		2F7F37531FEEBF9BE98F5881 /* components.composer-plus-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 3E6896EE7C64A0B526DE62BC /* components.composer-plus-dark.png */; };
 		303FA9618065D80BCE2B8CB9 /* components.ask-rejected-light.png in Resources */ = {isa = PBXBuildFile; fileRef = CAAC3ACA00E3FE10FEA8FB2A /* components.ask-rejected-light.png */; };
 		307FA7E06CE81FE133F305B2 /* components.composer-resume-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 5CA03157B4E68F01E5B9AF2B /* components.composer-resume-light.png */; };
 		31A1FBCB7EA89BF134D4FCF6 /* components.chat-loading-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 732DCD39627E1E7E2A7611EE /* components.chat-loading-light.png */; };
 		330FD92C3E56060542BA6323 /* components.ask-question-previews-light.png in Resources */ = {isa = PBXBuildFile; fileRef = ED7A844880C4E8C8773FE531 /* components.ask-question-previews-light.png */; };
-		344D301838279573239BD80D /* Judge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7316CFA811C55B9CEEB041C5 /* Judge.swift */; };
 		373B9E307D71E299CCABC0C9 /* components.row-thinking-open-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 46F61B24F0A41E2181570BB6 /* components.row-thinking-open-light.png */; };
 		37C414F45F97D31F2E0A9DF8 /* components.composer-thinking-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 0B532BFA62A04F92591A2642 /* components.composer-thinking-light.png */; };
 		3B0A858360AE296919E3CACA /* components.row-file-change-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 7373A86D3D26B4BA4658A302 /* components.row-file-change-light.png */; };
@@ -176,13 +173,11 @@
 		A0F152DD31F931EA4FE806CB /* components.row-tool-call-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 8B6B5F51320E7294BEEFAD09 /* components.row-tool-call-dark.png */; };
 		A1922790EEF5DAABAFFBFD7B /* components.chat-changes-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 31897EB68EF3D005F06E1542 /* components.chat-changes-dark.png */; };
 		A1F105BFB3DB159F957079FE /* components.ask-question-other-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 3BEE11B9170FE403346456AB /* components.ask-question-other-dark.png */; };
-		A3C2080DEA1ECDCA5A1BA441 /* PerformanceSuite.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */; };
 		A45D16D697C5D55893195FC8 /* components.chat-delete-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 42D2A72093090E7B8043448D /* components.chat-delete-dark.png */; };
 		A4ADC1A14E216A53B1FF8DF2 /* components.row-agent-message-rejected-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = FD8862EBE5F892D7BDBE54D4 /* components.row-agent-message-rejected-dark.png */; };
 		A5B690B62D965CD5BC9EC810 /* components.composer-strip-codex-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = FAD9CF7657C7C197DD88CAE7 /* components.composer-strip-codex-dark.png */; };
 		A5B79ADD08C0DA0A585A66D3 /* components.composer-strip-codex-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 227A8F28C25854DBC7946FAF /* components.composer-strip-codex-light.png */; };
 		A8A3D3A4E15E62E698219432 /* components.row-command-denied-light.png in Resources */ = {isa = PBXBuildFile; fileRef = AEC1C59630E396B315B79EAD /* components.row-command-denied-light.png */; };
-		A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A10C4D43E54FEABB391277E /* PerfRun.swift */; };
 		A953AD4948297C8BC643D2F0 /* components.composer-not-confirmed-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = F93A8EC6AA37E9E680EE94FE /* components.composer-not-confirmed-dark.png */; };
 		AA40CE7F86DBB175EC4F888F /* components.ask-permission-edit-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 23055BB8AD5F4E08133B78A2 /* components.ask-permission-edit-dark.png */; };
 		AA46D853E96A47FC7EB2F479 /* components.row-background-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 6198489A4CDE5DCEF6FCFC97 /* components.row-background-dark.png */; };
@@ -205,7 +200,6 @@
 		BE39D36EADF7F1E3FA22FD89 /* components.ask-permission-tool-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 6BF54861CB6B795909BEC45E /* components.ask-permission-tool-light.png */; };
 		BE54C38F3A034639F365030F /* components.ask-question-single-light.png in Resources */ = {isa = PBXBuildFile; fileRef = FB3B3860AEB77F64BD97FC40 /* components.ask-question-single-light.png */; };
 		BFD2EE45792143D71B460CF0 /* DoorLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB72F14B366D0C657F5D98FA /* DoorLines.swift */; };
-		C09FEF55EDD6530C94D3E862 /* Instruments.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E1FE40B447768ED3E301C2 /* Instruments.swift */; };
 		C1B44703DA54572087EB9733 /* components.row-boundary-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = D048873439DA819CDC60DD71 /* components.row-boundary-dark.png */; };
 		C33CB71ABFB42CDE7E3168D0 /* components.composer-dictation-listening-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 14E38B904C1FD1D222FB6C82 /* components.composer-dictation-listening-light.png */; };
 		C4CD03E9E0ED975E7823D51E /* components.chat-detached-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 8A66717812856056E64C6238 /* components.chat-detached-dark.png */; };
@@ -268,7 +262,6 @@
 		F5923CA3B2A4304640B245B6 /* components.row-auto-review-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = A644A0F05DA455C5891F937C /* components.row-auto-review-dark.png */; };
 		F78C3F503D1E250D5EA19E4C /* components.row-ask-secret-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = BC5B92076B3DD4D6F335450B /* components.row-ask-secret-dark.png */; };
 		F80B5B68A2757DE842319861 /* components.review-page-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 34BA76B0547BAAF4FF941130 /* components.review-page-light.png */; };
-		F840D37348D0746EA906D110 /* Harness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E50ACE0C6E84D336B13332 /* Harness.swift */; };
 		F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BAD30E79F5FE66C97691B57 /* RootView.swift */; };
 		FB9F8712EF2D36594115A001 /* components.composer-strip-expanded-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 7AB23EF6A2C55EB6D252F059 /* components.composer-strip-expanded-dark.png */; };
 		FBDD87ED7FBC5DE18A43F56A /* components.chat-away-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = E24A589F3EA88508AFC5859B /* components.chat-away-dark.png */; };
@@ -292,13 +285,6 @@
 			remoteInfo = Amux;
 		};
 		5951062B3B4AFD2F0DA405C5 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 4B97051BF0BFB50D573975CE /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 8CE566509F5A43BE6BF3E256;
-			remoteInfo = Amux;
-		};
-		7B170D055CFEF59AE814DAC2 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 4B97051BF0BFB50D573975CE /* Project object */;
 			proxyType = 1;
@@ -408,7 +394,6 @@
 		56885C30816CE2F941A5380A /* components.composer-settings-codex-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-settings-codex-dark.png"; sourceTree = "<group>"; };
 		577232130231CB5D8185A90C /* components.composer-slash-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-slash-dark.png"; sourceTree = "<group>"; };
 		577BD51E4D818B2C3EB3BD93 /* components.composer-strip-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-strip-dark.png"; sourceTree = "<group>"; };
-		57E50ACE0C6E84D336B13332 /* Harness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Harness.swift; sourceTree = "<group>"; };
 		581B37F7D26DE8D94FAC9EBC /* components.composer-empty-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-empty-light.png"; sourceTree = "<group>"; };
 		584967D39EBAE2CBA05DA6D5 /* components.ask-plan-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-plan-dark.png"; sourceTree = "<group>"; };
 		590B62F0B4C074AA2233FC70 /* DoorServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorServer.swift; sourceTree = "<group>"; };
@@ -419,7 +404,6 @@
 		5CBBB924EED36840518D0268 /* DoorHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorHost.swift; sourceTree = "<group>"; };
 		6013EA2776CE3161F61C3D4D /* components.chat-new-activity-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-new-activity-dark.png"; sourceTree = "<group>"; };
 		6198489A4CDE5DCEF6FCFC97 /* components.row-background-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-background-dark.png"; sourceTree = "<group>"; };
-		63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceSuite.swift; sourceTree = "<group>"; };
 		66F081627C3D17B3E941DCE7 /* components.row-thinking-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-thinking-light.png"; sourceTree = "<group>"; };
 		6922E0C57B8D0107F142EFED /* components.row-command-elsewhere-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-command-elsewhere-light.png"; sourceTree = "<group>"; };
 		69BAC2697858BF27BD8E5880 /* ComponentSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComponentSnapshotTests.swift; sourceTree = "<group>"; };
@@ -437,7 +421,6 @@
 		719758A8DDBFDCCD349C1EA7 /* components.row-ask-grant-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-ask-grant-light.png"; sourceTree = "<group>"; };
 		71A6007C075ED640DAE0FD1E /* components.chat-family-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-family-light.png"; sourceTree = "<group>"; };
 		72944A8BB86F187E3E7573E9 /* components.composer-sending-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-sending-dark.png"; sourceTree = "<group>"; };
-		7316CFA811C55B9CEEB041C5 /* Judge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Judge.swift; sourceTree = "<group>"; };
 		732DCD39627E1E7E2A7611EE /* components.chat-loading-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-loading-light.png"; sourceTree = "<group>"; };
 		7373A86D3D26B4BA4658A302 /* components.row-file-change-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-file-change-light.png"; sourceTree = "<group>"; };
 		73DF47D854C69950E20D508B /* components.composer-review-token-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-review-token-light.png"; sourceTree = "<group>"; };
@@ -466,7 +449,6 @@
 		86B00A7BE95F5390AE6962F9 /* components.chat-paging-unreachable-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-paging-unreachable-light.png"; sourceTree = "<group>"; };
 		87EFD78A921E2C906FC1D8ED /* components.chat-rename-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-rename-dark.png"; sourceTree = "<group>"; };
 		8959E3A72299B8152BE86967 /* AmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		8A10C4D43E54FEABB391277E /* PerfRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfRun.swift; sourceTree = "<group>"; };
 		8A66717812856056E64C6238 /* components.chat-detached-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-detached-dark.png"; sourceTree = "<group>"; };
 		8B6B5F51320E7294BEEFAD09 /* components.row-tool-call-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-tool-call-dark.png"; sourceTree = "<group>"; };
 		8DF95DB041377C76B2A2ABB9 /* components.composer-chip-stops-asking-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-chip-stops-asking-light.png"; sourceTree = "<group>"; };
@@ -540,7 +522,6 @@
 		D1C2A077E4EBCFE86C97CED7 /* components.review-files-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.review-files-dark.png"; sourceTree = "<group>"; };
 		D1DB4818849A191EE084960D /* components.composer-strip-trouble-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-strip-trouble-light.png"; sourceTree = "<group>"; };
 		D55A85D48914B5D3EB47DD08 /* components.row-ask-questions-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-ask-questions-light.png"; sourceTree = "<group>"; };
-		D5E1FE40B447768ED3E301C2 /* Instruments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Instruments.swift; sourceTree = "<group>"; };
 		D6C58D6548DC43D01ED4AC59 /* components.row-ask-link-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-ask-link-light.png"; sourceTree = "<group>"; };
 		D7256236894E5942A208E8DA /* components.composer-rejected-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-rejected-light.png"; sourceTree = "<group>"; };
 		D7745959B49F3C56DF7BB89F /* components.composer-review-token-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-review-token-dark.png"; sourceTree = "<group>"; };
@@ -552,7 +533,6 @@
 		DC616885FAC427581E1996CC /* components.row-command-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-command-light.png"; sourceTree = "<group>"; };
 		DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = DebugCopy.xcstrings; sourceTree = "<group>"; };
 		DEDEA60C06BAF8C68DF8D45D /* components.row-slash-output-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-slash-output-light.png"; sourceTree = "<group>"; };
-		DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxPerformanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2025163293E0667EB5E4966 /* components.row-run-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-run-dark.png"; sourceTree = "<group>"; };
 		E24A589F3EA88508AFC5859B /* components.chat-away-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-away-dark.png"; sourceTree = "<group>"; };
 		E2B11599CA45BAE8BA324236 /* components.row-subagent-steps-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-subagent-steps-dark.png"; sourceTree = "<group>"; };
@@ -575,10 +555,8 @@
 		EDC1438ED2A8B03C1EA21F01 /* components.row-command-allowed-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-command-allowed-light.png"; sourceTree = "<group>"; };
 		EE2C22D1F00C9C37CC9B6B31 /* components.row-command-failed-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-command-failed-dark.png"; sourceTree = "<group>"; };
 		EFB24C725FFE6E4D7599D1CD /* components.row-compaction-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-compaction-light.png"; sourceTree = "<group>"; };
-		F001566356B6645AB41CE39B /* Budgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Budgets.swift; sourceTree = "<group>"; };
 		F18F5890E56F6711B4E26F1A /* components.row-compaction-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-compaction-dark.png"; sourceTree = "<group>"; };
 		F460A9D995FBAC0E48BB9818 /* components.ask-permission-terminal-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-permission-terminal-light.png"; sourceTree = "<group>"; };
-		F5B661BE2402BC7D004818A5 /* Workloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workloads.swift; sourceTree = "<group>"; };
 		F93A8EC6AA37E9E680EE94FE /* components.composer-not-confirmed-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-not-confirmed-dark.png"; sourceTree = "<group>"; };
 		F9A659C06ACC81C034B66E55 /* components.composer-slash-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-slash-light.png"; sourceTree = "<group>"; };
 		FA19A1CEBA9AAAA23C10BEC6 /* components.composer-catching-up-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-catching-up-dark.png"; sourceTree = "<group>"; };
@@ -620,15 +598,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		079E0F65A5017818AF6B8C54 /* AmuxPerformanceTests */ = {
-			isa = PBXGroup;
-			children = (
-				57E50ACE0C6E84D336B13332 /* Harness.swift */,
-				63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */,
-			);
-			path = AmuxPerformanceTests;
-			sourceTree = "<group>";
-		};
 		0F43E47BAFD6271888A5F0B5 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -677,14 +646,6 @@
 			path = Goldens;
 			sourceTree = "<group>";
 		};
-		4449D0A6A852D2E301F18DB9 /* AmuxCore */ = {
-			isa = PBXGroup;
-			children = (
-				A93C129C195D63A10C55EBFC /* Sources */,
-			);
-			path = AmuxCore;
-			sourceTree = "<group>";
-		};
 		5445FBC267DE6D42E3D857C1 /* AmuxUITests */ = {
 			isa = PBXGroup;
 			children = (
@@ -692,18 +653,6 @@
 				DB72F14B366D0C657F5D98FA /* DoorLines.swift */,
 			);
 			path = AmuxUITests;
-			sourceTree = "<group>";
-		};
-		5D6EA25B972CA82995FF10D2 /* Instrumentation */ = {
-			isa = PBXGroup;
-			children = (
-				F001566356B6645AB41CE39B /* Budgets.swift */,
-				D5E1FE40B447768ED3E301C2 /* Instruments.swift */,
-				7316CFA811C55B9CEEB041C5 /* Judge.swift */,
-				8A10C4D43E54FEABB391277E /* PerfRun.swift */,
-				F5B661BE2402BC7D004818A5 /* Workloads.swift */,
-			);
-			path = Instrumentation;
 			sourceTree = "<group>";
 		};
 		64DAC62299FAA0DD1E9445EA /* Amux */ = {
@@ -1005,21 +954,12 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
-		A93C129C195D63A10C55EBFC /* Sources */ = {
-			isa = PBXGroup;
-			children = (
-				5D6EA25B972CA82995FF10D2 /* Instrumentation */,
-			);
-			path = Sources;
-			sourceTree = "<group>";
-		};
 		AE5FEBD430E530D71BFD9832 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				8ED8247A9E0214AD28831928 /* Amux.app */,
 				6B110703FCD2FD223978C97E /* AmuxAppTests.xctest */,
 				FF0ABB23B2C6EAB3B8D4148C /* AmuxComponentSnapshotTests.xctest */,
-				DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */,
 				8959E3A72299B8152BE86967 /* AmuxUITests.xctest */,
 			);
 			name = Products;
@@ -1031,7 +971,6 @@
 				64DAC62299FAA0DD1E9445EA /* Amux */,
 				8D168EC7A03FA2A38159AE6D /* AmuxAppTests */,
 				38FE5C105F7E0094209A7F01 /* AmuxComponentSnapshotTests */,
-				079E0F65A5017818AF6B8C54 /* AmuxPerformanceTests */,
 				5445FBC267DE6D42E3D857C1 /* AmuxUITests */,
 				3C9AAFCF46B0C3C23BA74921 /* Goldens */,
 				ECABC02511DE788415933245 /* Packages */,
@@ -1060,7 +999,6 @@
 				35ED0CE4A533E8878FBD1675 /* AmuxFeatures */,
 				E2D4F1F96B2AE8306CD589E6 /* AmuxShell */,
 				B4EFC5ACC5BD2F025A261F98 /* AmuxTestSupport */,
-				4449D0A6A852D2E301F18DB9 /* AmuxCore */,
 				211FF3D8B6D4DECA3AF7C730 /* AmuxTestSupport */,
 			);
 			path = Packages;
@@ -1069,24 +1007,6 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		0E3DEC796899800C70DE59A8 /* AmuxPerformanceTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 72CE7FB944009A38D87A9371 /* Build configuration list for PBXNativeTarget "AmuxPerformanceTests" */;
-			buildPhases = (
-				114CCBA2C817D62D398FF5B0 /* Sources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				A0D731EC13F9142BB2A92EBF /* PBXTargetDependency */,
-			);
-			name = AmuxPerformanceTests;
-			packageProductDependencies = (
-			);
-			productName = AmuxPerformanceTests;
-			productReference = DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
 		20C6A9BE8C01A7E6031D3C35 /* AmuxComponentSnapshotTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 5F3683E5427485FFD7F0E40C /* Build configuration list for PBXNativeTarget "AmuxComponentSnapshotTests" */;
@@ -1205,7 +1125,6 @@
 			projectRoot = "";
 			targets = (
 				8CE566509F5A43BE6BF3E256 /* Amux */,
-				0E3DEC796899800C70DE59A8 /* AmuxPerformanceTests */,
 				39E34D09D12B6D7C614BBB7E /* AmuxAppTests */,
 				20C6A9BE8C01A7E6031D3C35 /* AmuxComponentSnapshotTests */,
 				3DAE7AD018B70A791E1B19D2 /* AmuxUITests */,
@@ -1490,15 +1409,6 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		114CCBA2C817D62D398FF5B0 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				F840D37348D0746EA906D110 /* Harness.swift in Sources */,
-				A3C2080DEA1ECDCA5A1BA441 /* PerformanceSuite.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		16428338F9A0A10824F76155 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -1523,7 +1433,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */,
-				2F0347A6EA4A7731721003EE /* Budgets.swift in Sources */,
 				553BF8DD2498F7F22153BE30 /* ComponentCatalog.swift in Sources */,
 				07F4FE52C75D22617CDE6BB9 /* Composition.swift in Sources */,
 				63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */,
@@ -1532,10 +1441,7 @@
 				AEE5ABB7E7D74D75A3DF45A5 /* DoorHost.swift in Sources */,
 				546E08243B4B5BE2BDFDAB84 /* DoorServer.swift in Sources */,
 				82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */,
-				C09FEF55EDD6530C94D3E862 /* Instruments.swift in Sources */,
-				344D301838279573239BD80D /* Judge.swift in Sources */,
 				2AB9F9F887627829BEBBB09D /* MenuSource.swift in Sources */,
-				A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */,
 				DDDED99192D1F649C8282E0A /* Perturbation.swift in Sources */,
 				B6D27C4537AD3B1E7AC14846 /* ReportFreeze.swift in Sources */,
 				CAD420C705F7B9D3741E4C03 /* ReportTools.swift in Sources */,
@@ -1545,7 +1451,6 @@
 				CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */,
 				894FA032EAF19BFC5E92664F /* Trace.swift in Sources */,
 				08A81513DFEF3EE1567A6A5E /* VisibleTree.swift in Sources */,
-				1EB380BBF813E1A744D85210 /* Workloads.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1575,11 +1480,6 @@
 			isa = PBXTargetDependency;
 			target = 8CE566509F5A43BE6BF3E256 /* Amux */;
 			targetProxy = 5951062B3B4AFD2F0DA405C5 /* PBXContainerItemProxy */;
-		};
-		A0D731EC13F9142BB2A92EBF /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 8CE566509F5A43BE6BF3E256 /* Amux */;
-			targetProxy = 7B170D055CFEF59AE814DAC2 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1679,33 +1579,6 @@
 			};
 			name = Debug;
 		};
-		2244784CDFC88C6A4DEA3688 /* Measured */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 36;
-				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				INFOPLIST_FILE = Amux/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0.32;
-				OTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/../../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a";
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
-				SDKROOT = iphoneos;
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = AMUX_DEBUG_TOOLS;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = 1;
-			};
-			name = Measured;
-		};
 		304A2DC4DD64B8229FE6D67C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1734,7 +1607,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 36;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				EXCLUDED_SOURCE_FILE_NAMES = "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*";
+				EXCLUDED_SOURCE_FILE_NAMES = "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/*";
 				INFOPLIST_FILE = Amux/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1750,26 +1623,6 @@
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
-		};
-		4B3647C5C587712138659643 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxPerformanceTests;
-				SDKROOT = iphoneos;
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				TARGETED_DEVICE_FAMILY = 1;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
-			};
-			name = Debug;
 		};
 		553ECCECE82F6F452BAE186A /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -1791,26 +1644,6 @@
 			};
 			name = Debug;
 		};
-		60F93BDDC6AD920EECD5BE21 /* Measured */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxComponentSnapshotTests;
-				SDKROOT = iphoneos;
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				TARGETED_DEVICE_FAMILY = 1;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
-			};
-			name = Measured;
-		};
 		62CBA0674792A649E6E61464 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1831,47 +1664,6 @@
 			};
 			name = Debug;
 		};
-		7AC0602D3E224FBB05D7825E /* Measured */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				ENABLE_TESTABILITY = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxPerformanceTests;
-				SDKROOT = iphoneos;
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				TARGETED_DEVICE_FAMILY = 1;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
-			};
-			name = Measured;
-		};
-		7D44E6B517687482E46CF54B /* Measured */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxUITests;
-				SDKROOT = iphoneos;
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				TARGETED_DEVICE_FAMILY = 1;
-				TEST_TARGET_NAME = Amux;
-			};
-			name = Measured;
-		};
 		7EA0143F3EF99114A4D5DB7E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1891,108 +1683,6 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
 			};
 			name = Release;
-		};
-		9E74B7CC23B1363A40BF1044 /* Measured */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxAppTests;
-				SDKROOT = iphoneos;
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				TARGETED_DEVICE_FAMILY = 1;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
-			};
-			name = Measured;
-		};
-		9EAFCF25DF8CB11DA1F9749F /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxPerformanceTests;
-				SDKROOT = iphoneos;
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				TARGETED_DEVICE_FAMILY = 1;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
-			};
-			name = Release;
-		};
-		B49E27100A3872C1F96C1D05 /* Measured */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				ARCHS = arm64;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGNING_ALLOWED = NO;
-				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = YES;
-				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
-				GCC_C_LANGUAGE_STANDARD = gnu11;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MTL_ENABLE_DEBUG_INFO = NO;
-				MTL_FAST_MATH = YES;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Measured;
 		};
 		B9B730C37BC23724695BE5B8 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -2103,7 +1793,6 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1C6A74E2A949CE5DA9BC6C59 /* Debug */,
-				2244784CDFC88C6A4DEA3688 /* Measured */,
 				43EAF82C28C6FB2A3DB797AE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -2113,7 +1802,6 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				553ECCECE82F6F452BAE186A /* Debug */,
-				9E74B7CC23B1363A40BF1044 /* Measured */,
 				7EA0143F3EF99114A4D5DB7E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -2123,18 +1811,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				E48EEA25C2561146FBE6AA10 /* Debug */,
-				60F93BDDC6AD920EECD5BE21 /* Measured */,
 				CE4B6025D0B6F9CDD5826A8A /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
-		};
-		72CE7FB944009A38D87A9371 /* Build configuration list for PBXNativeTarget "AmuxPerformanceTests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				4B3647C5C587712138659643 /* Debug */,
-				7AC0602D3E224FBB05D7825E /* Measured */,
-				9EAFCF25DF8CB11DA1F9749F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
@@ -2143,7 +1820,6 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				62CBA0674792A649E6E61464 /* Debug */,
-				7D44E6B517687482E46CF54B /* Measured */,
 				304A2DC4DD64B8229FE6D67C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -2153,7 +1829,6 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				18AF2EFCFA6E6DA9D324BAEE /* Debug */,
-				B49E27100A3872C1F96C1D05 /* Measured */,
 				B9B730C37BC23724695BE5B8 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;

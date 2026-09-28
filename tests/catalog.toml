@@ -723,7 +723,7 @@ capabilities = ["macOS", "Xcode 26.6", "iOS 26.5 golden simulator"]
 lane = "fast"
 evidence = "target/ios/DerivedData"
 update = ""
-swift = ["AmuxAppTests", "AmuxCoreTests", "AmuxDesignTests", "AmuxFeaturesTests", "AmuxShellTests", "AmuxTestSupportTests", "InstrumentationTests"]
+swift = ["AmuxAppTests", "AmuxCoreTests", "AmuxDesignTests", "AmuxFeaturesTests", "AmuxShellTests", "AmuxTestSupportTests"]
 
 [[suite]]
 name = "phone-journeys"
@@ -875,23 +875,6 @@ cargo = [
   { package = "qualification", kind = "lib", targets = ["qualification"], features = ["perf"] },
   { package = "qualification", kind = "bin", targets = ["perf"], features = ["perf"] },
 ]
-
-[[suite]]
-name = "phone-performance-qualification"
-contract = "Phone launch, bridge, rendering, interaction, and memory workloads stay within budgets and reviewed drift on the enrolled simulator host."
-paths = ["apps/apple/AmuxPerformanceTests", "perf/baselines/phone", "scripts/ios-perf.py"]
-recipe = "just ios perf"
-boundary = "Native presentation"
-oracle = "Measured XCTest signposts and resource samples against the pinned-Mac baseline and documented budgets."
-real = ["measured phone app", "iOS simulator", "host clock and memory counters"]
-substituted = ["providers", "cloud account"]
-time = "real"
-capabilities = ["enrolled pinned Mac", "macOS", "Xcode 26.6", "quiet golden simulator"]
-lane = "qualification"
-evidence = "target/ios/perf"
-update = "just ios perf -- --baseline"
-swift = ["AmuxPerformanceTests"]
-baselines = ["perf/baselines/phone/pinned-mac.json"]
 
 [[suite]]
 name = "phone-source-policy"

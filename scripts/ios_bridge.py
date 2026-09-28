@@ -21,7 +21,7 @@ CRATE = "app-ffi"
 LIBRARY = "libamux_app.a"
 HEADER = "amux_app.h"
 MODULE = "AmuxApp"
-# The library the debug and measured app configurations force-load: the
+# The library the debug app configuration force-loads: the
 # bridge with its driving tools compiled in, for the simulator alone.
 DRIVING_FRAMEWORK = "AmuxAppDebugTools.xcframework"
 DRIVING_SLICE = "ios-arm64-simulator"

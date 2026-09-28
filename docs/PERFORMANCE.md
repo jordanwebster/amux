@@ -8,22 +8,20 @@ the qualification lane on enrolled machines, never in an ordinary push. Claims t
 (rows and bytes retained, message counts, cache misses) belong in ordinary tests; elapsed time and memory belong
 here. How this lane sits beside the others is on [Testing](TESTING.md).
 
-The desktop harness is the `qualification` crate (`crates/qualification/src/perf`). The phone keeps its own
-harness with the app; its metrics, budgets and machines are on [iPhone performance](IOS_PERFORMANCE.md).
+The harness is the `qualification` crate (`crates/qualification/src/perf`). The phone is measured through it:
+the flood's viewer stands in for it (see [The phone](#the-phone)).
 
 ## Running it
 
 ```sh
-just perf                        # the desktop workloads, then the phone suite when Xcode is present
-just perf -- --only flood        # the flood alone, desktop only
+just perf                        # every workload
+just perf -- --only flood        # the flood alone
 just perf --baseline             # record this machine's baseline after every budget passes
 just perf -- --only flood --baseline
 ```
 
 `just perf` builds the `perf` binary in release with the `bundled,perf` features and runs it; the binary refuses to
-run from a debug build. On a Mac with `xcrun`, a whole run then continues with `just ios perf`, passing the same
-arguments, under that recipe's own simulator lease; a desktop failure stops the recipe before the phone starts.
-`--only flood` skips the phone. The binary accepts nothing but `--baseline` and `--only flood`.
+run from a debug build. The binary accepts nothing but `--baseline` and `--only flood`.
 
 For the whole run a child process keeps one core busy. An otherwise idle Apple Silicon machine lets its cores drop
 into a low-power state between bursts and measures several times slower with wider spread; one busy core is the
@@ -96,7 +94,6 @@ Baselines are committed per enrolled machine:
 ```text
 perf/baselines/
   desktop/<hw.model>.json      e.g. desktop/Mac14,6.json
-  phone/<machine>.json         e.g. phone/pinned-mac.json
 ```
 
 A desktop baseline records its schema version, machine model, profile (`release`), features (`bundled,perf`),
@@ -125,8 +122,8 @@ without a drift gate. The run fails if any verdict is `FAIL`.
 
 ## The phone
 
-`just ios perf` measures the app's pinned workloads (cold start, reconciliation, echo, streaming, lifecycle) on the
-pinned simulator. Its definitions, budgets and machine rows are in [iPhone performance](IOS_PERFORMANCE.md); its
-baselines are `perf/baselines/phone/<machine>.json`, and its results land in `target/ios/perf`. `just ios perf --
---only <section>` runs one section; `just ios perf -- --baseline` records a whole run, and refuses to record from
-one section.
+The flood's viewer holds nothing and reads the fleet and one chat through the same subscriptions the iPhone app
+reads, from the same node the app runs inside itself, so its fleet and chat budgets are the phone's catching up under
+load, without a simulator's timing in the number. The phone's own screen under the
+flood is seen, not timed: serve `journeys/topologies/flood.json` with `testnet serve` and pair the app with its
+`desk` host as [the iPhone app](IOS.md) describes for any served topology.

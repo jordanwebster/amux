@@ -4,8 +4,7 @@
 The simulator slice, with the driving tools compiled in, under the ordinary
 release profile: what `ios build`, `ios unit` and every recipe that drives an
 app need. Debug app configurations still carry symbols and testability on the
-Swift side; the Rust bridge is optimised because the Measured configuration
-times it as part of launch. Nothing here builds for a phone or optimises for
+Swift side; the Rust bridge is built optimised. Nothing here builds for a phone or optimises for
 size; that is `ios-package.py`, and only the shipping recipes pay for it.
 
 When no Rust input has changed since the last run, cargo is not invoked and the

@@ -8,15 +8,8 @@ options:
   minimumXcodeGenVersion: "2.46.0"
   generateEmptyDirectories: true
 
-# Three configurations, not two. `Measured` is how the performance suite is
-# built: optimised the way a shipped build is, because an unoptimised Swift
-# build measures the compiler rather than the app, but with the driving door,
-# the fixtures and the workload generator still compiled in and `@testable`
-# still allowed, because the suite runs inside the app and reaches into it.
-# Nobody installs a `Measured` build; `Release` is still what ships.
 configs:
   Debug: debug
-  Measured: release
   Release: release
 
 settings:
@@ -73,10 +66,6 @@ targets:
       # rest of the fixtures.
       - path: Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources
         buildPhase: resources
-      # The performance harness, for the same reason: the workloads it
-      # generates are forty invented agents and a thousand invented rows, and
-      # none of that belongs in a build a person installs.
-      - path: Packages/AmuxCore/Sources/Instrumentation
       - path: Amux/Resources
         buildPhase: resources
       # The app icon. One 1024x1024 image; the catalog compiler derives every
@@ -179,24 +168,12 @@ targets:
           # reached, so nothing is taken from that one. `just ios scope-audit`
           # checks that the release binary does not carry the build marker.
           OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
-        Measured:
-          # The same tools as Debug, and for the same reason: the suite drives
-          # the app through the door and measures the workloads the harness
-          # generates, so a build without them cannot be measured at all. What
-          # it does not carry is DEBUG, so the app and the packages behind it
-          # are compiled the way a shipped build is.
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: AMUX_DEBUG_TOOLS
-          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
-          # The suite is `@testable import Amux`: it builds the app's own
-          # screens and reads the app's own stores, which is what makes the
-          # numbers the app's rather than a UI test's.
-          ENABLE_TESTABILITY: YES
         Release:
           # Belt as well as the AMUX_DEBUG_TOOLS braces: the debug sources
           # are not compiled at all, so a door symbol or a fixture cannot
           # reach a shipped binary by way of a stray reference outside a
           # conditional. `just ios scope-audit` checks the built binary.
-          EXCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*"
+          EXCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/*"
     dependencies:
       - package: AmuxCore
         product: AmuxCore
@@ -206,44 +183,6 @@ targets:
         product: AmuxFeatures
       - package: AmuxShell
         product: AmuxShell
-
-  # The performance suite runs inside the app it measures: it generates the
-  # pinned workloads, hands them to the runtime's own callback and reads the
-  # marks the app leaves. A UI test could not — it drives the app from another
-  # process, and the gap between the two processes would be in every number.
-  AmuxPerformanceTests:
-    type: bundle.unit-test
-    platform: iOS
-    sources:
-      - AmuxPerformanceTests
-    # The suite names the packages' types but must not depend on their
-    # products. A test bundle that lists a package product turns that package
-    # into a dynamic framework for every target in the configuration, and each
-    # of those frameworks carries its own copy of the Rust bridge — so the
-    # app's `-force_load` of the driving bridge above stops answering and the
-    # measured app silently loses the door's network. Taking the types from the
-    # host instead keeps the packages static and the bridge single: the modules
-    # are already built into `BUILT_PRODUCTS_DIR` for the host, so `import
-    # AmuxCore` still resolves, and `BUNDLE_LOADER` resolves the symbols
-    # against the app executable that already links them.
-    dependencies:
-      - target: Amux
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: sh.amux.AmuxPerformanceTests
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux"
-        BUNDLE_LOADER: "$(TEST_HOST)"
-        TARGETED_DEVICE_FAMILY: "1"
-        SUPPORTS_MACCATALYST: NO
-        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
-        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
-      configs:
-        Measured:
-          # A test bundle gets testability for nothing in a debug
-          # configuration and not in a release one, and this suite is
-          # `@testable import Amux` in an optimised build.
-          ENABLE_TESTABILITY: YES
 
   # Tests that need the app's own window and UIKit run hosted by the app
   # rather than by a package test runner.
@@ -330,23 +269,6 @@ schemes:
       targets:
         - AmuxUITests
         - AmuxAppTests
-
-  # Its own scheme, because a performance run must never share a process or a
-  # machine with another suite.
-  AmuxPerformance:
-    build:
-      targets:
-        Amux: all
-        AmuxPerformanceTests: [test]
-    run:
-      config: Measured
-    test:
-      config: Measured
-      # Coverage instruments every call and a sanitizer rewrites every access;
-      # both would be measured as if they were the app.
-      gatherCoverageData: false
-      targets:
-        - AmuxPerformanceTests
 
   # Component pictures have their own process and command. They deliberately
   # do not join `Amux`, whose default test action remains the ordinary unit and

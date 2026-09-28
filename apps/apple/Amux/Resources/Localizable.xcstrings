@@ -6590,7 +6590,7 @@
       }
     },
     "amux": {
-      "comment": "English app copy. Used in ios/Amux/Sources/Composition.swift, ios/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift, ios/Packages/AmuxCore/Sources/AmuxCore/Signposts.swift, ios/Packages/AmuxCore/Sources/Instrumentation/Workloads.swift, ios/Packages/AmuxShell/Sources/AmuxShell/DeepLink.swift, ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Scenario.swift, ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedCloud.swift.",
+      "comment": "English app copy. Used in ios/Amux/Sources/Composition.swift, ios/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift, ios/Packages/AmuxCore/Sources/AmuxCore/Signposts.swift, ios/Packages/AmuxShell/Sources/AmuxShell/DeepLink.swift, ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Scenario.swift, ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedCloud.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {

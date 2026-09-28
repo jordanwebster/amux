@@ -1,3 +1,22 @@
+2026-09-29 — **The phone's own performance suite is retired.** It ran
+inside the app: it generated forty invented agents and a thousand invented
+rows, handed them to the bridge's event callback as event batches and timed
+the Swift stores applying them, plus a lifecycle section against a served
+network in the old topology format. The app no longer has that bridge or
+those stores: its fleet and chats are the embedded node's, read through
+subscriptions, so the suite no longer built and its script could not load
+its topology. Rebuilding it would mean designing new phone workloads rather
+than porting old ones, and the flood already measures what the phone waits
+for under load: a viewer holding nothing opens the fleet and one chat
+through the same subscriptions from the same node the app runs, against
+budgets and a reviewed baseline. Gone with it: the AmuxPerformanceTests
+target and scheme, the Measured build configuration only it used, the
+Instrumentation library and its tests, the phone budget page and baseline,
+`just ios perf`, its catalogue suite and verification stage, the captures
+workflow's performance upload, and the phone half of `just perf`, which now
+runs the desktop workloads alone. The performance page says how to watch the
+phone under the flood without timing it.
+
 2026-09-29 — **A closed pairing window answers a PIN with INVALID_PIN,
 however the refusal lands.** A host with no pairing window open (the PIN
 was used, five guesses closed it, or it expired) closes a certificate-less

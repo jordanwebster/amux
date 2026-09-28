@@ -193,9 +193,7 @@ ci-remote:
 live *ARGS:
     set -e; if [ "${1-}" = -- ]; then shift; fi; if [ $# -eq 0 ]; then for kind in claude_pty claude_sdk codex; do echo "live $kind: not_run (no scenario selected)"; done; exit 0; fi; kind=$1; shift; case "$kind" in claude_pty|claude_sdk|codex) ;; *) echo "live: unknown kind $kind; known: claude_pty, claude_sdk, codex" >&2; exit 2 ;; esac; {{bounded}} 3600 cargo test --locked -p qualification --features bundled,live --test "${kind}_live" -- "$@"
 
-# Qualify desktop performance on an enrolled machine and include the phone
-# suite whenever Xcode is available. The phone recipe takes its own simulator
-# lease and prepares the pinned device. Pass --baseline to record the current
-# release medians after every absolute budget passes.
+# Qualify desktop performance on an enrolled machine. Pass --baseline to
+# record the current release medians after every absolute budget passes.
 perf *ARGS:
-    set -e; if [ "${1-}" = -- ]; then shift; fi; mode=${1-}; {{bounded}} 1200 cargo build --locked --release -p qualification --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"; if [ "$mode" != --only ] && command -v xcrun >/dev/null 2>&1; then {{bounded}} 3600 just ios perf -- "$@"; fi
+    set -e; if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p qualification --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"
