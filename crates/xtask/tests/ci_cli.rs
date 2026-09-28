@@ -25,7 +25,7 @@ fn ci_status_cli_emits_typed_failures_at_the_command_boundary() {
     let dir = commands();
     executable(
         &dir.path().join("git"),
-        "#!/bin/sh\ncase \"$1\" in\nrev-parse) echo head;;\nls-remote) echo \"$REMOTE refs/heads/nativeapp\";;\nesac\n",
+        "#!/bin/sh\ncase \"$1\" in\nrev-parse) echo head;;\nbranch) echo work;;\nls-remote) echo \"$REMOTE refs/heads/work\";;\nesac\n",
     );
     executable(
         &dir.path().join("gh"),
@@ -61,8 +61,8 @@ case "$*" in
   'rev-parse HEAD') echo head;;
   'branch --show-current') echo "$BRANCH";;
   'status --porcelain --untracked-files=normal') printf '%s' "$DIRTY";;
-  'push origin HEAD:nativeapp') exit "${PUSH_EXIT:-0}";;
-  'ls-remote origin refs/heads/nativeapp') echo "$REMOTE refs/heads/nativeapp";;
+  'push origin HEAD:work') exit "${PUSH_EXIT:-0}";;
+  'ls-remote origin refs/heads/work') echo "$REMOTE refs/heads/work";;
   *) exit 91;;
 esac
 "#,
@@ -73,8 +73,8 @@ esac
 echo "gh $*" >> "$CALLS"
 case "$*" in
   'repo view --json nameWithOwner --jq .nameWithOwner') echo owner/repo;;
-  'api repos/owner/repo/actions/workflows/ci.yml/runs?branch=nativeapp&event=push&head_sha=head&per_page=100') echo "$RUNS_JSON";;
-  'api repos/owner/repo/actions/workflows/ci.yml/runs?branch=nativeapp&event=push&per_page=100&page=1') echo "$PRIOR_JSON";;
+  'api repos/owner/repo/actions/workflows/ci.yml/runs?branch=work&event=push&head_sha=head&per_page=100') echo "$RUNS_JSON";;
+  'api repos/owner/repo/actions/workflows/ci.yml/runs?branch=work&event=push&per_page=100&page=1') echo "$PRIOR_JSON";;
   'api repos/owner/repo/actions/runs/42/jobs?filter=latest&per_page=100&page=1') echo "$JOBS_JSON";;
   *) exit 92;;
 esac
@@ -115,9 +115,9 @@ fn observation_environment(command: &mut Command, dir: &Path, scenario: &str) {
         _ => vec![run_fixture(41, "previous", Some("success"))],
     };
     let jobs = serde_json::json!({"jobs": [{
-        "name": "iOS verification", "status": "completed", "conclusion": "success",
+        "name": "iOS gate", "status": "completed", "conclusion": "success",
         "started_at": "2026-09-05T00:00:00Z", "completed_at": "2026-09-05T00:02:00Z",
-        "steps": [{"name": "Run iOS verification", "conclusion": "success"}]
+        "steps": [{"name": "Run the iOS gate", "conclusion": "success"}]
     }]});
     command
         .current_dir(dir)
@@ -126,7 +126,7 @@ fn observation_environment(command: &mut Command, dir: &Path, scenario: &str) {
             format!("{}:{}", dir.display(), std::env::var("PATH").unwrap()),
         )
         .env("CALLS", dir.join("calls"))
-        .env("BRANCH", "nativeapp")
+        .env("BRANCH", "work")
         .env("DIRTY", "")
         .env("PUSH_EXIT", "0")
         .env("REMOTE", "head")
@@ -214,7 +214,7 @@ fn ci_observe_cli_records_pending_failed_missing_and_success_without_real_remote
                 .lines()
                 .filter(|line| line.starts_with("git push"))
                 .collect::<Vec<_>>(),
-            ["git push origin HEAD:nativeapp"]
+            ["git push origin HEAD:work"]
         );
         if let Some(evidence) = std::env::var_os("AMUX_CI_CLI_EVIDENCE_DIR") {
             let evidence = std::path::PathBuf::from(evidence);
@@ -230,10 +230,10 @@ fn ci_observe_cli_records_pending_failed_missing_and_success_without_real_remote
 }
 
 #[test]
-fn ci_observe_cli_refuses_wrong_branch_dirty_tree_push_failure_and_not_pushed() {
+fn ci_observe_cli_refuses_detached_head_dirty_tree_push_failure_and_not_pushed() {
     let dir = observation_commands();
     for (variable, value, error, pushed) in [
-        ("BRANCH", "main", "WrongBranch", false),
+        ("BRANCH", "", "DetachedHead", false),
         ("DIRTY", "?? untracked", "DirtyTree", false),
         ("PUSH_EXIT", "1", "ToolFailure", true),
         ("REMOTE", "old", "NotPushed", true),
