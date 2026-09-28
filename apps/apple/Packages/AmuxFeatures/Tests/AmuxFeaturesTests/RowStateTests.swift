@@ -43,15 +43,16 @@ final class RowStateTests: XCTestCase {
         XCTAssertEqual(RowState(row: row(.working)).word, "Working")
         XCTAssertEqual(RowState(row: row(.starting)).word, "Starting")
         XCTAssertEqual(RowState(row: row(.idle)).word, "Idle")
-        XCTAssertEqual(RowState(row: row(.exited, exitCause: "finished")).word, "Exited")
-        XCTAssertEqual(
-            RowState(row: row(.exited, exitCause: "finished")).elaboration, "finished")
+        XCTAssertEqual(RowState(row: row(.exited, exitCause: "finished")).word, "Finished")
+        XCTAssertNil(RowState(row: row(.exited, exitCause: "finished")).elaboration)
+        XCTAssertEqual(RowState(row: row(.exited, exitCause: "code 1")).word, "Exited")
+        XCTAssertEqual(RowState(row: row(.exited, exitCause: "code 1")).elaboration, "code 1")
     }
 
-    func testNeedingYouHasNoWordAndIsTheOnlyMark() {
+    func testNeedingYouSaysSoAndIsTheOnlyMark() {
         let state = RowState(row: row(.needsYou))
         XCTAssertEqual(state, .needsYou)
-        XCTAssertNil(state.word)
+        XCTAssertEqual(state.word, "Needs you")
         XCTAssertTrue(state.needsYou)
         XCTAssertEqual(state.spoken, "Needs you")
     }

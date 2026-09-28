@@ -493,6 +493,11 @@ impl Edge {
         self.routing.signed_in_for(host)
     }
 
+    /// What kind of machine `host` last announced itself as.
+    pub fn platform(&self, host: HostId) -> Option<String> {
+        self.routing.platform_for(host)
+    }
+
     /// Whether `host` last said it no longer trusts this host, by closing
     /// a link or refusing a stream, and has not taken it back since.
     pub fn revoked(&self, host: HostId) -> bool {

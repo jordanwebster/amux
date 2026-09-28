@@ -17,7 +17,7 @@ chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,118,54
 hosts.subtitle |  | 1 reachable | 18,127,205,40
-hosts.row.<desk> | desk, reachable on this network | on-this-network | 18,230,366,108
+hosts.row.<desk> | desk, macOS, reachable on this network | on-this-network | 18,230,366,108
 hosts.fact.identity | <volatile>
 hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,473,366,69
 hosts.caption.devices |  |  | 18,550,347,78
@@ -44,7 +44,7 @@ you.help.caption |  |  | 18,1124,366,161
  | Hosts |  | 18,72,118,54
  | 1 reachable |  | 18,127,205,40
  | ON THIS NETWORK |  | 20,183,276,39
- | desk, reachable on this network |  | 18,230,366,108
+ | desk, macOS, reachable on this network |  | 18,230,366,108
  | THIS PHONE |  | 20,356,184,39
  | Identity, amux-iphone-1 · <key> |  | 18,403,366,69
  | Paired Devices, 1 |  | 18,473,366,69

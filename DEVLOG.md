@@ -1,3 +1,21 @@
+2026-09-28 — **Phone fleet rows draw three lines again, and hosts say what
+they are.** A fleet row is the name with its age (and the needs-you dot),
+then what the agent is working on (its status declaration, or its spawn
+prompt's first line, which the interpreter already seeds; omitted when there
+is neither), then the state in mono with the directory and the host on the
+right: `Needs you · dir` now reads on that line in the accent instead of
+standing alone, and a one-shot agent that exited after its turn reads
+`Finished · dir`. The inventory row carries only the phase and working_on,
+so a needs-you row cannot yet name what the ask is about. Hosts announce
+their platform in the link handshake; the daemon now keeps the last one each
+trusted peer announced in the trust store (so an offline host still says
+what it is) and publishes it on the host entry, its own included, so the
+phone's hosts rows read `macOS · direct`. The goldens topology starts the
+asker with its prompt and has the planner and keeper declare what they are
+on, so the fleet golden shows summaries and a needs-you row. The fleet,
+hosts and chat goldens and the journey frames that show hosts or fleet rows
+are re-recorded.
+
 2026-09-28 — **Phone ask cards share one anatomy again.** Every ask opens
 with an accent circle carrying its kind's glyph (a hand for permissions, a
 question mark, a list for plans, a form, a link, a lock for access, an alert

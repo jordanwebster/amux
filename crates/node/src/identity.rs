@@ -694,6 +694,7 @@ mod tests {
                 paired_at: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
                 signed_in: None,
+                platform: None,
             },
         );
         store

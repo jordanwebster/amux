@@ -9,7 +9,7 @@ home.row.<desk-work>.detail.volatile | <volatile>
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 reachable | 18,105,79,16
-hosts.row.<desk> | desk, reachable on this network | on-this-network | 18,159,366,64
+hosts.row.<desk> | desk, macOS, reachable on this network | on-this-network | 18,159,366,64
 hosts.fact.identity | <volatile>
 hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,310,366,46
 hosts.caption.devices |  |  | 18,363,320,18

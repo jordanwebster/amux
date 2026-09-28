@@ -64,27 +64,33 @@ enum RowState: Equatable {
         }
     }
 
-    /// The word the third line opens with. Needing you has none: the accent
-    /// line under it says what for.
+    /// The word the third line opens with. A row that needs you says so in
+    /// the accent: the inventory carries the phase, not what the ask is
+    /// about. A one-shot agent that ended after its turn finished rather
+    /// than exited.
     var word: String? {
         switch self {
-        case .needsYou: nil
+        case .needsYou: "Needs you"
         case .working: "Working"
         case .starting: "Starting"
         case .hostOffline(let machine): "\(machine) offline"
         case .hostAway(let machine): "\(machine) away"
         case .unsupported: "Unknown agent"
-        case .exited: "Exited"
+        case .exited(let cause): cause == Self.finished ? "Finished" : "Exited"
         case .idle: "Idle"
         }
     }
+
+    /// The exit cause the host records for a one-shot agent that exited
+    /// after its turn.
+    static let finished = "finished"
 
     /// What follows the word, where it says more than the place.
     var elaboration: String? {
         switch self {
         case .unsupported: "update amux to open it"
         case .hostAway: "not live"
-        case .exited(let cause): cause.flatMap { $0.isEmpty ? nil : $0 }
+        case .exited(let cause): cause.flatMap { $0.isEmpty || $0 == Self.finished ? nil : $0 }
         default: nil
         }
     }
@@ -108,6 +114,7 @@ enum RowState: Equatable {
         case .hostOffline(let machine): "\(machine) is offline"
         case .hostAway(let machine): "\(machine) is away, not live"
         case .unsupported: "Unknown agent, update amux to open it"
+        case .exited(let cause) where cause == Self.finished: "Finished"
         case .exited(let cause): ["Exited", cause].compactMap { $0 }.joined(separator: ", ")
         case .idle: "Idle"
         }

@@ -110,7 +110,8 @@ class Goldens:
                 lambda chat, reply=reply: chat["phase"] == "IDLE" and any(reply in i["text"] for i in chat["items"]),
                 f"{agent}-answered",
             )
-        journey.request({"Send": {"agent": "asker", "text": "Tidy the release notes."}})
+        # The asker was started with its prompt, so it is asking already and
+        # the fleet names what it was asked to do.
         journey.wait_chat("desk", "asker", lambda chat: chat["phase"] == "NEEDS_YOU", "asker-asking")
 
     def pairing(self) -> None:

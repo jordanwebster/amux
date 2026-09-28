@@ -42,6 +42,7 @@ impl ProfileRuntime {
             trust: Trust::Trusted as i32,
             presence: Presence::Online as i32,
             version: Some(crate::version().to_owned()),
+            platform: Some(crate::routing::local_platform().to_owned()),
             ..HostEntry::default()
         }
     }
@@ -86,6 +87,7 @@ impl ProfileRuntime {
                         last_dial_error: edge.last_dial_error(host).await,
                         via: via.to_wire() as i32,
                         signed_in: edge.signed_in(host),
+                        platform: edge.platform(host),
                         revoked: revoked.then_some(true),
                         trust: Trust::Trusted as i32,
                         presence: presence as i32,

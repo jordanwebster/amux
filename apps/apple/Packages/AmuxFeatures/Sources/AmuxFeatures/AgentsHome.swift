@@ -640,7 +640,7 @@ extension FleetGate {
 ///
 /// There is no mark in front of the name. A row that needs you carries the
 /// accent dot beside its age, where an unread conversation is marked in
-/// Messages, and its third line says what it wants in the accent colour. Rows
+/// Messages, and its third line says "Needs you" in the accent colour. Rows
 /// that need nothing line up with it because nothing reserves a slot for a
 /// mark they do not have.
 struct AgentRowView: View {
@@ -672,7 +672,7 @@ struct AgentRowView: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            third
+            words
         }
         .padding(.horizontal, 13)
         .padding(.vertical, design.metrics.rowPadding)
@@ -683,25 +683,8 @@ struct AgentRowView: View {
     /// "Finished · 4 files · +118 −40" is both more precise than a tick and
     /// readable without having learnt a vocabulary first. When the provider
     /// never counted the changes the word stands alone: an absent count is not
-    /// a zero.
-    ///
-    /// A row that needs you says what it needs instead — the question, or the
-    /// command it wants to run — in the one colour this app keeps for that.
-    @ViewBuilder
-    private var third: some View {
-        if state.needsYou || (row.familyNeedsYou && state.word == nil) {
-            Text(state.needsYou ? "Needs you" : "An agent it started needs you")
-                .designFont(.monoSmall, design)
-                .foregroundStyle(design.accent.color)
-                .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 1)
-        } else {
-            words
-        }
-    }
-
+    /// a zero. A row that needs you reads "Needs you" in the one colour this
+    /// app keeps for that, on the same line as every other state.
     private var words: some View {
         Group {
             if typeSize.isAccessibilitySize {
@@ -736,7 +719,7 @@ struct AgentRowView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .designFont(.monoSmall, design)
-        .foregroundStyle(design.inkFaint.color)
+        .foregroundStyle(state.needsYou ? design.accent.color : design.inkFaint.color)
         .padding(.top, 1)
     }
 

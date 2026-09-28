@@ -37,7 +37,7 @@ chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 offline | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 offline | 18,105,65,16
-hosts.row.<desk> | desk, offline, its agents’ state is unknown | offline | 18,159,366,64
+hosts.row.<desk> | desk, macOS, offline, its agents’ state is unknown | offline | 18,159,366,64
 hosts.caption.offline |  | Agents on an offline host report their state as unknown. | 18,231,293,37
 hosts.fact.identity | <volatile>
 hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,354,366,46
@@ -71,7 +71,7 @@ you.help.caption |  |  | 18,599,354,31
  | Hosts |  | 18,72,69,32
  | 1 offline |  | 18,105,65,16
  | OFFLINE |  | 20,137,49,14
- | desk, offline, its agents’ state is unknown |  | 18,159,366,64
+ | desk, macOS, offline, its agents’ state is unknown |  | 18,159,366,64
  | Agents on an offline host report their state as unknown. |  | 18,231,293,37
  | THIS PHONE |  | 20,286,70,14
  | Identity, amux-iphone-1 · <key> |  | 18,308,366,46

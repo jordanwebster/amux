@@ -492,6 +492,14 @@ impl RoutingCore {
         trust_store.entry(host_id).and_then(|entry| entry.signed_in)
     }
 
+    pub(crate) fn platform_for(&self, host_id: HostId) -> Option<String> {
+        let trust_store = self.trust_store.as_ref()?;
+        let trust_store = trust_store.read().ok()?;
+        trust_store
+            .entry(host_id)
+            .and_then(|entry| entry.platform.clone())
+    }
+
     fn remember_signed_in(&self, host: &Host) {
         let Some(trust_store) = &self.trust_store else {
             return;
@@ -500,7 +508,9 @@ impl RoutingCore {
             tracing::warn!(peer = %host.id, "failed to update signed-in state: trust store poisoned");
             return;
         };
-        if !trust_store.remember_signed_in(host.id, host.signed_in) {
+        let signed_in = trust_store.remember_signed_in(host.id, host.signed_in);
+        let platform = trust_store.remember_platform(host.id, host.platform.as_deref());
+        if !signed_in && !platform {
             return;
         }
         if let Some(data_dir) = &self.trust_data_dir
@@ -685,6 +695,7 @@ mod tests {
                 paired_at: chrono::DateTime::<chrono::Utc>::from_timestamp(1, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
                 signed_in: None,
+                platform: None,
             },
         );
         trust_store

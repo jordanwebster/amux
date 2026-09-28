@@ -18,7 +18,8 @@ pub(crate) use core::{Revocations, RouteUpdateOutcome};
 
 pub use events::RoutingEvent;
 pub(crate) use host::{
-    FEATURE_CLOUD_RELAY, Incarnation, LiveLocalHost, local_host, validate_remote_host,
+    FEATURE_CLOUD_RELAY, Incarnation, LiveLocalHost, local_host, local_platform,
+    validate_remote_host,
 };
 pub use link::ConnectRole;
 pub(crate) use link::{

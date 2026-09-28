@@ -36,6 +36,9 @@ pub struct TrustEntry {
     pub reachabilities: Vec<Reachability>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed_in: Option<bool>,
+    /// What kind of machine the peer announced itself as, last it said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -151,6 +154,7 @@ impl TrustStore {
                         paired_at,
                         reachabilities: reachability.into_iter().collect(),
                         signed_in: None,
+                        platform: None,
                     },
                 );
                 Ok(TrustStorePairingUpdate::Inserted)
@@ -188,6 +192,7 @@ impl TrustStore {
                 entry.paired_at = paired_at;
                 entry.reachabilities = reachability.into_iter().collect();
                 entry.signed_in = None;
+                entry.platform = None;
                 Ok(TrustStorePairingUpdate::ReplacedPubkey)
             }
             None => {
@@ -200,6 +205,7 @@ impl TrustStore {
                         paired_at,
                         reachabilities: reachability.into_iter().collect(),
                         signed_in: None,
+                        platform: None,
                     },
                 );
                 Ok(TrustStorePairingUpdate::Inserted)
@@ -231,6 +237,19 @@ impl TrustStore {
             return false;
         }
         entry.signed_in = signed_in;
+        true
+    }
+
+    /// Keeps the machine kind a peer announced, so an offline peer still
+    /// says what it is. A peer that announces none leaves the last one.
+    pub(crate) fn remember_platform(&mut self, host_id: HostId, platform: Option<&str>) -> bool {
+        let (Some(entry), Some(platform)) = (self.entries.get_mut(&host_id), platform) else {
+            return false;
+        };
+        if entry.platform.as_deref() == Some(platform) {
+            return false;
+        }
+        entry.platform = Some(platform.to_owned());
         true
     }
 
@@ -400,6 +419,7 @@ mod tests {
                     Reachability::Cloud,
                 ],
                 signed_in: None,
+                platform: None,
             },
         );
 
@@ -610,6 +630,7 @@ mod tests {
                     profile: uuid::Uuid::from_u128(42),
                 }],
                 signed_in: None,
+                platform: None,
             },
         );
 
@@ -648,6 +669,33 @@ mod tests {
         assert_eq!(loaded.entry(peer).unwrap().signed_in, Some(false));
     }
 
+    /// An offline peer still says what kind of machine it is: the last
+    /// platform it announced is kept, and one announcing none keeps it.
+    #[test]
+    fn trust_store_remembers_and_persists_a_peers_platform() {
+        let dir = temp_data_dir();
+        let peer = HostId::from_u128(2);
+        let mut store = TrustStore::default();
+        store
+            .upsert_paired_peer(
+                peer,
+                vec![9; 32],
+                "peer".to_string(),
+                Reachability::Cloud,
+                DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
+            )
+            .unwrap();
+
+        assert!(store.remember_platform(peer, Some("Linux")));
+        assert!(!store.remember_platform(peer, Some("Linux")));
+        assert!(!store.remember_platform(peer, None));
+        assert!(!store.remember_platform(HostId::from_u128(3), Some("macOS")));
+        store.save_in(dir.path()).unwrap();
+
+        let loaded = TrustStore::load_or_create_in(dir.path()).unwrap();
+        assert_eq!(loaded.entry(peer).unwrap().platform.as_deref(), Some("Linux"));
+    }
+
     #[test]
     fn trust_store_rejects_wrong_length_pubkey_on_load_and_save() {
         let dir = temp_data_dir();
@@ -661,6 +709,7 @@ mod tests {
                 paired_at: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
                 signed_in: None,
+                platform: None,
             },
         );
 
