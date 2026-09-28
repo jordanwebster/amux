@@ -72,8 +72,11 @@ enum ComponentCatalog {
             readinessValue: readiness ? "rendered" : nil
         ) {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(rows, id: \.id) { row in
-                    ChatRowView(row: row, expanded: expanded, bytes: CatalogFixtures.bytes)
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                    ChatRowView(
+                        row: row, expanded: expanded,
+                        rail: RailJoin.of(row, next: index + 1 < rows.count ? rows[index + 1] : nil),
+                        bytes: CatalogFixtures.bytes)
                 }
             }
         }
@@ -852,8 +855,11 @@ enum CatalogFixtures {
             r("c06", 6, .command(command: "cargo check -p amux-ui", state: .failed, outputHead: ["error[E0308]: mismatched types"], moreLines: 214, durationMs: 4_200, exitCode: 101)),
             r("c07", 7, .command(command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, durationMs: 12_000, exitCode: 0),
               decision: Decision(outcome: .allowed, elsewhere: false, note: nil, scope: "this session")),
-            r("c08", 8, .prose(text: [.text("Done. The three arms are one now, and the new test asserts on the single string.")], streaming: false, workingNote: false)),
-            r("c09", 9, .turnEnd(failed: false, costUsd: nil, durationMs: 102_000)),
+            r("c08", 8, .fileChange(files: [FileRow(path: "crates/amux-ui/tests/spec/pairing_copy.rs", change: .created(lines: 38), added: 38, removed: 0)], state: .succeeded)),
+            r("c09", 9, .command(command: "rm -rf target", state: .denied, outputHead: [], moreLines: 0, durationMs: nil, exitCode: nil),
+              decision: Decision(outcome: .denied, elsewhere: false, note: "Use cargo clean instead", scope: nil)),
+            r("c10", 10, .prose(text: [.text("Done. The three arms are one now, and the new test asserts on the single string.")], streaming: false, workingNote: false)),
+            r("c11", 11, .turnEnd(failed: false, costUsd: nil, durationMs: 102_000)),
         ]
     }()
 

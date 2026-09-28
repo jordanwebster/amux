@@ -229,6 +229,18 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(plain.paged, [ChatModel.pageRows])
     }
 
+    func testTheRowDrawnBelowPassesOverCollapsedAndEmptyRows() {
+        var folded = row("b", 2)
+        folded.collapsed = true
+        var empty = row("c", 3)
+        empty.kind = .hidden
+        let source = FakeChat(
+            rows: [row("a", 1), folded, empty, row("d", 4)], frame: frame())
+        let model = ChatModel(source: source)
+        XCTAssertEqual(model.drawnRow(after: 0)?.id, "d")
+        XCTAssertNil(model.drawnRow(after: 3))
+    }
+
     func testNothingIsAskedForWhenNoOlderHistoryExists() async {
         let source = FakeChat(rows: [row("a", 1)], frame: frame(hasOlder: false))
         let model = ChatModel(source: source)

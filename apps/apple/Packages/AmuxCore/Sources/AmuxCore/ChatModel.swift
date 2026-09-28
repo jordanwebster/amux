@@ -172,6 +172,19 @@ public final class ChatModel {
         !row.collapsed || row.parent.map(expanded.contains) == true
     }
 
+    /// The nearest row drawn below the one at `index`: what decides whether
+    /// that row's rail runs on. Collapsed rows and rows with nothing to draw
+    /// are passed over.
+    public func drawnRow(after index: Int) -> Row? {
+        guard index + 1 < ids.count else { return nil }
+        for id in ids[(index + 1)...] {
+            guard let row = cell(for: id).row else { continue }
+            if case .hidden = row.kind { continue }
+            if shows(row) { return row }
+        }
+        return nil
+    }
+
     public var options: RowOptions {
         RowOptions(tools: .collapseRuns(expanded: expanded.sorted()))
     }

@@ -43,6 +43,32 @@ final class ChatWordsTests: XCTestCase {
         XCTAssertEqual(words(.succeeded, row(.stopped)), "Ran")
         let denied = Decision(outcome: .denied, elsewhere: false, note: "Use cargo clean", scope: nil)
         XCTAssertEqual(words(.succeeded, row(.stopped, decision: denied)), "Denied")
+        let allowed = Decision(outcome: .allowed, elsewhere: false, note: nil, scope: "this session")
+        XCTAssertEqual(words(.succeeded, row(.stopped, decision: allowed)), "Allowed")
+        XCTAssertEqual(words(.running, row(.stopped, decision: allowed)), "Running")
+        XCTAssertEqual(words(.failed, row(.stopped, decision: allowed)), "Ran")
+    }
+
+    func testAVerbThatNamesTheOutcomeLeavesItOutOfTheMeta() {
+        let allowed = Decision(outcome: .allowed, elsewhere: false, note: nil, scope: "this session")
+        XCTAssertEqual(
+            ChatWords.meta(["12s"], row(.stopped, decision: allowed), verb: "Allowed"),
+            "12s · this session")
+        let denied = Decision(outcome: .denied, elsewhere: false, note: "Use cargo clean", scope: nil)
+        XCTAssertEqual(
+            ChatWords.meta([], row(.stopped, decision: denied), verb: "Denied", note: false), "")
+    }
+
+    func testTheRailRunsBetweenGridRowsAndBreaksAtProse() {
+        let tool = row(.background(command: "npm run dev", running: true))
+        let prose = row(.prose(text: [.text("Done.")], streaming: false, workingNote: false))
+        XCTAssertEqual(RailJoin.of(tool, next: tool), RailJoin(continues: true))
+        XCTAssertEqual(RailJoin.of(tool, next: prose), RailJoin(continues: false))
+        XCTAssertEqual(RailJoin.of(tool, next: nil), RailJoin(continues: false))
+        XCTAssertEqual(RailJoin.of(prose, next: tool), .none)
+        var step = tool
+        step.parent = "agent"
+        XCTAssertEqual(RailJoin.of(step, next: tool), RailJoin(continues: true, nested: true))
     }
 
     func testADecisionIsMetaWithScopeNoteAndWhereItWasAnswered() {

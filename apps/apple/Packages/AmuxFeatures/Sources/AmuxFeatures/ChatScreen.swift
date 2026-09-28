@@ -294,7 +294,7 @@ public struct ChatScreen: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 top
                 ForEach(Array(model.ids.enumerated()), id: \.element) { index, id in
-                    ChatCell(model: model, id: id)
+                    ChatCell(model: model, id: id, index: index)
                         .onAppear { if index < 8 { model.reachedTop() } }
                 }
             }
@@ -543,25 +543,29 @@ public struct ChatStanding: View {
     }
 }
 
-/// One row cell: it observes its own row only.
+/// One row cell: it observes its own row, and the row drawn below it for
+/// whether its rail runs on.
 private struct ChatCell: View {
     let model: ChatModel
     let id: String
+    let index: Int
 
     var body: some View {
-        RowCellView(cell: model.cell(for: id), model: model)
+        RowCellView(cell: model.cell(for: id), model: model, index: index)
     }
 }
 
 private struct RowCellView: View {
     let cell: RowCell
     let model: ChatModel
+    let index: Int
 
     var body: some View {
         if let row = cell.row, model.shows(row) {
             ChatRowView(
-                row: row, expanded: model.isExpanded(row.id), bytes: model.bytes(of:),
-                toggle: { model.toggle(row.id) })
+                row: row, expanded: model.isExpanded(row.id),
+                rail: RailJoin.of(row, next: model.drawnRow(after: index)),
+                bytes: model.bytes(of:), toggle: { model.toggle(row.id) })
         } else {
             Color.clear.frame(height: 0)
         }

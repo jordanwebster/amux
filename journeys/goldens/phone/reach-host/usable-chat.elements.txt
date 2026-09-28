@@ -7,10 +7,10 @@ home.row.<desk-work> | desk-work, Idle, desk, /tmp/amux-phone-journey/net/desk/w
 home.row.<desk-work>.age.volatile | <volatile>
 home.row.<desk-work>.detail.volatile | <volatile>
 chat |  | desk-work | 0,62,402,778
-chat.row.boundary | Started |  | 18,132,366,16
-chat.row.prompt | Hello from the phone. |  | 18,160,366,40
-chat.row.prose | The desk is reachable. | final | 18,211,366,20
-chat.prose.render |  | rendered | 18,211,366,20
+chat.row.boundary | Started |  | 18,132,366,34
+chat.row.prompt | Hello from the phone. |  | 18,166,366,40
+chat.row.prose | The desk is reachable. | final | 18,217,366,20
+chat.prose.render |  | rendered | 18,217,366,20
 chat.row.turn-end | <volatile>
 chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
@@ -45,10 +45,10 @@ you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
  | desk-work, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | Started |  | 18,132,366,16
- | Hello from the phone. |  | 197,160,187,40
- | The desk is reachable. |  | 18,211,366,20
- | Worked <t> · $0.00 |  | 45,243,130,16
+ | Started |  | 18,136,366,16
+ | Hello from the phone. |  | 197,166,187,40
+ | The desk is reachable. |  | 18,217,366,20
+ | Worked <t> · $0.00 |  | 48,245,130,16
  | Attach |  | 13,780,44,44
  | Dictate |  | 57,780,44,44
  | claude-fake-1, Default |  | 101,780,114,44

@@ -6,9 +6,9 @@ home.newAgent | New Agent |  | 345,118,44,44
 home.row.<decision-sdk> | decision-sdk, Needs you, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,271,366,114
 home.row.<decision-sdk>.age.volatile | <volatile>
 chat |  | decision-sdk | 0,62,402,778
-chat.row.boundary | Started |  | 18,139,366,40
-chat.row.prompt | Check the deployment once. |  | 18,191,366,106
-chat.row.command | Wants to run, deploy --check |  | 18,309,366,43
+chat.row.boundary | Started |  | 18,134,366,58
+chat.row.prompt | Check the deployment once. |  | 18,192,366,106
+chat.row.command | Wants to run, deploy --check |  | 18,310,366,40
 chat.header | /t/a/n/d/work · desk | live | 18,64,298,98
 chat.back | Back |  | 16,90,42,46
 chat.title | decision-sdk | decision-sdk | 51,72,252,82
@@ -44,9 +44,9 @@ you.help.caption |  |  | 18,1124,366,161
  | Back |  | 16,90,42,46
  | decision-sdk, /t/a/n/d/work · desk |  | 51,72,252,82
  | More |  | 344,91,44,44
- | Started |  | 18,139,366,40
- | Check the deployment once. |  | 67,191,317,106
- | Wants to run, deploy --check |  | 18,309,366,43
+ | Started |  | 18,138,366,40
+ | Check the deployment once. |  | 67,192,317,106
+ | Wants to run, deploy --check |  | 18,310,366,40
  | Wants to run a command |  | 46,380,218,86
  | More |  | 343,400,45,46
  | deploy --check |  | 28,478,261,40

@@ -5,42 +5,43 @@ import SwiftUI
 
 /// One chat row, drawn from its value.
 ///
-/// Work rows hang off a rail with a glyph, a verb, a subject in mono and
-/// meta on the trailing edge; the person's prompts sit in a bubble; the
-/// agent's prose takes the full width; session events are rules and quiet
-/// footers. The accent is kept for rows an open ask points at and for
-/// failures. A row that opens says so with a chevron and opens in place.
+/// Work and decisions sit on one grid: a glyph cell, then a line of verb,
+/// subject in mono and meta on the trailing edge, then what the row says
+/// underneath. Consecutive grid rows hang off one rail drawn in the glyph
+/// column, so a turn's work reads as one run. The person's prompts sit in a
+/// bubble, the agent's prose takes the full width, and session events are
+/// rules and quiet footers. The accent is kept for the glyph of a row an open
+/// ask points at, a failure and a refusal. A row that opens says so with a
+/// chevron and opens in place.
 public struct ChatRowView: View {
     @Environment(\.design) private var design
     let row: Row
     let expanded: Bool
+    let rail: RailJoin
     let bytes: (BlobRef) -> Data?
     let toggle: () -> Void
 
     public init(
-        row: Row, expanded: Bool, bytes: @escaping (BlobRef) -> Data? = { _ in nil },
-        toggle: @escaping () -> Void = {}
+        row: Row, expanded: Bool, rail: RailJoin = .none,
+        bytes: @escaping (BlobRef) -> Data? = { _ in nil }, toggle: @escaping () -> Void = {}
     ) {
         self.row = row
         self.expanded = expanded
+        self.rail = rail
         self.bytes = bytes
         self.toggle = toggle
     }
 
     public var body: some View {
-        content
-            .padding(.leading, row.parent == nil ? 0 : 20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 12)
+        content.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
     private var content: some View {
         if let run = row.run, run.isSummary, !expanded {
-            RailRow(
-                kind: "run", glyph: "magnifyingglass", verb: String(localized: "Explored"),
-                subject: run.anchor, meta: ChatWords.run(run), truncation: .head,
-                opens: true, open: false, toggle: toggle)
+            GridRow(
+                kind: "run", glyph: "magnifyingglass", rail: rail, verb: ChatWords.run(run),
+                subject: run.anchor, truncation: .head, opens: true, open: false, toggle: toggle)
         } else {
             kindView
         }
@@ -50,132 +51,208 @@ public struct ChatRowView: View {
     private var kindView: some View {
         switch row.kind {
         case .prompt(let text, let steered):
-            PromptBubble(text: text, steered: steered, bytes: bytes)
+            PromptBubble(text: text, steered: steered, bytes: bytes).padding(.bottom, RowGrid.prose)
         case .prose(let text, let streaming, let workingNote):
             ProseRow(text: text, streaming: streaming, workingNote: workingNote)
+                .padding(.bottom, RowGrid.prose)
         case .thinking(let text, let open, let durationMs):
-            RailRow(
-                kind: "thinking", glyph: "ellipsis", verb: ChatWords.thinking(
-                    open: open, durationMs: durationMs),
-                quiet: true, detail: expanded && !text.isEmpty ? text : nil,
+            GridRow(
+                kind: "thinking", glyph: "ellipsis", rail: rail,
+                verb: ChatWords.thinking(open: open, durationMs: durationMs), quiet: true,
+                detail: expanded && !text.isEmpty ? text : nil, detailFace: .text,
                 opens: !text.isEmpty, open: expanded, toggle: toggle)
         case .toolCall(let server, let tool, let fact, let state, let result):
             let verb = ChatWords.verb(
                 state, row, wants: String(localized: "Wants to use"),
                 doing: String(localized: "Using"), done: String(localized: "Used"))
-            RailRow(
-                kind: "tool", glyph: glyph(state, done: "wrench.adjustable"), verb: verb,
-                subject: server.isEmpty ? tool : "\(server) · \(tool)",
-                meta: ChatWords.meta(
-                    [fact, state == .failed ? String(localized: "failed") : ""], row, verb: verb),
-                accented: accented(state),
+            GridRow(
+                kind: "tool", glyph: glyph(state, "wrench.adjustable"), accented: accented(state),
+                rail: rail, verb: verb, subject: server.isEmpty ? tool : "\(server) · \(tool)",
+                meta: RowMeta(ChatWords.meta(
+                    [fact, state == .failed ? String(localized: "failed") : ""], row, verb: verb,
+                    note: false)),
+                quote: denialNote,
                 detail: expanded && !result.isEmpty ? result : nil,
                 opens: !result.isEmpty, open: expanded, toggle: toggle)
         case .fileChange(let files, let state):
-            FileChangeRow(row: row, files: files, state: state, accented: accented(state))
+            fileChange(files, state)
         case .command(let command, let state, let outputHead, let moreLines, let durationMs, let exitCode):
             let verb = ChatWords.verb(
                 state, row, wants: String(localized: "Wants to run"),
                 doing: String(localized: "Running"), done: String(localized: "Ran"))
-            let meta = commandMeta(state, exitCode: exitCode, durationMs: durationMs)
-            RailRow(
-                kind: "command", glyph: glyph(state, done: "chevron.left.forwardslash.chevron.right"),
-                verb: verb, subject: ChatWords.firstLine(command),
-                meta: ChatWords.meta(meta, row, verb: verb), accented: accented(state),
-                output: outputHead, more: moreLines, failed: state == .failed)
+            GridRow(
+                kind: "command", glyph: glyph(state, "chevron.left.forwardslash.chevron.right"),
+                accented: accented(state), rail: rail, verb: verb,
+                subject: ChatWords.firstLine(command),
+                meta: RowMeta(ChatWords.meta(
+                    commandMeta(state, exitCode: exitCode, durationMs: durationMs), row, verb: verb,
+                    note: false)),
+                quote: denialNote, output: outputHead, more: moreLines)
         case .explore(let verb, let subject, let state):
-            RailRow(
-                kind: "explore", glyph: glyph(state, done: "magnifyingglass"),
-                verb: ChatWords.explore(verb), subject: subject,
-                meta: [ChatWords.meta([ChatWords.state(state) ?? ""], row),
+            GridRow(
+                kind: "explore", glyph: glyph(state, "magnifyingglass"), accented: accented(state),
+                rail: rail, verb: ChatWords.explore(verb), subject: subject,
+                meta: RowMeta([ChatWords.meta([ChatWords.state(state) ?? ""], row, note: false),
                        row.run.map { expanded && $0.isSummary ? ChatWords.run($0) : "" } ?? ""]
-                    .filter { !$0.isEmpty }.joined(separator: " · "),
-                accented: accented(state), truncation: .head,
+                    .filter { !$0.isEmpty }.joined(separator: " · ")),
+                truncation: .head, quote: denialNote,
                 opens: row.run?.isSummary == true, open: expanded, toggle: toggle)
         case .subagent(let description, let running, let toolCount, let lastTool, let answer, let durationMs):
-            RailRow(
-                kind: "subagent", glyph: "arrow.triangle.branch", verb: String(localized: "Agent"),
-                subject: ChatWords.firstLine(description),
-                meta: ChatWords.subagent(toolCount: toolCount, durationMs: durationMs),
-                accented: false, live: running,
+            GridRow(
+                kind: "subagent", glyph: "arrow.triangle.branch", rail: rail,
+                verb: String(localized: "Agent"), subject: ChatWords.firstLine(description),
+                meta: RowMeta(ChatWords.subagent(toolCount: toolCount, durationMs: durationMs)),
+                truncation: .tail,
                 note: running && !lastTool.isEmpty ? "└ \(lastTool)" : nil,
-                detail: !running && !answer.isEmpty ? answer : nil,
-                detailLines: expanded ? nil : 2,
-                opens: true, open: expanded, toggle: toggle)
+                detail: !running && !answer.isEmpty ? answer : nil, detailFace: .text,
+                detailLines: expanded ? nil : 2, opens: true, open: expanded, toggle: toggle)
         case .background(let command, let running):
-            RailRow(
-                kind: "background", glyph: "clock", verb: String(localized: "In background"),
-                subject: ChatWords.firstLine(command),
-                meta: running ? String(localized: "running") : String(localized: "finished"))
+            GridRow(
+                kind: "background", glyph: "play", rail: rail,
+                verb: String(localized: "In background"), subject: ChatWords.firstLine(command),
+                meta: RowMeta(running ? String(localized: "running") : String(localized: "finished")))
         case .image(let path, let generated, let image):
-            ImageRow(path: path, generated: generated, image: image, bytes: bytes)
+            GridRow(
+                kind: "image", glyph: "photo", rail: rail,
+                verb: generated ? String(localized: "Generated image") : String(localized: "Image"),
+                subject: path.isEmpty ? image?.name ?? "" : path,
+                meta: RowMeta(image.map { ChatWords.bytes($0.size) } ?? ""),
+                below: image.flatMap { Thumbnail.image(bytes($0)) }.map { picture in
+                    AnyView(picture.resizable().scaledToFit()
+                        .frame(maxWidth: 240, maxHeight: 240, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: design.metrics.controlRadius))
+                        .padding(.top, 4))
+                })
         case .slashOutput(let command, let args, let output):
-            RailRow(
-                kind: "slash", glyph: "slash.circle", verb: "",
-                subject: args.isEmpty ? command : "\(command) \(args)",
+            GridRow(
+                kind: "slash", glyph: "slash.circle", rail: rail, verb: command, subject: args,
                 detail: output.isEmpty ? nil : output, detailLines: expanded ? nil : 6,
-                opens: true, open: expanded, toggle: toggle)
+                opens: !output.isEmpty, open: expanded, toggle: toggle)
         case .ask(let ask):
-            AskRowView(ask: ask, expanded: expanded, toggle: toggle)
+            AskRowView(ask: ask, rail: rail, expanded: expanded, toggle: toggle)
         case .turnEnd(let failed, let costUsd, let durationMs):
             Footer(
                 kind: "turn-end",
                 text: ChatWords.turnEnd(durationMs: durationMs, costUsd: costUsd, failed: failed),
                 accented: failed)
         case .stopped:
-            Footer(kind: "stopped", text: String(localized: "You stopped it"))
+            GridRow(
+                kind: "stopped", glyph: "stop", rail: rail,
+                verb: String(localized: "You stopped it"), quiet: true)
         case .compaction(let automatic, let after, let before):
             FeedRule(
                 kind: "compaction",
                 label: ChatWords.compaction(before: before, after: after, automatic: automatic))
         case .error(let errorKind, let message, let attempts, let gaveUp):
-            RailRow(
-                kind: "error", glyph: "exclamationmark.triangle", verb: "",
-                subject: errorKind.isEmpty ? ChatWords.firstLine(message) : errorKind,
-                meta: gaveUp && attempts > 1 ? String(localized: "gave up after \(attempts) tries") : "",
-                accented: true, mono: false,
-                detail: !errorKind.isEmpty && !message.isEmpty ? message : nil,
-                detailLines: expanded ? nil : 3, opens: !errorKind.isEmpty && !message.isEmpty,
-                open: expanded, toggle: toggle)
+            let detailed = !errorKind.isEmpty && !message.isEmpty
+            GridRow(
+                kind: "error", glyph: "exclamationmark.triangle", accented: true, rail: rail,
+                verb: errorKind.isEmpty ? ChatWords.firstLine(message) : errorKind,
+                meta: RowMeta(gaveUp && attempts > 1
+                    ? String(localized: "gave up after \(attempts) tries") : ""),
+                detail: detailed ? message : nil, detailLines: expanded ? nil : 3,
+                opens: detailed, open: expanded, toggle: toggle)
         case .modelSwitch(_, let to, let reason):
-            RailRow(
-                kind: "model-switch", glyph: "arrow.left.arrow.right",
-                verb: String(localized: "Switched to"), subject: to, meta: reason)
+            GridRow(
+                kind: "model-switch", glyph: "arrow.left.arrow.right", rail: rail,
+                verb: String(localized: "Switched to"), subject: to,
+                note: reason.isEmpty ? nil : reason)
         case .boundary(let kind, let cause):
             FeedRule(kind: "boundary", label: ChatWords.boundary(kind, cause: cause))
         case .agentMessage(let from, let kind, let text, let to, let sent, let rejection):
-            RailRow(
-                kind: "agent-message", glyph: to.isEmpty ? "arrow.turn.down.left" : "arrow.turn.up.right",
+            GridRow(
+                kind: "agent-message",
+                glyph: to.isEmpty ? "arrow.turn.down.left" : "arrow.turn.up.right",
+                accented: sent == .rejected, rail: rail,
                 verb: to.isEmpty ? String(localized: "From") : String(localized: "To"),
-                subject: to.isEmpty ? from : to,
-                meta: messageMeta(kind, sent, rejection), accented: sent == .rejected,
-                detail: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                detailLines: expanded ? nil : 1, detailInk: true,
-                opens: true, open: expanded, toggle: toggle)
+                subject: to.isEmpty ? from : to, meta: RowMeta(messageMeta(kind, sent, rejection)),
+                detail: text.trimmingCharacters(in: .whitespacesAndNewlines), detailFace: .text,
+                detailLines: expanded ? nil : 1, opens: true, open: expanded, toggle: toggle)
         case .autoReview(let decision, let risk, let rationale, _):
-            RailRow(
-                kind: "auto-review", glyph: "checkmark.shield",
-                verb: String(localized: "Auto-reviewed"), subject: decision,
-                meta: risk.isEmpty ? "" : String(localized: "\(risk) risk"),
-                detail: expanded && !rationale.isEmpty ? rationale : nil,
+            GridRow(
+                kind: "auto-review", glyph: "checkmark.shield", rail: rail, verb: decision,
+                meta: RowMeta(risk.isEmpty ? "" : String(localized: "\(risk) risk")),
+                detail: expanded && !rationale.isEmpty ? rationale : nil, detailFace: .text,
                 opens: !rationale.isEmpty, open: expanded, toggle: toggle)
         case .unrecognized(let what, let summary):
-            RailRow(
-                kind: "unrecognized", glyph: "questionmark.square.dashed",
+            GridRow(
+                kind: "unrecognized", glyph: "questionmark.square.dashed", rail: rail,
                 verb: String(localized: "Unreadable"), subject: what,
-                meta: ChatWords.firstLine(summary))
+                note: summary.isEmpty ? nil : ChatWords.firstLine(summary))
         case .hidden:
             EmptyView()
         }
     }
 
-    private func glyph(_ state: ToolStateView, done: String) -> String {
-        switch state {
-        case .pending, .running: row.attention ? "hand.raised" : done
-        case .succeeded: done
-        case .failed: "xmark"
-        case .denied, .cancelled: "nosign"
+    /// Edited, created, deleted and moved files: one grid row each, joined to
+    /// one another on the rail.
+    @ViewBuilder
+    private func fileChange(_ files: [FileRow], _ state: ToolStateView) -> some View {
+        let tail = [ChatWords.state(state) ?? ""]
+        if files.isEmpty {
+            GridRow(
+                kind: "file-change", glyph: glyph(state, "plusminus"), accented: accented(state),
+                rail: rail, verb: String(localized: "Editing"),
+                meta: RowMeta(ChatWords.meta(tail, row, note: false)), quote: denialNote)
         }
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(files.enumerated()), id: \.offset) { index, file in
+                let last = index == files.count - 1
+                let extra = index == 0 ? ChatWords.meta(tail, row, note: false) : ""
+                let words = Self.words(file)
+                GridRow(
+                    kind: "file-change", glyph: glyph(state, words.glyph),
+                    accented: accented(state),
+                    rail: last ? rail : RailJoin(continues: true, nested: rail.nested),
+                    verb: words.verb, subject: words.subject,
+                    subjectFace: words.verb.isEmpty ? .path : .mono,
+                    meta: words.meta.then(extra), truncation: .head,
+                    quote: index == 0 ? denialNote : nil)
+            }
+        }
+    }
+
+    /// An edit is its path and its counts, as the diff names it; the other
+    /// changes say what happened first.
+    private static func words(_ file: FileRow) -> (glyph: String, verb: String, subject: String, meta: RowMeta) {
+        switch file.change {
+        case .edited:
+            ("plusminus", "", file.path, .change(added: file.added, removed: file.removed))
+        case .created(let lines):
+            ("square.and.pencil", String(localized: "Created"), file.path,
+             RowMeta(String(localized: "\(lines) lines")))
+        case .deleted:
+            ("trash", String(localized: "Deleted"), file.path, RowMeta())
+        case .moved(let to):
+            ("arrow.right", String(localized: "Moved"), "\(file.path) → \(to)", RowMeta())
+        }
+    }
+
+    /// A refused call's mark is the hand; one an open ask points at waits on
+    /// the same hand. Otherwise the kind's own glyph, in the accent when it failed.
+    private func glyph(_ state: ToolStateView, _ done: String) -> String {
+        if denied(state) { return "hand.raised" }
+        switch state {
+        case .pending, .running: return row.attention ? "hand.raised" : done
+        case .cancelled: return "nosign"
+        case .succeeded, .failed, .denied: return done
+        }
+    }
+
+    private func denied(_ state: ToolStateView) -> Bool {
+        state == .denied || row.decision?.outcome == .denied
+    }
+
+    private func accented(_ state: ToolStateView) -> Bool {
+        row.attention || state == .failed || denied(state)
+    }
+
+    /// What the person said when they refused, under the row in their words.
+    private var denialNote: String? {
+        guard let decision = row.decision, decision.outcome == .denied,
+              let note = decision.note, !note.isEmpty
+        else { return nil }
+        return ChatWords.firstLine(note)
     }
 
     /// "exit 101 · 4.2s": a failure names its code where the agent gives one.
@@ -190,10 +267,6 @@ public struct ChatRowView: View {
         return meta
     }
 
-    private func accented(_ state: ToolStateView) -> Bool {
-        row.attention || state == .failed
-    }
-
     private func messageMeta(_ kind: EnvelopeKind, _ sent: SendState, _ rejection: String) -> String {
         switch (kind, sent) {
         case (.finished, _): String(localized: "finished")
@@ -205,31 +278,133 @@ public struct ChatRowView: View {
     }
 }
 
-/// The rail: a glyph column, then a verb, a subject in mono, meta on the
-/// trailing edge, and what the row opens to beneath.
-struct RailRow: View {
+/// How a grid row joins the rail: whether the next row drawn below it is on
+/// the rail too, and whether it is a subagent's step, set in under its
+/// parent's text.
+public struct RailJoin: Equatable, Sendable {
+    public var continues = false
+    public var nested = false
+
+    public init(continues: Bool = false, nested: Bool = false) {
+        self.continues = continues
+        self.nested = nested
+    }
+
+    public static let none = RailJoin()
+
+    /// The join for `row` with `next` drawn below it.
+    public static func of(_ row: Row, next: Row?) -> RailJoin {
+        guard onRail(row) else { return .none }
+        return RailJoin(continues: next.map(onRail) ?? false, nested: row.parent != nil)
+    }
+
+    /// Everything drawn on the grid hangs off the rail; what is read rather
+    /// than scanned — the prompt, the prose — and the rules and footers that
+    /// close a turn break it.
+    public static func onRail(_ row: Row) -> Bool {
+        switch row.kind {
+        case .prompt, .prose, .turnEnd, .compaction, .boundary, .hidden: false
+        default: true
+        }
+    }
+}
+
+/// The grid's measures, shared by every row on it.
+enum RowGrid {
+    /// The glyph cell: wide enough for the widest glyph, and no wider.
+    static let cell: CGFloat = 20
+    /// Between the glyph cell and the line.
+    static let spacing: CGFloat = 10
+    /// Where the line begins: every row's text starts here.
+    static var text: CGFloat { cell + spacing }
+    /// Under a row whose rail runs on to the next.
+    static let inRun: CGFloat = 10
+    /// Under the last row of a run.
+    static let afterRun: CGFloat = 14
+    /// Under a prompt or the agent's prose.
+    static let prose: CGFloat = 12
+}
+
+/// A row's meta: plain words, or a change's counts in the added and removed
+/// colours.
+struct RowMeta: Equatable {
+    enum Ink: Equatable { case faint, added, removed }
+    struct Run: Equatable {
+        let text: String
+        let ink: Ink
+    }
+
+    var runs: [Run] = []
+
+    init(_ text: String = "") {
+        runs = text.isEmpty ? [] : [Run(text: text, ink: .faint)]
+    }
+
+    /// "+9 −14".
+    static func change(added: UInt32, removed: UInt32) -> RowMeta {
+        var meta = RowMeta()
+        meta.runs = [
+            Run(text: "+\(added)", ink: .added), Run(text: " ", ink: .faint),
+            Run(text: "−\(removed)", ink: .removed),
+        ]
+        return meta
+    }
+
+    /// This meta with more words after it.
+    func then(_ text: String) -> RowMeta {
+        guard !text.isEmpty else { return self }
+        guard !runs.isEmpty else { return RowMeta(text) }
+        var meta = self
+        meta.runs.append(Run(text: " · \(text)", ink: .faint))
+        return meta
+    }
+
+    var isEmpty: Bool { runs.isEmpty }
+    var string: String { runs.map(\.text).joined() }
+
+    func attributed(_ design: Design) -> AttributedString {
+        runs.reduce(into: AttributedString()) { text, run in
+            var piece = AttributedString(run.text)
+            piece.foregroundColor = switch run.ink {
+            case .faint: design.inkFaint.color
+            case .added: design.added.color
+            case .removed: design.removed.color
+            }
+            text += piece
+        }
+    }
+}
+
+/// The one row primitive: a glyph cell on the rail, then one line — the
+/// verb in the text face, the subject in mono, the meta on the trailing edge
+/// — then whatever the row says underneath: a one-line note, the person's
+/// words in quotes, a command's output head, or the detail it opens to.
+struct GridRow: View {
     @Environment(\.design) private var design
+    enum SubjectFace { case mono, path, text }
+    enum DetailFace { case mono, text }
+
     let kind: String
     let glyph: String
-    let verb: String
-    var subject: String = ""
-    var meta: String = ""
     var accented = false
-    var mono = true
+    var rail = RailJoin.none
+    var verb = ""
+    /// A verb that reports rather than acts, drawn a step quieter.
     var quiet = false
-    /// A subagent still under way.
-    var live = false
+    var subject = ""
+    var subjectFace = SubjectFace.mono
+    var meta = RowMeta()
+    /// Which end of a long subject is kept: a path keeps its file name.
+    var truncation: Text.TruncationMode = .middle
     var note: String?
+    var quote: String?
     var output: [String] = []
     var more: UInt = 0
-    var failed = false
     var detail: String?
+    var detailFace = DetailFace.mono
     /// How many lines of the detail show; all of it when nil.
     var detailLines: Int?
-    var detailInk = false
-    /// Which end of a long mono subject is kept: a path keeps its file name. A prose
-    /// subject always keeps its opening words, so it still reads as a sentence.
-    var truncation: Text.TruncationMode = .middle
+    var below: AnyView?
     var opens = false
     var open = false
     var toggle: () -> Void = {}
@@ -237,9 +412,9 @@ struct RailRow: View {
     var body: some View {
         Group {
             if opens {
-                // A one-line row is under 20 pt: its target reaches into the
+                // A one-line row is under 44 pt: its target reaches into the
                 // gaps around it, which leaves the chat drawn as it was.
-                Button(action: toggle) { layout.thumbTarget(y: RailRow.reach) }
+                Button(action: toggle) { layout.thumbTarget(y: GridRow.reach) }
                     .buttonStyle(.amuxRow)
             } else {
                 layout
@@ -248,112 +423,244 @@ struct RailRow: View {
         .accessibilityElement(children: .combine)
         .identified(
             "chat.row.\(kind)",
-            label: [verb, subject, meta].filter { !$0.isEmpty }.joined(separator: ", "),
+            label: [verb, subject, meta.string, quote ?? ""].filter { !$0.isEmpty }
+                .joined(separator: ", "),
             value: opens ? (open ? "open" : "folded") : nil)
-        .reclaimingThumbTarget(y: opens ? RailRow.reach : 0)
+        .reclaimingThumbTarget(y: opens ? GridRow.reach : 0)
+        .padding(.bottom, rail.continues ? RowGrid.inRun : RowGrid.afterRun)
+        .padding(.leading, rail.nested ? RowGrid.text : 0)
+        .background(alignment: .topLeading) { railLine }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
-    private static let reach: CGFloat = 14
+    private static let reach: CGFloat = 12
 
-    @ViewBuilder private var verbText: some View {
-        if !verb.isEmpty {
-            Text(verb)
-                .designFont(quiet ? .detail : .bodyEmphasis, design)
-                .italic(quiet)
-                .foregroundStyle(quiet ? design.inkFaint.color : design.ink.color)
-                .fixedSize()
-        }
-    }
-
-    @ViewBuilder private var subjectText: some View {
-        if !subject.isEmpty {
-            Text(subject)
-                .designFont(mono ? .monoSmall : .detail, design)
-                .foregroundStyle(design.inkMuted.color)
-                .truncationMode(mono ? truncation : .tail)
-        }
-    }
-
-    @ViewBuilder private var metaText: some View {
-        if !meta.isEmpty {
-            Text(meta)
-                .designFont(.caption, design)
-                .foregroundStyle(accented ? design.accent.color : design.inkFaint.color)
-                .lineLimit(1)
-                .fixedSize()
-                // Usually a measured duration: a compared screenshot masks it.
-                .reported("chat.row.meta.volatile")
-        }
-    }
-
-    @ViewBuilder private var chevron: some View {
-        if opens {
-            Image(systemName: open ? "chevron.up" : "chevron.down")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(design.inkFaint.color)
+    /// The hairline from under this row's glyph to the top of the next row's.
+    /// A step set in under its parent carries the parent's rail past its
+    /// own glyph instead.
+    @ViewBuilder private var railLine: some View {
+        if rail.continues {
+            GeometryReader { geometry in
+                Path { path in
+                    let x = RowGrid.cell / 2
+                    path.move(to: CGPoint(x: x, y: rail.nested ? 0 : RowGrid.cell - 2))
+                    path.addLine(to: CGPoint(x: x, y: geometry.size.height))
+                }
+                .stroke(design.hairline.color, lineWidth: design.metrics.hairline)
+            }
         }
     }
 
     private var layout: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
+        HStack(alignment: .top, spacing: RowGrid.spacing) {
             Image(systemName: glyph)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(accented ? design.accent.color : design.inkFaint.color)
-                .frame(width: 18)
-                .opacity(live ? 0.9 : 1)
+                .frame(width: RowGrid.cell, height: RowGrid.cell)
             VStack(alignment: .leading, spacing: 3) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        verbText
-                        subjectText.lineLimit(1)
-                        Spacer(minLength: 4)
-                        metaText
-                        chevron
-                    }
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        verbText
-                        VStack(alignment: .leading, spacing: 2) {
-                            subjectText.lineLimit(1)
-                            metaText
-                        }
-                        Spacer(minLength: 4)
-                        chevron
-                    }
-                }
-                if let note {
-                    Text(note)
-                        .designFont(.monoSmall, design)
-                        .foregroundStyle(design.inkFaint.color)
-                        .lineLimit(1)
-                }
-                if !output.isEmpty {
-                    VStack(alignment: .leading, spacing: 1) {
-                        ForEach(Array(output.enumerated()), id: \.offset) { _, line in
-                            Text(line)
-                                .designFont(.monoSmall, design)
-                                .foregroundStyle(failed ? design.accent.color : design.inkFaint.color)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    RowLine {
+                        if !verb.isEmpty {
+                            Text(verb)
+                                .designFont(.detail, design)
+                                .foregroundStyle(quiet ? design.inkMuted.color : design.ink.color)
                                 .lineLimit(1)
+                                .rowLine(.verb)
                         }
-                        if more > 0 {
-                            Text(String(localized: "··· \(more) more lines"))
+                        if !subject.isEmpty {
+                            Text(subject)
+                                .designFont(subjectFace == .text ? .detail : .monoSmall, design)
+                                .foregroundStyle(
+                                    subjectFace == .path ? design.ink.color : design.inkMuted.color)
+                                .lineLimit(1)
+                                .truncationMode(subjectFace == .text ? .tail : truncation)
+                                .rowLine(.subject)
+                        }
+                        if !meta.isEmpty {
+                            Text(meta.attributed(design))
                                 .designFont(.monoSmall, design)
-                                .foregroundStyle(design.inkFaint.color)
+                                .lineLimit(1)
+                                // Usually a measured duration: a compared screenshot masks it.
+                                .reported("chat.row.meta.volatile")
+                                .rowLine(.meta)
                         }
                     }
+                    if opens {
+                        Image(systemName: open ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(design.inkFaint.color)
+                    }
                 }
-                if let detail {
-                    Text(detail)
-                        .designFont(detailInk ? .detail : .monoSmall, design)
-                        .foregroundStyle(detailInk ? design.ink.color : design.inkMuted.color)
-                        .lineLimit(detailLines)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
+                .frame(minHeight: RowGrid.cell)
+                underneath
             }
         }
         .contentShape(Rectangle())
     }
+
+    @ViewBuilder private var underneath: some View {
+        if let note {
+            Text(note)
+                .designFont(.monoSmall, design)
+                .foregroundStyle(design.inkFaint.color)
+                .lineLimit(1)
+        }
+        if let quote {
+            Text("“\(quote)”")
+                .designFont(.monoSmall, design)
+                .foregroundStyle(design.inkMuted.color)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if !output.isEmpty {
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(Array(output.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkMuted.color)
+                        .lineLimit(1)
+                }
+                if more > 0 {
+                    Text(String(localized: "··· \(more) more lines"))
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkFaint.color)
+                }
+            }
+        }
+        if let detail {
+            Text(detail)
+                .designFont(detailFace == .text ? .detail : .monoSmall, design)
+                .foregroundStyle(detailFace == .text ? design.ink.color : design.inkMuted.color)
+                .lineLimit(detailLines)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        if let below { below }
+    }
 }
+
+/// One line of a grid row: a verb, the thing it acted on, and the meta on
+/// the trailing edge, all on one baseline.
+///
+/// A stack gives a line that does not fit to whichever text has the layout
+/// priority, and the other is squeezed to nothing. Neither can afford that
+/// here: a tool's meta can be a whole sentence, and a long command must not
+/// push off the "exit 1" that says how it went. So the subject is served
+/// first and the meta gives up width until it is down to under half of the
+/// contested line; below that the two truncate together.
+struct RowLine: Layout {
+    enum Role: Int { case verb, subject, meta }
+
+    struct RoleKey: LayoutValueKey {
+        static let defaultValue = Role.verb
+    }
+
+    /// The most of a contested line the trailing meta may hold: enough for
+    /// "exit 101 · 4.2s" beside a long command.
+    static let metaShare: CGFloat = 0.5
+    /// Between the verb and the subject.
+    private let spacing: CGFloat = 7
+    /// The clear space between the subject and the meta.
+    private let gap: CGFloat = 16
+    /// What a line with nothing on its trailing edge keeps there anyway.
+    private let trailing: CGFloat = 8
+
+    static func split(
+        content: CGFloat, subject: CGFloat, meta: CGFloat
+    ) -> (subject: CGFloat, meta: CGFloat) {
+        guard content > 0 else { return (0, 0) }
+        guard subject + meta > content else { return (subject, meta) }
+        let allowed = max(content - subject, content * metaShare)
+        let meta = min(meta, allowed)
+        return (min(subject, content - meta), meta)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let widths = widths(subviews, within: proposal.width)
+        let line = widths.values.reduce(0, +) + fixed(subviews)
+        let heights = heights(subviews, widths: widths)
+        return CGSize(
+            width: proposal.width.map { $0.isFinite ? $0 : line } ?? line,
+            height: heights.ascent + heights.descent)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
+    ) {
+        let widths = widths(subviews, within: bounds.width)
+        let heights = heights(subviews, widths: widths)
+        var leading = bounds.minX
+        for (index, subview) in subviews.enumerated() {
+            guard let width = widths[index] else { continue }
+            let role = subview[RoleKey.self]
+            let x = role == .meta ? bounds.maxX - width : leading
+            if role != .meta { leading = x + width + spacing }
+            let size = ProposedViewSize(width: width, height: nil)
+            let baseline = subview.dimensions(in: size)[.firstTextBaseline]
+            subview.place(
+                at: CGPoint(x: x, y: bounds.minY + heights.ascent - baseline),
+                anchor: .topLeading, proposal: size)
+        }
+    }
+
+    private func widths(_ subviews: Subviews, within available: CGFloat?) -> [Int: CGFloat] {
+        var ideal: [Role: (index: Int, width: CGFloat)] = [:]
+        for (index, subview) in subviews.enumerated() {
+            ideal[subview[RoleKey.self]] = (index, subview.sizeThatFits(.unspecified).width)
+        }
+        var widths = ideal.values.reduce(into: [Int: CGFloat]()) { $0[$1.index] = $1.width }
+        guard let available, available.isFinite else { return widths }
+        // Without a subject the verb is what the meta shares the line with.
+        let hasSubject = ideal[.subject] != nil
+        let lead = hasSubject ? (ideal[.verb].map { $0.width + spacing } ?? 0) : 0
+        switch (ideal[.subject] ?? ideal[.verb], ideal[.meta]) {
+        case let (.some(main), .some(meta)):
+            let content = max(0, available - lead - gap)
+            let share = Self.split(content: content, subject: main.width, meta: meta.width)
+            widths[main.index] = share.subject
+            widths[meta.index] = share.meta
+        case let (.some(main), .none):
+            widths[main.index] = min(main.width, max(0, available - lead - trailing))
+        case let (.none, .some(meta)):
+            widths[meta.index] = min(meta.width, max(0, available - gap))
+        case (.none, .none):
+            break
+        }
+        if hasSubject, let verb = ideal[.verb] {
+            // A verb longer than the whole line keeps what is left of it.
+            widths[verb.index] = min(verb.width, max(0, available - trailing))
+        }
+        return widths
+    }
+
+    private func fixed(_ subviews: Subviews) -> CGFloat {
+        let roles = Set(subviews.map { $0[RoleKey.self] })
+        return (roles.contains(.verb) && roles.contains(.subject) ? spacing : 0)
+            + (roles.contains(.meta) ? gap : trailing)
+    }
+
+    private func heights(
+        _ subviews: Subviews, widths: [Int: CGFloat]
+    ) -> (ascent: CGFloat, descent: CGFloat) {
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        for (index, subview) in subviews.enumerated() {
+            let dimensions = subview.dimensions(in: ProposedViewSize(width: widths[index], height: nil))
+            let baseline = dimensions[.firstTextBaseline]
+            ascent = max(ascent, baseline)
+            descent = max(descent, dimensions.height - baseline)
+        }
+        return (ascent, descent)
+    }
+}
+
+extension View {
+    /// Says which of a row line's three texts this one is.
+    func rowLine(_ role: RowLine.Role) -> some View {
+        layoutValue(key: RowLine.RoleKey.self, value: role)
+    }
+}
+
 
 /// What the person said, in a bubble set in from the leading edge.
 struct PromptBubble: View {
@@ -681,87 +988,18 @@ private struct MarkdownBlockView: View {
     }
 }
 
-/// Edited, created, deleted and moved files: one line each.
-private struct FileChangeRow: View {
-    let row: Row
-    let files: [FileRow]
-    let state: ToolStateView
-    let accented: Bool
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if files.isEmpty {
-                RailRow(
-                    kind: "file-change", glyph: "pencil", verb: String(localized: "Editing"),
-                    meta: ChatWords.meta([], row), accented: accented)
-            }
-            ForEach(Array(files.enumerated()), id: \.offset) { index, file in
-                let (verb, subject, meta) = words(file)
-                RailRow(
-                    kind: "file-change", glyph: glyph, verb: verb, subject: subject,
-                    meta: index == 0
-                        ? ChatWords.meta([meta, ChatWords.state(state) ?? ""], row)
-                        : meta,
-                    accented: accented, truncation: .head)
-            }
-        }
-    }
-
-    private var glyph: String {
-        switch state {
-        case .failed: "xmark"
-        case .denied, .cancelled: "nosign"
-        case .pending, .running: row.attention ? "hand.raised" : "pencil"
-        case .succeeded: "pencil"
-        }
-    }
-
-    private func words(_ file: FileRow) -> (String, String, String) {
-        switch file.change {
-        case .edited:
-            (String(localized: "Edited"), file.path, "+\(file.added) −\(file.removed)")
-        case .created(let lines):
-            (String(localized: "Created"), file.path, String(localized: "\(lines) lines"))
-        case .deleted: (String(localized: "Deleted"), file.path, "")
-        case .moved(let to): (String(localized: "Moved"), "\(file.path) → \(to)", "")
-        }
-    }
-}
-
-/// An image the agent read or made: its thumbnail once the bytes are here.
-private struct ImageRow: View {
-    @Environment(\.design) private var design
-    let path: String
-    let generated: Bool
-    let image: BlobRef?
-    let bytes: (BlobRef) -> Data?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            RailRow(
-                kind: "image", glyph: "photo",
-                verb: generated ? String(localized: "Generated image") : String(localized: "Image"),
-                subject: path.isEmpty ? image?.name ?? "" : path,
-                meta: image.map { ChatWords.bytes($0.size) } ?? "")
-            if let image, let picture = Thumbnail.image(bytes(image)) {
-                picture.resizable().scaledToFit()
-                    .frame(maxWidth: 240, maxHeight: 240, alignment: .leading)
-                    .clipShape(RoundedRectangle(cornerRadius: design.metrics.controlRadius))
-                    .padding(.leading, 27)
-            }
-        }
-    }
-}
-
-/// A rule across the chat with what it marks written into it.
+/// A rule across the chat with what it marks written into it, the words
+/// starting where every row's text starts.
 private struct FeedRule: View {
     @Environment(\.design) private var design
     let kind: String
     let label: String
 
     var body: some View {
-        HStack(spacing: 8) {
-            Rectangle().fill(design.hairline.color).frame(width: 14, height: design.metrics.hairline)
+        HStack(spacing: RowGrid.spacing) {
+            Rectangle().fill(design.hairline.color)
+                .frame(width: RowGrid.cell, height: design.metrics.hairline)
             // The label wins the width over the trailing rule, which only fills what is left.
             Text(label)
                 .designFont(.caption, design)
@@ -770,12 +1008,14 @@ private struct FeedRule: View {
                 .layoutPriority(1)
             Rectangle().fill(design.hairline.color).frame(height: design.metrics.hairline)
         }
+        .padding(.top, 4)
+        .padding(.bottom, RowGrid.afterRun)
         .accessibilityElement(children: .combine)
         .identified("chat.row.\(kind)", label: label)
     }
 }
 
-/// A quiet line under the last reply.
+/// A quiet line under the last reply, where the rows' text starts.
 private struct Footer: View {
     @Environment(\.design) private var design
     let kind: String
@@ -786,17 +1026,20 @@ private struct Footer: View {
         Text(text)
             .designFont(.caption, design)
             .foregroundStyle(accented ? design.accent.color : design.inkFaint.color)
-            .padding(.leading, 27)
+            .padding(.leading, RowGrid.text)
+            .padding(.top, -4)
+            .padding(.bottom, RowGrid.afterRun)
             .identified("chat.row.\(kind)", label: text)
     }
 }
 
-/// An ask that is the work, resolved in place: questions and their answers,
-/// a plan and its verdict, a form, a link, an access grant, or a dialog this
-/// build could not read.
+/// An ask that is the work, resolved in place on the grid: questions and
+/// their answers, a plan and its verdict, a form, a link, an access grant, or
+/// a dialog this build could not read.
 private struct AskRowView: View {
     @Environment(\.design) private var design
     let ask: AskRow
+    let rail: RailJoin
     let expanded: Bool
     let toggle: () -> Void
 
@@ -804,43 +1047,36 @@ private struct AskRowView: View {
         switch ask {
         case .question(let questions, let answers, let resolution, let note),
              .questions(let questions, let answers, let resolution, let note):
-            questionsView(questions, answers, resolution, note)
+            questionsRow(questions, answers, resolution, note)
         case .plan(let plan, let verdict, let note):
-            VStack(alignment: .leading, spacing: 8) {
-                RailRow(
-                    kind: "plan", glyph: planGlyph(verdict), verb: planVerb(verdict),
-                    subject: verdict == .sentBack && note != nil
-                        ? "“\(ChatWords.firstLine(note ?? ""))”"
-                        : planTitle(plan),
-                    accented: verdict == .open, mono: false, opens: true, open: expanded,
-                    toggle: toggle)
-                if expanded {
-                    Prose(markdown: plan).padding(.leading, 27)
-                }
-            }
+            let sentBack = verdict == .sentBack && !(note ?? "").isEmpty
+            GridRow(
+                kind: "plan", glyph: "list.bullet.rectangle", accented: verdict == .open,
+                rail: rail, verb: planVerb(verdict), subject: sentBack ? "" : planTitle(plan),
+                subjectFace: .text, quote: sentBack ? ChatWords.firstLine(note ?? "") : nil,
+                below: expanded ? AnyView(planBody(plan)) : nil,
+                opens: true, open: expanded, toggle: toggle)
         case .form(let server, let message, let fields, let resolution):
-            RailRow(
-                kind: "form", glyph: resolutionGlyph(resolution),
-                verb: formVerb(resolution, count: fields.count, server: server),
+            GridRow(
+                kind: "form", glyph: "list.bullet.clipboard", accented: resolution == .open,
+                rail: rail, verb: formVerb(resolution, count: fields.count, server: server),
                 subject: resolution == .answered ? server : "",
-                accented: resolution == .open,
-                detail: expanded && !message.isEmpty ? message : nil,
+                detail: expanded && !message.isEmpty ? message : nil, detailFace: .text,
                 opens: !message.isEmpty, open: expanded, toggle: toggle)
         case .link(let server, let message, let url, let resolution):
-            RailRow(
-                kind: "link", glyph: resolutionGlyph(resolution),
+            GridRow(
+                kind: "link", glyph: "link", accented: resolution == .open, rail: rail,
                 verb: resolution == .answered
                     ? String(localized: "Opened link from")
                     : resolution == .open
                         ? String(localized: "Link from")
                         : ChatWords.resolution(resolution, answered: ""),
-                subject: server, accented: resolution == .open,
-                detail: expanded ? "\(message)\n\(url)" : nil,
+                subject: server, detail: expanded ? "\(message)\n\(url)" : nil,
                 opens: true, open: expanded, toggle: toggle)
         case .grant(let reason, let read, let write, let network, let hosts, let resolution, let granted):
             let asked = access(read: read, write: write, network: network, hosts: hosts)
-            RailRow(
-                kind: "grant", glyph: resolutionGlyph(resolution),
+            GridRow(
+                kind: "grant", glyph: "lock", accented: resolution == .open, rail: rail,
                 verb: resolution == .answered && granted != nil
                     ? String(localized: "Granted")
                     : resolution == .open
@@ -849,68 +1085,112 @@ private struct AskRowView: View {
                 subject: granted.map {
                     access(read: $0.read, write: $0.write, network: $0.network, hosts: hosts)
                 } ?? asked,
-                meta: granted.map {
+                meta: RowMeta(granted.map {
                     $0.forSession ? String(localized: "this session") : String(localized: "this turn")
-                } ?? "",
-                accented: resolution == .open,
-                detail: expanded && !reason.isEmpty ? reason : nil,
+                } ?? ""),
+                detail: expanded && !reason.isEmpty ? reason : nil, detailFace: .text,
                 opens: !reason.isEmpty, open: expanded, toggle: toggle)
         case .unanswerable(let reason, let resolution):
-            RailRow(
-                kind: "unanswerable", glyph: resolutionGlyph(resolution),
+            GridRow(
+                kind: "unanswerable", glyph: "exclamationmark.bubble",
+                accented: resolution == .open, rail: rail,
                 verb: resolution == .open
                     ? String(localized: "Can’t answer this here")
                     : String(localized: "\(ChatWords.resolution(resolution, answered: String(localized: "Answered"))) a dialog this build can’t read"),
-                accented: resolution == .open,
-                detail: expanded && !reason.isEmpty ? reason : nil,
+                detail: expanded && !reason.isEmpty ? reason : nil, detailFace: .text,
                 opens: !reason.isEmpty, open: expanded, toggle: toggle)
         }
     }
 
-    @ViewBuilder
-    private func questionsView(
+    /// One question names itself on the line; several say how many. The
+    /// answers sit in a card under the line: each question's header, then
+    /// the picks as pills and a typed answer in quotes, then the note.
+    private func questionsRow(
         _ questions: [QuestionView], _ answers: [AnswerView], _ resolution: Resolution,
         _ note: String?
     ) -> some View {
-        let verb = ChatWords.resolution(resolution, answered: String(localized: "Answered"))
-        VStack(alignment: .leading, spacing: 6) {
-            if questions.count == 1, let question = questions.first {
-                let answer = answers.first.map(ChatWords.answer) ?? ""
-                RailRow(
-                    kind: "question", glyph: resolutionGlyph(resolution), verb: verb,
-                    subject: question.question, accented: resolution == .open, mono: false)
-                if !answer.isEmpty { pill(answer).padding(.leading, 27) }
-            } else {
-                RailRow(
-                    kind: "question", glyph: resolutionGlyph(resolution), verb: verb,
-                    subject: String(localized: "\(questions.count) questions"),
-                    accented: resolution == .open, mono: false)
-                ForEach(Array(zip(questions, answers).enumerated()), id: \.offset) { _, pair in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(pair.0.header.isEmpty ? pair.0.question : pair.0.header)
-                            .designFont(.caption, design)
-                            .foregroundStyle(design.inkFaint.color)
-                        pill(ChatWords.answer(pair.1))
-                    }
-                    .padding(.leading, 27)
+        let single = questions.count == 1
+        let pairs = Array(zip(questions, answers))
+        return GridRow(
+            kind: "question", glyph: "questionmark.circle", accented: resolution == .open,
+            rail: rail, verb: ChatWords.resolution(resolution, answered: String(localized: "Answered")),
+            subject: single ? "" : String(localized: "\(questions.count) questions"),
+            subjectFace: .text,
+            below: pairs.isEmpty && note == nil ? nil : AnyView(answerCard(pairs, note: note)))
+    }
+
+    private func answerCard(_ pairs: [(QuestionView, AnswerView)], note: String?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(pairs.enumerated()), id: \.offset) { index, pair in
+                if index > 0 {
+                    Rectangle().fill(design.hairline.color).frame(height: design.metrics.hairline)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pairs.count == 1 || pair.0.header.isEmpty ? pair.0.question : pair.0.header)
+                        .designFont(.detail, design)
+                        .foregroundStyle(design.inkMuted.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                    answer(pair.1)
                 }
             }
             if let note {
                 Text(String(localized: "Note: \(ChatWords.firstLine(note))"))
-                    .designFont(.caption, design)
+                    .designFont(.detail, design)
                     .foregroundStyle(design.inkMuted.color)
-                    .padding(.leading, 27)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            let shape = RoundedRectangle(cornerRadius: design.metrics.controlRadius + 2, style: .continuous)
+            shape.fill(design.raised.color)
+                .overlay(shape.strokeBorder(design.hairline.color, lineWidth: 1))
+        }
+        .padding(.top, 4)
+    }
+
+    /// Several picks are pills; one pick is the answer itself, and words the
+    /// person typed read in quotes.
+    @ViewBuilder
+    private func answer(_ answer: AnswerView) -> some View {
+        if answer.hidden || answer.picked.count + (answer.other == nil ? 0 : 1) < 2 {
+            Text(answer.picked.isEmpty ? ChatWords.answer(answer) : answer.picked[0])
+                .designFont(.bodyEmphasis, design)
+                .italic(answer.picked.isEmpty && !answer.hidden)
+                .foregroundStyle(design.ink.color)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            HStack(spacing: 6) {
+                ForEach(answer.picked, id: \.self) { pick in
+                    Text(pick)
+                        .designFont(.detail, design)
+                        .foregroundStyle(design.ink.color)
+                        .lineLimit(1)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 2)
+                        .overlay(Capsule().strokeBorder(design.hairline.color, lineWidth: 1))
+                }
+                if let other = answer.other {
+                    Text("“\(other)”")
+                        .designFont(.detail, design)
+                        .italic()
+                        .foregroundStyle(design.ink.color)
+                        .lineLimit(1)
+                }
             }
         }
     }
 
-    private func pill(_ text: String) -> some View {
-        Text(text)
-            .designFont(.detail, design)
-            .foregroundStyle(design.ink.color)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(design.sunken.color))
+    private func planBody(_ plan: String) -> some View {
+        Prose(markdown: plan)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                    .fill(design.sunken.color)
+            }
+            .padding(.top, 4)
     }
 
     private func access(read: [String], write: [String], network: Bool, hosts: [String]) -> String {
@@ -923,14 +1203,6 @@ private struct AskRowView: View {
                 : String(localized: "network \(hosts.joined(separator: ", "))"))
         }
         return parts.joined(separator: " · ")
-    }
-
-    private func resolutionGlyph(_ resolution: Resolution) -> String {
-        switch resolution {
-        case .open: "hand.raised"
-        case .answered: "checkmark"
-        case .declined, .cancelled, .dismissed: "nosign"
-        }
     }
 
     private func formVerb(_ resolution: Resolution, count: Int, server: String) -> String {
@@ -951,15 +1223,6 @@ private struct AskRowView: View {
         case .approved: String(localized: "Plan approved")
         case .sentBack: String(localized: "Plan sent back")
         case .dismissed: String(localized: "Plan dismissed")
-        }
-    }
-
-    private func planGlyph(_ verdict: PlanVerdict) -> String {
-        switch verdict {
-        case .open: "hand.raised"
-        case .approved: "checkmark"
-        case .sentBack: "arrow.uturn.left"
-        case .dismissed: "nosign"
         }
     }
 

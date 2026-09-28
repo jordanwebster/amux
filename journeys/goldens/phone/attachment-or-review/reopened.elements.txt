@@ -19,12 +19,12 @@ home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/
 home.row.<decision-sdk>.age.volatile | <volatile>
 home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | reviewer | 0,62,402,778
-chat.row.boundary | Started |  | 18,132,366,16
-chat.row.prompt | Please check against[Pasted text · 12 lines][Review · 1 comment] |  | 18,160,366,103
-chat.attachment | Pasted text · 12 lines |  | 173,195,197,26
-chat.attachment | Review · 1 comment |  | 173,227,171,26
-chat.row.prose | I read the review. | final | 18,275,366,20
-chat.prose.render |  | rendered | 18,275,366,20
+chat.row.boundary | Started |  | 18,132,366,34
+chat.row.prompt | Please check against[Pasted text · 12 lines][Review · 1 comment] |  | 18,166,366,103
+chat.attachment | Pasted text · 12 lines |  | 173,201,197,26
+chat.attachment | Review · 1 comment |  | 173,233,171,26
+chat.row.prose | I read the review. | final | 18,281,366,20
+chat.prose.render |  | rendered | 18,281,366,20
 chat.row.turn-end | <volatile>
 chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
@@ -61,10 +61,10 @@ you.help.caption |  |  | 18,599,354,31
  | reviewer, /t/a/n/d/work · desk |  | 51,72,156,38
  | 1 file, 2 added, 1 removed |  | 280,73,60,36
  | More |  | 344,69,44,44
- | Started |  | 18,132,366,16
- | Please check against, Pasted text · 12 lines, Review · 1 comment |  | 159,160,225,103
- | I read the review. |  | 18,275,366,20
- | Worked <t> · $0.00 |  | 45,306,130,16
+ | Started |  | 18,136,366,16
+ | Please check against, Pasted text · 12 lines, Review · 1 comment |  | 159,166,225,103
+ | I read the review. |  | 18,281,366,20
+ | Worked <t> · $0.00 |  | 48,308,130,16
  | Attach |  | 13,780,44,44
  | Dictate |  | 57,780,44,44
  | claude-fake-1, Default |  | 101,780,114,44

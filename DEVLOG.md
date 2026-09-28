@@ -1,3 +1,23 @@
+2026-09-28 — **Phone chat rows sit on one grid again.** Every row that is
+not the person's prompt, the agent's prose, a rule or the turn footer is
+drawn by one primitive: a 20 pt glyph cell, then one line — the verb in the
+text face, the subject in mono, the meta on the trailing edge — then what
+the row says underneath (a one-line note, the person's words in quotes, a
+command's output head with `··· N more lines`, or the detail it opens to).
+Consecutive grid rows are joined by a hairline rail in the glyph column; the
+row decides whether it runs on from the next drawn row (`ChatModel.drawnRow`
+passes over collapsed rows). A line that does not fit gives the subject the
+width first and lets the meta shrink to half the contested line, so meta no
+longer wraps under the subject. A collapsed exploration reads
+`4 reads · 2 searches` with the last path and a chevron; an edit is its path
+with `+9 −14` in the added and removed colours; a failed command keeps only
+its glyph in the accent with `exit 101 · 4.2s` on the line; a denied call
+reads `Denied rm -rf target` with the note in quotes under it; a call that
+went through on a decision reads `Allowed` with the scope as meta. Answered
+questions sit in a card under their row with picks as pills. Footers and
+rules start where the rows' text starts. Component snapshots, whole-screen
+goldens and phone journey frames are re-recorded.
+
 2026-09-28 — **Terminal chat rows hang off a rail again.** Consecutive tool
 rows (exploration, commands, tool-server calls, file changes, background
 commands, subagents) share a `│` rail in the gutter with no blank line

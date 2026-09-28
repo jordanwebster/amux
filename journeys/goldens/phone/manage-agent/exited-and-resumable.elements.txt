@@ -22,12 +22,12 @@ home.row.<id> | helper, Exited, stopped, desk, /private/tmp/amux-phone-journey/n
 home.row.<id>.age.volatile | <volatile>
 home.row.<id>.detail.volatile | <volatile>
 chat |  | helper | 0,62,402,778
-chat.row.boundary | Started |  | 18,132,366,16
-chat.row.prompt | Say hello. |  | 18,160,366,40
-chat.row.prose | Ready when you are. | final | 18,211,366,20
-chat.prose.render |  | rendered | 18,211,366,20
-chat.row.turn-end | Worked <t> · $0.00 |  | 18,243,157,16
-chat.row.boundary | Ended · stopped |  | 18,271,366,16
+chat.row.boundary | Started |  | 18,132,366,34
+chat.row.prompt | Say hello. |  | 18,166,366,40
+chat.row.prose | Ready when you are. | final | 18,217,366,20
+chat.prose.render |  | rendered | 18,217,366,20
+chat.row.turn-end | Worked <t> · $0.00 |  | 18,249,160,26
+chat.row.boundary | Ended · stopped |  | 18,275,366,34
 chat.header | Exited · stopped | live | 18,64,171,54
 chat.back | Back |  | 16,68,42,46
 chat.title | helper | helper | 51,72,125,38
@@ -61,11 +61,11 @@ you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
  | helper, Exited · stopped |  | 51,72,125,38
  | More |  | 344,69,44,44
- | Started |  | 18,132,366,16
- | Say hello. |  | 287,160,97,40
- | Ready when you are. |  | 18,211,366,20
- | Worked <t> · $0.00 |  | 45,243,130,16
- | Ended · stopped |  | 18,271,366,16
+ | Started |  | 18,136,366,16
+ | Say hello. |  | 287,166,97,40
+ | Ready when you are. |  | 18,217,366,20
+ | Worked <t> · $0.00 |  | 48,245,130,16
+ | Ended · stopped |  | 18,279,366,16
  | Attach |  | 13,780,44,44
  | Dictate |  | 57,780,44,44
  | claude-fake-1, Default |  | 101,780,114,44

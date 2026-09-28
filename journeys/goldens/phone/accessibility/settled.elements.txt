@@ -6,12 +6,12 @@ home.newAgent | New Agent |  | 345,118,44,44
 home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,271,366,194
 home.row.<decision-sdk>.age.volatile | <volatile>
 chat |  | decision-sdk | 0,62,402,778
-chat.row.boundary | Started |  | 18,176,366,40
-chat.row.prompt | Check the deployment once. |  | 18,228,366,106
+chat.row.boundary | Started |  | 18,176,366,58
+chat.row.prompt | Check the deployment once. |  | 18,234,366,106
 chat.row.command | <volatile>
 chat.row.meta.volatile | <volatile>
-chat.row.prose | The deploy check passed. | final | 18,485,366,90
-chat.prose.render |  | rendered | 18,485,366,90
+chat.row.prose | The deploy check passed. | final | 18,448,366,90
+chat.prose.render |  | rendered | 18,448,366,90
 chat.row.turn-end | <volatile>
 chat.header | /t/a/n/d/work · desk | live | 18,64,298,98
 chat.back | Back |  | 16,90,42,46
@@ -46,11 +46,11 @@ you.help.caption |  |  | 18,1124,366,161
  | Back |  | 16,90,42,46
  | decision-sdk, /t/a/n/d/work · desk |  | 51,72,252,82
  | More |  | 344,91,44,44
- | Started |  | 18,176,366,40
- | Check the deployment once. |  | 67,228,317,106
- | Ran, deploy --check, <t> · allowed, deploy check: ok |  | 18,346,367,127
- | The deploy check passed. |  | 18,485,366,90
- | Worked <t> · $0.00 |  | 45,587,335,40
+ | Started |  | 18,180,366,40
+ | Check the deployment once. |  | 67,234,317,106
+ | Allowed, deploy --check, <t>, deploy check: ok |  | 18,352,366,82
+ | The deploy check passed. |  | 18,448,366,90
+ | Worked <t> · $0.00 |  | 48,546,335,40
  | Attach |  | 13,763,44,44
  | Dictate |  | 57,763,44,44
  | claude-fake-1, Default |  | 101,746,229,78

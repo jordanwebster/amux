@@ -98,6 +98,10 @@ public enum ChatWords {
         case .running where row.attention && row.decision == nil: return wants
         case .running: return doing
         case .cancelled: return String(localized: "Cancelled")
+        // A call that went through on a decision says so; its glyph says what it was.
+        case .succeeded where row.decision?.outcome == .allowed: return String(localized: "Allowed")
+        case .succeeded where row.decision?.outcome == .autoApproved:
+            return String(localized: "Auto-approved")
         case .succeeded, .failed, .denied: return done
         }
     }
@@ -105,7 +109,9 @@ public enum ChatWords {
     /// A permission decision as meta: allowed or denied, its scope, the
     /// note, and where it was answered. The outcome word is left off when
     /// the verb already says it.
-    public static func decision(_ decision: Decision, verbSaysIt: Bool = false) -> String {
+    public static func decision(
+        _ decision: Decision, verbSaysIt: Bool = false, note: Bool = true
+    ) -> String {
         var parts: [String] = []
         if !verbSaysIt {
             let outcome = switch decision.outcome {
@@ -117,14 +123,17 @@ public enum ChatWords {
             parts.append(outcome)
         }
         if let scope = decision.scope { parts.append(scope) }
-        if let note = decision.note { parts.append("“\(firstLine(note))”") }
+        if note, let words = decision.note { parts.append("“\(firstLine(words))”") }
         if decision.elsewhere { parts.append(String(localized: "in the terminal")) }
         return parts.joined(separator: " · ")
     }
 
     /// The row's meta with its decision after it; the call's own state word
-    /// for the same thing is dropped.
-    public static func meta(_ meta: [String], _ row: Row, verb: String = "") -> String {
+    /// for the same thing is dropped. A row that says the person's note on
+    /// a line of its own leaves it out with `note: false`.
+    public static func meta(
+        _ meta: [String], _ row: Row, verb: String = "", note: Bool = true
+    ) -> String {
         guard let decision = row.decision else {
             return meta.filter { !$0.isEmpty }.joined(separator: " · ")
         }
@@ -135,9 +144,20 @@ public enum ChatWords {
         var kept = meta.filter { !$0.isEmpty && !dropped.contains($0) }
         let decided = Self.decision(
             decision,
-            verbSaysIt: verb == String(localized: "Denied") && decision.outcome == .denied)
+            verbSaysIt: Self.says(verb, decision.outcome),
+            note: note)
         if !decided.isEmpty { kept.append(decided) }
         return kept.joined(separator: " · ")
+    }
+
+    /// Whether a row's verb already names the decision's outcome.
+    private static func says(_ verb: String, _ outcome: DecisionView) -> Bool {
+        switch outcome {
+        case .denied: verb == String(localized: "Denied")
+        case .allowed: verb == String(localized: "Allowed")
+        case .autoApproved: verb == String(localized: "Auto-approved")
+        case .dismissed: false
+        }
     }
 
     public static func answer(_ answer: AnswerView) -> String {

@@ -7,18 +7,18 @@ home.row.<guarded> | guarded, hello, Idle, desk, /tmp/amux-phone-journey/net/des
 home.row.<guarded>.age.volatile | <volatile>
 home.row.<guarded>.detail.volatile | <volatile>
 chat |  | guarded | 0,62,402,778
-chat.row.boundary | Started |  | 18,132,366,16
-chat.row.prompt | hello |  | 18,160,366,40
-chat.row.prose | Ready. | final | 18,211,366,20
-chat.prose.render |  | rendered | 18,211,366,20
+chat.row.boundary | Started |  | 18,132,366,34
+chat.row.prompt | hello |  | 18,166,366,40
+chat.row.prose | Ready. | final | 18,217,366,20
+chat.prose.render |  | rendered | 18,217,366,20
 chat.row.turn-end | <volatile>
-chat.row.prompt | Are you there? |  | 18,271,366,40
-chat.row.prose | Only this account reaches me. | final | 18,322,366,20
-chat.prose.render |  | rendered | 18,322,366,20
+chat.row.prompt | Are you there? |  | 18,275,366,40
+chat.row.prose | Only this account reaches me. | final | 18,326,366,20
+chat.prose.render |  | rendered | 18,326,366,20
 chat.row.turn-end | <volatile>
-chat.row.prompt | Still there? |  | 18,382,366,40
-chat.row.prose | The relay carries us again. | final | 18,433,366,20
-chat.prose.render |  | rendered | 18,433,366,20
+chat.row.prompt | Still there? |  | 18,384,366,40
+chat.row.prose | The relay carries us again. | final | 18,435,366,20
+chat.prose.render |  | rendered | 18,435,366,20
 chat.row.turn-end | <volatile>
 chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
@@ -57,16 +57,16 @@ you.help.caption |  |  | 18,853,354,31
  | Back |  | 16,68,42,46
  | guarded, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | Started |  | 18,132,366,16
- | hello |  | 320,160,64,40
- | Ready. |  | 18,211,366,20
- | Worked <t> · $0.00 |  | 45,243,130,16
- | Are you there? |  | 249,271,135,40
- | Only this account reaches me. |  | 18,322,366,20
- | Worked <t> · $0.00 |  | 45,354,130,16
- | Still there? |  | 278,382,106,40
- | The relay carries us again. |  | 18,433,366,20
- | Worked <t> · $0.00 |  | 45,465,130,16
+ | Started |  | 18,136,366,16
+ | hello |  | 320,166,64,40
+ | Ready. |  | 18,217,366,20
+ | Worked <t> · $0.00 |  | 48,245,130,16
+ | Are you there? |  | 249,275,135,40
+ | Only this account reaches me. |  | 18,326,366,20
+ | Worked <t> · $0.00 |  | 48,354,130,16
+ | Still there? |  | 278,384,106,40
+ | The relay carries us again. |  | 18,435,366,20
+ | Worked <t> · $0.00 |  | 48,463,130,16
  | Attach |  | 13,780,44,44
  | Dictate |  | 57,780,44,44
  | claude-fake-1, Default |  | 101,780,114,44
