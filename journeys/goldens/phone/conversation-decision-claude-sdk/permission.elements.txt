@@ -18,8 +18,8 @@ home.row.<decision-codex>.detail.volatile | <volatile>
 home.row.<decision-sdk> | decision-sdk, Needs you, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,462,366,70
 home.row.<decision-sdk>.age.volatile | <volatile>
 chat |  | decision-sdk | 0,62,402,778
-chat.row.prompt | Check the deployment once. |  | 18,132,366,40
-chat.row.boundary | Started |  | 18,184,366,16
+chat.row.boundary | Started |  | 18,132,366,16
+chat.row.prompt | Check the deployment once. |  | 18,160,366,40
 chat.row.command | Wants to run, deploy --check |  | 18,211,366,20
 chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
@@ -56,8 +56,8 @@ you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
  | decision-sdk, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | Check the deployment once. |  | 145,132,239,40
- | Started |  | 18,184,366,16
+ | Started |  | 18,132,366,16
+ | Check the deployment once. |  | 145,160,239,40
  | Wants to run, deploy --check |  | 18,211,366,20
  | Wants to run a command |  | 46,552,189,20
  | More |  | 345,547,41,30

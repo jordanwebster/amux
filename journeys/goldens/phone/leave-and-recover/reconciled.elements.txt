@@ -19,8 +19,8 @@ home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/
 home.row.<decision-sdk>.age.volatile | <volatile>
 home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | keeper | 0,62,402,778
-chat.row.prompt | Remember this recovery turn. |  | 18,132,366,40
-chat.row.boundary | Started |  | 18,184,366,16
+chat.row.boundary | Started |  | 18,132,366,16
+chat.row.prompt | Remember this recovery turn. |  | 18,160,366,40
 chat.row.prose | The recovery state is safely stored. | final | 18,211,366,20
 chat.prose.render |  | rendered | 18,211,366,20
 chat.row.turn-end | <volatile>
@@ -65,8 +65,8 @@ you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
  | keeper, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | Remember this recovery turn. |  | 139,132,245,40
- | Started |  | 18,184,366,16
+ | Started |  | 18,132,366,16
+ | Remember this recovery turn. |  | 139,160,245,40
  | The recovery state is safely stored. |  | 18,211,366,20
  | Worked <t> · $0.00 |  | 45,243,130,16
  | Carry on. |  | 290,271,94,40

@@ -22,8 +22,8 @@ home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/
 home.row.<decision-sdk>.age.volatile | <volatile>
 home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | work | 0,62,402,778
-chat.row.prompt | Say hello. |  | 18,132,366,40
-chat.row.boundary | Started |  | 18,184,366,16
+chat.row.boundary | Started |  | 18,132,366,16
+chat.row.prompt | Say hello. |  | 18,160,366,40
 chat.row.prose | Ready when you are. | final | 18,211,366,20
 chat.prose.render |  | rendered | 18,211,366,20
 chat.row.turn-end | <volatile>
@@ -60,8 +60,8 @@ you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
  | work, /p/t/a/n/d/work · desk |  | 51,72,172,38
  | More |  | 344,69,44,44
- | Say hello. |  | 287,132,97,40
- | Started |  | 18,184,366,16
+ | Started |  | 18,132,366,16
+ | Say hello. |  | 287,160,97,40
  | Ready when you are. |  | 18,211,366,20
  | Worked <t> · $0.00 |  | 45,243,130,16
  | Attach |  | 26,783,37,36

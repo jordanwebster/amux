@@ -19,8 +19,8 @@ home.row.<decision-codex> | decision-codex, Idle, desk, /tmp/amux-phone-journey/
 home.row.<decision-codex>.age.volatile | <volatile>
 home.row.<decision-codex>.detail.volatile | <volatile>
 chat |  | decision-sdk | 0,62,402,778
-chat.row.prompt | Check the deployment once. |  | 18,132,366,40
-chat.row.boundary | Started |  | 18,184,366,16
+chat.row.boundary | Started |  | 18,132,366,16
+chat.row.prompt | Check the deployment once. |  | 18,160,366,40
 chat.row.command | Ran, deploy --check, <t> · allowed |  | 18,211,366,40
 chat.row.meta.volatile | <volatile>
 chat.row.prose | The deploy check passed. | final | 18,263,366,20
@@ -59,8 +59,8 @@ you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
  | decision-sdk, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | Check the deployment once. |  | 145,132,239,40
- | Started |  | 18,184,366,16
+ | Started |  | 18,132,366,16
+ | Check the deployment once. |  | 145,160,239,40
  | Ran, deploy --check, <t> · allowed, deploy check: ok |  | 18,211,366,40
  | The deploy check passed. |  | 18,263,366,20
  | Worked <t> · $0.00 |  | 45,295,130,16
