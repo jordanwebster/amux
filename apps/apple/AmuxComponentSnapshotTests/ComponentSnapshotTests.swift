@@ -259,13 +259,24 @@ final class ComponentSnapshotTests: XCTestCase {
     /// backdrop. Until the first report arrives nothing changes, and when it
     /// arrives is up to the render server: a third of a second locally, more
     /// than half a second on a CI runner, where a photograph taken after half
-    /// a second of stillness showed the unadapted glass exactly. Larger glass
-    /// does not track luma and is drawn once.
+    /// a second of stillness showed the unadapted glass exactly.
+    ///
+    /// Larger glass (a page, a list over the composer) does not track luma
+    /// and nothing about it changes that the app can see, yet the render
+    /// server finishes it in two passes: a photograph shows it first without
+    /// its rim and shadow, then, at once, complete. The second pass follows
+    /// the first rendering of that glass by about a third of a second here
+    /// and on a CI runner, but has come more than half a second after it
+    /// there, and a photograph between the passes matched a runner's failed
+    /// picture exactly. Photographs that do not ask for a screen update never
+    /// show the second pass, so they cannot stand in.
     ///
     /// So the picture is taken once every glass that tracks luma has taken a
     /// report (see ``GlassWatch``) and the photographs and those glass states
     /// have then stayed unchanged for a quiet window longer than any pause in
-    /// the easing. The comparison is not loosened. Every example with glass
+    /// the easing and, where there is larger glass, longer than its second
+    /// pass has been seen to take. The comparison is not loosened. Every
+    /// example with glass
     /// prints when its glass adapted and when its photographs changed, counted
     /// from the window showing, so the render server's latency on the machine
     /// that ran it is on record.
@@ -276,7 +287,6 @@ final class ComponentSnapshotTests: XCTestCase {
         deadline: TimeInterval,
         name: String
     ) async -> UIImage? {
-        let quiet: TimeInterval = 0.5
         let started = ProcessInfo.processInfo.systemUptime
         var state = glass.sample()
         var adapted: TimeInterval?
@@ -297,11 +307,13 @@ final class ComponentSnapshotTests: XCTestCase {
                 settled = current
                 state = sampled
                 since = now
-            } else if !waiting, now - since >= quiet {
+            } else if !waiting,
+                now - since >= (glass.untracked > 0 ? Self.largeGlassQuiet : Self.quiet)
+            {
                 if glass.panes > 0 {
                     print(String(
-                        format: "AMUX_SNAPSHOT_GLASS component=%@ panes=%d tracking=%d adapted=%@ changes=%@",
-                        name, glass.panes, sampled.count,
+                        format: "AMUX_SNAPSHOT_GLASS component=%@ panes=%d tracking=%d untracked=%d adapted=%@ changes=%@",
+                        name, glass.panes, sampled.count, glass.untracked,
                         adapted.map { String(format: "%.3f", $0) } ?? "-",
                         changes.map { String(format: "%.3f", $0) }.joined(separator: ",")))
                 }
@@ -310,6 +322,12 @@ final class ComponentSnapshotTests: XCTestCase {
         } while ProcessInfo.processInfo.systemUptime < deadline
         return nil
     }
+
+    /// Longer than any pause in the easing of glass that tracks luma.
+    private static let quiet: TimeInterval = 0.5
+    /// Longer than larger glass's second pass: about 0.35 s after the
+    /// first on a CI runner, and once more than 0.5 s.
+    private static let largeGlassQuiet: TimeInterval = 2
 
     /// Draws the view as SnapshotTesting's key-window strategy does.
     private func photograph(_ view: UIView, traits: UITraitCollection) -> UIImage {
@@ -355,6 +373,8 @@ private final class GlassWatch {
     let shown = ProcessInfo.processInfo.systemUptime
     /// The most glass surfaces, tracking luma or not, seen at once.
     private(set) var panes = 0
+    /// The most glass surfaces that do not track luma seen at once.
+    private(set) var untracked = 0
 
     init(window: UIWindow) {
         self.window = window
@@ -369,16 +389,17 @@ private final class GlassWatch {
         func visit(_ layer: CALayer) {
             if Self.isGlass(layer) {
                 glass += 1
-            }
-            if layer.value(forKey: "tracksLuma") as? Bool == true, Self.isGlass(layer) {
-                found[ObjectIdentifier(layer)] =
-                    (try? NSKeyedArchiver.archivedData(withRootObject: layer, requiringSecureCoding: false))
-                    ?? Data()
+                if layer.value(forKey: "tracksLuma") as? Bool == true {
+                    found[ObjectIdentifier(layer)] =
+                        (try? NSKeyedArchiver.archivedData(withRootObject: layer, requiringSecureCoding: false))
+                        ?? Data()
+                }
             }
             layer.sublayers?.forEach(visit)
         }
         visit(window.layer)
         panes = max(panes, glass)
+        untracked = max(untracked, glass - found.count)
         for (layer, state) in found where firstSeen[layer] == nil {
             firstSeen[layer] = state
         }

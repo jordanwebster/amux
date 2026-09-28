@@ -1,3 +1,18 @@
+2026-09-28 — **Component snapshots wait out larger Liquid Glass's second
+pass.** Larger glass (the review page, the list over the composer) does
+not track luma, and nothing about it that the app can see changes, but the
+render server finishes it in two passes: photographs first show it without
+its rim and shadow, then, at once, complete. The second pass follows the
+first rendering by about 0.35 s here and on the CI runner, and once came
+more than half a second after it there, so the half-second stillness test
+photographed between the passes: that runner's review.folded.light is
+pixel-identical to a local photograph taken with the quiet window cut to
+0.25 s, which fails five of the six larger-glass pictures the same way.
+Photographs that do not ask for a screen update never show the second
+pass, so they cannot be used to wait for it. Examples with larger glass
+now hold for two seconds of stillness; the batch grows by about 15 s (180 s
+here, under its 400 s bound) and the negative control still fails.
+
 2026-09-28 — **A peer is told why the link closed even when it writes
 first.** A host that stops trusting another says so on the link's control
 stream and closes; over a multiplexed carrier (the relay, SSH, in-process
