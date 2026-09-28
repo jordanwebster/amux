@@ -1,3 +1,6 @@
+2026-09-28 — Phone journey frames re-recorded for the ink radios (paywall),
+tail-truncated commands (Codex settled row) and ink review buttons.
+
 2026-09-28 — **The phone spends its accent only on what waits for you, and
 drops what nothing drew.** A look at every screen beside the last release's
 goldens and the chat vocabulary page found the accent filling buttons and

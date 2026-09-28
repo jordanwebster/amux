@@ -21,9 +21,9 @@ paywall |  | yearly | 0,62,402,778
 paywall.back | Back to Hosts |  | 17,57,59,46
 paywall.title |  | Reach your agents anywhere | 18,106,218,64
 paywall.explanation |  | A subscription reaches your hosts from anywhere. Hosts on this network work without one. | 18,175,366,39
-paywall.monthly | Monthly £7.99 | not chosen | 18,237,366,52
-paywall.yearly | Yearly £79.99 | chosen | 18,289,366,67
-paywall.terms |  |  | 18,356,343,48
+paywall.monthly | Monthly £7.99 | not chosen | 18,237,366,48
+paywall.yearly | Yearly £79.99 | chosen | 18,285,366,67
+paywall.terms |  |  | 18,352,343,48
 paywall.buy | Subscribe · £79.99 a year | yearly | 26,746,350,44
 paywall.restore | Restore Purchases |  | 130,786,143,46
 you |  | ada@example.com | 0,62,402,778
@@ -47,9 +47,9 @@ you.help.caption |  |  | 18,794,354,31
  | Reach your agents
 anywhere |  | 18,106,218,64
  | A subscription reaches your hosts from anywhere. Hosts on this network work without one. |  | 18,175,366,39
- | Monthly, £7.99 |  | 18,237,366,52
- | Yearly, £79.99, 2 months free |  | 18,289,366,67
- | Cancel any time in the App Store. A subscription bought on the web carries over. |  | 18,370,343,34
+ | Monthly, £7.99 |  | 18,237,366,48
+ | Yearly, £79.99, 2 months free |  | 18,285,366,67
+ | Cancel any time in the App Store. A subscription bought on the web carries over. |  | 18,366,343,34
  | Subscribe · £79.99 a year |  | 26,746,350,44
  | Restore Purchases |  | 130,786,143,46
  | Agents |  | 18,72,86,32
