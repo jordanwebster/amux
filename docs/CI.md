@@ -39,8 +39,9 @@ failure on one operating system does not cancel the others. The Windows
 runner compiles and runs every test target; suites that need Unix processes,
 PTYs or sockets are compiled out there. Among them are the tests that host
 terminal Claude: the agent's terminal cases (in its `attach`, `dump`,
-`providers`, `tools` and `lifecycle` suites), provider-fakes' `pty` suite and
-the terminal module of its `conformance` suite. Windows does not host
+`providers`, `tools` and `lifecycle` suites), provider-fakes' `pty` suite,
+the terminal modules of its `conformance` and `scripted` suites, and the
+terminal client's served `frames` suite, whose hosts run terminal Claude. Windows does not host
 terminal Claude in this build (see
 [Windows, as a stated cost](ARCHITECTURE.md#windows-as-a-stated-cost)), so
 the Windows job runs the agent's test of that refusal instead, and every

@@ -7,7 +7,12 @@
 //! CaughtUp, then the rebuilt transcript.
 //!
 //! Rewrite with `UPDATE_GOLDENS=1 just test-tui`; CI refuses to rewrite.
-
+//!
+//! Unix only: every served host here runs terminal Claude agents, which
+//! Windows does not host (see docs/ARCHITECTURE.md, "Windows, as a stated
+//! cost"); the fleet and chat views these frames draw are the same code on
+//! every platform and keep their component goldens there.
+#![cfg(unix)]
 #![cfg(feature = "fixtures")]
 
 mod common;

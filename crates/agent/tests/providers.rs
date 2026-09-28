@@ -253,6 +253,26 @@ fn a_terminal_claude_agent_types_through_its_keymap_and_hears_its_hooks() {
     });
 }
 
+/// Whether Codex has answered the agent's request of `method`: the answer
+/// is among the facts the interpreter was fed.
+fn codex_acknowledged(agent: &Agent, method: &str) -> bool {
+    let Some(id) = agent
+        .provider_input()
+        .into_iter()
+        .find(|line| line["method"] == method)
+        .map(|line| line["id"].clone())
+    else {
+        return false;
+    };
+    agent.facts().iter().any(|entry| {
+        entry["event"] == "fact"
+            && entry["text"]
+                .as_str()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                .is_some_and(|fact| fact["id"] == id && fact.get("result").is_some())
+    })
+}
+
 fn held_turn() -> Vec<Step> {
     vec![
         Step::Text {
@@ -295,6 +315,15 @@ async fn a_message_mid_turn_is_consumed_before_a_one_shot_child_exits(
         matches!(verdict, Verdict::Accepted | Verdict::Queued),
         "{verdict:?}"
     );
+    if kind == "codex" {
+        // The agent accepts the message when it writes the inject; the turn
+        // drains it only if Codex takes it while the turn still runs.
+        agent
+            .until("Codex acknowledges the inject", || {
+                codex_acknowledged(&agent, "thread/inject_items")
+            })
+            .await;
+    }
     agent.release();
     assert_eq!(agent.exit().await, ExitCause::Finished);
     let log = agent.log();

@@ -619,6 +619,10 @@ mod claude_sdk {
     }
 }
 
+// Unix only: Windows does not host terminal Claude, and the fake terminal
+// Claude's raw console mode and hooks are Unix-only in this build; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost".
+#[cfg(unix)]
 mod claude_pty {
     use super::*;
 

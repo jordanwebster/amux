@@ -1,3 +1,16 @@
+2026-09-28 — **A Codex message test waits for Codex to take the inject.**
+The agent accepts a parent's message to a Codex child when it writes
+`thread/inject_items`; Codex drains the item into the running turn only if
+it reads it while that turn still runs. The test released the held turn
+as soon as the message was accepted, so on the slower Windows runner the
+turn ended first and the agent, correctly, started a turn for the message.
+The test now waits for Codex's acknowledgement of the inject before
+releasing the turn; delaying the inject on its way to the fake reproduced
+the Windows failure on macOS and the fix holds under that delay. The
+scripted conformance suite's terminal module and the terminal client's
+served `frames` suite join the other Unix-only terminal Claude tests: their
+hosts run terminal Claude, which Windows does not host.
+
 2026-09-28 — **A Windows socket can be bound again while an old connection
 lives.** On Windows a local socket was a named pipe named by a hash of its
 path and created as the pipe's first instance. A pipe exists while any
