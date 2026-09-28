@@ -23,6 +23,11 @@ pub struct FleetCard {
     /// Children in the fleet, and how loud the family is.
     pub children: u32,
     pub family_attention: Attention,
+    /// The whole family below and including this agent, and how many of
+    /// them need the person: what a folded family stands for when a client
+    /// counts its fleet.
+    pub members: u32,
+    pub members_need_you: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
@@ -36,6 +41,7 @@ pub struct FleetRow {
 fn card(fleet: &FleetState, agent: &Agent) -> FleetCard {
     let at = ui_state::agent_key(agent);
     let host = fleet.host(&agent.host_id);
+    let family = fleet.family(&at);
     FleetCard {
         name: agent.name.clone().unwrap_or_default(),
         kind: agent.kind(),
@@ -51,6 +57,11 @@ fn card(fleet: &FleetState, agent: &Agent) -> FleetCard {
         host_presence: host.map_or(Presence::Unspecified, |host| host.presence()),
         children: fleet.families().children(&at).count() as u32,
         family_attention: fleet.family_attention(&at).unwrap_or(Attention::Exited),
+        members: family.len() as u32,
+        members_need_you: family
+            .iter()
+            .filter(|member| ui_state::attention(member) == Attention::NeedsYou)
+            .count() as u32,
         agent: at,
     }
 }

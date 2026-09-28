@@ -24,7 +24,9 @@ final class RowStateTests: XCTestCase {
                     agent: AgentKey(host: machine, agent: UUID()), name: "refactor-auth",
                     kind: kind, attention: attention, cwd: "~/src/amux", lastActivityMs: 0,
                     host: "Studio.local", hostPresence: presence, children: 0,
-                    familyAttention: attention, exitCause: exitCause, workingOn: nil),
+                    familyAttention: attention, members: 1,
+                    membersNeedYou: attention == .needsYou ? 1 : 0, exitCause: exitCause,
+                    workingOn: nil),
                 depth: 0, expanded: false),
             unread: false)
     }

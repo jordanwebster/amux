@@ -1876,10 +1876,15 @@ public struct FleetCard: Codable, Hashable, Sendable {
     /// Children in the fleet, and how loud the family is.
     public var children: UInt32
     public var familyAttention: Attention
+    /// The whole family below and including this agent, and how many of
+    /// them need the person: what a folded family stands for when a client
+    /// counts its fleet.
+    public var members: UInt32
+    public var membersNeedYou: UInt32
     public var exitCause: String?
     public var workingOn: String?
 
-    public init(agent: AgentKey, name: String, kind: Kind, attention: Attention, cwd: String, lastActivityMs: Int64, host: String, hostPresence: Presence, children: UInt32, familyAttention: Attention, exitCause: String?, workingOn: String?) {
+    public init(agent: AgentKey, name: String, kind: Kind, attention: Attention, cwd: String, lastActivityMs: Int64, host: String, hostPresence: Presence, children: UInt32, familyAttention: Attention, members: UInt32, membersNeedYou: UInt32, exitCause: String?, workingOn: String?) {
         self.agent = agent
         self.name = name
         self.kind = kind
@@ -1890,6 +1895,8 @@ public struct FleetCard: Codable, Hashable, Sendable {
         self.hostPresence = hostPresence
         self.children = children
         self.familyAttention = familyAttention
+        self.members = members
+        self.membersNeedYou = membersNeedYou
         self.exitCause = exitCause
         self.workingOn = workingOn
     }
@@ -1905,6 +1912,8 @@ public struct FleetCard: Codable, Hashable, Sendable {
         case hostPresence = "host_presence"
         case children
         case familyAttention = "family_attention"
+        case members
+        case membersNeedYou = "members_need_you"
         case exitCause = "exit_cause"
         case workingOn = "working_on"
     }

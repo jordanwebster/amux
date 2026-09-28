@@ -859,11 +859,11 @@ enum CatalogFixtures {
             FleetCard(agent: AgentKey(host: Array(repeating: 1, count: 16), agent: Array(repeating: 3, count: 16)),
                       name: "worker-2", kind: .claudeSdk, attention: .needsYou, cwd: "", lastActivityMs: 0,
                       host: "Laptop", hostPresence: .online, children: 0, familyAttention: .needsYou,
-                      exitCause: nil, workingOn: nil),
+                      members: 1, membersNeedYou: 1, exitCause: nil, workingOn: nil),
             FleetCard(agent: AgentKey(host: Array(repeating: 1, count: 16), agent: Array(repeating: 4, count: 16)),
                       name: "worker-3", kind: .codex, attention: .working, cwd: "", lastActivityMs: 0,
                       host: "Studio", hostPresence: .online, children: 0, familyAttention: .working,
-                      exitCause: nil, workingOn: nil),
+                      members: 1, membersNeedYou: 0, exitCause: nil, workingOn: nil),
         ],
         attention: .needsYou, parent: nil)
 }

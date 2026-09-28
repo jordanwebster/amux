@@ -180,12 +180,15 @@ public final class FleetStore {
     }
 
     public var subtitle: String {
-        let waiting = rows.filter(\.needsYou).count
+        // A folded family stands for every member under it, so somebody it
+        // started who needs the person is counted before it is unfolded.
+        let waiting = rows.reduce(0) { $0 + ($1.expanded ? ($1.needsYou ? 1 : 0) : Int($1.card.membersNeedYou)) }
         guard waiting > 0 else {
             let running = rows.filter { $0.attention == .working }.count
             return "Nothing needs you · \(running) running"
         }
-        return "\(waiting) need you · \(rows.count) agent\(rows.count == 1 ? "" : "s")"
+        let agents = rows.reduce(0) { $0 + ($1.expanded ? 1 : Int($1.card.members)) }
+        return "\(waiting) need you · \(agents) agent\(agents == 1 ? "" : "s")"
     }
 
     /// One line for what is wrong with reaching the fleet, if anything.

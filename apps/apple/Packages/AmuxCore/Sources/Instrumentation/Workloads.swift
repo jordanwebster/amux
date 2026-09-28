@@ -80,6 +80,7 @@ public enum Workloads {
                 lastActivityMs: Int64(now.addingTimeInterval(-60 * minutesAgo)
                     .timeIntervalSince1970 * 1000),
                 host: host.name, hostPresence: .online, children: 0, familyAttention: attention,
+                members: 1, membersNeedYou: attention == .needsYou ? 1 : 0,
                 exitCause: attention == .exited ? "finished" : nil,
                 workingOn: "\(verb(random.next())) the \(noun(random.next()))")
             return FleetRow(card: card, depth: 0, expanded: false)

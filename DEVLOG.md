@@ -1,3 +1,13 @@
+2026-09-28 — **The phone's fleet subtitle counts the agents inside a folded family.**
+The phone QA pass found a folded family flagged "an agent it started needs
+you" under a subtitle reading "Nothing needs you · 0 running": the subtitle
+counted only the rows drawn, and a folded family's members are not drawn.
+The fleet card now carries the size of the family below and including an
+agent and how many of its members need the person, and a folded row counts
+for all of them. Unfolded, each member is its own row and nothing is counted
+twice. The same QA pass is summarised in the flight's report; its other
+findings are filed as their own work.
+
 2026-09-28 — **The debug door can scroll the list under the middle of the screen.**
 Phone recordings of a chat under a flood and of a long family chat need to page
 through history as a person's swipe does, and the door had no way to move a

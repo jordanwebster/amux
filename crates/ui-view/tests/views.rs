@@ -421,6 +421,10 @@ fn the_fleet_ranks_families_by_their_loudest_member() {
         (card.attention, card.family_attention, card.children),
         (Attention::Idle, Attention::NeedsYou, 1)
     );
+    // Folded, the family still counts: two members, one needing the person.
+    assert_eq!((card.members, card.members_need_you), (2, 1));
+    let alone = fleet_card(&fleet, b"busy").unwrap();
+    assert_eq!((alone.members, alone.members_need_you), (1, 0));
     // The child's ask is not hosted in the parent's chat: the family header
     // carries its attention and nothing more.
     let header = family_header(&fleet, b"parent").unwrap();

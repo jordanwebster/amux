@@ -16,6 +16,7 @@ enum Cards {
     static func row(
         _ index: Int, _ name: String, attention: Attention = .idle, minutesAgo: Double = 1,
         depth: UInt32 = 0, children: UInt32 = 0, family: Attention? = nil,
+        members: UInt32 = 1, membersNeedYou: UInt32? = nil, expanded: Bool = false,
         kind: Kind = .claudeSdk, presence: Presence = .online, host: HostId = desk
     ) -> FleetRow {
         FleetRow(
@@ -25,8 +26,10 @@ enum Cards {
                 lastActivityMs: Int64(now.addingTimeInterval(-60 * minutesAgo)
                     .timeIntervalSince1970 * 1000),
                 host: "desk", hostPresence: presence, children: children,
-                familyAttention: family ?? attention, exitCause: nil, workingOn: nil),
-            depth: depth, expanded: false)
+                familyAttention: family ?? attention, members: members,
+                membersNeedYou: membersNeedYou ?? (attention == .needsYou ? 1 : 0),
+                exitCause: nil, workingOn: nil),
+            depth: depth, expanded: expanded)
     }
 
     static func host(
@@ -109,6 +112,24 @@ final class FleetStoreTests: XCTestCase {
         XCTAssertEqual(fleet.subtitle, "Nothing needs you · 1 running")
         fleet.show([Cards.row(1, "a", attention: .needsYou), Cards.row(2, "b")], hosts: [])
         XCTAssertEqual(fleet.subtitle, "1 need you · 2 agents")
+    }
+
+    func testAFoldedFamilyCountsTheMembersItHides() {
+        let fleet = FleetStore(now: Cards.now)
+        // Folded: the lead stands for itself and the helper that needs you.
+        let folded = Cards.row(
+            1, "lead", children: 1, family: .needsYou, members: 2, membersNeedYou: 1)
+        fleet.show([folded, Cards.row(3, "other")], hosts: [])
+        XCTAssertEqual(fleet.subtitle, "1 need you · 3 agents")
+
+        // Unfolded, the helper is its own row and nothing is counted twice.
+        let open = Cards.row(
+            1, "lead", children: 1, family: .needsYou, members: 2, membersNeedYou: 1,
+            expanded: true)
+        fleet.show(
+            [open, Cards.row(2, "helper", attention: .needsYou, depth: 1), Cards.row(3, "other")],
+            hosts: [])
+        XCTAssertEqual(fleet.subtitle, "1 need you · 3 agents")
     }
 
     func testAnOfflineHostIsTheExceptionAndTheRelayOutranksIt() {
