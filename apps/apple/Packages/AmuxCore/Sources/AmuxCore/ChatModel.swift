@@ -88,6 +88,10 @@ public final class ChatModel {
     @ObservationIgnored private var cells: [String: RowCell] = [:]
     public private(set) var frame: ChatFrame?
     public private(set) var ask: AskCard?
+    /// What the person picked and typed on the head ask's questions and has
+    /// not sent, kept like the draft so leaving the chat loses none of it,
+    /// until that ask closes.
+    @ObservationIgnored private var questionKept: (ask: String, draft: QuestionDraft)?
     public private(set) var strip: Strip?
     /// What the agent offers to change, the current values marked.
     public private(set) var settings: SettingsView?
@@ -252,6 +256,7 @@ public final class ChatModel {
         let before = frame
         frame = source.frame()
         ask = source.askCard()
+        if let kept = questionKept?.ask, kept != ask?.key { questionKept = nil }
         strip = source.strip()
         settings = source.settings()
         if Self.changesMayHaveMoved(from: before, to: frame) { refreshChanges() }
@@ -331,6 +336,17 @@ public final class ChatModel {
     }
 
     // MARK: - Writing
+
+    /// Keeps the question card's progress on the head ask.
+    public func keep(_ draft: QuestionDraft, onAsk key: String) {
+        guard ask?.key == key else { return }
+        questionKept = (key, draft)
+    }
+
+    /// The progress kept on this ask's question card, if any.
+    public func questionDraft(onAsk key: String) -> QuestionDraft? {
+        questionKept?.ask == key ? questionKept?.draft : nil
+    }
 
     /// Sending waits for the rows to be current and the agent live; the draft
     /// never does.
@@ -664,4 +680,29 @@ public final class ChatModel {
     static let notConfirmed = String(
         localized: "The connection dropped before the agent answered.")
     static let closed = String(localized: "This chat is closed.")
+}
+
+/// A question card part way through: where it stands, what is picked and
+/// typed per question, and the note.
+public struct QuestionDraft: Equatable, Sendable {
+    public var step: Int
+    public var picks: [Set<UInt32>]
+    public var others: [String?]
+    public var highlighted: [UInt32?]
+    public var reviewing: Bool
+    public var note: String
+    public var noting: Bool
+
+    public init(
+        step: Int = 0, picks: [Set<UInt32>], others: [String?], highlighted: [UInt32?],
+        reviewing: Bool = false, note: String = "", noting: Bool = false
+    ) {
+        self.step = step
+        self.picks = picks
+        self.others = others
+        self.highlighted = highlighted
+        self.reviewing = reviewing
+        self.note = note
+        self.noting = noting
+    }
 }

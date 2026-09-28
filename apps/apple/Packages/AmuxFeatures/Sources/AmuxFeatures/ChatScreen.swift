@@ -442,6 +442,13 @@ public struct ChatStanding: View {
         standing.onChange(of: putDown) { focused = false }
     }
 
+    /// A question card's picks live on the chat, like the draft.
+    private func keeping(_ ask: AskCard) -> QuestionKeeping {
+        QuestionKeeping(kept: model.questionDraft(onAsk: ask.key)) { [model] in
+            model.keep($0, onAsk: ask.key)
+        }
+    }
+
     @ViewBuilder
     private var standing: some View {
         VStack(spacing: 8) {
@@ -474,9 +481,9 @@ public struct ChatStanding: View {
                 }
             case nil:
                 if let ask = model.ask, ask.state != .dismissed {
-                    AskCardView(card: ask, act: answer)
+                    AskCardView(card: ask, questions: keeping(ask), act: answer)
                 } else {
-                    if let ask = model.ask { AskCardView(card: ask, act: answer) }
+                    if let ask = model.ask { AskCardView(card: ask, questions: keeping(ask), act: answer) }
                     composerStack
                 }
             }

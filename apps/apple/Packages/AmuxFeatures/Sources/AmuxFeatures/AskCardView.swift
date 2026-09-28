@@ -29,6 +29,21 @@ public enum AskPreset: Equatable, Sendable {
     case autoAccept
 }
 
+/// Where a question card keeps its progress: what it was left at, and where
+/// each change goes.
+public struct QuestionKeeping: Sendable {
+    let kept: QuestionDraft?
+    let keep: @MainActor @Sendable (QuestionDraft) -> Void
+
+    public init(kept: QuestionDraft?, keep: @escaping @MainActor @Sendable (QuestionDraft) -> Void) {
+        self.kept = kept
+        self.keep = keep
+    }
+
+    /// Kept only while the card is on screen.
+    public static let none = QuestionKeeping(kept: nil) { _ in }
+}
+
 /// The head ask, docked where the composer was. One anatomy for every
 /// kind: what it wants and "1 of 3", the subject verbatim, then choices
 /// stated as outcomes with the likely one first. Stop is always one tap
@@ -37,11 +52,18 @@ public struct AskCardView: View {
     @Environment(\.design) private var design
     let card: AskCard
     let preset: AskPreset?
+    let questions: QuestionKeeping
     let act: (AskAction) -> Void
 
-    public init(card: AskCard, preset: AskPreset? = nil, act: @escaping (AskAction) -> Void) {
+    /// `questions` holds a question card's progress somewhere that outlives
+    /// the card, so leaving the chat and coming back finds it as it was.
+    public init(
+        card: AskCard, preset: AskPreset? = nil, questions: QuestionKeeping = .none,
+        act: @escaping (AskAction) -> Void
+    ) {
         self.card = card
         self.preset = preset
+        self.questions = questions
         self.act = act
     }
 
@@ -64,7 +86,7 @@ public struct AskCardView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     head
                     stateLine
-                    if showsBody { AskBodyView(card: card, preset: preset, act: act) }
+                    if showsBody { AskBodyView(card: card, preset: preset, questions: questions, act: act) }
                 }
                 .padding(16)
             }
@@ -171,6 +193,7 @@ private struct AskBodyView: View {
     @Environment(\.openURL) private var openURL
     let card: AskCard
     let preset: AskPreset?
+    let questions: QuestionKeeping
     let act: (AskAction) -> Void
     /// The choice waiting for its note.
     @State private var noting: Int?
@@ -182,9 +205,10 @@ private struct AskBodyView: View {
     @State private var opened = false
     @State private var fields: [FormField]?
 
-    init(card: AskCard, preset: AskPreset?, act: @escaping (AskAction) -> Void) {
+    init(card: AskCard, preset: AskPreset?, questions: QuestionKeeping, act: @escaping (AskAction) -> Void) {
         self.card = card
         self.preset = preset
+        self.questions = questions
         self.act = act
         if case .noting(let index)? = preset { _noting = State(initialValue: index) }
         _autoAccept = State(initialValue: preset == .autoAccept)
@@ -312,7 +336,10 @@ private struct AskBodyView: View {
     private var choices: some View {
         switch card.body {
         case .question(let questions):
-            QuestionCard(questions: questions, takesNote: card.questionNote, preset: preset) { picks, note in
+            QuestionCard(
+                questions: questions, takesNote: card.questionNote, preset: preset,
+                keeping: self.questions
+            ) { picks, note in
                 act(.pick(picks, note: note))
             }
         case .plan:
@@ -693,6 +720,7 @@ struct QuestionCard: View {
     @Environment(\.design) private var design
     let questions: [QuestionView]
     let takesNote: Bool
+    let keeping: QuestionKeeping
     let send: ([Pick], String?) -> Void
     @State private var step = 0
     @State private var picks: [Set<UInt32>]
@@ -704,11 +732,23 @@ struct QuestionCard: View {
 
     init(
         questions: [QuestionView], takesNote: Bool, preset: AskPreset? = nil,
-        send: @escaping ([Pick], String?) -> Void
+        keeping: QuestionKeeping = .none, send: @escaping ([Pick], String?) -> Void
     ) {
         self.questions = questions
         self.takesNote = takesNote
+        self.keeping = keeping
         self.send = send
+        if let kept = keeping.kept, kept.picks.count == questions.count,
+           kept.others.count == questions.count, kept.highlighted.count == questions.count {
+            _step = State(initialValue: kept.step)
+            _picks = State(initialValue: kept.picks)
+            _others = State(initialValue: kept.others)
+            _highlighted = State(initialValue: kept.highlighted)
+            _reviewing = State(initialValue: kept.reviewing)
+            _note = State(initialValue: kept.note)
+            _noting = State(initialValue: kept.noting)
+            return
+        }
         var picks = Array(repeating: Set<UInt32>(), count: questions.count)
         var others = Array(repeating: String?.none, count: questions.count)
         var highlighted = Array(repeating: UInt32?.none, count: questions.count)
@@ -743,6 +783,13 @@ struct QuestionCard: View {
                 question(questions[step], at: step)
             }
         }
+        .onChange(of: progress) { _, progress in keeping.keep(progress) }
+    }
+
+    private var progress: QuestionDraft {
+        QuestionDraft(
+            step: step, picks: picks, others: others, highlighted: highlighted,
+            reviewing: reviewing, note: note, noting: noting)
     }
 
     private var steps: some View {

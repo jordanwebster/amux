@@ -435,6 +435,43 @@ final class ChatModelTests: XCTestCase {
         XCTAssertTrue(model.expanded.isEmpty)
     }
 
+    /// Picks on a question card not yet sent stay with the chat, as the
+    /// draft does, until the ask closes.
+    func testAQuestionCardsPicksStayUntilItsAskCloses() async {
+        func card(_ key: String) -> AskCard {
+            AskCard(
+                kind: .claudeSdk, key: key, itemKey: "", position: 1, count: 1, body: .question([]),
+                choices: [], questionNote: true, state: .open)
+        }
+        let source = FakeChat(rows: [row("a", 1)], frame: frame())
+        source.card = card("ask:1")
+        let model = ChatModel(source: source)
+        await settle()
+        let picked = QuestionDraft(
+            step: 1, picks: [[2], []], others: [nil, "Only on staging"], highlighted: [2, nil],
+            note: "and say when")
+        model.keep(picked, onAsk: "ask:1")
+        model.keep(picked, onAsk: "ask:2")
+        XCTAssertNil(model.questionDraft(onAsk: "ask:2"), "only the head ask keeps progress")
+
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertEqual(model.questionDraft(onAsk: "ask:1"), picked, "the ask is still open")
+
+        source.card = card("ask:2")
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertNil(model.questionDraft(onAsk: "ask:1"), "the ask closed")
+
+        source.card = card("ask:1")
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertNil(model.questionDraft(onAsk: "ask:1"), "gone for good once closed")
+    }
+
     func testTheWorkingTreeIsAskedAboutOnceCurrentAndAgainWhenATurnEnds() async {
         let source = FakeChat(rows: [row("a", 1)], frame: frame(caughtUp: false))
         source.working = ReviewFixtures.frozen

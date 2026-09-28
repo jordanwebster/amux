@@ -1,3 +1,10 @@
+2026-09-28 — **A partly answered question card survives leaving the chat.**
+On the phone, the picks, typed answers, step and note on a multi-question
+card lived in the card's view, so leaving the chat and opening it again
+started the card over. They are now kept on the chat model beside the
+composer's draft, per ask, and dropped when that ask closes (a send that
+comes back refused finds them too).
+
 2026-09-28 — **The phone's model chip names the model as the settings card does.**
 The chip read the id the agent reports ("claude-opus-5-5") while the card
 listed the same model by its offered display name. Both now use one rule:
