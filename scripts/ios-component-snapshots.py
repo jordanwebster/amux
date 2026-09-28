@@ -22,7 +22,7 @@ TIMINGS = ARTIFACTS / "timing.json"
 PROJECT = "apps/apple/Amux.xcodeproj"
 SCHEME = "AmuxComponentSnapshots"
 TARGET = "AmuxComponentSnapshotTests"
-NEGATIVE_DEFAULT = "controls.primary"
+NEGATIVE_DEFAULT = "row.prompt"
 MISMATCH = "does not match reference"
 
 
