@@ -1,3 +1,13 @@
+2026-09-28 — **The contracts check compiles nothing the test run did not.**
+It built each package's named test targets on their own, with the
+features the test catalogue gives them. Cargo unifies features per build,
+so those sixteen builds needed 735 artifacts the workspace test build never
+makes; a warm local cache hid that (about 70 s), while the macOS runner,
+with only the workspace build cached, passed the check's 300 s bound
+before it listed anything. The check now lists the binaries of the same
+build the test run makes, `cargo test --workspace --features bundled
+--all-targets --no-run`, which is fresh by then: under a second here.
+
 2026-09-28 — **A revocation is not undone by an answer older than it.** A
 host that stops trusting this one says so as it closes the link, and a
 later stream it accepts takes that back. But a stream begun just before

@@ -51,7 +51,8 @@ system lane as well: the built `amux` binary's suites (`process`,
 and the `survive-daemon` system journey are ordinary test targets.
 `contracts-check` runs on the macOS test runner only, after the tests have
 built: the contracts name Unix-only tests and one macOS-only test, so only
-there does every named test exist.
+there does every named test exist. It lists the binaries of the test run's
+own build (the same Cargo arguments), so it compiles nothing more.
 
 The terminal journeys are `reach-host`,
 `conversation-decision-claude-pty`, `conversation-decision-claude-sdk`,
@@ -82,8 +83,8 @@ What the bounds were sized from, on a warm cache:
 | `windows-latest` | [36467514576](https://github.com/jordanwebster/amux/actions/runs/36467514576) | 239 s | 286 s | 11 min 41 s |
 
 Linux is the slowest clean test run: 601 s × 1.5 is 902 s, so the run's
-bound is 1000 s. The macOS job spends a further 168 s in `contracts-check`
-and still ends near 13 minutes, well inside the 30-minute guard. Windows
+bound is 1000 s. Every job ends near 13 minutes, well inside the 30-minute
+guard. Windows
 compiles out most of the slow suites (the embedded client, the supervisor,
 the system journeys, terminal Claude), so its clean run is under half of
 Linux's and does not move the bound. A cold cache, after a `Cargo.lock`

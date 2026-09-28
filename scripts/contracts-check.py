@@ -11,10 +11,11 @@ tests asserting it:
   swift:<Target>/<Class>/<method>   an XCTest method in a phone test bundle
   journey:<client>/<story>          a journey in journeys/manifest.json
 
-Cargo names are checked against the listing of the built test binaries,
-compiled with the features tests/catalog.toml gives their target, so the
-check runs on macOS, where every named test builds: some are Unix-only and
-one is macOS-only. XCTest names are read from the test bundles' sources,
+Cargo names are checked against the listing of the test binaries the
+workspace test run builds (`just test`, the same Cargo arguments), so a
+contract names a test that run executes, and after that run nothing is
+compiled again. The check runs on macOS, where every named test builds:
+some are Unix-only and one is macOS-only. XCTest names are read from the test bundles' sources,
 since building the bundles needs Xcode and a simulator.
 """
 
@@ -58,87 +59,80 @@ def parse_cargo(name: str) -> tuple[str, str, str, str] | None:
     return package, "test", target, path
 
 
-def catalog_features() -> dict[tuple[str, str, str], tuple[str, ...]]:
-    features: dict[tuple[str, str, str], tuple[str, ...]] = {}
+def catalog_targets() -> set[tuple[str, str, str]]:
+    targets: set[tuple[str, str, str]] = set()
     for suite in load(CATALOG)["suite"]:
         for selector in suite.get("cargo", []):
             kind = selector.get("kind", "test")
             for target in selector.get("targets", []):
-                key = (selector["package"], kind, target.replace("-", "_") if kind == "lib" else target)
-                features[key] = tuple(sorted(selector.get("features", [])))
-    return features
-
-
-def target_flags(kind: str, target: str) -> list[str]:
-    if kind == "lib":
-        return ["--lib"]
-    if kind == "bin":
-        return ["--bin", target]
-    return ["--test", target]
+                targets.add((selector["package"], kind, target.replace("-", "_") if kind == "lib" else target))
+    return targets
 
 
 def cargo_listing(
     wanted: set[tuple[str, str, str]],
-    features: dict[tuple[str, str, str], tuple[str, ...]],
+    catalogued: set[tuple[str, str, str]],
     errors: list[str],
 ) -> dict[tuple[str, str, str], set[str]]:
-    """Build the wanted test binaries and list the tests each one holds."""
-    groups: dict[tuple[str, tuple[str, ...]], list[tuple[str, str, str]]] = defaultdict(list)
-    for key in sorted(wanted):
-        if key not in features:
-            errors.append(
-                f"Cargo target {key[0]}/{key[1]}:{key[2]} is not in tests/catalog.toml, "
-                "so its features are unknown"
-            )
-            continue
-        groups[(key[0], features[key])].append(key)
-
+    """List the tests each wanted binary of the workspace test build holds."""
+    for key in sorted(wanted - catalogued):
+        errors.append(f"Cargo target {key[0]}/{key[1]}:{key[2]} is not in tests/catalog.toml")
     environment = dict(os.environ, AMUX_TEST_DISCOVERY_MODE="disabled")
+    # The compile phase of scripts/workspace-test.sh. Building packages one
+    # at a time instead unifies their features differently and recompiles
+    # hundreds of crates the test run has already built.
+    built = subprocess.run(
+        [
+            "cargo", "test", "--locked", "--workspace", "--features", "bundled",
+            "--all-targets", "--no-run", "--message-format=json",
+        ],
+        cwd=ROOT, text=True, capture_output=True, env=environment,
+    )
+    if built.returncode != 0:
+        errors.append(f"building the workspace tests failed:\n{built.stderr[-4000:]}")
+        return {}
+    packages = {
+        package["id"]: package["name"]
+        for package in json.loads(
+            subprocess.run(
+                ["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps"],
+                cwd=ROOT, text=True, capture_output=True, check=True,
+            ).stdout
+        )["packages"]
+    }
     listing: dict[tuple[str, str, str], set[str]] = {}
-    for (package, feature_set), keys in sorted(groups.items()):
-        command = ["cargo", "test", "--locked", "--no-run", "--message-format=json", "-p", package]
-        if feature_set:
-            command += ["--features", ",".join(feature_set)]
-        for _, kind, target in keys:
-            command += target_flags(kind, target)
-        built = subprocess.run(
-            command, cwd=ROOT, text=True, capture_output=True, env=environment
-        )
-        if built.returncode != 0:
-            errors.append(f"building {package} tests failed:\n{built.stderr[-4000:]}")
+    for line in built.stdout.splitlines():
+        if not line.startswith("{"):
             continue
-        for line in built.stdout.splitlines():
-            if not line.startswith("{"):
-                continue
-            message = json.loads(line)
-            if message.get("reason") != "compiler-artifact" or not message.get("executable"):
-                continue
-            if not message["profile"]["test"]:
-                continue
-            target = message["target"]
-            kinds = set(target["kind"])
-            kind = "test" if "test" in kinds else "bin" if "bin" in kinds else "lib"
-            key = (package, kind, target["name"])
-            if key not in keys:
-                continue
-            listed = subprocess.run(
-                [message["executable"], "--list", "--format", "terse"],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                env=environment,
-            )
-            if listed.returncode != 0:
-                errors.append(f"listing {package}/{kind}:{target['name']} failed:\n{listed.stderr[-2000:]}")
-                continue
-            listing[key] = {
-                line.rsplit(": ", 1)[0]
-                for line in listed.stdout.splitlines()
-                if line.endswith(": test")
-            }
-        for package, kind, target in keys:
-            if (package, kind, target) not in listing:
-                errors.append(f"building {package} made no test binary for {kind}:{target}")
+        message = json.loads(line)
+        if message.get("reason") != "compiler-artifact" or not message.get("executable"):
+            continue
+        if not message["profile"]["test"]:
+            continue
+        target = message["target"]
+        kinds = set(target["kind"])
+        kind = "test" if "test" in kinds else "bin" if "bin" in kinds else "lib"
+        key = (packages.get(message["package_id"], ""), kind, target["name"])
+        if key not in wanted:
+            continue
+        listed = subprocess.run(
+            [message["executable"], "--list", "--format", "terse"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            env=environment,
+        )
+        if listed.returncode != 0:
+            errors.append(f"listing {key[0]}/{kind}:{target['name']} failed:\n{listed.stderr[-2000:]}")
+            continue
+        listing[key] = {
+            line.rsplit(": ", 1)[0]
+            for line in listed.stdout.splitlines()
+            if line.endswith(": test")
+        }
+    for package, kind, target in sorted(wanted):
+        if (package, kind, target) not in listing:
+            errors.append(f"the workspace test build made no test binary for {package}/{kind}:{target}")
     return listing
 
 
@@ -209,7 +203,7 @@ def check(contracts: list[dict[str, Any]], errors: list[str]) -> None:
                 cargo[(package, kind, target)].add(path)
                 parsed.append((label, "cargo", split))
 
-    listing = cargo_listing(set(cargo), catalog_features(), errors)
+    listing = cargo_listing(set(cargo), catalog_targets(), errors)
     swift = swift_listing()
     journeys = journey_listing()
     for label, kind, name in parsed:
