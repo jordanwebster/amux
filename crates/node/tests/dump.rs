@@ -31,11 +31,15 @@ fn tree(root: &Path) -> Vec<(String, u64)> {
             if entry.file_type().unwrap().is_dir() {
                 stack.push(path);
             } else {
+                // Named with '/' whatever the platform's separator, as the
+                // assertions below spell them.
                 let name = path
                     .strip_prefix(root)
                     .unwrap()
-                    .to_string_lossy()
-                    .into_owned();
+                    .iter()
+                    .map(|part| part.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
                 files.push((name, entry.metadata().unwrap().len()));
             }
         }

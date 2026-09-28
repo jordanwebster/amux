@@ -275,7 +275,7 @@ async fn spawn_writes_spec_one_and_starts_the_agent_process() {
     );
     assert!(runtime.hello(id).is_some(), "the agent said Hello");
     assert!(
-        dir.join(agent_dir::TOOLS_SOCK).exists(),
+        listens(&dir.join(agent_dir::TOOLS_SOCK)).await,
         "the daemon listens on the agent's tools socket"
     );
 
@@ -328,7 +328,8 @@ async fn spawn_writes_spec_one_and_starts_the_agent_process() {
 
     kill_all(&runtime).await;
     assert!(
-        !dir.join(agent_dir::TOOLS_SOCK).exists(),
+        !listens(&dir.join(agent_dir::TOOLS_SOCK)).await
+            && !dir.join(agent_dir::TOOLS_SOCK).exists(),
         "the tools socket goes when the agent exits"
     );
     drop(runtime);
@@ -365,7 +366,11 @@ async fn stop_modes_end_the_process_and_record_why() {
         assert_eq!(stopped.lifecycle, Lifecycle::Exited as i32, "{mode:?}");
         assert_eq!(stopped.exit_cause.as_deref(), Some(cause), "{mode:?}");
         assert!(!node::locked(&dir), "{mode:?}: the lock is released");
-        assert!(!dir.join(agent_dir::TOOLS_SOCK).exists(), "{mode:?}");
+        assert!(
+            !listens(&dir.join(agent_dir::TOOLS_SOCK)).await
+                && !dir.join(agent_dir::TOOLS_SOCK).exists(),
+            "{mode:?}"
+        );
         assert!(!runtime.live().contains(&id), "{mode:?}");
         assert_eq!(
             runtime

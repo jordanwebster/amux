@@ -179,10 +179,10 @@ impl Writer {
         let path = segment_path(&dir, start);
         let bytes = fs::read(&path)?;
         let whole = whole_prefix(&bytes);
-        let file = OpenOptions::new().append(true).open(&path)?;
         if whole < bytes.len() {
-            file.set_len(whole as u64)?;
+            truncate(&path, whole as u64)?;
         }
+        let file = OpenOptions::new().append(true).open(&path)?;
         Ok(Self {
             dir,
             segment_size,
@@ -211,10 +211,10 @@ impl Writer {
         }
         let frame = encode_frame(step);
         if let Err(error) = self.write_frame_bytes(&frame) {
-            if let Some((start, file)) = &self.segment {
+            if let Some((start, _)) = &self.segment {
                 // Best effort: a disk too full to write may still truncate,
                 // and a failure here leaves a torn tail a reopen cuts off.
-                let _ = file.set_len(self.offset - start);
+                let _ = truncate(&segment_path(&self.dir, *start), self.offset - start);
             }
             return Err(error);
         }
@@ -260,6 +260,15 @@ impl Writer {
         self.offset += bytes.len() as u64;
         Ok(())
     }
+}
+
+/// Cuts the segment at `path` to `len` bytes, through a handle of its own.
+/// The writer's append handle cannot do it on Windows: append access there
+/// omits FILE_WRITE_DATA, which moving a file's end requires, so the call
+/// fails with access denied. The append handle, still open, writes at the
+/// new end.
+pub fn truncate(path: &Path, len: u64) -> io::Result<()> {
+    OpenOptions::new().write(true).open(path)?.set_len(len)
 }
 
 /// The length of the longest run of whole frames at the front of `bytes`.

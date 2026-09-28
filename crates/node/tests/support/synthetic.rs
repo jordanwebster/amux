@@ -11,7 +11,7 @@ use agent_dir::local_socket::{LocalListener, LocalStream};
 use journal::synthetic::SyntheticWriter;
 use node::{Launch, ProfileRuntime};
 use store::{AgentKey, AgentRow, Store as _};
-use tokio::io::{AsyncWriteExt, WriteHalf};
+use tokio::io::WriteHalf;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use wire::{
@@ -67,7 +67,24 @@ struct Live {
     _lock: agent_dir::Lock,
     accept: JoinHandle<()>,
     conn: Arc<tokio::sync::Mutex<Option<WriteHalf<LocalStream>>>>,
+    /// The task holding the current connection's read half.
+    reading: Arc<Mutex<Option<JoinHandle<()>>>>,
     hellos: Arc<AtomicUsize>,
+}
+
+impl Live {
+    /// Closes the current control connection whole: its write half and the
+    /// task holding its read half. Shutting the write half is not enough: a
+    /// named pipe has no half-close, so the daemon sees the connection end
+    /// only once neither half is open, as when a process's handles close.
+    async fn close_connection(&self) {
+        drop(self.conn.lock().await.take());
+        let reading = self.reading.lock().unwrap().take();
+        if let Some(reading) = reading {
+            reading.abort();
+            let _ = reading.await;
+        }
+    }
 }
 
 impl SyntheticAgent {
@@ -189,6 +206,7 @@ impl SyntheticAgent {
             .expect("nothing else holds the lock");
         let mut listener = LocalListener::bind(&self.dir.join(agent_dir::CTL_SOCK)).unwrap();
         let conn = Arc::new(tokio::sync::Mutex::new(None));
+        let reading = Arc::new(Mutex::new(None));
         let hellos = Arc::new(AtomicUsize::new(0));
         let id = self.id;
         let offset = self.journal().offset();
@@ -198,6 +216,7 @@ impl SyntheticAgent {
         let wedged = self.wedged.clone();
         let accept = tokio::spawn({
             let conn = conn.clone();
+            let reading = reading.clone();
             let hellos = hellos.clone();
             async move {
                 while let Ok(stream) = listener.accept().await {
@@ -221,7 +240,7 @@ impl SyntheticAgent {
                         inputs.clone(),
                     );
                     let mut wedged = wedged.subscribe();
-                    tokio::spawn(async move {
+                    let task = tokio::spawn(async move {
                         loop {
                             let frame = tokio::select! {
                                 biased;
@@ -243,6 +262,7 @@ impl SyntheticAgent {
                             answer_input(&input, &answer, &journal, &conn).await;
                         }
                     });
+                    *reading.lock().unwrap() = Some(task);
                 }
             }
         });
@@ -250,6 +270,7 @@ impl SyntheticAgent {
             _lock: lock,
             accept,
             conn,
+            reading,
             hellos,
         });
     }
@@ -285,19 +306,17 @@ impl SyntheticAgent {
     /// daemon dials again and gets a new Hello.
     pub async fn drop_connection(&self) {
         let live = self.live.as_ref().expect("a live agent");
-        if let Some(mut writer) = live.conn.lock().await.take() {
-            let _ = writer.shutdown().await;
-        }
+        live.close_connection().await;
     }
 
     /// The process dies: its connection closes and its lock is released.
     pub async fn die(&mut self) {
-        let Some(live) = self.live.take() else { return };
+        let Some(mut live) = self.live.take() else {
+            return;
+        };
         live.accept.abort();
-        let _ = live.accept.await;
-        if let Some(mut writer) = live.conn.lock().await.take() {
-            let _ = writer.shutdown().await;
-        }
+        let _ = (&mut live.accept).await;
+        live.close_connection().await;
         let _ = std::fs::remove_file(self.dir.join(agent_dir::CTL_SOCK));
     }
 }

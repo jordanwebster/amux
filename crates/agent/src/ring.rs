@@ -98,8 +98,10 @@ impl Ring {
     /// not count them as written. Best effort; a rotation since `offset`
     /// keeps what it wrote.
     pub fn undo(&mut self, offset: u64) {
-        let (start, file) = &self.segment;
-        if offset >= *start && file.set_len(offset - start).is_ok() {
+        let start = self.segment.0;
+        if offset >= start
+            && journal::truncate(&journal::segment_path(&self.dir, start), offset - start).is_ok()
+        {
             self.offset = offset;
         }
     }

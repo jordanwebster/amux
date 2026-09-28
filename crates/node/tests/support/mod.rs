@@ -207,6 +207,13 @@ pub async fn until(what: &str, mut done: impl AsyncFnMut() -> bool) {
     }
 }
 
+/// Whether something listens on the local socket named `path`. Dialled,
+/// not looked for: on Windows the socket is a named pipe and no file
+/// exists at its path.
+pub async fn listens(path: &Path) -> bool {
+    agent_dir::local_socket::connect(path).await.is_ok()
+}
+
 /// Kills every agent the runtime is running, so none outlives its test.
 pub async fn kill_all(runtime: &ProfileRuntime) {
     for id in runtime.live() {
