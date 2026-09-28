@@ -79,16 +79,14 @@ What the bounds were sized from, on a warm cache:
 | --- | --- | --- | --- | --- |
 | `ubuntu-latest` | [36448433638](https://github.com/jordanwebster/amux/actions/runs/36448433638) | 145 s | 601 s | 13 min 6 s |
 | `macos-latest` | [36448433638](https://github.com/jordanwebster/amux/actions/runs/36448433638) | 95 s | 449 s | 13 min 13 s |
-| `windows-latest` | [36448433638](https://github.com/jordanwebster/amux/actions/runs/36448433638) | 296 s | not clean | not clean |
+| `windows-latest` | [36467514576](https://github.com/jordanwebster/amux/actions/runs/36467514576) | 239 s | 286 s | 11 min 41 s |
 
 Linux is the slowest clean test run: 601 s × 1.5 is 902 s, so the run's
 bound is 1000 s. The macOS job spends a further 168 s in `contracts-check`
-and still ends near 13 minutes, well inside the 30-minute guard. That Windows
-run is not a measurement: its terminal-Claude tests, which Windows no longer
-runs, waited out their own timeouts until the run's bound cut it. Windows compiles out most of the slow suites (the embedded client, the
-supervisor, the system journeys), so its clean run is expected well under
-Linux's; the first clean Windows run replaces that row, and resizes the bound
-by the same rule if it is the slowest. A cold cache, after a `Cargo.lock`
+and still ends near 13 minutes, well inside the 30-minute guard. Windows
+compiles out most of the slow suites (the embedded client, the supervisor,
+the system journeys, terminal Claude), so its clean run is under half of
+Linux's and does not move the bound. A cold cache, after a `Cargo.lock`
 change, compiles the whole dependency graph and can take longer than these
 numbers.
 

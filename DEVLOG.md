@@ -1,3 +1,10 @@
+2026-09-28 — **Windows runs every test target clean.** With Windows
+sockets rebinding past lingering connections, the fake Codex view reading
+its console, and terminal Claude's suites Unix-only, the Windows test job
+finished clean for the first time: 239 s to compile, 286 s to run, 11 min
+41 s in all. docs/CI.md records it; Linux stays the slowest and sets the
+run bound.
+
 2026-09-28 — **A Codex message test waits for Codex to take the inject.**
 The agent accepts a parent's message to a Codex child when it writes
 `thread/inject_items`; Codex drains the item into the running turn only if
