@@ -15,7 +15,7 @@ use ratatui::text::Line;
 use ui_state::{Key, SessionState};
 use ui_view::{ChatOptions, Row, ToolRows, chat_rows, chat_rows_for};
 
-use super::rows::{RowState, row_lines};
+use super::rows::{OPEN_LINES, PATCH_HEAD_LINES, RowFacts, RowState, on_rail, row_lines};
 use crate::theme::Theme;
 
 /// Rows fetched per page, and the tail a chat opens with.
@@ -71,6 +71,7 @@ pub struct Frame<'a> {
     pub width: usize,
     pub height: usize,
     pub theme: Theme,
+    pub leader: char,
 }
 
 impl Frame<'_> {
@@ -85,13 +86,14 @@ impl Frame<'_> {
             .collect()
     }
 
-    /// The row for one held order, or None when it draws nothing here.
-    fn block(
+    /// The row drawn at one held order, as shown, with whether its subagent
+    /// parent is open; None when it draws nothing here.
+    fn shown(
         &self,
         state: &SessionState,
         order: u64,
         runs: &[RangeInclusive<u64>],
-    ) -> Option<Block> {
+    ) -> Option<(Row, bool)> {
         let transcript = state.transcript();
         let held = transcript.at(order)?;
         let opts = ChatOptions {
@@ -115,20 +117,71 @@ impl Frame<'_> {
             .parent
             .as_ref()
             .is_some_and(|parent| self.expanded.contains(parent));
-        let mut shown = row.clone();
+        let mut shown = row;
         if child_open {
             shown.collapsed = false;
         }
-        let expanded = self.expanded.contains(&row.id)
-            || row
+        if shown.collapsed || matches!(shown.kind, ui_view::RowKind::Hidden) {
+            return None;
+        }
+        Some((shown, child_open))
+    }
+
+    /// Whether the nearest row drawn beside `order`, older or newer, is a
+    /// tool row.
+    fn tool_beside(
+        &self,
+        state: &SessionState,
+        order: u64,
+        runs: &[RangeInclusive<u64>],
+        older: bool,
+    ) -> bool {
+        let beside = |held: &ui_state::Held| self.shown(state, held.item.order, runs);
+        let row = if older {
+            before(state, order).rev().find_map(beside)
+        } else {
+            after(state, order).find_map(beside)
+        };
+        row.is_some_and(|(row, _)| on_rail(&row))
+    }
+
+    /// The row for one held order, or None when it draws nothing here.
+    fn block(
+        &self,
+        state: &SessionState,
+        order: u64,
+        runs: &[RangeInclusive<u64>],
+    ) -> Option<Block> {
+        let (shown, child_open) = self.shown(state, order, runs)?;
+        let expanded = self.expanded.contains(&shown.id)
+            || shown
                 .run
                 .as_ref()
                 .is_some_and(|_| runs.iter().any(|span| span.contains(&order)));
-        let state = RowState {
-            focused: self.focus == Some(&row.id),
+        let tool = on_rail(&shown);
+        let joined = tool && self.tool_beside(state, order, runs, false);
+        let row_state = RowState {
+            focused: self.focus == Some(&shown.id),
             expanded,
+            rail: joined || (tool && self.tool_beside(state, order, runs, true)),
+            joined,
         };
-        let mut lines = row_lines(&shown, state, self.width, self.theme);
+        let mut facts = RowFacts {
+            leader: self.leader,
+            ..RowFacts::default()
+        };
+        if shown.run.as_ref().is_some_and(|run| run.is_summary) && !expanded {
+            facts.run_subjects = ui_view::run_subjects(state, order, 2);
+        }
+        if matches!(shown.kind, ui_view::RowKind::FileChange { .. }) {
+            let lines = if expanded {
+                OPEN_LINES
+            } else {
+                PATCH_HEAD_LINES
+            };
+            facts.patch = ui_view::patch_head(state, &shown.id, lines);
+        }
+        let mut lines = row_lines(&shown, row_state, &facts, self.width, self.theme);
         if child_open {
             for line in &mut lines {
                 line.spans.insert(0, "  ".into());
@@ -138,9 +191,9 @@ impl Frame<'_> {
             return None;
         }
         Some(Block {
-            key: row.id.clone(),
+            key: shown.id.clone(),
             order,
-            row,
+            row: shown,
             lines,
         })
     }

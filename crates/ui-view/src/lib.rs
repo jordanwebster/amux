@@ -32,8 +32,8 @@ pub use fleet::{
 pub use review::{DiffLine, FileStatus, Hunk, LineKind, ReviewDoc, ReviewFile, review_doc};
 pub use rows::{
     AnswerView, AskRow, ChatOptions, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow,
-    Granted, OUTPUT_HEAD_LINES, PlanVerdict, Resolution, Row, RowKind, RunInfo, ToolRows,
-    ToolStateView, chat_rows, chat_rows_for,
+    Granted, OUTPUT_HEAD_LINES, PatchHead, PatchLine, PlanVerdict, Resolution, Row, RowKind,
+    RunInfo, ToolRows, ToolStateView, chat_rows, chat_rows_for, patch_head, run_subjects,
 };
 pub use segments::{AttachmentView, Segment, segments};
 pub use settings::{

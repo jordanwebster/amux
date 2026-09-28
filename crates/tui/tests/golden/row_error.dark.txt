@@ -1,11 +1,11 @@
-  ✗ overloaded                                                                gave up after 10 tries
+  ✗ overloaded · gave up after 10 tries
     The API is overloaded; try again shortly.
 
   ✗ rate_limit
     Rate limited.
 
 --- styles
-..x.cccccccccc................................................................mmmmmmmmmmmmmmmmmmmmmm
+..x.ccccccccccmmmmmmmmmmmmmmmmmmmmmmmmm.............................................................
 ....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.......................................................
 ....................................................................................................
 ..x.cccccccccc......................................................................................

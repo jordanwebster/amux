@@ -1150,3 +1150,143 @@ fn terminal_claude_shows_what_it_reports_and_says_how_to_type_a_change() {
     assert!(!sdk.cycle_mode, "headless Claude picks its mode");
     assert_eq!(sdk.change_by_typing, None);
 }
+
+fn tool_item(
+    order: u64,
+    name: &str,
+    input: serde_json::Value,
+    outcome: serde_json::Value,
+    state: ToolState,
+) -> Item {
+    let class = if name == "Read" {
+        ToolClass::Exploration
+    } else {
+        ToolClass::Consequential
+    };
+    Item {
+        key: format!("k{order}"),
+        order,
+        revision: order,
+        kind: wire::kind_tag(Kind::ClaudeSdk).into(),
+        body: wire::ClaudeSdkItem {
+            kind: Some(wire::claude_sdk_item::Kind::Tool(wire::ToolCall {
+                name: name.into(),
+                input_json: input.to_string().into_bytes(),
+                outcome_json: outcome.to_string().into_bytes(),
+                state: state as i32,
+                class: class as i32,
+                ..Default::default()
+            })),
+        }
+        .encode_to_vec(),
+        at_ms: order as i64 * 1000,
+        ..Item::default()
+    }
+}
+
+/// A landed edit's patch head is its first lines, numbered on the side each
+/// belongs to, with the count of the rest; an edit still running has none.
+/// A collapsed run names its newest distinct subjects.
+#[test]
+fn a_landed_edit_shows_its_numbered_patch_head_and_a_run_its_newest_subjects() {
+    use serde_json::json;
+    let mut state = SessionState::new(agent(Kind::ClaudeSdk));
+    let edit = json!({"file_path": "src/retry.rs", "old_string": "x", "new_string": "y"});
+    let patch = json!({"structuredPatch": [{
+        "oldStart": 20, "newStart": 20,
+        "lines": [" fn retry() {", "-    sleep(1);", "+    sleep(delay);", "+    attempts += 1;", " }"],
+    }]});
+    page(
+        &mut state,
+        vec![
+            tool_item(
+                1,
+                "Read",
+                json!({"file_path": "src/a.rs"}),
+                json!({}),
+                ToolState::Succeeded,
+            ),
+            tool_item(
+                2,
+                "Read",
+                json!({"file_path": "src/b.rs"}),
+                json!({}),
+                ToolState::Succeeded,
+            ),
+            tool_item(
+                3,
+                "Read",
+                json!({"file_path": "src/c.rs"}),
+                json!({}),
+                ToolState::Succeeded,
+            ),
+            tool_item(4, "Edit", edit.clone(), patch, ToolState::Succeeded),
+            tool_item(5, "Edit", edit, json!({}), ToolState::Running),
+        ],
+        true,
+    );
+    let head = patch_head(&state, &"k4".to_owned(), 3).expect("the landed edit has a head");
+    let seen: Vec<(Option<u32>, LineKind, &str)> = head
+        .lines
+        .iter()
+        .map(|line| (line.number, line.kind, line.text.as_str()))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            (Some(20), LineKind::Context, "fn retry() {"),
+            (Some(21), LineKind::Removed, "    sleep(1);"),
+            (Some(21), LineKind::Added, "    sleep(delay);"),
+        ]
+    );
+    assert_eq!(head.more, 2);
+    assert_eq!(
+        patch_head(&state, &"k5".to_owned(), 3),
+        None,
+        "still running"
+    );
+    assert_eq!(patch_head(&state, &"k1".to_owned(), 3), None, "not an edit");
+    assert_eq!(run_subjects(&state, 3, 2), vec!["src/c.rs", "src/b.rs"]);
+
+    // Codex's patch is a unified diff, numbered from its hunk header.
+    let mut codex = SessionState::new(agent(Kind::Codex));
+    let change = |state: ToolState| {
+        Item {
+        key: "change".into(),
+        order: 1,
+        revision: 1,
+        kind: wire::kind_tag(Kind::Codex).into(),
+        body: wire::CodexItem {
+            kind: Some(wire::codex_item::Kind::Work(wire::Work {
+                of: Some(wire::work::Of::FileChange(wire::FileChangeWork {
+                    changes: vec![wire::FileChange {
+                        path: "lexer.rs".into(),
+                        patch: "diff --git a/lexer.rs b/lexer.rs\n--- a/lexer.rs\n+++ b/lexer.rs\n@@ -7,2 +7,2 @@\n-a\n+b\n c\n".into(),
+                        ..Default::default()
+                    }],
+                })),
+                state: state as i32,
+                ..Default::default()
+            })),
+        }
+        .encode_to_vec(),
+        ..Item::default()
+    }
+    };
+    page(&mut codex, vec![change(ToolState::Succeeded)], true);
+    let head = patch_head(&codex, &"change".to_owned(), 10).unwrap();
+    let seen: Vec<(Option<u32>, LineKind)> = head
+        .lines
+        .iter()
+        .map(|line| (line.number, line.kind))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            (Some(7), LineKind::Removed),
+            (Some(7), LineKind::Added),
+            (Some(8), LineKind::Context),
+        ]
+    );
+    assert_eq!(head.more, 0);
+}

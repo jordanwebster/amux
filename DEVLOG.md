@@ -1,3 +1,22 @@
+2026-09-28 — **Terminal chat rows hang off a rail again.** Consecutive tool
+rows (exploration, commands, tool-server calls, file changes, background
+commands, subagents) share a `│` rail in the gutter with no blank line
+between them; a lone tool row stands on its own, and a blank line ends a
+run. The layout decides both from the drawn neighbours, so heights stay
+exact. Every row is one line — glyph, verb, subject in the code face, then
+` · ` meta — and a command's output or a call's result hangs under it with
+`└`. A collapsed exploration names its last two subjects and the expand key
+(`⌄ 3 reads · src/b.rs, src/c.rs · C-a o expand`). A landed file edit shows
+the first lines of its patch under its line, numbered and in the diff
+colours, with how many more and `C-a o` to open the rest; ui-view gains
+`patch_head` (Claude's structured patch or edit strings, Codex's unified
+diff) and `run_subjects` for this, without changing the row values the
+phone builds. The composer's keys now include `C-a r review` and, where the
+agent's mode can change from here, `shift+tab mode` at the right: Shift+Tab
+sends terminal Claude its own cycle key, and moves a headless Claude or
+Codex to the next offered mode that still asks before acting. The activity
+line names a running call's subject in the code face.
+
 2026-09-28 — **The terminal fleet is dense again.** The fleet draws inside a
 frame titled amux, as it did before the rearchitecture: a header with the
 agent count (and how many need you), then one row per agent on a column

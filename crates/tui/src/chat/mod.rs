@@ -116,6 +116,8 @@ pub struct ChatView {
     /// Why the agent's host is away when it is, kept current by the app
     /// from the fleet.
     pub away: Away,
+    /// The leader key, for the keys the chat names.
+    pub leader: char,
     epoch: u64,
     opened_at_ms: i64,
     /// The last frame's layout, for scrolling and focus.
@@ -142,6 +144,7 @@ impl ChatView {
             review_open: false,
             attach,
             away: Away::Plain,
+            leader: 'a',
             epoch: 0,
             opened_at_ms: now_ms,
             laid: Laid::default(),
@@ -160,6 +163,7 @@ impl ChatView {
             width: self.feed.0,
             height: self.feed.1,
             theme,
+            leader: self.leader,
         }
     }
 
@@ -351,6 +355,11 @@ impl ChatView {
             }
             KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => self.submit(state),
             KeyCode::Char('v') if ctrl => vec![ChatEffect::Paste],
+            KeyCode::BackTab if state.composer() == Composer::Send => next_mode(state)
+                .and_then(|change| ui_view::setting_input(state.kind(), &change))
+                .map(ChatEffect::Answer)
+                .into_iter()
+                .collect(),
             KeyCode::Up if self.editor.on_first_line() && !Self::tray_rows(state).is_empty() => {
                 self.tray = Some(Self::tray_rows(state).len() - 1);
                 vec![]
@@ -801,7 +810,7 @@ impl ChatView {
                     );
                     cursor = Some((bottom.len() + at.0, at.1));
                     bottom.extend(lines);
-                    hint = composer_hint(state, &self.editor, self.away, width, theme);
+                    hint = composer_hint(state, &self.editor, self.away, self.leader, width, theme);
                 }
             }
             None => {
@@ -825,7 +834,9 @@ impl ChatView {
                             push(&mut line, row.hint(), theme.muted(), width);
                             line
                         }
-                        None => composer_hint(state, &self.editor, self.away, width, theme),
+                        None => {
+                            composer_hint(state, &self.editor, self.away, self.leader, width, theme)
+                        }
                     };
                 }
             }
@@ -1042,40 +1053,91 @@ fn composer_hint(
     state: &SessionState,
     editor: &Editor,
     away: Away,
+    leader: char,
     width: usize,
     theme: Theme,
 ) -> Line<'static> {
-    let working = state.phase() == PhaseView::Working;
-    hint_line(&state.composer(), away, working, editor, width, theme)
+    let keys = HintKeys {
+        working: state.phase() == PhaseView::Working,
+        leader,
+        mode: next_mode(state).is_some(),
+    };
+    hint_line(&state.composer(), away, keys, editor, width, theme)
 }
 
-/// The keys under the composer, for its mode and draft.
+/// What the keys under the composer depend on beyond its mode and draft.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HintKeys {
+    pub working: bool,
+    pub leader: char,
+    /// Shift+Tab changes the agent's mode.
+    pub mode: bool,
+}
+
+/// The keys under the composer, for its mode and draft, with the mode key
+/// at the right while the composer sends.
 pub(crate) fn hint_line(
     composer: &Composer,
     away: Away,
-    working: bool,
+    keys: HintKeys,
     editor: &Editor,
     width: usize,
     theme: Theme,
 ) -> Line<'static> {
+    let review = format!("C-{} r review", keys.leader);
     let words = match composer {
-        Composer::Send if working => "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop",
-        Composer::Send if editor.is_empty() => {
-            "enter send · ctrl+j newline · ctrl+v attach · ? help"
+        Composer::Send if keys.working => {
+            "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop".to_owned()
         }
-        Composer::Send => "enter send · ctrl+j newline · ctrl+v attach",
-        Composer::Resume => "enter resume with this message · ctrl+j newline",
+        Composer::Send if editor.is_empty() => {
+            format!("enter send · ctrl+j newline · ctrl+v attach · {review} · ? help")
+        }
+        Composer::Send => format!("enter send · ctrl+j newline · ctrl+v attach · {review}"),
+        Composer::Resume => "enter resume with this message · ctrl+j newline".to_owned(),
         Composer::Disabled(Waiting::Detached) if away == Away::SignedOut => {
-            "draft kept · sending waits until this machine signs in"
+            "draft kept · sending waits until this machine signs in".to_owned()
         }
         Composer::Disabled(Waiting::Detached) if away == Away::Revoked => {
-            "draft kept · sending waits until you pair again"
+            "draft kept · sending waits until you pair again".to_owned()
         }
-        Composer::Disabled(_) => "draft kept · sending waits",
+        Composer::Disabled(_) => "draft kept · sending waits".to_owned(),
     };
     let mut line = Line::from(Span::raw("  "));
-    push(&mut line, words, theme.muted(), width);
+    let mode = if keys.mode && *composer == Composer::Send {
+        "shift+tab mode"
+    } else {
+        ""
+    };
+    let room = width.saturating_sub(text::str_width(mode) + 3);
+    push(&mut line, words, theme.muted(), room);
+    push_right(&mut line, mode, theme.muted(), width.saturating_sub(1));
     line
+}
+
+/// The mode Shift+Tab moves the agent to: its own next mode where the
+/// agent only cycles, else the next offered mode that still asks before
+/// acting. None where the mode cannot change from here.
+pub(crate) fn next_mode(state: &SessionState) -> Option<ui_view::SettingChange> {
+    let view = ui_view::settings(state);
+    if view.cycle_mode {
+        return Some(ui_view::SettingChange::CycleMode);
+    }
+    if view.mode_refusal.is_some() {
+        return None;
+    }
+    let offered: Vec<&ui_view::ModeChoice> = view
+        .modes
+        .iter()
+        .filter(|mode| !mode.reported && (!mode.stops_asking || mode.current))
+        .collect();
+    if offered.len() < 2 {
+        return None;
+    }
+    let next = offered
+        .iter()
+        .position(|mode| mode.current)
+        .map_or(0, |at| (at + 1) % offered.len());
+    Some(ui_view::SettingChange::Mode(offered[next].value.clone()))
 }
 
 /// The ask card's lines on the panel surface, edge to edge.

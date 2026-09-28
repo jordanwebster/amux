@@ -16,9 +16,10 @@ use ratatui::widgets::Paragraph;
 use ui_state::{Activity, ActivityKind, Composer, Waiting};
 use ui_view::{
     AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CardState, Choice, ChoiceOutcome,
-    ContextView, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, OptionView,
-    OutboxRow, OutboxState, PlanVerdict, QuestionView, QueuedRow, Resolution, Row, RowKind,
-    RunInfo, Scope, Segment, ServerView, SignInView, Strip, TasksView, ToolStateView, UsageView,
+    ContextView, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, LineKind,
+    OptionView, OutboxRow, OutboxState, PatchHead, PatchLine, PlanVerdict, QuestionView, QueuedRow,
+    Resolution, Row, RowKind, RunInfo, Scope, Segment, ServerView, SignInView, Strip, TasksView,
+    ToolStateView, UsageView,
 };
 use wire::{BlobRef, BoundaryKind, EnvelopeKind, SendState, SignInState};
 
@@ -27,8 +28,8 @@ use crate::chat::composer::{
     TrayRow, activity_line, editor_lines, foot_cards, placeholder, strip_line,
 };
 use crate::chat::review::ReviewPage;
-use crate::chat::rows::{RowState, row_lines};
-use crate::chat::{hint_line, on_panel};
+use crate::chat::rows::{RowFacts, RowState, on_rail, row_lines};
+use crate::chat::{HintKeys, hint_line, on_panel};
 use crate::editor::Editor;
 use crate::theme::Theme;
 
@@ -105,10 +106,19 @@ pub fn components(theme: Theme) -> Vec<Component> {
         });
     };
     for (name, shows, rows) in row_sets() {
-        let lines = rows
-            .iter()
-            .flat_map(|(row, state)| row_lines(row, *state, w, theme))
-            .collect();
+        let mut lines = Vec::new();
+        // Consecutive tool rows share the rail, as a chat draws them.
+        for (i, (row, state)) in rows.iter().enumerate() {
+            let tool = on_rail(row);
+            let older = i > 0 && on_rail(&rows[i - 1].0);
+            let newer = rows.get(i + 1).is_some_and(|(next, _)| on_rail(next));
+            let state = RowState {
+                rail: tool && (older || newer),
+                joined: tool && newer,
+                ..*state
+            };
+            lines.extend(row_lines(row, state, &facts(row), w, theme));
+        }
         add(name, shows, lines);
     }
     add(
@@ -145,7 +155,12 @@ pub fn components(theme: Theme) -> Vec<Component> {
             theme,
         );
         lines.insert(0, Line::default());
-        lines.push(hint_line(&composer, away, false, &editor, w, theme));
+        let keys = HintKeys {
+            working: false,
+            leader: 'a',
+            mode: true,
+        };
+        lines.push(hint_line(&composer, away, keys, &editor, w, theme));
         add(name, shows, lines);
     }
     out.push(Component {
@@ -249,15 +264,60 @@ fn text(words: &str) -> Vec<Segment> {
 const CLOSED: RowState = RowState {
     focused: false,
     expanded: false,
+    rail: false,
+    joined: false,
 };
 const OPEN: RowState = RowState {
     focused: false,
     expanded: true,
+    rail: false,
+    joined: false,
 };
 const FOCUSED: RowState = RowState {
     focused: true,
     expanded: false,
+    rail: false,
+    joined: false,
 };
+
+/// What the layout would look up for an authored row: a collapsed run's
+/// newest subjects, and the first edit's landed patch.
+fn facts(row: &Row) -> RowFacts {
+    let mut facts = RowFacts::default();
+    if row.run.as_ref().is_some_and(|run| run.is_summary) {
+        facts.run_subjects = vec![
+            "crates/store/src/lib.rs".into(),
+            "crates/tui/src/app.rs".into(),
+        ];
+    }
+    if let RowKind::FileChange { files, state } = &row.kind
+        && *state == ToolStateView::Succeeded
+        && files
+            .first()
+            .is_some_and(|file| file.path == "crates/tui/src/fleet.rs")
+    {
+        let line = |number, kind, text: &str| PatchLine {
+            number: Some(number),
+            kind,
+            text: text.into(),
+        };
+        facts.patch = Some(PatchHead {
+            lines: vec![
+                line(
+                    41,
+                    LineKind::Context,
+                    "    fn redraw(&mut self, frame: &mut Frame) {",
+                ),
+                line(42, LineKind::Removed, "        self.paint_all(frame);"),
+                line(42, LineKind::Added, "        if self.dirty {"),
+                line(43, LineKind::Added, "            self.paint_all(frame);"),
+                line(44, LineKind::Added, "        }"),
+            ],
+            more: 10,
+        });
+    }
+    facts
+}
 
 fn decided(mut row: Row, outcome: DecisionView, scope: Option<&str>, note: Option<&str>) -> Row {
     row.decision = Some(Decision {

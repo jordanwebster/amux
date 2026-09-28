@@ -1221,3 +1221,204 @@ pub(crate) fn patch_counts(patch: &str) -> (u32, u32) {
     }
     (added, removed)
 }
+
+/// One line of a landed edit's patch, numbered on the side it belongs to
+/// (the new file for context and added lines, the old for removed ones)
+/// when the provider said where its hunk starts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PatchLine {
+    pub number: Option<u32>,
+    pub kind: crate::review::LineKind,
+    pub text: String,
+}
+
+/// The head of a landed file change: its first file's first lines, and
+/// how many lines of that file's patch follow them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PatchHead {
+    pub lines: Vec<PatchLine>,
+    pub more: usize,
+}
+
+/// The first `max` lines of the patch a landed file change made, for a
+/// chat to show under its row; None for a row that changed no file, has
+/// not landed, or carries no patch.
+pub fn patch_head(state: &SessionState, key: &Key, max: usize) -> Option<PatchHead> {
+    let held = state.transcript().get(key)?;
+    let lines = match &held.body {
+        ItemBody::ClaudePty(wire::claude_pty_item::Kind::Tool(tool))
+        | ItemBody::ClaudeSdk(wire::claude_sdk_item::Kind::Tool(tool)) => {
+            if state_view(tool.state) != ToolStateView::Succeeded {
+                return None;
+            }
+            claude_patch(tool)?
+        }
+        ItemBody::Codex(wire::codex_item::Kind::Work(work)) => {
+            if state_view(work.state) != ToolStateView::Succeeded {
+                return None;
+            }
+            match &work.of {
+                Some(wire::work::Of::FileChange(change)) => {
+                    unified_lines(&change.changes.first()?.patch)
+                }
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    if lines.is_empty() {
+        return None;
+    }
+    let more = lines.len().saturating_sub(max);
+    Some(PatchHead {
+        lines: lines.into_iter().take(max).collect(),
+        more,
+    })
+}
+
+fn claude_patch(tool: &ToolCall) -> Option<Vec<PatchLine>> {
+    use crate::review::LineKind;
+    if !matches!(
+        tool.name.as_str(),
+        "Edit" | "MultiEdit" | "NotebookEdit" | "Write"
+    ) {
+        return None;
+    }
+    let out: Value = serde_json::from_slice(&tool.outcome_json).unwrap_or(Value::Null);
+    if let Some(hunks) = out.get("structuredPatch").and_then(Value::as_array)
+        && !hunks.is_empty()
+    {
+        let mut lines = Vec::new();
+        for hunk in hunks {
+            let start = |name: &str| hunk.get(name).and_then(Value::as_u64).map(|n| n as u32);
+            let (mut old, mut new) = (start("oldStart"), start("newStart"));
+            for line in hunk
+                .get("lines")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                lines.push(numbered(line, &mut old, &mut new));
+            }
+        }
+        return Some(lines);
+    }
+    let input = input(tool);
+    if tool.name == "Write" {
+        return Some(
+            field(&input, "content")
+                .lines()
+                .enumerate()
+                .map(|(i, text)| PatchLine {
+                    number: Some(i as u32 + 1),
+                    kind: LineKind::Added,
+                    text: text.to_owned(),
+                })
+                .collect(),
+        );
+    }
+    let edits = input
+        .get("edits")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_else(|| vec![input.clone()]);
+    let mut lines = Vec::new();
+    for edit in &edits {
+        for (name, kind) in [
+            ("old_string", LineKind::Removed),
+            ("new_string", LineKind::Added),
+        ] {
+            lines.extend(field(edit, name).lines().map(|text| PatchLine {
+                number: None,
+                kind,
+                text: text.to_owned(),
+            }));
+        }
+    }
+    Some(lines)
+}
+
+/// One patch line, numbered from the running old and new positions.
+fn numbered(line: &str, old: &mut Option<u32>, new: &mut Option<u32>) -> PatchLine {
+    use crate::review::LineKind;
+    let (kind, text) = match line.chars().next() {
+        Some('+') => (LineKind::Added, &line[1..]),
+        Some('-') => (LineKind::Removed, &line[1..]),
+        Some(' ') => (LineKind::Context, &line[1..]),
+        _ => (LineKind::Context, line),
+    };
+    let number = if kind == LineKind::Removed {
+        *old
+    } else {
+        *new
+    };
+    let step = |at: &mut Option<u32>| {
+        if let Some(at) = at.as_mut() {
+            *at += 1;
+        }
+    };
+    match kind {
+        LineKind::Removed => step(old),
+        LineKind::Added => step(new),
+        LineKind::Context => {
+            step(old);
+            step(new);
+        }
+    }
+    PatchLine {
+        number,
+        kind,
+        text: text.to_owned(),
+    }
+}
+
+/// The body lines of a unified diff, numbered from its hunk headers.
+fn unified_lines(patch: &str) -> Vec<PatchLine> {
+    let mut lines = Vec::new();
+    let (mut old, mut new) = (None, None);
+    for line in patch.lines() {
+        if let Some(header) = line.strip_prefix("@@ ") {
+            let start = |sign: char| {
+                header
+                    .split_whitespace()
+                    .find_map(|part| part.strip_prefix(sign))
+                    .and_then(|range| range.split(',').next()?.parse().ok())
+            };
+            (old, new) = (start('-'), start('+'));
+            continue;
+        }
+        if line.starts_with("diff --git")
+            || line.starts_with("index ")
+            || line.starts_with("--- ")
+            || line.starts_with("+++ ")
+            || line.starts_with('\\')
+            || line.starts_with("new file")
+            || line.starts_with("deleted file")
+        {
+            continue;
+        }
+        lines.push(numbered(line, &mut old, &mut new));
+    }
+    lines
+}
+
+/// The subjects of the newest `n` members of the run whose summary sits at
+/// `order`, newest first: what a collapsed run names beside its counts.
+pub fn run_subjects(state: &SessionState, order: u64, n: usize) -> Vec<String> {
+    let transcript = state.transcript();
+    let Some(run) = transcript.run_at(order) else {
+        return Vec::new();
+    };
+    let mut subjects: Vec<String> = Vec::new();
+    for held in transcript.range(run.oldest..=run.newest).rev() {
+        let subject = subject_of(held);
+        if !subject.is_empty() && !subjects.contains(&subject) {
+            subjects.push(subject);
+        }
+        if subjects.len() == n {
+            break;
+        }
+    }
+    subjects
+}

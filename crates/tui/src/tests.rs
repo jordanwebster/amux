@@ -241,6 +241,74 @@ fn a_run_collapses_to_its_summary_and_expands_by_item_key() {
     assert!(!screen.contains("src/file2.rs"), "{screen}");
 }
 
+/// A lone tool row stands on its own; consecutive ones hang off one rail
+/// in the gutter with no blank line between them, and a blank line ends
+/// the run.
+#[test]
+fn consecutive_tool_rows_share_the_rail_and_a_lone_one_has_none() {
+    let mut items = replies(1, 1);
+    items.extend((2..=4).map(|order| item(order, Some(&format!("src/file{order}.rs")))));
+    items.extend(replies(5, 5));
+    let state = chat(items);
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (screen, _) = feed(&mut view, &state);
+    let summary = screen
+        .lines()
+        .find(|line| line.contains("3 reads"))
+        .expect(&screen);
+    assert!(summary.starts_with("  ⌄ 3 reads"), "{screen}");
+    assert!(
+        summary.contains("src/file3.rs, src/file4.rs · C-a o expand"),
+        "the last two subjects, oldest first: {screen}"
+    );
+
+    view.expanded.insert("k4".into());
+    let (screen, _) = feed(&mut view, &state);
+    let lines: Vec<&str> = screen.lines().collect();
+    let first = lines
+        .iter()
+        .position(|line| line.contains("src/file2.rs"))
+        .expect(&screen);
+    for (at, order) in (2..=4).enumerate() {
+        let line = lines[first + at];
+        assert!(
+            line.starts_with("│ ") && line.contains(&format!("src/file{order}.rs")),
+            "{screen}"
+        );
+    }
+    let after = &lines[first + 3..];
+    let end = after
+        .iter()
+        .position(|line| !line.starts_with('│'))
+        .expect(&screen);
+    assert!(
+        after[end].trim().is_empty(),
+        "a blank line ends the run: {screen}"
+    );
+    assert!(after[end + 1].contains("reply number 5"), "{screen}");
+}
+
+/// Shift+Tab moves a headless Claude to the next mode that still asks
+/// before acting, and the composer names the key.
+#[test]
+fn shift_tab_sends_the_next_mode_that_still_asks() {
+    let state = chat(replies(1, 1));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(screen.contains("shift+tab mode"), "{screen}");
+    let effects = view.key(&state, key(KeyCode::BackTab), theme());
+    let [ChatEffect::Answer(input)] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let Some(wire::input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+        of: Some(wire::claude_sdk_input::Of::Mode(mode)),
+    })) = &input.of
+    else {
+        panic!("{input:?}");
+    };
+    assert_ne!(mode.mode, "bypassPermissions");
+}
+
 // --- asks ------------------------------------------------------------------
 
 fn body_name(body: &AskBody) -> &'static str {
@@ -1537,11 +1605,8 @@ fn a_question_mark_types_into_a_review_comment() {
 }
 
 fn row_text(row: &ui_view::Row) -> String {
-    let state = crate::chat::rows::RowState {
-        focused: false,
-        expanded: false,
-    };
-    crate::chat::rows::row_lines(row, state, 100, theme())
+    let state = crate::chat::rows::RowState::default();
+    crate::chat::rows::row_lines(row, state, &Default::default(), 100, theme())
         .iter()
         .map(|line| {
             line.spans

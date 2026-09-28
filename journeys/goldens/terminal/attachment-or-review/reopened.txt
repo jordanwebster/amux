@@ -31,4 +31,4 @@
 
 
 ▎ Message reviewer
-  enter send · ctrl+j newline · ctrl+v attach · ? help
+  enter send · ctrl+j newline · ctrl+v attach · C-a r review · ? help                          shift+tab mode

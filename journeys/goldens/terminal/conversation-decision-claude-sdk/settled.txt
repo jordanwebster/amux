@@ -22,8 +22,8 @@
 
 ▎   Check the deployment once.
 
-  ✔ Ran deploy --check                                                                           <t> · allowed
-    deploy check: ok
+  ✔ Ran deploy --check · <t> · allowed
+    └ deploy check: ok
 
     The deploy check passed.
 
@@ -31,4 +31,4 @@
 
 
 ▎ Message decision-sdk
-  enter send · ctrl+j newline · ctrl+v attach · ? help
+  enter send · ctrl+j newline · ctrl+v attach · C-a r review · ? help                          shift+tab mode

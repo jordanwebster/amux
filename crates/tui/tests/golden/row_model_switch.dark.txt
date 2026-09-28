@@ -1,5 +1,5 @@
-  ⇄ Switched to gpt-5-mini                                                               usage limit
+  ⇄ Switched to gpt-5-mini · usage limit
 
 --- styles
-..m.eeeeeeeeeee.cccccccccc...............................................................mmmmmmmmmmm
+..m.eeeeeeeeeee.ccccccccccmmmmmmmmmmmmmm............................................................
 ....................................................................................................

@@ -24,13 +24,24 @@ pub fn activity_line(
     let frames = ['◐', '◓', '◑', '◒'];
     let glyph = frames[((activity.elapsed_ms / 1_000) % 4) as usize];
     let elapsed = text::duration(activity.elapsed_ms - activity.elapsed_ms % 1_000);
+    let mut line = Line::from(Span::styled(format!("  {glyph} "), theme.accent()));
+    // A running call names its subject in the code face, as its row does.
+    if let (ActivityKind::Running { .. }, Some(subject)) = (&activity.kind, running)
+        && !subject.is_empty()
+    {
+        let tail = format!(" · {elapsed}");
+        let room =
+            width.saturating_sub(text::str_width(&tail) + text::str_width("ctrl+x stop") + 2);
+        push(&mut line, "Running ", theme.muted(), room);
+        push(&mut line, subject, theme.code(), room);
+        push(&mut line, tail, theme.muted(), width);
+        push_right(&mut line, "ctrl+x stop", theme.muted(), width);
+        return line;
+    }
     let words = match &activity.kind {
         ActivityKind::Working => format!("Working · {elapsed}"),
         ActivityKind::Thinking => format!("Thinking · {elapsed}"),
-        ActivityKind::Running { .. } => match running {
-            Some(subject) if !subject.is_empty() => format!("Running {subject} · {elapsed}"),
-            _ => format!("Running · {elapsed}"),
-        },
+        ActivityKind::Running { .. } => format!("Running · {elapsed}"),
         ActivityKind::Subagents { count } => format!(
             "{count} subagent{} working · {elapsed}",
             if *count == 1 { "" } else { "s" }
@@ -43,7 +54,6 @@ pub fn activity_line(
         } if *max_attempts > 0 => format!("Retrying · attempt {attempt} of {max_attempts}"),
         ActivityKind::Retrying { attempt, .. } => format!("Retrying · attempt {attempt}"),
     };
-    let mut line = Line::from(Span::styled(format!("  {glyph} "), theme.accent()));
     push(&mut line, words, theme.muted(), width);
     push_right(&mut line, "ctrl+x stop", theme.muted(), width);
     line

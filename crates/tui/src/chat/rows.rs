@@ -1,13 +1,14 @@
-//! Chat rows as terminal lines. Each row hangs off the rail with a glyph,
-//! a verb, a subject and meta on the right; rows that open show their
-//! detail below when the reader expands them. Wording lives here; the
-//! facts come from `ui_view::Row`.
+//! Chat rows as terminal lines. Each row is one line of glyph, verb, subject
+//! and ` · ` meta; consecutive tool rows hang off one rail in the gutter,
+//! and rows that open show their detail below when the reader expands
+//! them. Wording lives here; the facts come from `ui_view::Row`.
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_view::{
     AnswerView, AskRow, AttachmentView, Decision, DecisionView, ExploreVerb, FileChangeView,
-    PlanVerdict, QuestionView, Resolution, Row, RowKind, RunInfo, Segment, ToolStateView,
+    LineKind, PatchHead, PlanVerdict, QuestionView, Resolution, Row, RowKind, RunInfo, Segment,
+    ToolStateView,
 };
 use wire::{BoundaryKind, EnvelopeKind, SendState};
 
@@ -18,22 +19,80 @@ use crate::theme::Theme;
 /// Where body text starts.
 const INDENT: usize = 4;
 /// Lines of an opened body before it is cut with a count.
-const OPEN_LINES: usize = 40;
+pub const OPEN_LINES: usize = 40;
+/// Lines of a landed edit's patch shown under its row until it is opened.
+pub const PATCH_HEAD_LINES: usize = 5;
 
-/// How the reader has this row.
+/// How the reader has this row, and where it sits among its neighbours.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RowState {
     pub focused: bool,
     /// The row is open, or its run is expanded.
     pub expanded: bool,
+    /// A tool row beside another: it hangs off the rail in the gutter.
+    pub rail: bool,
+    /// The next row continues the rail, so no blank line separates them.
+    pub joined: bool,
+}
+
+/// What a row shows beyond its own view value, looked up by the layout.
+#[derive(Clone, Debug)]
+pub struct RowFacts {
+    /// A collapsed run's newest subjects, newest first.
+    pub run_subjects: Vec<String>,
+    /// A landed file change's patch head.
+    pub patch: Option<PatchHead>,
+    /// The leader key, for the keys a row names.
+    pub leader: char,
+}
+
+impl Default for RowFacts {
+    fn default() -> Self {
+        RowFacts {
+            run_subjects: Vec::new(),
+            patch: None,
+            leader: 'a',
+        }
+    }
+}
+
+/// Whether a row is a tool row: one that joins its neighbours' rail.
+pub fn on_rail(row: &Row) -> bool {
+    matches!(
+        row.kind,
+        RowKind::Explore { .. }
+            | RowKind::Command { .. }
+            | RowKind::ToolCall { .. }
+            | RowKind::FileChange { .. }
+            | RowKind::Background { .. }
+            | RowKind::Subagent { .. }
+    )
 }
 
 /// The lines one row draws at `width`, its trailing blank separator
-/// included. A row the view marks collapsed draws nothing.
-pub fn row_lines(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    let mut lines = body(row, state, width, theme);
+/// included unless the next row joins its rail. A row the view marks
+/// collapsed draws nothing.
+pub fn row_lines(
+    row: &Row,
+    state: RowState,
+    facts: &RowFacts,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = body(row, state, facts, width, theme);
     if lines.is_empty() {
         return lines;
+    }
+    if state.rail {
+        for line in &mut lines {
+            if let Some(first) = line.spans.first_mut()
+                && first.content.starts_with(' ')
+            {
+                let rest = first.content[1..].to_owned();
+                *first = Span::styled(rest, first.style);
+                line.spans.insert(0, Span::styled("│", theme.muted()));
+            }
+        }
     }
     let bar = if state.focused {
         Some(Span::styled("▌", theme.focus_bar()))
@@ -47,14 +106,16 @@ pub fn row_lines(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<
         for line in &mut lines {
             if let Some(first) = line.spans.first_mut() {
                 let mut chars = first.content.chars();
-                if matches!(chars.next(), Some(' ' | '▎')) {
+                if matches!(chars.next(), Some(' ' | '▎' | '│')) {
                     *first = Span::styled(chars.as_str().to_owned(), first.style);
                 }
             }
             line.spans.insert(0, bar.clone());
         }
     }
-    lines.push(Line::default());
+    if !state.joined {
+        lines.push(Line::default());
+    }
     lines
 }
 
@@ -101,7 +162,8 @@ fn state_glyph(state: ToolStateView, done: &'static str, theme: Theme) -> (&'sta
     }
 }
 
-/// "  ✔ Ran  cargo test                         exit 101 · 4.2s"
+/// "  ✔ Ran cargo test · exit 101 · 4.2s": the subject gives way first, so
+/// the meta always shows.
 fn head(
     glyph: (&str, Style),
     verb: &str,
@@ -113,19 +175,42 @@ fn head(
     let mut line = Line::from(Span::raw("  "));
     push(&mut line, glyph.0, glyph.1, width);
     push(&mut line, " ", theme.text(), width);
-    let meta_room = if meta.is_empty() {
-        0
+    let meta = if meta.is_empty() {
+        String::new()
+    } else if subject.is_empty() && verb.is_empty() {
+        meta.to_owned()
     } else {
-        text::str_width(meta) + 2
+        format!(" · {meta}")
     };
-    let room = width.saturating_sub(meta_room);
+    let room = width.saturating_sub(text::str_width(&meta));
     if !verb.is_empty() {
         push(&mut line, verb, theme.emphasis(), room);
-        push(&mut line, " ", theme.text(), room);
+        if !subject.is_empty() {
+            push(&mut line, " ", theme.text(), room);
+        }
     }
     push(&mut line, subject, theme.code(), room);
-    push_right(&mut line, meta, theme.muted(), width);
+    push(&mut line, meta, theme.muted(), width);
     line
+}
+
+/// Detail hung under a tool row: "└ " before its first line.
+fn hung(text: &str, width: usize, style: Style, limit: usize, theme: Theme) -> Vec<Line<'static>> {
+    hang(detail(text, width.saturating_sub(2), style, limit, theme))
+}
+
+/// Puts the hook before the first of these indented lines and aligns the
+/// rest under its text.
+fn hang(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut line)| {
+            let hook = if i == 0 { "└ " } else { "  " };
+            line.spans.insert(1, Span::raw(hook));
+            line
+        })
+        .collect()
 }
 
 /// Indented body lines, cut with a count past `limit`.
@@ -354,21 +439,39 @@ fn resolution_glyph(resolution: Resolution, theme: Theme) -> (&'static str, Styl
     }
 }
 
-fn body(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'static>> {
+fn body(
+    row: &Row,
+    state: RowState,
+    facts: &RowFacts,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
     if row.collapsed {
         return Vec::new();
     }
     let open = state.expanded;
     if let Some(run) = row.run.as_ref().filter(|run| run.is_summary && !open) {
-        let meta = format!("{} · …{}", run_summary(run), tail(&run.anchor, 32));
-        return vec![head(
-            ("⌄", theme.muted()),
-            "Explored",
-            "",
-            &meta,
-            width,
-            theme,
-        )];
+        // "⌄ 2 reads · 1 search · sync/config.rs, sync/client.rs · C-a o expand"
+        let mut line = Line::from(Span::raw("  "));
+        push(&mut line, "⌄ ", theme.muted(), width);
+        push(&mut line, run_summary(run), theme.text(), width);
+        let hint = format!(" · C-{} o expand", facts.leader);
+        let room = width.saturating_sub(text::str_width(&hint));
+        let mut subjects: Vec<String> = facts
+            .run_subjects
+            .iter()
+            .rev()
+            .map(|subject| tail(subject, 40))
+            .collect();
+        if subjects.is_empty() && !run.anchor.is_empty() {
+            subjects.push(tail(&run.anchor, 40));
+        }
+        if !subjects.is_empty() {
+            push(&mut line, " · ", theme.muted(), room);
+            push(&mut line, subjects.join(", "), theme.code(), room);
+        }
+        push(&mut line, hint, theme.muted(), width);
+        return vec![line];
     }
     match &row.kind {
         RowKind::Prompt { text, steered } => {
@@ -461,7 +564,7 @@ fn body(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'sta
                 theme,
             )];
             if open && !result.is_empty() {
-                lines.extend(detail(result, width, theme.muted(), OPEN_LINES, theme));
+                lines.extend(hung(result, width, theme.muted(), OPEN_LINES, theme));
             }
             lines
         }
@@ -503,6 +606,12 @@ fn body(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'sta
                     width,
                     theme,
                 ));
+                // The landed patch is the first file's, under its line.
+                if i == 0
+                    && let Some(patch) = &facts.patch
+                {
+                    lines.extend(patch_lines(patch, open, facts.leader, width, theme));
+                }
             }
             if lines.is_empty() {
                 lines.push(head(
@@ -548,21 +657,25 @@ fn body(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'sta
             } else {
                 theme.muted()
             };
-            for out in output_head {
-                let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
-                push(&mut line, out, style, width);
-                lines.push(line);
-            }
+            let mut out: Vec<Line<'static>> = output_head
+                .iter()
+                .map(|out| {
+                    let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
+                    push(&mut line, out, style, width.saturating_sub(2));
+                    line
+                })
+                .collect();
             if *more_lines > 0 {
                 let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
                 push(
                     &mut line,
                     format!("··· {more_lines} more lines"),
                     theme.muted(),
-                    width,
+                    width.saturating_sub(2),
                 );
-                lines.push(line);
+                out.push(line);
             }
+            lines.extend(hang(out));
             lines
         }
         RowKind::Explore {
@@ -625,7 +738,7 @@ fn body(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'sta
                 lines.push(line);
             } else if !answer.is_empty() {
                 let limit = if open { OPEN_LINES } else { 2 };
-                lines.extend(detail(answer, width, theme.muted(), limit, theme));
+                lines.extend(hung(answer, width, theme.muted(), limit, theme));
             }
             lines
         }
@@ -859,12 +972,62 @@ fn body(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'sta
     }
 }
 
+/// A landed edit's patch under its row: numbered lines in the diff
+/// colours, then how much more there is and the key that opens it.
+fn patch_lines(
+    patch: &PatchHead,
+    open: bool,
+    leader: char,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let digits = patch
+        .lines
+        .iter()
+        .filter_map(|line| line.number)
+        .max()
+        .map_or(0, |n| n.to_string().len());
+    let mut lines = Vec::new();
+    for line in &patch.lines {
+        let (sign, style) = match line.kind {
+            LineKind::Added => ("+", theme.diff_added()),
+            LineKind::Removed => ("-", theme.diff_removed()),
+            LineKind::Context => (" ", theme.diff_context()),
+        };
+        let number = line
+            .number
+            .map(|n| format!("{n:>digits$}"))
+            .unwrap_or_else(|| " ".repeat(digits));
+        let mut out = Line::from(Span::raw(" ".repeat(INDENT)));
+        if digits > 0 {
+            push(&mut out, format!("{number} │ "), theme.muted(), width);
+        }
+        push(&mut out, format!("{sign}{}", line.text), style, width);
+        lines.push(out);
+    }
+    if patch.more > 0 {
+        let mut out = Line::from(Span::raw(" ".repeat(INDENT)));
+        let words = if open {
+            format!("··· {} more lines", patch.more)
+        } else {
+            format!("··· {} more lines · C-{leader} o open", patch.more)
+        };
+        push(&mut out, words, theme.muted(), width);
+        lines.push(out);
+    }
+    lines
+}
+
+/// The end of `text` in at most `max` characters, "…" marking a cut.
 fn tail(text: &str, max: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     if chars.len() <= max {
         return text.to_owned();
     }
-    chars[chars.len() - max..].iter().collect()
+    let kept: String = chars[chars.len() - max.saturating_sub(1)..]
+        .iter()
+        .collect();
+    format!("…{kept}")
 }
 
 fn rule(words: &str, width: usize, theme: Theme) -> Line<'static> {

@@ -283,7 +283,8 @@ impl App {
                         let terminal = self.fleet.state().agent(&agent).is_some_and(|entry| {
                             self.config.attach && terminal_refusal(entry, &self.config).is_none()
                         });
-                        let view = ChatView::new(agent.agent.clone(), now_ms(), terminal);
+                        let mut view = ChatView::new(agent.agent.clone(), now_ms(), terminal);
+                        view.leader = self.config.leader;
                         self.fleet_view.select(agent.clone());
                         self.chat = Some(OpenChat {
                             session,
@@ -904,6 +905,10 @@ fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
             "queued and unconfirmed messages: send now, withdraw, resend, discard".into(),
         ),
         ("ctrl+x", "stop the turn; the agent stays".into()),
+        (
+            "shift+tab",
+            "the agent's next mode, where it has one to move to".into(),
+        ),
         (
             "pgup / pgdn, wheel",
             "scroll; ctrl+end follows the newest".into(),

@@ -1,5 +1,5 @@
-  ? Unreadable system/hook_progress                                         a hook reported progress
+  ? Unreadable system/hook_progress · a hook reported progress
 
 --- styles
-..m.eeeeeeeeee.cccccccccccccccccccc.........................................mmmmmmmmmmmmmmmmmmmmmmmm
+..m.eeeeeeeeee.ccccccccccccccccccccmmmmmmmmmmmmmmmmmmmmmmmmmmm......................................
 ....................................................................................................

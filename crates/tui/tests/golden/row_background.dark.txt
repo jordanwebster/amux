@@ -1,9 +1,7 @@
-  ◷ In background npm run dev                                                                running
-
-  ◷ In background cargo watch                                                               finished
+│ ◷ In background npm run dev · running
+│ ◷ In background cargo watch · finished
 
 --- styles
-..m.eeeeeeeeeeeee.ccccccccccc................................................................mmmmmmm
-....................................................................................................
-..m.eeeeeeeeeeeee.ccccccccccc...............................................................mmmmmmmm
+m.m.eeeeeeeeeeeee.cccccccccccmmmmmmmmmm.............................................................
+m.m.eeeeeeeeeeeee.cccccccccccmmmmmmmmmmm............................................................
 ....................................................................................................
