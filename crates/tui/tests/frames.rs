@@ -533,10 +533,8 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
             && phase(&runner) == Some(wire::Phase::Working)
             && phase(&scout) == Some(wire::Phase::Idle)
             && phase(planner.as_bytes()) == Some(wire::Phase::Idle)
-            && exited(&specs.agent_id).is_some_and(|(lifecycle, cause)| {
-                eprintln!("DIAG {cause:?}");
-                lifecycle == wire::Lifecycle::Exited
-            })
+            && exited(&specs.agent_id)
+                .is_some_and(|(lifecycle, _)| lifecycle == wire::Lifecycle::Exited)
             && exited(&crasher).is_some_and(|(lifecycle, _)| lifecycle == wire::Lifecycle::Exited)
             && fleet
                 .hosts()
