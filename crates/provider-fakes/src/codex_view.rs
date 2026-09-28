@@ -12,7 +12,6 @@ use std::sync::mpsc;
 
 enum Event {
     Bytes(Vec<u8>),
-    #[cfg_attr(not(unix), allow(dead_code))]
     Resized,
     Ended,
 }
@@ -118,8 +117,22 @@ fn signals(tx: mpsc::Sender<Event>) {
             }
         });
     });
-    #[cfg(not(unix))]
-    let _ = tx;
+    // A console signals nothing on a resize: the fake looks at its size
+    // often enough that a test waiting for the new one sees it.
+    #[cfg(windows)]
+    std::thread::spawn(move || {
+        let mut drawn = crate::pty::size_line();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let size = crate::pty::size_line();
+            if size != drawn {
+                drawn = size;
+                if tx.send(Event::Resized).is_err() {
+                    return;
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]

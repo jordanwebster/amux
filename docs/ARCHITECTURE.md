@@ -374,8 +374,12 @@ The code builds and its tests run on Windows in CI, but a Unix primitive is
 nicer in several places, and Windows pays for each:
 
 - **Local sockets.** `ctl.sock`, `pty.sock`, `tools.sock`, `hooks.sock`, the
-  profile socket and the front door are named pipes whose names hash the
-  path ([`agent_dir::local_socket`](../crates/agent-dir/src/local_socket.rs)).
+  profile socket and the front door are named pipes. Each bind makes a fresh
+  pipe and writes its name into the file at the socket's path, because a pipe
+  lives on while any connection to it is open and a successor could not take
+  its name; a path already in the pipe namespace, like the front door's
+  default, is that pipe
+  ([`agent_dir::local_socket`](../crates/agent-dir/src/local_socket.rs)).
 - **Process groups.** Agents start with `CREATE_NEW_PROCESS_GROUP` and
   `DETACHED_PROCESS`; a kill ends the process tree with `taskkill /F /T`.
 - **Terminals.** Pseudo-terminals are ConPTY, through `portable-pty` in

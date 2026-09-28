@@ -17,6 +17,9 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
+
 [[bin]]
 name = "fake-claude-sdk"
 path = "src/bin/fake_claude_sdk.rs"

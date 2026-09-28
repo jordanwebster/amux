@@ -6,8 +6,11 @@
 //! it is too long for `sockaddr_un`, which agent directories under a deep
 //! data directory easily are; then the socket is reached through a short
 //! symbolic link to its directory in a per-user runtime directory, so the
-//! file still lives at its path. On Windows it is a pipe whose name is a
-//! hash of the path. Both ends derive the same address from the same path.
+//! file still lives at its path. On Windows the file at the path names a
+//! pipe that each bind makes afresh: a pipe lives on while any connection to
+//! it is open, so a successor could not take its predecessor's name, just as
+//! a Unix bind replaces the file and leaves old connections to finish. A
+//! path already in the pipe namespace is that pipe itself.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -226,6 +229,7 @@ mod imp {
     use std::io;
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
     use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
@@ -235,6 +239,9 @@ mod imp {
     /// ERROR_PIPE_BUSY: every instance is taken; another comes shortly.
     const PIPE_BUSY: i32 = 231;
 
+    /// Binds made by this process, so no two of its pipes share a name.
+    static BINDS: AtomicU64 = AtomicU64::new(0);
+
     pub struct Listener {
         name: String,
         next: NamedPipeServer,
@@ -242,11 +249,22 @@ mod imp {
 
     impl Listener {
         pub fn bind(path: &Path) -> io::Result<Self> {
-            let name = pipe_name(path);
+            let name = direct(path).unwrap_or_else(|| pipe_name(path));
+            // First instance: a name someone else already holds is refused,
+            // never joined.
             let next = ServerOptions::new()
                 .first_pipe_instance(true)
                 .reject_remote_clients(true)
                 .create(&name)?;
+            if direct(path).is_some() {
+                return Ok(Self { name, next });
+            }
+            // Named once the pipe listens, and replaced whole, so a client
+            // reads either the old name or this one.
+            let mut staged = path.as_os_str().to_owned();
+            staged.push(format!(".{}-{}", std::process::id(), bind_number()));
+            std::fs::write(&staged, &name)?;
+            std::fs::rename(&staged, path)?;
             Ok(Self { name, next })
         }
 
@@ -260,10 +278,17 @@ mod imp {
         }
     }
 
-    pub fn unbind(_path: &Path) {}
+    pub fn unbind(path: &Path) {
+        if direct(path).is_none() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 
     pub async fn connect(path: &Path) -> io::Result<LocalStream> {
-        let name = pipe_name(path);
+        let name = match direct(path) {
+            Some(name) => name,
+            None => std::fs::read_to_string(path)?,
+        };
         loop {
             match ClientOptions::new().open(&name) {
                 Ok(client) => return Ok(Box::new(client)),
@@ -275,13 +300,33 @@ mod imp {
         }
     }
 
+    /// A path already in the pipe namespace (the front door's default,
+    /// `\\.\pipe\amux-<user>`) is that pipe; no file can stand there.
+    fn direct(path: &Path) -> Option<String> {
+        let path = path.to_str()?;
+        path.get(..9)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\.\pipe\"))
+            .then(|| path.to_owned())
+    }
+
+    fn bind_number() -> u64 {
+        BINDS.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Unique among live pipes: the path's hash for whoever reads a pipe
+    /// list, then this process and its count of binds.
     fn pipe_name(path: &Path) -> String {
         let wide: Vec<u8> = path
             .as_os_str()
             .encode_wide()
             .flat_map(u16::to_le_bytes)
             .collect();
-        format!(r"\\.\pipe\amux-{:016x}", fnv(&wide))
+        format!(
+            r"\\.\pipe\amux-{:016x}-{}-{}",
+            fnv(&wide),
+            std::process::id(),
+            bind_number()
+        )
     }
 }
 
@@ -333,5 +378,57 @@ mod tests {
 
         let short = root.path().join("m.sock");
         assert_eq!(unix_private_address(&short).unwrap(), short);
+    }
+}
+
+#[cfg(test)]
+mod rebind {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+
+    async fn echo_once(listener: &mut LocalListener) -> LocalStream {
+        let mut stream = listener.accept().await.unwrap();
+        let mut byte = [0u8; 1];
+        stream.read_exact(&mut byte).await.unwrap();
+        stream.write_all(&byte).await.unwrap();
+        stream
+    }
+
+    async fn ask(stream: &mut LocalStream, byte: u8) -> u8 {
+        stream.write_all(&[byte]).await.unwrap();
+        let mut answer = [0u8; 1];
+        stream.read_exact(&mut answer).await.unwrap();
+        answer[0]
+    }
+
+    /// A successor binds the path while a connection to its predecessor is
+    /// still open: new clients reach the successor, and the old connection
+    /// stays whole until its ends close it.
+    #[tokio::test]
+    async fn a_path_rebinds_while_a_predecessors_connection_is_open() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("ctl.sock");
+
+        let mut first = LocalListener::bind(&path).unwrap();
+        let (served, mut old) = tokio::join!(echo_once(&mut first), async {
+            let mut client = connect(&path).await.unwrap();
+            assert_eq!(ask(&mut client, 1).await, 1);
+            client
+        });
+        drop(first);
+
+        let mut second = LocalListener::bind(&path).expect("the path rebinds");
+        let (_new_served, _new) = tokio::join!(echo_once(&mut second), async {
+            let mut client = connect(&path).await.unwrap();
+            assert_eq!(ask(&mut client, 2).await, 2);
+            client
+        });
+
+        let mut served = served;
+        let mut byte = [0u8; 1];
+        old.write_all(&[3]).await.unwrap();
+        served.read_exact(&mut byte).await.unwrap();
+        assert_eq!(byte, [3], "the old connection still carries bytes");
     }
 }

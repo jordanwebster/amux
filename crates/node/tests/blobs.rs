@@ -112,7 +112,13 @@ async fn get_blob_reads_a_replica_file_and_put_blob_refuses_a_replica() {
     let install = Install::new();
     let daemon = install.start("boot-1", quiet_launch()).await;
     let runtime = runtime(&daemon, &install);
-    let (peer, agent) = (Uuid::new_v4(), Uuid::new_v4());
+    // A replica exists only of a trusted host: the daemon drops every
+    // other host's replicas when it starts, which can land after the row.
+    let elsewhere = Install::new();
+    let peer_daemon = elsewhere.start("boot-1", quiet_launch()).await;
+    let peer_edge = support::runtime(&peer_daemon, &elsewhere).edge().unwrap();
+    runtime.edge().unwrap().trust(&peer_edge).await.unwrap();
+    let (peer, agent) = (peer_edge.host_id(), Uuid::new_v4());
     let key = AgentKey::new(peer.as_bytes().to_vec(), agent.as_bytes().to_vec());
     runtime
         .store()
@@ -152,6 +158,8 @@ async fn get_blob_reads_a_replica_file_and_put_blob_refuses_a_replica() {
     assert!(matches!(refused, BlobError::NotOwn), "{refused}");
     drop(runtime);
     daemon.shutdown().await.unwrap();
+    drop(peer_edge);
+    peer_daemon.shutdown().await.unwrap();
 }
 
 /// A full disk cannot be arranged portably; a directory where the file must

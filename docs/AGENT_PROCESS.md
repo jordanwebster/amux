@@ -70,7 +70,8 @@ agents/<agent id>/
 Unix socket address is bound through a short symbolic link in a per-user
 runtime directory, so the file still appears at its path; both ends derive
 the same address from the same path (`agent_dir::local_socket`). On Windows
-each socket is a named pipe whose name is a hash of the path.
+each socket is a named pipe made afresh by every bind, and the file at the
+path holds its name.
 
 ## Starting
 

@@ -1,3 +1,19 @@
+2026-09-28 — **A Windows socket can be bound again while an old connection
+lives.** On Windows a local socket was a named pipe named by a hash of its
+path and created as the pipe's first instance. A pipe exists while any
+connection to it is open, so binding the same path again (an agent's next
+incarnation, its tools socket after a resume) failed with "Access is
+denied" whenever something still held a connection to the old one. Each
+bind now makes a fresh pipe and writes its name into the file at the path,
+which clients read; a path already in the pipe namespace, like the front
+door's default, is that pipe. This mirrors Unix, where a bind replaces the
+socket file and old connections finish on their own. The fake Codex view
+now reads its console size and notices resizes on Windows, and puts the
+console in raw mode, so a Codex attach test sees the size it set. A node
+blob test planted a replica of a host the profile never trusted, which the
+daemon's first replication pass rightly drops; on a slow runner that pass
+landed after the row. The replica now belongs to a trusted host.
+
 2026-09-28 — **Component snapshots photograph a settled screen.** The iOS
 gate's component snapshots of `chat.new-activity.dark` and
 `chat.changes.light` failed on the CI runner in the header's glass buttons.
