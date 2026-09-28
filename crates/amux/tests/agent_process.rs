@@ -343,11 +343,15 @@ impl Log {
         })
     }
 
-    /// Boundaries in order, as `KIND` or `KIND cause`.
+    /// Boundaries in order, as `KIND` or `KIND cause`. A boundary revised in
+    /// place (headless Claude's, drawn above the first prompt before its init
+    /// fills it in) is one boundary, counted where it was first written.
     fn boundaries(&self) -> Vec<String> {
+        let mut seen = std::collections::BTreeSet::new();
         self.0
             .iter()
             .flat_map(|step| step.items.iter())
+            .filter(|item| seen.insert(item.key.clone()))
             .filter_map(boundary)
             .collect()
     }
