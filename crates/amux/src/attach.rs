@@ -145,6 +145,10 @@ fn terminal_size() -> (u16, u16) {
 struct Screen {
     parser: vt100::Parser,
     live: bool,
+    /// What the agent drew before the terminal first went live, written
+    /// as-is when it does. The connection is read from the moment it is
+    /// held, and its first read is the agent's history.
+    unshown: Option<Vec<u8>>,
 }
 
 impl Screen {
@@ -154,6 +158,8 @@ impl Screen {
             let mut out = io::stdout().lock();
             let _ = out.write_all(bytes);
             let _ = out.flush();
+        } else if let Some(unshown) = &mut self.unshown {
+            unshown.extend_from_slice(bytes);
         }
     }
 }
@@ -178,6 +184,7 @@ impl Held {
         let screen = Arc::new(Mutex::new(Screen {
             parser: vt100::Parser::new(rows, cols, 0),
             live: false,
+            unshown: Some(Vec::new()),
         }));
         let (typed, receiver) = mpsc::unbounded_channel();
         let (ended_tx, ended) = watch::channel(None);
@@ -240,14 +247,17 @@ async fn passthrough(held: &Held, leader: &LeaderKey, returning: bool) -> Result
     {
         let mut screen = held.screen.lock().unwrap();
         screen.parser.set_size(rows, cols);
+        let unshown = screen.unshown.take();
+        let mut out = io::stdout().lock();
         if returning {
             // The fleet drew over the terminal: put back the agent's screen
             // as the model holds it, with the modes it had switched on.
-            let mut out = io::stdout().lock();
             let _ = out.write_all(b"\x1b[H\x1b[2J");
             let _ = out.write_all(&screen.parser.screen().state_formatted());
-            let _ = out.flush();
+        } else if let Some(unshown) = unshown {
+            let _ = out.write_all(&unshown);
         }
+        let _ = out.flush();
         screen.live = true;
     }
     let _ = held.typed.send(Typed::Resize(rows, cols));
