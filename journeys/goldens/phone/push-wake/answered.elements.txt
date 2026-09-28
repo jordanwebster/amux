@@ -10,8 +10,8 @@ home.row.<bystander> | bystander, Get ready., Idle, desk, /tmp/amux-phone-journe
 home.row.<bystander>.age.volatile | <volatile>
 home.row.<bystander>.detail.volatile | <volatile>
 chat |  | asker | 0,62,402,778
-chat.row.prompt | Get ready. |  | 18,132,366,40
-chat.row.boundary | Started |  | 18,184,366,16
+chat.row.boundary | Started |  | 18,132,366,16
+chat.row.prompt | Get ready. |  | 18,160,366,40
 chat.row.prose | Ready to deploy. | final | 18,211,366,20
 chat.prose.render |  | rendered | 18,211,366,20
 chat.row.turn-end | <volatile>
@@ -54,8 +54,8 @@ you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
  | asker, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | Get ready. |  | 281,132,103,40
- | Started |  | 18,184,366,16
+ | Started |  | 18,132,366,16
+ | Get ready. |  | 281,160,103,40
  | Ready to deploy. |  | 18,211,366,20
  | Worked <t> · $0.00 |  | 45,243,130,16
  | Deploy it. |  | 287,271,97,40
