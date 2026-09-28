@@ -1,3 +1,11 @@
+2026-09-28 — **`amux pair` catches its end signals before pairing opens.**
+The SIGINT/SIGTERM/SIGHUP listeners were installed only after the
+invitation printed, so a signal in between took the default action and left
+pairing mode open until it expired (refusing the next `amux pair`); the
+pairing test, which signals as soon as it reads the PIN line, raced the
+install. They are now installed before pairing mode is asked for. The test
+passed 20 runs in a row under six `yes` loops.
+
 2026-09-28 — **The phone's accessibility audit walks live pages again.**
 The audit asked the door for fixture states this build no longer draws, so
 `just ios accessibility` could not pass while the journeys manifest leaned

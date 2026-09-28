@@ -71,6 +71,11 @@ pub async fn wait(mut door: Door, profile: &ProfileInfo, qr: bool, link: bool) -
     } else {
         start_pairing_request::Mode::Pin
     };
+    // Listening before pairing mode opens: a signal between the invitation
+    // and the wait would otherwise end the command with pairing left open.
+    // One that arrives while it opens is kept and closes it at once.
+    let ended = ended()?;
+    tokio::pin!(ended);
     let started = door
         .start_pairing(ProfileStartPairingRequest {
             operation_id: operation(),
@@ -100,8 +105,6 @@ pub async fn wait(mut door: Door, profile: &ProfileInfo, qr: bool, link: bool) -
     }
     let ttl = Duration::from_secs(started.ttl_seconds);
     let deadline = tokio::time::Instant::now() + ttl;
-    let ended = ended()?;
-    tokio::pin!(ended);
     loop {
         tokio::select! {
             () = &mut ended => return cancel(door, profile).await,
