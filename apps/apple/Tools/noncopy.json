@@ -7,7 +7,7 @@
       {"literal": "\"context-band\"", "context": "case contextBand = \"context-band\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorHost.swift": [
-      {"literal": "\"nothing scrolls there\"", "context": "guard let list = view as? UIScrollView else { return .error(\"nothing scrolls there\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"nothing scrolls there\"", "context": "guard let list = VisibleTree.list(in: window) else { return .error(\"nothing scrolls there\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"up\"", "context": "case \"up\": y = max(top, list.contentOffset.y - page)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"down\"", "context": "case \"down\": y = min(bottom, list.contentOffset.y + page)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"top\"", "context": "case \"top\": y = top", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -1427,7 +1427,7 @@
       {"literal": "\"\\($0)\"", "context": ".identified(\"chat.settings\", value: kind.map { \"\\($0)\" })", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.settings.typing\"", "context": "if let typing = view.changeByTyping { sentence(typing, id: \"chat.settings.typing\") }", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.settings.model.\\(choice.value)\"", "context": "id: \"chat.settings.model.\\(choice.value)\",", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.settings.model\"", "context": "fact(current.displayName.isEmpty ? current.value : current.displayName, id: \"chat.settings.model\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.settings.model\"", "context": "fact(ChatWords.model(current), id: \"chat.settings.model\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.settings.model.refusal\"", "context": "if let refusal = view.modelRefusal { sentence(refusal, id: \"chat.settings.model.refusal\") }", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.settings.effort\"", "context": "fact(current.value, id: \"chat.settings.effort\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.settings.effort.refusal\"", "context": "if let refusal = view.effortRefusal { sentence(refusal, id: \"chat.settings.effort.refusal\") }", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
