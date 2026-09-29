@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
@@ -12,9 +12,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ui_state::{AgentKey, Attention, Connection, FleetState};
 use ui_view::{FleetCard, FleetRow, fleet_list};
-use wire::{Kind, Presence, Trust};
+use wire::{Attachment, Kind, Presence, Trust};
 
 use crate::editor::Editor;
+use crate::home::{self, Home};
 use crate::hosts;
 use crate::text::{self, pad_to, push, push_right};
 use crate::theme::Theme;
@@ -27,6 +28,13 @@ pub enum FleetEffect {
     Attach(AgentKey),
     Create {
         kind: Kind,
+    },
+    /// Create an agent with its first prompt, and open its chat or stay.
+    Start {
+        kind: Kind,
+        text: String,
+        attachments: Vec<Attachment>,
+        open: bool,
     },
     Rename {
         agent: AgentKey,
@@ -57,7 +65,7 @@ enum Overlay {
     },
 }
 
-const KINDS: [(Kind, &str); 3] = [
+pub(crate) const KINDS: [(Kind, &str); 3] = [
     (Kind::ClaudePty, "Claude (terminal)"),
     (Kind::ClaudeSdk, "Claude (SDK)"),
     (Kind::Codex, "Codex"),
@@ -75,6 +83,16 @@ pub struct FleetView {
     /// This build's version, and the host whose daemon it talks to.
     pub version: String,
     pub local_host: Vec<u8>,
+    /// Where a new agent works, as the person would write it.
+    pub working_dir: String,
+    /// Home as redesigned; drawn instead of the framed grid while the
+    /// design variant says so.
+    pub home: Home,
+}
+
+/// Whether home is the redesigned one.
+fn redesigned() -> bool {
+    crate::variant::get() == 1
 }
 
 fn kind_word(kind: Kind) -> &'static str {
@@ -99,19 +117,29 @@ impl FleetView {
     }
 
     pub fn selected(&self) -> Option<&AgentKey> {
+        if redesigned() {
+            return self.home.selected_agent();
+        }
         self.selected.as_ref()
     }
 
     pub fn select(&mut self, agent: AgentKey) {
+        self.home.select(agent.clone());
         self.selected = Some(agent);
     }
 
     /// Whether a text field has the keys and holds something, for Ctrl+C.
     pub fn field_text(&self) -> bool {
+        if redesigned() {
+            return self.home.field_text();
+        }
         matches!(&self.overlay, Some(Overlay::Rename { editor, .. }) if !editor.is_empty())
     }
 
     pub fn kill_field(&mut self) -> bool {
+        if redesigned() {
+            return self.home.kill_field();
+        }
         match &mut self.overlay {
             Some(Overlay::Rename { editor, .. }) => editor.kill_all(),
             _ => false,
@@ -121,6 +149,10 @@ impl FleetView {
     /// A bracketed paste types into the rename field; nothing else in the
     /// fleet takes text. A name is one line.
     pub fn paste(&mut self, text: &str) {
+        if redesigned() {
+            self.home.paste(text);
+            return;
+        }
         if let Some(Overlay::Rename { editor, .. }) = &mut self.overlay {
             let parts: Vec<&str> = text
                 .split(['\r', '\n'])
@@ -133,6 +165,9 @@ impl FleetView {
     /// One key: an open overlay's first, so `q` and `?` quit and help only
     /// from the list.
     pub fn key(&mut self, fleet: &FleetState, key: KeyEvent) -> Vec<FleetEffect> {
+        if redesigned() {
+            return self.home.key(fleet, key, self.attach);
+        }
         if let Some(overlay) = self.overlay.take() {
             return self.overlay_key(overlay, key);
         }
@@ -280,6 +315,19 @@ impl FleetView {
         }
     }
 
+    /// The framed grid answers only the wheel, which it ignores.
+    pub fn mouse(&mut self, fleet: &FleetState, event: MouseEvent) -> Vec<FleetEffect> {
+        if redesigned() {
+            return self.home.mouse(fleet, event, self.attach);
+        }
+        vec![]
+    }
+
+    /// Whether the screen moves with time while nothing else changes.
+    pub fn animating(&self, fleet: &FleetState) -> bool {
+        redesigned() && self.home.animating(fleet)
+    }
+
     pub fn draw(
         &mut self,
         paint: &mut Paint<'_>,
@@ -289,6 +337,16 @@ impl FleetView {
         now_ms: i64,
         theme: Theme,
     ) {
+        if redesigned() {
+            let place = home::Place {
+                local_host: &self.local_host,
+                working_dir: &self.working_dir,
+                attach: self.attach,
+            };
+            self.home
+                .draw(paint, area, fleet, footer, now_ms, theme, &place);
+            return;
+        }
         let width = usize::from(area.width);
         let height = usize::from(area.height);
         // Inside the frame's two borders.

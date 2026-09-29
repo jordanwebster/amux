@@ -79,6 +79,14 @@ pub enum AppEvent {
         blob: wire::BlobRef,
     },
     Created(Agent),
+    /// An agent created with its first prompt: its chat opens, or home
+    /// stays and says it started.
+    Started {
+        agent: Agent,
+        open: bool,
+    },
+    /// Creating an agent from home's draft failed; the draft is kept.
+    StartFailed(String),
     /// A working-tree diff frozen for this agent's review page.
     Review {
         agent_id: Vec<u8>,
@@ -158,6 +166,7 @@ impl App {
         fleet_view.attach = config.attach;
         fleet_view.version = config.version.clone();
         fleet_view.local_host = config.local_host.clone();
+        fleet_view.working_dir = config.working_dir.to_string_lossy().into_owned();
         App {
             client,
             fleet,
@@ -212,6 +221,8 @@ impl App {
             if state.phase() == PhaseView::Working || state.transcript().is_empty() {
                 at(Instant::now() + Duration::from_millis(250));
             }
+        } else if self.fleet_view.animating(&self.fleet.state()) {
+            at(Instant::now() + Duration::from_millis(crate::home::SPIN_MS));
         }
         next
     }
@@ -234,7 +245,7 @@ impl App {
             self.notice = None;
             changed = true;
         }
-        changed || self.chat.is_some()
+        changed || self.chat.is_some() || self.fleet_view.animating(&self.fleet.state())
     }
 
     /// Opens the configured first chat once its row is in the fleet, and
@@ -353,6 +364,24 @@ impl App {
                 self.fleet_view.select(key.clone());
                 self.open(key);
             }
+            AppEvent::Started { agent, open } => {
+                self.fleet_view.home.started();
+                let key = ui_state::agent_key(&agent);
+                self.fleet_view.select(key.clone());
+                if open {
+                    // The inventory may not list it yet; the chat opens
+                    // once it does.
+                    self.config.initial_chat = Some(agent.agent_id.clone());
+                    self.fleet_changed();
+                } else {
+                    let name = agent.name.as_deref().unwrap_or("the agent");
+                    self.notice(format!("started {name}"), Tone::Info);
+                }
+            }
+            AppEvent::StartFailed(error) => {
+                self.fleet_view.home.start_failed();
+                self.notice(format!("could not start the agent: {error}"), Tone::Warn);
+            }
         }
         Flow::Continue
     }
@@ -405,6 +434,9 @@ impl App {
                 Flow::Continue
             }
             Event::Mouse(mouse) => {
+                if self.help {
+                    return Flow::Continue;
+                }
                 let theme = self.theme();
                 if let Some(chat) = &mut self.chat {
                     {
@@ -412,6 +444,16 @@ impl App {
                         chat.view.mouse(&state, mouse, theme);
                     }
                     chat.tell_following();
+                    return Flow::Continue;
+                }
+                let effects = {
+                    let fleet = self.fleet.state();
+                    self.fleet_view.mouse(&fleet, mouse)
+                };
+                for effect in effects {
+                    if let Some(flow) = self.fleet_effect(effect) {
+                        return flow;
+                    }
                 }
                 Flow::Continue
             }
@@ -593,6 +635,27 @@ impl App {
                             format!("could not start the agent: {error}"),
                             Tone::Warn,
                         ),
+                    })
+                });
+            }
+            FleetEffect::Start {
+                kind,
+                text,
+                attachments,
+                open,
+            } => {
+                let cwd = self.config.working_dir.to_string_lossy().into_owned();
+                self.spawn(async move {
+                    let request = CreateAgentRequest {
+                        agent_id: inputs::input_id(),
+                        cwd,
+                        kind: kind as i32,
+                        initial_prompt: inputs::prompt(kind, &text, attachments),
+                        ..CreateAgentRequest::default()
+                    };
+                    Some(match client.create_agent(request).await {
+                        Ok(agent) => AppEvent::Started { agent, open },
+                        Err(error) => AppEvent::StartFailed(error.to_string()),
                     })
                 });
             }
@@ -898,17 +961,23 @@ impl App {
 
 fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
     let leader = format!("ctrl+{leader}");
-    let rows: Vec<(&str, String)> = vec![
-        ("Fleet", String::new()),
-        ("enter", "open the chat".into()),
-        (
-            "o / ctrl+enter",
-            "the agent's own terminal (this machine)".into(),
-        ),
-        ("n / r / s / d", "new · rename · stop · delete".into()),
-        ("z", "show or hide a family's agents".into()),
-        ("h", "hosts: trusted and found nearby".into()),
-        ("q", "quit".into()),
+    let mut rows: Vec<(&str, String)> = if crate::variant::get() == 1 {
+        crate::home::help_rows()
+    } else {
+        vec![
+            ("Fleet", String::new()),
+            ("enter", "open the chat".into()),
+            (
+                "o / ctrl+enter",
+                "the agent's own terminal (this machine)".into(),
+            ),
+            ("n / r / s / d", "new · rename · stop · delete".into()),
+            ("z", "show or hide a family's agents".into()),
+            ("h", "hosts: trusted and found nearby".into()),
+            ("q", "quit".into()),
+        ]
+    };
+    rows.extend([
         ("", String::new()),
         ("Chat", String::new()),
         (
@@ -957,7 +1026,7 @@ fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
         ("n", format!("{leader} n  next agent in this family")),
         ("", String::new()),
         ("ctrl+c", "clear the field; twice on nothing quits".into()),
-    ];
+    ]);
     let mut lines = vec![
         Line::from(Span::styled("  Keys", theme.emphasis())),
         Line::default(),

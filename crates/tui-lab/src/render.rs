@@ -6,7 +6,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tui::Theme;
@@ -21,9 +23,11 @@ pub struct Request<'a> {
     pub scenario: &'a Scenario,
     pub step: usize,
     pub sizes: Vec<(u16, u16)>,
-    pub keys: Vec<KeyEvent>,
+    /// Keys and mouse events delivered before drawing.
+    pub keys: Vec<Event>,
     pub out: &'a Path,
     pub theme: Theme,
+    pub variant: u8,
 }
 
 pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
@@ -31,6 +35,7 @@ pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
         scenario: request.scenario.name.clone(),
         fired: request.step,
         open: request.scenario.open.clone(),
+        variant: request.variant,
         ..Place::default()
     };
     let mut booted = boot(request.scenario, Some(&place), true, request.theme).await?;
@@ -38,8 +43,8 @@ pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
     let (width, height) = request.sizes.first().copied().unwrap_or((120, 40));
     let mut terminal = Terminal::new(TestBackend::new(width, height))?;
     draw_settle(app, &mut terminal, &place).await?;
-    for key in &request.keys {
-        let _ = app.input(Event::Key(*key));
+    for event in &request.keys {
+        let _ = app.input(event.clone());
         draw_settle(app, &mut terminal, &place).await?;
     }
     let mut written = Vec::new();
@@ -82,12 +87,38 @@ pub fn parse_size(text: &str) -> Result<(u16, u16)> {
 
 /// Keys written like a shell line: named keys (`enter`, `esc`, `tab`,
 /// `backtab`, `up`, `down`, `left`, `right`, `pgup`, `pgdn`, `home`, `end`,
-/// `bs`, `del`, `space`, `f1`..`f12`), `C-x` for Ctrl+x, and anything else
-/// typed as text (quote it to keep spaces: `'fix the bug' enter`).
-pub fn parse_keys(text: &str) -> Result<Vec<KeyEvent>> {
-    let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+/// `bs`, `del`, `space`, `f1`..`f12`), `C-x` for Ctrl+x and `C-enter`,
+/// `hover:X,Y` and `click:X,Y` for the mouse at a cell (zero-based), and
+/// anything else typed as text (quote it to keep spaces:
+/// `'fix the bug' enter`).
+pub fn parse_keys(text: &str) -> Result<Vec<Event>> {
+    let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
     let mut out = Vec::new();
     for word in shell_words::split(text)? {
+        if let Some((what, at)) = word.split_once(':')
+            && let Some((x, y)) = at.split_once(',')
+            && matches!(what, "hover" | "click")
+        {
+            let kind = if what == "hover" {
+                MouseEventKind::Moved
+            } else {
+                MouseEventKind::Down(MouseButton::Left)
+            };
+            out.push(Event::Mouse(MouseEvent {
+                kind,
+                column: x.parse()?,
+                row: y.parse()?,
+                modifiers: KeyModifiers::NONE,
+            }));
+            continue;
+        }
+        if word == "C-enter" {
+            out.push(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::CONTROL,
+            )));
+            continue;
+        }
         let named = match word.as_str() {
             "enter" => Some(KeyCode::Enter),
             "esc" => Some(KeyCode::Esc),
@@ -118,7 +149,10 @@ pub fn parse_keys(text: &str) -> Result<Vec<KeyEvent>> {
             && let Some(c) = rest.chars().next()
             && rest.chars().count() == 1
         {
-            out.push(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
+            out.push(Event::Key(KeyEvent::new(
+                KeyCode::Char(c),
+                KeyModifiers::CONTROL,
+            )));
         } else {
             out.extend(word.chars().map(|c| key(KeyCode::Char(c))));
         }

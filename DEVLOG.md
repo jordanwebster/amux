@@ -1,3 +1,28 @@
+2026-09-29 — **A redesigned home, behind design variant 1.** Home is being
+rethought for the terminal client this branch will replace, and the lab
+now draws the new one when F3 selects variant 1; variant 0 keeps the
+framed grid, and the switch is a thin branch in `FleetView` so dropping
+the old home later is mechanical. The new home (`crates/tui/src/home.rs`)
+has no frame and no composer: a top line that says where you are and
+what needs you and becomes the filter on `/`, the list, and one line of
+hints for what is highlighted. The families that need you lead under
+their own heading; everything else follows newest first; families idle or
+exited for a day fold into one "Older" line. An agent's place moves only
+when its attention changes, captured from the inventory's activity time at
+that change, because the inventory carries no turn-start or last-send
+time and its activity time moves on every streamed row: ordering by it
+would move rows under the cursor. Hover and selection are one highlight;
+mouse motion over a row selects it and keys take over until the mouse
+moves again. On a terminal that reported its colours the highlighted row
+is tinted a step off its own ground; elsewhere it gets a `›` and a bold
+name. Its `×` stops the agent, or deletes it once exited, after asking.
+`n` or "+ New agent" opens an empty chat whose composer names the
+provider, directory and host; Enter creates the agent with the draft as
+its first prompt and opens it, Ctrl+Enter creates it and stays home.
+`tui-lab render` gained `--variant`, `hover:`/`click:` mouse events,
+`C-enter`, and `--theme sample`, which draws as a terminal that answered
+the colour queries would.
+
 2026-09-29 — **The TUI lab: the terminal client over scripted dummy data.**
 Trying a design in the terminal client meant a daemon, real agents and
 waiting for them to reach the state worth looking at. `crates/tui-lab`

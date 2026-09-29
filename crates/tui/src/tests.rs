@@ -2204,3 +2204,271 @@ fn esc_on_a_later_question_and_the_review_goes_back() {
     assert!(!screen.contains("enter send"), "{screen}");
     asks(&mut view, &questions[questions.len() - 1].question);
 }
+
+// --- home, as redesigned ------------------------------------------------------
+
+fn home_agent(
+    id: &[u8],
+    name: &str,
+    phase: Phase,
+    parent: Option<&[u8]>,
+    activity_ms: i64,
+) -> wire::inventory_event::Of {
+    let mut row = agent_row(id, name, phase, parent);
+    if let wire::inventory_event::Of::Agent(agent) = &mut row {
+        agent.last_activity_ms = activity_ms;
+        agent.cwd = "/work/amux".into();
+    }
+    row
+}
+
+fn now() -> i64 {
+    use client::Clock as _;
+    client::SystemClock.now_ms()
+}
+
+/// A fleet on host `a`: a family whose child needs you, two working
+/// agents, and an idle one untouched for two days.
+fn home_fleet() -> FleetState {
+    let now = now();
+    let mut fleet = FleetState::new();
+    inventory(
+        &mut fleet,
+        host(b"a", "studio", wire::Trust::Trusted, wire::Presence::Online),
+    );
+    inventory(
+        &mut fleet,
+        home_agent(b"p", "planner", Phase::Idle, None, now - 60_000),
+    );
+    inventory(
+        &mut fleet,
+        home_agent(b"c", "worker", Phase::NeedsYou, Some(b"p"), now - 30_000),
+    );
+    inventory(
+        &mut fleet,
+        home_agent(b"w1", "alpha", Phase::Working, None, now - 5_000),
+    );
+    inventory(
+        &mut fleet,
+        home_agent(b"w2", "beta", Phase::Working, None, now - 9_000),
+    );
+    inventory(
+        &mut fleet,
+        home_agent(b"old", "archive", Phase::Idle, None, now - 2 * 86_400_000),
+    );
+    inventory(
+        &mut fleet,
+        wire::inventory_event::Of::CaughtUp(wire::CaughtUp { revision: 0 }),
+    );
+    fleet
+}
+
+const HOME_PLACE: crate::home::Place<'static> = crate::home::Place {
+    local_host: b"a",
+    working_dir: "~/work/amux",
+    attach: false,
+};
+
+fn home_screen(home: &mut crate::home::Home, fleet: &FleetState, theme: Theme) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            home.draw(frame, area, fleet, None, now(), theme, &HOME_PLACE);
+        })
+        .unwrap();
+    text(terminal.backend().buffer())
+}
+
+fn row_of(screen: &str, words: &str) -> u16 {
+    screen
+        .lines()
+        .position(|line| line.contains(words))
+        .unwrap_or_else(|| panic!("{words} is not on\n{screen}")) as u16
+}
+
+#[test]
+fn home_leads_with_what_needs_you_and_folds_the_old() {
+    let fleet = home_fleet();
+    let mut home = crate::home::Home::default();
+    let screen = home_screen(&mut home, &fleet, theme());
+    // The family whose child needs you is under the heading, its child
+    // named on its second line; the rest follow newest first; the old one
+    // is folded away.
+    let heading = row_of(&screen, "Needs you 1");
+    let planner = row_of(&screen, "planner");
+    assert!(heading < planner, "{screen}");
+    assert!(screen.contains("↳ worker"), "{screen}");
+    assert!(
+        row_of(&screen, "alpha") < row_of(&screen, "beta"),
+        "{screen}"
+    );
+    assert!(screen.contains("Older · 1"), "{screen}");
+    assert!(!screen.contains("archive"), "{screen}");
+    assert!(!screen.contains('┌'), "home has no frame: {screen}");
+}
+
+#[test]
+fn streaming_never_reorders_home_but_a_turn_ending_does() {
+    let mut fleet = home_fleet();
+    let mut home = crate::home::Home::default();
+    home_screen(&mut home, &fleet, theme());
+    // beta streams: its activity time moves past alpha's, its attention
+    // does not.
+    inventory(
+        &mut fleet,
+        home_agent(b"w2", "beta", Phase::Working, None, now()),
+    );
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        row_of(&screen, "alpha") < row_of(&screen, "beta"),
+        "{screen}"
+    );
+    // beta's turn ends: that is a moment, and it moves up.
+    inventory(
+        &mut fleet,
+        home_agent(b"w2", "beta", Phase::Idle, None, now()),
+    );
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        row_of(&screen, "beta") < row_of(&screen, "alpha"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn hovering_highlights_a_row_and_its_close_mark_asks_first() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let fleet = home_fleet();
+    let mut home = crate::home::Home::default();
+    let screen = home_screen(&mut home, &fleet, theme());
+    let beta = row_of(&screen, "beta");
+    let mouse = |kind, column, row| MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    home.mouse(&fleet, mouse(MouseEventKind::Moved, 10, beta), false);
+    // Without a known ground the highlight is a mark and weight.
+    let screen = home_screen(&mut home, &fleet, theme());
+    let line = screen.lines().nth(usize::from(beta)).unwrap();
+    assert!(
+        line.contains('›') && line.trim_end().ends_with('×'),
+        "{screen}"
+    );
+    // A key takes over from where the mouse left the highlight.
+    home.key(&fleet, key(KeyCode::Char('j')), false);
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        !screen.lines().nth(usize::from(beta)).unwrap().contains('›'),
+        "{screen}"
+    );
+    home.key(&fleet, key(KeyCode::Char('k')), false);
+    home_screen(&mut home, &fleet, theme());
+    // The × stops, after asking.
+    let effects = home.mouse(
+        &fleet,
+        mouse(MouseEventKind::Down(MouseButton::Left), W - 3, beta),
+        false,
+    );
+    assert!(effects.is_empty());
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(screen.contains("Stop beta?"), "{screen}");
+    let effects = home.key(&fleet, key(KeyCode::Char('y')), false);
+    assert!(matches!(effects.as_slice(), [FleetEffect::Stop(agent)] if agent.agent == b"w2"));
+}
+
+#[test]
+fn a_known_ground_tints_the_highlight_instead_of_marking_it() {
+    let fleet = home_fleet();
+    let mut home = crate::home::Home::default();
+    let colors = crate::theme::TerminalColors {
+        background: (21, 21, 21),
+        foreground: (208, 208, 208),
+        ansi: [(128, 128, 128); 16],
+    };
+    let tinted = Theme::from_terminal(colors, crate::theme::ColorMode::TrueColor);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            home.draw(frame, area, &fleet, None, now(), tinted, &HOME_PLACE);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let screen = text(&buffer);
+    assert!(!screen.contains('›'), "{screen}");
+    let planner = row_of(&screen, "planner");
+    let cell = &buffer[(W / 2, planner)];
+    assert!(
+        matches!(cell.bg, ratatui::style::Color::Rgb(..)),
+        "the highlighted row is tinted: {:?}",
+        cell.bg
+    );
+    // Only the highlighted row: the margins and other rows keep the
+    // terminal's own ground.
+    assert_eq!(buffer[(0, planner)].bg, ratatui::style::Color::Reset);
+    assert_eq!(buffer[(W / 2, 0)].bg, ratatui::style::Color::Reset);
+}
+
+#[test]
+fn a_new_agent_starts_from_a_draft_with_its_first_prompt() {
+    let fleet = home_fleet();
+    let mut home = crate::home::Home::default();
+    home.key(&fleet, key(KeyCode::Char('n')), false);
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        screen.contains("What should the new agent work on?"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("Claude (terminal) · ~/work/amux"),
+        "{screen}"
+    );
+    // Enter on an empty draft does nothing; Tab picks the next provider.
+    assert!(home.key(&fleet, key(KeyCode::Enter), false).is_empty());
+    home.key(&fleet, key(KeyCode::Tab), false);
+    for c in "fix it".chars() {
+        home.key(&fleet, key(KeyCode::Char(c)), false);
+    }
+    let effects = home.key(
+        &fleet,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+        false,
+    );
+    assert!(
+        matches!(effects.as_slice(), [FleetEffect::Start { kind: Kind::ClaudeSdk, text, open: false, .. }] if text == "fix it"),
+        "{effects:?}"
+    );
+    // While it starts, keys do not edit the draft.
+    home.key(&fleet, key(KeyCode::Char('x')), false);
+    assert_eq!(home.draft.editor.text(), "fix it");
+    home.started();
+    assert!(home.draft.editor.is_empty());
+}
+
+#[test]
+fn the_filter_lives_in_the_top_line_and_narrows_the_list() {
+    let fleet = home_fleet();
+    let mut home = crate::home::Home::default();
+    home.key(&fleet, key(KeyCode::Char('/')), false);
+    for c in "arch".chars() {
+        home.key(&fleet, key(KeyCode::Char(c)), false);
+    }
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        screen.lines().next().unwrap().contains("/ arch"),
+        "{screen}"
+    );
+    // The filter looks through the older families too.
+    assert!(screen.contains("archive"), "{screen}");
+    assert!(!screen.contains("alpha"), "{screen}");
+    home.key(&fleet, key(KeyCode::Enter), false);
+    home.key(&fleet, key(KeyCode::Esc), false);
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        screen.contains("alpha") && !screen.contains("archive"),
+        "{screen}"
+    );
+}

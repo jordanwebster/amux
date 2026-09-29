@@ -349,9 +349,12 @@ is rebuilt from the scenario and those beats.
 | Key | What it does |
 |---|---|
 | F2 or Ctrl+] f | Capture this screen with a one-line note: text, PNG, note and place go to `notes/tui-lab/feedback/<time>/` |
-| F3 or Ctrl+] v | Cycle the design variant (`tui::variant`), for renderers comparing designs |
+| F3 or Ctrl+] v | Cycle the design variant (`tui::variant`), for renderers comparing designs; variant 1 draws the redesigned home ([`home.rs`](../crates/tui/src/home.rs)) |
 | Ctrl+] r | Restart the scenario from its beginning |
 
-`tui-lab render` draws frames without a terminal: the scenario after `--step N` beats and a key sequence
-(`--keys "down enter 'fix it' enter"`, with named keys and `C-x` for Ctrl), at each `--size`, to text and PNG.
-Scripts play at once there, so a frame does not wait on timing.
+`tui-lab render` draws frames without a terminal: the scenario after `--step N` beats and a sequence of keys
+and mouse events (`--keys "down enter 'fix it' enter"`, with named keys, `C-x` and `C-enter` for Ctrl, and
+`hover:X,Y` or `click:X,Y` for the mouse at a zero-based cell), in `--variant N`, at each `--size`, to text and
+PNG. `--theme sample` draws as if a dark terminal had reported its colours, which is what a real terminal that
+answers gets; `dark` and `light` are amux's own palettes, drawn as for a terminal that does not answer. Scripts
+play at once there, so a frame does not wait on timing.

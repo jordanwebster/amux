@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use tui::{ColorMode, ColorPreference, Theme};
+use tui::{ColorMode, ColorPreference, TerminalColors, Theme};
 
 /// The exit status the lab uses to ask `tui-lab watch` for a relaunch.
 const RELAUNCH_STATUS: i32 = 75;
@@ -67,6 +67,9 @@ enum Command {
         out: PathBuf,
         #[arg(long, value_enum, default_value = "dark")]
         theme: ThemeArg,
+        /// The design variant to draw.
+        #[arg(long, default_value_t = 0)]
+        variant: u8,
     },
 }
 
@@ -76,7 +79,35 @@ enum ThemeArg {
     Terminal,
     Dark,
     Light,
+    /// A fixed dark terminal's answer, as if it had reported its colours:
+    /// draws what `terminal` draws where the terminal answers.
+    Sample,
 }
+
+/// A dark terminal's answer to the colour queries: a near-black ground,
+/// grey text and the usual sixteen colours.
+const SAMPLE: TerminalColors = TerminalColors {
+    background: (21, 21, 21),
+    foreground: (208, 208, 208),
+    ansi: [
+        (21, 21, 21),
+        (204, 102, 102),
+        (152, 195, 121),
+        (229, 192, 123),
+        (97, 175, 239),
+        (198, 120, 221),
+        (86, 182, 194),
+        (208, 208, 208),
+        (92, 99, 112),
+        (224, 108, 117),
+        (152, 195, 121),
+        (229, 192, 123),
+        (97, 175, 239),
+        (198, 120, 221),
+        (86, 182, 194),
+        (255, 255, 255),
+    ],
+};
 
 fn color_mode() -> ColorMode {
     tui::detect_color_mode(
@@ -95,6 +126,7 @@ fn theme(arg: ThemeArg, mode: ColorMode) -> Theme {
         },
         ThemeArg::Dark => Theme::dark(mode),
         ThemeArg::Light => Theme::light(mode),
+        ThemeArg::Sample => Theme::from_terminal(SAMPLE, mode),
     }
 }
 
@@ -149,6 +181,7 @@ async fn main() -> Result<()> {
             keys,
             out,
             theme: theme_arg,
+            variant,
         } => {
             let loaded = scenario::load(&scenario)?;
             let sizes = sizes
@@ -162,6 +195,7 @@ async fn main() -> Result<()> {
                 keys: render::parse_keys(&keys)?,
                 out: &out,
                 theme: theme(theme_arg, ColorMode::TrueColor),
+                variant,
             })
             .await?;
             for stem in written {
@@ -186,6 +220,7 @@ mod tests {
             keys: render::parse_keys(keys).unwrap(),
             out: dir.path(),
             theme: Theme::dark(ColorMode::TrueColor),
+            variant: 0,
         })
         .await
         .unwrap();
@@ -235,8 +270,14 @@ mod tests {
     #[test]
     fn keys_parse_named_control_and_typed() {
         let keys = render::parse_keys("C-a r 'hi there' enter f2").unwrap();
-        let codes: Vec<_> = keys.iter().map(|k| (k.code, k.modifiers)).collect();
-        use crossterm::event::{KeyCode, KeyModifiers};
+        use crossterm::event::{Event, KeyCode, KeyModifiers};
+        let codes: Vec<_> = keys
+            .iter()
+            .map(|event| match event {
+                Event::Key(k) => (k.code, k.modifiers),
+                other => panic!("not a key: {other:?}"),
+            })
+            .collect();
         assert_eq!(codes[0], (KeyCode::Char('a'), KeyModifiers::CONTROL));
         assert_eq!(codes[1], (KeyCode::Char('r'), KeyModifiers::NONE));
         assert_eq!(codes.len(), 2 + 8 + 2);

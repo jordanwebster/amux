@@ -481,6 +481,15 @@ impl Theme {
         self.text().bg(self.color(self.tokens.user_surface))
     }
 
+    /// A highlighted row's surface: the terminal's own ground moved a step
+    /// toward its text. None when amux does not know that ground, or cannot
+    /// paint an exact shade of it, where a highlight falls back to weight
+    /// and a mark rather than borrowing a colour of its own.
+    pub(crate) fn row_surface(self) -> Option<Style> {
+        (self.name == ThemeName::Adopted && self.mode == ColorMode::TrueColor)
+            .then(|| Style::default().bg(self.color(self.tokens.user_surface)))
+    }
+
     /// The filled diff and ask-panel surface.
     pub(crate) fn panel(self) -> Style {
         self.text().bg(self.color(self.tokens.panel))

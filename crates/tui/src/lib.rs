@@ -12,6 +12,7 @@ pub mod chat;
 pub mod clipboard;
 pub mod editor;
 pub mod fleet;
+pub mod home;
 mod hosts;
 pub(crate) mod markdown;
 pub mod run;
