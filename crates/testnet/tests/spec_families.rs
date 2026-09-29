@@ -100,6 +100,15 @@ async fn row(net: &Net, host: &str, agent: &str) -> Option<AgentRow> {
 /// What `agent`'s own host holds for it that came in as an input other
 /// than its first prompt: the agent messages it accepted.
 async fn received(net: &Net, agent: &str) -> Vec<wire::Item> {
+    items(net, agent)
+        .await
+        .into_iter()
+        .filter(|item| !item.input_id.is_empty() && item.input_id != b"testnet-first")
+        .collect()
+}
+
+/// Everything `agent`'s own host holds for it, oldest first.
+async fn items(net: &Net, agent: &str) -> Vec<wire::Item> {
     let at = net.agent(agent).unwrap().clone();
     net.runtime(&at.host)
         .unwrap()
@@ -108,9 +117,6 @@ async fn received(net: &Net, agent: &str) -> Vec<wire::Item> {
         .page(&at.key(), None, 1_000)
         .unwrap()
         .items
-        .into_iter()
-        .filter(|item| !item.input_id.is_empty() && item.input_id != b"testnet-first")
-        .collect()
 }
 
 async fn with_input(net: &Net, agent: &str, input_id: &[u8]) -> usize {
@@ -124,23 +130,44 @@ async fn with_input(net: &Net, agent: &str, input_id: &[u8]) -> usize {
 /// How many lines `agent`'s provider has read that carry `text`, once
 /// everything its process had accepted when this was called has reached
 /// the provider: its host has ingested the journal as far as it went then,
-/// and the agent is idle with nothing queued. An accepted input is queued
-/// until it is delivered, and a delivered one is read before the turn it
-/// starts can end, so a duplicate accepted by then is counted.
+/// the agent is idle with nothing queued, and a turn has ended since the
+/// newest accepted agent message carrying `text`. A prompt is queued until
+/// it is delivered, but an agent message is not: the host hands it to the
+/// provider as it accepts it, and the row reads idle with nothing queued
+/// until the provider takes it and runs the turn it starts. Every kind
+/// writes a `turn:` item when a turn ends, and a delivered message is read
+/// before the turn it starts or folds into can end, so a duplicate
+/// accepted by then is counted.
 async fn taken(net: &Net, agent: &str, text: &str) -> usize {
     let end = net.journal_end(agent).unwrap();
     eventually(
-        &format!("{agent} idle past {end}"),
+        &format!("{agent} idle past {end}, its messages taken"),
         PATIENCE,
         || async move {
             let Some(row) = row(net, &net.agent(agent).unwrap().host, agent).await else {
                 return false;
             };
-            row.ingest_cursor >= end
+            let settled = row.ingest_cursor >= end
                 && row.phase == Phase::Idle as i32
                 && row
                     .snapshot
-                    .is_some_and(|snapshot| snapshot.queue.is_empty())
+                    .is_some_and(|snapshot| snapshot.queue.is_empty());
+            if !settled {
+                return false;
+            }
+            let items = items(net, agent).await;
+            let Some(message) = items
+                .iter()
+                .filter(|item| !item.input_id.is_empty() && item.input_id != b"testnet-first")
+                .filter(|item| item.text.contains(text))
+                .map(|item| item.order)
+                .max()
+            else {
+                return true;
+            };
+            items
+                .iter()
+                .any(|item| item.key.starts_with("turn:") && item.order > message)
         },
     )
     .await
