@@ -159,6 +159,10 @@ The phone has its own besides (`account-sign-in`, `purchase-restore`, `report`, 
 `local-network`, `push-wake`; `just ios journey -- --native` runs them), and `survive-daemon` is the system
 journey on the built binaries.
 
+The phone journeys written before these stories are listed under `retired_phone_journeys`: each of their claims
+either names the story step that carries it (`story/screen`, a screen that story photographs) or is listed as
+dropped with the reason, and a script test checks every named step exists.
+
 ```sh
 just journey terminal <story>   # builds amux, the fakes and testnet, then runs the story in tmux
 just ios journey -- <story>     # the app on the leased simulator, driven through its door

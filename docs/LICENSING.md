@@ -87,7 +87,8 @@ recorded beside it. Fonts are the only such material:
 | --- | --- |
 | `crates/shot/assets/DejaVuSans.ttf` | [`crates/shot/assets/DejaVu-LICENSE.txt`](../crates/shot/assets/DejaVu-LICENSE.txt) |
 | `crates/shot/assets/JetBrainsMono-*.ttf` | SIL Open Font License 1.1, [`crates/shot/assets/OFL.txt`](../crates/shot/assets/OFL.txt) |
-| `GeistMono.ttf` and `InstrumentSans.ttf` in `apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/Resources/Fonts` | Both are published under the SIL Open Font License 1.1; no licence file is committed beside them yet |
+| `apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/Resources/Fonts/GeistMono.ttf` | SIL Open Font License 1.1, [`OFL-GeistMono.txt`](../apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/Resources/Fonts/OFL-GeistMono.txt) beside it |
+| `apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/Resources/Fonts/InstrumentSans.ttf` | SIL Open Font License 1.1, [`OFL-InstrumentSans.txt`](../apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/Resources/Fonts/OFL-InstrumentSans.txt) beside it |
 
 Dependencies fetched by Cargo, Swift Package Manager or other tools are not
 part of the repository and carry their own licences.

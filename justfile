@@ -37,8 +37,8 @@ test-crate CRATE *ARGS:
 test-store *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p store --features bundled "$@"
 
-# Cross-compile every store test and run it against bundled SQLite on the
-# leased, booted iOS simulator, including linkage and runtime identity proof.
+# Cross-compile every store test target and run it on the leased, booted iOS
+# simulator, after proving the SQLite suite's binary carries SQLite itself.
 test-store-ios:
     scripts/with iphone -- {{bounded}} 2300 scripts/python -B scripts/ios-store-test.py
 

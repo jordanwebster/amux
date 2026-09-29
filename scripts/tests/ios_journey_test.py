@@ -183,6 +183,24 @@ class Selecting(unittest.TestCase):
             for carrier in journey["carried_by"]:
                 self.assertIn(carrier, stories.STORIES, journey["id"])
 
+    def test_every_retired_claim_is_carried_by_a_story_step_or_dropped_with_why(self):
+        manifest = json.loads(phone.MANIFEST.read_text())
+        goldens = phone.MANIFEST.parent / "goldens" / "phone"
+        for journey in manifest["retired_phone_journeys"]["journeys"]:
+            self.assertTrue(journey["claims"] or journey["dropped"], journey["id"])
+            carriers = []
+            for claim in journey["claims"]:
+                self.assertTrue(claim["claim"], journey["id"])
+                story, screen = claim["step"].split("/")
+                self.assertIn(story, stories.STORIES, claim["step"])
+                # A step is a screen the story photographs.
+                self.assertTrue((goldens / story / f"{screen}.png").exists(), claim["step"])
+                if story not in carriers:
+                    carriers.append(story)
+            self.assertEqual(journey["carried_by"], carriers, journey["id"])
+            for dropped in journey["dropped"]:
+                self.assertTrue(dropped["claim"] and dropped["why"], journey["id"])
+
     def test_the_needs_you_push_carries_what_the_app_reads(self):
         payload = json.loads(stories.NEEDS_YOU.read_text())
         self.assertEqual(payload["aps"]["content-available"], 1)

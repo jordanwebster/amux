@@ -1,3 +1,18 @@
+2026-09-29 — **The phone's remaining test tree says only what it
+checks.** `just test-store-ios` built a store fixture binary behind a
+feature that no longer exists, so the nightly captures lane failed before
+running a test; it now cross-compiles the store's current test targets
+(unit, conformance, retention, sqlite), proves the sqlite suite's binary
+carries SQLite itself, and runs all of them on the leased simulator (73
+tests pass). The retired phone journeys in journeys/manifest.json now
+record every claim they made: carried by a named step of a current story,
+or dropped with the reason (answers other than Allow, revoking a key from
+the phone, deleting an account, switching between two accounts with
+machines and counting connections are among the dropped, each naming what
+pins it below the UI). A script test checks every named step is a screen
+its story photographs. The Geist Mono and Instrument Sans fonts ship with
+their SIL Open Font License texts beside them.
+
 2026-09-29 — **Terminal Claude's send-now is a keymap row, and a
 patch head keeps hunk lines that look like file headers.** Send now used to
 type a queued prompt with the prompt's keys, relying on what Enter happens
