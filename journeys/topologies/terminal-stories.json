@@ -7,17 +7,8 @@
     {"name": "laptop"}
   ],
   "links": [{"a": "desk", "b": "laptop"}],
+  "settle": true,
   "agents": [
-    {
-      "name": "decision-pty",
-      "host": "desk",
-      "kind": "claude_pty",
-      "script": {"steps": [
-        {"ask": {"permission": {"name": "Bash", "class": "consequential", "input": {"command": "deploy --check"}, "outcome": {"output": "deploy check: ok"}}}},
-        {"text": {"chunks": ["The deploy check passed."]}},
-        "turn_end"
-      ]}
-    },
     {
       "name": "decision-sdk",
       "host": "desk",
@@ -58,6 +49,16 @@
       "kind": "claude_sdk",
       "script": {"steps": [
         {"text": {"chunks": ["I read the review."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "decision-pty",
+      "host": "desk",
+      "kind": "claude_pty",
+      "script": {"steps": [
+        {"ask": {"permission": {"name": "Bash", "class": "consequential", "input": {"command": "deploy --check"}, "outcome": {"output": "deploy check: ok"}}}},
+        {"text": {"chunks": ["The deploy check passed."]}},
         "turn_end"
       ]}
     }

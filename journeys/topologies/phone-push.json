@@ -3,6 +3,7 @@
   "hosts": [
     {"name": "desk", "lan": true, "bonjour": true}
   ],
+  "settle": true,
   "agents": [
     {
       "name": "asker",

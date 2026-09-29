@@ -306,6 +306,9 @@ impl Net {
         }
         for agent in &topology.agents {
             net.spawn(agent.clone()).await?;
+            if topology.settle {
+                net.settle(&agent.name).await?;
+            }
         }
         Ok(net)
     }
@@ -560,6 +563,36 @@ impl Net {
             },
         );
         Ok(agent)
+    }
+
+    /// Waits until `name` has come to rest on its host: idle or needing
+    /// the person, with nothing queued, so a creation prompt's turn has
+    /// run. The fleet lists agents of one standing most recently active
+    /// first, so starting each once the one before has settled fixes the
+    /// order they are listed in.
+    pub async fn settle(&self, name: &str) -> Result<(), NetError> {
+        let host = self.agent(name)?.host.clone();
+        let mut session = self.observe(&host, name, 0).await?;
+        session
+            .observe_until(
+                |events| {
+                    let newest = events.iter().rev().find_map(|event| match &event.of {
+                        Some(wire::session_event::Of::Snapshot(snapshot)) => Some(snapshot),
+                        _ => None,
+                    });
+                    observe::caught_up(events)
+                        && newest.is_some_and(|snapshot| {
+                            snapshot.queue.is_empty()
+                                && matches!(
+                                    snapshot.phase(),
+                                    wire::Phase::Idle | wire::Phase::NeedsYou
+                                )
+                        })
+                },
+                PATIENCE,
+            )
+            .await?;
+        Ok(())
     }
 
     /// Starts an exited agent's next incarnation on the same script.

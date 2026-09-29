@@ -1,3 +1,16 @@
+2026-09-29 — **Journeys start their agents in a fixed order.** The shared
+stories network, the push network and the phone goldens network declared
+several agents that all come to rest in the same standing, and the test
+network started them back to back, waiting only for each process to say
+hello, so the fleet's order in their goldens rested on which agent finished
+starting last. A topology can now ask for `settle`: each declared agent
+starts once the one before it is idle or needs the person with nothing
+queued, and `Net::settle` is the same wait for a Rust test. Those networks
+set it and declare their agents least recently active first, which gives
+the order their goldens already hold. A pause at the start of keeper's first
+turn fails the terminal manage-agent journey on the old network and passes
+on the new one.
+
 2026-09-29 — **The fleet standings frame no longer depends on which first
 turn ends last.** The fleet lists agents of the same standing most recently
 active first, and the test that draws every standing started all its agents

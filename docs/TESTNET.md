@@ -71,6 +71,7 @@ The same network as JSON, as `testnet serve` reads it:
 | `hosts[].repositories` | Git repositories made under the host's repository root, by path below it. |
 | `links[]` | `{"a", "b"}`: two hosts that trust each other and are linked at start. |
 | `relay.accounts[]` | `{"name", "tier"}`, tier `pro` (the default: relayed tunnels) or `free` (hosts are listed; the relay opens no tunnels). |
+| `settle` | Start each declared agent only once the one before it has settled (see `settle(name)` below), so agents that come to rest in the same standing are listed in declaration order, the last declared as most recently active. Every declared agent must come to rest. Without it the agents start together and which first turn ends last is a race. |
 | `agents[].name`, `host` | Unique name; the host it runs on. |
 | `agents[].kind` | `claude_pty`, `claude_sdk` (the default) or `codex`: which fake runs and which interpreter reads it. |
 | `agents[].script` or `script_file` | What the fake plays, inline or from a file relative to the topology file; not both. |
@@ -106,7 +107,7 @@ load.
 
 `Net::start(topology)` starts the relay and every host, signs hosts in to their accounts, trusts and links the
 declared pairs, waits until each link carries traffic both ways, and spawns the declared agents, each returning
-once its process has said hello. When it returns the net is ready. `Net::start_with(topology, NetOptions)` takes a clock
+once its process has said hello (or, when the topology sets `settle`, once it has settled). When it returns the net is ready. `Net::start_with(topology, NetOptions)` takes a clock
 mode, a shared `DrivenClock`, hooks that adjust each host's edge or launch parameters (the tail size, a
 retention budget), and a fixed root directory.
 
@@ -125,6 +126,7 @@ The harness owns resources, verbs and observations, never scenarios. Scenarios l
 | `rewind_host(host, cuts)` | Power loss: daemon and agents die at once, the store goes back to the checkpoint without its write-ahead log, each named journal is cut at a byte, and the host returns under a new boot id. |
 | `advance(by)` | Move policy time on every host (driven nets only). |
 | `spawn(decl)`, `resume(name, text)` | Start an agent; start an exited agent's next incarnation. |
+| `settle(name)` | Wait until the agent rests on its host: idle or needing the person, nothing queued, so a creation prompt's turn has run. The fleet lists agents of one standing most recently active first; settling each before starting the next fixes that order. |
 | `send(name, text)`, `input(...)` | Send a prompt, or any input (an answer, a withdrawal, an interrupt), through the agent's own host. |
 | `delete(name)`, `delete_family(name)` | Delete an agent, or delete it with its children and report what the cascade reached. |
 | `spawn_child(parent, decl)` | Spawn through the parent's tool socket, naming the child's host. |

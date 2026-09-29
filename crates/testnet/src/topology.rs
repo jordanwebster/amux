@@ -25,6 +25,13 @@ pub struct Topology {
     /// A relay every host can reach, and the accounts its cloud knows.
     #[serde(default)]
     pub relay: Option<RelayDecl>,
+    /// Start each declared agent only once the one before it has settled
+    /// (see [`crate::Net::settle`]), so agents that come to rest in the same
+    /// standing are listed in declaration order, the last declared as the
+    /// most recently active. Every declared agent must come to rest.
+    /// Without it the agents start together and their first turns race.
+    #[serde(default)]
+    pub settle: bool,
 }
 
 /// One relay, with the cloud that signs accounts in to it.

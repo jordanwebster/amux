@@ -50,8 +50,8 @@ fn topology() -> Topology {
 }
 
 /// The served agents, least recently active first. The fleet lists the most
-/// recently active first, so each starts once the one before it has gone
-/// idle: started together, their first turns race and so would the rows.
+/// recently active first, so each starts once the one before it has
+/// settled: started together, their first turns race and so would the rows.
 fn agents() -> [AgentDecl; 3] {
     [
         AgentDecl::new("coder", "desk")
@@ -80,22 +80,11 @@ fn agents() -> [AgentDecl; 3] {
     ]
 }
 
-/// Spawns `decl` and returns once `host`'s inventory lists it idle after
-/// its first turn.
-async fn spawn_settled(net: &mut Net, host: &str, decl: AgentDecl) {
-    let id = net.spawn(decl).await.unwrap().agent_id;
-    let mut inventory = net.observe_inventory(host).await.unwrap();
-    inventory
-        .observe_until(
-            |events| {
-                testnet::observe::inventory_agents(events)
-                    .iter()
-                    .any(|agent| agent.agent_id == id && agent.phase() == wire::Phase::Idle)
-            },
-            PATIENCE,
-        )
-        .await
-        .unwrap();
+/// Spawns `decl` and returns once it has settled after its first turn.
+async fn spawn_settled(net: &mut Net, decl: AgentDecl) {
+    let name = decl.name.clone();
+    net.spawn(decl).await.unwrap();
+    net.settle(&name).await.unwrap();
 }
 
 /// The fleet as `host`'s inventory says it once every agent is idle.
@@ -247,7 +236,7 @@ fn frame(name: &str, buffer: &Buffer) {
 async fn served_frames_match_their_goldens() {
     let mut net = Net::start(topology()).await.unwrap();
     for decl in agents() {
-        spawn_settled(&mut net, "laptop", decl).await;
+        spawn_settled(&mut net, decl).await;
     }
     let worker = net.agent("worker").unwrap().id;
     let fleet = fleet_at(&net, "laptop").await;
@@ -477,10 +466,9 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
         );
     let mut net = Net::start(topology).await.unwrap();
     // The idle heads share a standing, so the fleet lists them most
-    // recently active first: each starts once the one before it is idle on
-    // the laptop, least recently active first. Started together, their
-    // first turns race and so would the rows. Every studio agent is listed
-    // on the laptop before the studio goes.
+    // recently active first: each starts once the one before it has
+    // settled, least recently active first. Started together, their
+    // first turns race and so would the rows.
     let idle = [
         AgentDecl::new("scout", "desk")
             .kind(FakeKind::ClaudePty)
@@ -501,8 +489,16 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
             .prompt("Update the specs."),
     ];
     for decl in idle {
-        spawn_settled(&mut net, "laptop", decl).await;
+        spawn_settled(&mut net, decl).await;
     }
+    // Every studio agent listed on the laptop before the studio goes.
+    let archivist = net.agent("archivist").unwrap().id;
+    fleet_when(&net, "laptop", |fleet| {
+        fleet
+            .find(archivist.as_bytes())
+            .is_some_and(|agent| agent.phase() == wire::Phase::Idle)
+    })
+    .await;
     let planner = net.agent("planner").unwrap().id;
     let specs = net
         .spawn_child(
