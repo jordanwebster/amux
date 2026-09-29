@@ -1,3 +1,8 @@
+2026-09-29 — **The wire guide's rejection table is whole again.** The
+`host_unreachable` row had been left below the paragraph on provider-worded
+refusals, so Markdown rendered it as stray text after a truncated table; it
+is back inside the table, with the paragraph after it.
+
 2026-09-29 — **A refused Send now leaves its prompt queued.** When
 terminal Claude is too old to steer, the press answers with the reason
 (shown as the terminal's notice and the phone's chat notice); a view test
