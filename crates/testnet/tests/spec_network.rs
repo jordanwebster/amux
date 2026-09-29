@@ -1400,6 +1400,7 @@ async fn a_subscriber_that_stops_reading_is_closed_while_one_beside_it_keeps_its
                                 },
                                 Step::Pause { ms: 2 },
                             ],
+                            played: 0,
                         },
                         Step::Text {
                             chunks: vec!["done".to_owned()],

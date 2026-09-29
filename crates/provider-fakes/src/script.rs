@@ -147,8 +147,16 @@ pub enum Step {
     /// Exit the provider process with this code, mid-turn or not.
     Exit { code: i32 },
     /// Play `steps` this many times in a row, as if written out: a flood
-    /// of messages without a script the size of the flood.
-    Repeat { times: usize, steps: Vec<Step> },
+    /// of messages without a script the size of the flood. `{pass}` in the
+    /// text or thinking of a step directly inside becomes the pass's
+    /// number, counted from 1, so a watcher can tell the messages apart.
+    Repeat {
+        times: usize,
+        steps: Vec<Step>,
+        /// The passes already played, as the repeat unrolls.
+        #[serde(skip)]
+        played: usize,
+    },
 }
 
 /// A tool call. The class picks a tool of that class when no name is given:
@@ -319,22 +327,45 @@ fn check_steps(steps: &[Step], provider: &'static str, raises: &[&str]) -> Resul
 pub fn next_step(steps: &mut std::collections::VecDeque<Step>) -> Option<Step> {
     loop {
         match steps.pop_front()? {
-            Step::Repeat { times, steps: body } => {
+            Step::Repeat {
+                times,
+                steps: body,
+                played,
+            } => {
                 if times == 0 || body.is_empty() {
                     continue;
                 }
+                let pass = (played + 1).to_string();
                 if times > 1 {
                     steps.push_front(Step::Repeat {
                         times: times - 1,
                         steps: body.clone(),
+                        played: played + 1,
                     });
                 }
                 for step in body.into_iter().rev() {
-                    steps.push_front(step);
+                    steps.push_front(numbered(step, &pass));
                 }
             }
             step => return Some(step),
         }
+    }
+}
+
+/// A step of a repeat's pass, with `{pass}` in its words made the pass's
+/// number.
+fn numbered(step: Step, pass: &str) -> Step {
+    match step {
+        Step::Text { chunks } => Step::Text {
+            chunks: chunks
+                .into_iter()
+                .map(|chunk| chunk.replace("{pass}", pass))
+                .collect(),
+        },
+        Step::Thinking { text } => Step::Thinking {
+            text: text.replace("{pass}", pass),
+        },
+        step => step,
     }
 }
 
@@ -375,5 +406,34 @@ mod repeat_tests {
         }
         expected.push(Step::TurnEnd);
         assert_eq!(played, expected);
+    }
+
+    #[test]
+    fn a_repeat_numbers_its_passes_where_its_text_asks() {
+        let steps: Vec<Step> = serde_json::from_str(
+            r#"[{"repeat": {"times": 2, "steps": [{"text": {"chunks": ["message {pass}"]}}, {"thinking": {"text": "on {pass}"}}, {"repeat": {"times": 2, "steps": [{"text": {"chunks": ["{pass}"]}}]}}]}}]"#,
+        )
+        .unwrap();
+        let mut queue: VecDeque<Step> = steps.into();
+        let mut played = Vec::new();
+        while let Some(step) = next_step(&mut queue) {
+            played.push(step);
+        }
+        let thinking = |text: &str| Step::Thinking {
+            text: text.to_owned(),
+        };
+        assert_eq!(
+            played,
+            [
+                text("message 1"),
+                thinking("on 1"),
+                text("1"),
+                text("2"),
+                text("message 2"),
+                thinking("on 2"),
+                text("1"),
+                text("2"),
+            ]
+        );
     }
 }

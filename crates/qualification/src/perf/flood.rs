@@ -117,11 +117,14 @@ pub fn agent_name(at: usize) -> String {
     format!("flood-{at:02}")
 }
 
-/// What every flood agent plays: one turn of `messages` messages, `pace_ms`
-/// apart, then idle.
+/// What every flood agent plays: one turn of `messages` numbered messages,
+/// `pace_ms` apart, then idle. The numbers let a person watching a client
+/// see how far its chat is behind the origin's.
 pub fn script(messages: usize, pace_ms: Option<u64>) -> Script {
     let mut message = vec![Step::Text {
-        chunks: vec!["the agent reports progress on its task at full rate".to_owned()],
+        chunks: vec![
+            "message {pass}: the agent reports progress on its task at full rate".to_owned(),
+        ],
     }];
     if let Some(ms) = pace_ms {
         message.push(Step::Pause { ms });
@@ -131,6 +134,7 @@ pub fn script(messages: usize, pace_ms: Option<u64>) -> Script {
             Step::Repeat {
                 times: messages,
                 steps: message,
+                played: 0,
             },
             Step::TurnEnd,
         ],

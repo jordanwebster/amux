@@ -126,4 +126,8 @@ The flood's viewer holds nothing and reads the fleet and one chat through the sa
 reads, from the same node the app runs inside itself, so its fleet and chat budgets are the phone's catching up under
 load, without a simulator's timing in the number. The phone's own screen under the
 flood is seen, not timed: serve `journeys/topologies/flood.json` with `testnet serve` and pair the app with its
-`desk` host as [the iPhone app](IOS.md) describes for any served topology.
+`desk` host as [the iPhone app](IOS.md) describes for any served topology. Every flood message carries its number
+(`message 1234: ...`), so the newest row the phone draws can be read against the newest row `desk` holds (the served
+net's `Chat` verb), and a page of history shows by its numbers where it starts. On the app's debug door, scrolling up
+leaves the newest row as a person's drag does, and the `conversation` reading of the chat on screen is the rows its
+page holds.

@@ -1,3 +1,15 @@
+2026-09-29 — **Flood messages carry their numbers, and the phone's debug
+door scrolls like a reader.** The phone recording under the flood showed the
+same sentence on every row, so nobody could tell whether the phone kept up
+with the origin or whether paging brought older rows. A scripted repeat in the
+provider fakes now replaces `{pass}` in its text with the pass's number, and
+every flood agent says `message N: ...`. On the app's debug door, scrolling up
+now tells the shown chat its reader left the newest row, as the end of a drag
+does; before, a set offset had no drag, so the flooding chat still followed and
+pulled the list back down at its next row, and paging never started. The
+door's `conversation` reading of the chat on screen is now the rows its page
+holds, paged-in rows included, rather than a fresh session's tail.
+
 2026-09-29 — **The test network restores a severed link only once both
 ends have seen it go.** A repeat run on Linux failed the host-sign-out spec:
 the desk signed out, the link was severed and at once restored, and the

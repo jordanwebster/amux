@@ -347,12 +347,27 @@ final class DoorHost {
         return body(model)
     }
 
-    /// An agent's chat as the runtime holds it, opened for the reading and
-    /// closed again.
+    /// The chat the page on screen shows, if it shows one.
+    private var shownChat: (agent: AgentKey, model: ChatModel)? {
+        guard let stores, case .conversation(let agent)? = composition?.router.top,
+              let model = try? stores.chat(agent)
+        else { return nil }
+        return (agent, model)
+    }
+
+    /// An agent's chat as the page on screen holds it, rows paged in and
+    /// all; for a chat no page shows, as the runtime holds it, opened for
+    /// the reading and closed again.
     private func reading(_ agent: String) -> DoorReply {
         guard let stores,
               let row = stores.fleet.rows.first(where: { $0.name == agent || "\($0.id)" == agent })
         else { return .error("no agent named \(agent)") }
+        if let shown = shownChat, shown.agent == row.id {
+            let model = shown.model
+            return .conversation(ConversationReading(
+                agent: agent, frame: model.frame,
+                rows: model.ids.compactMap { model.cell(for: $0).row }, ask: model.ask))
+        }
         do {
             let chat = try stores.openChat(row.id) {}
             defer { stores.closeChat(chat) }
@@ -653,6 +668,11 @@ final class DoorHost {
         case "bottom": y = bottom
         default: return .error("scroll goes up, down, top or bottom, not \(direction)")
         }
+        // A person's drag up leaves the newest row, and the chat stops
+        // following new rows when the drag ends. An offset set here has no
+        // drag, so the shown chat is told, or its next row pulls the list back
+        // down.
+        if y < list.contentOffset.y { shownChat?.model.reading(atNewest: false) }
         list.setContentOffset(CGPoint(x: list.contentOffset.x, y: y), animated: true)
         return .ack
     }
