@@ -1,0 +1,142 @@
+description: One long headless-Claude chat with every common row kind, a task list, a working-tree diff for the review page, and a scripted reply.
+local_host: laptop
+cwd: ~/source/amux
+open: cache
+agents:
+  - id: cache
+    name: blob cache eviction
+    kind: claude_sdk
+    ago: 1m
+    model: opus
+    effort: high
+    mode: acceptEdits
+    context: { used: 142000, window: 200000 }
+    usage:
+      state: near
+      windows:
+        - { name: 5h, used: 81, resets_in: 2h }
+        - { name: 7d, used: 44, resets_in: 4d }
+    background: 1
+    tasks:
+      - { subject: Measure the cache's size under the flood, status: done }
+      - { subject: Evict least recently used blobs past the cap, status: done }
+      - { subject: Cover eviction with a test, status: done }
+      - { subject: Document the new parameter, status: active }
+    diff: |
+      diff --git a/crates/ui-runtime/src/session.rs b/crates/ui-runtime/src/session.rs
+      --- a/crates/ui-runtime/src/session.rs
+      +++ b/crates/ui-runtime/src/session.rs
+      @@ -40,9 +40,14 @@ use crate::trace::DriverTrace;
+       /// How many attachment bytes a session keeps before evicting the least
+       /// recently used.
+      -const BLOB_CACHE: usize = usize::MAX;
+      +const BLOB_CACHE: usize = 64 * 1024 * 1024;
+      +
+      +struct Cached {
+      +    bytes: Arc<[u8]>,
+      +    used: u64,
+      +}
+
+       pub struct Session {
+      -    blobs: HashMap<Vec<u8>, Arc<[u8]>>,
+      +    blobs: HashMap<Vec<u8>, Cached>,
+      +    clock: u64,
+       }
+      @@ -210,6 +215,21 @@ impl Session {
+               self.blobs.get(hash).cloned()
+           }
+      +
+      +    fn evict(&mut self) {
+      +        let mut total: usize = self.blobs.values().map(|c| c.bytes.len()).sum();
+      +        while total > BLOB_CACHE {
+      +            let Some(oldest) = self.blobs.iter().min_by_key(|(_, c)| c.used).map(|(k, _)| k.clone())
+      +            else {
+      +                break;
+      +            };
+      +            total -= self.blobs.remove(&oldest).map_or(0, |c| c.bytes.len());
+      +        }
+      +    }
+       }
+      diff --git a/docs/PARAMETERS.md b/docs/PARAMETERS.md
+      --- a/docs/PARAMETERS.md
+      +++ b/docs/PARAMETERS.md
+      @@ -88,3 +88,4 @@
+       | `RECONNECT_MAX_MS` | 5 s | ... |
+      +| `BLOB_CACHE` | 64 MiB | A session's attachment bytes before least-recently-used eviction. |
+    reply:
+      - think: Checking what they asked against the change so far.
+      - read: crates/ui-runtime/src/session.rs
+      - say: "Good question. On \"{prompt}\": the cap is per session, so two open chats hold at most 128 MiB between them. I can make it global if you'd rather."
+      - turn: {}
+    transcript:
+      - boundary: started
+      - user: The phone's memory climbs when a chat has lots of screenshots. Can you cap the blob cache in the session driver?
+      - think: |
+          The session keeps every fetched blob for its lifetime. With screenshots at ~1 MiB each, a long chat
+          holds hundreds of MiB. An LRU cap in the driver is the smallest fix; the runtime can always re-serve.
+      - read: crates/ui-runtime/src/session.rs
+      - read: crates/ui-runtime/src/lib.rs
+      - grep: fetch_blob
+      - glob: crates/ui-runtime/tests/*.rs
+      - read: docs/CLIENT.md
+      - say: |
+          The session keeps every blob it fetched until the chat closes, and nothing bounds it. I'll add a
+          least-recently-used cap in the driver. Since the runtime can re-serve any blob, evicting one only
+          costs a refetch if the row scrolls back into view.
+      - subagent:
+          description: Measure blob memory under the flood
+          prompt: Run the flood fixture with screenshots and report peak session memory.
+          tools: 14
+          last: Bash
+          result: Peak 412 MiB after 600 screenshots; 97% of it is blob bytes.
+      - edit:
+          path: crates/ui-runtime/src/session.rs
+          old: "const BLOB_CACHE: usize = usize::MAX;"
+          new: "const BLOB_CACHE: usize = 64 * 1024 * 1024;"
+      - edit:
+          path: crates/ui-runtime/src/session.rs
+          old: "    blobs: HashMap<Vec<u8>, Arc<[u8]>>,"
+          new: "    blobs: HashMap<Vec<u8>, Cached>,\n    clock: u64,"
+      - bash:
+          command: just test-crate ui-runtime
+          output: |
+            running 48 tests
+            test session::blobs_evict_least_recently_used ... ok
+            test session::a_refetched_blob_redraws_its_rows ... ok
+            ...
+            test result: ok. 48 passed; 0 failed; 0 ignored
+          exit: 0
+          took: 38s
+      - error: { message: "Overloaded; retrying in 10s", retry: true }
+      - bash:
+          command: just lint
+          output: "warning: unused import: `std::sync::Arc`\n --> crates/ui-runtime/src/session.rs:3:5"
+          exit: 1
+          took: 22s
+      - edit:
+          path: crates/ui-runtime/src/session.rs
+          old: "use std::sync::Arc;\n"
+          new: ""
+      - bash: { command: just lint, output: "lint passed", exit: 0, took: 20s }
+      - say: |
+          Done. The session now keeps at most **64 MiB** of attachment bytes and evicts the least recently used
+          past that:
+
+          - `BLOB_CACHE` in `crates/ui-runtime/src/session.rs`, documented in `docs/PARAMETERS.md`
+          - a test that fills past the cap and checks the oldest blob is refetched when its row redraws
+
+          Under the flood with 600 screenshots the peak dropped from 412 MiB to 71 MiB.
+      - turn: { took: 6m, cost: 1.84 }
+      - user: Does the cap apply per chat or across all chats?
+      - search: rust Arc<[u8]> memory accounting
+      - say: Per chat. Each `Session` owns its own cache, so two open chats can hold up to 128 MiB together.
+      - turn: { took: 25s }
+      - user: Keep it per chat, but add the parameter to the docs table.
+      - read: docs/PARAMETERS.md
+      - edit:
+          path: docs/PARAMETERS.md
+          old: "| `RECONNECT_MAX_MS` | 5 s | ... |"
+          new: "| `RECONNECT_MAX_MS` | 5 s | ... |\n| `BLOB_CACHE` | 64 MiB | A session's attachment bytes before least-recently-used eviction. |"
+      - bash: { command: "cargo test -p ui-runtime --doc", running: true, background: true }
+      - say: Added the row to the parameters table; the doc tests are running in the background.
+      - turn: { took: 3m }

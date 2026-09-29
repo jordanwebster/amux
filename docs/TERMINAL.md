@@ -309,5 +309,49 @@ peer's link over SSH).
 | PNG renderings of the components | [`crates/shot`](../crates/shot/README.md) | `just shot -- render vocabulary --out DIR` |
 | Raw attach, the CLI and the binary against real daemons | `crates/amux/tests/` | `just test-crate amux` |
 | Journeys through the real terminal client | `journeys/`, `scripts/terminal-journey.py` | `just journey terminal <name>` |
+| The lab's scenarios drawn at two sizes, and its fake runtime answering a prompt and an ask | `crates/tui-lab` | `just test-crate tui-lab` |
 
 [TESTING.md](TESTING.md) places these in the suite catalogue.
+
+## The lab
+
+The lab ([`crates/tui-lab`](../crates/tui-lab/src/main.rs)) runs this client over a scripted fake runtime instead
+of a daemon, for trying designs and walking through flows. The fake runtime implements the same `Client` the
+daemon's socket does and changes the way a daemon would: a sent prompt is reflected and answered, an answered ask
+closes and the agent carries on, a created agent starts and answers its first prompt, and stop, resume, rename,
+delete, the working-tree diff and attachments all work against it. No provider runs and nothing is persisted.
+
+```sh
+just lab rich-chat        # open a scenario; relaunch at the same place on every change
+just lab                  # resume the last scenario and place
+just lab-list             # the scenarios
+just lab-render asks --keys enter --size 120x40 --size 80x24
+```
+
+**Scenarios** are YAML files in `crates/tui-lab/scenarios/`, read at launch: the hosts and their presence, the
+agents (kind, host, family, phase, model and mode, context, usage, tasks, queue, a working-tree diff) with their
+transcripts written as one-key entries (`- user:`, `- say:`, `- read:`, `- bash:`, `- edit:`, `- subagent:`,
+`- ask:` with a permission, question, plan, form, link or unanswerable body, `- turn:`), what each agent says
+back to a prompt (`reply:`), and a timeline of beats that play in real time: an agent continues, a new agent
+appears, a host drops away and returns. Entries after an ask wait for its answer. `src/scenario.rs` documents
+every field.
+
+**Relaunching.** `just lab` runs `tui-lab watch`, which polls the client's crates and the scenarios. A code change
+rebuilds in the background while the old lab stays on screen, then the lab saves its place and the new build
+reopens it there, in about two seconds after an edit in `crates/tui`. A scenario change relaunches without a
+build. A failed build leaves the old lab running with a notice naming the first error; the whole log is
+`notes/tui-lab/build.log`. The place is the scenario, how many timeline beats have fired, the open chat, the
+fleet's selection, the draft and the scroll anchor. What was done against the fake runtime is not kept: the world
+is rebuilt from the scenario and those beats.
+
+**Lab keys**, layered over the client's own:
+
+| Key | What it does |
+|---|---|
+| F2 or Ctrl+] f | Capture this screen with a one-line note: text, PNG, note and place go to `notes/tui-lab/feedback/<time>/` |
+| F3 or Ctrl+] v | Cycle the design variant (`tui::variant`), for renderers comparing designs |
+| Ctrl+] r | Restart the scenario from its beginning |
+
+`tui-lab render` draws frames without a terminal: the scenario after `--step N` beats and a key sequence
+(`--keys "down enter 'fix it' enter"`, with named keys and `C-x` for Ctrl), at each `--size`, to text and PNG.
+Scripts play at once there, so a frame does not wait on timing.

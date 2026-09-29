@@ -1,0 +1,155 @@
+description: A day's fleet across three machines, with families, every standing, a host that drops away and agents that change while you watch.
+local_host: laptop
+hosts:
+  - id: desk
+    name: desk
+    platform: linux
+  - id: studio
+    name: studio
+    platform: macos
+    via: relay
+  - id: pi
+    name: garage-pi
+    platform: linux
+    presence: offline
+    dial_error: connection refused
+cwd: ~/source/amux
+repositories:
+  - ~/source/amux
+  - ~/source/amuxcloud
+agents:
+  - id: rearchitect
+    name: rearchitect flight
+    kind: claude
+    ago: 20s
+    working_on: Re-recording the flood baseline
+    context: { used: 158000 }
+    transcript:
+      - user: Babysit the rearchitect flight to landing.
+      - bash: { command: "autopilot status", output: "Progress: 11/12 milestones · repairing acceptance", exit: 0 }
+      - say: Eleven of twelve milestones are done; the implementer is re-recording the flood baseline.
+      - wait: 30s
+  - id: implementer
+    name: implementer · task 199
+    kind: claude_sdk
+    parent: rearchitect
+    ago: 5s
+    working_on: Recording three head runs under quiet
+    transcript:
+      - user: Re-record the flood ingest-cost baseline in a proven reference state.
+      - bash: { command: "just perf --baseline", running: true, output: "run 1/3 …" }
+  - id: closer
+    name: closer · audit 3
+    kind: codex
+    parent: rearchitect
+    ago: 50m
+    exited: finished
+    transcript:
+      - user: Audit milestone 11 against the contract.
+      - say: Milestone 11 passes; one note on the flood fixture's naming.
+      - turn: { took: 12m }
+  - id: e2e
+    name: e2e reconnect flake
+    kind: claude_sdk
+    ago: 1m
+    working_on: Fixing the flaky reconnect test
+    transcript:
+      - user: The reconnect e2e test flakes. Find out why.
+      - read: crates/ui-runtime/tests/reconnect.rs
+      - ask:
+          permission:
+            tool: Bash
+            input: { command: "cargo test -p ui-runtime --test reconnect -- --test-threads=1" }
+            reason: Runs the reconnect test alone.
+  - id: pricing
+    name: pricing page
+    kind: codex
+    host: desk
+    ago: 4m
+    working_on: Plan ready for review
+    transcript:
+      - user: Rework the pricing page for the new tiers.
+      - ask:
+          plan:
+            plan: "1. Replace the table with two cards.\n2. Move the FAQ below.\n3. Add the free-tier note."
+  - id: ios-goldens
+    name: iOS goldens
+    kind: claude
+    host: studio
+    ago: 3m
+    working_on: Re-recording the chat goldens
+    transcript:
+      - user: Re-record the chat goldens after the transparency change.
+      - bash: { command: "just ios verify", running: true }
+  - id: docs
+    name: docs pass
+    kind: claude_sdk
+    ago: 2h
+    transcript:
+      - user: Tighten HOW_IT_WORKS.md.
+      - say: Done — rewrote the pairing section for readers.
+      - turn: { took: 4m }
+  - id: licensing
+    name: licensing
+    kind: claude_sdk
+    ago: 1d
+    exited: stopped
+    transcript:
+      - user: Draft the licensing page.
+      - say: Drafted docs/LICENSING.md.
+      - turn: { took: 3m }
+  - id: garage
+    name: sensor logger
+    kind: codex
+    host: pi
+    ago: 3d
+    transcript:
+      - user: Log the garage sensor every minute.
+      - say: Running under systemd now.
+      - turn: {}
+  - id: marketing
+    name: marketing copy
+    kind: codex
+    host: desk
+    ago: 11h
+    transcript:
+      - user: Write three taglines.
+      - say: "1. Every agent, every machine, one place."
+      - turn: {}
+timeline:
+  - after: 4s
+    agent: docs
+    play:
+      - user: One more pass on the relay section, please.
+      - read: docs/HOW_IT_WORKS.md
+      - say: Rewriting the relay section in plain terms.
+  - after: 5s
+    agent: implementer
+    play:
+      - working_on: Waiting for the file-events daemon to quiet
+  - after: 6s
+    host: studio
+    presence: away
+  - after: 6s
+    agent: docs
+    play:
+      - ask:
+          permission:
+            tool: Bash
+            input: { command: "just docs-check" }
+            reason: Checks the docs' links.
+  - after: 8s
+    create:
+      id: newcomer
+      name: triage inbox
+      kind: claude_sdk
+      ago: 0s
+      phase: starting
+  - after: 3s
+    agent: newcomer
+    play:
+      - user: Triage today's Linear inbox.
+      - read: notes/inbox.md
+  - after: 6s
+    host: studio
+    presence: online

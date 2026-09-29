@@ -1,3 +1,30 @@
+2026-09-29 — **The TUI lab: the terminal client over scripted dummy data.**
+Trying a design in the terminal client meant a daemon, real agents and
+waiting for them to reach the state worth looking at. `crates/tui-lab`
+runs the unchanged client over a fake runtime behind the same `Client`
+seam the daemon's socket implements, built from YAML scenarios: hosts
+and their presence, agents of every kind in every standing with authored
+transcripts, a working-tree diff, what each agent says back to a prompt,
+and a timeline of beats that play in real time. The fake runtime answers
+the client's acts the way a daemon would (a prompt is reflected and
+answered, a prompt sent mid-turn queues, an answered ask closes and the
+agent carries on, a created agent starts and answers its first prompt),
+so whole flows can be walked, not only still screens. `just lab <scenario>`
+watches the client's crates and the scenarios, rebuilds in the background
+and relaunches at the saved place (scenario, timeline beats fired, open
+chat, selection, draft, scroll anchor): about 2.3 seconds from an edit in
+`crates/tui` to the relaunched screen, 0.2 seconds for a scenario edit. A
+failed rebuild leaves the old lab running with a notice. F2 captures the
+screen with a note as text and PNG under the gitignored `notes/tui-lab/`,
+F3 cycles `tui::variant` for renderers comparing designs, and
+`tui-lab render` draws a scenario after a key sequence at several sizes
+headlessly. Five scenarios ship: a first run, a busy fleet across three
+machines, one rich chat, one agent per ask kind, and a turn that plays
+live. The lab takes no daemon into its graph and the client needed no new
+seam beyond the variant number; scenarios are authored rather than cut
+from the recorded provider fixtures, which would pull the interpreters
+in and slow the relink.
+
 2026-09-29 — **A chat's window is bounded while the reader follows.** A
 chat left open under a flood (about 40 rows a second) held every row it had
 seen. The session model now keeps at most a cap of the newest rows while

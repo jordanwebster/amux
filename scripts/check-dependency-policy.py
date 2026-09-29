@@ -75,6 +75,7 @@ TEST_SUPPORT = {
     "provider-fakes",
     "fake-amux",
     "shot",
+    "tui-lab",
 }
 SUPPORT_ALLOWED_LOCAL = {
     # The many-daemons harness: real daemons in process, real agents on the
@@ -93,6 +94,9 @@ SUPPORT_ALLOWED_LOCAL = {
     "fake-amux": {"agent-dir", "node"},
     # Renders the terminal client's named states to PNG for review.
     "shot": {"tui"},
+    # The terminal client over a scripted fake runtime, for design work;
+    # no daemon in its graph, so it relinks in seconds.
+    "tui-lab": {"client", "shot", "tui", "ui-runtime", "ui-state", "wire"},
 }
 
 def local_edges(package: dict[str, object]) -> set[str]:

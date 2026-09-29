@@ -1,0 +1,142 @@
+description: One agent waiting on each kind of ask, across terminal Claude, headless Claude and Codex.
+local_host: laptop
+hosts:
+  - id: desk
+    name: desk
+    platform: linux
+cwd: ~/source/amux
+open: bash-permission
+agents:
+  - id: bash-permission
+    name: flaky e2e
+    kind: claude_sdk
+    ago: 40s
+    working_on: Fixing the flaky reconnect test
+    context: { used: 61000 }
+    transcript:
+      - user: The reconnect e2e test flakes about one run in ten. Can you find out why and fix it?
+      - think: Probably a race between the pump's backoff and the test's clock.
+      - read: crates/ui-runtime/src/session.rs
+      - read: crates/ui-runtime/tests/reconnect.rs
+      - grep: RECONNECT_FIRST_MS
+      - say: |
+          The test waits a fixed 300 ms for the second subscribe, but the pump's first backoff is 250 ms
+          plus scheduling, so on a loaded machine the subscribe lands late. I'd like to run the test in a
+          loop to confirm before changing it.
+      - ask:
+          permission:
+            tool: Bash
+            input: { command: "for i in $(seq 50); do cargo test -p ui-runtime --test reconnect -q || break; done" }
+            reason: Runs the reconnect test 50 times to measure the flake rate.
+            scopes: ["Always allow cargo test in this project"]
+            output: "test result: FAILED. 0 passed; 1 failed\nfailed on run 7"
+            exit: 101
+            then:
+              - edit: { path: crates/ui-runtime/tests/reconnect.rs, old: "sleep(Duration::from_millis(300))", new: "calls.subscribe().await" }
+              - say: Confirmed (failed on run 7), and fixed by waiting for the subscribe itself rather than a fixed time.
+              - turn: {}
+  - id: codex-edit
+    name: pricing copy
+    kind: codex
+    host: desk
+    ago: 2m
+    working_on: Updating the pricing page copy
+    transcript:
+      - user: Change the pricing page to say $7.99 a month and mention the free tier.
+      - read: site/pricing.md
+      - say: I'll update the price and add a paragraph on the free tier.
+      - ask:
+          permission:
+            tool: Edit
+            input: { file_path: site/pricing.md, old_string: "$4.99 / month", new_string: "$7.99 / month\n\nThe free tier covers every host on your own network." }
+            reason: Edits the pricing copy.
+  - id: codex-command
+    name: release notes
+    kind: codex
+    ago: 3m
+    transcript:
+      - user: Draft release notes from the commits since the last tag.
+      - ask:
+          permission:
+            tool: Bash
+            input: { command: "git log --oneline v0.5.0..HEAD" }
+            reason: Lists commits since the last tag.
+  - id: question
+    name: attach redesign
+    kind: claude_sdk
+    ago: 5m
+    working_on: Designing how attach returns to the fleet
+    transcript:
+      - user: Redesign what happens when you leave an attached terminal.
+      - read: docs/TERMINAL.md
+      - ask:
+          question:
+            questions:
+              - header: On exit
+                question: When the agent exits while attached, where should you land?
+                options:
+                  - { label: The shell, description: "Like tmux: the session ended, so does the view.", recommended: true }
+                  - { label: The fleet, description: Back to the list of agents. }
+                  - { label: The chat, description: The agent's own chat, showing how it ended. }
+              - header: Chord
+                question: Which chord should return to the fleet?
+                multi: false
+                options:
+                  - "<leader> s"
+                  - "<leader> f"
+                  - "Ctrl+]"
+  - id: plan
+    name: journal compaction
+    kind: claude
+    ago: 8m
+    mode: plan
+    transcript:
+      - user: Plan how we'd compact journal segments older than a week.
+      - read: docs/JOURNAL_AND_STORE.md
+      - grep: segment_bytes
+      - ask:
+          plan:
+            plan: |
+              ## Compact old journal segments
+
+              1. Add a `compacted` marker record that names the last order it covers.
+              2. A background task rewrites segments older than 7 days into one segment per agent,
+                 keeping only the newest revision of each item.
+              3. Readers treat a compacted segment like any other; orders stay dense.
+              4. Test: a flood fixture compacts to the same rows the store serves.
+  - id: form
+    name: linear triage
+    kind: claude_sdk
+    ago: 12m
+    transcript:
+      - user: File the three bugs we found today in Linear.
+      - ask:
+          form:
+            server: linear
+            message: Linear needs a team and a priority for these issues.
+            schema:
+              type: object
+              properties:
+                team: { type: string, enum: [FOX, CORE] }
+                priority: { type: string, enum: [urgent, high, medium, low] }
+              required: [team]
+  - id: link
+    name: cloud sign-in
+    kind: claude_sdk
+    ago: 15m
+    transcript:
+      - user: Check the relay's error rate for the last day.
+      - ask:
+          link:
+            server: grafana
+            message: Grafana needs you to sign in before I can read dashboards.
+            url: https://grafana.example.com/login?session=lab
+  - id: unanswerable
+    name: mcp dialog
+    kind: claude
+    ago: 20m
+    transcript:
+      - user: Connect to the new tool server and list what it offers.
+      - ask:
+          unanswerable:
+            reason: Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.

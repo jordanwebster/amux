@@ -633,6 +633,24 @@ cargo = [
 ]
 
 [[suite]]
+name = "tui-lab"
+contract = "The TUI lab loads every scenario, draws the terminal client over its fake runtime at more than one size, and the fake runtime carries a prompt and an answered ask the way a daemon would."
+paths = ["crates/tui-lab/src", "crates/tui-lab/scenarios"]
+recipe = "just test-crate tui-lab"
+boundary = "Native presentation"
+oracle = "Frames that name the answered call's output and the new agent's reply, and a non-empty frame per scenario and size."
+real = ["terminal client", "session and fleet drivers", "font rasterizer", "temporary image files"]
+substituted = ["daemon and providers by the scripted fake runtime", "interactive terminal"]
+time = "real"
+capabilities = ["Rust toolchain", "vendored fonts"]
+lane = "tool"
+evidence = "notes/tui-lab"
+update = "Edit the scenario YAML under crates/tui-lab/scenarios."
+cargo = [
+  { package = "tui-lab", kind = "bin", targets = ["tui-lab"] },
+]
+
+[[suite]]
 name = "client-runtime-drivers"
 contract = "The session and fleet drivers paint the snapshot and held rows before returning, page below the oldest held row, reconnect on their own clock, settle uncertain inputs, fetch attachment bytes lazily, keep a bounded replayable trace, and run alike in process and over the profile socket against a real node."
 paths = ["crates/ui-runtime/tests", "crates/ui-runtime/src"]
