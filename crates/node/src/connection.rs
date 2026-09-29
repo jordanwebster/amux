@@ -93,14 +93,23 @@ impl ConnectionManager {
             .await
             .ok_or(ChannelError::NoRoute { host_id: peer })?;
         match self.activate_route(peer, route, class).await {
-            // When both hosts dial each other, the preferred link supersedes
-            // the other and closes it. A call that chose the losing link just
-            // before that fails while opening its stream, though routing by
-            // then names the link that replaced it: try that one, once.
+            // A direct link can close under a call that just chose it: the
+            // preferred of two crossed dials supersedes the other, or the
+            // peer ends the link. Routing may still list the closed link for
+            // a moment, since the link leaves the registry before it leaves
+            // routing. Try the next route routing holds, once: the link that
+            // replaced it, or the relay, which lets a host that revoked this
+            // one say so.
             Err(error @ ChannelError::LinkUnavailable { .. }) if route.is_direct() => {
-                match self.routing.route_to(peer).await {
-                    Some(next) if next != route => self.activate_route(peer, next, class).await,
-                    _ => Err(error),
+                let next = self
+                    .routing
+                    .routes_to(peer)
+                    .await
+                    .into_iter()
+                    .find(|next| *next != route);
+                match next {
+                    Some(next) => self.activate_route(peer, next, class).await,
+                    None => Err(error),
                 }
             }
             result => result,

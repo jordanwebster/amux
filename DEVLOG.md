@@ -1,3 +1,14 @@
+2026-09-29 — **A call whose direct link closes under it tries the relay.**
+A direct link leaves the link registry a moment before it leaves routing,
+so a call made in between chose the closed link and failed with "no live
+link"; the one retry asked routing again and got the same link. The retry
+now takes the next route routing holds that is not the failed one: the
+link that replaced it, or the relay. A host the desk had just revoked saw
+the anonymous "no live link" instead of the desk's refusal by name (seen
+once in the macOS repeat lane); holding the gap open for 500 ms reproduced
+that exactly every run, and with this change the reopen reaches the desk
+through the relay and is refused as no longer trusted.
+
 2026-09-29 — **Tests that build binaries mid-run share one build.** The
 macOS test job ran out its 1000 s bound with every test passing: it spent
 about ten of its sixteen minutes rebuilding `amux`, once for each test
