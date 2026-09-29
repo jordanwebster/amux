@@ -446,7 +446,14 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     assert!(!chat.is_null());
     // SAFETY: the chat is open.
     let id = unsafe { amux_session_id(chat) };
-    phone.until(id, chat, "the first turn", || says(chat, "turn one"));
+    // The rows can be on screen before the chat is caught up: the switch to
+    // on-demand above may have closed the replica's source, and the one
+    // reopened for listed agents serves the held rows as detached until its
+    // catch-up lands.
+    phone.until(id, chat, "the first turn, caught up", || {
+        // SAFETY: the chat is open.
+        says(chat, "turn one") && take(unsafe { amux_session_frame(chat) })["caught_up"] == true
+    });
     // SAFETY: the chat is open.
     let frame = take(unsafe { amux_session_frame(chat) });
     assert_eq!(frame["name"], "worker", "{frame}");

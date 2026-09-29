@@ -1,3 +1,17 @@
+2026-09-29 — **Four test races found by the repeat lane are closed.** The
+supervisor tests forked processes while another thread copied a binary into
+place, so on Linux the copy's write descriptor leaked into the fork and
+exec'ing the binary failed with "Text file busy"; writing an executable now
+excludes process starts in that test binary. The cross-host duplicate-send
+spec counted provider deliveries once the recipient looked idle, but an agent
+message is never shown queued, so it now also waits for a turn to end after
+the message. The power-loss spec's simulated crash let a still-running task
+close the store (and checkpoint its WAL) after the power cut had been staged;
+the crash now returns only once the store is closed. The phone's C ABI test
+took a chat's rows as its first turn before the chat had caught up after a
+source-policy switch; it now waits for both. Each was reproduced by forcing
+its ordering and passes under the same forcing.
+
 2026-09-29 — **A component snapshot's quiet window no longer eats its
 deadline.** On a CI runner `review.selection.dark` timed out waiting to
 settle. Each example had one 5 s deadline to become ready, take its glass's
