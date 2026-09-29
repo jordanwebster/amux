@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use node::release::{self, Choice, Manifest, Release, Skip, VerifyError};
@@ -27,12 +27,38 @@ const TEST_SEED: [u8; 32] = [
 const OTHER_SEED: [u8; 32] = [7; 32];
 const PATIENCE: Duration = Duration::from_secs(30);
 
+/// Tests in this binary write executables and start processes on parallel
+/// threads. A process forked while another thread holds a freshly written
+/// executable open for writing inherits that descriptor until it execs, and
+/// on Linux an exec of the file meanwhile fails with "Text file busy". So
+/// writing an executable excludes every start in this process, and a start
+/// holds the lock until the child has exec'd (`spawn` returns only then).
+static EXECUTABLES: RwLock<()> = RwLock::new(());
+
+/// Writes an executable with no process start in flight. `write` must not
+/// start a process itself (resolve `binaries()` before calling).
+fn write_executable<T>(write: impl FnOnce() -> T) -> T {
+    let _writing = EXECUTABLES
+        .write()
+        .unwrap_or_else(|poison| poison.into_inner());
+    write()
+}
+
+/// Starts a process with no executable being written.
+fn start<T>(start: impl FnOnce() -> T) -> T {
+    let _starting = EXECUTABLES
+        .read()
+        .unwrap_or_else(|poison| poison.into_inner());
+    start()
+}
+
 /// fake-amux and amux, built once per run.
 fn binaries() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let status = Command::new(cargo)
+        let mut cargo = Command::new(cargo);
+        cargo
             .args([
                 "build",
                 "--locked",
@@ -42,8 +68,10 @@ fn binaries() -> &'static Path {
                 "amux",
                 "--bins",
             ])
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .status()
+            .current_dir(env!("CARGO_MANIFEST_DIR"));
+        let status = start(|| cargo.spawn())
+            .expect("cargo runs")
+            .wait()
             .expect("cargo runs");
         assert!(status.success(), "building fake-amux and amux failed");
         let exe = std::env::current_exe().expect("the test binary's path");
@@ -171,7 +199,8 @@ impl Fixture {
             server: Server::start().await,
             supervisor: None,
         };
-        std::fs::copy(fixture.build("1.0.0"), &fixture.bin).unwrap();
+        let build = fixture.build("1.0.0");
+        write_executable(|| std::fs::copy(build, &fixture.bin)).unwrap();
         fixture
     }
 
@@ -179,7 +208,8 @@ impl Fixture {
     fn build(&self, version: &str) -> PathBuf {
         let path = self.dir.join("builds").join(format!("amux-{version}"));
         if !path.exists() {
-            release::restamp(&binaries().join("fake-amux"), &path, version).unwrap();
+            let fake = binaries().join("fake-amux");
+            write_executable(|| release::restamp(&fake, &path, version)).unwrap();
         }
         path
     }
@@ -222,16 +252,16 @@ impl Fixture {
             .append(true)
             .open(self.dir.join("supervisor.log"))
             .unwrap();
-        let child = Command::new(&self.bin)
+        let mut command = Command::new(&self.bin);
+        command
             .arg("supervise")
             .env("FAKE_AMUX_DIR", &self.dir)
             .env("FAKE_AMUX_MANIFEST", self.server.url("/stable.json"))
             .env("RUST_LOG", "info")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(log)
-            .spawn()
-            .unwrap();
+            .stderr(log);
+        let child = start(|| command.spawn()).unwrap();
         let pid = child.id();
         self.supervisor = Some(child);
         pid
@@ -630,9 +660,11 @@ async fn a_daemon_that_ignores_the_stop_signal_is_killed_at_the_stop_deadline() 
 async fn a_starting_supervisor_counts_failed_starts_against_prev_and_rolls_back() {
     // A reboot in the middle of an update: 2.0.0 at the path, 1.0.0 as prev.
     let mut fixture = Fixture::new().await;
-    std::fs::copy(fixture.build("1.0.0"), fixture.prev()).unwrap();
+    let build = fixture.build("1.0.0");
+    write_executable(|| std::fs::copy(build, fixture.prev())).unwrap();
     std::fs::remove_file(&fixture.bin).unwrap();
-    std::fs::copy(fixture.build("2.0.0"), &fixture.bin).unwrap();
+    let build = fixture.build("2.0.0");
+    write_executable(|| std::fs::copy(build, &fixture.bin)).unwrap();
     fixture.behave("2.0.0", "exit");
     let supervisor = fixture.start();
 
@@ -650,9 +682,11 @@ async fn a_starting_supervisor_counts_failed_starts_against_prev_and_rolls_back(
 async fn a_starting_supervisor_finishes_a_recorded_rollback() {
     // A crash between recording the rejected build and renaming prev back.
     let mut fixture = Fixture::new().await;
-    std::fs::copy(fixture.build("1.0.0"), fixture.prev()).unwrap();
+    let build = fixture.build("1.0.0");
+    write_executable(|| std::fs::copy(build, fixture.prev())).unwrap();
     std::fs::remove_file(&fixture.bin).unwrap();
-    std::fs::copy(fixture.build("2.0.0"), &fixture.bin).unwrap();
+    let build = fixture.build("2.0.0");
+    write_executable(|| std::fs::copy(build, &fixture.bin)).unwrap();
     std::fs::write(fixture.dir.join("bin/amux.rejected"), "2.0.0").unwrap();
     let supervisor = fixture.start();
 
@@ -700,13 +734,13 @@ async fn the_amux_daemon_exits_when_its_supervisor_dies() {
         ),
     )
     .unwrap();
-    let mut supervisor = Command::new(binaries().join("amux"))
+    let mut command = Command::new(binaries().join("amux"));
+    command
         .arg("supervise")
         .env("AMUX_CONFIG", &config)
         .env_remove("AMUX_LOG")
-        .stdin(Stdio::null())
-        .spawn()
-        .unwrap();
+        .stdin(Stdio::null());
+    let mut supervisor = start(|| command.spawn()).unwrap();
     let lock = data.join(node::INSTALLATION_LOCK);
     let deadline = Instant::now() + PATIENCE;
     while std::os::unix::net::UnixStream::connect(&socket).is_err() {
@@ -886,8 +920,18 @@ fn verify_checks_the_hash_and_the_signature_over_version_and_hash() {
 fn restamping_a_build_changes_the_version_it_reports() {
     let dir = tempfile::tempdir().unwrap();
     let copy = dir.path().join("amux");
-    release::restamp(&binaries().join("amux"), &copy, "0.0.1-previous").unwrap();
-    let output = Command::new(&copy).arg("--version").output().unwrap();
+    let amux = binaries().join("amux");
+    write_executable(|| release::restamp(&amux, &copy, "0.0.1-previous")).unwrap();
+    let output = start(|| {
+        Command::new(&copy)
+            .arg("--version")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+    })
+    .unwrap()
+    .wait_with_output()
+    .unwrap();
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
