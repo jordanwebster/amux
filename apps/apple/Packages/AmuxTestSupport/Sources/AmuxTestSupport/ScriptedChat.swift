@@ -187,7 +187,10 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
         return .done
     }
     public func resume(with draft: Draft) async -> ActOutcome? { .done }
-    public func pageOlder(_ rows: UInt32) async -> PageOutcome? { lock.withLock { paged } }
+    public func pageOlder(_ rows: UInt32) async -> PageOutcome? {
+        try? await Task.sleep(for: .seconds(0.6))
+        return lock.withLock { paged }
+    }
 
     public func putBlob(
         _ data: Data, name: String, mime: String

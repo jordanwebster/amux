@@ -93,6 +93,21 @@ final class ChatFeedTests: XCTestCase {
         }
     }
 
+    /// The pixels of the rows between the header and the composer, as the
+    /// screen shows them.
+    private func rowsBand() throws -> Data {
+        let window = try XCTUnwrap(self.window)
+        let band = CGRect(x: 0, y: 150, width: window.bounds.width, height: 550)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: band.size, format: format).image { _ in
+            window.drawHierarchy(
+                in: CGRect(origin: CGPoint(x: 0, y: -band.minY), size: window.bounds.size),
+                afterScreenUpdates: true)
+        }
+        return try XCTUnwrap(image.cgImage?.dataProvider?.data as Data?)
+    }
+
     /// Up into history, moved the way the door moves it.
     private func scrollUp(_ list: UIScrollView, _ model: ChatModel, screens: CGFloat) async {
         model.reading(atNewest: false)
@@ -154,11 +169,24 @@ final class ChatFeedTests: XCTestCase {
         await scrollUp(list, model, screens: 40)
         XCTAssertTrue(model.drawsOldestHeld)
 
+        // The anchor moves the list inside SwiftUI's layout pass, and until
+        // something else changes SwiftUI goes on reporting the rows where they
+        // were before that move: at the top, where the loading notice coming
+        // was taken back, the reported frames lag the screen. So the screen
+        // itself is compared, over the rows between the header and the
+        // composer.
         let before = try onScreen()
+        let photographed = try rowsBand()
         source.prepend(Self.messages(921...960))
         model.woke()
         await spin()
-        try assertStill(before, "a page landing")
+        let after = try onScreen()
+        XCTAssertGreaterThan(
+            before.keys.filter { after[$0] != nil }.count, 3, "a page landing: the rows on screen went")
+        let now = try rowsBand()
+        try photographed.write(to: URL(fileURLWithPath: "/tmp/band-before.raw"))
+        try now.write(to: URL(fileURLWithPath: "/tmp/band-after.raw"))
+        XCTAssertEqual(now, photographed, "a page landing moved the rows on screen")
         XCTAssertEqual(model.drawn.first, "m921", "the page the reader waited at the top for is drawn")
         XCTAssertEqual(model.ids.count, 80)
     }
