@@ -481,6 +481,9 @@ impl Daemon {
         }
         self.generation.mark_clean(&self.installation.data_dir)?;
         drop(hosted);
+        // Said while the lock is still held: whoever waits for the lock to
+        // free reads a log that already ends here.
+        tracing::info!("stopped cleanly");
         drop(self.lock.take());
         Ok(())
     }

@@ -115,7 +115,6 @@ pub fn run_daemon(config: &InstallationConfig, pipe: Option<node::InheritedPipe>
             () = supervisor_gone(supervisor) => tracing::info!("the supervisor went away"),
         }
         daemon.shutdown().await.context("shutting down")?;
-        tracing::info!("stopped cleanly");
         Ok(())
     })
 }

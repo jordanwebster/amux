@@ -1,3 +1,11 @@
+2026-09-29 — **The daemon says it stopped cleanly before it lets go of the
+installation.** It released the installation lock and only then wrote
+"stopped cleanly" to its log, so anything waiting for the lock to free (a
+new daemon, or the test that watches a daemon outlive its supervisor) could
+read a log that did not yet say so (seen once on Linux CI). The line is now
+written while the lock is still held. Delaying the moment after shutdown
+fails that test the way CI did before the fix and passes after.
+
 2026-09-29 — **A call caught opening its channel when a link drops no
 longer waits forever.** Closing a link's multiplexed connection does not
 wake a stream already waiting to read, so a stream opened just before a
