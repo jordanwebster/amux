@@ -107,6 +107,26 @@ judged on budgets alone.
 cannot become a baseline: a miss is a defect to explain, never a new value to adopt. Review the complete report
 before committing the file.
 
+A baseline is only comparable with a run that measures the same way. Whenever a metric's measurement changes,
+re-record that metric's baseline in the same commit as the change. `--baseline` rewrites every median, so when only
+one measurement changed, keep the other metrics' committed values and commit only the changed one.
+
+A baseline, or a run that qualifies a change, counts only when the machine is shown to be in the reference state,
+never assumed. Show it in the same session, with the machine state (`uptime`, `ps -Ao pcpu,comm -r | head`,
+`df -h`) recorded beside every run:
+
+- **Control.** Build the commit that recorded the current baseline (`git archive <sha>` into a scratch tree with its
+  own target directory) and run its `perf --only flood` three times before and three times after the runs that
+  count. Both medians must reproduce its recorded value within 5%. One reading is not a control: runs of one build
+  differ by several percent.
+- **Quiet.** Before each run, no process holds more than a fifth of a core for a minute. After every flood run the
+  file-events daemon works through the run's writes for minutes; wait it out.
+- **Free space.** Ample free space on the volume the run writes to (the temporary directory's). Ingest cost is file
+  writes, and a nearly full APFS volume inflates it: with 5 GiB free on a 926 GiB disk the baseline commit read 8
+  to 25% above its own recorded value; with 176 GiB free it reproduced it.
+- **Agreement.** Run the build being judged at least three times; the recorded run must fall within 5% of the
+  median of that session's runs of the same build. A reading outside that is noise, not a baseline.
+
 ## Reading a report
 
 The report names the machine and OS, profile and features and the reference state, then one line per metric:
