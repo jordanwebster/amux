@@ -438,9 +438,16 @@ async fn stop_and_send_are_lineage_checked_across_hosts() {
     .await
     .unwrap();
     let helper = net.agent("helper").unwrap().clone();
-    eventually("desk to hold helper's replica", PATIENCE, || {
+    // Stop cancels a running turn. Until Claude takes input the creation
+    // prompt only waits in the queue, and an interrupt then cancels
+    // nothing; the prompt's turn would run and wait on its gate forever.
+    eventually("desk to see helper's turn running", PATIENCE, || {
         let net = &net;
-        async move { row(net, "desk", "helper").await.is_some() }
+        async move {
+            row(net, "desk", "helper")
+                .await
+                .is_some_and(|row| row.phase == Phase::Working as i32)
+        }
     })
     .await
     .unwrap();

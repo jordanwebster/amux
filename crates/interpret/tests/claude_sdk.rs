@@ -387,3 +387,76 @@ fn attached_chart() -> (String, wire::Attachment) {
     let path = Path::new("/home/me/agents/a/blobs").join("ab".repeat(32));
     (attachments::element(&attachment, Some(&path)), attachment)
 }
+
+fn sdk_input(id: &[u8], of: wire::claude_sdk_input::Of) -> Event {
+    Event::Input(wire::Input {
+        input_id: id.to_vec(),
+        of: Some(wire::input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(of),
+        })),
+    })
+}
+
+/// Stop cancels the running turn, and before Claude takes input there is
+/// none: the prompt waits in the queue, the interrupt is accepted with
+/// nothing to cancel, and the prompt's turn runs once Claude starts. Who
+/// stops a child must wait for its turn to be running.
+#[test]
+fn an_interrupt_before_claude_starts_leaves_the_queued_prompt_to_run() {
+    let spec = wire::AgentSpec {
+        agent_id: b"agent".to_vec(),
+        incarnation: 1,
+        ..Default::default()
+    };
+    let (mut state, _) = ClaudeSdk::initial(&spec, "test");
+    let prompt = wire::claude_sdk_input::Of::Prompt(wire::PromptInput {
+        text: "Run the test suite and report.".into(),
+        ..Default::default()
+    });
+    let queued = ClaudeSdk::step(&mut state, sdk_input(b"first", prompt));
+    assert!(
+        !queued
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::UserMessage { .. }))
+    );
+    let snapshot = queued.step.snapshot.expect("a snapshot");
+    assert_eq!(snapshot.phase(), wire::Phase::Starting);
+    assert_eq!(snapshot.queue.len(), 1);
+
+    let interrupt = wire::claude_sdk_input::Of::Interrupt(wire::Interrupt {});
+    let stopped = ClaudeSdk::step(&mut state, sdk_input(b"stop", interrupt));
+    assert!(
+        stopped.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Reply { input_id, verdict } if input_id == b"stop"
+                && matches!(verdict.of, Some(wire::send_input_response::Of::Accepted(_)))
+        )),
+        "{:?}",
+        stopped.effects
+    );
+    assert!(
+        !stopped
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ProviderWrite(_))),
+        "nothing to cancel is written: {:?}",
+        stopped.effects
+    );
+
+    let ran = ClaudeSdk::step(
+        &mut state,
+        stream(json!({"type": "system", "subtype": "init", "uuid": "i", "session_id": "s"})),
+    );
+    let uuid = client_uuid(b"first");
+    assert!(
+        ran.effects.iter().any(
+            |effect| matches!(effect, Effect::UserMessage { uuid: sent, .. } if *sent == uuid)
+        ),
+        "{:?}",
+        ran.effects
+    );
+    let snapshot = ran.step.snapshot.expect("a snapshot");
+    assert_eq!(snapshot.phase(), wire::Phase::Working);
+    assert!(snapshot.queue.is_empty());
+}

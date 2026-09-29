@@ -1,3 +1,18 @@
+2026-09-29 — **The cross-host stop test waits for the child's turn to run.**
+The test that a parent's stop reaches its child on another host sent the
+interrupt as soon as the parent's host held the child's row, and once in
+the macOS repeat lane the child never exited. The row appears while
+headless Claude is still starting; the creation prompt waits in the queue
+until Claude answers `initialize`, and an interrupt then has no turn to
+cancel. It is accepted, the prompt's turn runs afterwards and waits on its
+gate for good. Delaying the fake's `initialize` answer by 3 s reproduced
+the exact failure every run and showed the interrupt arriving with the
+provider not yet started. Stop cancelling only a running turn is the
+specified behaviour, so the test now waits until the child's row shows it
+working; it passes under the same delay. An interpreter test pins the rule
+the old test missed: an interrupt before Claude starts leaves the queued
+prompt to run.
+
 2026-09-29 — **A call whose direct link closes under it tries the relay.**
 A direct link leaves the link registry a moment before it leaves routing,
 so a call made in between chose the closed link and failed with "no live
