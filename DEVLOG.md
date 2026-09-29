@@ -1,3 +1,14 @@
+2026-09-29 — **The fleet standings frame no longer depends on which first
+turn ends last.** The fleet lists agents of the same standing most recently
+active first, and the test that draws every standing started all its agents
+at once, so the idle scout, the offline host's archivist and the planner
+landed in whatever order their first turns happened to end (a macOS runner
+drew scout above archivist). The three idle agents now start one after
+another, each once the one before is idle, in the golden's order. A pause at
+the start of scout's first turn fails the old setup every run (scout above
+archivist, and above planner too); with the new setup that pause, and one
+at the start of archivist's turn, leave the frame matching its golden.
+
 2026-09-29 — **The daemon says it stopped cleanly before it lets go of the
 installation.** It released the installation lock and only then wrote
 "stopped cleanly" to its log, so anything waiting for the lock to free (a

@@ -470,43 +470,39 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
                 .prompt("Run the relay tests."),
         )
         .agent(
-            AgentDecl::new("planner", "desk")
-                .kind(FakeKind::ClaudeSdk)
-                .steps(vec![
-                    text("Handing the specs to a helper."),
-                    Step::TurnEnd,
-                    text("The specs are updated."),
-                    Step::TurnEnd,
-                ])
-                .prompt("Update the specs."),
-        )
-        .agent(
             AgentDecl::new("crasher", "desk")
                 .kind(FakeKind::Codex)
                 .steps(vec![text("Starting."), Step::Exit { code: 1 }])
                 .prompt("Migrate the store."),
-        )
-        .agent(
-            AgentDecl::new("scout", "desk")
-                .kind(FakeKind::ClaudePty)
-                .steps(vec![text("Found it."), Step::TurnEnd])
-                .prompt("Find the socket name."),
-        )
-        .agent(
-            AgentDecl::new("archivist", "studio")
-                .kind(FakeKind::ClaudePty)
-                .steps(vec![text("Archived."), Step::TurnEnd])
-                .prompt("Archive the old logs."),
         );
     let mut net = Net::start(topology).await.unwrap();
-    // Every studio agent listed on the laptop before the studio goes.
-    let archivist = net.agent("archivist").unwrap().id;
-    fleet_when(&net, "laptop", |fleet| {
-        fleet
-            .find(archivist.as_bytes())
-            .is_some_and(|agent| agent.phase() == wire::Phase::Idle)
-    })
-    .await;
+    // The idle heads share a standing, so the fleet lists them most
+    // recently active first: each starts once the one before it is idle on
+    // the laptop, least recently active first. Started together, their
+    // first turns race and so would the rows. Every studio agent is listed
+    // on the laptop before the studio goes.
+    let idle = [
+        AgentDecl::new("scout", "desk")
+            .kind(FakeKind::ClaudePty)
+            .steps(vec![text("Found it."), Step::TurnEnd])
+            .prompt("Find the socket name."),
+        AgentDecl::new("archivist", "studio")
+            .kind(FakeKind::ClaudePty)
+            .steps(vec![text("Archived."), Step::TurnEnd])
+            .prompt("Archive the old logs."),
+        AgentDecl::new("planner", "desk")
+            .kind(FakeKind::ClaudeSdk)
+            .steps(vec![
+                text("Handing the specs to a helper."),
+                Step::TurnEnd,
+                text("The specs are updated."),
+                Step::TurnEnd,
+            ])
+            .prompt("Update the specs."),
+    ];
+    for decl in idle {
+        spawn_settled(&mut net, "laptop", decl).await;
+    }
     let planner = net.agent("planner").unwrap().id;
     let specs = net
         .spawn_child(
