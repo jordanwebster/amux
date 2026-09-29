@@ -86,9 +86,31 @@ async fn start(install: &Install, boot: &str, launch: Launch) -> (Daemon, Arc<Pr
 
 /// A daemon crash: nothing is flushed and nothing marks the installation
 /// clean. The page cache, and so the store's WAL, survives.
-fn crash(daemon: Daemon, runtime: Arc<ProfileRuntime>) {
-    drop(runtime);
+///
+/// Returns only once the store is closed, as a dead process's is. Dropping
+/// the daemon aborts its tasks without waiting for them, and one caught
+/// holding the runtime would close the store later on its own thread;
+/// closing checkpoints the WAL into the store file, and done after
+/// [`lose_power`] rewrote that file it would put back what the power cut
+/// took. So the runtime is dropped here, on this thread, once this is its
+/// last reference.
+async fn crash(daemon: Daemon, runtime: Arc<ProfileRuntime>) {
     drop(daemon);
+    let mut runtime = Some(runtime);
+    until(
+        "the crashed daemon's tasks to release its store",
+        async || match Arc::try_unwrap(runtime.take().unwrap()) {
+            Ok(last) => {
+                drop(last);
+                true
+            }
+            Err(shared) => {
+                runtime = Some(shared);
+                false
+            }
+        },
+    )
+    .await;
 }
 
 async fn write_and_ingest(
@@ -112,7 +134,7 @@ async fn reference() -> Held {
     let (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
     write_and_ingest(&runtime, &mut agent, &steps()).await;
     let held = held(&runtime, &agent, &install).await;
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
     held
 }
 
@@ -147,7 +169,7 @@ async fn order_is_assigned_once_per_key_and_kept_across_a_re_derivation() {
     agent.register_offline(&install);
     let (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
     write_and_ingest(&runtime, &mut agent, &steps()[..5]).await;
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
     let (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
     write_and_ingest(
         &runtime,
@@ -170,7 +192,7 @@ async fn order_is_assigned_once_per_key_and_kept_across_a_re_derivation() {
         ],
         "known keys keep the order they were first committed at; a new key takes the next"
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 /// Where a run is cut.
@@ -206,7 +228,7 @@ async fn cut_run(cut: Cut, at: usize) -> Held {
 
     let resume_from = match cut {
         Cut::CrashBeforeWrite => {
-            crash(daemon, runtime);
+            crash(daemon, runtime).await;
             (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
             at
         }
@@ -228,7 +250,7 @@ async fn cut_run(cut: Cut, at: usize) -> Held {
         }
         Cut::CrashAfterWrite => {
             agent.append(&steps[at]);
-            crash(daemon, runtime);
+            crash(daemon, runtime).await;
             // The sweep reads what the agent wrote while nobody was reading.
             (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
             at + 1
@@ -277,14 +299,14 @@ async fn cut_run(cut: Cut, at: usize) -> Held {
         Cut::CrashAfterCommit => {
             agent.append(&steps[at]);
             runtime.ingest(agent.id).await.unwrap();
-            crash(daemon, runtime);
+            crash(daemon, runtime).await;
             (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
             at + 1
         }
     };
     write_and_ingest(&runtime, &mut agent, &steps[resume_from..]).await;
     let held = held(&runtime, &agent, &install).await;
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
     held
 }
 
@@ -354,7 +376,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
         vec!["item b o2 r2 \"two\"", "caught_up r2"]
     );
     agent.die().await;
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 
     // Dead: the agent died mid-frame. The sweep reads what is whole; the
     // agent's next process reopens the journal, which drops the torn bytes.
@@ -394,7 +416,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
         items_of(&held(&runtime, &agent, &install).await),
         vec![("a", 1, 1, "one"), ("b", 2, 2, "two"), ("c", 3, 3, "three")]
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 
     // A zero-filled tail left in a segment that is already final, as a
     // file system can leave one after power loss: skipped, and the
@@ -415,7 +437,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
         items_of(&held(&runtime, &agent, &install).await),
         vec![("a", 1, 1, "one"), ("b", 2, 2, "two")]
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -543,7 +565,7 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
         log(&seen)
     );
     println!("one subscription across two Hellos: {:#?}", log(&seen));
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -611,7 +633,7 @@ async fn a_lagging_subscriber_is_closed_with_lagged_and_ingest_never_waits() {
             "caught_up r20",
         ]
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 /// Installs a join hook that starts an ingest of `agent` and gives it time
@@ -673,7 +695,7 @@ async fn a_snapshot_committed_between_join_and_cut_arrives_once() {
             "snapshot r2 Working queue=[]",
         ]
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 /// The newest snapshot a stream has delivered at each CaughtUp must be
@@ -728,7 +750,7 @@ async fn a_withdrawn_prompt_is_never_read_as_queued() {
         vec!["snapshot r2 Working queue=[]", "caught_up r2"]
     );
     assert_markers_describe_their_snapshot(&seen, &committed);
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 
     // Withdrawn while the subscribe is between its join and its cut: the
     // marker read with the cut never claims the withdrawal while the
@@ -757,7 +779,7 @@ async fn a_withdrawn_prompt_is_never_read_as_queued() {
         ]
     );
     assert_markers_describe_their_snapshot(&seen, &committed);
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -826,7 +848,7 @@ async fn segments_are_deleted_only_below_a_cursor_on_the_drive() {
     // re-ingest from there finds every frame it needs.
     let lost = held(&runtime, &agent, &install).await;
     let checkpointed = checkpointed_store(&runtime, &install).await;
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
     lose_power(&install, &checkpointed);
     let (daemon, runtime) = start(&install, "boot-2", quiet_launch()).await;
     assert_eq!(daemon.generation().counter, 2);
@@ -835,7 +857,7 @@ async fn segments_are_deleted_only_below_a_cursor_on_the_drive() {
         lost,
         "re-ingesting from the durable cursor rebuilt every row with the same revisions"
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 /// The store file as the drive holds it: what was checkpointed, without
@@ -899,7 +921,7 @@ async fn power_loss_bumps_the_generation_and_re_ingests_from_the_durable_cursor(
     // step 6's frame, and the machine back under a new boot id with the
     // clean flag never set.
     let checkpointed = checkpointed_store(&runtime, &install).await;
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
     lose_power(&install, &checkpointed);
     journal::synthetic::cut(&agent.dir.join(agent_dir::JOURNAL), offsets[5] + 3).unwrap();
 
@@ -965,7 +987,7 @@ async fn power_loss_bumps_the_generation_and_re_ingests_from_the_durable_cursor(
         daemon.generation().counter,
         items_of(&held(&runtime, &agent, &install).await)
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -981,7 +1003,7 @@ async fn a_journal_cut_below_a_durable_cursor_rewinds_it_and_re_derived_steps_co
     let before = held(&runtime, &agent, &install).await;
     assert_eq!(before.cursor, offsets[7]);
     let checkpointed = checkpointed_store(&runtime, &install).await;
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
     lose_power(&install, &checkpointed);
     journal::synthetic::cut(&agent.dir.join(agent_dir::JOURNAL), offsets[5] + 3).unwrap();
 
@@ -1036,7 +1058,7 @@ async fn a_journal_cut_below_a_durable_cursor_rewinds_it_and_re_derived_steps_co
         (4, revision + 1, "four, again".to_owned())
     );
     assert_eq!(rederived.snapshot, Some((revision, Vec::new())));
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1100,7 +1122,7 @@ async fn a_batch_that_fails_on_a_later_frame_commits_and_broadcasts_none_of_it()
         ],
         "the retried batch commits whole"
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1153,7 +1175,7 @@ async fn the_sweep_ingests_a_finished_childs_journal_before_marking_it_exited() 
         ],
         "CaughtUp carries the last committed revision"
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1163,7 +1185,7 @@ async fn a_daemon_crash_under_the_same_boot_id_bumps_nothing() {
     agent.register_offline(&install);
     let (daemon, runtime, _, before) = run_to_the_cut(&install, &mut agent).await;
     // The page cache survives a daemon crash: the WAL is intact.
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
     let (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
     assert_eq!(daemon.generation().counter, 1);
     assert_eq!(host_generation(&runtime).await.0, 1);
@@ -1172,7 +1194,7 @@ async fn a_daemon_crash_under_the_same_boot_id_bumps_nothing() {
         runtime.ingest(agent.id).await.unwrap().records.is_empty(),
         "nothing is re-ingested"
     );
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1192,7 +1214,7 @@ async fn a_clean_reboot_bumps_nothing() {
     assert_eq!(host_generation(&runtime).await.0, 1);
     assert_eq!(held(&runtime, &agent, &install).await, before);
     assert!(runtime.ingest(agent.id).await.unwrap().records.is_empty());
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1258,7 +1280,7 @@ async fn fetch_and_get_are_store_reads() {
         .await
         .unwrap_err();
     assert!(matches!(nobody, ServeError::NoAgent));
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 fn describe_inventory(event: &InventoryEvent) -> String {
@@ -1330,7 +1352,7 @@ async fn the_inventory_streams_hosts_and_rows_then_caught_up_then_deltas() {
         );
     }
     println!("inventory: {described:#?}");
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1370,7 +1392,7 @@ async fn resolve_agent_finds_one_name_or_says_why_not() {
     ];
     expected.sort();
     assert_eq!((detail.name.as_str(), candidates), ("beta", expected));
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
 
 // --- retention -------------------------------------------------------------
@@ -1711,5 +1733,5 @@ async fn a_backlog_is_committed_in_batches_and_caught_up_once_at_its_end() {
     drain(&mut subscription, &mut seen, Duration::from_millis(100)).await;
     assert_eq!(caught_ups(&seen), 1);
     agent.die().await;
-    crash(daemon, runtime);
+    crash(daemon, runtime).await;
 }
