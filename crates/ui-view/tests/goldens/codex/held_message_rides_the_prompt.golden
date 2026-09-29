@@ -1,0 +1,24 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 1 input {"id":"p1","prompt":{"text":"Review the parser change."}}
+  composer Send activity=None queue=[QueuedRow { input_id: [112, 49], text: [Text("Review the parser change.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
+## 2 input {"agent_message":{"envelope":"e1","from":"lead","text":"It is on branch parser."},"id":"m1"}
+  row    1 agent-message:6531 AgentMessage { from: "lead", kind: Message, text: "It is on branch parser.", to: "", sent: Unspecified, rejection: "" }
+## 3 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
+  row    2 boundary:1 Boundary { kind: Started, cause: "" }
+  row    3 prompt:7031 Prompt { text: [Text("Review the parser change.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 7 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-1","status":"completed"}}}}
+  row    4 turn:1 TurnEnd { duration_ms: Some(0), cost_usd: None, failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 agent-message:6531 AgentMessage { from: "lead", kind: Message, text: "It is on branch parser.", to: "", sent: Unspecified, rejection: "" }
+     2 boundary:1 Boundary { kind: Started, cause: "" }
+     3 prompt:7031 Prompt { text: [Text("Review the parser change.")], steered: false }
+     4 turn:1 TurnEnd { duration_ms: Some(0), cost_usd: None, failed: false }
+== strip Strip { tasks: None, context: None, model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported gpt-5.6-luna "" efforts=[]
+  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode* Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking

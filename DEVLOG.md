@@ -1,3 +1,19 @@
+2026-09-29 — **Three Codex interpreter fixes.** An interrupt sent while
+a turn/start was still in flight waited for Codex to name the turn; when
+that turn/start failed, or Codex exited first, the waiting interrupt was
+kept and cancelled the next, unrelated turn. It is now dropped on both
+paths, pinned by two authored goldens that fail with the old behaviour.
+An agent message that reached a spawned Codex agent before its thread
+started used to be injected with an empty turn of its own, so the model
+answered the message before it had seen its task; when a prompt is
+waiting for the thread, the held messages now ride that prompt's turn and
+are consumed at its acknowledgement (no prompt waiting keeps the empty
+turn). And a Codex tool-call approval for amux's own tool server is
+answered approved for the session at once instead of opening an ask, as
+the Claude launch settings already pre-approve amux's tools; approvals for
+any other server still open a card. docs/INTERPRETERS.md and
+docs/AGENT_TOOLS.md say so.
+
 2026-09-29 — **Agent processes no longer load AppKit.** The flood's
 agent process memory had grown 16% past its baseline (3.50 MiB against
 3.02), over the 10% drift limit. The baseline's commit, built and run

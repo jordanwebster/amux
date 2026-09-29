@@ -1,0 +1,328 @@
+{
+  "about": "amux's own tools never ask: an approval Codex elicits for a call to amux's tool server is answered approved at once, for the session since Codex offers that, and opens no card; an approval for any other server still opens one. Frames shaped as the tool_server_form recording's.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Get the parser reviewed."
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turn": {
+              "id": "turn-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "item": {
+              "appContext": null,
+              "arguments": {
+                "name": "reviewer",
+                "prompt": "Review the parser change."
+              },
+              "durationMs": null,
+              "error": null,
+              "id": "exec-1",
+              "mcpAppUi": null,
+              "pluginId": null,
+              "readOnlyHint": null,
+              "result": null,
+              "server": "amux",
+              "status": "inProgress",
+              "tool": "spawn",
+              "type": "mcpToolCall"
+            },
+            "threadId": "t1",
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 0,
+          "method": "mcpServer/elicitation/request",
+          "params": {
+            "_meta": {
+              "codex_approval_kind": "mcp_tool_call",
+              "persist": [
+                "session",
+                "always"
+              ],
+              "tool_description": "Start a new agent.",
+              "tool_params": {
+                "name": "reviewer",
+                "prompt": "Review the parser change."
+              },
+              "tool_params_display": [
+                {
+                  "display_name": "name",
+                  "name": "name",
+                  "value": "reviewer"
+                },
+                {
+                  "display_name": "prompt",
+                  "name": "prompt",
+                  "value": "Review the parser change."
+                }
+              ]
+            },
+            "message": "Allow the amux MCP server to run tool \"spawn\"?",
+            "mode": "form",
+            "requestedSchema": {
+              "properties": {},
+              "type": "object"
+            },
+            "serverName": "amux",
+            "threadId": "t1",
+            "turnId": "turn-1"
+          }
+        }
+      },
+      "expect": {
+        "asks": [],
+        "effects": [
+          "write \"{\\\"id\\\":0,\\\"result\\\":{\\\"_meta\\\":{\\\"persist\\\":\\\"session\\\"},\\\"action\\\":\\\"accept\\\",\\\"content\\\":{}}}\""
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "item": {
+              "appContext": null,
+              "arguments": {
+                "name": "reviewer",
+                "prompt": "Review the parser change."
+              },
+              "durationMs": 3,
+              "error": null,
+              "id": "exec-1",
+              "mcpAppUi": null,
+              "pluginId": null,
+              "readOnlyHint": null,
+              "result": {
+                "_meta": null,
+                "content": [
+                  {
+                    "text": "started reviewer",
+                    "type": "text"
+                  }
+                ],
+                "structuredContent": null
+              },
+              "server": "amux",
+              "status": "completed",
+              "tool": "spawn",
+              "type": "mcpToolCall"
+            },
+            "threadId": "t1",
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "item": {
+              "appContext": null,
+              "arguments": {
+                "word": "BLUE"
+              },
+              "durationMs": null,
+              "error": null,
+              "id": "exec-2",
+              "mcpAppUi": null,
+              "pluginId": null,
+              "readOnlyHint": null,
+              "result": null,
+              "server": "spec",
+              "status": "inProgress",
+              "tool": "ask_the_operator",
+              "type": "mcpToolCall"
+            },
+            "threadId": "t1",
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 1,
+          "method": "mcpServer/elicitation/request",
+          "params": {
+            "_meta": {
+              "codex_approval_kind": "mcp_tool_call",
+              "persist": [
+                "session",
+                "always"
+              ],
+              "tool_description": "Ask the operator to confirm a word, then return it.",
+              "tool_params": {
+                "word": "BLUE"
+              },
+              "tool_params_display": [
+                {
+                  "display_name": "word",
+                  "name": "word",
+                  "value": "BLUE"
+                }
+              ]
+            },
+            "message": "Allow the spec MCP server to run tool \"ask_the_operator\"?",
+            "mode": "form",
+            "requestedSchema": {
+              "properties": {},
+              "type": "object"
+            },
+            "serverName": "spec",
+            "threadId": "t1",
+            "turnId": "turn-1"
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "1"
+        ],
+        "phase": "NEEDS_YOU"
+      }
+    },
+    {
+      "input": {
+        "id": "a1",
+        "answer": {
+          "ask": "1",
+          "answer": {
+            "decision": "approve"
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "item": {
+              "appContext": null,
+              "arguments": {
+                "word": "BLUE"
+              },
+              "durationMs": 1,
+              "error": null,
+              "id": "exec-2",
+              "mcpAppUi": null,
+              "pluginId": null,
+              "readOnlyHint": null,
+              "result": {
+                "_meta": null,
+                "content": [
+                  {
+                    "text": "BLUE",
+                    "type": "text"
+                  }
+                ],
+                "structuredContent": null
+              },
+              "server": "spec",
+              "status": "completed",
+              "tool": "ask_the_operator",
+              "type": "mcpToolCall"
+            },
+            "threadId": "t1",
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    }
+  ]
+}

@@ -383,7 +383,7 @@ something, and responses to the requests the interpreter sent.
   | `item/fileChange/requestApproval` | File-change approval |
   | `item/permissions/requestApproval` | Access grant |
   | `item/tool/requestUserInput` | Question |
-  | `mcpServer/elicitation/request` | A tool server's form or link, or, when Codex marks it as a tool-call approval, approval of the running tool server call |
+  | `mcpServer/elicitation/request` | A tool server's form or link, or, when Codex marks it as a tool-call approval, approval of the running tool server call. An approval for amux's own tool server is answered approved at once (for the session when Codex offers it) and opens no ask: amux's own tools never ask, on any kind |
 
   `item/tool/call` is answered at once that this client hosts no dynamic
   tools. Any other request is answered with a method-not-found error and
@@ -396,7 +396,8 @@ something, and responses to the requests the interpreter sent.
   the running turn with `turn/steer`; a steer Codex refuses, or one still
   unanswered when the turn ends, goes back to waiting in the queue. An
   interrupt is `turn/interrupt`, held until `turn/started` names the turn
-  when it has not yet. A `/compact` prompt is `thread/compact/start`.
+  when it has not yet; a held interrupt is dropped when that `turn/start`
+  fails or Codex exits, so it never lands on a later turn. A `/compact` prompt is `thread/compact/start`.
 - **Model, effort, approval.** These inputs are accepted at once and ride on
   the next `turn/start` as overrides.
 - **Streaming.** Agent-message, plan and reasoning deltas and command output
@@ -408,8 +409,11 @@ something, and responses to the requests the interpreter sent.
   answers items injected into it before it ends, so a message injected
   mid-turn is consumed at the inject's acknowledgement; an inject into an idle
   thread is answered by an empty turn the interpreter starts for it, and is
-  consumed at that turn's acknowledgement. Both arms have goldens of their
-  own.
+  consumed at that turn's acknowledgement. A message that arrives before the
+  thread is running is held until it is; if a prompt is waiting for the
+  thread as well (a spawn's task), the held messages are injected and ride
+  that prompt's turn instead of an empty one, so the model reads its task
+  with them. Both arms have goldens of their own.
 
 ## Provider transport crates
 

@@ -701,6 +701,19 @@ impl State {
 
     fn inject(&mut self, emit: &mut Emit, envelope: &Envelope) {
         let during_turn = self.shared.is_busy();
+        self.inject_items(emit, envelope, during_turn);
+        if !during_turn {
+            // An idle thread records the item and waits; an empty turn
+            // answers it under either arm.
+            self.kick(emit, vec![envelope.id.clone()]);
+        } else if self.consumption == InjectConsumption::ParkedUntilNextTurn {
+            self.parked.push(envelope.id.clone());
+        }
+    }
+
+    /// Records an agent message in the thread; whatever turn runs next
+    /// sees it.
+    fn inject_items(&mut self, emit: &mut Emit, envelope: &Envelope, during_turn: bool) {
         self.request(
             emit,
             "thread/inject_items",
@@ -718,13 +731,6 @@ impl State {
                 turn_over: false,
             },
         );
-        if !during_turn {
-            // An idle thread records the item and waits; an empty turn
-            // answers it under either arm.
-            self.kick(emit, vec![envelope.id.clone()]);
-        } else if self.consumption == InjectConsumption::ParkedUntilNextTurn {
-            self.parked.push(envelope.id.clone());
-        }
     }
 
     /// Starts an empty turn; the messages it carries are consumed at its
@@ -735,11 +741,34 @@ impl State {
         self.request(emit, "turn/start", params, Request::Turn { consumes });
     }
 
-    /// Inject what was held until a thread was running.
+    /// Inject what was held until a thread was running. A prompt queued
+    /// for the thread (a spawn's task) carries the held messages in its own
+    /// turn, so the model reads its task with them rather than answering
+    /// them first in an empty turn of their own.
     fn release_held(&mut self, emit: &mut Emit) {
-        for envelope in std::mem::take(&mut self.held) {
-            self.inject(emit, &envelope);
+        let held = std::mem::take(&mut self.held);
+        if held.is_empty() {
+            return;
         }
+        // A compaction runs as a turn that carries no input.
+        let compacts = self
+            .shared
+            .queue()
+            .entries()
+            .iter()
+            .find(|entry| !entry.steer)
+            .is_some_and(|entry| entry.text.trim() == "/compact");
+        let Some(entry) = (!compacts).then(|| self.shared.next_queued()).flatten() else {
+            for envelope in &held {
+                self.inject(emit, envelope);
+            }
+            return;
+        };
+        for envelope in &held {
+            self.inject_items(emit, envelope, false);
+        }
+        let consumes = held.into_iter().map(|envelope| envelope.id).collect();
+        self.submit(emit, entry, consumes);
     }
 
     /// At turn end in the parked arm: parked messages need a turn. A queued

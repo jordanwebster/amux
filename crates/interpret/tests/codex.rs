@@ -32,6 +32,10 @@ macro_rules! goldens {
 
 goldens! {
     amuxs_own_tools_draw_a_message_or_nothing => "amux_tools",
+    amuxs_own_tools_are_approved_without_asking => "amux_tool_approval",
+    a_failed_turn_start_drops_its_pending_interrupt => "interrupt_turn_start_failed",
+    an_exit_drops_a_pending_interrupt => "interrupt_exited",
+    a_held_message_rides_the_first_prompts_turn => "held_message_rides_the_prompt",
     lifecycle_events_write_boundaries_and_interrupt => "lifecycle",
     asks_cover_every_request_codex_makes => "asks",
     inputs_become_app_server_requests => "inputs",

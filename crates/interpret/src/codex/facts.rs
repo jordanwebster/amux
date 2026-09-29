@@ -16,8 +16,8 @@ use super::{
 };
 use crate::claude_common::{compact_json, text};
 use crate::{
-    Channel, Effect, Emit, Fact, ItemDraft, SendOutcome, ask_item, is_send_tool, is_status_tool,
-    sent_message, status_working_on,
+    AMUX_TOOL_SERVER, Channel, Effect, Emit, Fact, ItemDraft, SendOutcome, ask_item, is_send_tool,
+    is_status_tool, sent_message, status_working_on,
 };
 
 /// Notifications that carry nothing a client draws, or that another fact
@@ -295,6 +295,9 @@ impl State {
             );
             match request {
                 Request::Turn { consumes } => {
+                    // An interrupt asked for while this turn was starting
+                    // had this turn in mind, never the next one.
+                    self.interrupt_pending = false;
                     self.shared.reflect_prompt();
                     self.shared.turn_abandoned();
                     // Nothing will consume them now.
@@ -302,7 +305,10 @@ impl State {
                         self.shared.message_consumed(&envelope);
                     }
                 }
-                Request::Compact => self.shared.turn_abandoned(),
+                Request::Compact => {
+                    self.interrupt_pending = false;
+                    self.shared.turn_abandoned();
+                }
                 Request::Steer { .. } => {}
                 Request::Inject { envelope_id, .. } => {
                     self.shared.message_consumed(&envelope_id);
@@ -733,19 +739,28 @@ impl State {
     fn elicitation(&mut self, emit: &mut Emit, key: String, method: &str, params: &Value) {
         let meta = params.get("_meta").unwrap_or(&Value::Null);
         let server = text(params, "serverName").to_owned();
+        let approval = text(meta, "codex_approval_kind") == "mcp_tool_call";
+        let session = strings(meta.get("persist"))
+            .iter()
+            .any(|scope| scope == "session");
+        if approval && server == AMUX_TOOL_SERVER {
+            // amux's own tools never ask, as the Claude launch settings
+            // pre-approve them: the call is approved at once, for the rest
+            // of the session when Codex offers that.
+            let mut accept = json!({ "action": "accept", "content": {} });
+            if session {
+                accept["_meta"] = json!({ "persist": "session" });
+            }
+            return self.respond(emit, &key, accept);
+        }
         let message = text(params, "message").to_owned();
         let (item_key, call_server, tool) = self.running_tool_call().unwrap_or_default();
-        let (body, offered): (_, Vec<(Decision, Value)>) = if text(meta, "codex_approval_kind")
-            == "mcp_tool_call"
-        {
+        let (body, offered): (_, Vec<(Decision, Value)>) = if approval {
             let mut offered = vec![(
                 Decision::Approve,
                 json!({ "action": "accept", "content": {} }),
             )];
-            if strings(meta.get("persist"))
-                .iter()
-                .any(|scope| scope == "session")
-            {
+            if session {
                 offered.push((
                     Decision::ApproveSession,
                     json!({ "action": "accept", "content": {}, "_meta": { "persist": "session" } }),
@@ -1750,6 +1765,7 @@ impl State {
         self.settle_open(emit, false);
         self.shared.provider_exited();
         self.active_turn = None;
+        self.interrupt_pending = false;
         self.boundary(emit, wire::BoundaryKind::Exited, cause);
     }
 }

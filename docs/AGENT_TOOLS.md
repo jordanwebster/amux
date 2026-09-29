@@ -26,8 +26,10 @@ its session. The agent process registers it when it launches the provider:
 Claude gets it through `--mcp-config` as a server named `amux`, with
 `mcp__amux__*` allowed in its settings so the tools run without a permission
 prompt; Codex gets it through `--config mcp_servers.amux.command=…` and
-`mcp_servers.amux.args=…`. It speaks MCP as newline-delimited JSON-RPC on
-stdin and stdout.
+`mcp_servers.amux.args=…`, and when Codex asks to approve a call to it, the
+interpreter approves at once, for the session, without opening an ask. amux's
+own tools never ask, whatever the kind. The server speaks MCP as
+newline-delimited JSON-RPC on stdin and stdout.
 
 Its identity is its agent's directory. The daemon listens on
 `<dir>/tools.sock` for that agent alone, and the tool server finds the socket
@@ -206,7 +208,7 @@ the provider queues the message and amux's queue for people never sees it:
 | --- | --- | --- |
 | `claude_pty` | Claude's messaging socket, whose path and token Claude reports through its hooks. When the socket is not known yet or refuses the message, the agent process pastes it into the terminal wrapped in `<cross-session-message from="amux">`. | Claude shows the message to the model, which the interpreter reads in its transcript. |
 | `claude_sdk` | A user message on Claude's stream-JSON stdin, carrying a uuid derived from the envelope id. Claude takes it into its own queue, joining a running turn. | Claude reports taking the message with that uuid. |
-| `codex` | `thread/inject_items` on the agent's thread, labelled with its sender (`[message from agent <name>]`). Before the thread is running the message is held and injected once it is; into an idle thread the interpreter also starts an empty turn so the message is answered. | The inject's acknowledgement for a running turn, which drains injected items before it ends; the empty turn's acknowledgement for an idle thread. |
+| `codex` | `thread/inject_items` on the agent's thread, labelled with its sender (`[message from agent <name>]`). Before the thread is running the message is held and injected once it is; when a prompt is waiting for the thread too (a spawn's task), the held messages ride that prompt's turn. Into an idle thread the interpreter otherwise starts an empty turn so the message is answered. | The inject's acknowledgement for a running turn, which drains injected items before it ends; the acknowledgement of the turn that carries it (the empty turn, or the waiting prompt's) for an idle thread. |
 
 Codex reports nothing about an injected item, which is why every interpreter
 writes the agent-message item itself at acceptance rather than waiting for a

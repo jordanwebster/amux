@@ -1,0 +1,31 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 1 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 2 input {"id":"p1","prompt":{"text":"Deploy it."}}
+  row    2 prompt:7031 Prompt { text: [Text("Deploy it.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 4 provider_exit {"code":1}
+  row    3 boundary:2 Boundary { kind: Exited, cause: "exit code 1" }
+  composer Send activity=None queue=[] outbox=[]
+## 5 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
+  row    4 boundary:3 Boundary { kind: Resumed, cause: "" }
+## 6 input {"id":"p2","prompt":{"text":"Summarise the plan."}}
+  row    5 prompt:7032 Prompt { text: [Text("Summarise the plan.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 9 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-2","status":"completed"}}}}
+  row    6 turn:2 TurnEnd { duration_ms: Some(0), cost_usd: None, failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 prompt:7031 Prompt { text: [Text("Deploy it.")], steered: false }
+     3 boundary:2 Boundary { kind: Exited, cause: "exit code 1" }
+     4 boundary:3 Boundary { kind: Resumed, cause: "" }
+     5 prompt:7032 Prompt { text: [Text("Summarise the plan.")], steered: false }
+     6 turn:2 TurnEnd { duration_ms: Some(0), cost_usd: None, failed: false }
+== strip Strip { tasks: None, context: None, model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported gpt-5.6-luna "" efforts=[]
+  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode* Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking

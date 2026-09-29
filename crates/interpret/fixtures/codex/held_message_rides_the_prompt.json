@@ -1,0 +1,127 @@
+{
+  "about": "An agent message that arrives before the thread starts rides the turn of the prompt queued for the thread (a spawn's task): the message is injected, the prompt's turn starts, and no empty turn runs ahead of the task. The message is consumed at the turn's acknowledgement.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Review the parser change."
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "phase": "STARTING"
+      }
+    },
+    {
+      "input": {
+        "id": "m1",
+        "agent_message": {
+          "envelope": "e1",
+          "from": "lead",
+          "text": "It is on branch parser."
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "pending": [
+          "e1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      },
+      "expect": {
+        "phase": "WORKING",
+        "queue": [],
+        "pending": [
+          "e1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {}
+        }
+      },
+      "expect": {
+        "pending": [
+          "e1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-2",
+          "result": {
+            "turn": {
+              "id": "turn-1"
+            }
+          }
+        }
+      },
+      "expect": {
+        "pending": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    }
+  ]
+}

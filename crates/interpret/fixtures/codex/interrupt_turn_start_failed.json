@@ -1,0 +1,129 @@
+{
+  "about": "An interrupt sent while turn/start is in flight belongs to that turn: when the turn/start fails, the next prompt's turn runs uninterrupted.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Deploy it."
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "phase": "WORKING"
+      }
+    },
+    {
+      "input": {
+        "id": "i1",
+        "interrupt": {}
+      },
+      "expect": {
+        "reply": "accepted",
+        "effects": [
+          "reply i1 accepted"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "error": {
+            "code": -32600,
+            "message": "model gpt-5.6 is not available"
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "p2",
+        "prompt": {
+          "text": "Summarise the plan."
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "phase": "WORKING"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-2",
+          "result": {
+            "turn": {
+              "id": "turn-2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "inProgress"
+            }
+          }
+        }
+      },
+      "expect": {
+        "effects": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    }
+  ]
+}
