@@ -1,3 +1,26 @@
+2026-09-29 — **The phone's chat list draws a bounded run of the rows it
+holds.** Under the flood the phone froze for over 90 s when a reader jumped to
+the top of a chat holding about 1,100 rows: its list was a lazy stack over
+every held row, and each change placed all of them again on the main thread.
+`ChatModel` now draws at most 240 contiguous held rows. While following, that
+is the newest rows; in history arrivals are held but not drawn and New
+activity shows; reaching an end of the run takes in 80 held rows beyond it
+without a fetch, letting as many go at the far end, still held; a page is
+asked for only when fewer than a page of held rows remain above, one per
+arrival at the top. The session window is unchanged. The run is laid out in a
+plain `VStack`: a lazy stack forgot its measured heights when rows were
+inserted above, so the reader's place could not be held. A new UIKit leaf,
+`ScrollAnchor`, pins the row at the top of the view and moves the scroll view
+by exactly as much as layout moved that row, inside the same pass: SwiftUI's
+scroll position lands a frame late, and its size-change anchor and row
+tracking did not hold the rows still. An app-hosted test measures rows on
+screen holding still to half a point at both ends and under a landing page.
+Under the flood the phone now keeps its newest row one to three messages
+behind the agent, each jump to the top takes in one step, and New activity
+returns to the live head. The debug door's `conversation` reading also names
+the drawn keys. The new-activity component baseline changes by design: the
+arriving row is held, not drawn below the reader.
+
 2026-09-29 — **Flood messages carry their numbers, and the phone's debug
 door scrolls like a reader.** The phone recording under the flood showed the
 same sentence on every row, so nobody could tell whether the phone kept up

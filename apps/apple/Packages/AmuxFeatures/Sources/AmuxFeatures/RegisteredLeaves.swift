@@ -37,4 +37,11 @@ public enum RegisteredLeaves: String, CaseIterable, Sendable {
     /// reaches VoiceOver without the menu's name or identifier. The leaf owns
     /// that button so it carries both. `docs/IOS.md` has the detail.
     case menuButton
+    /// Built, and measured by an app-hosted layout test: SwiftUI's scroll
+    /// position lands a frame or more after it is asked to move, so a chat
+    /// that takes rows in above the reader showed them moved in between and
+    /// took in more off the moved layout. The leaf moves the scroll view
+    /// itself within the layout pass that moved the rows. `docs/IOS.md` has
+    /// the detail.
+    case scrollAnchor
 }

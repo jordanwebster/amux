@@ -85,6 +85,15 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
         }
     }
 
+    /// Puts rows before the oldest, as a page of older history lands, and
+    /// says so on the next take.
+    public func prepend(_ rows: [Row]) {
+        lock.withLock {
+            ordered.insert(contentsOf: rows, at: 0)
+            pending.keys.append(contentsOf: rows.map(\.id))
+        }
+    }
+
     /// Replaces rows in place and says so on the next take.
     public func revise(_ rows: [Row]) {
         lock.withLock {

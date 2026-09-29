@@ -366,7 +366,8 @@ final class DoorHost {
             let model = shown.model
             return .conversation(ConversationReading(
                 agent: agent, frame: model.frame,
-                rows: model.ids.compactMap { model.cell(for: $0).row }, ask: model.ask))
+                rows: model.ids.compactMap { model.cell(for: $0).row }, ask: model.ask,
+                drawn: model.drawn))
         }
         do {
             let chat = try stores.openChat(row.id) {}

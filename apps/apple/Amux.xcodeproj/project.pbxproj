@@ -216,6 +216,7 @@
 		CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */; };
 		CE66FA985559EAEADBC73CCF /* components.composer-strip-expanded-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 27D163089D0F1607633CC942 /* components.composer-strip-expanded-light.png */; };
 		CF7F42CA05BABE211A2F446B /* components.row-slash-output-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 187D22E36157DEC8B3BD2390 /* components.row-slash-output-dark.png */; };
+		D089F8E1D4F8BC606C2D4825 /* ChatFeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EEC45DFA7E5DD6C27FB07F4 /* ChatFeedTests.swift */; };
 		D152DC2AA5C7B65756BD0940 /* components.row-ask-plan-open-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 5930FEB5E3920CA9968DDCCF /* components.row-ask-plan-open-light.png */; };
 		D1A97780CCAFAEB0284A62F9 /* components.composer-settings-claude-sdk-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 6D4230B2C4F1F272A85D0D0A /* components.composer-settings-claude-sdk-light.png */; };
 		D2AB8118218B75FD04E98717 /* components.ask-dismissed-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = FB3DFD28C63F81C714E1E914 /* components.ask-dismissed-dark.png */; };
@@ -453,6 +454,7 @@
 		8B6B5F51320E7294BEEFAD09 /* components.row-tool-call-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-tool-call-dark.png"; sourceTree = "<group>"; };
 		8DF95DB041377C76B2A2ABB9 /* components.composer-chip-stops-asking-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-chip-stops-asking-light.png"; sourceTree = "<group>"; };
 		8ED8247A9E0214AD28831928 /* Amux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Amux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8EEC45DFA7E5DD6C27FB07F4 /* ChatFeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFeedTests.swift; sourceTree = "<group>"; };
 		8FFE20A681A4FD1770F6B455 /* components.ask-question-secret-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-question-secret-light.png"; sourceTree = "<group>"; };
 		91164DE7C3FD9BE78B6EFCBA /* components.row-ask-plan-open-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-ask-plan-open-dark.png"; sourceTree = "<group>"; };
 		9215BDF01E19C20DA96CB89E /* components.row-image-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-image-light.png"; sourceTree = "<group>"; };
@@ -939,6 +941,7 @@
 		8D168EC7A03FA2A38159AE6D /* AmuxAppTests */ = {
 			isa = PBXGroup;
 			children = (
+				8EEC45DFA7E5DD6C27FB07F4 /* ChatFeedTests.swift */,
 				9F5CB3619E7C3A489C1D92DF /* DoorTargetTests.swift */,
 				821F9981F05DEE81D729D42C /* ReportFreezeTests.swift */,
 			);
@@ -1413,6 +1416,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D089F8E1D4F8BC606C2D4825 /* ChatFeedTests.swift in Sources */,
 				F57D20E641910776C2CB94DE /* DoorTargetTests.swift in Sources */,
 				99B82C08E29C0F2FE41DDBEC /* ReportFreezeTests.swift in Sources */,
 			);

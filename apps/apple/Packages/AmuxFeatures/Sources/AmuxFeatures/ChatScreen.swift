@@ -91,6 +91,7 @@ public struct ChatScreen: View {
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atNewest = true
     @State private var userScrolling = false
+    @State private var anchor = ScrollAnchor()
     /// Bumped to put the keyboard down.
     @State private var putDown = 0
 
@@ -301,15 +302,37 @@ public struct ChatScreen: View {
 
     private var feed: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            // The drawn run, which is bounded, laid out whole: every row's
+            // height is then measured rather than estimated, so a row taken
+            // in or let go at one end moves the others by exactly its height
+            // and the anchor below can take that back. The rows held beyond
+            // the run cost nothing until the reader comes near them.
+            VStack(alignment: .leading, spacing: 0) {
                 top
-                ForEach(Array(model.ids.enumerated()), id: \.element) { index, id in
-                    ChatCell(model: model, id: id, index: index)
-                        .onAppear { if index < 8 { model.reachedTop() } }
+                ForEach(model.drawn, id: \.self) { id in
+                    ChatCell(model: model, id: id)
+                        .onGeometryChange(for: CGRect.self) { geometry in
+                            geometry.frame(in: .named(ScrollAnchor.rows))
+                        } action: { frame in
+                            anchor.laidOut(id, at: frame, following: model.following)
+                        }
+                        .onDisappear { anchor.gone(id) }
                 }
+            }
+            .background { ScrollViewFinder { anchor.scrollView = $0 } }
+            // The top of the rows in view while following the newest: the
+            // whole chat fits, and older rows would show above it. A reader
+            // in history reaches the top by the row at the top of the view.
+            .overlay(alignment: .top) {
+                Color.clear
+                    .frame(height: 1)
+                    .onScrollVisibilityChange(threshold: 0) { shown in
+                        if shown, model.following { model.reachedTop() }
+                    }
             }
             .padding(.horizontal, design.metrics.gutter)
             .padding(.top, 8)
+            .coordinateSpace(.named(ScrollAnchor.rows))
         }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .top)
@@ -319,12 +342,33 @@ public struct ChatScreen: View {
         // space changes, under the header and out of the gutter.
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .onScrollGeometryChange(for: Extent.self) { geometry in
+            Extent(
+                height: geometry.contentSize.height, offset: geometry.contentOffset.y,
+                inset: geometry.contentInsets.top)
+        } action: { old, new in
+            // A scroll picks the row the view is pinned to; a change in the
+            // rows' height is layout, which the pinned row answers.
+            guard !anchor.movedItself(to: new.offset),
+                  new.height == old.height || !anchor.pinning else { return }
+            // A new row at the top of the view, near an end of the drawn
+            // run, takes in the held rows beyond that end. The list moving
+            // itself to keep the pinned row still leaves it pinned, so
+            // taking rows in never takes in more.
+            if let row = anchor.pick(top: new.offset + new.inset) { model.reading(at: row) }
+        }
         .onScrollGeometryChange(for: Bool.self) { geometry in
             geometry.contentOffset.y + geometry.containerSize.height - geometry.contentInsets.bottom
                 >= geometry.contentSize.height - 24
         } action: { _, now in
             atNewest = now
-            if !userScrolling, now { model.reading(atNewest: true) }
+            if userScrolling {
+                // A reader dragging away from the newest row stops following
+                // at once, so rows arriving meanwhile are held, not drawn.
+                if !now { model.reading(atNewest: false) }
+            } else if now {
+                model.reading(atNewest: true)
+            }
         }
         // New rows, and a change in what stands at the bottom (a card
         // opening, an ask docking, the keyboard rising), keep the newest row
@@ -366,6 +410,13 @@ public struct ChatScreen: View {
         }
     }
 
+    /// How tall the rows are and where the reader is in them.
+    private struct Extent: Equatable {
+        var height: CGFloat
+        var offset: CGFloat
+        var inset: CGFloat
+    }
+
     /// How tall the rows are against the space the scroll view shows them in.
     private struct Fit: Equatable {
         var content: CGFloat
@@ -376,7 +427,7 @@ public struct ChatScreen: View {
     /// while the chat is empty, the loading hint or the away notice.
     @ViewBuilder
     private var top: some View {
-        switch model.paging {
+        switch model.drawsOldestHeld ? model.paging : .idle {
         case .fetching:
             notice(String(localized: "Loading older messages…"), id: "chat.paging", value: "fetching")
         case .unreachable:
@@ -388,7 +439,7 @@ public struct ChatScreen: View {
         case .idle:
             EmptyView()
         }
-        if model.ids.isEmpty, !(model.frame?.caughtUp ?? false) {
+        if model.drawn.isEmpty, !(model.frame?.caughtUp ?? false) {
             if !subject.reachable {
                 notice(awayNotice, id: "chat.away", value: subject.away.map { "\($0)" } ?? "plain")
             } else if model.loadingHint {
@@ -577,23 +628,21 @@ public struct ChatStanding: View {
 private struct ChatCell: View {
     let model: ChatModel
     let id: String
-    let index: Int
 
     var body: some View {
-        RowCellView(cell: model.cell(for: id), model: model, index: index)
+        RowCellView(cell: model.cell(for: id), model: model)
     }
 }
 
 private struct RowCellView: View {
     let cell: RowCell
     let model: ChatModel
-    let index: Int
 
     var body: some View {
         if let row = cell.row, model.shows(row) {
             ChatRowView(
                 row: row, expanded: model.isExpanded(row.id),
-                rail: RailJoin.of(row, next: model.drawnRow(after: index)),
+                rail: RailJoin.of(row, next: model.drawnRow(below: row.id)),
                 bytes: model.bytes(of:), toggle: { model.toggle(row.id) })
         } else {
             Color.clear.frame(height: 0)

@@ -67,16 +67,34 @@ public enum ChatPaging: Equatable, Sendable {
 
 /// One open chat as the phone's list holds it.
 ///
-/// The list is retained: it holds the sequence of row keys, which only ever
-/// grows at its two edges, and each cell reads its row by key when it is
-/// first drawn. An update names the keys it changed; only cells already
-/// drawn are read again, and only those cells redraw. A Reset's swap is the
-/// one time the whole sequence is read again.
+/// The chat holds the sequence of row keys, which only ever grows at its two
+/// edges, and each cell reads its row by key when it is first drawn. An
+/// update names the keys it changed; only cells already read are read
+/// again, and only those cells redraw. A Reset's swap is the one time the
+/// whole sequence is read again.
+///
+/// The list draws a bounded, contiguous run of the held keys, because every
+/// change places each drawn row again: drawing all of a long chat costs
+/// what the chat holds rather than what is near the screen. While the
+/// reader follows, the newest rows are drawn; in history the drawn run
+/// moves with the reader, taking in held rows at the end the reader
+/// reaches and letting go of rows at the far end. Rows it lets go of stay
+/// held and are drawn again without asking anybody for them.
 @MainActor
 @Observable
 public final class ChatModel {
     /// A page of older rows, and the rows a chat opens with.
     public static let pageRows: UInt32 = 40
+    /// The most rows the list draws. Under twenty agents each writing a
+    /// message every 20 ms, a list drawing up to about 1000 rows kept its
+    /// newest row within 3 messages of the agent, and one drawing about
+    /// 1100 froze for over 90 s placing rows when the reader went to its
+    /// top; this stays well inside what kept up.
+    public static let drawnRows = 240
+    /// How many held rows the drawn run takes in when the reader reaches
+    /// one of its ends: a few screens, so a reader never waits at an end
+    /// that has rows held beyond it.
+    public static let drawnStep = 80
     /// The most a page asks for at a run that continues below the window.
     public static let largestPage: UInt32 = 1000
     /// How long an empty chat waits before saying it is loading, so a chat
@@ -84,9 +102,28 @@ public final class ChatModel {
     public static let loadingHintDelay: Duration = .milliseconds(300)
 
     @ObservationIgnored public let source: ChatSource
-    /// Row keys, oldest first.
-    public private(set) var ids: [String] = []
-    @ObservationIgnored private var held: Set<String> = []
+    /// Every row key the chat holds, oldest first. Nothing draws from this
+    /// directly, so it is not observed: the list observes `drawn`.
+    @ObservationIgnored public private(set) var ids: [String] = []
+    /// Each held key's place, counted so that a page landing before the
+    /// oldest row renumbers nothing: a key's index in `ids` is its place
+    /// less `firstPlace`.
+    @ObservationIgnored private var places: [String: Int] = [:]
+    @ObservationIgnored private var firstPlace = 0
+    /// How many rows the chat holds. Only a cell with nothing drawn below it
+    /// reads this, so a row arriving under the newest drawn row redraws
+    /// just that cell's rail.
+    public private(set) var heldCount = 0
+    /// The keys the list draws: a contiguous run of `ids`.
+    public private(set) var drawn: [String] = []
+    /// Where `drawn` starts in `ids`.
+    @ObservationIgnored private var drawnStart = 0
+    /// Whether the drawn run starts at the oldest row held: where older
+    /// history, on its way or out of reach, is said.
+    public private(set) var drawsOldestHeld = true
+    /// The reader reached the top with nothing held above the drawn run: the
+    /// page on its way is drawn when it lands.
+    @ObservationIgnored private var drawLandingPage = false
     @ObservationIgnored private var cells: [String: RowCell] = [:]
     public private(set) var frame: ChatFrame?
     public private(set) var ask: AskCard?
@@ -137,8 +174,8 @@ public final class ChatModel {
         // Taken before reading, so a change that lands while the chat is
         // read wakes it again rather than being taken with the rest.
         _ = source.takeChanges()
-        ids = source.keys()
-        held = Set(ids)
+        hold(keys: source.keys())
+        drawNewest()
         readSession()
         if ids.isEmpty { waitForRows(loadingHintAfter) }
     }
@@ -152,7 +189,7 @@ public final class ChatModel {
         if changes.reloaded {
             swap()
         } else if !changes.keys.isEmpty {
-            if changes.keys.contains(where: { !held.contains($0) }) { extend() }
+            if changes.keys.contains(where: { places[$0] == nil }) { extend() }
             refresh(changes.keys.filter { cells[$0] != nil })
         }
         if changes.session || changes.reloaded || !changes.keys.isEmpty { readSession() }
@@ -172,16 +209,22 @@ public final class ChatModel {
         !row.collapsed || row.parent.map(expanded.contains) == true
     }
 
-    /// The nearest row drawn below the one at `index`: what decides whether
-    /// that row's rail runs on. Collapsed rows and rows with nothing to draw
-    /// are passed over.
-    public func drawnRow(after index: Int) -> Row? {
-        guard index + 1 < ids.count else { return nil }
-        for id in ids[(index + 1)...] {
-            guard let row = cell(for: id).row else { continue }
-            if case .hidden = row.kind { continue }
-            if shows(row) { return row }
+    /// The nearest row drawn below this one: what decides whether its rail
+    /// runs on. It reads the held rows, so the last row drawn joins a row
+    /// held below it. Collapsed rows and rows with nothing to draw are
+    /// passed over.
+    public func drawnRow(below id: String) -> Row? {
+        guard let place = places[id] else { return nil }
+        let start = place - firstPlace + 1
+        if start < ids.count {
+            for id in ids[start...] {
+                guard let row = cell(for: id).row else { continue }
+                if case .hidden = row.kind { continue }
+                if shows(row) { return row }
+            }
         }
+        // Nothing below yet: the next row to arrive may be the one.
+        _ = heldCount
         return nil
     }
 
@@ -231,34 +274,89 @@ public final class ChatModel {
             return
         }
         if !older.isEmpty {
+            let drewOldest = drawnStart == 0
             ids.insert(contentsOf: older, at: 0)
-            held.formUnion(older)
+            firstPlace -= older.count
+            for (offset, key) in older.enumerated() { places[key] = firstPlace + offset }
+            drawnStart += older.count
+            heldCount = ids.count
+            // A page lands above the drawn run. It is drawn if the reader is
+            // waiting at the top; either way the notice above the oldest row
+            // goes.
+            if drawLandingPage {
+                drawLandingPage = false
+                growOlder()
+            } else if drewOldest {
+                draw(from: drawnStart, to: drawnEnd)
+            }
         }
         if !newer.isEmpty {
+            for (offset, key) in newer.enumerated() { places[key] = firstPlace + ids.count + offset }
             ids.append(contentsOf: newer)
-            held.formUnion(newer)
-            arrived()
+            heldCount = ids.count
+            loadingHint = false
+            if following || drawn.isEmpty {
+                drawNewest()
+                toNewest += 1
+            } else {
+                newActivity = true
+            }
         }
     }
 
     /// A Reset's transcript was swapped in: every key may be new. Cells the
-    /// new sequence keeps are read again in place.
+    /// new sequence keeps are read again in place, and the list goes to the
+    /// newest row.
     private func swap() {
-        let fresh = source.keys()
-        ids = fresh
-        held = Set(fresh)
-        cells = cells.filter { held.contains($0.key) }
+        hold(keys: source.keys())
+        cells = cells.filter { places[$0.key] != nil }
         refresh(Array(cells.keys))
-        arrived()
+        loadingHint = false
+        drawLandingPage = false
+        following = true
+        newActivity = false
+        drawNewest()
+        toNewest += 1
     }
 
-    private func arrived() {
-        loadingHint = false
-        if following {
-            toNewest += 1
-        } else {
-            newActivity = true
-        }
+    private func hold(keys: [String]) {
+        ids = keys
+        firstPlace = 0
+        places = Dictionary(uniqueKeysWithValues: keys.enumerated().map { ($1, $0) })
+        heldCount = keys.count
+    }
+
+    // MARK: - The drawn run
+
+    private var drawnEnd: Int { drawnStart + drawn.count }
+
+
+    private func draw(from start: Int, to end: Int) {
+        drawnStart = start
+        let keys = Array(ids[start..<end])
+        if keys != drawn { drawn = keys }
+        if drawsOldestHeld != (start == 0) { drawsOldestHeld = start == 0 }
+    }
+
+    /// The newest rows, up to the cap.
+    private func drawNewest() {
+        draw(from: max(0, ids.count - Self.drawnRows), to: ids.count)
+    }
+
+    /// Takes in held rows above the drawn run; rows past the cap leave at
+    /// the bottom, still held.
+    private func growOlder() {
+        guard drawnStart > 0 else { return }
+        let start = max(0, drawnStart - Self.drawnStep)
+        draw(from: start, to: min(drawnEnd, start + Self.drawnRows))
+    }
+
+    /// Takes in held rows below the drawn run; rows past the cap leave at
+    /// the top, still held.
+    private func growNewer() {
+        guard drawnEnd < ids.count else { return }
+        let end = min(ids.count, drawnEnd + Self.drawnStep)
+        draw(from: max(drawnStart, end - Self.drawnRows), to: end)
     }
 
     private func refresh(_ keys: [String]) {
@@ -310,22 +408,68 @@ public final class ChatModel {
 
     // MARK: - Scrolling
 
-    /// Where the reader is: at the newest row or above it.
+    /// Where the reader is: at the bottom of the list or above it. The
+    /// bottom of a drawn run that stops short of the newest row held is not
+    /// the newest row: it takes in the held rows below it instead.
     public func reading(atNewest: Bool) {
-        following = atNewest
-        if atNewest { newActivity = false }
+        guard atNewest else {
+            following = false
+            return
+        }
+        if drawnEnd < ids.count {
+            reachedBottom()
+            return
+        }
+        following = true
+        newActivity = false
+        drawNewest()
     }
 
     /// Takes the reader to the newest row.
     public func jumpToNewest() {
         following = true
         newActivity = false
+        drawNewest()
         toNewest += 1
     }
 
-    /// The top of the list came into view: ask for older rows if there are
-    /// any and nothing is already on its way.
+    /// The row at the top of the reader's view: near an end of the drawn
+    /// run, the held rows beyond that end are taken in.
+    public func reading(at id: String) {
+        guard let place = places[id] else { return }
+        let index = place - firstPlace - drawnStart
+        guard drawn.indices.contains(index) else { return }
+        if index < Self.nearTop { reachedTop() }
+        if index >= drawn.count - Self.nearBottom { reachedBottom() }
+    }
+
+    /// How near the top of the drawn run the row at the top of the view is
+    /// when the reader has reached it.
+    static let nearTop = 20
+    /// How near the bottom: a screen of rows further, so the rows below are
+    /// taken in before the reader sees the end of the run.
+    static let nearBottom = 60
+
+    /// The bottom of the drawn run came near: take in the held rows below.
+    public func reachedBottom() {
+        growNewer()
+    }
+
+    /// The top of the drawn run came near: take in the held rows above it,
+    /// and ask for the page before them once fewer than a page are left.
+    /// One arrival at the top asks for one page at most.
     public func reachedTop() {
+        // A reader following a full run is at its bottom, not its top.
+        if following, drawn.count >= Self.drawnRows { return }
+        if drawnStart > 0 {
+            growOlder()
+        } else if frame?.hasOlder == true {
+            drawLandingPage = true
+        }
+        if drawnStart < Int(Self.pageRows) { askOlder() }
+    }
+
+    private func askOlder() {
         guard frame?.hasOlder == true, paging != .fetching else { return }
         paging = .fetching
         let rows = pageSize
@@ -344,7 +488,7 @@ public final class ChatModel {
     /// A page, or at a collapsed run that continues below the window, the
     /// run's own length up to a cap, so a long run arrives in a few pages.
     public var pageSize: UInt32 {
-        let top = ids.lazy.compactMap { self.cells[$0]?.row }.first { self.shows($0) }
+        let top = ids.lazy.compactMap { self.cell(for: $0).row }.first { self.shows($0) }
         guard let run = top?.run, run.openBelow, run.isSummary, !isExpanded(run.newest)
         else { return Self.pageRows }
         return min(max(run.len, Self.pageRows), Self.largestPage)
@@ -391,6 +535,8 @@ public final class ChatModel {
         sending = true
         notice = nil
         following = true
+        newActivity = false
+        drawNewest()
         toNewest += 1
         Task {
             let outcome = await source.send(sent)
@@ -418,6 +564,8 @@ public final class ChatModel {
             case .done?:
                 if composed == sent { clearDraft() }
                 following = true
+                newActivity = false
+                drawNewest()
                 toNewest += 1
             case .rejected(let reason)?, .failed(let reason)?: notice = reason
             case .notConfirmed?: notice = Self.notConfirmed
