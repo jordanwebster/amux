@@ -165,7 +165,7 @@ async fn a_trusted_host_stays_in_every_snapshot_while_unreachable() {
         reopened.transcript()
     );
 
-    net.restore_link("desk", "laptop").unwrap();
+    net.restore_link("desk", "laptop").await.unwrap();
     fleet
         .observe_until(
             |events| {
@@ -317,7 +317,7 @@ async fn a_replica_its_origin_no_longer_lists_is_dropped_and_its_chats_close() {
     )
     .await
     .unwrap();
-    net.restore_link("desk", "laptop").unwrap();
+    net.restore_link("desk", "laptop").await.unwrap();
     quiet_chat.until_closed(PATIENCE).await.unwrap();
     fleet
         .observe_until(

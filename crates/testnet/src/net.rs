@@ -1215,13 +1215,24 @@ impl Net {
         Ok(self.ack(format!("link {a} - {b} severed")))
     }
 
-    /// Links the two hosts again, if both are up.
-    pub fn restore_link(&mut self, a: &str, b: &str) -> Result<Ack, NetError> {
-        let link = self
+    /// Links the two hosts again, if both are up, once both ends have seen
+    /// the severed link go. An end still holding it would refuse the new
+    /// link as a second dial from the same process, and an in-process link
+    /// is never dialled again.
+    pub async fn restore_link(&mut self, a: &str, b: &str) -> Result<Ack, NetError> {
+        let severed = self
             .links
+            .get(&link_key(a, b))
+            .ok_or_else(|| NetError::NoLink(a.to_owned(), b.to_owned()))?
+            .live
+            .is_none();
+        if severed {
+            self.wait_direct_gone(a, b).await?;
+        }
+        self.links
             .get_mut(&link_key(a, b))
-            .ok_or_else(|| NetError::NoLink(a.to_owned(), b.to_owned()))?;
-        link.severed = false;
+            .expect("the link")
+            .severed = false;
         self.link_all()?;
         Ok(self.ack(format!("link {a} - {b} restored")))
     }
@@ -1424,6 +1435,26 @@ impl Net {
             } else {
                 via_ab == HostVia::Offline && via_ba == HostVia::Offline
             }
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Waits until neither end of a link routes to the other over it. Unlike
+    /// the link being down, this holds while a third host still reaches
+    /// across.
+    async fn wait_direct_gone(&self, a: &str, b: &str) -> Result<(), NetError> {
+        let (id_a, id_b) = (self.host(a)?.host_id, self.host(b)?.host_id);
+        let what = format!("the severed link {a} - {b} to go at both ends");
+        observe::eventually(&what, PATIENCE, || async {
+            for (near, far) in [(a, id_b), (b, id_a)] {
+                if let Ok(edge) = self.edge(near)
+                    && edge.via(far).await == HostVia::Direct
+                {
+                    return false;
+                }
+            }
+            true
         })
         .await?;
         Ok(())

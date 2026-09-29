@@ -488,7 +488,7 @@ async fn measure(net: &mut Net, options: &FloodOptions) -> Result<Vec<MetricRun>
         .await?;
     let origin_id = net.host(ORIGIN)?.host_id;
     let opened = Instant::now();
-    net.restore_link(ORIGIN, VIEWER)?;
+    net.restore_link(ORIGIN, VIEWER).await?;
     net.wait_link(ORIGIN, VIEWER, true).await?;
     let listed = options.agents;
     fleet
@@ -700,7 +700,7 @@ async fn catch_up(
     let from = origin_newest(net, agent).await?;
     wait_newest(net, agent, from + distance).await?;
     let restored = Instant::now();
-    net.restore_link(ORIGIN, VIEWER)?;
+    net.restore_link(ORIGIN, VIEWER).await?;
     observer
         .observe_until(
             |events: &[SessionEvent]| {

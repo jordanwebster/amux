@@ -1,3 +1,18 @@
+2026-09-29 — **The test network restores a severed link only once both
+ends have seen it go.** A repeat run on Linux failed the host-sign-out spec:
+the desk signed out, the link was severed and at once restored, and the
+laptop never heard the new sign-in state; it saw the desk online, then
+offline for good. The sign-out was not lost. The restored link reached an end
+that still held the severed one, from the same process and dialled the same
+way, and the link registry refused it as a second dial of a live link, as it
+should; the severed link then went, and the test network never dials an
+in-process link again. `Net::restore_link` (and the door's `Restore`) now
+waits until neither end routes to the other directly before linking. Delaying
+every link's removal 300 ms failed the spec every run with the CI message and
+both ends logging the refusal; with the wait it passes, and a harness case
+that restores straight after severing keeps the new link up under the same
+delay and fails without the wait.
+
 2026-09-29 — **A repeat lane samples the workspace tests for timing
 races.** Each of the last four CI rounds went red on one different timing
 race in the Linux or macOS test job while everything else was green, one

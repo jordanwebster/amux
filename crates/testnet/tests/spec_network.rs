@@ -1889,14 +1889,14 @@ async fn a_host_is_seen_going_and_coming_with_its_identity_and_its_sign_in() {
         .await
         .unwrap();
     net.sever_link("desk", "laptop").unwrap();
-    net.restore_link("desk", "laptop").unwrap();
+    net.restore_link("desk", "laptop").await.unwrap();
     row_until(&mut fleet, desk, "the desk signed out", |row| {
         row.signed_in == Some(false)
     })
     .await;
     net.sign_in("desk", "ada").await.unwrap();
     net.sever_link("desk", "laptop").unwrap();
-    net.restore_link("desk", "laptop").unwrap();
+    net.restore_link("desk", "laptop").await.unwrap();
     row_until(&mut fleet, desk, "the desk signed in again", |row| {
         row.signed_in == Some(true)
     })

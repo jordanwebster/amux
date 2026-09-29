@@ -434,7 +434,7 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
     let value = |ack| serde_json::to_value(ack).expect("an ack serializes");
     Ok(match control {
         Control::Sever { a, b } => value(net.sever_link(&a, &b)?),
-        Control::Restore { a, b } => value(net.restore_link(&a, &b)?),
+        Control::Restore { a, b } => value(net.restore_link(&a, &b).await?),
         Control::Link { a, b } => {
             net.host(&a)?;
             net.host(&b)?;

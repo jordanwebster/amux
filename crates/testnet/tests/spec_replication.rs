@@ -173,7 +173,7 @@ async fn sever(net: &mut Net) {
 }
 
 async fn restore(net: &mut Net) {
-    net.restore_link("desk", "laptop").unwrap();
+    net.restore_link("desk", "laptop").await.unwrap();
     net.wait_link("desk", "laptop", true).await.unwrap();
 }
 

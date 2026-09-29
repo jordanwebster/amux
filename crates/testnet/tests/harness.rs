@@ -273,8 +273,22 @@ async fn a_severed_link_goes_down_and_a_restored_one_comes_back() {
     let ack = net.sever_link("b", "a").unwrap();
     assert_eq!(ack.installed, "link b - a severed");
     net.wait_link("a", "b", false).await.unwrap();
-    net.restore_link("a", "b").unwrap();
+    net.restore_link("a", "b").await.unwrap();
     net.wait_link("a", "b", true).await.unwrap();
+
+    // Restored at once, before either end has seen the cut: the new link
+    // comes back and stays, rather than being refused as a second dial
+    // while the severed one still looks up.
+    net.sever_link("a", "b").unwrap();
+    net.restore_link("a", "b").await.unwrap();
+    net.wait_link("a", "b", true).await.unwrap();
+    holds_for(
+        "the restored link to stay up",
+        Duration::from_millis(500),
+        || net.link_up("a", "b"),
+    )
+    .await
+    .unwrap();
 
     assert!(matches!(
         net.sever_link("a", "c"),

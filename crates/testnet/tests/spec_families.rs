@@ -547,7 +547,7 @@ async fn a_cascade_delete_reaches_a_reachable_child_and_orphans_an_unreachable_o
         "scout runs on, untouched"
     );
 
-    net.restore_link("desk", "laptop").unwrap();
+    net.restore_link("desk", "laptop").await.unwrap();
     net.wait_link("desk", "laptop", true).await.unwrap();
     let mut inventory = net.observe_inventory("desk").await.unwrap();
     let laptop = net.host("laptop").unwrap().host_id;
@@ -631,7 +631,7 @@ async fn an_away_parents_rows_wait_and_a_stale_incarnation_is_dropped() {
     .unwrap();
     assert!(received(&net, "lead").await.is_empty());
     println!("desk away: helper's finished message waits on server");
-    net.restore_link("desk", "server").unwrap();
+    net.restore_link("desk", "server").await.unwrap();
     eventually("the row to be delivered", PATIENCE, || {
         let net = &net;
         async move { outbox(net, "server").await == 0 }
@@ -671,7 +671,7 @@ async fn an_away_parents_rows_wait_and_a_stale_incarnation_is_dropped() {
         .await
         .unwrap();
     net.resume("lead", None).await.unwrap();
-    net.restore_link("desk", "server").unwrap();
+    net.restore_link("desk", "server").await.unwrap();
     eventually("the stale row to be dropped", PATIENCE, || {
         let net = &net;
         async move { outbox(net, "server").await == 0 }
@@ -981,8 +981,8 @@ async fn cross_host_family_journey() {
         "server never heard the answer"
     );
     say("4. helper finishes; server hands the message to desk; server's links drop before desk answers; lead has it, server still holds the row".into());
-    net.restore_link("desk", "server").unwrap();
-    net.restore_link("server", "phone").unwrap();
+    net.restore_link("desk", "server").await.unwrap();
+    net.restore_link("server", "phone").await.unwrap();
     eventually("server's retry to settle the row", PATIENCE, || {
         let net = &net;
         async move { outbox(net, "server").await == 0 }
