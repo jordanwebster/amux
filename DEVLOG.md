@@ -1,3 +1,18 @@
+2026-09-29 — **The redesigned home is the default, and frames match the
+person's terminal.** The lab opened on the old framed grid, which is not
+the design being judged, so variant 0 is now the redesigned home and F3's
+variant 1 brings back the old one; the tests that still describe the old
+grid ask for it with `FleetView::legacy`, since the variant is
+process-wide. Home rows are polished: every agent takes two lines, falling
+back to its state in words when it has reported nothing, so rows keep one
+height; working is a still `◐` in the same scale as idle `○` and
+needs-you `●` rather than a spinner, since motion across a list of agents
+is noise, and home no longer ticks; section headings carry a faint rule
+to the right edge (a new `hairline` theme token), and when "Needs you" is
+shown the rest sits under "Recent" so that section's end is visible. The
+lab keeps the colours the terminal reports and `tui-lab render` draws with
+them by default, so a headless frame looks like the person's own screen.
+
 2026-09-29 — **A redesigned home, behind design variant 1.** Home is being
 rethought for the terminal client this branch will replace, and the lab
 now draws the new one when F3 selects variant 1; variant 0 keeps the

@@ -991,6 +991,7 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
     assert!(!screen.contains("not signed in"), "{screen}");
     // The fleet says what signing in would bring back.
     let mut fleet_view = FleetView::default();
+    fleet_view.legacy = true;
     fleet_view.local_host = b"laptop".to_vec();
     let screen = fleet_screen(&mut fleet_view, &fleet);
     assert!(
@@ -1226,6 +1227,7 @@ fn the_fleet_lists_families_and_acts_on_the_selected_agent() {
         wire::inventory_event::Of::CaughtUp(wire::CaughtUp { revision: 0 }),
     );
     let mut view = FleetView::default();
+    view.legacy = true;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
     let mut screen = String::new();
     terminal
@@ -1300,6 +1302,7 @@ fn the_fleet_says_restart_to_update_when_the_daemon_runs_another_build() {
         wire::inventory_event::Of::CaughtUp(wire::CaughtUp { revision: 0 }),
     );
     let mut view = FleetView::default();
+    view.legacy = true;
     view.version = "0.8.0".into();
     view.local_host = b"a".to_vec();
     let screen = fleet_screen(&mut view, &fleet);
@@ -1834,6 +1837,7 @@ fn an_agent_that_exited_while_the_daemon_was_away_says_exited_once() {
     );
     inventory(&mut fleet, wire::inventory_event::Of::Agent(exited));
     let mut fleet_view = FleetView::default();
+    fleet_view.legacy = true;
     let screen = fleet_screen(&mut fleet_view, &fleet);
     let row = screen.lines().find(|line| line.contains("worker")).unwrap();
     assert!(row.contains(" exited "), "{screen}");
@@ -2122,6 +2126,7 @@ fn a_paste_in_the_fleet_types_into_the_rename_field() {
     );
     inventory(&mut fleet, agent_row(b"p", "planner", Phase::Idle, None));
     let mut view = FleetView::default();
+    view.legacy = true;
     view.paste("ignored");
     view.key(&fleet, key(KeyCode::Char('r')));
     view.key(&fleet, ctrl('u'));
@@ -2143,6 +2148,7 @@ fn q_and_question_mark_reach_an_open_fleet_overlay_first() {
     );
     inventory(&mut fleet, agent_row(b"p", "planner", Phase::Idle, None));
     let mut view = FleetView::default();
+    view.legacy = true;
     let q = key(KeyCode::Char('q'));
     let help = key(KeyCode::Char('?'));
     assert_eq!(view.key(&fleet, help), vec![FleetEffect::Help]);

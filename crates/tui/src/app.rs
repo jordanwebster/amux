@@ -221,8 +221,6 @@ impl App {
             if state.phase() == PhaseView::Working || state.transcript().is_empty() {
                 at(Instant::now() + Duration::from_millis(250));
             }
-        } else if self.fleet_view.animating(&self.fleet.state()) {
-            at(Instant::now() + Duration::from_millis(crate::home::SPIN_MS));
         }
         next
     }
@@ -245,7 +243,7 @@ impl App {
             self.notice = None;
             changed = true;
         }
-        changed || self.chat.is_some() || self.fleet_view.animating(&self.fleet.state())
+        changed || self.chat.is_some()
     }
 
     /// Opens the configured first chat once its row is in the fleet, and
@@ -920,7 +918,12 @@ impl App {
         let width = usize::from(area.width);
         if self.help {
             paint.render_widget(
-                Paragraph::new(help_lines(self.config.leader, width, theme)),
+                Paragraph::new(help_lines(
+                    self.config.leader,
+                    self.fleet_view.redesigned(),
+                    width,
+                    theme,
+                )),
                 area,
             );
             return;
@@ -959,9 +962,9 @@ impl App {
     }
 }
 
-fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
+fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec<Line<'static>> {
     let leader = format!("ctrl+{leader}");
-    let mut rows: Vec<(&str, String)> = if crate::variant::get() == 1 {
+    let mut rows: Vec<(&str, String)> = if redesigned {
         crate::home::help_rows()
     } else {
         vec![

@@ -65,7 +65,7 @@ enum Command {
         keys: String,
         #[arg(long, default_value = "notes/tui-lab/frames")]
         out: PathBuf,
-        #[arg(long, value_enum, default_value = "dark")]
+        #[arg(long, value_enum, default_value = "captured")]
         theme: ThemeArg,
         /// The design variant to draw.
         #[arg(long, default_value_t = 0)]
@@ -82,6 +82,44 @@ enum ThemeArg {
     /// A fixed dark terminal's answer, as if it had reported its colours:
     /// draws what `terminal` draws where the terminal answers.
     Sample,
+    /// The colours the person's terminal reported the last time the lab
+    /// ran in it, so frames drawn without a terminal look like theirs.
+    /// `sample` until the lab has run once.
+    Captured,
+}
+
+/// Where the last terminal's reported colours are kept.
+fn captured_path() -> std::path::PathBuf {
+    place::dir().join("terminal-colors.json")
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Captured {
+    background: (u8, u8, u8),
+    foreground: (u8, u8, u8),
+    ansi: [(u8, u8, u8); 16],
+}
+
+fn save_captured(colors: &TerminalColors) {
+    let captured = Captured {
+        background: colors.background,
+        foreground: colors.foreground,
+        ansi: colors.ansi,
+    };
+    if let Ok(json) = serde_json::to_vec_pretty(&captured) {
+        let _ = std::fs::create_dir_all(place::dir());
+        let _ = std::fs::write(captured_path(), json);
+    }
+}
+
+fn load_captured() -> Option<TerminalColors> {
+    let text = std::fs::read(captured_path()).ok()?;
+    let captured: Captured = serde_json::from_slice(&text).ok()?;
+    Some(TerminalColors {
+        background: captured.background,
+        foreground: captured.foreground,
+        ansi: captured.ansi,
+    })
 }
 
 /// A dark terminal's answer to the colour queries: a near-black ground,
@@ -121,9 +159,13 @@ fn color_mode() -> ColorMode {
 fn theme(arg: ThemeArg, mode: ColorMode) -> Theme {
     match arg {
         ThemeArg::Terminal => match tui::query_terminal_colors(Duration::from_millis(250)) {
-            Some(colors) => Theme::from_terminal(colors, mode),
+            Some(colors) => {
+                save_captured(&colors);
+                Theme::from_terminal(colors, mode)
+            }
             None => Theme::dark(mode),
         },
+        ThemeArg::Captured => Theme::from_terminal(load_captured().unwrap_or(SAMPLE), mode),
         ThemeArg::Dark => Theme::dark(mode),
         ThemeArg::Light => Theme::light(mode),
         ThemeArg::Sample => Theme::from_terminal(SAMPLE, mode),

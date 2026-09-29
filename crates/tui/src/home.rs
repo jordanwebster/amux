@@ -30,10 +30,6 @@ use crate::theme::Theme;
 
 /// Past this, a family that is idle or exited folds into "Older".
 const DAY_MS: i64 = 86_400_000;
-const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-/// How long one spinner frame shows, and so how often home redraws while
-/// an agent works.
-pub const SPIN_MS: u64 = 100;
 /// Blank columns at each side of the screen.
 const MARGIN: usize = 2;
 /// Where section headings start, and the `›` of a highlight without a tint.
@@ -290,15 +286,6 @@ impl Home {
         }
     }
 
-    /// Whether anything on home moves with time: a working agent's spinner.
-    pub fn animating(&self, fleet: &FleetState) -> bool {
-        !self.draft.open
-            && self.overlay.is_none()
-            && fleet
-                .agents()
-                .any(|agent| ui_state::attention(agent) == Attention::Working)
-    }
-
     /// Keeps each agent's moment, which moves only when its attention does.
     fn observe(&mut self, fleet: &FleetState) {
         self.moments.retain(|key, _| fleet.agent(key).is_some());
@@ -425,6 +412,11 @@ impl Home {
         }
         if !recent.is_empty() {
             items.push(Item::Gap);
+            // Named only when "Needs you" sits above it, to mark where that
+            // section ends; alone, the list needs no heading.
+            if !needs.is_empty() {
+                items.push(Item::Heading("Recent", recent.len()));
+            }
             for family in &recent {
                 self.push_agent(fleet, &family.head, 0, family, &mut items);
             }
@@ -1040,10 +1032,20 @@ impl Home {
                     laid.push(Laid::row(tint(line, chosen, width, theme), Target::New));
                 }
                 Item::Heading(words, count) => {
+                    // The label, its count, and a faint rule to the right
+                    // edge, so a section's end is visible at a glance.
                     let mut line = Line::default();
                     pad_to(&mut line, HEAD_COL);
-                    push(&mut line, *words, theme.accent(), width);
-                    push(&mut line, format!(" {count}"), theme.muted(), width);
+                    let label = if *words == "Needs you" {
+                        theme.accent()
+                    } else {
+                        theme.muted()
+                    };
+                    push(&mut line, *words, label, width);
+                    push(&mut line, format!(" {count} "), theme.muted(), width);
+                    let end = width.saturating_sub(MARGIN);
+                    let rule = end.saturating_sub(text::line_width(&line));
+                    push(&mut line, "─".repeat(rule), theme.hairline(), width);
                     laid.push(Laid::plain(line));
                 }
                 Item::Gap => blank(&mut laid),
@@ -1421,8 +1423,10 @@ fn tint(line: Line<'static>, chosen: bool, width: usize, theme: Theme) -> Line<'
     out
 }
 
-/// An agent's mark: only needs-you is loud, only working moves.
-fn mark(entry: &Entry, unreached: bool, now_ms: i64, theme: Theme) -> (&'static str, Style) {
+/// An agent's mark. The circles read as one scale, empty (idle) to half
+/// (working) to full (needs you); only needs-you is loud, and nothing
+/// moves, because motion on a list of many agents is noise.
+fn mark(entry: &Entry, unreached: bool, theme: Theme) -> (&'static str, Style) {
     let agent = &entry.agent;
     if unreached {
         return ("–", theme.muted());
@@ -1432,10 +1436,7 @@ fn mark(entry: &Entry, unreached: bool, now_ms: i64, theme: Theme) -> (&'static 
     }
     match ui_state::attention(agent) {
         Attention::NeedsYou => ("●", theme.accent()),
-        Attention::Working => {
-            let frame = (now_ms.max(0) as u64 / SPIN_MS) as usize % SPINNER.len();
-            (SPINNER[frame], theme.text())
-        }
+        Attention::Working => ("◐", theme.text()),
         Attention::Starting => ("◌", theme.muted()),
         Attention::Idle => ("○", theme.muted()),
         Attention::Exited => match agent.exit_cause.as_deref() {
@@ -1448,9 +1449,20 @@ fn mark(entry: &Entry, unreached: bool, now_ms: i64, theme: Theme) -> (&'static 
     }
 }
 
+/// What an agent's second line says when it has reported nothing better.
+fn state_words(agent: &Agent) -> &'static str {
+    match ui_state::attention(agent) {
+        Attention::NeedsYou => "waiting for you",
+        Attention::Working => "working",
+        Attention::Starting => "starting",
+        Attention::Idle => "idle",
+        Attention::Exited => "exited",
+    }
+}
+
 /// An agent's lines: its mark, name, project and host, and its age or the
-/// highlighted row's `×`; then, when there is something to say, what it is
-/// doing or why it stopped.
+/// highlighted row's `×`; then what it is doing, why it stopped, or its
+/// state in words. Every agent takes two lines, so rows keep one height.
 fn agent_lines(
     fleet: &FleetState,
     entry: &Entry,
@@ -1474,7 +1486,7 @@ fn agent_lines(
     let mut first = lead(chosen, theme);
     let mut spots = vec![(None, Hit::Row(target.clone()))];
     pad_to(&mut first, MARK_COL + indent);
-    let (glyph, glyph_style) = mark(entry, unreached, now_ms, theme);
+    let (glyph, glyph_style) = mark(entry, unreached, theme);
     first.spans.push(Span::styled(glyph, glyph_style));
     pad_to(&mut first, NAME_COL + indent);
     // The right edge: the age, or on the highlighted row its `×`.
@@ -1570,14 +1582,9 @@ fn agent_lines(
                 .working_on
                 .as_ref()
                 .map(|working| text::first_line(&working.text).to_owned())
-                .unwrap_or_default()
+                .filter(|text| !text.is_empty())
+                .unwrap_or_else(|| state_words(agent).to_owned())
         };
-        if detail.is_empty() {
-            return vec![Laid {
-                line: tint(first, chosen, width, theme),
-                spots,
-            }];
-        }
         push(
             &mut second,
             text::ellipsize(&detail, room),

@@ -85,14 +85,12 @@ pub struct FleetView {
     pub local_host: Vec<u8>,
     /// Where a new agent works, as the person would write it.
     pub working_dir: String,
-    /// Home as redesigned; drawn instead of the framed grid while the
-    /// design variant says so.
+    /// Home as redesigned; drawn unless the design variant asks for the
+    /// old framed grid.
     pub home: Home,
-}
-
-/// Whether home is the redesigned one.
-fn redesigned() -> bool {
-    crate::variant::get() == 1
+    /// Draw the old framed grid regardless of the variant: the tests that
+    /// still describe it set this, since the variant is process-wide.
+    pub legacy: bool,
 }
 
 fn kind_word(kind: Kind) -> &'static str {
@@ -105,6 +103,11 @@ fn kind_word(kind: Kind) -> &'static str {
 }
 
 impl FleetView {
+    /// Whether home is the redesigned one.
+    pub fn redesigned(&self) -> bool {
+        !self.legacy && crate::variant::get() == 0
+    }
+
     pub fn rows(&self, fleet: &FleetState) -> Vec<FleetRow> {
         fleet_list(fleet, &self.expanded)
     }
@@ -117,7 +120,7 @@ impl FleetView {
     }
 
     pub fn selected(&self) -> Option<&AgentKey> {
-        if redesigned() {
+        if self.redesigned() {
             return self.home.selected_agent();
         }
         self.selected.as_ref()
@@ -130,14 +133,14 @@ impl FleetView {
 
     /// Whether a text field has the keys and holds something, for Ctrl+C.
     pub fn field_text(&self) -> bool {
-        if redesigned() {
+        if self.redesigned() {
             return self.home.field_text();
         }
         matches!(&self.overlay, Some(Overlay::Rename { editor, .. }) if !editor.is_empty())
     }
 
     pub fn kill_field(&mut self) -> bool {
-        if redesigned() {
+        if self.redesigned() {
             return self.home.kill_field();
         }
         match &mut self.overlay {
@@ -149,7 +152,7 @@ impl FleetView {
     /// A bracketed paste types into the rename field; nothing else in the
     /// fleet takes text. A name is one line.
     pub fn paste(&mut self, text: &str) {
-        if redesigned() {
+        if self.redesigned() {
             self.home.paste(text);
             return;
         }
@@ -165,7 +168,7 @@ impl FleetView {
     /// One key: an open overlay's first, so `q` and `?` quit and help only
     /// from the list.
     pub fn key(&mut self, fleet: &FleetState, key: KeyEvent) -> Vec<FleetEffect> {
-        if redesigned() {
+        if self.redesigned() {
             return self.home.key(fleet, key, self.attach);
         }
         if let Some(overlay) = self.overlay.take() {
@@ -317,15 +320,10 @@ impl FleetView {
 
     /// The framed grid answers only the wheel, which it ignores.
     pub fn mouse(&mut self, fleet: &FleetState, event: MouseEvent) -> Vec<FleetEffect> {
-        if redesigned() {
+        if self.redesigned() {
             return self.home.mouse(fleet, event, self.attach);
         }
         vec![]
-    }
-
-    /// Whether the screen moves with time while nothing else changes.
-    pub fn animating(&self, fleet: &FleetState) -> bool {
-        redesigned() && self.home.animating(fleet)
     }
 
     pub fn draw(
@@ -337,7 +335,7 @@ impl FleetView {
         now_ms: i64,
         theme: Theme,
     ) {
-        if redesigned() {
+        if self.redesigned() {
             let place = home::Place {
                 local_host: &self.local_host,
                 working_dir: &self.working_dir,

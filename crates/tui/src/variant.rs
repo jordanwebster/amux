@@ -1,6 +1,7 @@
 //! A design variant number the renderer may branch on while designs are
-//! compared side by side. The TUI lab cycles it with a key; the shipped
-//! client never sets it, so it stays zero there.
+//! compared side by side. Zero is the current design, and the shipped client
+//! never sets it. The TUI lab cycles it with a key; variant 1 draws the old
+//! home.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 

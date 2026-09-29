@@ -82,6 +82,8 @@ pub struct Tokens {
     pub accent: Token,
     pub user_surface: Token,
     pub panel: Token,
+    /// Section rules: a line that separates without being read.
+    pub hairline: Token,
     pub focus: Token,
     pub code: Token,
     pub ok: Token,
@@ -291,6 +293,7 @@ impl Theme {
                 accent: Token::new((95, 179, 198), Color::Cyan),
                 user_surface: Token::new((24, 32, 40), Color::Black),
                 panel: Token::new((23, 27, 34), Color::Blue),
+                hairline: Token::new((44, 50, 58), Color::DarkGray),
                 focus: Token::new((156, 140, 214), Color::Magenta),
                 code: Token::new((127, 182, 217), Color::Cyan),
                 ok: Token::new((134, 184, 122), Color::Green),
@@ -322,6 +325,7 @@ impl Theme {
                 accent: Token::new((31, 111, 130), Color::Blue),
                 user_surface: Token::new((236, 241, 243), Color::Cyan),
                 panel: Token::new((240, 240, 238), Color::Gray),
+                hairline: Token::new((220, 223, 228), Color::Gray),
                 focus: Token::new((109, 78, 156), Color::Magenta),
                 code: Token::new((26, 95, 135), Color::Blue),
                 ok: Token::new((47, 122, 68), Color::Green),
@@ -390,6 +394,7 @@ impl Theme {
             // find, so its surface states where it is rather than shouting.
             user_surface: surface(0.10),
             panel: surface(0.055),
+            hairline: surface(0.2),
             // Both tints start as the same plain surface and are tinted by
             // the repair pass with this palette's own success and error
             // hues, so a hunk is green-on-your-green and red-on-your-red
@@ -488,6 +493,11 @@ impl Theme {
     pub(crate) fn row_surface(self) -> Option<Style> {
         (self.name == ThemeName::Adopted && self.mode == ColorMode::TrueColor)
             .then(|| Style::default().bg(self.color(self.tokens.user_surface)))
+    }
+
+    /// A section rule: separates without being read.
+    pub(crate) fn hairline(self) -> Style {
+        Style::default().fg(self.color(self.tokens.hairline))
     }
 
     /// The filled diff and ask-panel surface.
@@ -685,6 +695,7 @@ pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, Theme
         background: mapped_token(file, "base00")?,
         user_surface: mapped_token(file, "base01")?,
         panel: mapped_token(file, "base02")?,
+        hairline: mapped_token(file, "base02")?,
         muted: mapped_token(file, "base03")?,
         diff_meta: mapped_token(file, "base04")?,
         text: mapped_token(file, "base05")?,
