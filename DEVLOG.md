@@ -1,3 +1,13 @@
+2026-09-29 — **A process hosted on a terminal no longer dies at birth on
+macOS.** Now and then a hosted process died before it ran, with no output and a
+status that read as a signal. macOS libSystem aborts the child side of `fork`
+when another thread was partway through libnotify's one-time setup at the
+fork, and that first use can come from anything: a passwd or DNS lookup, or
+portable-pty looking up a home directory when `HOME` is unset. The pty host
+now completes that setup once before its first spawn. Under load the pty host
+suite failed about once in 140 runs, with eight crash reports saying "crashed
+on child side of fork pre-exec"; after the fix it passed 900 runs with none.
+
 2026-09-29 — **Four test races found by the repeat lane are closed.** The
 supervisor tests forked processes while another thread copied a binary into
 place, so on Linux the copy's write descriptor leaked into the fork and

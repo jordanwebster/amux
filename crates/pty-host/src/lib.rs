@@ -230,6 +230,8 @@ pub enum ProcessGroupSignal {
 
 /// Spawn a process on a new PTY in its own process group.
 pub fn spawn(spec: PtySpawn) -> Result<PtyProcess, PtyError> {
+    #[cfg(target_os = "macos")]
+    prepare_fork();
     let pair = native_pty_system()
         .openpty(portable_size(spec.size))
         .map_err(anyhow_to_io)
@@ -451,6 +453,37 @@ pub async fn terminate(process: &PtyProcess, policy: Terminate) -> ExitStatus {
 
     let mut monitor = process.exit.clone();
     monitor.wait().await
+}
+
+/// Completes libnotify's one-time setup before this process first forks.
+///
+/// On macOS the child side of `fork` runs libSystem's atfork handlers, and
+/// libnotify's reads its once-initialised globals: if another thread was
+/// partway through that initialisation at the fork, the child finds the
+/// once gate held by a thread it does not have and aborts before `exec`
+/// ("os_once_t is corrupt ... crashed on child side of fork pre-exec"). The
+/// hosted process then dies without output and its status reads as a
+/// signal. The first use of libnotify can come from anything on another
+/// thread (a passwd or DNS lookup, portable-pty resolving a home directory
+/// with `HOME` unset), so it is finished here, once, before the first
+/// spawn; a spawn racing it waits for it.
+#[cfg(target_os = "macos")]
+fn prepare_fork() {
+    unsafe extern "C" {
+        fn notify_register_check(name: *const libc::c_char, token: *mut libc::c_int) -> u32;
+        fn notify_cancel(token: libc::c_int) -> u32;
+    }
+    static PREPARED: std::sync::Once = std::sync::Once::new();
+    PREPARED.call_once(|| {
+        let mut token = 0;
+        // SAFETY: the name is a NUL-terminated string and the token a valid
+        // out-pointer; a registered token is cancelled at once.
+        unsafe {
+            if notify_register_check(c"sh.amux.pty-host.prepare".as_ptr(), &mut token) == 0 {
+                notify_cancel(token);
+            }
+        }
+    });
 }
 
 #[cfg(unix)]
