@@ -98,6 +98,12 @@ pub enum TerminalInput {
         text: String,
         attachments: Vec<Attachment>,
     },
+    /// Type a queued prompt into the running turn, which Claude hands the
+    /// model at its next tool boundary.
+    SendNow {
+        text: String,
+        attachments: Vec<Attachment>,
+    },
     /// Stop the running turn.
     Interrupt,
     /// Start a new conversation: /clear.
@@ -167,6 +173,13 @@ impl fmt::Display for TerminalInput {
                 }
                 Ok(())
             }
+            Self::SendNow { text, attachments } => {
+                write!(f, "send now {}", Value::String(text.clone()))?;
+                if !attachments.is_empty() {
+                    write!(f, " attachments={}", attachments.len())?;
+                }
+                Ok(())
+            }
             Self::Interrupt => f.write_str("interrupt"),
             Self::Clear => f.write_str("clear"),
             Self::Key(key) => write!(f, "key {}", key.as_str_name()),
@@ -218,14 +231,24 @@ pub struct PermissionMenus {
 
 /// The launch fact the agent process sends on the agent channel before the
 /// provider's first fact, and again after it relaunches the provider.
-pub fn launch_fact(version: &str, keymap: &str, permission_menus: &PermissionMenus) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
+/// `send_now_refused` is why the keymap cannot type send now for this
+/// Claude, when it cannot.
+pub fn launch_fact(
+    version: &str,
+    keymap: &str,
+    permission_menus: &PermissionMenus,
+    send_now_refused: Option<&str>,
+) -> Vec<u8> {
+    let mut fact = serde_json::json!({
         "type": "launch",
         "version": version,
         "keymap": keymap,
         "permission_menus": permission_menus,
-    }))
-    .expect("json")
+    });
+    if let Some(reason) = send_now_refused {
+        fact["send_now_refused"] = reason.into();
+    }
+    serde_json::to_vec(&fact).expect("json")
 }
 
 /// The fact the agent process sends when Claude's terminal first draws with
@@ -251,6 +274,9 @@ struct Provider {
     keymap: String,
     #[serde(default)]
     permission_menus: PermissionMenus,
+    /// Why this Claude's keymap cannot type send now, when it cannot.
+    #[serde(default)]
+    send_now_refused: Option<String>,
     launches: u32,
     /// Launched again after an earlier launch; the next session start is a
     /// restart whatever its source says.
@@ -932,16 +958,20 @@ impl State {
             }
             // Typed while the turn runs, a prompt joins it at the next tool
             // boundary, as Codex's steer and headless Claude's mid-turn
-            // message do. Claude's send-now chord is not used: it moves a
+            // message do; the keymap's send-now row says from which Claude
+            // that holds. Claude's send-now chord is not used: it moves a
             // running command to the background or cancels the reply being
             // written. Nothing is typed over an open menu.
             claude_pty_input::Of::SendNow(send) => {
+                if let Some(reason) = self.provider.send_now_refused.clone() {
+                    return self.shared.reject(emit, &id, &reason);
+                }
                 let running = self.shared.is_busy() && self.shared.asks().is_empty();
                 if let Some(entry) = self
                     .shared
                     .send_now(emit, &id, &send.queued_input_id, running)
                 {
-                    emit.effect(Effect::Terminal(TerminalInput::Prompt {
+                    emit.effect(Effect::Terminal(TerminalInput::SendNow {
                         text: entry.text,
                         attachments: entry.attachments,
                     }));

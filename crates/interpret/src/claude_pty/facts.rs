@@ -150,6 +150,10 @@ impl State {
             .cloned()
             .and_then(|menus| serde_json::from_value(menus).ok())
             .unwrap_or_default();
+        provider.send_now_refused = value
+            .get("send_now_refused")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         provider.relaunched = provider.launches > 0;
         provider.launches += 1;
     }

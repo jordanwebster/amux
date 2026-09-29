@@ -1377,22 +1377,48 @@ fn numbered(line: &str, old: &mut Option<u32>, new: &mut Option<u32>) -> PatchLi
 fn unified_lines(patch: &str) -> Vec<PatchLine> {
     let mut lines = Vec::new();
     let (mut old, mut new) = (None, None);
+    // Lines each side of the open hunk still holds, from its header: a
+    // file's header lines ("--- ", "+++ ", "index ") come only between
+    // hunks, so a removed "-- comment" inside one is a line of the patch.
+    let (mut old_left, mut new_left) = (0u32, 0u32);
     for line in patch.lines() {
+        if line.starts_with('\\') {
+            continue;
+        }
+        if old_left > 0 || new_left > 0 {
+            match line.chars().next() {
+                Some('-') => old_left = old_left.saturating_sub(1),
+                Some('+') => new_left = new_left.saturating_sub(1),
+                _ => {
+                    old_left = old_left.saturating_sub(1);
+                    new_left = new_left.saturating_sub(1);
+                }
+            }
+            lines.push(numbered(line, &mut old, &mut new));
+            continue;
+        }
         if let Some(header) = line.strip_prefix("@@ ") {
-            let start = |sign: char| {
-                header
+            let range = |sign: char| {
+                let range = header
                     .split_whitespace()
-                    .find_map(|part| part.strip_prefix(sign))
-                    .and_then(|range| range.split(',').next()?.parse().ok())
+                    .find_map(|part| part.strip_prefix(sign))?;
+                let mut parts = range.split(',');
+                let start = parts.next()?.parse().ok()?;
+                let count = parts.next().map_or(Some(1), |count| count.parse().ok())?;
+                Some((start, count))
             };
-            (old, new) = (start('-'), start('+'));
+            let (from, to) = (range('-'), range('+'));
+            (old, new) = (from.map(|(start, _)| start), to.map(|(start, _)| start));
+            (old_left, new_left) = (
+                from.map_or(0, |(_, count)| count),
+                to.map_or(0, |(_, count)| count),
+            );
             continue;
         }
         if line.starts_with("diff --git")
             || line.starts_with("index ")
             || line.starts_with("--- ")
             || line.starts_with("+++ ")
-            || line.starts_with('\\')
             || line.starts_with("new file")
             || line.starts_with("deleted file")
         {

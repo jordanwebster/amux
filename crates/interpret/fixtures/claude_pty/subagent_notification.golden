@@ -48,7 +48,7 @@ effect reply p3 queued
 snapshot WORKING queue=[p3] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
 ## 19 input {"id":"n3","send_now":{"target":"p3"}}
 effect reply n3 accepted
-effect terminal prompt "Use UTC."
+effect terminal send now "Use UTC."
 snapshot WORKING queue=[p3(steered)] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
 ## 20 fact {"channel":"transcript","json":{"message":{"content":"<task-notification>\n<task-id>ag1</task-id>\n<tool-use-id>toolu_gone</tool-use-id>\n<status>completed</status>\n<summary>Agent \"Look around\" finished</summary>\n<result>An answer for a call that is no longer drawn.</result>\n</task-notification>","role":"user"},"origin":{"kind":"task-notification"},"promptSource":"system","sessionId":"s1","timestamp":"2027-01-15T08:00:00.100Z","turnOrigin":"task_notification","type":"user","uuid":"n2"}}
 ## 21 fact {"channel":"transcript","json":{"attachment":{"commandMode":"prompt","prompt":"Use UTC.","type":"queued_command"},"sessionId":"s1","timestamp":"2027-01-15T08:00:00.110Z","type":"attachment","uuid":"q1"}}

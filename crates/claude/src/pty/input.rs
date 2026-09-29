@@ -44,10 +44,20 @@ pub struct QuestionFact {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "intent", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Intent {
-    Prompt { text: String },
+    Prompt {
+        text: String,
+    },
+    /// A prompt typed into the running turn, which Claude takes at its next
+    /// tool boundary.
+    SendNow {
+        text: String,
+    },
     Interrupt,
     CyclePermissionMode,
-    Answer { ask_id: AskId, answer: AskAnswer },
+    Answer {
+        ask_id: AskId,
+        answer: AskAnswer,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -4,6 +4,7 @@ verified = [{ version = "2.1.251", run_id = "be51d262-2443-4131-9cf3-cfa86c2eb41
 
 [intent_programs]
 prompt = "prompt"
+send_now = "send_now"
 interrupt = "interrupt"
 mode_cycle = "mode_cycle"
 permission = "permission_menu"
@@ -83,6 +84,16 @@ steps = [
     { step = "delay", delay = "after_paste" },
     { step = "key", key = "enter" },
 ]
+
+# A prompt typed while a turn runs: Claude 2.1.283 queues it and hands it to
+# the model at the turn's next tool boundary (the steer_queued and
+# steer_send_now recordings). What Enter means mid-turn is Claude's choice,
+# not a fixed key, so the row holds only from that version and, like a menu,
+# is not extrapolated past its minor.
+[programs.send_now]
+stability = "menu"
+since = "2.1.283"
+steps = [{ step = "call", program = "prompt" }]
 
 [programs.interrupt]
 stability = "stable"

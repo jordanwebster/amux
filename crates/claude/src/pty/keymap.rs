@@ -72,6 +72,10 @@ pub struct ShapeSet {
 #[serde(deny_unknown_fields)]
 pub struct Program {
     pub stability: Stability,
+    /// The first Claude version whose behaviour this program is verified
+    /// against; an older Claude is refused it, whatever its basis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<Version>,
     pub steps: Vec<Step>,
 }
 
@@ -199,12 +203,28 @@ string_enum!(MenuEntryName {
 
 string_enum!(ProgramName {
     Prompt,
+    SendNow,
     Interrupt,
     ModeCycle,
     PermissionMenu,
     PlanMenu,
     QuestionForm,
 });
+
+impl ProgramName {
+    /// What the program does, as a refusal names it to a person.
+    pub fn doing(self) -> &'static str {
+        match self {
+            Self::Prompt => "Typing a prompt",
+            Self::SendNow => "Send now",
+            Self::Interrupt => "Interrupting",
+            Self::ModeCycle => "Changing the permission mode",
+            Self::PermissionMenu => "Answering a permission menu",
+            Self::PlanMenu => "Answering a plan review",
+            Self::QuestionForm => "Answering a question",
+        }
+    }
+}
 
 string_enum!(TextSource {
     PromptText,
@@ -327,6 +347,7 @@ pub struct Environment<'a> {
 #[serde(rename_all = "snake_case")]
 enum IntentName {
     Prompt,
+    SendNow,
     Interrupt,
     ModeCycle,
     Permission,
@@ -336,6 +357,7 @@ enum IntentName {
 
 const PROGRAM_TABLE: &[(IntentName, ProgramName)] = &[
     (IntentName::Prompt, ProgramName::Prompt),
+    (IntentName::SendNow, ProgramName::SendNow),
     (IntentName::Interrupt, ProgramName::Interrupt),
     (IntentName::ModeCycle, ProgramName::ModeCycle),
     (IntentName::Permission, ProgramName::PermissionMenu),
@@ -682,6 +704,11 @@ fn resolved(selected: &LoadedKeymap, basis: Basis, observed: &Version) -> Resolv
         .programs
         .iter()
         .map(|(name, program)| {
+            if let Some(since) = program.since.as_ref().filter(|since| observed < *since) {
+                let reason =
+                    format!("{} needs Claude {since} or later; this agent runs Claude {observed}", name.doing());
+                return (*name, Extrapolation::Refused { reason });
+            }
             let limit = match (&basis, program.stability) {
                 (Basis::Verified { .. } | Basis::InRange, _) | (_, Stability::Stable) => {
                     Extrapolation::Allowed
@@ -732,7 +759,7 @@ fn validate_program_table(raw: &RawKeymap) -> Result<(), KeymapError> {
     if raw.intent_programs.len() != PROGRAM_TABLE.len() || raw.programs.len() != PROGRAM_TABLE.len()
     {
         return Err(KeymapError::ProgramTableViolation {
-            program: "the keymap must contain exactly the six fixed intent roots".to_owned(),
+            program: "the keymap must contain exactly the fixed intent roots".to_owned(),
         });
     }
     Ok(())
@@ -881,6 +908,7 @@ fn reference_error<T: std::fmt::Debug>(
 pub fn program_for(intent: &Intent, ask: Option<&AskKind>) -> Result<ProgramName, InputError> {
     let intent_name = match intent {
         Intent::Prompt { .. } => IntentName::Prompt,
+        Intent::SendNow { .. } => IntentName::SendNow,
         Intent::Interrupt => IntentName::Interrupt,
         Intent::CyclePermissionMode => IntentName::ModeCycle,
         Intent::Answer { ask_id, answer } => {
@@ -948,7 +976,7 @@ fn validate_environment(
     env: &Environment<'_>,
 ) -> Result<(), InputError> {
     match program {
-        ProgramName::Prompt => {
+        ProgramName::Prompt | ProgramName::SendNow => {
             let text = env
                 .prompt
                 .ok_or_else(|| unsafe_text("prompt text is missing"))?;
@@ -1648,7 +1676,7 @@ mod interpret {
     fn encoded(intent: &Intent, ask: Option<&AskKind>) -> Result<Vec<KeyStep>, InputError> {
         let program = program_for(intent, ask)?;
         let (answer, prompt) = match intent {
-            Intent::Prompt { text } => (None, Some(text.as_str())),
+            Intent::Prompt { text } | Intent::SendNow { text } => (None, Some(text.as_str())),
             Intent::Answer { answer, .. } => (Some(answer), None),
             Intent::Interrupt | Intent::CyclePermissionMode => (None, None),
         };
@@ -2212,7 +2240,11 @@ mod resolve {
         assert!(exact.keymap.digest.starts_with("sha256:"));
         assert_eq!(exact.keymap.digest.len(), 71);
         for (_, program) in PROGRAM_TABLE {
-            assert_allowed(&exact, *program);
+            if *program == ProgramName::SendNow {
+                assert_refused(&exact, *program);
+            } else {
+                assert_allowed(&exact, *program);
+            }
         }
 
         let same_minor = resolve(&sources, &version("2.1.260")).expect("same minor");
@@ -2223,7 +2255,15 @@ mod resolve {
             }
         );
         for (_, program) in PROGRAM_TABLE {
-            assert_allowed(&same_minor, *program);
+            if *program == ProgramName::SendNow {
+                assert_refused(&same_minor, *program);
+            } else {
+                assert_allowed(&same_minor, *program);
+            }
+        }
+        let steering = resolve(&sources, &version("2.1.283")).expect("steering probe");
+        for (_, program) in PROGRAM_TABLE {
+            assert_allowed(&steering, *program);
         }
 
         // A later minor extrapolates from the newest live-verified version,
@@ -2239,12 +2279,48 @@ mod resolve {
         assert_eq!(next_minor.basis, Basis::Extrapolated { from: newest });
         assert_allowed(&next_minor, ProgramName::Prompt);
         for program in [
+            ProgramName::SendNow,
             ProgramName::PermissionMenu,
             ProgramName::PlanMenu,
             ProgramName::QuestionForm,
         ] {
             assert_refused(&next_minor, program);
         }
+    }
+
+    /// Send now is its own row, bounded below by the steering probe's
+    /// version: from there it types what a prompt types; an older Claude is
+    /// refused it with a reason a person can read.
+    #[test]
+    fn send_now_holds_from_the_steering_probes_version() {
+        let keymap = load_str(BAKED, "baked.toml", KeymapSource::Baked).unwrap();
+        assert_eq!(
+            keymap.programs[&ProgramName::SendNow].since,
+            Some("2.1.283".parse().unwrap())
+        );
+        let text = Environment {
+            ask: None,
+            answer: None,
+            prompt: Some("use the staging config"),
+        };
+        let steering = resolve(&KeymapSources::default(), &version("2.1.283")).unwrap();
+        assert_eq!(
+            encode(&keymap, &steering, ProgramName::SendNow, &text).unwrap(),
+            encode(&keymap, &steering, ProgramName::Prompt, &text).unwrap()
+        );
+
+        let older = resolve(&KeymapSources::default(), &version("2.1.251")).unwrap();
+        let error = encode(&keymap, &older, ProgramName::SendNow, &text)
+            .expect_err("an older Claude is refused send now");
+        let InputError::UnverifiedShape { program, reason } = error else {
+            panic!("a refusal, got {error:?}");
+        };
+        assert_eq!(program, ProgramName::SendNow);
+        assert_eq!(
+            reason,
+            "Send now needs Claude 2.1.283 or later; this agent runs Claude 2.1.251"
+        );
+        assert!(encode(&keymap, &older, ProgramName::Prompt, &text).is_ok());
     }
 
     #[test]

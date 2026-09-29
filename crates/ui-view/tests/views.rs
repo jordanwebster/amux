@@ -1290,3 +1290,50 @@ fn a_landed_edit_shows_its_numbered_patch_head_and_a_run_its_newest_subjects() {
     );
     assert_eq!(head.more, 0);
 }
+
+/// Inside a hunk a removed "-- comment" reads "--- comment" and an added
+/// "++ x" reads "+++ x"; they are lines of the patch, not file headers,
+/// and the lines after them keep their numbers.
+#[test]
+fn a_patch_head_keeps_hunk_lines_that_look_like_file_headers() {
+    let mut codex = SessionState::new(agent(Kind::Codex));
+    let patch = "diff --git a/q.sql b/q.sql\n--- a/q.sql\n+++ b/q.sql\n@@ -3,2 +3,2 @@\n--- old note\n+++ new note\n select 1;\ndiff --git a/r.sql b/r.sql\n--- a/r.sql\n+++ b/r.sql\n@@ -10 +10 @@\n-a\n+b\n";
+    let change = Item {
+        key: "change".into(),
+        order: 1,
+        revision: 1,
+        kind: wire::kind_tag(Kind::Codex).into(),
+        body: wire::CodexItem {
+            kind: Some(wire::codex_item::Kind::Work(wire::Work {
+                of: Some(wire::work::Of::FileChange(wire::FileChangeWork {
+                    changes: vec![wire::FileChange {
+                        path: "q.sql".into(),
+                        patch: patch.into(),
+                        ..Default::default()
+                    }],
+                })),
+                state: ToolState::Succeeded as i32,
+                ..Default::default()
+            })),
+        }
+        .encode_to_vec(),
+        ..Item::default()
+    };
+    page(&mut codex, vec![change], true);
+    let head = patch_head(&codex, &"change".to_owned(), 10).unwrap();
+    let seen: Vec<(Option<u32>, LineKind, &str)> = head
+        .lines
+        .iter()
+        .map(|line| (line.number, line.kind, line.text.as_str()))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            (Some(3), LineKind::Removed, "-- old note"),
+            (Some(3), LineKind::Added, "++ new note"),
+            (Some(4), LineKind::Context, "select 1;"),
+            (Some(10), LineKind::Removed, "a"),
+            (Some(10), LineKind::Added, "b"),
+        ]
+    );
+}

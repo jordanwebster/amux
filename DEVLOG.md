@@ -1,3 +1,18 @@
+2026-09-29 — **Terminal Claude's send-now is a keymap row, and a
+patch head keeps hunk lines that look like file headers.** Send now used to
+type a queued prompt with the prompt's keys, relying on what Enter happens
+to mean while a turn runs in Claude 2.1.283. It is now a program of its own
+in the versioned keymap, with the prompt's keys, verified from 2.1.283 (the
+steering recordings) and not extrapolated past its minor, so a Claude that
+changes what Enter means mid-turn is one keymap row to revise. Programs can
+now carry a `since` lower bound; an older Claude is refused the program,
+and the launch fact carries that refusal so the interpreter rejects a
+send-now with a sentence naming both versions. Separately, the patch head
+under a landed Codex edit skipped any line starting with "--- " or "+++ ",
+so a removed "-- comment" vanished and every later line number was off by
+one; header lines are now recognised only between hunks, using each hunk
+header's line counts.
+
 2026-09-29 — **Headless Claude starts a session that never began, and a
 spawn on its parent's own host starts in its parent's directory.** A
 headless Claude agent stopped before its first prompt left Claude no

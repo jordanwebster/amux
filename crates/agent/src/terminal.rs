@@ -72,10 +72,31 @@ impl Keys {
         }
     }
 
+    /// Why this keymap cannot type send now for this Claude, when it
+    /// cannot.
+    pub fn send_now_refused(&self) -> Option<String> {
+        match self.resolved.stability_limits.get(&ProgramName::SendNow) {
+            Some(keymap::Extrapolation::Refused { reason }) => Some(reason.clone()),
+            Some(keymap::Extrapolation::Allowed) => None,
+            None => Some("this Claude's keymap has no send now".to_owned()),
+        }
+    }
+
     /// The keystrokes for a semantic input.
     pub fn steps(&self, input: &TerminalInput, prompt_text: &str) -> io::Result<Vec<KeyStep>> {
         match input {
             TerminalInput::Prompt { .. } => self.prompt(prompt_text),
+            TerminalInput::SendNow { .. } => keymap::encode(
+                &self.keymap,
+                &self.resolved,
+                ProgramName::SendNow,
+                &Environment {
+                    ask: None,
+                    answer: None,
+                    prompt: Some(prompt_text),
+                },
+            )
+            .map_err(io::Error::other),
             TerminalInput::Clear => self.prompt("/clear"),
             TerminalInput::Interrupt => self.encode(ProgramName::Interrupt, None, None),
             TerminalInput::Key(KeyName::CyclePermissionMode) => {

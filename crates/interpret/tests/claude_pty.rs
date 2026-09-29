@@ -70,6 +70,7 @@ goldens! {
     answers_through_amux_become_terminal_inputs => "answers",
     semantic_inputs_become_effects => "inputs",
     send_now_steers_a_queued_prompt_into_the_running_turn => "steering",
+    send_now_is_refused_below_its_keymap_rows_version => "send_now_refused",
     background_subagent_answers_on_its_agent_row => "subagent_notification",
     boundaries_carry_the_provider_session_and_version => "boundaries",
     rows_no_recording_shows => "rows",

@@ -372,6 +372,7 @@ impl Provider {
                 .as_ref()
                 .map(Keys::permission_menus)
                 .unwrap_or_default(),
+            keys.as_ref().and_then(Keys::send_now_refused).as_deref(),
         );
         let _ = events
             .send(ProviderEvent::Fact(Fact {
@@ -521,7 +522,8 @@ impl Provider {
             }
             Effect::Terminal(input) => {
                 let text = match &input {
-                    interpret::claude_pty::TerminalInput::Prompt { text, attachments } => {
+                    interpret::claude_pty::TerminalInput::Prompt { text, attachments }
+                    | interpret::claude_pty::TerminalInput::SendNow { text, attachments } => {
                         self.with_attachments(text, attachments)
                     }
                     _ => String::new(),

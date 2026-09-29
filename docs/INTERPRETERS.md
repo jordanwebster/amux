@@ -280,9 +280,11 @@ into the binary (`BAKED_KEYMAPS`). The shipped one is `claude-2.1`, with
 - verified menu shapes (`[verified_shapes.permission_menu]`): the permission
   suggestion counts whose menu is verified to have one scoped entry per
   suggestion, and those verified to put every suggestion into one entry;
-- the steps of six fixed programs, `prompt`, `interrupt`, `mode_cycle`,
-  `permission_menu`, `plan_menu` and `question_form`, each marked `stable` or
-  `menu`, and the fixed table from intent to program;
+- the steps of seven fixed programs, `prompt`, `send_now`, `interrupt`,
+  `mode_cycle`, `permission_menu`, `plan_menu` and `question_form`, each
+  marked `stable` or `menu` and optionally bounded below by `since`, the
+  first Claude version it is verified against, and the fixed table from
+  intent to program;
 - `[provenance]`: the Claude version, model, dates and specs it was
   transcribed from;
 - `verified`: the evidence list, one entry per Claude version, probe run id
@@ -308,8 +310,19 @@ keymap for it, so an updated Claude gets the right map without another spec:
 
 `stable` programs run on any basis. `menu` programs extrapolate only within
 the same minor version of Claude, and refuse outside it or on an unknown
-basis. The resolved keymap's name is recorded on the boundary item beside
-Claude's version.
+basis. A program whose `since` is newer than the Claude observed is refused
+whatever the basis. The resolved keymap's name is recorded on the boundary
+item beside Claude's version.
+
+Send now is its own program: typed while a turn runs, a prompt is what
+Claude 2.1.283 hands the model at the turn's next tool boundary (the
+`steer_queued` and `steer_send_now` recordings), and what Enter means
+mid-turn is Claude's choice rather than a fixed key. `claude-2.1` gives it
+the prompt's keys, `since = "2.1.283"` and `menu` stability. When the
+resolved keymap refuses it, the launch fact carries the refusal, and the
+interpreter rejects a send-now with that sentence (for example "Send now
+needs Claude 2.1.283 or later; this agent runs Claude 2.1.251") rather than
+typing anything.
 
 Only the Claude probe appends to `verified`, and only after the spec passes
 live (see [re-recording](#re-recording)). The test

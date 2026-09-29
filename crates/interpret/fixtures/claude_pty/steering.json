@@ -120,7 +120,7 @@
         ],
         "effects": [
           "reply n1 accepted",
-          "terminal prompt \"Use the staging config.\""
+          "terminal send now \"Use the staging config.\""
         ]
       }
     },
