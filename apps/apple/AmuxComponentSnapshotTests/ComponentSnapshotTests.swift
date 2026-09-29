@@ -7,7 +7,7 @@ import XCTest
 
 @MainActor
 final class ComponentSnapshotTests: XCTestCase {
-    private let appearances: [(name: String, colorScheme: ColorScheme, interfaceStyle: UIUserInterfaceStyle)] = [
+    private let appearances: [Appearance] = [
         ("light", .light, .light),
         ("dark", .dark, .dark),
     ]
@@ -70,10 +70,14 @@ final class ComponentSnapshotTests: XCTestCase {
 
         let recording = environment["AMUX_RECORD_SNAPSHOTS"] == "1"
         let perturbing = environment["AMUX_SNAPSHOT_PERTURB"] == "1"
+        let review = environment["AMUX_SNAPSHOT_REVIEW"].flatMap {
+            $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
+        }
         print(
             "AMUX_SNAPSHOT_CONFIGURATION selected="
                 + (requested.isEmpty ? "all" : requested.sorted().joined(separator: ","))
                 + " record=\(recording ? 1 : 0) perturb=\(perturbing ? 1 : 0)"
+                + " review=\(review == nil ? 0 : 1)"
                 + " host=\(environment["AMUX_COMPONENT_SNAPSHOTS"] == "1" ? 1 : 0)"
         )
         let suiteStarted = ProcessInfo.processInfo.systemUptime
@@ -84,12 +88,16 @@ final class ComponentSnapshotTests: XCTestCase {
         for example in examples {
             for appearance in appearances {
                 let started = ProcessInfo.processInfo.systemUptime
-                await snapshot(
-                    example: example,
-                    appearance: appearance,
-                    recording: recording,
-                    perturbing: perturbing
-                )
+                if let review {
+                    await capture(example: example, appearance: appearance, into: review)
+                } else {
+                    await snapshot(
+                        example: example,
+                        appearance: appearance,
+                        recording: recording,
+                        perturbing: perturbing
+                    )
+                }
                 print(String(
                     format: "AMUX_SNAPSHOT_TIMING component=%@.%@ seconds=%.3f",
                     example.id,
@@ -105,11 +113,108 @@ final class ComponentSnapshotTests: XCTestCase {
         ))
     }
 
+    /// The example as the comparison sees it: every frosted surface drawn
+    /// flat, as Reduce Transparency draws it. Liquid Glass and material are
+    /// finished by the render server, out of the app's sight and on its own
+    /// schedule (glass eases toward the luma behind it after reports that
+    /// arrive when the render server sends them, and larger glass completes
+    /// in a second pass), so a photograph of glass is not a fixed picture an
+    /// exact comparison can hold. Glass is looked at by eye instead, in the
+    /// review captures.
     private func snapshot(
         example: ComponentExample,
-        appearance: (name: String, colorScheme: ColorScheme, interfaceStyle: UIUserInterfaceStyle),
+        appearance: Appearance,
         recording: Bool,
         perturbing: Bool
+    ) async {
+        let name = "\(example.id).\(appearance.name)"
+        await showing(example, appearance, reducesTransparency: true, perturbing: perturbing) {
+            controller, window, deadline in
+            guard let settled = await settledPhotograph(
+                of: controller.view, traits: Self.traits(appearance), deadline: deadline, name: name)
+            else {
+                XCTFail(
+                    "Timed out waiting for \(name) to settle: its photographs were still changing "
+                        + "5 s after it showed (plus its quiet window)"
+                )
+                return
+            }
+            let frosted = Self.frostedLayers(in: window.layer)
+            guard frosted == 0 else {
+                XCTFail(
+                    "\(name) holds \(frosted) Liquid Glass or material layer(s) when photographed: "
+                        + "a surface drew glass or material without going through the "
+                        + "reduce-transparency flag, and the comparison holds only flat pictures"
+                )
+                return
+            }
+            var strategy: Snapshotting<UIViewController, UIImage> = .image(
+                drawHierarchyInKeyWindow: true,
+                precision: 1,
+                perceptualPrecision: 1,
+                size: example.canvas,
+                traits: Self.traits(appearance)
+            )
+            strategy.diffing = RoundingImageDiff.allowingChannelRounding(strategy.diffing)
+            strategy.snapshot = { _ in Async(value: settled) }
+            let failure = verifySnapshot(
+                of: controller,
+                as: strategy,
+                named: name,
+                record: recording ? .all : .never,
+                file: #filePath,
+                testName: "components"
+            )
+            if recording, failure?.contains("Record mode is on") == true {
+                return
+            }
+            if let failure {
+                XCTFail(failure)
+            }
+        }
+    }
+
+    /// A picture for a person to look at, never compared: the example with
+    /// its glass and material as a phone draws them, written to `directory`
+    /// as `<id>.<appearance>.png`. Only an example that wears a frosted
+    /// surface is drawn, and the rule is what its window holds once it is
+    /// ready: a layer of glass or material (see ``frostedLayers(in:)``). The
+    /// picture is taken a fixed time later, longer than
+    /// the render server has been seen to take to finish glass.
+    private func capture(example: ComponentExample, appearance: Appearance, into directory: URL) async {
+        let name = "\(example.id).\(appearance.name)"
+        await showing(example, appearance, reducesTransparency: false, perturbing: false) {
+            controller, window, _ in
+            guard Self.frostedLayers(in: window.layer) > 0 else {
+                print("AMUX_SNAPSHOT_REVIEW component=\(name) frosted=0")
+                return
+            }
+            try? await Task.sleep(for: Self.glassFinishes)
+            let image = photograph(controller.view, traits: Self.traits(appearance))
+            let file = directory.appendingPathComponent("\(name).png")
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try XCTUnwrap(image.pngData()).write(to: file)
+                print("AMUX_SNAPSHOT_REVIEW component=\(name) frosted=1")
+            } catch {
+                XCTFail("Could not write the review capture \(file.path): \(error)")
+            }
+        }
+    }
+
+    /// The longest the render server has been seen to take to finish glass
+    /// after it first draws is under 2 s.
+    private static let glassFinishes: Duration = .milliseconds(2500)
+
+    /// Shows the example in a window of its own, on screen, waits until it
+    /// reports ready, and hands `body` its controller, its window and the
+    /// deadline for what follows.
+    private func showing(
+        _ example: ComponentExample,
+        _ appearance: Appearance,
+        reducesTransparency: Bool,
+        perturbing: Bool,
+        _ body: (UIViewController, UIWindow, TimeInterval) async -> Void
     ) async {
         let calendar: Calendar = {
             var value = Calendar(identifier: .gregorian)
@@ -117,7 +222,9 @@ final class ComponentSnapshotTests: XCTestCase {
             value.timeZone = TimeZone(secondsFromGMT: 0)!
             return value
         }()
-        let content = ComponentExampleView(example: example, appearance: appearance.colorScheme)
+        let content = ComponentExampleView(
+            example: example, appearance: appearance.colorScheme,
+            reducesTransparency: reducesTransparency)
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
             .environment(\.calendar, calendar)
             .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
@@ -137,10 +244,9 @@ final class ComponentSnapshotTests: XCTestCase {
         ))
         controller.overrideUserInterfaceStyle = appearance.interfaceStyle
         // The component is drawn without the window's safe area (the status
-        // bar) and photographed where it stands, on screen. SnapshotTesting's
-        // own answer, moving the view far off screen just before drawing,
-        // stops the render server finishing the glass: its shadow then
-        // appears in some runs and not others.
+        // bar) and photographed where it stands, on screen, as a person sees
+        // it; SnapshotTesting's own answer moves the view far off screen just
+        // before drawing.
         controller.safeAreaRegions = []
         guard let windowScene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
@@ -166,14 +272,12 @@ final class ComponentSnapshotTests: XCTestCase {
             bottom: -window.safeAreaInsets.bottom, right: -window.safeAreaInsets.right)
         controller.view.frame = window.bounds
         controller.view.layoutIfNeeded()
-        let glass = GlassWatch(window: window)
         let deadline = ProcessInfo.processInfo.systemUptime + 5
         let becameReady = await waitUntilReady(
             identifier: example.readinessIdentifier,
             value: example.readinessValue,
             readiness: readiness,
             controller: controller,
-            glass: glass,
             deadline: deadline
         )
         guard becameReady else {
@@ -187,48 +291,7 @@ final class ComponentSnapshotTests: XCTestCase {
         }
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
-
-        let traits = UITraitCollection(traitsFrom: [
-            UITraitCollection(displayScale: 3),
-            UITraitCollection(displayGamut: .SRGB),
-            UITraitCollection(layoutDirection: .leftToRight),
-            UITraitCollection(userInterfaceStyle: appearance.interfaceStyle),
-            UITraitCollection(accessibilityContrast: .normal),
-        ])
-        guard let settled = await settledPhotograph(
-            of: controller.view, traits: traits, glass: glass, deadline: deadline,
-            name: "\(example.id).\(appearance.name)")
-        else {
-            XCTFail(
-                "Timed out waiting for \(example.id).\(appearance.name) to settle: "
-                    + "its photographs were still changing, or its glass had not adapted "
-                    + "to its backdrop, 5 s after it showed (plus its quiet window)"
-            )
-            return
-        }
-        var strategy: Snapshotting<UIViewController, UIImage> = .image(
-            drawHierarchyInKeyWindow: true,
-            precision: 1,
-            perceptualPrecision: 1,
-            size: example.canvas,
-            traits: traits
-        )
-        strategy.diffing = RoundingImageDiff.allowingChannelRounding(strategy.diffing)
-        strategy.snapshot = { _ in Async(value: settled) }
-        let failure = verifySnapshot(
-            of: controller,
-            as: strategy,
-            named: "\(example.id).\(appearance.name)",
-            record: recording ? .all : .never,
-            file: #filePath,
-            testName: "components"
-        )
-        if recording, failure?.contains("Record mode is on") == true {
-            return
-        }
-        if let failure {
-            XCTFail(failure)
-        }
+        await body(controller, window, deadline)
     }
 
     private func waitUntilReady(
@@ -236,13 +299,11 @@ final class ComponentSnapshotTests: XCTestCase {
         value: String?,
         readiness: SnapshotReadiness,
         controller: UIViewController,
-        glass: GlassWatch,
         deadline: TimeInterval
     ) async -> Bool {
         guard let identifier, let value else { return true }
         repeat {
             controller.view.layoutIfNeeded()
-            glass.sample()
             if readiness.contains(identifier: identifier, value: value) {
                 return true
             }
@@ -251,92 +312,74 @@ final class ComponentSnapshotTests: XCTestCase {
         return readiness.contains(identifier: identifier, value: value)
     }
 
-    /// The picture compared is one the screen has settled on. Small Liquid
-    /// Glass (a pill, a button, the composer's strip) adapts to what is
-    /// behind it: its backdrop layer asks the render server to measure the
-    /// luma there, and each report eases the glass's filter parameters, its
-    /// shadow above all, from neutral values toward ones suited to that
-    /// backdrop. Until the first report arrives nothing changes, and when it
-    /// arrives is up to the render server: a third of a second locally, more
-    /// than half a second on a CI runner, where a photograph taken after half
-    /// a second of stillness showed the unadapted glass exactly.
+    /// The picture compared is one the screen has settled on: the first
+    /// photograph that stays unchanged for ``quiet``. Drawn flat, most
+    /// examples are final at their first photograph. A few take one more
+    /// change after they report ready, content that lands a pass later: a
+    /// chat feed moving to its newest row, an attachment chip replacing
+    /// "Attaching", a focused field's caret appearing. On a local simulator
+    /// that change has come up to 0.45 s after readiness, once and never
+    /// again after it.
     ///
-    /// Larger glass (a page, a list over the composer) does not track luma
-    /// and nothing about it changes that the app can see, yet the render
-    /// server finishes it in two passes: a photograph shows it first without
-    /// its rim and shadow, then, at once, complete. The second pass follows
-    /// the first rendering of that glass by about a third of a second here
-    /// and on a CI runner, but has come more than half a second after it
-    /// there, and a photograph between the passes matched a runner's failed
-    /// picture exactly. Photographs that do not ask for a screen update never
-    /// show the second pass, so they cannot stand in.
-    ///
-    /// So the picture is taken once every glass that tracks luma has taken a
-    /// report (see ``GlassWatch``) and the photographs and those glass states
-    /// have then stayed unchanged for a quiet window longer than any pause in
-    /// the easing and, where there is larger glass, longer than its second
-    /// pass has been seen to take. The comparison is not loosened. Every
-    /// example with glass
-    /// prints when its glass adapted and when its photographs changed, counted
-    /// from the window showing, so the render server's latency on the machine
-    /// that ran it is on record.
-    ///
-    /// The deadline bounds how long the example may take to become ready,
-    /// take its luma reports and stop changing; the quiet window that proves
-    /// it stopped is added to it, so a longer window never eats into that
-    /// time. On CI runners the last change has come up to 2.2 s after the
-    /// window showed.
+    /// The deadline bounds how long the example may take to become ready
+    /// and stop changing; the quiet window that proves it stopped is added
+    /// to it. When the photographs changed, counted from readiness, is
+    /// printed for every example that changed at all.
     private func settledPhotograph(
         of view: UIView,
         traits: UITraitCollection,
-        glass: GlassWatch,
         deadline: TimeInterval,
         name: String
     ) async -> UIImage? {
         let started = ProcessInfo.processInfo.systemUptime
-        var state = glass.sample()
-        var adapted: TimeInterval?
-        var changes: [TimeInterval] = []
         var settled = photograph(view, traits: traits)
         var since = started
-        var waiting = true
-        var quietWindow: TimeInterval { glass.untracked > 0 ? Self.largeGlassQuiet : Self.quiet }
-        func report(_ outcome: String) {
-            guard glass.panes > 0 else { return }
-            print(String(
-                format: "AMUX_SNAPSHOT_GLASS component=%@ %@ panes=%d tracking=%d untracked=%d adapted=%@ unadapted=%d changes=%@",
-                name, outcome, glass.panes, state.count, glass.untracked,
-                adapted.map { String(format: "%.3f", $0) } ?? "-", waiting ? 1 : 0,
-                changes.map { String(format: "%.3f", $0) }.joined(separator: ",")))
-        }
+        var changes: [String] = []
         repeat {
             await DisplayFrame.pass()
             let current = photograph(view, traits: traits)
             let now = ProcessInfo.processInfo.systemUptime
-            let sampled = glass.sample()
-            waiting = glass.unadapted(sampled)
-            if adapted == nil, !sampled.isEmpty, !waiting {
-                adapted = now - started
-            }
-            if Self.pixels(of: current) != Self.pixels(of: settled) || sampled != state {
-                changes.append(now - glass.shown)
+            if Self.pixels(of: current) != Self.pixels(of: settled) {
                 settled = current
-                state = sampled
                 since = now
-            } else if !waiting, now - since >= quietWindow {
-                report("settled")
+                changes.append(String(format: "%.3f", now - started))
+            } else if now - since >= Self.quiet {
+                if !changes.isEmpty {
+                    print("AMUX_SNAPSHOT_TIMING component=\(name) changes=\(changes.joined(separator: ","))")
+                }
                 return settled
             }
-        } while ProcessInfo.processInfo.systemUptime < deadline + quietWindow
-        report("unsettled")
+        } while ProcessInfo.processInfo.systemUptime < deadline + Self.quiet
         return nil
     }
 
-    /// Longer than any pause in the easing of glass that tracks luma.
-    private static let quiet: TimeInterval = 0.5
-    /// Longer than larger glass's second pass: about 0.35 s after the
-    /// first on a CI runner, and once more than 0.5 s.
-    private static let largeGlassQuiet: TimeInterval = 2
+    /// Over twice the longest wait seen for a flat example's late change,
+    /// so a slower machine (a CI runner has taken over one and a half times
+    /// as long as this Mac to draw) still shows it inside the window.
+    private static let quiet: TimeInterval = 1
+
+    /// How many layers under `layer` are a frosted surface's glass or
+    /// material: a layer carrying Liquid Glass's filter, or a backdrop layer
+    /// (what samples the content behind a material) that SwiftUI draws
+    /// itself. A backdrop a UIKit view owns is left out: a list's scroll edge
+    /// effect samples what is behind it too, and is no frosted surface.
+    private static func frostedLayers(in layer: CALayer) -> Int {
+        let glass = (layer.filters ?? []).contains {
+            ($0 as? NSObject)?.value(forKey: "name") as? String == "glassBackground"
+        }
+        let material = NSStringFromClass(type(of: layer)).contains("Backdrop") && !(layer.delegate is UIView)
+        return (glass || material ? 1 : 0) + (layer.sublayers ?? []).reduce(0) { $0 + frostedLayers(in: $1) }
+    }
+
+    private static func traits(_ appearance: Appearance) -> UITraitCollection {
+        UITraitCollection(traitsFrom: [
+            UITraitCollection(displayScale: 3),
+            UITraitCollection(displayGamut: .SRGB),
+            UITraitCollection(layoutDirection: .leftToRight),
+            UITraitCollection(userInterfaceStyle: appearance.interfaceStyle),
+            UITraitCollection(accessibilityContrast: .normal),
+        ])
+    }
 
     /// Draws the view as SnapshotTesting's key-window strategy does.
     private func photograph(_ view: UIView, traits: UITraitCollection) -> UIImage {
@@ -369,66 +412,7 @@ final class ComponentSnapshotTests: XCTestCase {
     }
 }
 
-/// Every Liquid Glass surface in a window that tracks the luma behind it,
-/// sampled from the moment the window shows: each is first seen in the
-/// neutral state it is drawn with, before the render server's first report
-/// can have reached it. Archiving a layer is the one public way to read what
-/// the glass has set on it.
-@MainActor
-private final class GlassWatch {
-    private let window: UIWindow
-    private var firstSeen: [ObjectIdentifier: Data] = [:]
-    /// When the window showed.
-    let shown = ProcessInfo.processInfo.systemUptime
-    /// The most glass surfaces, tracking luma or not, seen at once.
-    private(set) var panes = 0
-    /// The most glass surfaces that do not track luma seen at once.
-    private(set) var untracked = 0
-
-    init(window: UIWindow) {
-        self.window = window
-        sample()
-    }
-
-    /// Each tracking glass's state now, by layer.
-    @discardableResult
-    func sample() -> [ObjectIdentifier: Data] {
-        var found: [ObjectIdentifier: Data] = [:]
-        var glass = 0
-        func visit(_ layer: CALayer) {
-            if Self.isGlass(layer) {
-                glass += 1
-                if layer.value(forKey: "tracksLuma") as? Bool == true {
-                    found[ObjectIdentifier(layer)] =
-                        (try? NSKeyedArchiver.archivedData(withRootObject: layer, requiringSecureCoding: false))
-                        ?? Data()
-                }
-            }
-            layer.sublayers?.forEach(visit)
-        }
-        visit(window.layer)
-        panes = max(panes, glass)
-        untracked = max(untracked, glass - found.count)
-        for (layer, state) in found where firstSeen[layer] == nil {
-            firstSeen[layer] = state
-        }
-        return found
-    }
-
-    /// Whether any glass in `sampled` is still as it was first seen: it has
-    /// not taken a luma report yet.
-    func unadapted(_ sampled: [ObjectIdentifier: Data]) -> Bool {
-        sampled.contains { firstSeen[$0.key] == $0.value }
-    }
-
-    /// UIKit's scroll edge blur tracks luma too, but draws the same whatever
-    /// it hears; only the glass filter adapts.
-    private static func isGlass(_ layer: CALayer) -> Bool {
-        (layer.filters ?? []).contains {
-            ($0 as? NSObject)?.value(forKey: "name") as? String == "glassBackground"
-        }
-    }
-}
+private typealias Appearance = (name: String, colorScheme: ColorScheme, interfaceStyle: UIUserInterfaceStyle)
 
 @MainActor
 private final class SnapshotReadiness {

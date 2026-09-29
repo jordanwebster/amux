@@ -1,3 +1,26 @@
+2026-09-29 — **The phone's compared pictures are drawn flat.** Liquid Glass
+and material are finished by the render server after SwiftUI draws, out of
+the app's sight and on its own schedule, and the suites kept losing to it:
+luma reports that arrived a third of a second late on one machine and later
+on another, a second pass for larger glass no photograph could observe, and
+a loose region around the chat header's pill. Every component snapshot and
+whole-screen golden is now drawn with the app's reduce-transparency flag on,
+so each frosted surface is the raised fill and hairline rim a person who
+turned Reduce Transparency on already sees; the app itself still draws
+glass. The glass watcher, its quiet windows and trace are gone, and so is
+the golden diff's loose region. What remains of settling is a one-second
+quiet window for the few examples whose content lands a pass after they
+report ready (at most 0.45 s measured), and an example whose window still
+holds glass or material when photographed fails by name. Drawn flat, four
+runs of every screen matched pixel for pixel, so screens are now held to a
+channel's rounding with no pixel past it, down from a tolerance of 2 with 64
+pixels. 138 component baselines and 14 screen goldens with frosted surfaces
+were re-recorded and looked at beside their glass predecessors: layout and
+content are unchanged. Glass is reviewed by eye through `just ios goldens --
+--review DIR` and `just ios component-snapshots -- --review DIR`, which
+compare nothing. The phone journeys still draw glass under their own loose
+thresholds.
+
 2026-09-29 — **A process hosted on a terminal no longer dies at birth on
 macOS.** Now and then a hosted process died before it ran, with no output and a
 status that read as a signal. macOS libSystem aborts the child side of `fork`

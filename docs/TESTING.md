@@ -37,7 +37,7 @@ Each catalogued suite names one boundary.
 | Client model | `update(state, msg)` gives the same state under any arrival order; inputs reach a settled, rejected or uncertain state. | `crates/ui-state/tests/spec` |
 | Store, effects, bridge | Runtimes and the embedded owner reach the right service; Swift decodes and applies the Rust view and command contract. | `crates/ui-runtime`, `crates/app-runtime`, `crates/app-embedded`, `crates/client`, Swift unit suites |
 | Views | Each view is a pure function of session state; row ids are item keys and never move. | `crates/ui-view/tests` |
-| Native presentation | The terminal and the phone draw a view correctly and interaction sends the right command. | `crates/tui/tests`, `apps/apple` snapshot and golden suites |
+| Native presentation | The terminal and the phone draw a view correctly and interaction sends the right command. The phone's compared pictures are drawn with reduce transparency on, so they hold no glass the render server finishes on its own schedule. | `crates/tui/tests`, `apps/apple` snapshot and golden suites |
 | System composition | Built binaries launch, survive, stop and clean up as promised: agents outlive a killed daemon, the supervisor updates and rolls back. | `crates/amux/tests`, `crates/agent/tests/lifecycle.rs`, `crates/node/tests/supervisor.rs` |
 | Journeys | A person completes a declared task through a real client and the production path. | `journeys/`, `scripts/terminal-journey.py`, `scripts/ios-journey.py`, `crates/amux/tests/system_journeys.rs` |
 
@@ -144,7 +144,10 @@ production code, and small authored scenarios. Ordinary runs compare and never r
 | A dump bundle replayed through its three stages | `crates/replay-support/tests/fixtures/bundle` | a fresh `amux dump`; see [Debugging](DEBUGGING.md) |
 | Performance baselines | `perf/baselines` | `just perf --baseline`; see [Performance](PERFORMANCE.md) |
 
-Every update is reviewed as a diff before it is committed.
+Every update is reviewed as a diff before it is committed. The phone's pictures with their glass on are review
+captures written wherever they are asked for (`just ios goldens -- --review DIR`, `just ios component-snapshots --
+--review DIR`) and are never compared or committed; [the iPhone app](IOS.md#compared-pictures-are-drawn-flat) says
+why.
 
 ## Journeys
 

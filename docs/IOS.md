@@ -277,7 +277,7 @@ Use the cheapest test that can see the regression:
 | --- | --- | --- |
 | Unit suites | Model state, decisions and projections, without rendering | `just ios unit` |
 | Component snapshots | One production view from typed inputs: its text, size and both appearances | `just ios component-snapshots` |
-| Whole-screen goldens | Composition, safe areas and render-server materials on a few screens of the running app | `just ios goldens` |
+| Whole-screen goldens | Composition, safe areas and navigation on a few screens of the running app | `just ios goldens` |
 | Journeys | Real taps and typing, routing, persistence and the machines on the other side | `just ios journey` |
 | Accessibility audit | Every control on every drawn state has a VoiceOver name and a 44 pt target | `just ios accessibility` |
 
@@ -285,6 +285,46 @@ Journeys prove actions; a picture of a final state proves nothing about the
 actions that produce it. How the phone's suites fit the rest of the testing
 is on [the testing page](TESTING.md), and the served networks they run
 against are on [the testnet page](TESTNET.md).
+
+### Compared pictures are drawn flat
+
+Every picture a check compares, component snapshot or whole-screen golden, is
+drawn with the app's reduce-transparency flag on. Each frosted surface then
+takes the flat branch of `Frosted` in `AmuxDesign/Glass.swift`: a raised fill
+with a hairline rim, exactly what a person who turned on Reduce Transparency
+sees. The app itself is unchanged and still draws Liquid Glass and material
+on a phone.
+
+Glass is not something an exact comparison can hold. The render server
+finishes it after SwiftUI has drawn, out of the app's sight and on its own
+schedule: small glass eases its shadow and filters toward the brightness
+behind it after reports that arrive a third of a second later on one machine
+and more than half a second on another, and larger glass completes in a
+second pass the app cannot observe. A photograph taken at any fixed moment
+shows one stage or another of that work. Drawn flat, the same screens repeat
+pixel for pixel.
+
+Glass is looked at by eye instead, in review captures nothing compares:
+
+```sh
+just ios goldens -- --review DIR
+just ios component-snapshots -- --review DIR
+just ios component-snapshots -- --review DIR composer.strip ask.plan
+```
+
+The golden run walks the same way with the flag off and writes every
+manifest screen, light and dark, to `DIR/<screen>.<appearance>.png`. The
+snapshot run draws with the flag off every selected example that wears a
+frosted surface: one whose window, once it is ready, holds a Liquid Glass
+layer or a backdrop layer SwiftUI draws itself (the material under a panel;
+a list's scroll edge effect is UIKit's and does not count). It waits 2.5 s,
+longer than the render server has been seen to take to finish glass, and
+writes `DIR/<id>.<appearance>.png`. Neither reads or writes a baseline,
+neither can fail on a picture, and neither runs in `just ci`, the gate or any
+check.
+
+The phone journeys still draw glass: they compare live pages with thresholds
+of their own, loose enough for it, and run only in the captures.
 
 ### Component snapshots
 
@@ -310,9 +350,16 @@ stripe over the component and requires a mismatch.
 
 Comparisons use Point-Free's SnapshotTesting and allow at most one 8-bit
 level per channel for rasteriser rounding (`RoundingImageDiff`); one pixel
-with a larger difference fails. These in-process images say nothing about
-compositor glass, system chrome, keyboards, scrolling or layering between
-screens; those belong to the goldens and journeys.
+with a larger difference fails. Each example is drawn flat (see above) in a
+window of its own, on screen, and photographed once it reports ready and its
+photographs have stayed unchanged for a second: a few take one more change
+after they report ready (a chat feed moving to its newest row, an attachment
+chip, a focused field's caret), which has come within half a second. An
+example whose window still holds glass or material when it is photographed
+fails by name, so a surface that reaches glass without the flag is a plain
+failure, never a flaky one. These in-process images say nothing about system
+chrome, keyboards, scrolling or layering between screens; those belong to the
+goldens and journeys.
 
 ### Whole-screen goldens
 
@@ -333,15 +380,15 @@ before and after the swap.
 
 `scripts/ios-goldens.py` reaches every screen the way a person does. It
 serves `journeys/topologies/phone-goldens.json`, installs the debug app
-fresh, pairs with the desk by the code it printed, and taps through to each
+fresh, turns the reduce-transparency flag on through the door's `assist`
+verb, pairs with the desk by the code it printed, and taps through to each
 screen while the served network makes the desk's agents act. Each screen is
 compared in light and dark twice over:
 
-- The display's pixels, with `xtask golden diff`, at a tolerance of 2 per
-  channel with at most 64 pixels past it. The chat header's glass pill, which
-  the render server resolves a little differently each time, is held at 32
-  over its frame, rim and shadow; the measurements behind these numbers sit
-  beside them in the script.
+- The display's pixels, with `xtask golden diff`, at a tolerance of 1 per
+  channel with no pixel past it: drawn flat, repeated runs match their
+  goldens pixel for pixel outside the masks. The measurement behind these
+  numbers sits beside them in the script.
 - The door's element geometry, as `<screen>.elements.txt`, compared word for
   word and frame for frame. Tab pages covered by a pushed page are left out.
 

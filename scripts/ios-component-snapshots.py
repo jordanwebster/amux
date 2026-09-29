@@ -25,9 +25,12 @@ TARGET = "AmuxComponentSnapshotTests"
 NEGATIVE_DEFAULT = "row.prompt"
 MISMATCH = "does not match reference"
 # Hang detector for one test-without-building batch (startup and every
-# example), sized by docs/CI.md's rule: the slowest clean run (246 s on the
-# CI runner) times 1.5, rounded up to the hundred.
+# example), sized by docs/CI.md's rule: the slowest clean run (247 s on a
+# local Mac) times 1.5, rounded up to the hundred.
 BATCH_BOUND = 400
+# The same for a batch of review captures, every frosted example held 2.5 s
+# for its glass: 372 s for all of them on a local Mac.
+REVIEW_BOUND = 600
 
 
 def arguments(argv: list[str]) -> Namespace:
@@ -47,9 +50,16 @@ def arguments(argv: list[str]) -> Namespace:
         "--negative-control", action="store_true",
         help="first verify, then perturb a selected component and require an image mismatch",
     )
+    parser.add_argument(
+        "--review", metavar="DIR", type=Path,
+        help="write the selected components that wear a frosted surface to DIR with their glass "
+        "on, in light and dark, for a person to look at; nothing is compared or recorded",
+    )
     parsed = parser.parse_args(argv)
     if parsed.record and parsed.negative_control:
         parser.error("--record and --negative-control cannot be combined")
+    if parsed.review and (parsed.record or parsed.negative_control):
+        parser.error("--review writes pictures nothing compares; it takes neither --record nor --negative-control")
     return parsed
 
 
@@ -97,7 +107,7 @@ def forwarded(udid: str, variables: dict[str, str]):
             )
 
 
-def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool = False):
+def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool = False, review: Path | None = None):
     shutil.rmtree(ARTIFACTS, ignore_errors=True)
     shutil.rmtree(RESULT, ignore_errors=True)
     ARTIFACTS.mkdir(parents=True)
@@ -106,6 +116,9 @@ def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool =
         "AMUX_SNAPSHOT_ONLY": ",".join(selected),
         "AMUX_RECORD_SNAPSHOTS": "1" if record else "0",
         "AMUX_SNAPSHOT_PERTURB": "1" if perturb else "0",
+        # The simulator shares the Mac's file system, so the test writes the
+        # review captures straight into the directory asked for.
+        "AMUX_SNAPSHOT_REVIEW": str(review.resolve()) if review else "",
         # SnapshotTesting writes the newly rendered image here on a mismatch;
         # its reference/failure/difference attachments are exported below.
         "SNAPSHOT_ARTIFACTS": str(ARTIFACTS),
@@ -113,8 +126,10 @@ def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool =
     expected = (
         f"AMUX_SNAPSHOT_CONFIGURATION selected={','.join(sorted(selected)) or 'all'} "
         f"record={values['AMUX_RECORD_SNAPSHOTS']} "
-        f"perturb={values['AMUX_SNAPSHOT_PERTURB']} host=1"
+        f"perturb={values['AMUX_SNAPSHOT_PERTURB']} "
+        f"review={1 if review else 0} host=1"
     )
+    bound = REVIEW_BOUND if review else BATCH_BOUND
     with forwarded(udid, values | {"AMUX_SNAPSHOT_RUNNER_STARTED": str(time.monotonic())}):
         started = time.monotonic()
         try:
@@ -123,7 +138,7 @@ def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool =
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                timeout=BATCH_BOUND,
+                timeout=bound,
             )
         except subprocess.TimeoutExpired as expired:
             # What the batch printed up to the bound (each example's timing,
@@ -131,7 +146,7 @@ def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool =
             output = expired.stdout or ""
             output = output.decode(errors="replace") if isinstance(output, bytes) else output
             completed = subprocess.CompletedProcess(expired.cmd, 124, output)
-            print(f"component snapshot batch passed its {BATCH_BOUND}s bound", file=sys.stderr)
+            print(f"component snapshot batch passed its {bound}s bound", file=sys.stderr)
     elapsed = time.monotonic() - started
     if completed.returncode:
         export_failure_attachments()
@@ -174,6 +189,7 @@ def write_timings(options: Namespace, stages: dict) -> None:
         "recording": options.record,
         "warm_without_build": options.skip_build,
         "negative_control": options.negative_control,
+        "review": str(options.review) if options.review else None,
         **stages,
     }, indent=2) + "\n")
     print(f"component snapshot timings: {TIMINGS}", flush=True)
@@ -195,7 +211,9 @@ def main(argv: list[str] | None = None) -> int:
     selected = options.components
     if options.negative_control and not selected:
         selected = [NEGATIVE_DEFAULT]
-    ordinary = run(udid, selected, record=options.record)
+    if options.review:
+        shutil.rmtree(options.review, ignore_errors=True)
+    ordinary = run(udid, selected, record=options.record, review=options.review)
     stages = {
         "components": selected or "all",
         "project_generation_seconds": generated_seconds,
@@ -211,6 +229,9 @@ def main(argv: list[str] | None = None) -> int:
         return ordinary.returncode
     if not options.negative_control:
         write_timings(options, stages)
+        if options.review:
+            written = sorted(options.review.glob("*.png")) if options.review.is_dir() else []
+            print(f"{len(written)} review captures with glass on under {options.review}", flush=True)
         return 0
 
     changed = run(udid, selected, perturb=True)

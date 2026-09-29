@@ -153,28 +153,6 @@ def volatile_masks(
     return masks
 
 
-# How far past a glass surface's frame its rim and shadow reach, in points.
-GLASS_MARGIN = 2
-
-
-def glass_regions(elements: list[dict], glass: dict[str, int], scale: int = SCALE, screen: str | None = None) -> list[str]:
-    """Pixel rectangles with their tolerance, as `xtask golden diff --loose`
-    reads them, of every glass surface named in `glass` on the page the door
-    says is on screen, grown by its rim and shadow."""
-    regions = []
-    for element in elements:
-        tolerance = glass.get(element["identifier"])
-        if tolerance is None or not on_screen(element["identifier"], screen):
-            continue
-        frame = element["frame"]
-        x = max(0, int((frame["x"] - GLASS_MARGIN) * scale))
-        y = max(0, int((frame["y"] - GLASS_MARGIN) * scale))
-        width = int((frame["x"] + frame["width"] + GLASS_MARGIN) * scale + 0.999) - x
-        height = int((frame["y"] + frame["height"] + GLASS_MARGIN) * scale + 0.999) - y
-        regions.append(f"{x},{y},{width},{height},{tolerance}")
-    return regions
-
-
 def named_ids(text: str, ids: dict[str, str]) -> str:
     """Every id the net made this run, as the name it was declared by; any
     other id as <id>."""
@@ -241,9 +219,6 @@ class PhoneJourney:
         # How far a pixel may move, and how many may, before a screen differs.
         self.tolerance = TOLERANCE
         self.max_differing = MAX_DIFFERING
-        # Glass surfaces, by element id, compared at a tolerance of their own
-        # (with a margin for their rim and shadow) rather than the screen's.
-        self.glass: dict[str, int] = {}
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
@@ -492,7 +467,7 @@ class PhoneJourney:
         actual = self.output / "actual"
         actual.mkdir(parents=True, exist_ok=True)
         png = actual / f"{label}.png"
-        self._steady_display(png)
+        self.steady_display(png)
         volatile = volatile + OWN_IDENTITY
         ids = {host["host_id"]: host["name"] for host in self.ready["hosts"]}
         ids |= {agent["id"]: agent["name"] for agent in self.ready["agents"]}
@@ -500,13 +475,12 @@ class PhoneJourney:
         geometry_label = geometry_label or label
         (actual / f"{geometry_label}.elements.txt").write_text(drawn)
         masks = volatile_masks(elements, volatile, screen=state.get("screen"))
-        loose = glass_regions(elements, self.glass, screen=state.get("screen"))
         self.actions.append(f"captured {label}")
         if self.update and os.environ.get("CI"):
             raise RuntimeError("rewriting goldens is refused in CI")
         golden_png = self.goldens / f"{label}.png"
         expected = self.goldens / f"{geometry_label}.elements.txt"
-        differs = self._differs(png, golden_png, expected, drawn, masks, label, loose)
+        differs = self._differs(png, golden_png, expected, drawn, masks, label)
         if differs and self.update:
             self.goldens.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(png, golden_png)
@@ -523,7 +497,6 @@ class PhoneJourney:
         drawn: str,
         masks: list[str],
         label: str,
-        loose: list[str] | None = None,
     ) -> str | None:
         if not expected.exists() or not golden_png.exists():
             return f"missing golden {golden_png}; review a rewritten one"
@@ -545,7 +518,6 @@ class PhoneJourney:
                 "--tolerance", str(self.tolerance),
                 "--max-differing", str(self.max_differing),
                 *[argument for mask in masks for argument in ("--mask", mask)],
-                *[argument for region in loose or [] for argument in ("--loose", region)],
             ],
             cwd=ROOT, text=True, capture_output=True, timeout=600,
         )
@@ -556,7 +528,7 @@ class PhoneJourney:
             )
         return None
 
-    def _steady_display(self, png: Path) -> None:
+    def steady_display(self, png: Path) -> None:
         """The display once two photographs a moment apart agree: a
         transition or the glass settling behind it is over."""
         previous = b""

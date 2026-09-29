@@ -104,13 +104,13 @@ half of the phone's verification that building the app can settle.
 `rust`, `simulator golden`, `build`, `component-snapshots`, `loopback-smoke`
 and `unit`. None of it compares a photograph of the whole display, so it
 answers the same on any machine. The component snapshot batch runs under its
-own bound, sized by the rule above from its slowest clean run: 246 s on the
-CI runner in
-[36467514576](https://github.com/jordanwebster/amux/actions/runs/36467514576)
-(39 s to start, 204 s for the 230 pictures, each held until it has not
-changed for half a second), so 400 s. Locally the same batch takes 180 s. The job uploads the component snapshot
-comparisons and the shipped-scope audit directory to the run, whether it
-passed or not.
+own bound, sized by the rule above from a clean run: 247 s on a local Mac
+(the 230 pictures, each drawn flat and held until it has not changed for a
+second), so 400 s. No CI runner has run the batch since the pictures were
+drawn flat; its first clean run there gives the runner's number, and the
+bound follows from the slower of the two. The job uploads the component
+snapshot comparisons and the shipped-scope audit directory to the run,
+whether it passed or not.
 
 `just ios verify` is the whole sequence a developer runs before pushing a
 phone change: the workspace's `fmt-check`, `lint`, `test` and `spec`, then the

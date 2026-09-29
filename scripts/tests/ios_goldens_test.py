@@ -37,6 +37,13 @@ class Camera:
         self.calls.append(("compare", label, geometry_label))
         return self.differs
 
+    def app(self, request):
+        self.calls.append(("door", request["kind"]))
+        return {}
+
+    def steady_display(self, png):
+        self.calls.append(("capture", png.name))
+
 
 class PhotographTests(unittest.TestCase):
     def test_the_driver_reaches_every_screen_the_committed_manifest_names(self):
@@ -70,6 +77,21 @@ class PhotographTests(unittest.TestCase):
             run.photograph("origin-rewind")
         with self.assertRaises(RuntimeError):
             run.photograph("fleet", "before")
+
+    def test_a_review_writes_each_appearance_and_compares_nothing(self):
+        camera = Camera(differs="would differ")
+        run = goldens.Goldens(camera, MANIFEST, {"fleet"}, review=Path("/tmp/review"))
+        original, goldens.GLASS_FINISHES = goldens.GLASS_FINISHES, 0
+        try:
+            run.photograph("fleet")
+        finally:
+            goldens.GLASS_FINISHES = original
+        self.assertEqual(camera.calls, [
+            ("wear", "light"), ("door", "settle"), ("capture", "fleet.light.png"),
+            ("wear", "dark"), ("door", "settle"), ("capture", "fleet.dark.png"),
+            ("wear", "light"),
+        ])
+        self.assertEqual(run.outcomes, [("fleet.light", None), ("fleet.dark", None)])
 
     def test_a_screen_not_asked_for_is_passed_without_a_photograph(self):
         camera = Camera()

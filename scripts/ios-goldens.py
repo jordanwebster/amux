@@ -2,7 +2,7 @@
 """Photograph the phone's whole screens through the served door and compare
 each with its golden, in light and in dark.
 
-`scripts/ios-goldens.py [--only ID]... [--update] [--perturb TOKEN]`
+`scripts/ios-goldens.py [--only ID]... [--update] [--perturb TOKEN] [--review DIR]`
 
 The screens are the `screens` half of apps/apple/Goldens/manifest.json. Each
 is reached the way a person reaches it, on the phone driver: the manifest's
@@ -14,6 +14,13 @@ door's element geometry against apps/apple/Goldens/<screen>.<appearance>.png
 and <screen>.elements.txt (both appearances share one geometry). A screen
 with frames (origin-rewind's before and after) has a golden per frame.
 
+Every screen is drawn with the app's reduce-transparency flag on, turned on
+through the door before the first screen, so each frosted surface is flat:
+a raised fill with a hairline rim, what a person who turned Reduce
+Transparency on sees. Liquid Glass and material are finished by the render
+server on its own schedule, out of the app's sight, so a photograph of them
+is not a fixed picture a tight comparison can hold.
+
 `--only ID` photographs just the screens named; the way through every other
 screen is still taken, so each is reached in the same state. Tab pages a
 pushed page covers are left out of the geometry. `--update` rewrites every
@@ -21,6 +28,9 @@ golden that differs and leaves the rest alone. `--perturb TOKEN` moves one desig
 token (or, named `needs-you-dot`, takes that one small mark away) before
 anything is drawn and fails unless every photograph comes back different
 with a difference image: what proves the comparison would notice.
+`--review DIR` takes the same way with the flag off and writes every screen,
+glass and all, to DIR as <screen>.<appearance>.png for a person to look at;
+nothing is compared and no golden is read or written.
 
 The components half of the manifest is photographed in-process by
 `just ios component-snapshots`; this script only reads its screens.
@@ -47,16 +57,15 @@ PERTURBED = ROOT / "target/ios/goldens-perturb"
 SIMULATOR = "golden"
 APPEARANCES = ("light", "dark")
 # Whole screens are compared far more tightly than a journey's live pages.
-# Measured over seven runs of every screen in both appearances against the
-# same goldens: inside the chat header's glass (the back and title pill, in
-# the light appearance) the render server moved up to 814 pixels past a
-# tolerance of 2 and 42 still past 16, none past 24; so that pill, with its
-# rim and shadow, is held at 32. With it bounded, three more runs moved at
-# most 3 pixels past 2 anywhere else on any screen. So the screen is held at
-# 2 with a budget of 64: a needs-you dot alone is some 450 pixels.
-TOLERANCE = 2
-MAX_DIFFERING = 64
-GLASS = {"chat.header": 32}
+# Drawn flat, four runs of every screen in both appearances matched the same
+# goldens pixel for pixel outside the masks, so a screen is held to a
+# channel's rounding (what the component snapshots allow too) with no pixel
+# past it. A needs-you dot alone is some 450 pixels.
+TOLERANCE = 1
+MAX_DIFFERING = 0
+# Longer than the render server has been seen to take to finish glass after
+# it first draws (under 2 s), for the review captures.
+GLASS_FINISHES = 2.5
 # A turn's duration and a pairing code's fingerprint and countdown are made
 # fresh by every run.
 TURN = ("chat.row.turn-end",)
@@ -68,10 +77,11 @@ def labelled(drawn: dict, text: str) -> bool:
 
 
 class Goldens:
-    def __init__(self, journey: PhoneJourney, manifest: dict, wanted: set[str]):
+    def __init__(self, journey: PhoneJourney, manifest: dict, wanted: set[str], review: Path | None = None):
         self.journey = journey
         self.screens = {screen["id"]: screen for screen in manifest["screens"]}
         self.wanted = wanted
+        self.review = review
         self.outcomes: list[tuple[str, str | None]] = []
 
     def agent(self, name: str) -> str:
@@ -88,6 +98,13 @@ class Goldens:
         for appearance in APPEARANCES:
             self.journey.appearance(appearance)
             name = f"{label}.{appearance}"
+            if self.review is not None:
+                self.journey.app({"kind": "settle"})
+                time.sleep(GLASS_FINISHES)
+                self.journey.steady_display(self.review / f"{name}.png")
+                self.outcomes.append((name, None))
+                print(f"wrote {name}", flush=True)
+                continue
             differs = self.journey.compare(name, volatile, geometry_label=label)
             self.outcomes.append((name, differs))
             print(f"{'ok' if differs is None else 'DIFFERS'} {name}", flush=True)
@@ -260,6 +277,7 @@ def main() -> int:
     parser.add_argument("--only", action="append", default=[], metavar="ID")
     parser.add_argument("--update", action="store_true")
     parser.add_argument("--perturb", metavar="TOKEN")
+    parser.add_argument("--review", metavar="DIR", type=Path)
     options = parser.parse_args()
     manifest = json.loads(MANIFEST.read_text())
     declared = [screen["id"] for screen in manifest["screens"]]
@@ -270,11 +288,17 @@ def main() -> int:
         raise SystemExit(f"{MANIFEST} has no screen named {', '.join(unknown)}")
     if options.perturb and options.update:
         raise SystemExit("--perturb moves a token on purpose; its photographs are never goldens")
+    if options.review and (options.perturb or options.update):
+        raise SystemExit("--review writes pictures nothing compares; it takes neither --update nor --perturb")
     wanted = set(options.only or declared)
 
     udid = ios_simulators.ready(SIMULATOR)
     began = time.monotonic()
     output = PERTURBED / options.perturb if options.perturb else OUTPUT
+    if options.review:
+        output = OUTPUT.with_name("goldens-review")
+        options.review = options.review.resolve()
+        options.review.mkdir(parents=True, exist_ok=True)
     journey = PhoneJourney(
         {"id": "goldens"}, ROOT / manifest["topology"], udid, output=output, goldens=GOLDENS
     )
@@ -282,10 +306,12 @@ def main() -> int:
     journey.covered_hidden = True
     journey.tolerance = TOLERANCE
     journey.max_differing = MAX_DIFFERING
-    journey.glass = GLASS
-    goldens = Goldens(journey, manifest, wanted)
+    goldens = Goldens(journey, manifest, wanted, options.review)
     try:
         journey.launch()
+        if not options.review:
+            # Motion stays as the run has it: the door's own default, off.
+            journey.app({"kind": "assist", "motion": False, "transparency": True})
         if options.perturb:
             journey.app({"kind": "perturb", "token": options.perturb})
         goldens.prepare_the_desk()
@@ -302,6 +328,9 @@ def main() -> int:
         raise
     finally:
         journey.close()
+    if options.review:
+        print(f"{len(goldens.outcomes)} review captures with glass on in {time.monotonic() - began:.1f}s under {options.review}")
+        return 0
     print(f"{len(goldens.outcomes)} photographs in {time.monotonic() - began:.1f}s; captures under {output}")
     if options.perturb:
         missed = [

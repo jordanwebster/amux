@@ -24,7 +24,6 @@ struct ComponentExample: Identifiable {
     let family: Family
     let canvas: CGSize
     let dynamicTypeSize: DynamicTypeSize
-    let reducesTransparency: Bool
     let readinessIdentifier: String?
     let readinessValue: String?
     fileprivate let build: @MainActor () -> AnyView
@@ -34,7 +33,6 @@ struct ComponentExample: Identifiable {
         family: Family,
         canvas: CGSize = CGSize(width: 390, height: 120),
         dynamicTypeSize: DynamicTypeSize = .large,
-        reducesTransparency: Bool = false,
         readinessIdentifier: String? = nil,
         readinessValue: String? = nil,
         @ViewBuilder build: @escaping @MainActor () -> some View
@@ -43,7 +41,6 @@ struct ComponentExample: Identifiable {
         self.family = family
         self.canvas = canvas
         self.dynamicTypeSize = dynamicTypeSize
-        self.reducesTransparency = reducesTransparency
         self.readinessIdentifier = readinessIdentifier
         self.readinessValue = readinessValue
         self.build = { AnyView(build()) }
@@ -919,14 +916,21 @@ enum CatalogFixtures {
 }
 
 /// A component on a fixed, production-coloured canvas.
+///
+/// `reducesTransparency` draws every frosted surface flat, as it is for a
+/// person who turned Reduce Transparency on: what the snapshot comparison
+/// photographs. Off, the surfaces are glass and material, as the app draws
+/// them on a phone.
 @MainActor
 struct ComponentExampleView: View {
     let example: ComponentExample
     let appearance: ColorScheme
+    let reducesTransparency: Bool
 
-    init(example: ComponentExample, appearance: ColorScheme) {
+    init(example: ComponentExample, appearance: ColorScheme, reducesTransparency: Bool) {
         self.example = example
         self.appearance = appearance
+        self.reducesTransparency = reducesTransparency
     }
 
     var body: some View {
@@ -941,7 +945,7 @@ struct ComponentExampleView: View {
         .environment(\.design, Design.app)
         .environment(\.photographed, true)
         .environment(\.reducesMotion, true)
-        .environment(\.reducesTransparency, example.reducesTransparency)
+        .environment(\.reducesTransparency, reducesTransparency)
         .environment(\.dynamicTypeSize, example.dynamicTypeSize)
         .preferredColorScheme(appearance)
     }
@@ -983,7 +987,9 @@ struct ComponentCatalogGallery: View {
                 ForEach(ComponentCatalog.examples) { example in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(example.id).font(.headline.monospaced())
-                        ComponentExampleView(example: example, appearance: appearance.colorScheme)
+                        ComponentExampleView(
+                            example: example, appearance: appearance.colorScheme,
+                            reducesTransparency: false)
                     }
                 }
             }

@@ -88,9 +88,11 @@ build: rust
 unit *ARGS: rust
     if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 1800 {{python}} -B scripts/ios-unit.py "$@"
 
-# Build once, then render the shared SwiftUI component catalog in-process. A
-# list of component IDs selects a subset; --record is the only baseline-writing
-# path, and --skip-build checks an existing bundle without compiling edits.
+# Build once, then render the shared SwiftUI component catalog in-process,
+# every frosted surface drawn flat. A list of component IDs selects a subset;
+# --record is the only baseline-writing path, --skip-build checks an existing
+# bundle without compiling edits, and --review DIR writes the frosted examples
+# with their glass on to DIR for a person to look at, comparing nothing.
 # Compare stable components with their native image baselines.
 component-snapshots *ARGS: rust
     if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 2100 {{python}} -B scripts/ios-component-snapshots.py "$@"
@@ -103,8 +105,10 @@ component-snapshots-perturb *ARGS:
 
 # Reach each whole screen the golden manifest names on the phone driver, over
 # a served topology through the app's door, and compare its display and
-# element geometry with the golden in light and dark. `--only ID` runs one
-# screen; `--update` rewrites the goldens that differ.
+# element geometry with the golden in light and dark, every frosted surface
+# drawn flat. `--only ID` runs one screen; `--update` rewrites the goldens that
+# differ; `--review DIR` writes every screen with its glass on to DIR for a
+# person to look at, comparing nothing.
 # Compare the phone's whole screens with their goldens.
 goldens *ARGS: build tools
     if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 2400 {{python}} -B scripts/ios-goldens.py "$@"
