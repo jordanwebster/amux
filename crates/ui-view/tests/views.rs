@@ -841,6 +841,48 @@ fn a_sent_prompt_the_queue_lists_is_drawn_once() {
     }
 }
 
+/// A refused Send now (terminal Claude too old to steer) leaves the prompt
+/// queued to run at turn end: its row reads queued again with Send now still
+/// offered, and nothing lands in the outbox. The reason is the press's reply.
+#[test]
+fn a_refused_send_now_leaves_the_prompt_queued() {
+    let kind = Kind::ClaudePty;
+    let mut state = SessionState::new(agent(kind));
+    state.update(snapshot(
+        kind,
+        Phase::Working,
+        vec![],
+        vec![queued(b"q1", false, None)],
+    ));
+    state.update(caught_up());
+    state.update(Msg::Send(wire::Input {
+        input_id: b"now".to_vec(),
+        of: Some(wire::input::Of::ClaudePty(wire::ClaudePtyInput {
+            of: Some(wire::claude_pty_input::Of::SendNow(wire::SendQueuedNow {
+                queued_input_id: b"q1".to_vec(),
+            })),
+        })),
+    }));
+    assert!(
+        queue_rows(&state)[0].steered,
+        "steered while the press is in flight"
+    );
+    state.update(Msg::Sent(
+        b"now".to_vec(),
+        InputOutcome::Reply(wire::SendInputResponse {
+            of: Some(wire::send_input_response::Of::Rejected(wire::Rejected {
+                reason: "Send now needs Claude 2.1.283 or later".into(),
+            })),
+        }),
+    ));
+    let rows = queue_rows(&state);
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].steered);
+    assert!(rows[0].can_send_now);
+    assert!(rows[0].can_withdraw);
+    assert!(outbox_rows(&state).is_empty());
+}
+
 #[test]
 fn unknown_renders_one_way() {
     for kind in KINDS {

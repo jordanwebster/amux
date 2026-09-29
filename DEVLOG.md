@@ -1,3 +1,10 @@
+2026-09-29 — **A refused Send now leaves its prompt queued.** When
+terminal Claude is too old to steer, the press answers with the reason
+(shown as the terminal's notice and the phone's chat notice); a view test
+now pins that the queued row reads queued again with Send now still
+offered, and that nothing appears in the outbox, since the prompt still
+runs at turn end.
+
 2026-09-29 — **The phone's remaining test tree says only what it
 checks.** `just test-store-ios` built a store fixture binary behind a
 feature that no longer exists, so the nightly captures lane failed before
