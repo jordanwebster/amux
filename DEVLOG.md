@@ -1,3 +1,13 @@
+2026-09-29 — **A chat's trace is read with the state it replays to.** The
+session and fleet drivers keep a bounded trace that must replay to their
+current state, and the tests checking that read the trace and then the state
+under two separate locks. Against a real node the agent's idle snapshot
+trails its turn's last row, so it could land between the two reads and the
+replay came out one snapshot behind (seen once in an unloaded local run). The
+trace now comes from the state guard, so both are one read. Delaying every
+snapshot 300 ms and pausing between the two reads failed both real-node
+session tests every run; with the trace on the guard the same delay passes.
+
 2026-09-29 — **Journeys start their agents in a fixed order.** The shared
 stories network, the push network and the phone goldens network declared
 several agents that all come to rest in the same standing, and the test

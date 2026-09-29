@@ -165,8 +165,10 @@ async fn drive(client: Arc<dyn Client>, net: &Net) {
     }
     assert_eq!(session.state().oldest_order(), Some(1));
     assert!(says(&session, "turn one"), "paged in from below");
-    let trace = session.trace();
-    assert_eq!(trace.replay(), *session.state());
+    // Events still arrive (the idle snapshot trails the turn's last row),
+    // so the trace and the state it must replay to are read together.
+    let state = session.state();
+    assert_eq!(state.trace().replay(), *state);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -238,7 +240,7 @@ async fn a_session_over_the_socket_reconnects_across_a_daemon_restart() {
         .then_some(())
     })
     .await;
-    println!("{}", compact(&session.trace()));
+    println!("{}", compact(&session.state().trace()));
     session.close();
     fleet.close();
     net.shutdown().await.unwrap();

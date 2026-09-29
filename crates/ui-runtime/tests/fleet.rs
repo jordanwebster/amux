@@ -52,7 +52,9 @@ async fn the_fleet_opens_at_caught_up_and_relists_after_a_reconnect() {
         .collect();
     assert_eq!(ids, [b"a".to_vec()]);
     assert!(fleet.take_changed().contains(&key(b"b")));
-    assert_eq!(fleet.trace().replay(), *fleet.state());
+    let state = fleet.state();
+    assert_eq!(state.trace().replay(), *state);
+    drop(state);
     let names: Vec<String> = fleet
         .dump_part()
         .files

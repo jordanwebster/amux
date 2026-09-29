@@ -231,6 +231,15 @@ fn rejected(reason: String) -> SendInputResponse {
 /// await: the pump waits for it to apply the next event.
 pub struct StateGuard<'a>(MutexGuard<'a, Model>);
 
+impl StateGuard<'_> {
+    /// The bounded trace: the state its oldest segment began from and every
+    /// event since, in this client's order. Read under the same guard as
+    /// the state, so it replays to exactly that state while events arrive.
+    pub fn trace(&self) -> DriverTrace<SessionState, Msg> {
+        self.0.trace.trace()
+    }
+}
+
 impl Deref for StateGuard<'_> {
     type Target = SessionState;
 
@@ -554,12 +563,6 @@ impl Session {
             bytes,
         };
         self.inner.client.put_blob(request).await
-    }
-
-    /// The bounded trace: the state its oldest segment began from and every
-    /// event since, in this client's order.
-    pub fn trace(&self) -> DriverTrace<SessionState, Msg> {
-        self.inner.model().trace.trace()
     }
 
     /// This session's part of a dump bundle: the structure of its state and

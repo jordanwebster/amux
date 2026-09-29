@@ -90,6 +90,14 @@ impl Inner {
 /// The fleet's state while the guard lives; never hold it across an await.
 pub struct FleetGuard<'a>(MutexGuard<'a, Model>);
 
+impl FleetGuard<'_> {
+    /// The bounded trace, read under the same guard as the state it
+    /// replays to.
+    pub fn trace(&self) -> DriverTrace<FleetState, FleetMsg> {
+        self.0.trace.trace()
+    }
+}
+
 impl Deref for FleetGuard<'_> {
     type Target = FleetState;
 
@@ -174,10 +182,6 @@ impl Fleet {
     /// Set when the runtime refused to serve the inventory again.
     pub fn ended(&self) -> Option<RpcError> {
         self.inner.model().ended.clone()
-    }
-
-    pub fn trace(&self) -> DriverTrace<FleetState, FleetMsg> {
-        self.inner.model().trace.trace()
     }
 
     /// The fleet's part of a dump bundle: the structure of its state and

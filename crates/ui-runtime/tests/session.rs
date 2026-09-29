@@ -128,7 +128,7 @@ async fn lagged_reopens_with_a_tail_at_once_and_dedupes_the_overlap() {
         ["k1", "k2", "k3", "k4"],
         "the overlap is deduped by key"
     );
-    let trace = session.trace();
+    let trace = session.state().trace();
     assert!(
         trace
             .events
@@ -543,14 +543,12 @@ async fn the_trace_is_bounded_and_replays_from_its_starting_state() {
         (state.transcript().get("k1")?.item.revision == 1_000).then_some(())
     })
     .await;
-    let trace = session.trace();
+    let state = session.state();
+    let trace = state.trace();
     assert!(trace.events.len() <= TRACE_EVENTS);
     assert!(trace.events.len() >= TRACE_EVENTS / 2);
-    assert_eq!(
-        trace.replay(),
-        *session.state(),
-        "the trace replays to the state"
-    );
+    assert_eq!(trace.replay(), *state, "the trace replays to the state");
+    drop(state);
     let seqs: Vec<u64> = trace.events.iter().map(|traced| traced.seq).collect();
     assert!(
         seqs.windows(2).all(|pair| pair[1] == pair[0] + 1),
