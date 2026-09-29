@@ -1,3 +1,23 @@
+2026-09-29 — **The flood's ingest-cost baseline is re-recorded with the
+measurement it is compared with.** The desktop baseline's ingest cost,
+21.002 µs a frame, was recorded before the flood's capacity phase changed
+how it measures, and was never recorded again, so every later run compared
+a new measurement with an old one; the same code reads about 20% higher by
+the new method. The afternoon's reading of +47% stacked a second cause on
+that: the startup disk was 99.4% full (5.3 GiB free), and since ingest cost
+is file writes, the baseline commit's own build then read 8 to 25% above
+its own recorded value. With this worktree's compiler cache deleted (176
+GiB free, later 349 GiB), the baseline commit's build reproduced its value
+(medians of three: 19.520 µs before the head runs, 20.961 µs after the
+recording run), and the head read 24.240, 22.969, 24.569, 22.580, 22.913,
+23.153 µs. The recording run read 23.778 µs, within 5% of the head's
+median, and is the new median; an earlier recording run at 20.917 µs, 9%
+under that median, was discarded as noise. Only the ingest cost changes:
+the agent's memory measurement did not change, so its baseline stands.
+docs/PERFORMANCE.md now says when a baseline must be re-recorded and how to
+show the machine is in the reference state before a baseline or a
+qualifying run counts.
+
 2026-09-29 — **A chat's window is bounded while the reader follows.** A
 chat left open under a flood (about 40 rows a second) held every row it had
 seen. The session model now keeps at most a cap of the newest rows while
