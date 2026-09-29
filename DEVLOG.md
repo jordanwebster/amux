@@ -1,3 +1,16 @@
+2026-09-29 — **A component snapshot's quiet window no longer eats its
+deadline.** On a CI runner `review.selection.dark` timed out waiting to
+settle. Each example had one 5 s deadline to become ready, take its glass's
+luma reports and then hold still; when larger glass's hold grew from half a
+second to two, that time came out of the same 5 s, leaving examples with both
+kinds of glass about three seconds to stop changing. On CI runners the last
+change has landed up to 2.2 s after the window showed, and the slowest clean
+example took 4.7 s of the budget. The quiet window is now added to the
+deadline. A timed-out example also prints its glass state (whether its glass
+ever adapted, and when its photographs changed), so an example that truly
+never settles can be told from a slow one. It did not reproduce locally: five
+runs under load settled within 1.1 s.
+
 2026-09-29 — **The phone's chat list draws a bounded run of the rows it
 holds.** Under the flood the phone froze for over 90 s when a reader jumped to
 the top of a chat holding about 1,100 rows: its list was a lazy stack over

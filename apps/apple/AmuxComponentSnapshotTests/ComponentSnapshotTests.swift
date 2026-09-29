@@ -202,7 +202,7 @@ final class ComponentSnapshotTests: XCTestCase {
             XCTFail(
                 "Timed out waiting for \(example.id).\(appearance.name) to settle: "
                     + "its photographs were still changing, or its glass had not adapted "
-                    + "to its backdrop, after 5 s"
+                    + "to its backdrop, 5 s after it showed (plus its quiet window)"
             )
             return
         }
@@ -280,6 +280,12 @@ final class ComponentSnapshotTests: XCTestCase {
     /// prints when its glass adapted and when its photographs changed, counted
     /// from the window showing, so the render server's latency on the machine
     /// that ran it is on record.
+    ///
+    /// The deadline bounds how long the example may take to become ready,
+    /// take its luma reports and stop changing; the quiet window that proves
+    /// it stopped is added to it, so a longer window never eats into that
+    /// time. On CI runners the last change has come up to 2.2 s after the
+    /// window showed.
     private func settledPhotograph(
         of view: UIView,
         traits: UITraitCollection,
@@ -293,12 +299,22 @@ final class ComponentSnapshotTests: XCTestCase {
         var changes: [TimeInterval] = []
         var settled = photograph(view, traits: traits)
         var since = started
+        var waiting = true
+        var quietWindow: TimeInterval { glass.untracked > 0 ? Self.largeGlassQuiet : Self.quiet }
+        func report(_ outcome: String) {
+            guard glass.panes > 0 else { return }
+            print(String(
+                format: "AMUX_SNAPSHOT_GLASS component=%@ %@ panes=%d tracking=%d untracked=%d adapted=%@ unadapted=%d changes=%@",
+                name, outcome, glass.panes, state.count, glass.untracked,
+                adapted.map { String(format: "%.3f", $0) } ?? "-", waiting ? 1 : 0,
+                changes.map { String(format: "%.3f", $0) }.joined(separator: ",")))
+        }
         repeat {
             await DisplayFrame.pass()
             let current = photograph(view, traits: traits)
             let now = ProcessInfo.processInfo.systemUptime
             let sampled = glass.sample()
-            let waiting = glass.unadapted(sampled)
+            waiting = glass.unadapted(sampled)
             if adapted == nil, !sampled.isEmpty, !waiting {
                 adapted = now - started
             }
@@ -307,19 +323,12 @@ final class ComponentSnapshotTests: XCTestCase {
                 settled = current
                 state = sampled
                 since = now
-            } else if !waiting,
-                now - since >= (glass.untracked > 0 ? Self.largeGlassQuiet : Self.quiet)
-            {
-                if glass.panes > 0 {
-                    print(String(
-                        format: "AMUX_SNAPSHOT_GLASS component=%@ panes=%d tracking=%d untracked=%d adapted=%@ changes=%@",
-                        name, glass.panes, sampled.count, glass.untracked,
-                        adapted.map { String(format: "%.3f", $0) } ?? "-",
-                        changes.map { String(format: "%.3f", $0) }.joined(separator: ",")))
-                }
+            } else if !waiting, now - since >= quietWindow {
+                report("settled")
                 return settled
             }
-        } while ProcessInfo.processInfo.systemUptime < deadline
+        } while ProcessInfo.processInfo.systemUptime < deadline + quietWindow
+        report("unsettled")
         return nil
     }
 
