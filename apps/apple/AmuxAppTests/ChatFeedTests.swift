@@ -94,12 +94,14 @@ final class ChatFeedTests: XCTestCase {
     }
 
     /// The pixels of the rows between the header and the composer, as the
-    /// screen shows them.
+    /// screen shows them. The band starts below the soft edge under the
+    /// header, which blurs in whatever rows are scrolled past above it.
     private func rowsBand() throws -> Data {
         let window = try XCTUnwrap(self.window)
-        let band = CGRect(x: 0, y: 150, width: window.bounds.width, height: 550)
+        let band = CGRect(x: 0, y: 200, width: window.bounds.width, height: 500)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
+        format.preferredRange = .standard
         let image = UIGraphicsImageRenderer(size: band.size, format: format).image { _ in
             window.drawHierarchy(
                 in: CGRect(origin: CGPoint(x: 0, y: -band.minY), size: window.bounds.size),
@@ -162,6 +164,10 @@ final class ChatFeedTests: XCTestCase {
     func testAPageLandingAboveAReaderAtTheTopMovesNothingOnScreen() async throws {
         let source = ScriptedChat(rows: Self.messages(961...1_000), frame: ScriptedChat.frame(hasOlder: true))
         source.paged = .arrived(0)
+        // The page answers after the reader has come to rest at the top, so
+        // the loading notice is showing above the rows when they are
+        // photographed and goes as the page lands.
+        source.pageTakes = .seconds(0.6)
         let model = ChatModel(source: source)
         try show(model)
         await spin(1)
@@ -169,23 +175,24 @@ final class ChatFeedTests: XCTestCase {
         await scrollUp(list, model, screens: 40)
         XCTAssertTrue(model.drawsOldestHeld)
 
+        XCTAssertEqual(model.paging, .fetching)
+
         // The anchor moves the list inside SwiftUI's layout pass, and until
         // something else changes SwiftUI goes on reporting the rows where they
-        // were before that move: at the top, where the loading notice coming
-        // was taken back, the reported frames lag the screen. So the screen
-        // itself is compared, over the rows between the header and the
-        // composer.
+        // were before that move: the loading notice coming was taken back on
+        // screen, but the rows' reported frames still stand a notice lower.
+        // So the screen itself is compared, over the rows between the header
+        // and the composer.
         let before = try onScreen()
         let photographed = try rowsBand()
         source.prepend(Self.messages(921...960))
         model.woke()
-        await spin()
+        await spin(1)
+        XCTAssertEqual(model.paging, .idle)
         let after = try onScreen()
         XCTAssertGreaterThan(
             before.keys.filter { after[$0] != nil }.count, 3, "a page landing: the rows on screen went")
         let now = try rowsBand()
-        try photographed.write(to: URL(fileURLWithPath: "/tmp/band-before.raw"))
-        try now.write(to: URL(fileURLWithPath: "/tmp/band-after.raw"))
         XCTAssertEqual(now, photographed, "a page landing moved the rows on screen")
         XCTAssertEqual(model.drawn.first, "m921", "the page the reader waited at the top for is drawn")
         XCTAssertEqual(model.ids.count, 80)

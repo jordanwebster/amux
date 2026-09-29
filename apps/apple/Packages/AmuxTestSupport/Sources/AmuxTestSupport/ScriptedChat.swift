@@ -19,6 +19,8 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     public private(set) var changed: [SettingChange] = []
     /// What asking for older rows comes to.
     public var paged: PageOutcome = .arrived(0)
+    /// How long asking for older rows takes to answer.
+    public var pageTakes: Duration = .zero
     /// What asking for the working-tree diff comes to; nil answers that the
     /// machine could not be asked.
     public var working: FrozenReview?
@@ -188,7 +190,8 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     }
     public func resume(with draft: Draft) async -> ActOutcome? { .done }
     public func pageOlder(_ rows: UInt32) async -> PageOutcome? {
-        try? await Task.sleep(for: .seconds(0.6))
+        let takes = lock.withLock { pageTakes }
+        if takes > .zero { try? await Task.sleep(for: takes) }
         return lock.withLock { paged }
     }
 

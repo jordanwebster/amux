@@ -1,3 +1,19 @@
+2026-09-29 — **The page-landing chat test compares the screen, not reported
+frames.** On a CI runner the test that a page of older rows landing above a
+reader at the top moves nothing on screen saw every row 54 points higher
+afterwards: exactly the height of the loading notice that showed while the
+page was on its way. The screen had not moved. The anchor keeps the reader's
+row still by moving the UIKit scroll view inside SwiftUI's layout pass, and
+SwiftUI goes on reporting the rows' frames from before that move until
+something else changes, so when the notice came the reported rows stood a
+notice lower than the drawn ones. The test now photographs the rows between
+the header and the composer before and after and requires the same pixels,
+below the soft scroll edge that blurs in whatever is scrolled past above it.
+The scripted chat's page now takes a set time to answer, so the notice is
+always showing when the rows are photographed and goes as the page lands:
+the case the runner hit happens every run. Switching the anchor off fails
+the comparison.
+
 2026-09-29 — **The phone's compared pictures are drawn flat.** Liquid Glass
 and material are finished by the render server after SwiftUI draws, out of
 the app's sight and on its own schedule, and the suites kept losing to it:
