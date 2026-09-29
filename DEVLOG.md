@@ -1,3 +1,12 @@
+2026-09-29 — **A repeat lane samples the workspace tests for timing
+races.** Each of the last four CI rounds went red on one different timing
+race in the Linux or macOS test job while everything else was green, one
+race a round. `test-repeat.yml` runs on every push to `rearchitect` (and by
+hand): three jobs on each of Linux and macOS, each compiling once and running
+`just test -- --no-fail-fast` twice, so a push gets six samples per platform.
+It gates nothing; `just ci-remote` still watches the CI workflow alone.
+docs/CI.md says how to read it.
+
 2026-09-29 — **A subscriber that has read everything no longer lags while
 a backlog drains.** Ingest commits a backlog in batches and publishes each
 batch's records in one burst; the per-agent fan-out ring held exactly one

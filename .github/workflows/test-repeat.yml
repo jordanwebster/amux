@@ -1,0 +1,44 @@
+name: Test repeat
+
+# Runs the workspace tests several times per push on the runners where timing
+# races show up, so one round surfaces several of them instead of the one a
+# single run per platform happens to hit. It gates nothing: the CI workflow
+# is the run a change is held to.
+
+on:
+  push:
+    branches: [rearchitect]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  test-repeat:
+    name: Test repeat (${{ matrix.os }}, ${{ matrix.sample }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        sample: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse fixture update flags
+        shell: bash
+        run: scripts/no-update-flags.sh
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - name: Build workspace tests
+        id: build
+        run: just test -- --no-run
+      - name: Run workspace tests (first pass)
+        run: just test -- --no-fail-fast
+      - name: Run workspace tests (second pass)
+        # Runs whether or not the first pass failed; either failing turns
+        # the job red.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: just test -- --no-fail-fast
