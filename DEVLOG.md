@@ -1,3 +1,15 @@
+2026-09-29 — **Tests that build binaries mid-run share one build.** The
+macOS test job ran out its 1000 s bound with every test passing: it spent
+about ten of its sixteen minutes rebuilding `amux`, once for each test
+crate that started a nested `cargo build`. Cargo reruns a build script
+when a variable it declared with `rerun-if-env-changed` differs from
+cargo's own environment, and `ring` declares `CARGO_MANIFEST_DIR` and
+`CARGO_PKG_*`; a test process carries its own package's values, so each
+crate's nested build reran `ring` and recompiled rustls, quinn, node and
+amux. Every nested build now starts through `provider_fakes::cargo::command()`,
+which drops the package's variables; across three crates the nested build
+went from recompiling to 0.2 s. The bound stays at 1000 s.
+
 2026-09-29 — **The flood's ingest-cost baseline is re-recorded with the
 measurement it is compared with.** The desktop baseline's ingest cost,
 21.002 µs a frame, was recorded before the flood's capacity phase changed

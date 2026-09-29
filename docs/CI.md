@@ -92,6 +92,14 @@ Linux's and does not move the bound. A cold cache, after a `Cargo.lock`
 change, compiles the whole dependency graph and can take longer than these
 numbers.
 
+Tests that build `amux` or the fake providers mid-run start cargo through
+`provider_fakes::cargo::command()`, which drops the variables cargo set for
+the package under test. Started with them, every test crate's build reran
+`ring`'s build script and recompiled everything above it, about a minute a
+crate on the macOS runner; that pushed the macOS run from 449 s to past its
+1000 s bound in
+[36616922626](https://github.com/jordanwebster/amux/actions/runs/36616922626).
+
 ### The iOS gate
 
 The iOS gate job selects Xcode 26.6, asserts that the iOS 26.5 simulator

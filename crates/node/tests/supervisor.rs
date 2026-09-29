@@ -56,8 +56,7 @@ fn start<T>(start: impl FnOnce() -> T) -> T {
 fn binaries() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let mut cargo = Command::new(cargo);
+        let mut cargo = provider_fakes::cargo::command();
         cargo
             .args([
                 "build",

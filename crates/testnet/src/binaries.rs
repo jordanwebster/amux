@@ -20,7 +20,6 @@ impl Binaries {
     pub fn built() -> &'static Binaries {
         static BUILT: OnceLock<Binaries> = OnceLock::new();
         BUILT.get_or_init(|| {
-            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
             let dir = target_dir();
             let mut args = vec![
                 "build",
@@ -34,7 +33,7 @@ impl Binaries {
             if dir.file_name().and_then(|name| name.to_str()) == Some("release") {
                 args.push("--release");
             }
-            let status = std::process::Command::new(cargo)
+            let status = provider_fakes::cargo::command()
                 .args(args)
                 .current_dir(env!("CARGO_MANIFEST_DIR"))
                 .stdout(std::process::Stdio::null())

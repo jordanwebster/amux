@@ -41,8 +41,7 @@ const GRACE_MS: u32 = 10 * 60 * 1000;
 fn fakes() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let status = Command::new(cargo)
+        let status = provider_fakes::cargo::command()
             .args(["build", "--locked", "-p", "provider-fakes", "--bins"])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .status()

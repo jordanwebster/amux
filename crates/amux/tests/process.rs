@@ -35,8 +35,7 @@ const GRACE_SECS: u64 = 10;
 fn binaries() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let status = std::process::Command::new(cargo)
+        let status = provider_fakes::cargo::command()
             .args(["build", "--locked", "-p", "provider-fakes", "--bins"])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .status()

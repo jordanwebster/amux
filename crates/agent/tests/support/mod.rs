@@ -46,8 +46,7 @@ const HOLD_SCRIPT: &str = r#""$0" "$@"; while [ ! -e "$AMUX_TEST_HOLD" ]; do sle
 pub fn fakes() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let status = std::process::Command::new(cargo)
+        let status = provider_fakes::cargo::command()
             .args([
                 "build",
                 "--locked",
