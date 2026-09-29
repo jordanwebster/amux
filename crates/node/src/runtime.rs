@@ -67,10 +67,18 @@ const KILL_PATIENCE: Duration = Duration::from_secs(5);
 /// Fully ingested journal segments kept below the cursor, for dumps.
 pub const KEPT_SEGMENTS: usize = 2;
 /// The most journal frames one ingest transaction commits. At tens of
-/// microseconds a frame this holds the store for a few tens of
-/// milliseconds, which is what a subscribe, an input or a spawn waits
-/// behind at worst while a backlog drains.
-pub const INGEST_BATCH: usize = 512;
+/// microseconds a frame this holds the store for several milliseconds,
+/// which is what a subscribe, an input or a spawn waits behind at worst
+/// while a backlog drains.
+///
+/// A batch's records are published in one burst, at memory speed, and a
+/// short batch can follow a full one within a millisecond, so the fan-out
+/// ring holds two batches (about a record a frame): a subscriber that has
+/// read everything when a batch lands is closed with Lagged only if it
+/// reads nothing of it for the whole of a full batch's commit. With a
+/// ring of one batch, a caught-up reader would lag whenever its wakeup
+/// came later than a short batch's commit.
+pub const INGEST_BATCH: usize = 256;
 /// The tail size K: the rows a replica keeps and asks for, and the newest
 /// rows own retention never trims. About an hour of a busy agent and
 /// several screens of scroll-back.
@@ -162,7 +170,7 @@ impl Default for Launch {
             ctl_write_ms: 5_000,
             reply_patience_ms: 30_000,
             notify_delay_ms: 30_000,
-            fanout_capacity: 512,
+            fanout_capacity: 2 * INGEST_BATCH,
             inventory_capacity: 1024,
             delivery_retry_ms: 30_000,
             push_retry_ms: 60_000,

@@ -1,3 +1,16 @@
+2026-09-29 — **A subscriber that has read everything no longer lags while
+a backlog drains.** Ingest commits a backlog in batches and publishes each
+batch's records in one burst; the per-agent fan-out ring held exactly one
+batch, and the short batch at a backlog's end can follow a full one within a
+millisecond. A subscriber that had read every record but woke a moment late
+found both bursts in the ring, one record more than it holds, and was closed
+with Lagged (a macOS runner: 1024 rows read, then lagged). A batch is now 256
+frames, half the unchanged 512-record ring, so a caught-up reader lags only
+if it reads nothing for a whole batch's commit. Pausing the backlog test's
+reader 5 ms at the start of each batch failed it every run with the old batch
+and passes with the new one; a 40 ms pause, longer than a commit, still
+closes the reader with Lagged.
+
 2026-09-29 — **A chat's trace is read with the state it replays to.** The
 session and fleet drivers keep a bounded trace that must replay to their
 current state, and the tests checking that read the trace and then the state

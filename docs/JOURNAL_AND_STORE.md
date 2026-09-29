@@ -141,7 +141,7 @@ One ingest pass:
 
 1. Lock the store and read the agent's `ingest_cursor` from its row.
 2. Read whole frames from that offset with `journal::Reader::read_up_to`, at
-   most `INGEST_BATCH` (512) frames.
+   most `INGEST_BATCH` (256) frames.
 3. Commit them in one transaction (`Store::commit`), which also writes the
    advanced cursor.
 4. Still holding the store, broadcast each committed record once on the
@@ -156,8 +156,11 @@ Holding the store lock through the broadcast makes commit order the broadcast
 order, and lets a subscriber that opens under the same lock read a cut that is
 wholly before or wholly after a batch. Batching bounds how long a backlog holds
 every other reader and writer off: at the measured cost of tens of
-microseconds a frame, 512 frames hold the store for a few tens of
-milliseconds.
+microseconds a frame, 256 frames hold the store for several milliseconds.
+A batch is half the agent's fan-out ring: its records go out in one burst,
+and a short batch can follow a full one within a millisecond, so a
+subscriber that has read everything when a batch lands is closed with
+`Lagged` only if it reads none of it for a whole batch's commit.
 
 A torn frame in the newest segment means a write is still under way, so that
 pass is not at the end of the journal and does not announce `CaughtUp`; the
