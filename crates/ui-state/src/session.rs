@@ -1,7 +1,7 @@
 //! One open chat's state: the agent's entry and snapshot, the transcript
 //! window, and this client's inputs.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub use model::{Activity, ActivityKind, BlobStatus, Composer, Connection, PhaseView, Waiting};
 use wire::{Agent, HostEntry, Input, Item, Kind, QueuedInput, SessionEvent, session_event};
@@ -9,7 +9,7 @@ use wire::{Agent, HostEntry, Input, Item, Kind, QueuedInput, SessionEvent, sessi
 use crate::Key;
 use crate::body::{AgentState, ItemClass, OpenAsk};
 use crate::inputs::{InputId, InputOutcome, InputState, InputWhat, Inputs, SentInput};
-use crate::transcript::{Appended, Changed, Transcript};
+use crate::transcript::{Appended, Changed, Held, Transcript};
 
 /// Everything the driver forwards to a session.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,6 +38,13 @@ pub enum Msg {
         hash: Vec<u8>,
         status: BlobStatus,
     },
+    /// The reader left the newest row (false) or returned to it (true).
+    /// Only the client knows where its reader is; this is how the window
+    /// learns whether to trim its top or to hold what arrives.
+    Following(bool),
+    /// The driver reopened the stream for the reload a return asked for:
+    /// what follows is a fresh tail, built apart and swapped in at CaughtUp.
+    Reloading,
 }
 
 /// What one update did.
@@ -54,6 +61,10 @@ pub struct Outcome {
     /// Something outside the rows moved: the snapshot, entry, host, inputs,
     /// connection or caught-up state.
     pub session: bool,
+    /// The reader returned after the head moved on past what the session
+    /// holds: the driver reopens the stream with a fresh tail and says so
+    /// with [`Msg::Reloading`].
+    pub reload: bool,
 }
 
 /// A queued prompt as the composer draws it.
@@ -91,10 +102,104 @@ pub struct SessionState {
     exited_under: Option<u32>,
     epoch: u64,
     blobs: HashMap<Vec<u8>, BlobStatus>,
+    /// The most rows the window keeps while the reader follows.
+    cap: usize,
+    /// The reader is at the newest row, as the client last said.
+    following: bool,
+    /// What arrived above the head while the reader was in history.
+    arrivals: Arrivals,
+    /// The reader returned after the head moved on: a reload is owed, and
+    /// the driver has not reopened the stream for it yet.
+    reload_owed: bool,
+}
+
+/// Rows that arrived above the window's head while the reader was in
+/// history, held apart so the window the reader is in does not move. They
+/// continue the window without a gap, at most the window's cap of them;
+/// past that, or past a gap, the session holds nothing more and remembers
+/// only that the head moved on.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Arrivals {
+    rows: BTreeMap<u64, Held>,
+    by_key: HashMap<Key, u64>,
+    moved_on: bool,
+    /// Counts every change, so an update can say the activity line and the
+    /// affordance, which read these rows, may have moved.
+    changes: u64,
+}
+
+impl Arrivals {
+    fn clear(&mut self) {
+        let changes = self.changes;
+        *self = Arrivals::default();
+        self.changes = changes + 1;
+    }
+
+    fn get(&self, key: &str) -> Option<&Held> {
+        self.by_key.get(key).and_then(|order| self.rows.get(order))
+    }
+
+    fn key_for_input(&self, input_id: &[u8]) -> bool {
+        self.rows
+            .values()
+            .any(|held| held.item.input_id == input_id)
+    }
+
+    /// Holds a row, or gives up holding when it would leave a gap or pass
+    /// the cap.
+    fn hold(&mut self, kind: Kind, item: Item, head: u64, cap: usize) {
+        if self.moved_on {
+            return;
+        }
+        if let Some(&order) = self.by_key.get(&item.key) {
+            if self.rows[&order].item.revision < item.revision {
+                let mut item = item;
+                item.order = order;
+                self.rows.insert(order, Held::new(kind, item));
+                self.changes += 1;
+            }
+            return;
+        }
+        let next = self.rows.keys().next_back().copied().unwrap_or(head) + 1;
+        if item.order < next {
+            // One key per order: another key at a held order is not this
+            // agent's history.
+            return;
+        }
+        if item.order > next || self.rows.len() >= cap {
+            self.clear();
+            self.moved_on = true;
+            return;
+        }
+        self.by_key.insert(item.key.clone(), item.order);
+        self.rows.insert(item.order, Held::new(kind, item));
+        self.changes += 1;
+    }
+
+    fn append(&mut self, kind: Kind, append: &wire::Append) -> Appended {
+        let Some(&order) = self.by_key.get(&append.key) else {
+            return Appended::NeedGet;
+        };
+        let held = &self.rows[&order];
+        if held.item.revision >= append.revision {
+            return Appended::Stale;
+        }
+        if held.item.revision != append.base_revision {
+            return Appended::NeedGet;
+        }
+        let mut item = held.item.clone();
+        item.text.push_str(&append.text);
+        item.revision = append.revision;
+        self.rows.insert(order, Held::new(kind, item));
+        self.changes += 1;
+        Appended::Applied
+    }
 }
 
 impl SessionState {
-    pub fn new(agent: Agent) -> SessionState {
+    /// A session following the newest row, whose window keeps at most `cap`
+    /// rows while it does.
+    pub fn new(agent: Agent, cap: usize) -> SessionState {
         let kind = agent.kind();
         SessionState {
             state: AgentState {
@@ -115,7 +220,46 @@ impl SessionState {
             exited_under: None,
             epoch: 0,
             blobs: HashMap::new(),
+            cap: cap.max(1),
+            following: true,
+            arrivals: Arrivals::default(),
+            reload_owed: false,
         }
+    }
+
+    /// The most rows the window keeps while the reader follows.
+    pub fn cap(&self) -> usize {
+        self.cap
+    }
+
+    /// Whether the reader is at the newest row, as the client last said.
+    pub fn following(&self) -> bool {
+        self.following
+    }
+
+    /// Rows arrived above the window while the reader is in history: what
+    /// the new-activity affordance shows from.
+    pub fn arrivals_held(&self) -> bool {
+        !self.following && (!self.arrivals.rows.is_empty() || self.arrivals.moved_on)
+    }
+
+    /// How many rows arrived and are held outside the window.
+    pub fn held_arrivals(&self) -> usize {
+        self.arrivals.rows.len()
+    }
+
+    /// Whether the head moved on past what the session holds, so a return
+    /// to the newest row reloads it.
+    pub fn head_moved_on(&self) -> bool {
+        self.arrivals.moved_on
+    }
+
+    /// How many older rows a page may bring: while the reader follows, only
+    /// what fits under the cap, so a following client never fetches rows
+    /// the next live row would trim; in history, any number.
+    pub fn page_room(&self) -> Option<usize> {
+        self.following
+            .then(|| self.cap.saturating_sub(self.transcript.len()))
     }
 
     pub fn kind(&self) -> Kind {
@@ -290,6 +434,14 @@ impl SessionState {
             elapsed_ms: (now_ms - since_ms).max(0),
         };
         let transcript = &self.transcript;
+        // Arrivals held above the window are the newest rows there are.
+        let newest_first = || {
+            self.arrivals
+                .rows
+                .values()
+                .rev()
+                .chain(transcript.iter().rev())
+        };
         let running_tasks = self
             .state
             .active_tasks
@@ -298,7 +450,7 @@ impl SessionState {
             .count() as u32;
         let mut subagents = 0u32;
         let mut turn_start = None;
-        for held in transcript.iter().rev() {
+        for held in newest_first() {
             match &held.class {
                 ItemClass::Tool(tool) if tool.subagent => subagents += 1,
                 ItemClass::Prompt | ItemClass::Steer | ItemClass::AgentMessage => {
@@ -315,16 +467,12 @@ impl SessionState {
         // landed after it: terminal Claude writes a call's row up to
         // seconds after the call starts.
         let announced = self.state.running_calls.last().filter(|call| {
-            !transcript.iter().any(|held| {
+            !newest_first().any(|held| {
                 matches!(&held.class, ItemClass::Tool(tool) if tool.in_flight)
                     && held.item.at_ms > call.since_ms
             })
         });
-        let Some(newest) = transcript
-            .iter()
-            .rev()
-            .find(|held| held.class != ItemClass::Ask)
-        else {
+        let Some(newest) = newest_first().find(|held| held.class != ItemClass::Ask) else {
             return Some(match announced {
                 Some(call) => at(
                     call.since_ms,
@@ -422,14 +570,37 @@ impl SessionState {
                     self.blobs.insert(hash, status);
                 }
             }
+            Msg::Following(following) => self.follow(following, &mut changed, &mut outcome),
+            Msg::Reloading => {
+                // Every reopened stream re-tails; a reload builds apart.
+                self.retail = true;
+                if self.reload_owed {
+                    self.reload_owed = false;
+                    self.pending = Some(Transcript::new(self.kind()));
+                    outcome.session = true;
+                }
+            }
         }
         outcome.changed = changed.into_keys();
         outcome
     }
 
     fn event(&mut self, event: SessionEvent, changed: &mut Changed, outcome: &mut Outcome) {
-        use session_event::Of;
         let Some(event) = event.of else { return };
+        let arrivals = self.arrivals.changes;
+        self.apply_event(event, changed, outcome);
+        if self.arrivals.changes != arrivals {
+            outcome.session = true;
+        }
+    }
+
+    fn apply_event(
+        &mut self,
+        event: session_event::Of,
+        changed: &mut Changed,
+        outcome: &mut Outcome,
+    ) {
+        use session_event::Of;
         match event {
             Of::Snapshot(snapshot) => {
                 self.state = AgentState::from_snapshot(self.kind(), &snapshot);
@@ -446,10 +617,18 @@ impl SessionState {
                 }
             }
             Of::Append(append) => {
+                let kind = self.kind();
                 let target = if let Some(pending) = &mut self.pending {
                     pending.append(&append, &mut Changed::default())
-                } else {
+                } else if self.transcript.get(&append.key).is_some() {
                     self.transcript.append(&append, changed)
+                } else if self.arrivals.get(&append.key).is_some() {
+                    self.arrivals.append(kind, &append)
+                } else if self.arrivals.moved_on {
+                    // The reload brings the row whole.
+                    Appended::Stale
+                } else {
+                    Appended::NeedGet
                 };
                 if target == Appended::NeedGet {
                     outcome.need_get = Some(append.key);
@@ -463,6 +642,7 @@ impl SessionState {
                     self.swap(fresh, changed);
                     outcome.reloaded = true;
                 }
+                self.trim(changed);
                 self.resolve_uncertain();
                 outcome.session = true;
             }
@@ -491,6 +671,22 @@ impl SessionState {
             pending.upsert(item, &mut Changed::default());
             return false;
         }
+        let kind = self.kind();
+        if self.transcript.get(&item.key).is_none()
+            && let Some(head) = self.transcript.head()
+            && item.order > head
+        {
+            if self.arrivals.get(&item.key).is_some() || !self.following {
+                // In history the window stays put: what arrives above it
+                // is held apart.
+                self.arrivals.hold(kind, item, head, self.cap);
+                return false;
+            }
+            if self.arrivals.moved_on {
+                // Back at the newest row with the reload on its way.
+                return false;
+            }
+        }
         let gap = self.retail
             && self.transcript.get(&item.key).is_none()
             && self
@@ -506,10 +702,46 @@ impl SessionState {
             return false;
         }
         self.transcript.upsert(item, changed);
+        self.trim(changed);
         true
     }
 
+    /// While the reader follows, the window keeps only the newest rows.
+    fn trim(&mut self, changed: &mut Changed) {
+        if self.following && self.pending.is_none() {
+            self.transcript.trim(self.cap, changed);
+        }
+    }
+
+    /// The reader moved to or from the newest row. Leaving holds what
+    /// arrives from now; returning releases what was held when it all was
+    /// and continues the window, and otherwise asks the driver for a reload.
+    fn follow(&mut self, following: bool, changed: &mut Changed, outcome: &mut Outcome) {
+        if self.following == following {
+            return;
+        }
+        self.following = following;
+        outcome.session = true;
+        if !following {
+            return;
+        }
+        if self.arrivals.moved_on {
+            self.reload_owed = true;
+            outcome.reload = true;
+            return;
+        }
+        let held = std::mem::take(&mut self.arrivals);
+        for (_, held) in held.rows {
+            self.transcript.upsert(held.item, changed);
+        }
+        // A window grown past the cap by paging is trimmed here too, which
+        // fetches nothing and keeps the block contiguous.
+        self.trim(changed);
+    }
+
     fn swap(&mut self, fresh: Transcript, changed: &mut Changed) {
+        self.arrivals.clear();
+        self.reload_owed = false;
         let old = std::mem::replace(&mut self.transcript, fresh);
         let new = &self.transcript;
         let keys: BTreeSet<&Key> = old.keys().chain(new.keys()).collect();
@@ -544,7 +776,8 @@ impl SessionState {
     fn sent(&mut self, id: &[u8], result: InputOutcome) -> bool {
         use wire::send_input_response::Of;
         let incarnation = self.agent.incarnation;
-        let reflected = self.transcript.key_for_input(id).is_some();
+        let reflected =
+            self.transcript.key_for_input(id).is_some() || self.arrivals.key_for_input(id);
         let Some(sent) = self.inputs.get_mut(id) else {
             // A late result for an input this open never sent.
             return false;
@@ -597,6 +830,7 @@ impl SessionState {
     fn resolve_uncertain(&mut self) {
         let queue = &self.state.queue;
         let transcript = &self.transcript;
+        let arrivals = &self.arrivals;
         for sent in self.inputs.iter_mut() {
             if sent.state != InputState::Uncertain {
                 continue;
@@ -604,7 +838,9 @@ impl SessionState {
             if queue.iter().any(|entry| entry.input_id == sent.id) {
                 sent.state = InputState::Queued;
                 sent.seen_queued = true;
-            } else if transcript.key_for_input(&sent.id).is_some() {
+            } else if transcript.key_for_input(&sent.id).is_some()
+                || arrivals.key_for_input(&sent.id)
+            {
                 sent.state = InputState::Settled;
             }
         }

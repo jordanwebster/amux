@@ -151,7 +151,7 @@ fn unknown_is_explicit_and_never_depends_on_which_fact_came_first() {
 #[test]
 fn the_envelope_carries_phase_queue_and_working_on() {
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         let mut snap = snapshot(kind, 4, Phase::Working, &[], &[(b"q1", false)]);
         snap.working_on = Some("fixing the build".into());
         apply_checked(&mut state, ev_snapshot(snap));
@@ -167,7 +167,7 @@ fn the_envelope_carries_phase_queue_and_working_on() {
 fn the_chat_header_reads_the_snapshot_while_the_row_says_otherwise() {
     for kind in KINDS {
         // The inventory row lags one round trip behind the stream.
-        let mut state = SessionState::new(with_phase(agent(kind), Phase::Idle));
+        let mut state = SessionState::new(with_phase(agent(kind), Phase::Idle), CAP);
         assert_eq!(
             state.phase(),
             PhaseView::Idle,

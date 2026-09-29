@@ -7,6 +7,7 @@ mod harness;
 mod activity;
 mod asks;
 mod fleet;
+mod following;
 mod inputs;
 mod open;
 mod properties;

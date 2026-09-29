@@ -102,7 +102,7 @@ pub fn frames(kind: Kind, name: &str) -> Vec<(String, SessionState, i64)> {
         _ => replay::<Codex>(&path),
     }
     .unwrap_or_else(|error| panic!("{dir}/{name}: {error}"));
-    let mut state = SessionState::new(agent(kind));
+    let mut state = SessionState::new(agent(kind), crate::chat::layout::CAP as usize);
     state.update(Msg::Connection(ui_state::Connection::Live));
     let mut committer = Committer::default();
     let mut out = Vec::new();

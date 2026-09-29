@@ -7,7 +7,7 @@ use wire::{Kind, Phase};
 use crate::harness::*;
 
 fn open_with(kind: Kind, orders: std::ops::RangeInclusive<u64>) -> SessionState {
-    let mut state = SessionState::new(agent(kind));
+    let mut state = SessionState::new(agent(kind), CAP);
     apply_checked(
         &mut state,
         ev_snapshot(snapshot(kind, 1, Phase::Idle, &[], &[])),
@@ -115,7 +115,7 @@ fn page_and_live_overlap_dedupe_by_key() {
 #[test]
 fn the_store_read_and_broadcast_overlap_is_deduped_by_key() {
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 1, Phase::Working, &[], &[])),

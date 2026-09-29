@@ -16,8 +16,9 @@ use crate::values::{
 };
 
 /// An open chat. Row ids are item keys and never move, so the host's id
-/// sequence only ever grows at its two edges: newer keys above the newest
-/// it holds, older ones below its oldest, until a reload.
+/// sequence changes only at its two edges: newer keys above the newest it
+/// holds, older ones below its oldest, and while the reader follows, the
+/// oldest dropped as the window trims to its cap; until a reload.
 pub struct Chat {
     id: u64,
     session: Session,
@@ -88,6 +89,23 @@ impl Chat {
                 .map(|held| held.item.key.clone())
                 .collect(),
         )
+    }
+
+    /// The oldest key the window holds: while the reader follows, the
+    /// window drops its oldest rows as new ones arrive, and the host drops
+    /// the keys before this one.
+    pub fn oldest_key(&self) -> Option<Key> {
+        let state = self.session.state();
+        state
+            .transcript()
+            .iter()
+            .next()
+            .map(|held| held.item.key.clone())
+    }
+
+    /// Where the reader is: at the newest row, or in history.
+    pub fn follow(&self, following: bool) {
+        self.session.follow(following);
     }
 
     /// Keys older than `oldest`, oldest first; None when `oldest` is not
@@ -348,6 +366,7 @@ pub(crate) fn frame(state: &SessionState, now_ms: i64, ended: Option<String>) ->
         connection: state.connection(),
         caught_up: state.caught_up(),
         has_older: state.transcript().has_older(),
+        arrivals_held: state.arrivals_held(),
         queue: ui_view::queue_rows(state),
         outbox: ui_view::outbox_rows(state),
         ask_input: ui_view::ask_card(state)

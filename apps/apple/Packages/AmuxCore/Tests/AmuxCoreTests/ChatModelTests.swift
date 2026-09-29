@@ -28,11 +28,59 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     /// asked for.
     var working: FrozenReview?
     var reviews = 0
+    /// The window's cap while the reader follows, as the session keeps it.
+    var cap = Int.max
+    /// Where the model last said its reader is, in order.
+    var follows: [Bool] = []
+    var following = true
+    /// Rows the session holds apart while the reader is in history.
+    var held: [Row] = []
 
     init(rows: [Row], frame: ChatFrame) {
         ordered = rows
         current = frame
     }
+
+    /// Rows arriving at the head as the session takes them: while the
+    /// reader follows they join the window, which drops its oldest rows past
+    /// the cap; in history they are held apart and the frame says so.
+    func arrive(_ rows: [Row]) {
+        if following {
+            ordered.append(contentsOf: rows)
+            pending.keys.append(contentsOf: rows.map(\.id))
+            trim()
+        } else {
+            held.append(contentsOf: rows)
+            current.arrivalsHeld = true
+            pending.session = true
+        }
+    }
+
+    private func trim() {
+        while ordered.count > cap {
+            pending.keys.append(ordered.removeFirst().id)
+        }
+    }
+
+    func follow(_ following: Bool) {
+        follows.append(following)
+        self.following = following
+        guard following, !held.isEmpty else { return }
+        current.arrivalsHeld = false
+        pending.session = true
+        if held.count > cap {
+            // More arrived than the window holds: the head is reloaded.
+            ordered = Array((ordered + held).suffix(cap))
+            pending.reloaded = true
+        } else {
+            ordered.append(contentsOf: held)
+            pending.keys.append(contentsOf: held.map(\.id))
+            trim()
+        }
+        held = []
+    }
+
+    func oldestKey() -> String? { ordered.first?.id }
 
     func keys() -> [String] { ordered.map(\.id) }
 
@@ -131,7 +179,8 @@ private func frame(
     ChatFrame(
         agent: AgentKey(host: [1], agent: [2]), name: "a", kind: kind, phase: phase,
         composer: ComposerView(mode: mode, activity: nil), connection: .live, caughtUp: caughtUp,
-        hasOlder: hasOlder, queue: [], outbox: [], askInput: nil, ended: nil, waiting: nil)
+        hasOlder: hasOlder, arrivalsHeld: false, queue: [], outbox: [], askInput: nil, ended: nil,
+        waiting: nil)
 }
 
 /// Prose rows "m<first>" through "m<last>", in order.
@@ -215,14 +264,60 @@ final class ChatModelTests: XCTestCase {
         let model = ChatModel(source: source)
         model.reading(atNewest: false)
         let before = model.toNewest
-        source.ordered.append(row("b", 2))
-        source.pending = ChatChanges(keys: ["b"], reloaded: false, session: false)
+        source.arrive([row("b", 2)])
         model.woke()
-        XCTAssertTrue(model.newActivity)
+        XCTAssertTrue(model.newActivity, "shown from the session's report")
+        XCTAssertEqual(model.ids, ["a"], "the session holds the arrival apart")
         XCTAssertEqual(model.toNewest, before, "the list is not moved under the reader")
         model.jumpToNewest()
         XCTAssertFalse(model.newActivity)
         XCTAssertEqual(model.toNewest, before + 1)
+        model.woke()
+        XCTAssertEqual(model.ids, ["a", "b"], "the return releases it")
+        XCTAssertEqual(model.drawn.last, "b")
+    }
+
+    /// The model tells its session once when the reader leaves the newest
+    /// row and once when the reader returns, whichever way that happens.
+    func testTheSessionIsToldWhenTheReaderLeavesAndReturns() async {
+        let source = FakeChat(rows: numbered(1...50), frame: frame())
+        let model = ChatModel(source: source)
+        XCTAssertEqual(source.follows, [], "a chat opens following")
+        model.reading(atNewest: false)
+        model.reading(atNewest: false)
+        XCTAssertEqual(source.follows, [false])
+        model.reading(atNewest: true)
+        XCTAssertEqual(source.follows, [false, true], "reaching the bottom returns")
+        model.reading(atNewest: false)
+        model.jumpToNewest()
+        XCTAssertEqual(source.follows, [false, true, false, true], "and so does New activity")
+        model.reading(atNewest: false)
+        model.draft = "go on"
+        model.send()
+        XCTAssertEqual(source.follows.last, true, "and so does sending, before the send")
+        XCTAssertTrue(source.sent.isEmpty)
+        await settle()
+        XCTAssertEqual(source.sent.count, 1)
+    }
+
+    /// A following chat under a flood holds the session's capped window: the
+    /// keys the window drops leave the sequence, and nothing is paged.
+    func testAFollowingChatUnderLiveRowsDropsTrimmedKeysAndAsksForNoPage() async {
+        let source = FakeChat(rows: numbered(801...1_000), frame: frame(hasOlder: true))
+        source.cap = 200
+        let model = ChatModel(source: source)
+        for n in 1_001...1_300 {
+            source.arrive([row("m\(n)", UInt64(n))])
+            model.woke()
+            // The screen's top row, a screen above the newest.
+            model.reading(at: model.drawn[model.drawn.count - 12])
+            model.reading(atNewest: true)
+        }
+        await settle()
+        XCTAssertTrue(source.paged.isEmpty, "a following chat pages nothing")
+        XCTAssertEqual(model.ids, (1_101...1_300).map { "m\($0)" })
+        XCTAssertEqual(model.drawn, model.ids)
+        XCTAssertEqual(source.follows, [])
     }
 
     // MARK: - The drawn run
@@ -254,7 +349,9 @@ final class ChatModelTests: XCTestCase {
     /// dragging down takes in held rows until the head, where following
     /// resumes, all without a fetch.
     func testArrivalsWhileReadingAreHeldAndReturningDownLandsOnTheHead() {
+        // Six hundred rows paged in while reading, over a window of 200.
         let source = FakeChat(rows: numbered(1...600), frame: frame(hasOlder: true))
+        source.cap = 200
         let model = ChatModel(source: source)
         model.reading(atNewest: false)
         for _ in 0..<3 {
@@ -266,20 +363,19 @@ final class ChatModelTests: XCTestCase {
         let toNewest = model.toNewest
 
         for n in 601...650 {
-            source.ordered.append(row("m\(n)", UInt64(n)))
-            source.pending = ChatChanges(keys: ["m\(n)"], reloaded: false, session: false)
+            source.arrive([row("m\(n)", UInt64(n))])
             model.woke()
         }
         XCTAssertEqual(model.drawn, reading, "arrivals leave the drawn run alone")
         XCTAssertTrue(model.newActivity)
         XCTAssertEqual(model.toNewest, toNewest, "the list is not moved under the reader")
-        XCTAssertEqual(model.ids.count, 650)
+        XCTAssertEqual(model.ids.count, 600, "the session holds them apart")
 
         // The reader drags down: each time the bottom of the drawn run is
         // reached, held rows below are taken in, and past the cap rows leave
         // at the top.
         var steps = 0
-        while model.drawn.last != "m650" {
+        while model.drawn.last != "m600" {
             let top = model.drawn.first
             model.reading(atNewest: true)
             XCTAssertFalse(model.following, "the bottom of the drawn run is not the head")
@@ -288,11 +384,15 @@ final class ChatModelTests: XCTestCase {
             steps += 1
             XCTAssertLessThan(steps, 10)
         }
+        // At the newest row the session releases what it held and trims
+        // the window back to its cap.
         model.reading(atNewest: true)
         XCTAssertTrue(model.following)
         XCTAssertFalse(model.newActivity)
+        model.woke()
         XCTAssertEqual(model.drawn.last, "m650")
-        XCTAssertLessThanOrEqual(model.drawn.count, ChatModel.drawnRows)
+        XCTAssertEqual(model.ids, (451...650).map { "m\($0)" })
+        XCTAssertEqual(model.drawn, model.ids)
         XCTAssertTrue(source.paged.isEmpty, "coming back down asks for nothing")
     }
 
@@ -301,18 +401,21 @@ final class ChatModelTests: XCTestCase {
     func testNewActivityTakesTheReaderToTheNewestRun() {
         let source = FakeChat(rows: numbered(1...600), frame: frame())
         let model = ChatModel(source: source)
+        source.cap = 200
         model.reading(atNewest: false)
         model.reachedTop()
-        source.ordered.append(contentsOf: numbered(601...1_000))
-        source.pending = ChatChanges(keys: (601...1_000).map { "m\($0)" }, reloaded: false, session: false)
+        source.arrive(numbered(601...1_000))
         model.woke()
         XCTAssertTrue(model.newActivity)
         let toNewest = model.toNewest
         model.jumpToNewest()
-        XCTAssertEqual(model.drawn, (1_001 - ChatModel.drawnRows...1_000).map { "m\($0)" })
         XCTAssertTrue(model.following)
         XCTAssertFalse(model.newActivity)
         XCTAssertEqual(model.toNewest, toNewest + 1)
+        // More arrived than the window holds: the head is reloaded.
+        model.woke()
+        XCTAssertEqual(model.ids, (801...1_000).map { "m\($0)" })
+        XCTAssertEqual(model.drawn, model.ids)
     }
 
     /// The top of the drawn run takes in held rows first, and a page is

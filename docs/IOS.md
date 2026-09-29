@@ -52,23 +52,30 @@ The runtime wakes Swift at most once per main-thread turn, naming the fleet
 or the chat that moved. The bundle takes that one's changes and reads again
 only what changed. A chat is a `ChatModel` over an open `Chat`:
 
-- It holds the chat's row keys, oldest first. Keys never move, and the list
-  only grows at its two edges: newer keys above the newest it holds, older
-  ones below its oldest when the reader scrolls up.
+- It holds the chat's row keys, oldest first: the session's window. Keys
+  never move, and the list changes only at its two edges: newer keys above
+  the newest it holds, older ones below its oldest when the reader scrolls
+  up, and while the reader follows, the oldest keys the window drops as it
+  trims to its cap of 200 rows.
+- `following` is told to the session whenever it changes: leaving the newest
+  row, and returning to it by reaching the bottom, New activity, or a send.
+  In history the session holds arrivals apart from the window, and New
+  activity shows from the frame's `arrivalsHeld`; the return releases them,
+  or reloads the newest rows when more arrived than the window holds.
 - The list draws a bounded run of those keys, at most 240, because every
   change places each drawn row again. While the reader follows, the run is
-  the newest rows; in history it stops growing at the bottom (arrivals are
-  held and New activity shows), and reaching either end takes in 80 held
-  rows beyond it without a fetch, letting as many go at the far end, still
-  held. A page is asked for only when fewer than a page of held rows are
-  left above the run, one per arrival at the top. New activity, a send and
-  a Reset draw the newest run again.
+  the newest rows, which the cap keeps under 240; in history the window
+  grows by pages, and reaching either end of the run takes in 80 held rows
+  beyond it without a fetch, letting as many go at the far end, still held.
+  A page is asked for only when fewer than a page of held rows are left
+  above the run, one per arrival at the top. New activity, a send and a
+  Reset draw the newest run again.
 - Each row is a `RowCell` read by key when it is first drawn. An update names
   the keys it changed, and only cells already drawn are read again, so one
   changed item redraws one cell.
 - The whole list is read again only when a change batch says it was reloaded,
-  which is what a Reset's swap does: the rows on screen stay until the rebuilt
-  transcript replaces them.
+  which is what a Reset's swap and the reload of a head that moved on do: the
+  rows on screen stay until the rebuilt transcript replaces them.
 - It keeps the draft, attachments, the head ask's unsent answers and a review
   in progress for as long as the chat is open, so leaving the page loses none
   of them.

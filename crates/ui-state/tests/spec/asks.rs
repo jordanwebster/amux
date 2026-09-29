@@ -11,7 +11,7 @@ fn an_ask_is_drawn_before_caught_up_only_when_the_entry_says_needs_you() {
     for kind in KINDS {
         // Answered from another device: the entry already says working, the
         // cached snapshot still lists the ask.
-        let mut state = SessionState::new(with_phase(agent(kind), Phase::Working));
+        let mut state = SessionState::new(with_phase(agent(kind), Phase::Working), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 5, Phase::NeedsYou, &["ask-1"], &[])),
@@ -28,7 +28,7 @@ fn an_ask_is_drawn_before_caught_up_only_when_the_entry_says_needs_you() {
         assert!(state.open_asks().is_empty());
 
         // Still open: the entry says needs_you, so the card draws at once.
-        let mut state = SessionState::new(with_phase(agent(kind), Phase::NeedsYou));
+        let mut state = SessionState::new(with_phase(agent(kind), Phase::NeedsYou), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 5, Phase::NeedsYou, &["ask-1"], &[])),
@@ -37,7 +37,7 @@ fn an_ask_is_drawn_before_caught_up_only_when_the_entry_says_needs_you() {
         assert_eq!(keys, ["ask-1"]);
 
         // After CaughtUp the snapshot alone decides.
-        let mut state = SessionState::new(with_phase(agent(kind), Phase::Idle));
+        let mut state = SessionState::new(with_phase(agent(kind), Phase::Idle), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 5, Phase::NeedsYou, &["ask-1"], &[])),
@@ -55,7 +55,7 @@ fn an_ask_is_drawn_before_caught_up_only_when_the_entry_says_needs_you() {
 #[test]
 fn asks_keep_the_interpreters_order_and_the_head_comes_first() {
     for kind in KINDS {
-        let mut state = SessionState::new(with_phase(agent(kind), Phase::NeedsYou));
+        let mut state = SessionState::new(with_phase(agent(kind), Phase::NeedsYou), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(
@@ -131,7 +131,7 @@ fn ask_closes_on_fact() {
 #[test]
 fn a_stale_answer_comes_back_rejected_and_the_card_returns_with_the_reason() {
     for kind in KINDS {
-        let mut state = SessionState::new(with_phase(agent(kind), Phase::NeedsYou));
+        let mut state = SessionState::new(with_phase(agent(kind), Phase::NeedsYou), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 5, Phase::NeedsYou, &["ask-1"], &[])),
@@ -151,7 +151,7 @@ fn a_stale_answer_comes_back_rejected_and_the_card_returns_with_the_reason() {
 #[test]
 fn an_exited_agents_open_asks_are_drawn_dismissed() {
     for kind in KINDS {
-        let mut state = SessionState::new(with_phase(agent(kind), Phase::NeedsYou));
+        let mut state = SessionState::new(with_phase(agent(kind), Phase::NeedsYou), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 5, Phase::NeedsYou, &["ask-1"], &[])),

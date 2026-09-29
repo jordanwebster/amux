@@ -4,6 +4,9 @@ use std::collections::HashMap;
 
 use wire::{SessionEvent, session_event};
 
+/// The window's cap: more rows than any case here delivers.
+pub const CAP: usize = 200;
+
 /// Commits interpreter steps the way the owning daemon does.
 #[derive(Clone, Default)]
 pub struct Committer {

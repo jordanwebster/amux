@@ -160,7 +160,7 @@ fn describe_card(card: Option<&ui_view::AskCard>) -> String {
 
 /// Replays a fixture's emission through the session and renders the views.
 fn render(kind: Kind, frames: &[Replayed]) -> String {
-    let mut state = SessionState::new(agent(kind));
+    let mut state = SessionState::new(agent(kind), support::CAP);
     let mut committer = Committer::default();
     let mut out = String::new();
     let expanded = HashSet::new();

@@ -21,6 +21,8 @@ final class CaughtUpSession: OpenChat, @unchecked Sendable {
     func keys() -> [String] { ["a"] }
     func keys(above newest: String) -> [String]? { [] }
     func keys(below oldest: String) -> [String]? { [] }
+    func oldestKey() -> String? { "a" }
+    func follow(_ following: Bool) {}
     func rows(for keys: [String], options: RowOptions?) -> [Row] { [] }
     func askCard() -> AskCard? { nil }
     func strip() -> Strip? { nil }
@@ -29,7 +31,8 @@ final class CaughtUpSession: OpenChat, @unchecked Sendable {
         ChatFrame(
             agent: agent, name: "a", kind: .claudeSdk, phase: .needsYou,
             composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: current,
-            hasOlder: false, queue: [], outbox: [], askInput: nil, ended: nil, waiting: nil)
+            hasOlder: false, arrivalsHeld: false, queue: [], outbox: [], askInput: nil, ended: nil,
+            waiting: nil)
     }
     func takeChanges() -> ChatChanges { ChatChanges(keys: [], reloaded: false, session: true) }
     func send(_ draft: Draft) async -> Result<SendOutcome, RuntimeFailure> { .failure(RuntimeFailure("no")) }

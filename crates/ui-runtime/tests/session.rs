@@ -15,6 +15,8 @@ use wire::{
 };
 
 const KIND: Kind = Kind::ClaudeSdk;
+/// The window's cap in cases about something else.
+const CAP: u32 = 200;
 
 /// Opens a session and brings it to caught up with `rows` held rows.
 async fn open_caught_up(
@@ -22,7 +24,7 @@ async fn open_caught_up(
     rows: u64,
 ) -> (Arc<Session>, Calls, Feed<wire::SessionEvent>) {
     let (client, mut calls) = runtime();
-    let open = tokio::spawn(Session::open(client, agent(KIND), 40, clock.clone()));
+    let open = tokio::spawn(Session::open(client, agent(KIND), 40, CAP, clock.clone()));
     let (_, feed) = calls.subscribe().await;
     feed.send(snapshot(KIND, rows, &[]));
     for order in 1..=rows {
@@ -61,7 +63,13 @@ fn clock_now(clock: &ManualClock) -> i64 {
 #[tokio::test]
 async fn open_paints_the_snapshot_and_held_rows_before_it_returns() {
     let (client, mut calls) = runtime();
-    let open = tokio::spawn(Session::open(client, agent(KIND), 40, ManualClock::new(0)));
+    let open = tokio::spawn(Session::open(
+        client,
+        agent(KIND),
+        40,
+        CAP,
+        ManualClock::new(0),
+    ));
     let (request, feed) = calls.subscribe().await;
     assert_eq!(
         request.from,
@@ -90,7 +98,13 @@ async fn open_paints_the_snapshot_and_held_rows_before_it_returns() {
 #[tokio::test]
 async fn an_away_host_paints_its_held_rows_then_detached_with_send_disabled() {
     let (client, mut calls) = runtime();
-    let open = tokio::spawn(Session::open(client, agent(KIND), 40, ManualClock::new(0)));
+    let open = tokio::spawn(Session::open(
+        client,
+        agent(KIND),
+        40,
+        CAP,
+        ManualClock::new(0),
+    ));
     let (_, feed) = calls.subscribe().await;
     feed.send(snapshot(KIND, 2, &[]));
     feed.send(ev(text_item(KIND, 1, 1, "cached")));
@@ -239,7 +253,13 @@ async fn an_uncertain_input_is_settled_from_the_queue_or_the_items_and_otherwise
 #[tokio::test]
 async fn page_older_asks_below_the_oldest_held_row_and_merges_under_the_window() {
     let (client, mut calls) = runtime();
-    let open = tokio::spawn(Session::open(client, agent(KIND), 2, ManualClock::new(0)));
+    let open = tokio::spawn(Session::open(
+        client,
+        agent(KIND),
+        2,
+        CAP,
+        ManualClock::new(0),
+    ));
     let (_, feed) = calls.subscribe().await;
     feed.send(snapshot(KIND, 6, &[]));
     feed.send(ev(text_item(KIND, 5, 5, "five")));
@@ -369,7 +389,13 @@ fn act_arm(request: &SendInputRequest) -> String {
 async fn acts_on_the_chat_go_in_the_kinds_own_arm_and_return_the_verdict() {
     for kind in [Kind::ClaudePty, Kind::ClaudeSdk, Kind::Codex] {
         let (client, mut calls) = runtime();
-        let open = tokio::spawn(Session::open(client, agent(kind), 40, ManualClock::new(0)));
+        let open = tokio::spawn(Session::open(
+            client,
+            agent(kind),
+            40,
+            CAP,
+            ManualClock::new(0),
+        ));
         let (_, feed) = calls.subscribe().await;
         feed.send(snapshot(kind, 1, &[b"queued-1"]));
         feed.send(caught_up(1));
@@ -421,6 +447,7 @@ async fn the_exited_composer_resumes_with_the_draft_as_the_first_prompt() {
         client,
         exited(agent(KIND)),
         40,
+        CAP,
         ManualClock::new(0),
     ));
     let (_, feed) = calls.subscribe().await;
@@ -501,7 +528,13 @@ async fn a_refused_call_is_a_rejection_never_uncertain() {
 #[tokio::test]
 async fn attachment_bytes_are_fetched_lazily_once_and_redraw_their_row() {
     let (client, mut calls) = runtime();
-    let open = tokio::spawn(Session::open(client, agent(KIND), 40, ManualClock::new(0)));
+    let open = tokio::spawn(Session::open(
+        client,
+        agent(KIND),
+        40,
+        CAP,
+        ManualClock::new(0),
+    ));
     let (_, feed) = calls.subscribe().await;
     feed.send(snapshot(KIND, 1, &[]));
     feed.send(ev(image_item(KIND, 1, 1, b"hash-1")));
@@ -595,7 +628,7 @@ async fn the_dump_part_writes_structure_and_no_content() {
 
     let clock = ManualClock::new(0);
     let (client, mut calls) = runtime();
-    let open = tokio::spawn(Session::open(client, agent(KIND), 40, clock.clone()));
+    let open = tokio::spawn(Session::open(client, agent(KIND), 40, CAP, clock.clone()));
     let (_, feed) = calls.subscribe().await;
     let mut first = snapshot(KIND, 3, &[b"queued-1"]);
     if let Some(wire::session_event::Of::Snapshot(snapshot)) = &mut first.of {
@@ -695,7 +728,13 @@ async fn the_dump_part_writes_structure_and_no_content() {
 #[tokio::test]
 async fn closing_drops_the_stream_and_a_late_result_changes_nothing() {
     let (client, mut calls) = runtime();
-    let open = tokio::spawn(Session::open(client, agent(KIND), 40, ManualClock::new(0)));
+    let open = tokio::spawn(Session::open(
+        client,
+        agent(KIND),
+        40,
+        CAP,
+        ManualClock::new(0),
+    ));
     let (_, feed) = calls.subscribe().await;
     feed.send(snapshot(KIND, 1, &[]));
     feed.send(ev(image_item(KIND, 1, 1, b"hash-1")));
@@ -738,4 +777,134 @@ async fn an_agent_the_runtime_no_longer_serves_ends_the_session() {
     assert_eq!(ended.code(), Some(ErrorCode::NotFound));
     calls.none().await;
     assert!(clock.sleeping().is_empty(), "nothing retries");
+}
+
+fn keys(session: &Session) -> Vec<String> {
+    session.state().transcript().keys().cloned().collect()
+}
+
+#[tokio::test]
+async fn a_following_window_trims_to_its_cap_and_a_return_past_the_held_rows_reloads_the_head() {
+    let (client, mut calls) = runtime();
+    let open = tokio::spawn(Session::open(
+        client,
+        agent(KIND),
+        3,
+        3,
+        ManualClock::new(0),
+    ));
+    let (_, feed) = calls.subscribe().await;
+    feed.send(snapshot(KIND, 3, &[]));
+    for order in 1..=3 {
+        feed.send(ev(text_item(KIND, order, order, &format!("row {order}"))));
+    }
+    feed.send(caught_up(3));
+    let session = open.await.unwrap().expect("the session opens");
+    until(session.changed(), || {
+        session.state().caught_up().then_some(())
+    })
+    .await;
+
+    // Following, a live row trims the top, and the full window fetches no
+    // page however often the client asks.
+    feed.send(ev(text_item(KIND, 4, 4, "row 4")));
+    until(session.changed(), || {
+        (session.state().transcript().head() == Some(4)).then_some(())
+    })
+    .await;
+    assert_eq!(keys(&session), ["k2", "k3", "k4"]);
+    assert_eq!(session.page_older(40).await, Ok(0));
+    calls.none().await;
+
+    // In history, arrivals are held apart until they pass the cap.
+    session.follow(false);
+    for order in 5..=8 {
+        feed.send(ev(text_item(KIND, order, order, &format!("row {order}"))));
+    }
+    until(session.changed(), || {
+        session.state().head_moved_on().then_some(())
+    })
+    .await;
+    assert!(session.state().arrivals_held());
+    assert_eq!(
+        keys(&session),
+        ["k2", "k3", "k4"],
+        "the reader's window stays"
+    );
+    session.take_changes();
+
+    // The return reopens the stream with a fresh tail, keeping the old
+    // window on screen until the fresh one is caught up.
+    session.follow(true);
+    let (request, fresh) = calls.subscribe().await;
+    assert_eq!(request.from, Some(subscribe_request::From::Tail(3)));
+    assert!(feed.is_closed(), "the old stream is dropped");
+    fresh.send(snapshot(KIND, 9, &[]));
+    for order in 7..=9 {
+        fresh.send(ev(text_item(KIND, order, order, &format!("row {order}"))));
+    }
+    until(session.changed(), || {
+        session.state().reset_pending().then_some(())
+    })
+    .await;
+    assert_eq!(keys(&session), ["k2", "k3", "k4"]);
+    fresh.send(caught_up(9));
+    until(session.changed(), || {
+        (!session.state().reset_pending()).then_some(())
+    })
+    .await;
+    assert_eq!(keys(&session), ["k7", "k8", "k9"]);
+    assert!(session.take_changes().reloaded, "the swap reports reloaded");
+    assert!(!session.state().arrivals_held());
+
+    let state = session.state();
+    let trace = state.trace();
+    assert!(
+        trace
+            .events
+            .iter()
+            .any(|traced| traced.event == TraceEvent::Driver(DriverEvent::Reload))
+    );
+    assert_eq!(trace.replay(), *state, "the trace rebuilds the same window");
+}
+
+#[tokio::test]
+async fn a_return_whose_held_rows_fit_releases_them_without_a_fetch() {
+    let (client, mut calls) = runtime();
+    let open = tokio::spawn(Session::open(
+        client,
+        agent(KIND),
+        3,
+        3,
+        ManualClock::new(0),
+    ));
+    let (_, feed) = calls.subscribe().await;
+    feed.send(snapshot(KIND, 3, &[]));
+    for order in 1..=3 {
+        feed.send(ev(text_item(KIND, order, order, &format!("row {order}"))));
+    }
+    feed.send(caught_up(3));
+    let session = open.await.unwrap().expect("the session opens");
+    session.follow(false);
+    for order in 4..=5 {
+        feed.send(ev(text_item(KIND, order, order, &format!("row {order}"))));
+    }
+    until(session.changed(), || {
+        (session.state().held_arrivals() == 2).then_some(())
+    })
+    .await;
+    // In history a page is not bounded by the cap.
+    let paging = tokio::spawn({
+        let session = Arc::new(session);
+        let paged = session.clone();
+        async move { (paged.page_older(40).await, session) }
+    });
+    let (request, reply) = calls.fetch().await;
+    assert_eq!(request.limit, 40);
+    reply.send(Ok(wire::FetchResponse::default())).ok();
+    let (_, session) = paging.await.unwrap();
+    session.follow(true);
+    calls.none().await;
+    assert_eq!(keys(&session), ["k3", "k4", "k5"]);
+    assert!(!feed.is_closed());
 }

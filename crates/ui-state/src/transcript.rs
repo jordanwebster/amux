@@ -19,7 +19,7 @@ pub struct Held {
 }
 
 impl Held {
-    fn new(kind: Kind, item: Item) -> Held {
+    pub(crate) fn new(kind: Kind, item: Item) -> Held {
         let kind = wire::kind_from_tag(&item.kind).unwrap_or(kind);
         let body = ItemBody::decode(kind, &item.body);
         let class = body.class();
@@ -38,7 +38,9 @@ impl Held {
 /// window it upserts by key if newer, else is ignored, which absorbs the
 /// overlap between a store read and the broadcast; below `oldest_held` it is
 /// dropped, since a page brings the current version if it is ever scrolled
-/// to. Pages only extend the low edge. Nothing is evicted.
+/// to. Pages only extend the low edge. The session trims the oldest rows
+/// while the reader follows the newest, so the window never grows past its
+/// cap then; the rows trimmed stay in the store, a page away.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Transcript {
     kind: Kind,
@@ -224,6 +226,94 @@ impl Transcript {
         item.revision = append.revision;
         self.replace(order, item, changed);
         Appended::Applied
+    }
+
+    /// Drops the oldest rows until at most `cap` remain. Older history then
+    /// exists again, and the run at the new low edge reads open below; its
+    /// indexes forget the dropped rows, so a later revision of one is
+    /// ignored like any row below the window.
+    pub(crate) fn trim(&mut self, cap: usize, changed: &mut Changed) {
+        if self.items.len() <= cap {
+            return;
+        }
+        while self.items.len() > cap {
+            let Some((_, held)) = self.items.pop_first() else {
+                break;
+            };
+            let key = &held.item.key;
+            self.by_key.remove(key);
+            if self.by_input.get(&held.item.input_id) == Some(key) {
+                self.by_input.remove(&held.item.input_id);
+            }
+            if let Some(target) = &held.refers
+                && self.referrers.get(target) == Some(key)
+            {
+                self.referrers.remove(target);
+                if self.by_key.contains_key(target) {
+                    changed.key(target);
+                }
+            }
+            self.referrers.remove(key);
+            changed.key(key);
+        }
+        self.exhausted = false;
+        let Some(oldest) = self.oldest_held() else {
+            self.runs = RunIndex::default();
+            return;
+        };
+        // A run the cut went through loses members; whatever run starts at
+        // the new low edge now reads open below.
+        let cut_run = self
+            .runs
+            .containing(oldest)
+            .filter(|(start, segment)| **start < oldest && segment.len >= 2)
+            .map(|(_, segment)| segment.end);
+        let mut runs = std::mem::take(&mut self.runs);
+        runs.cut_below(oldest, self);
+        self.runs = runs;
+        if let Some(end) = cut_run {
+            for held in self.items.range(oldest..=end).map(|(_, held)| held) {
+                changed.key(&held.item.key);
+            }
+        }
+        if let Some(run) = self.run_at(oldest) {
+            self.runs.members(&run, self, changed);
+        }
+    }
+
+    /// Checks the block invariant: orders contiguous, and every index names
+    /// only held rows.
+    pub fn check(&self) -> Result<(), String> {
+        if let (Some(oldest), Some(head)) = (self.oldest_held(), self.head())
+            && head - oldest + 1 != self.items.len() as u64
+        {
+            return Err(format!(
+                "{} rows held between {oldest} and {head}",
+                self.items.len()
+            ));
+        }
+        for (key, order) in &self.by_key {
+            if self.items.get(order).map(|held| &held.item.key) != Some(key) {
+                return Err(format!("key {key} indexed at {order}, which holds another"));
+            }
+        }
+        if self.by_key.len() != self.items.len() {
+            return Err("a held row is not indexed by key".into());
+        }
+        for key in self.by_input.values() {
+            if !self.by_key.contains_key(key) {
+                return Err(format!("input id indexes {key}, which is not held"));
+            }
+        }
+        for referrer in self.referrers.values() {
+            if !self.by_key.contains_key(referrer) {
+                return Err(format!("referrer {referrer} is not held"));
+            }
+        }
+        if self.runs != RunIndex::rebuild(self) {
+            return Err("run index drifted from a rebuild".into());
+        }
+        Ok(())
     }
 
     /// Records what `held` refers to; the referred row redraws with it.
@@ -442,6 +532,23 @@ impl RunIndex {
         }
         let span = self.span(order, transcript);
         self.scan(span, transcript);
+    }
+
+    /// Forgets rows below `oldest`: segments that started there go, and one
+    /// that reached past it is scanned again from `oldest`.
+    fn cut_below(&mut self, oldest: u64, transcript: &Transcript) {
+        let cut: Vec<u64> = self
+            .segments
+            .range(..oldest)
+            .map(|(&start, _)| start)
+            .collect();
+        for start in cut {
+            if let Some(segment) = self.segments.remove(&start)
+                && segment.end >= oldest
+            {
+                self.scan(oldest..=segment.end, transcript);
+            }
+        }
     }
 
     /// Replaces every segment inside `span` with a fresh scan of it.

@@ -51,8 +51,8 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
         ChatFrame(
             agent: agent, name: name, kind: kind, phase: phase,
             composer: ComposerView(mode: mode, activity: activity), connection: .live,
-            caughtUp: caughtUp, hasOlder: hasOlder, queue: queue, outbox: outbox, askInput: nil,
-            ended: nil, waiting: waiting)
+            caughtUp: caughtUp, hasOlder: hasOlder, arrivalsHeld: false, queue: queue,
+            outbox: outbox, askInput: nil, ended: nil, waiting: waiting)
     }
 
     public static func strip(
@@ -79,11 +79,20 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
 
     // MARK: - Changing it
 
-    /// Appends rows at the newest edge and says so on the next take.
+    /// Rows arriving at the newest edge, as the session takes them: while
+    /// the reader follows they join the rows and say so on the next take; in
+    /// history they are held apart until the reader returns, and the frame
+    /// says they are.
     public func append(_ rows: [Row]) {
         lock.withLock {
-            ordered.append(contentsOf: rows)
-            pending.keys.append(contentsOf: rows.map(\.id))
+            if following {
+                ordered.append(contentsOf: rows)
+                pending.keys.append(contentsOf: rows.map(\.id))
+            } else {
+                held.append(contentsOf: rows)
+                current.arrivalsHeld = true
+                pending.session = true
+            }
         }
     }
 
@@ -134,6 +143,26 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
         lock.withLock {
             guard let index = ordered.firstIndex(where: { $0.id == oldest }) else { return nil }
             return ordered[..<index].map(\.id)
+        }
+    }
+
+    public func oldestKey() -> String? { lock.withLock { ordered.first?.id } }
+
+    /// Where the reader was last said to be, in order, for a test to read.
+    public private(set) var follows: [Bool] = []
+    private var following = true
+    private var held: [Row] = []
+
+    public func follow(_ following: Bool) {
+        lock.withLock {
+            follows.append(following)
+            self.following = following
+            guard following, !held.isEmpty else { return }
+            ordered.append(contentsOf: held)
+            pending.keys.append(contentsOf: held.map(\.id))
+            held = []
+            current.arrivalsHeld = false
+            pending.session = true
         }
     }
 

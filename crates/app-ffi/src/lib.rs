@@ -1437,6 +1437,29 @@ pub unsafe extern "C" fn amux_session_new_keys_above(
     unsafe { read(chat, |chat| chat.keys_above(&newest)) }
 }
 
+/// The oldest key the window holds, as a JSON string; null JSON when it
+/// holds none. While the reader follows, the window drops its oldest rows
+/// as new ones arrive, and the host drops the keys before this one.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_oldest_key(chat: *const AmuxChat) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, Chat::oldest_key) }
+}
+
+/// Tells the chat whether the reader is at the newest row (true) or has
+/// scrolled into history (false). A chat opens following.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_follow(chat: *const AmuxChat, following: bool) {
+    // SAFETY: the caller's contract.
+    let _ = unsafe { read(chat, |chat| chat.follow(following)) };
+}
+
 /// Keys older than `oldest`, oldest first; null JSON when `oldest` is not
 /// held.
 ///

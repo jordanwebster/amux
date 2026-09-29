@@ -1,3 +1,31 @@
+2026-09-29 — **A chat's window is bounded while the reader follows.** A
+chat left open under a flood (about 40 rows a second) held every row it had
+seen. The session model now keeps at most a cap of the newest rows while
+the reader follows the newest row, dropping the oldest from the top as live
+rows arrive, with their key, input-id, referrer and run entries; older
+history exists again, so the run at the new low edge reads open below, and
+the dropped rows come back only by paging. While the reader is in history
+nothing is dropped and the window's head stays put: arrivals are held by
+the session apart from the window, appends to them apply to them, the
+snapshot, asks, queue, inputs and activity line stay current, and both
+clients show New activity from the session's report instead of counting on
+their own. The held rows are themselves bounded by the cap. Returning to
+the newest row releases them into the window and trims it back to the cap,
+which fetches nothing; when more arrived than the session held, the driver
+reopens the stream with a fresh tail and swaps the rebuilt window in at
+CaughtUp the way a Reset does, the old rows on screen until then. The model
+is a reducer with no view state, so it is told: the terminal reports its
+anchor pinned to the bottom or not after every key, mouse event and frame,
+and the phone reports `ChatModel.following` whenever it changes; both
+messages are in the driver trace, so a replayed session rebuilds the same
+window. The cap is given where a session opens, beside the tail: 200 rows
+on the phone (its tail), and 200 on the terminal, because the terminal
+keeps 40 rows above the screen while following and the window must still
+hold a screen and that lookahead after trimming. While following, a page
+fetches only what fits under the cap, so a following client never fetches
+rows the next live row trims. The phone's list drops the keys the window
+drops through a new `oldestKey` read.
+
 2026-09-29 — **The page-landing chat test compares the screen, not reported
 frames.** On a CI runner the test that a page of older rows landing above a
 reader at the top moves nothing on screen saw every row 54 points higher

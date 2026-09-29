@@ -88,7 +88,10 @@ fn snapshot(phase: Phase, body: Vec<u8>, queue: Vec<wire::QueuedInput>) -> Msg {
 
 /// A live Claude SDK chat holding `items`, caught up.
 fn chat(items: Vec<Item>) -> SessionState {
-    let mut state = SessionState::new(fixtures::agent(Kind::ClaudeSdk));
+    let mut state = SessionState::new(
+        fixtures::agent(Kind::ClaudeSdk),
+        crate::chat::layout::CAP as usize,
+    );
     state.update(Msg::Connection(ui_state::Connection::Live));
     state.update(snapshot(Phase::Idle, vec![], vec![]));
     for item in items {
@@ -96,6 +99,16 @@ fn chat(items: Vec<Item>) -> SessionState {
     }
     state.update(caught_up(0));
     state
+}
+
+/// Tells the session what the view says about following, as the app does
+/// after every key and frame.
+fn tell(view: &mut ChatView, state: &mut SessionState) -> Option<bool> {
+    let moved = view.following_moved();
+    if let Some(following) = moved {
+        state.update(Msg::Following(following));
+    }
+    moved
 }
 
 /// Replies at orders `from..=to`: a window with older history when `from`
@@ -143,12 +156,19 @@ fn fewer_than_a_page_of_held_rows_above_the_screen_asks_for_an_older_page() {
 
 #[test]
 fn an_open_collapsed_run_at_the_top_asks_for_a_larger_page() {
-    // A run of 300 reads from the oldest held row, then two replies.
-    let mut items: Vec<Item> = (101..=400)
-        .map(|order| item(order, Some("src/lib.rs")))
-        .collect();
-    items.extend(replies(401, 402));
-    let state = chat(items);
+    // A run of 300 reads from the oldest held row, then two replies: the
+    // reads paged in while the reader was in history, where the window
+    // keeps every row it pages.
+    let mut state = chat(replies(401, 402));
+    state.update(Msg::Following(false));
+    let epoch = state.epoch();
+    state.update(Msg::Page {
+        items: (101..=400)
+            .map(|order| item(order, Some("src/lib.rs")))
+            .collect(),
+        exhausted: false,
+        epoch,
+    });
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
     let (screen, page) = feed(&mut view, &state);
     assert!(screen.contains("300+ reads"), "{screen}");
@@ -162,10 +182,17 @@ fn a_scrolled_reader_keeps_its_place_as_rows_arrive() {
     feed(&mut view, &state);
     view.key(&state, key(KeyCode::PageUp), theme());
     assert!(matches!(view.anchor, Anchor::Top { .. }));
+    assert_eq!(tell(&mut view, &mut state), Some(false));
     let (before, _) = feed(&mut view, &state);
+    assert!(before.contains("scrolled back"), "{before}");
     for order in 61..=65 {
         state.update(event(session_event::Of::Item(item(order, None))));
     }
+    assert_eq!(
+        state.transcript().head(),
+        Some(60),
+        "arrivals are held apart"
+    );
     let (after, _) = feed(&mut view, &state);
     let top = |screen: &str| {
         screen
@@ -183,8 +210,57 @@ fn a_scrolled_reader_keeps_its_place_as_rows_arrive() {
         theme(),
     );
     assert_eq!(view.anchor, Anchor::Bottom);
+    assert_eq!(tell(&mut view, &mut state), Some(true));
     let (screen, _) = feed(&mut view, &state);
     assert!(screen.contains("reply number 65"), "{screen}");
+}
+
+#[test]
+fn the_view_tells_the_session_once_when_the_reader_leaves_and_once_when_it_returns() {
+    let mut state = chat(replies(1, 60));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    feed(&mut view, &state);
+    assert_eq!(tell(&mut view, &mut state), None, "a chat opens following");
+    view.key(&state, key(KeyCode::PageUp), theme());
+    assert_eq!(tell(&mut view, &mut state), Some(false));
+    view.key(&state, key(KeyCode::PageUp), theme());
+    assert_eq!(tell(&mut view, &mut state), None);
+    assert!(!state.following());
+    // Sending a prompt is a return to the newest row.
+    typed(&mut view, &state, "go on");
+    let effects = view.key(&state, key(KeyCode::Enter), theme());
+    assert!(matches!(effects.as_slice(), [ChatEffect::Prompt { .. }]));
+    assert_eq!(tell(&mut view, &mut state), Some(true));
+    assert!(state.following());
+}
+
+#[test]
+fn a_following_chat_under_live_rows_issues_no_page() {
+    // A long chat opened on its 40-row tail pages ahead once, then holds.
+    let mut state = chat(replies(961, 1000));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (_, page) = feed(&mut view, &state);
+    assert_eq!(page, Some(PAGE));
+    view.page_sent(&state);
+    let epoch = state.epoch();
+    state.update(Msg::Page {
+        items: replies(921, 960),
+        exhausted: false,
+        epoch,
+    });
+    // Replies and runs of reads flood in; the window trims at its cap and
+    // the view never asks for a page it would trim again.
+    for order in 1001..=1600 {
+        // Long runs collapse to a row each, so a full window can draw fewer
+        // rows than a page above the screen.
+        let read = order % 160 >= 10;
+        let row = item(order, read.then_some("src/lib.rs"));
+        state.update(event(session_event::Of::Item(row)));
+        let (_, page) = feed(&mut view, &state);
+        assert_eq!(page, None, "a page asked while following at {order}");
+        assert!(state.transcript().len() <= crate::chat::layout::CAP as usize);
+    }
+    assert_eq!(state.transcript().head(), Some(1600));
 }
 
 #[test]
@@ -645,7 +721,10 @@ fn an_unconfirmed_answer_offers_resend_and_discard() {
 
 #[test]
 fn a_draft_is_taken_any_time_and_sent_only_when_caught_up_and_live() {
-    let mut state = SessionState::new(fixtures::agent(Kind::ClaudeSdk));
+    let mut state = SessionState::new(
+        fixtures::agent(Kind::ClaudeSdk),
+        crate::chat::layout::CAP as usize,
+    );
     state.update(Msg::Connection(ui_state::Connection::Live));
     state.update(snapshot(Phase::Idle, vec![], vec![]));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);

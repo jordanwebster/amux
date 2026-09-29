@@ -34,6 +34,11 @@ use wire::{
 
 /// How many rows a chat opens with unless the host says otherwise.
 pub const DEFAULT_TAIL: u32 = 200;
+/// The most rows a chat's window keeps while the reader follows the newest:
+/// the tail it opened with. The list pages only at a top marker it can see,
+/// which a following reader sees only when the whole window fits on screen,
+/// far fewer rows than this; a longer tail raises the cap with it.
+pub const DEFAULT_CAP: u32 = DEFAULT_TAIL;
 
 /// What moved: the fleet, or the chat with this id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,8 +125,14 @@ impl AppRuntime {
             let host = fleet.host(&entry.host_id).cloned();
             (entry, host)
         };
-        let session =
-            ui_runtime::Session::open(self.client.clone(), entry, tail, self.clock.clone()).await?;
+        let session = ui_runtime::Session::open(
+            self.client.clone(),
+            entry,
+            tail,
+            DEFAULT_CAP.max(tail),
+            self.clock.clone(),
+        )
+        .await?;
         if let Some(host) = host {
             session.set_host(host);
         }

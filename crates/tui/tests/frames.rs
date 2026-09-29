@@ -166,7 +166,7 @@ async fn fleet_when(net: &Net, host: &str, ready: impl Fn(&FleetState) -> bool) 
 fn chat_state(fleet: &FleetState, agent: &[u8], events: &[SessionEvent]) -> SessionState {
     let entry = fleet.find(agent).expect("the agent is listed").clone();
     let host = fleet.host(&entry.host_id).cloned();
-    let mut state = SessionState::new(entry);
+    let mut state = SessionState::new(entry, tui::chat::layout::CAP as usize);
     state.update(Msg::Connection(Connection::Live));
     if let Some(host) = host {
         state.update(Msg::Host(host));

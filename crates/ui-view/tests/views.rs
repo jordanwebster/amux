@@ -14,6 +14,9 @@ use wire::{Item, Kind, Phase, SessionEvent, ToolClass, ToolState, session_event}
 
 const KINDS: [Kind; 3] = [Kind::ClaudePty, Kind::ClaudeSdk, Kind::Codex];
 
+/// The window's cap: more rows than any case here delivers.
+const CAP: usize = 200;
+
 fn agent(kind: Kind) -> wire::Agent {
     wire::Agent {
         agent_id: b"agent".to_vec(),
@@ -160,7 +163,7 @@ fn row_ids_never_move_and_rows_by_keys_equal_rows_by_range() {
                 rng ^= rng << 17;
                 rng
             };
-            let mut state = SessionState::new(agent(kind));
+            let mut state = SessionState::new(agent(kind), CAP);
             state.update(snapshot(kind, Phase::Working, vec![], vec![]));
             let start = 40;
             let mut head = start;
@@ -252,7 +255,7 @@ fn row_ids_never_move_and_rows_by_keys_equal_rows_by_range() {
 #[test]
 fn a_range_extends_across_a_run_at_either_edge() {
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         state.update(snapshot(kind, Phase::Working, vec![], vec![]));
         for order in 1..=3 {
             state.update(event(session_event::Of::Item(item(
@@ -344,7 +347,7 @@ fn attachments_keep_their_positions() {
         Segment::Attachment(AttachmentView::Text { lines: 2, .. })
     ));
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         let mut prompt = item(kind, 1, 1, None);
         prompt.body = body(kind, None, false);
         prompt.text = "\u{FFFC}first".into();
@@ -654,7 +657,7 @@ fn queued(id: &[u8], steer: bool, from_agent: Option<&str>) -> wire::QueuedInput
 /// The authored story each kind's golden tells.
 fn authored(kind: Kind) -> String {
     let mut out = String::new();
-    let mut state = SessionState::new(agent(kind));
+    let mut state = SessionState::new(agent(kind), CAP);
     let unanswerable = wire::Ask {
         key: "menu-1".into(),
         body: Some(wire::ask::Body::Unanswerable(wire::UnanswerableAsk {
@@ -825,7 +828,7 @@ fn authored_view_goldens() {
 #[test]
 fn a_sent_prompt_the_queue_lists_is_drawn_once() {
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         state.update(snapshot(kind, Phase::Starting, vec![], vec![]));
         state.update(caught_up());
         state.update(Msg::Send(prompt_input(kind, b"r1", "resumed")));
@@ -847,7 +850,7 @@ fn a_sent_prompt_the_queue_lists_is_drawn_once() {
 #[test]
 fn a_refused_send_now_leaves_the_prompt_queued() {
     let kind = Kind::ClaudePty;
-    let mut state = SessionState::new(agent(kind));
+    let mut state = SessionState::new(agent(kind), CAP);
     state.update(snapshot(
         kind,
         Phase::Working,
@@ -886,7 +889,7 @@ fn a_refused_send_now_leaves_the_prompt_queued() {
 #[test]
 fn unknown_renders_one_way() {
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         state.update(snapshot(kind, Phase::Starting, vec![], vec![]));
         assert_eq!(session_strip(&state), Strip::default());
     }
@@ -942,7 +945,7 @@ fn a_host_that_revoked_trust_is_away_for_that_reason_first() {
 }
 
 fn settings_of(kind: Kind, body: Vec<u8>) -> SettingsView {
-    let mut state = SessionState::new(agent(kind));
+    let mut state = SessionState::new(agent(kind), CAP);
     state.update(snapshot(kind, Phase::Idle, body, Vec::new()));
     settings(&state)
 }
@@ -1232,7 +1235,7 @@ fn tool_item(
 #[test]
 fn a_landed_edit_shows_its_numbered_patch_head_and_a_run_its_newest_subjects() {
     use serde_json::json;
-    let mut state = SessionState::new(agent(Kind::ClaudeSdk));
+    let mut state = SessionState::new(agent(Kind::ClaudeSdk), CAP);
     let edit = json!({"file_path": "src/retry.rs", "old_string": "x", "new_string": "y"});
     let patch = json!({"structuredPatch": [{
         "oldStart": 20, "newStart": 20,
@@ -1291,7 +1294,7 @@ fn a_landed_edit_shows_its_numbered_patch_head_and_a_run_its_newest_subjects() {
     assert_eq!(run_subjects(&state, 3, 2), vec!["src/c.rs", "src/b.rs"]);
 
     // Codex's patch is a unified diff, numbered from its hunk header.
-    let mut codex = SessionState::new(agent(Kind::Codex));
+    let mut codex = SessionState::new(agent(Kind::Codex), CAP);
     let change = |state: ToolState| {
         Item {
         key: "change".into(),
@@ -1338,7 +1341,7 @@ fn a_landed_edit_shows_its_numbered_patch_head_and_a_run_its_newest_subjects() {
 /// and the lines after them keep their numbers.
 #[test]
 fn a_patch_head_keeps_hunk_lines_that_look_like_file_headers() {
-    let mut codex = SessionState::new(agent(Kind::Codex));
+    let mut codex = SessionState::new(agent(Kind::Codex), CAP);
     let patch = "diff --git a/q.sql b/q.sql\n--- a/q.sql\n+++ b/q.sql\n@@ -3,2 +3,2 @@\n--- old note\n+++ new note\n select 1;\ndiff --git a/r.sql b/r.sql\n--- a/r.sql\n+++ b/r.sql\n@@ -10 +10 @@\n-a\n+b\n";
     let change = Item {
         key: "change".into(),

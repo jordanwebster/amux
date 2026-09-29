@@ -5,9 +5,13 @@ import Foundation
 /// One open chat on the shared runtime.
 ///
 /// Rows are handed out by item key, which never moves: the owner holds a
-/// sequence of keys that only grows at its two edges, fetches the rows an
+/// sequence of keys that changes only at its two edges, fetches the rows an
 /// update changed, and reads the keys again only when a change batch says
-/// the sequence was reloaded. Close it before the runtime stops.
+/// the sequence was reloaded. The sequence is the chat's window: while the
+/// reader follows the newest row it keeps at most its cap and drops the
+/// oldest rows as new ones arrive; while the reader is in history it stays
+/// put, and what arrives is held apart until the reader returns. The owner
+/// says which with `follow`. Close it before the runtime stops.
 public final class Chat: ChatSource, @unchecked Sendable {
     private let handle: OpaquePointer
     /// Held across every call into the library, so stopping waits for the
@@ -61,6 +65,16 @@ public final class Chat: ChatSource, @unchecked Sendable {
                 Bridge.read([String]?.self, amux_session_new_keys_below(live, $0))
             } ?? nil
         }
+    }
+
+    public func oldestKey() -> String? {
+        call(nil) { live in
+            Bridge.read(String?.self, amux_session_oldest_key(live)) ?? nil
+        }
+    }
+
+    public func follow(_ following: Bool) {
+        call(()) { live in amux_session_follow(live, following) }
     }
 
     public func rows(for keys: [String], options: RowOptions? = nil) -> [Row] {

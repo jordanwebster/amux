@@ -7,7 +7,7 @@ use wire::{Kind, Phase, ToolState};
 use crate::harness::*;
 
 fn open(kind: Kind) -> SessionState {
-    let mut state = SessionState::new(agent(kind));
+    let mut state = SessionState::new(agent(kind), CAP);
     apply_checked(
         &mut state,
         ev_snapshot(snapshot(kind, 1, Phase::Working, &[], &[])),

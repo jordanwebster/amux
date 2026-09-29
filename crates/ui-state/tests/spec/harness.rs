@@ -12,6 +12,10 @@ use wire::{
 
 pub const KINDS: [Kind; 3] = [Kind::ClaudePty, Kind::ClaudeSdk, Kind::Codex];
 
+/// The window's cap in cases about something else: more rows than any of
+/// them delivers.
+pub const CAP: usize = 200;
+
 pub fn agent(kind: Kind) -> Agent {
     Agent {
         agent_id: b"agent-1".to_vec(),
@@ -503,6 +507,7 @@ pub fn apply_checked(state: &mut SessionState, msg: Msg) -> Outcome {
         &RunIndex::rebuild(state.transcript()),
         "run index drifted from a rebuild after {msg:?}"
     );
+
     let mut differs: Vec<String> = Vec::new();
     for (key, row) in &after {
         if before.iter().find(|(k, _)| k == key).map(|(_, r)| r) != Some(row) {
@@ -518,6 +523,16 @@ pub fn apply_checked(state: &mut SessionState, msg: Msg) -> Outcome {
     changed.sort();
     differs.sort();
     assert_eq!(changed, differs, "changed keys wrong after {msg:?}");
+    outcome
+}
+
+/// [`apply_checked`], and the block invariant after it: orders contiguous
+/// and every index naming only held rows.
+pub fn apply_block(state: &mut SessionState, msg: Msg) -> Outcome {
+    let outcome = apply_checked(state, msg.clone());
+    if let Err(broken) = state.transcript().check() {
+        panic!("block invariant broken after {msg:?}: {broken}");
+    }
     outcome
 }
 
@@ -571,7 +586,7 @@ pub struct Tape {
 
 impl Tape {
     pub fn new(agent: Agent) -> Tape {
-        let state = SessionState::new(agent);
+        let state = SessionState::new(agent, CAP);
         let mut tape = Tape {
             lines: String::new(),
             state,

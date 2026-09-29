@@ -57,7 +57,7 @@ impl<S: Checkpoint + Clone> Driven<S> {
         let (interpreter, first) = I::initial(spec, producer);
         let mut driven = Driven {
             interpreter,
-            session: SessionState::new(agent(kind)),
+            session: SessionState::new(agent(kind), support::CAP),
             committer: Committer::default(),
         };
         driven.commit(&first);

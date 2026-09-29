@@ -60,9 +60,13 @@ impl Structure for SessionState {
         let transcript = self.transcript();
         let _ = writeln!(
             out,
-            "items {} has_older={}",
+            "items {} has_older={} cap={} following={} held={} moved_on={}",
             transcript.len(),
-            transcript.has_older()
+            transcript.has_older(),
+            self.cap(),
+            self.following(),
+            self.held_arrivals(),
+            self.head_moved_on()
         );
         for held in transcript.iter() {
             let _ = write!(out, "  {} class={}", item(&held.item), variant(&held.class));
@@ -108,6 +112,8 @@ impl Structure for Msg {
             Msg::Entry(entry) => format!("Entry {}", agent(entry)),
             Msg::Host(host) => format!("Host {}", host_entry(host)),
             Msg::Blob { hash, status } => format!("Blob {} {}", hex(hash), variant(status)),
+            Msg::Following(following) => format!("Following {following}"),
+            Msg::Reloading => "Reloading".into(),
         }
     }
 }

@@ -40,6 +40,9 @@ pub enum DriverEvent {
     },
     /// The runtime closed the stream after Lagged: reopened with a tail.
     Retail,
+    /// The reader returned after the head moved on: reopened with a tail
+    /// that builds the window apart.
+    Reload,
     Backoff {
         until_ms: i64,
     },

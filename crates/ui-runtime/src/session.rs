@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use client::{Client, Clock, EventStream, RpcError};
 use futures_util::{FutureExt as _, StreamExt as _};
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use ui_state::{BlobStatus, Connection, InputId, InputOutcome, Key, Msg, Outcome, SessionState};
 use wire::{
@@ -99,6 +99,8 @@ pub(crate) struct Inner {
     clock: Arc<dyn Clock>,
     model: Mutex<Model>,
     changed: watch::Sender<()>,
+    /// The model asked for a reload: the pump reopens the stream.
+    reload: Notify,
     closed: AtomicBool,
 }
 
@@ -130,6 +132,9 @@ impl Inner {
         let moved = !outcome.changed.is_empty() || outcome.reloaded || outcome.session;
         if moved {
             self.changed.send_replace(());
+        }
+        if outcome.reload {
+            self.reload.notify_one();
         }
         outcome
     }
@@ -258,6 +263,9 @@ pub struct Session {
 enum End {
     /// Lagged: the runtime closed it; reopen with a tail at once.
     Lagged,
+    /// The reader returned after the head moved on: reopen with a tail at
+    /// once and build the window from it apart.
+    Reload,
     /// The stream is gone: reconnect with backoff.
     Closed(Option<RpcError>),
 }
@@ -267,13 +275,16 @@ impl Session {
     /// and the rows the runtime already holds are applied, so the first
     /// render is correct: at once for an own agent, and from the replica
     /// for another host's even with that host away. CaughtUp may follow.
+    /// While the reader follows, the window keeps at most `cap` rows, never
+    /// fewer than the tail.
     pub async fn open(
         client: Arc<dyn Client>,
         agent: Agent,
         tail: u32,
+        cap: u32,
         clock: impl Clock,
     ) -> Result<Session, RpcError> {
-        let state = SessionState::new(agent.clone());
+        let state = SessionState::new(agent.clone(), cap.max(tail) as usize);
         let (changed, _) = watch::channel(());
         let inner = Arc::new(Inner {
             client,
@@ -289,6 +300,7 @@ impl Session {
                 ended: None,
             }),
             changed,
+            reload: Notify::new(),
             closed: AtomicBool::new(false),
         });
         let mut stream = inner.client.subscribe(inner.subscribe_request()).await?;
@@ -386,13 +398,28 @@ impl Session {
         self.inner.apply(Msg::Host(host));
     }
 
+    /// Where the reader is: at the newest row, or in history. A session
+    /// starts following; the client says when that changes.
+    pub fn follow(&self, following: bool) {
+        self.inner.apply(Msg::Following(following));
+    }
+
     /// Fetches up to `n` rows older than the oldest held and merges them
-    /// under the window; returns how many arrived.
+    /// under the window; returns how many arrived. While the reader follows
+    /// it fetches only what fits under the cap, and nothing at the cap.
     pub async fn page_older(&self, n: u32) -> Result<usize, PageError> {
-        let (before, epoch) = {
+        let (before, epoch, room) = {
             let model = self.inner.model();
-            (model.state.oldest_order(), model.state.epoch())
+            (
+                model.state.oldest_order(),
+                model.state.epoch(),
+                model.state.page_room(),
+            )
         };
+        let n = room.map_or(n, |room| n.min(u32::try_from(room).unwrap_or(u32::MAX)));
+        if n == 0 {
+            return Ok(0);
+        }
         self.inner.note(DriverEvent::Page { before, limit: n });
         let request = FetchRequest {
             agent_id: self.inner.agent_id.clone(),
@@ -615,10 +642,14 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Reads one stream until it ends.
+/// Reads one stream until it ends or the model asks for a reload.
 async fn read(inner: &Inner, stream: &mut EventStream<SessionEvent>, backoff: &mut Backoff) -> End {
     loop {
-        match stream.next().await {
+        let next = tokio::select! {
+            next = stream.next() => next,
+            () = inner.reload.notified() => return End::Reload,
+        };
+        match next {
             Some(Ok(event)) => {
                 let lagged = matches!(event.of, Some(session_event::Of::Lagged(_)));
                 let caught_up = matches!(event.of, Some(session_event::Of::CaughtUp(_)));
@@ -656,6 +687,11 @@ async fn pump(inner: Arc<Inner>, stream: EventStream<SessionEvent>, ended: Optio
         let mut wait = match end {
             End::Lagged => {
                 inner.note(DriverEvent::Retail);
+                false
+            }
+            End::Reload => {
+                inner.note(DriverEvent::Reload);
+                inner.apply(Msg::Reloading);
                 false
             }
             End::Closed(error) => {

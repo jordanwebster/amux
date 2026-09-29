@@ -8,6 +8,11 @@ public protocol ChatSource: AnyObject, Sendable {
     func keys() -> [String]
     func keys(above newest: String) -> [String]?
     func keys(below oldest: String) -> [String]?
+    /// The oldest key the window holds: while the reader follows, the window
+    /// drops its oldest rows as new ones arrive.
+    func oldestKey() -> String?
+    /// Where the reader is: at the newest row, or in history.
+    func follow(_ following: Bool)
     func rows(for keys: [String], options: RowOptions?) -> [Row]
     func askCard() -> AskCard?
     func strip() -> Strip?
@@ -67,11 +72,19 @@ public enum ChatPaging: Equatable, Sendable {
 
 /// One open chat as the phone's list holds it.
 ///
-/// The chat holds the sequence of row keys, which only ever grows at its two
+/// The chat holds the sequence of row keys, which changes only at its two
 /// edges, and each cell reads its row by key when it is first drawn. An
 /// update names the keys it changed; only cells already read are read
-/// again, and only those cells redraw. A Reset's swap is the one time the
+/// again, and only those cells redraw. A Reset's swap, or the reload of a
+/// head that moved on while the reader was in history, is the one time the
 /// whole sequence is read again.
+///
+/// The sequence is the session's window. While the reader follows, the
+/// window keeps the newest rows up to its cap and drops the oldest as new
+/// ones arrive; in history it stays put and grows only by pages, and what
+/// arrives meanwhile is held by the session, which the frame reports and
+/// New activity shows. The model tells the session each time the reader
+/// leaves or returns to the newest row.
 ///
 /// The list draws a bounded, contiguous run of the held keys, because every
 /// change places each drawn row again: drawing all of a long chat costs
@@ -142,8 +155,9 @@ public final class ChatModel {
     public private(set) var loadingHint = false
     /// The reader is at the newest row, so new rows are followed.
     public private(set) var following = true
-    /// Rows arrived below a reader who scrolled up.
-    public private(set) var newActivity = false
+    /// Rows arrived while the reader is in history: the session holds them
+    /// apart until the reader returns.
+    public var newActivity: Bool { !following && frame?.arrivalsHeld == true }
     /// Bumped whenever the list should go to its newest row: a swap, a send,
     /// or the reader asking.
     public private(set) var toNewest = 0
@@ -189,7 +203,9 @@ public final class ChatModel {
         if changes.reloaded {
             swap()
         } else if !changes.keys.isEmpty {
-            if changes.keys.contains(where: { places[$0] == nil }) { extend() }
+            // New keys, or a change to the oldest row, which is how the
+            // window dropping rows from its top shows.
+            if changes.keys.contains(where: { places[$0] == nil || $0 == ids.first }) { extend() }
             refresh(changes.keys.filter { cells[$0] != nil })
         }
         if changes.session || changes.reloaded || !changes.keys.isEmpty { readSession() }
@@ -268,8 +284,17 @@ public final class ChatModel {
             swap()
             return
         }
-        guard let newer = source.keys(above: newest), let older = source.keys(below: oldest)
-        else {
+        guard let newer = source.keys(above: newest) else {
+            swap()
+            return
+        }
+        let older: [String]
+        if let below = source.keys(below: oldest) {
+            older = below
+        } else if let first = source.oldestKey(), let place = places[first] {
+            older = []
+            dropOlder(than: place - firstPlace)
+        } else {
             swap()
             return
         }
@@ -298,10 +323,24 @@ public final class ChatModel {
             if following || drawn.isEmpty {
                 drawNewest()
                 toNewest += 1
-            } else {
-                newActivity = true
             }
         }
+    }
+
+    /// The window dropped its oldest rows: the first `count` keys go, and
+    /// their cells with them.
+    private func dropOlder(than count: Int) {
+        guard count > 0 else { return }
+        let start = max(0, drawnStart - count)
+        let end = max(start, drawnEnd - count)
+        for key in ids[..<count] {
+            places[key] = nil
+            cells[key] = nil
+        }
+        ids.removeFirst(count)
+        firstPlace += count
+        heldCount = ids.count
+        draw(from: start, to: end)
     }
 
     /// A Reset's transcript was swapped in: every key may be new. Cells the
@@ -313,10 +352,16 @@ public final class ChatModel {
         refresh(Array(cells.keys))
         loadingHint = false
         drawLandingPage = false
-        following = true
-        newActivity = false
+        setFollowing(true)
         drawNewest()
         toNewest += 1
+    }
+
+    /// Where the reader is, told to the session whenever it changes.
+    private func setFollowing(_ value: Bool) {
+        guard following != value else { return }
+        following = value
+        source.follow(value)
     }
 
     private func hold(keys: [String]) {
@@ -413,22 +458,20 @@ public final class ChatModel {
     /// the newest row: it takes in the held rows below it instead.
     public func reading(atNewest: Bool) {
         guard atNewest else {
-            following = false
+            setFollowing(false)
             return
         }
         if drawnEnd < ids.count {
             reachedBottom()
             return
         }
-        following = true
-        newActivity = false
+        setFollowing(true)
         drawNewest()
     }
 
     /// Takes the reader to the newest row.
     public func jumpToNewest() {
-        following = true
-        newActivity = false
+        setFollowing(true)
         drawNewest()
         toNewest += 1
     }
@@ -534,8 +577,7 @@ public final class ChatModel {
         clearDraft()
         sending = true
         notice = nil
-        following = true
-        newActivity = false
+        setFollowing(true)
         drawNewest()
         toNewest += 1
         Task {
@@ -563,8 +605,7 @@ public final class ChatModel {
             switch outcome {
             case .done?:
                 if composed == sent { clearDraft() }
-                following = true
-                newActivity = false
+                setFollowing(true)
                 drawNewest()
                 toNewest += 1
             case .rejected(let reason)?, .failed(let reason)?: notice = reason

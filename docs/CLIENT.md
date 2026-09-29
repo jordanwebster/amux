@@ -75,7 +75,8 @@ cancelled, deadline exceeded, internal, aborted); any other code maps to the mat
 ![Composition, not inheritance: the state never knows a kind except through the thin layer that decodes its snapshot body; nothing in it is persisted, because the runtime can re-serve every input it was built from.](figures/fleet-and-session.svg)
 
 [`SessionState`](../crates/ui-state/src/session.rs) is one open chat. It is built from the agent's inventory
-entry with `SessionState::new(agent)` and changes only through `update(msg)`. Its parts:
+entry and the window's cap with `SessionState::new(agent, cap)` and changes only through `update(msg)`. Its
+parts:
 
 - **The entry and host.** The agent's inventory row (lifecycle, phase, incarnation, exit cause) and its host's
   entry, both fed from the fleet.
@@ -85,15 +86,18 @@ entry with `SessionState::new(agent)` and changes only through `update(msg)`. It
   context, usage, tool servers, sign-in, background processes, running calls). A field the provider has not
   reported stays at its explicit unknown. Open asks keep the provider's own shape as `OpenAsk::Claude` or
   `OpenAsk::Codex`.
-- **`Transcript`**, the window of items by order. See [the transcript window](#the-transcript-window).
+- **`Transcript`**, the window of items by order, and the rows that arrived above it while the reader was in
+  history. See [the transcript window](#the-transcript-window).
+- **Whether the reader follows** the newest row, as the client last said. It is the one fact about the view the
+  state is told, because the window's rules depend on it.
 - **`Inputs`**, what this client sent during this open and what became of each input. Only the sender can know
   this, so it is the one thing the state holds that is not in the runtime's rows.
 - **Connection flags**: `caught_up`, whether the stream is detached, and the `Connection` to the local runtime
   (`Connecting`, `Live`, `Reconnecting`).
 - **Blob status** for each attachment hash the driver fetched.
 
-It holds no view state, no rows and no effects, and it never reads a clock: anything timed takes the caller's
-`now_ms`.
+It holds no other view state, no rows and no effects, and it never reads a clock: anything timed takes the
+caller's `now_ms`.
 
 ### Messages
 
@@ -109,10 +113,13 @@ The driver forwards everything as a [`Msg`](../crates/ui-state/src/session.rs):
 | `Discard(id)` | The person dropped an input that was not confirmed. |
 | `Entry(Agent)` / `Host(HostEntry)` | The agent's inventory row and its host, from the fleet. |
 | `Blob { hash, status }` | An attachment's bytes changed state in the driver's cache. |
+| `Following(bool)` | The reader left the newest row (`false`) or returned to it (`true`). A session starts following. |
+| `Reloading` | The driver reopened the stream for the reload a return asked for; a fresh tail follows. |
 
 `update` returns an `Outcome`: `changed` lists every row key whose row may differ (including every member of a
 run whose attributes moved, and nothing else), `need_get` names an Append whose base this client does not hold,
-`reloaded` says a Reset's transcript was swapped in, and `session` says something outside the rows moved.
+`reloaded` says a Reset's or a reload's transcript was swapped in, `session` says something outside the rows
+moved, and `reload` asks the driver to reopen the stream with a fresh tail.
 
 ### The transcript window
 
@@ -124,9 +131,27 @@ order in `[oldest_held, head]`. Each item is decoded once per revision into a `H
   revision is higher, and is otherwise ignored; that absorbs the overlap between the runtime's store read and its broadcast.
   An item below `oldest_held` is dropped, because a page brings the current version if the reader ever scrolls
   there.
-- Pages only extend the low edge. Nothing is ever evicted; a long chat is a few megabytes.
-- `has_older()` is true while the oldest held order is above 1 and no page has come back exhausted. Orders start
-  at one and are dense, so a window that reaches order one has everything.
+- Pages only extend the low edge.
+- While the reader follows, the window keeps the newest rows up to its cap and drops older rows from its top as
+  live rows arrive, so a chat left open under a flood holds a bounded set. The dropped rows' key, input-id,
+  referrer and run entries go with them, a later revision of a dropped key is ignored like any row below the
+  window, and the run at the new low edge reads `open_below`. The rows stay in the runtime's store and come back
+  only by paging from the low edge.
+- While the reader is in history, nothing is dropped and the window's head does not move. A row above the head
+  is held by the session apart from the window; revisions and appends to rows inside the window still apply,
+  and appends to a held row apply to it. The snapshot, asks, queue and inputs stay live, and the activity line
+  reads the held rows, so the composer and ask cards stay current. `arrivals_held()` reports that rows are held,
+  and both clients show their new-activity affordance from it. The held rows continue the window without a gap
+  and are bounded by the cap: past it, or past a gap, the session stops holding and remembers only that the
+  head moved on.
+- Returning to the newest row releases the held rows into the window when they are all held, and trims the
+  window back to the cap, which fetches nothing; a window grown past the cap by paging with few rows held is
+  released and trimmed the same way. When the head moved on instead, the return sets `reload`: the driver
+  reopens the subscription with a fresh tail, the fresh window is built apart and swapped in at CaughtUp exactly
+  as a Reset's is, the old window stays on screen until then, and the swap reports `reloaded`.
+- Nothing is paged downward, and no live row lands outside the window except into the held rows.
+- `has_older()` is true while the oldest held order is above 1 and neither a page came back exhausted nor the
+  window was trimmed since. Orders start at one and are dense, so a window that reaches order one has everything.
 - The window also indexes items by input id (a prompt's reflection) and by referrer (a headless Claude task item
   that reports a subagent's progress on the row of the call that started it).
 
@@ -293,7 +318,7 @@ reader is looking at keeps its id and grows its count while the older members in
 extends a run at the bottom, the summary moves to the newest item, where nothing is anchored.
 
 Three guarantees follow, and any list technique, including the inverted list chat apps use, can rely on them:
-row ids never move; the window grows only at its two edges; appends touch only the newest item.
+row ids never move; the window changes only at its two edges; appends touch only the newest item.
 
 ## Flows
 
@@ -374,10 +399,12 @@ final full item closes the stream: a `Prose` row reads `streaming: false` once i
 `page_older(n)` sends `Fetch { before_order: oldest_order, limit: n }` and applies the response as `Msg::Page`.
 Rows merge downward below the window, keep their ids, and never land above the head; a page that comes back
 `exhausted` rules out older history and clears the `open_below` mark of the run at the low edge. Scrolling back
-down fetches nothing, because the window only grows.
+down fetches nothing: in history the window only grows, and the rows paged in stay.
 
 Paging is the client's decision, never the model's: a client pages when fewer than a page of held rows sits
-above the top of the screen and `has_older()` is true. When the top visible row is a collapsed run marked
+above the top of the screen and `has_older()` is true. While the reader follows, `page_older` fetches only what
+fits under the cap (`SessionState::page_room`) and nothing once the window is full, so a following client never
+fetches rows the next live row would trim. When the top visible row is a collapsed run marked
 `open_below`, it asks for a larger page, up to a cap (1000 rows, `RUN_PAGE_CAP` in the terminal and
 `largestPage` on the phone), so a run of two thousand calls costs a few round trips rather than fifty.
 
@@ -385,8 +412,10 @@ above the top of the screen and `has_older()` is true. When the top visible row 
 
 A Reset means the origin's history changed under the chat (a rewind, for example). The state keeps the rows on
 screen and builds a fresh transcript from the events that follow; at the next CaughtUp it swaps the fresh one in
-and reports `reloaded`, the one time a client reloads its whole list. A re-tail after a reconnect whose rows do
-not meet the held window is handled the same way. Detached clears `caught_up`; the rows stay.
+and reports `reloaded`, one of the two times a client reloads its whole list; the other is the reload of a head
+that moved on while the reader was in history. A re-tail after a reconnect whose rows do not meet the held
+window is handled the same way while the reader follows; in history it only marks the head as moved on. Detached
+clears `caught_up`; the rows stay.
 
 ## The two draw loops
 
@@ -404,14 +433,18 @@ pinned to the bottom) at the known width until the feed is full, so heights are 
 and the cost is the visible rows; ratatui then writes only the cells that differ. An item outside a run asks
 `chat_rows` for its own order; a run member asks `chat_rows_for` by key, and collapsed members are skipped before
 any row is built. When fewer than `LOOKAHEAD` (40) held rows sit above the screen and older history exists,
-layout asks for a page.
+layout asks for a page, no larger than the room under the cap while the reader follows. After every key, mouse
+event and frame the app tells the session whether the anchor is pinned to the bottom, and the "new activity"
+line under a scrolled-back feed reads `arrivals_held()`.
 
 **The phone is retained mode.** [`app-runtime`](../crates/app-runtime/src/chat.rs) watches each session's change
 signal and gathers `take_changes()` into a coalescer that wakes the host once per main-thread turn, however many
 updates land. The Swift `ChatModel` holds the id sequence, which changes only at its two edges
-(`keys(above:)` and `keys(below:)`), reads a cell's row by key when the cell is first drawn, and re-reads only the
-cells whose keys changed, so a streaming append costs one cell. A `reloaded` change reads the whole sequence
-again. The top of the list coming into view asks for an older page. [IOS.md](IOS.md) and
+(`keys(above:)`, `keys(below:)`, and `oldestKey()` for the rows a following window dropped), reads a cell's row by
+key when the cell is first drawn, and re-reads only the cells whose keys changed, so a streaming append costs one
+cell. A `reloaded` change reads the whole sequence again. The top of the list coming into view asks for an older
+page. `ChatModel.following` is told to the session with `follow(_:)` whenever it changes, and New activity shows
+from the frame's `arrivals_held`. [IOS.md](IOS.md) and
 [EMBEDDED.md](EMBEDDED.md) cover the phone side.
 
 ## Replay and redaction

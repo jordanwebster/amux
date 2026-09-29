@@ -240,7 +240,7 @@ impl AgentDump {
     /// a Subscribe opening delivers it: the snapshot, the held rows, then
     /// CaughtUp.
     pub fn session(&self) -> SessionState {
-        let mut state = SessionState::new(self.row.clone());
+        let mut state = SessionState::new(self.row.clone(), usize::MAX);
         let event = |of| Msg::Event(SessionEvent { of: Some(of) });
         let mut revision = 0;
         if let Some(snapshot) = &self.store.snapshot {

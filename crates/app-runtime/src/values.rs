@@ -75,6 +75,9 @@ pub struct ChatFrame {
     pub caught_up: bool,
     /// Older rows exist below the held window.
     pub has_older: bool,
+    /// Rows arrived above the window while the reader is in history: the
+    /// new-activity affordance shows from this.
+    pub arrivals_held: bool,
     pub queue: Vec<QueuedRow>,
     pub outbox: Vec<OutboxRow>,
     /// The input answering the head ask, which a card that was not

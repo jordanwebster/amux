@@ -20,7 +20,7 @@ use wire::{
     SendInputResponse, StopAgentRequest, StopMode, send_input_response,
 };
 
-use crate::chat::layout::PAGE;
+use crate::chat::layout::{CAP, PAGE};
 use crate::chat::{ChatEffect, ChatView};
 use crate::clipboard::read_clipboard;
 use crate::fleet::{FleetEffect, FleetView};
@@ -100,6 +100,15 @@ pub struct OpenChat {
     pub session: Arc<Session>,
     pub view: ChatView,
     pub agent: AgentKey,
+}
+
+impl OpenChat {
+    /// Tells the session when the reader left or returned to the newest row.
+    fn tell_following(&mut self) {
+        if let Some(following) = self.view.following_moved() {
+            self.session.follow(following);
+        }
+    }
 }
 
 pub struct App {
@@ -355,7 +364,7 @@ impl App {
         self.opening = Some(agent.clone());
         let client = self.client.clone();
         self.spawn(async move {
-            let result = Session::open(client, entry, PAGE, SystemClock)
+            let result = Session::open(client, entry, PAGE, CAP, SystemClock)
                 .await
                 .map_err(|error| error.to_string());
             Some(AppEvent::Opened { agent, result })
@@ -398,8 +407,11 @@ impl App {
             Event::Mouse(mouse) => {
                 let theme = self.theme();
                 if let Some(chat) = &mut self.chat {
-                    let state = chat.session.state();
-                    chat.view.mouse(&state, mouse, theme);
+                    {
+                        let state = chat.session.state();
+                        chat.view.mouse(&state, mouse, theme);
+                    }
+                    chat.tell_following();
                 }
                 Flow::Continue
             }
@@ -641,6 +653,9 @@ impl App {
             }
             chat.view.key(&state, key, theme)
         };
+        // Before any send the key made: sending a prompt is a return to
+        // the newest row.
+        chat.tell_following();
         for effect in effects {
             if let Some(flow) = self.chat_effect(effect) {
                 return flow;
@@ -859,9 +874,14 @@ impl App {
                     )
                 };
                 chat.view.away = away;
-                let state = chat.session.state();
-                chat.view
-                    .draw(paint, area, &state, family.as_ref(), footer, now, theme)
+                let page = {
+                    let state = chat.session.state();
+                    chat.view
+                        .draw(paint, area, &state, family.as_ref(), footer, now, theme)
+                };
+                // A reload's swap takes the reader to the newest row.
+                chat.tell_following();
+                page
             }
             None => {
                 let fleet = self.fleet.state();

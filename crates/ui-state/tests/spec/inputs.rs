@@ -7,7 +7,7 @@ use wire::{Kind, Phase};
 use crate::harness::*;
 
 fn live(kind: Kind, phase: Phase, queue: &[(&[u8], bool)]) -> SessionState {
-    let mut state = SessionState::new(with_phase(agent(kind), phase));
+    let mut state = SessionState::new(with_phase(agent(kind), phase), CAP);
     apply_checked(
         &mut state,
         ev_snapshot(snapshot(kind, 5, phase, &[], queue)),

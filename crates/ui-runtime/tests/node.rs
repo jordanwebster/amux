@@ -15,6 +15,8 @@ use ui_state::{Connection, InputState};
 use wire::ListProfilesRequest;
 
 const PATIENCE: Duration = Duration::from_secs(20);
+/// The window's cap: more rows than any case here delivers.
+const CAP: u32 = 200;
 
 fn text(text: &str) -> Step {
     Step::Text {
@@ -127,7 +129,9 @@ async fn drive(client: Arc<dyn Client>, net: &Net) {
         .expect("the fleet lists the worker");
 
     // The first turn is written before the session sends anything.
-    let session = Session::open(client, agent, 2, SystemClock).await.unwrap();
+    let session = Session::open(client, agent, 2, CAP, SystemClock)
+        .await
+        .unwrap();
     until("the first turn", session.changed(), || {
         (session.state().caught_up() && says(&session, "turn one")).then_some(())
     })
@@ -208,7 +212,9 @@ async fn a_session_over_the_socket_reconnects_across_a_daemon_restart() {
     let fleet = Fleet::open(client.clone(), SystemClock).await.unwrap();
     let worker = net.agent("worker").unwrap().id;
     let agent = fleet.state().find(worker.as_bytes()).cloned().unwrap();
-    let session = Session::open(client, agent, 40, SystemClock).await.unwrap();
+    let session = Session::open(client, agent, 40, CAP, SystemClock)
+        .await
+        .unwrap();
     until("the first turn", session.changed(), || {
         (session.state().caught_up() && says(&session, "before")).then_some(())
     })

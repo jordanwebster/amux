@@ -74,9 +74,15 @@ the rows this device already holds are applied, so the host's first read is
 correct even with the agent's host away.
 
 Rows are handed out by item key, which never moves. The host holds a list of
-keys that only grows at its two edges: newer keys above the newest it holds,
-and a page of older ones below its oldest. It reads the whole list again only
-when a change batch says it was reloaded, which is what a Reset does.
+keys that changes only at its two edges: newer keys above the newest it
+holds, a page of older ones below its oldest, and, while the reader follows
+the newest row, the oldest keys dropped as the chat's window trims to its cap
+(200 rows, `DEFAULT_CAP`, raised with a longer tail). The host says where its
+reader is with `Chat::follow`; while the reader is in history the window
+stays put, arrivals are held apart and the frame's `arrivals_held` says so.
+It reads the whole list again only when a change batch says it was reloaded,
+which a Reset does, and so does a return to the newest row after more arrived
+than the window holds.
 
 The host's wake is called on a worker thread with the fleet or a chat's id
 whenever that one moved, and at most once until the host takes its changes.

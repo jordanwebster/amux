@@ -123,9 +123,8 @@ pub struct ChatView {
     /// The last frame's layout, for scrolling and focus.
     laid: Laid,
     feed: (usize, usize),
-    /// Rows arrived below while the reader was scrolled back.
-    new_below: bool,
-    seen_head: Option<u64>,
+    /// Whether the session was last told the reader follows the newest row.
+    told_following: bool,
     page_asked: Option<u64>,
 }
 
@@ -149,8 +148,7 @@ impl ChatView {
             opened_at_ms: now_ms,
             laid: Laid::default(),
             feed: (0, 0),
-            new_below: false,
-            seen_head: None,
+            told_following: true,
             page_asked: None,
         }
     }
@@ -487,15 +485,22 @@ impl ChatView {
 
     pub fn follow(&mut self) {
         self.anchor = Anchor::Bottom;
-        self.new_below = false;
+    }
+
+    /// Whether the reader follows the newest row, when that changed since
+    /// the session was last told: the one thing about the view the session
+    /// needs, to trim its window while following and hold arrivals while
+    /// the reader is in history.
+    pub fn following_moved(&mut self) -> Option<bool> {
+        let following = self.anchor == Anchor::Bottom;
+        (following != self.told_following).then(|| {
+            self.told_following = following;
+            following
+        })
     }
 
     fn scroll(&mut self, state: &SessionState, delta: isize, theme: Theme) {
-        let anchor = self.frame(theme).scrolled(state, &self.laid, delta);
-        if anchor == Anchor::Bottom {
-            self.new_below = false;
-        }
-        self.anchor = anchor;
+        self.anchor = self.frame(theme).scrolled(state, &self.laid, delta);
     }
 
     pub fn mouse(&mut self, state: &SessionState, event: MouseEvent, theme: Theme) {
@@ -729,15 +734,8 @@ impl ChatView {
         top.push(Line::default());
 
         let mut bottom: Vec<Line<'static>> = Vec::new();
-        let head = state.transcript().head();
-        if head != self.seen_head {
-            if self.anchor != Anchor::Bottom && self.seen_head.is_some() {
-                self.new_below = true;
-            }
-            self.seen_head = head;
-        }
         if self.anchor != Anchor::Bottom {
-            let words = if self.new_below {
+            let words = if state.arrivals_held() {
                 "↓ new activity below · pgdn or ctrl+end for the newest"
             } else {
                 "↓ scrolled back · pgdn or ctrl+end for the newest"

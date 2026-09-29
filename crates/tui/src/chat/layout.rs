@@ -20,6 +20,13 @@ use crate::theme::Theme;
 
 /// Rows fetched per page, and the tail a chat opens with.
 pub const PAGE: u32 = 40;
+/// The most rows a chat's window keeps while the reader follows the newest.
+/// While following, the layout pages only to keep a page of rows above the
+/// screen, and the window must still hold a full screen and that page after
+/// trimming, or each live row would trim what the next page fetches again:
+/// rows draw at least one line, and 160 lines is taller than a terminal in
+/// use, so a screen and the 40-row lookahead fit in 200.
+pub const CAP: u32 = 200;
 /// Fewer held rows than this above the screen asks for an older page.
 pub const LOOKAHEAD: u64 = PAGE as u64;
 /// The largest page asked for at an open collapsed run.
@@ -257,7 +264,13 @@ impl Frame<'_> {
                 .and_then(|block| block.row.run.as_ref())
                 .filter(|run| run.is_summary && run.open_below)
                 .map(|run| run.len.clamp(PAGE, RUN_PAGE_CAP));
-            laid.page = Some(run_page.unwrap_or(PAGE));
+            // Following, a page brings only what fits under the cap, so the
+            // next live row never trims what it fetched.
+            let room = state
+                .page_room()
+                .map_or(u32::MAX, |room| u32::try_from(room).unwrap_or(u32::MAX));
+            let size = run_page.unwrap_or(PAGE).min(room);
+            laid.page = (size > 0).then_some(size);
         }
         laid
     }

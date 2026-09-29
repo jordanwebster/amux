@@ -60,10 +60,10 @@ fn replay_from_any_checkpoint_equals_the_uninterrupted_state() {
         let (msgs, _) = live_stream(kind, 7);
         let mut msgs = msgs;
         msgs.insert(1, caught_up(1));
-        let mut whole = SessionState::new(agent(kind));
+        let mut whole = SessionState::new(agent(kind), CAP);
         run(&mut whole, &msgs);
         for cut in 0..=msgs.len() {
-            let mut checkpoint = SessionState::new(agent(kind));
+            let mut checkpoint = SessionState::new(agent(kind), CAP);
             run(&mut checkpoint, &msgs[..cut]);
             // A clone is the trace's starting state; replaying the rest from
             // it reproduces the state exactly.
@@ -79,15 +79,15 @@ fn catch_up_plus_live_equals_uninterrupted_delivery_at_every_cut() {
     for kind in KINDS {
         for seed in 1..6 {
             let (msgs, _) = live_stream(kind, seed);
-            let mut uninterrupted = SessionState::new(agent(kind));
+            let mut uninterrupted = SessionState::new(agent(kind), CAP);
             run(&mut uninterrupted, &msgs);
             apply_checked(&mut uninterrupted, caught_up(999));
             for cut in 1..=msgs.len() {
                 // A late subscriber: the store's full rows at the cut, CaughtUp,
                 // then the live rest from the cut, overlap included.
-                let mut store = SessionState::new(agent(kind));
+                let mut store = SessionState::new(agent(kind), CAP);
                 run(&mut store, &msgs[..cut]);
-                let mut late = SessionState::new(agent(kind));
+                let mut late = SessionState::new(agent(kind), CAP);
                 apply_checked(&mut late, msgs[0].clone());
                 for held in store.transcript().iter() {
                     apply_checked(&mut late, ev_item(held.item.clone()));
@@ -135,11 +135,11 @@ fn full_items_arriving_in_any_order_inside_the_window_give_the_same_state() {
             }
             revisions.push(ev_snapshot(snapshot(kind, 5, Phase::Working, &[], &[])));
             revisions.push(ev_snapshot(snapshot(kind, 9, Phase::Idle, &[], &[])));
-            let mut expected = SessionState::new(agent(kind));
+            let mut expected = SessionState::new(agent(kind), CAP);
             run(&mut expected, &base);
             let mut shuffled = revisions.clone();
             // Snapshots keep their stream order; items move freely.
-            let mut in_order = SessionState::new(agent(kind));
+            let mut in_order = SessionState::new(agent(kind), CAP);
             run(&mut in_order, &base);
             run(&mut in_order, &revisions);
             rng.shuffle(&mut shuffled);
@@ -168,7 +168,7 @@ fn full_items_arriving_in_any_order_inside_the_window_give_the_same_state() {
 #[test]
 fn a_page_and_the_live_stream_commute() {
     for kind in KINDS {
-        let mut first = SessionState::new(agent(kind));
+        let mut first = SessionState::new(agent(kind), CAP);
         run(
             &mut first,
             &[ev_snapshot(snapshot(kind, 1, Phase::Working, &[], &[]))],
@@ -196,4 +196,151 @@ fn a_page_and_the_live_stream_commute() {
 
 fn is_snapshot(msg: &Msg) -> bool {
     matches!(msg, Msg::Event(event) if matches!(event.of, Some(wire::session_event::Of::Snapshot(_))))
+}
+
+/// What the runtime holds for one agent: every row's newest revision.
+struct Store {
+    rows: Vec<Item>,
+}
+
+impl Store {
+    fn page(&self, before: u64, limit: usize) -> (Vec<Item>, bool) {
+        let older: Vec<Item> = self
+            .rows
+            .iter()
+            .filter(|item| item.order < before)
+            .rev()
+            .take(limit)
+            .cloned()
+            .collect();
+        let exhausted = older.last().is_none_or(|item| item.order == 1);
+        (older, exhausted)
+    }
+
+    fn tail(&self, n: usize) -> Vec<Item> {
+        let from = self.rows.len().saturating_sub(n);
+        self.rows[from..].to_vec()
+    }
+}
+
+#[test]
+fn the_block_holds_through_following_reading_paging_and_reloads() {
+    const CAP: usize = 6;
+    const TAIL: usize = 4;
+    for kind in KINDS {
+        for seed in 1..40 {
+            let mut rng = Rng::new(seed);
+            let mut store = Store { rows: Vec::new() };
+            let mut state = SessionState::new(agent(kind), CAP);
+            apply_block(
+                &mut state,
+                ev_snapshot(snapshot(kind, 1, Phase::Working, &[], &[])),
+            );
+            apply_block(&mut state, caught_up(1));
+            let mut revision = 1;
+            for _ in 0..120 {
+                match rng.below(10) {
+                    // A new row at the head, sometimes streaming.
+                    0..=4 => {
+                        revision += 1;
+                        let order = store.rows.len() as u64 + 1;
+                        let item = match rng.below(3) {
+                            0 => read(kind, order, revision),
+                            1 => streaming(kind, order, revision, "a"),
+                            _ => text(kind, order, revision, "t"),
+                        };
+                        store.rows.push(item.clone());
+                        apply_block(&mut state, ev_item(item));
+                    }
+                    // An append to the newest row.
+                    5 => {
+                        if let Some(last) = store.rows.last_mut()
+                            && last.text.starts_with('a')
+                        {
+                            revision += 1;
+                            let append = ev_append(&last.key, last.revision, revision, "b");
+                            last.text.push('b');
+                            last.revision = revision;
+                            let outcome = apply_block(&mut state, append);
+                            if outcome.need_get.is_some() {
+                                apply_block(&mut state, ev_item(last.clone()));
+                            }
+                        }
+                    }
+                    // A revision of an older row.
+                    6 => {
+                        if !store.rows.is_empty() {
+                            revision += 1;
+                            let at = rng.below(store.rows.len() as u64) as usize;
+                            let mut item = text(kind, store.rows[at].order, revision, "rev");
+                            item.key = store.rows[at].key.clone();
+                            store.rows[at] = item.clone();
+                            apply_block(&mut state, ev_item(item));
+                        }
+                    }
+                    // The reader moves.
+                    7 => {
+                        let following = rng.below(2) == 0;
+                        let outcome = apply_block(&mut state, Msg::Following(following));
+                        if outcome.reload {
+                            // The driver reopens the stream with a fresh tail.
+                            apply_block(&mut state, Msg::Reloading);
+                            apply_block(
+                                &mut state,
+                                ev_snapshot(snapshot(kind, revision, Phase::Working, &[], &[])),
+                            );
+                            for item in store.tail(TAIL) {
+                                apply_block(&mut state, ev_item(item));
+                            }
+                            let outcome = apply_block(&mut state, caught_up(revision));
+                            assert!(outcome.reloaded, "{kind:?} seed {seed}");
+                        }
+                    }
+                    // The client pages, as much as the session has room for.
+                    _ => {
+                        if let Some(oldest) = state.oldest_order()
+                            && state.transcript().has_older()
+                        {
+                            let limit = state.page_room().unwrap_or(3).min(3);
+                            if limit > 0 {
+                                let (items, exhausted) = store.page(oldest, limit);
+                                let epoch = state.epoch();
+                                apply_block(
+                                    &mut state,
+                                    Msg::Page {
+                                        items,
+                                        exhausted,
+                                        epoch,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+                let newest = store.rows.len() as u64;
+                let transcript = state.transcript();
+                if state.following() && !state.head_moved_on() && newest > 0 {
+                    assert_eq!(
+                        transcript.head(),
+                        Some(newest),
+                        "{kind:?} seed {seed}: a following window ends at the head"
+                    );
+                    assert!(
+                        transcript.len() <= CAP,
+                        "{kind:?} seed {seed}: a following window keeps at most the cap"
+                    );
+                }
+                if !state.following() {
+                    assert!(state.held_arrivals() <= CAP, "{kind:?} seed {seed}");
+                }
+                // Every held row is the store's current revision of that
+                // order, or one the store has since revised.
+                for held in transcript.iter() {
+                    let stored = &store.rows[held.item.order as usize - 1];
+                    assert_eq!(held.item.key, stored.key, "{kind:?} seed {seed}");
+                    assert!(held.item.revision <= stored.revision);
+                }
+            }
+        }
+    }
 }

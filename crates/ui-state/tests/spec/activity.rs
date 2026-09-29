@@ -8,7 +8,7 @@ use wire::{Kind, Phase, ToolState};
 use crate::harness::*;
 
 fn working(kind: Kind) -> SessionState {
-    let mut state = SessionState::new(agent(kind));
+    let mut state = SessionState::new(agent(kind), CAP);
     apply_checked(
         &mut state,
         ev_snapshot(snapshot(kind, 1, Phase::Working, &[], &[])),
@@ -175,7 +175,7 @@ fn compacting_shows_until_the_compaction_lands() {
 fn nothing_shows_unless_the_agent_works() {
     for kind in KINDS {
         for phase in [Phase::Idle, Phase::NeedsYou, Phase::Starting] {
-            let mut state = SessionState::new(agent(kind));
+            let mut state = SessionState::new(agent(kind), CAP);
             apply_checked(&mut state, ev_snapshot(snapshot(kind, 1, phase, &[], &[])));
             assert_eq!(state.activity(5_000), None);
         }

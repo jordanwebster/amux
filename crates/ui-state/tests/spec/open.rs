@@ -59,7 +59,7 @@ fn open_from_a_snapshot_alone_then_a_live_tail() {
 #[test]
 fn an_empty_snapshot_body_is_starting_with_nothing_known() {
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         let mut empty = snapshot(kind, 0, Phase::Starting, &[], &[]);
         empty.body.clear();
         apply_checked(&mut state, ev_snapshot(empty));
@@ -104,7 +104,7 @@ fn a_subscribe_to_an_away_host_paints_held_rows_then_detached() {
 #[test]
 fn detached_clears_caught_up_and_keeps_the_rows() {
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 2, Phase::Idle, &[], &[])),
@@ -198,7 +198,7 @@ fn reset_swaps_at_caught_up() {
 #[test]
 fn a_retail_that_meets_the_window_merges_without_a_reload() {
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 5, Phase::Idle, &[], &[])),
@@ -228,7 +228,7 @@ fn a_retail_that_meets_the_window_merges_without_a_reload() {
 #[test]
 fn a_retail_past_a_gap_builds_apart_and_swaps_at_caught_up() {
     for kind in KINDS {
-        let mut state = SessionState::new(agent(kind));
+        let mut state = SessionState::new(agent(kind), CAP);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 5, Phase::Idle, &[], &[])),
@@ -264,15 +264,15 @@ fn a_retail_past_a_gap_builds_apart_and_swaps_at_caught_up() {
 #[test]
 fn nothing_is_kept_between_opens() {
     for kind in KINDS {
-        let mut first = SessionState::new(agent(kind));
+        let mut first = SessionState::new(agent(kind), CAP);
         apply_checked(
             &mut first,
             ev_snapshot(snapshot(kind, 2, Phase::Idle, &[], &[])),
         );
         apply_checked(&mut first, ev_item(text(kind, 1, 2, "a")));
         apply_checked(&mut first, Msg::Send(prompt_input(kind, b"p1", "hi")));
-        let reopened = SessionState::new(agent(kind));
-        assert_eq!(reopened, SessionState::new(agent(kind)));
+        let reopened = SessionState::new(agent(kind), CAP);
+        assert_eq!(reopened, SessionState::new(agent(kind), CAP));
         assert!(reopened.transcript().is_empty());
         assert_eq!(reopened.inputs().iter().count(), 0);
         assert!(!reopened.has_snapshot());

@@ -80,11 +80,20 @@ Reads return at once: `amux_session_keys`, `amux_session_rows_for`,
 `amux_runtime_profiles`, `amux_runtime_source_policy_listed`.
 
 Rows are handed out by item key, which never moves. The host's id sequence
-only grows at its two edges: `amux_session_new_keys_above(chat, newest)` for
-rows that arrived after the newest it holds, and
-`amux_session_new_keys_below(chat, oldest)` for a page of older ones. Either
-returns JSON null when the key it names is no longer held, and the host reads
-`amux_session_keys` again.
+changes only at its two edges: `amux_session_new_keys_above(chat, newest)` for
+rows that arrived after the newest it holds,
+`amux_session_new_keys_below(chat, oldest)` for a page of older ones, and
+`amux_session_oldest_key(chat)` for where the window now starts: while the
+reader follows the newest row, the window keeps at most its cap and drops its
+oldest rows as new ones arrive. `amux_session_new_keys_above` and
+`amux_session_new_keys_below` return JSON null when the key they name is no
+longer held, and the host reads `amux_session_keys` again.
+
+The host says where its reader is with `amux_session_follow(chat, following)`:
+false when the reader leaves the newest row, true on the return. In history
+the window stays put, arrivals are held apart and the frame's `arrivals_held`
+says so; the return releases them, or reloads the newest rows when more
+arrived than the window holds.
 
 A profile's wake is called on a worker thread with a chat's id, or 0 for the fleet,
 whenever that one moved, and at most once until the host takes its changes

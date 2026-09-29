@@ -608,9 +608,21 @@ tests = [
 id = "boundary-client-model"
 source = "testing page"
 section = "Boundaries"
-claim = "Client model: an update returns the changed keys and what to fetch with no IO, clock or handles; keyed order and revisions never regress; an input reaches a settled, rejected or uncertain state; the result is the same under any arrival order."
+claim = "Client model: an update returns the changed keys and what to fetch with no IO, clock or handles; keyed order and revisions never regress; an input reaches a settled, rejected or uncertain state; the result is the same under any arrival order. The window is bounded while the reader follows (the newest rows up to a cap, dropped from the top) and holds still while the reader is in history, with arrivals held apart and reported; the return releases them when they fit and otherwise reloads the head from a fresh tail; each client tells the model when its reader leaves and returns, and a following client pages nothing the cap would drop."
 tests = [
   "ui-state/spec::properties::full_items_arriving_in_any_order_inside_the_window_give_the_same_state",
+  "ui-state/spec::properties::the_block_holds_through_following_reading_paging_and_reloads",
+  "ui-state/spec::following::following_drops_the_oldest_rows_past_the_cap_as_live_rows_arrive",
+  "ui-state/spec::following::reading_holds_arrivals_apart_and_reports_them",
+  "ui-state/spec::following::returning_releases_held_rows_that_fit_under_the_cap",
+  "ui-state/spec::following::returning_after_the_head_moved_on_reloads_it_from_a_fresh_tail",
+  "ui-state/spec::following::the_held_set_is_bounded_by_the_cap",
+  "ui-runtime/session::a_following_window_trims_to_its_cap_and_a_return_past_the_held_rows_reloads_the_head",
+  "tui/lib::tests::the_view_tells_the_session_once_when_the_reader_leaves_and_once_when_it_returns",
+  "tui/lib::tests::a_following_chat_under_live_rows_issues_no_page",
+  "swift:AmuxCoreTests/ChatModelTests/testTheSessionIsToldWhenTheReaderLeavesAndReturns",
+  "swift:AmuxCoreTests/ChatModelTests/testAFollowingChatUnderLiveRowsDropsTrimmedKeysAndAsksForNoPage",
+  "swift:AmuxCoreTests/ChatModelTests/testRowsArrivingBelowAReaderWhoScrolledUpAreOfferedRatherThanFollowed",
   "ui-state/spec::properties::replay_from_any_checkpoint_equals_the_uninterrupted_state",
   "ui-state/spec::properties::a_page_and_the_live_stream_commute",
   "ui-state/spec::inputs::a_prompt_is_sent_then_settled_by_its_reflection",
