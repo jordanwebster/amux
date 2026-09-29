@@ -150,25 +150,30 @@ impl LinkCarrier for MuxCarrier {
     ) -> BoxFuture<'_, Result<ByteStream, OpenError>> {
         Box::pin(async move {
             let mut stream = self.request_stream().await?.compat();
-            write_proto(&mut stream, &preface, wire::MESSAGE_SIZE_LIMIT)
-                .await
-                .map_err(OpenError::Io)?;
-            stream.flush().await.map_err(OpenError::Io)?;
-
-            let status = stream.read_u8().await.map_err(OpenError::Io)?;
-            match status {
-                STREAM_ACCEPTED => Ok(Box::new(MuxByteStream::accepted(stream)) as ByteStream),
-                STREAM_REFUSED => {
-                    let code = stream.read_u8().await.map_err(OpenError::Io)?;
-                    let refusal = pb::StreamRefusal::try_from(i32::from(code))
-                        .unwrap_or(pb::StreamRefusal::Unspecified);
-                    Err(OpenError::Refused(refusal))
-                }
-                other => Err(OpenError::Io(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid yamux stream-open status {other}"),
-                ))),
-            }
+            // yamux does not wake a stream waiting on its connection when
+            // the connection closes: the answer is waited for only while
+            // the link lasts.
+            let answer = tokio::select! {
+                answer = async {
+                    write_proto(&mut stream, &preface, wire::MESSAGE_SIZE_LIMIT).await?;
+                    stream.flush().await?;
+                    match stream.read_u8().await? {
+                        STREAM_ACCEPTED => Ok(Ok(())),
+                        STREAM_REFUSED => {
+                            let code = stream.read_u8().await?;
+                            Ok(Err(pb::StreamRefusal::try_from(i32::from(code))
+                                .unwrap_or(pb::StreamRefusal::Unspecified)))
+                        }
+                        other => Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("invalid yamux stream-open status {other}"),
+                        )),
+                    }
+                } => answer.map_err(OpenError::Io)?,
+                _ = self.closed() => return Err(OpenError::LinkClosed),
+            };
+            answer.map_err(OpenError::Refused)?;
+            Ok(Box::new(MuxByteStream::accepted(stream, self.closed.subscribe())) as ByteStream)
         })
     }
 
@@ -279,8 +284,9 @@ async fn drive_connection<IO>(
                     let _ = control.send(Ok(stream));
                 } else {
                     let inbound = inbound.clone();
+                    let ended = closed.subscribe();
                     tokio::spawn(async move {
-                        prepare_inbound_stream(stream, inbound).await;
+                        prepare_inbound_stream(stream, inbound, ended).await;
                     });
                 }
             }
@@ -302,11 +308,16 @@ async fn drive_connection<IO>(
 async fn prepare_inbound_stream(
     stream: yamux::Stream,
     inbound: mpsc::UnboundedSender<(pb::StreamPreface, ByteStream)>,
+    mut ended: watch::Receiver<Option<pb::LinkCloseReason>>,
 ) {
     let mut stream = stream.compat();
-    match read_proto::<_, pb::StreamPreface>(&mut stream, wire::MESSAGE_SIZE_LIMIT).await {
+    let preface = tokio::select! {
+        preface = read_proto::<_, pb::StreamPreface>(&mut stream, wire::MESSAGE_SIZE_LIMIT) => preface,
+        _ = ended.wait_for(Option::is_some) => return,
+    };
+    match preface {
         Ok(Some(preface)) => {
-            let stream = Box::new(MuxByteStream::pending(stream)) as ByteStream;
+            let stream = Box::new(MuxByteStream::pending(stream, ended)) as ByteStream;
             if let Err(error) = inbound.send((preface, stream)) {
                 let (_, mut stream) = error.0;
                 let _ = stream.reset(pb::StreamRefusal::ShuttingDown).await;
@@ -547,24 +558,50 @@ struct MuxByteStream {
     admission: Admission,
     accept_offset: usize,
     accepting_flush: bool,
+    link_ended: LinkEnded,
 }
 
 impl MuxByteStream {
-    fn pending(stream: tokio_util::compat::Compat<yamux::Stream>) -> Self {
+    fn pending(
+        stream: tokio_util::compat::Compat<yamux::Stream>,
+        closed: watch::Receiver<Option<pb::LinkCloseReason>>,
+    ) -> Self {
         Self {
             stream: Some(stream),
             admission: Admission::Pending,
             accept_offset: 0,
             accepting_flush: false,
+            link_ended: LinkEnded::new(closed),
         }
     }
 
-    fn accepted(stream: tokio_util::compat::Compat<yamux::Stream>) -> Self {
+    fn accepted(
+        stream: tokio_util::compat::Compat<yamux::Stream>,
+        closed: watch::Receiver<Option<pb::LinkCloseReason>>,
+    ) -> Self {
         Self {
             stream: Some(stream),
             admission: Admission::Accepted,
             accept_offset: 0,
             accepting_flush: false,
+            link_ended: LinkEnded::new(closed),
+        }
+    }
+
+    /// A read or write the stream left waiting fails once the link has
+    /// closed: yamux closes a connection without waking its streams, and
+    /// no more data reaches them after it, so the wait would never end.
+    fn unless_link_ended<T>(
+        &mut self,
+        cx: &mut Context<'_>,
+        poll: Poll<io::Result<T>>,
+    ) -> Poll<io::Result<T>> {
+        match poll {
+            Poll::Pending if self.link_ended.poll(cx) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "the link closed",
+            ))),
+            other => other,
         }
     }
 
@@ -607,15 +644,13 @@ impl AsyncRead for MuxByteStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        match self.poll_accept(cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-            Poll::Pending => return Poll::Pending,
-        }
-        match self.stream.as_mut() {
+        let accepted = self.poll_accept(cx);
+        std::task::ready!(self.unless_link_ended(cx, accepted))?;
+        let read = match self.stream.as_mut() {
             Some(stream) => Pin::new(stream).poll_read(cx, buf),
-            None => Poll::Ready(Ok(())),
-        }
+            None => return Poll::Ready(Ok(())),
+        };
+        self.unless_link_ended(cx, read)
     }
 }
 
@@ -625,39 +660,33 @@ impl AsyncWrite for MuxByteStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        match self.poll_accept(cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-            Poll::Pending => return Poll::Pending,
-        }
-        match self.stream.as_mut() {
+        let accepted = self.poll_accept(cx);
+        std::task::ready!(self.unless_link_ended(cx, accepted))?;
+        let written = match self.stream.as_mut() {
             Some(stream) => Pin::new(stream).poll_write(cx, buf),
-            None => Poll::Ready(Err(stream_closed_error())),
-        }
+            None => return Poll::Ready(Err(stream_closed_error())),
+        };
+        self.unless_link_ended(cx, written)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self.poll_accept(cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-            Poll::Pending => return Poll::Pending,
-        }
-        match self.stream.as_mut() {
+        let accepted = self.poll_accept(cx);
+        std::task::ready!(self.unless_link_ended(cx, accepted))?;
+        let flushed = match self.stream.as_mut() {
             Some(stream) => Pin::new(stream).poll_flush(cx),
-            None => Poll::Ready(Err(stream_closed_error())),
-        }
+            None => return Poll::Ready(Err(stream_closed_error())),
+        };
+        self.unless_link_ended(cx, flushed)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self.poll_accept(cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-            Poll::Pending => return Poll::Pending,
-        }
-        match self.stream.as_mut() {
+        let accepted = self.poll_accept(cx);
+        std::task::ready!(self.unless_link_ended(cx, accepted))?;
+        let shut = match self.stream.as_mut() {
             Some(stream) => Pin::new(stream).poll_shutdown(cx),
-            None => Poll::Ready(Ok(())),
-        }
+            None => return Poll::Ready(Ok(())),
+        };
+        self.unless_link_ended(cx, shut)
     }
 }
 
@@ -674,6 +703,36 @@ impl AsyncStream for MuxByteStream {
             self.stream.take();
             Ok(())
         })
+    }
+}
+
+/// Whether a stream's link has closed, remembered once seen.
+struct LinkEnded {
+    wait: Option<BoxFuture<'static, ()>>,
+}
+
+impl LinkEnded {
+    fn new(mut closed: watch::Receiver<Option<pb::LinkCloseReason>>) -> Self {
+        Self {
+            wait: Some(Box::pin(async move {
+                let _ = closed.wait_for(Option::is_some).await;
+            })),
+        }
+    }
+
+    /// True once the link has closed; until then the task is woken when
+    /// it does.
+    fn poll(&mut self, cx: &mut Context<'_>) -> bool {
+        match self.wait.as_mut() {
+            None => true,
+            Some(wait) => {
+                let ended = wait.as_mut().poll(cx).is_ready();
+                if ended {
+                    self.wait = None;
+                }
+                ended
+            }
+        }
     }
 }
 
@@ -1019,6 +1078,68 @@ mod tests {
                 .unwrap(),
             Some(revoked)
         );
+    }
+
+    /// A severed link: both ends close at once, the way a dead connection
+    /// is cleaned up on each side.
+    fn sever(connector: &MuxCarrier, acceptor: &MuxCarrier) {
+        connector.close(pb::LinkCloseReason::Unspecified);
+        acceptor.close(pb::LinkCloseReason::Unspecified);
+    }
+
+    /// yamux's close does not wake a stream's waiting reader: a call whose
+    /// answer was on the way when the link went must still end, or its
+    /// caller waits on the dead link forever.
+    #[tokio::test]
+    async fn reads_waiting_when_the_link_closes_end() {
+        let (connector, acceptor) = carriers().await;
+        let opening = {
+            let connector = connector.clone();
+            tokio::spawn(async move { connector.open_stream(preface(5)).await.unwrap() })
+        };
+        let (_, mut inbound) = acceptor.accept_stream().await.unwrap();
+        inbound.write_all(b"hi").await.unwrap();
+        let mut outbound = opening.await.unwrap();
+        let mut greeting = [0; 2];
+        outbound.read_exact(&mut greeting).await.unwrap();
+        let outbound_read = tokio::spawn(async move {
+            let mut byte = [0];
+            outbound.read(&mut byte).await
+        });
+        let inbound_read = tokio::spawn(async move {
+            let mut byte = [0];
+            inbound.read(&mut byte).await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        sever(&connector, &acceptor);
+        for (side, read) in [("outbound", outbound_read), ("inbound", inbound_read)] {
+            let read = tokio::time::timeout(Duration::from_secs(5), read)
+                .await
+                .unwrap_or_else(|_| panic!("the {side} read waits on a closed link"))
+                .unwrap();
+            assert!(!matches!(read, Ok(n) if n > 0), "{side} read {read:?}");
+        }
+    }
+
+    /// An open waiting for the peer's answer when the link closes fails.
+    #[tokio::test]
+    async fn an_open_waiting_for_its_answer_when_the_link_closes_fails() {
+        let (connector, acceptor) = carriers().await;
+        let opening = {
+            let connector = connector.clone();
+            tokio::spawn(async move { connector.open_stream(preface(6)).await })
+        };
+        // Taken but not yet answered: the answer goes out on first use.
+        let (_, _inbound) = acceptor.accept_stream().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        sever(&connector, &acceptor);
+        let opened = tokio::time::timeout(Duration::from_secs(5), opening)
+            .await
+            .expect("the open waits on a closed link")
+            .unwrap();
+        assert!(opened.is_err());
     }
 
     #[tokio::test]

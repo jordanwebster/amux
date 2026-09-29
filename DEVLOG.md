@@ -1,3 +1,15 @@
+2026-09-29 — **A call caught opening its channel when a link drops no
+longer waits forever.** Closing a link's multiplexed connection does not
+wake a stream already waiting to read, so a stream opened just before a
+link was severed (its open waiting for the peer's accept, or the TLS
+handshake of a new channel on it) never ended. A host whose first inventory
+request to a peer met that moment kept waiting on the dead link after the
+link came back, and never listed the peer's agents (seen once in the flood
+smoke test). Every stream on the connection, and every open waiting for its
+answer, now fails as soon as the link closes. Unit tests hold both cases,
+and delaying the peer's accept so the sever lands mid-open fails the flood
+smoke the way it failed before the fix and passes after.
+
 2026-09-29 — **`amux attach` no longer loses a resize made right after it
 draws.** It wrote the agent's screen to the terminal before it started
 listening for window changes, so a terminal resized as soon as the screen
