@@ -1,3 +1,9 @@
+2026-09-29 — **`amux attach` no longer loses a resize made right after it
+draws.** It wrote the agent's screen to the terminal before it started
+listening for window changes, so a terminal resized as soon as the screen
+appeared kept the agent at the old size (seen once on Linux CI). It now
+listens first, then reads the size and draws.
+
 2026-09-29 — **The wire guide's rejection table is whole again.** The
 `host_unreachable` row had been left below the paragraph on provider-worded
 refusals, so Markdown rendered it as stray text after a truncated table; it

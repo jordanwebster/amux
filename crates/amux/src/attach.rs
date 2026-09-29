@@ -243,6 +243,12 @@ async fn pump(
 
 async fn passthrough(held: &Held, leader: &LeaderKey, returning: bool) -> Result<Outcome> {
     let raw = RawMode::enter()?;
+    // Listen for window changes before reading the size and drawing: a
+    // terminal resized once it shows the agent's screen must reach the
+    // agent, and a signal with no listener yet is lost.
+    #[cfg(unix)]
+    let mut resized =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
     let (rows, cols) = terminal_size();
     {
         let mut screen = held.screen.lock().unwrap();
@@ -263,9 +269,6 @@ async fn passthrough(held: &Held, leader: &LeaderKey, returning: bool) -> Result
     let _ = held.typed.send(Typed::Resize(rows, cols));
     let mut keys = read_keys(Chords::new(leader));
     let mut ended = held.ended.clone();
-    #[cfg(unix)]
-    let mut resized =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
     let outcome = loop {
         #[cfg(unix)]
         let window = resized.recv();
