@@ -1,3 +1,16 @@
+2026-09-29 — **Headless Claude starts a session that never began, and a
+spawn on its parent's own host starts in its parent's directory.** A
+headless Claude agent stopped before its first prompt left Claude no
+transcript, and its next incarnation asked Claude to resume that session,
+which Claude refuses. Headless Claude now follows terminal Claude's rule:
+resume only a session Claude holds a transcript for, else start it under the
+same id. The fake headless Claude now writes a transcript at its first turn
+and, like Claude, refuses to resume a session without one or to start one
+under an id it already has, so tests see both mistakes. And a child spawned
+with no directory by an agent that named its own host (by any of its names)
+started in the home directory, as if on another host; the daemon now starts
+it where the parent works.
+
 2026-09-29 — **Three Codex interpreter fixes.** An interrupt sent while
 a turn/start was still in flight waited for Codex to name the turn; when
 that turn/start failed, or Codex exited first, the waiting interrupt was

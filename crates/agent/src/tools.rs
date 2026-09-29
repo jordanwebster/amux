@@ -351,7 +351,8 @@ impl Server {
         // The daemon resolves the name against the hosts it trusts.
         let host = optional(arguments, "host");
         let cwd = optional(arguments, "cwd").unwrap_or_else(|| match host {
-            // A path on this host means nothing on another: that host picks.
+            // A named host may be this one or another; the daemon picks:
+            // this agent's directory here, the home directory elsewhere.
             Some(_) => String::new(),
             None => self.cwd.clone(),
         });

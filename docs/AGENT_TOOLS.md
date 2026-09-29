@@ -101,9 +101,10 @@ tool's description tells it to reply with `send` to that agent's name.
 Starts a child agent of `kind` with `prompt` as its first input. `name` names
 it. `host` is a trusted host's name, as a person would say it; the daemon
 resolves it, and omitted it means the caller's own host. `cwd` is a path on
-the host the child runs on: omitted on the caller's host it is the caller's
-own working directory, and omitted on another host that host picks, which is
-the home directory of the user its daemon runs as. The caller becomes the
+the host the child runs on: omitted on the caller's host (named or not, by
+any of its names) it is the caller's own working directory, and omitted on
+another host that host picks, which is the home directory of the user its
+daemon runs as. The caller becomes the
 child's parent; the request cannot name any other parent.
 [Families](#families) describes what a child is.
 

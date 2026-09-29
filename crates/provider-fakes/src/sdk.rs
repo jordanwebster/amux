@@ -192,6 +192,26 @@ impl Engine {
     }
 
     async fn run(mut self) -> i32 {
+        // Claude resumes only a session whose transcript it wrote.
+        if let Some(session) = self
+            .args
+            .resume
+            .as_ref()
+            .filter(|_| !self.transcript().exists())
+        {
+            eprintln!("No conversation found with session ID: {session}");
+            return 1;
+        }
+        // Nor does it start a session under an id it already has.
+        if let Some(session) = self
+            .args
+            .session_id
+            .as_ref()
+            .filter(|_| self.args.resume.is_none() && self.transcript().exists())
+        {
+            eprintln!("Error: Session ID {session} is already in use.");
+            return 1;
+        }
         loop {
             if let Some(next) = self.queue.pop_front() {
                 if let Some(code) = self.turn(next).await {
@@ -405,6 +425,32 @@ impl Engine {
         })
     }
 
+    /// Where Claude keeps this session's transcript.
+    fn transcript(&self) -> std::path::PathBuf {
+        crate::playback::transcript_path(
+            &crate::playback::claude_config_dir(),
+            std::path::Path::new(&self.cwd),
+            &self.session,
+        )
+    }
+
+    /// Claude writes a session's transcript once its first turn begins; a
+    /// row naming the session is all a later `--resume` looks for.
+    fn begin_transcript(&self) {
+        let path = self.transcript();
+        if path.exists() {
+            return;
+        }
+        let row = json!({ "type": "summary", "sessionId": self.session, "cwd": self.cwd });
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, format!("{row}\n")));
+        if let Err(error) = written {
+            eprintln!("fake-claude-sdk: transcript: {error}");
+        }
+    }
+
     fn init_frame(&self) -> Value {
         let mut frame = json!({
             "type": "system",
@@ -455,6 +501,7 @@ impl Engine {
         }
         let init = self.init_frame();
         self.send(init).await;
+        self.begin_transcript();
         self.replay(&first).await;
         let mut calls = 0;
         let exit = loop {

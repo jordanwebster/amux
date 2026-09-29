@@ -667,6 +667,17 @@ impl ProfileRuntime {
             return Err(RegistryError::UnknownKind(request.kind));
         };
         let mut request = request;
+        if request.cwd.is_empty()
+            && let Some(caller) = caller
+        {
+            // One of this host's agents spawning here, whatever name it gave
+            // this host, starts its child where it works itself.
+            request.cwd = self
+                .agent(caller)
+                .await
+                .map(|parent| parent.cwd)
+                .unwrap_or_default();
+        }
         if request.cwd.is_empty() {
             // A spawn from another host names no path here unless it knows
             // one: the child starts in the home directory of the user this

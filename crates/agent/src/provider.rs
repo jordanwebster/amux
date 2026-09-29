@@ -136,7 +136,7 @@ impl Provider {
         dir: &Path,
         events: mpsc::Sender<ProviderEvent>,
     ) -> Result<Self, ProviderError> {
-        let (session, resume) = provider_session(spec, dir)?;
+        let (session, resume) = claude_session(spec, dir)?;
         let (args, settings) = claude_launch(spec, dir, false)?;
         let mut command = tokio::process::Command::new(&spec.provider_command);
         command
@@ -363,16 +363,7 @@ impl Provider {
         if cfg!(windows) {
             return Err(ProviderError::TerminalOnWindows);
         }
-        let (session, mut resume) = provider_session(spec, dir)?;
-        // Claude writes a session's transcript once the session begins; one
-        // that ended before (at its folder-trust dialog, say) has none, and
-        // Claude refuses to resume it. It starts under the same id instead.
-        if resume && !session_began(spec, &session) {
-            eprintln!(
-                "amux agent: Claude's session {session} never began; starting it rather than resuming"
-            );
-            resume = false;
-        }
+        let (session, resume) = claude_session(spec, dir)?;
         let keys = Keys::resolve(Path::new(&spec.provider_command)).await;
         let launch = interpret::claude_pty::launch_fact(
             keys.as_ref().map_or("", |keys| keys.version.as_str()),
@@ -1088,6 +1079,22 @@ fn provider_session(spec: &AgentSpec, dir: &Path) -> io::Result<(String, bool)> 
         Err(error) if error.kind() == io::ErrorKind::NotFound => new_session(&path),
         Err(error) => Err(error),
     }
+}
+
+/// Claude's session for this agent, and whether this incarnation resumes
+/// it. Claude writes a session's transcript once the session begins; one
+/// that ended before (at its folder-trust dialog, or stopped before its
+/// first prompt) has none, and Claude refuses to resume it. It starts under
+/// the same id instead.
+fn claude_session(spec: &AgentSpec, dir: &Path) -> io::Result<(String, bool)> {
+    let (session, resume) = provider_session(spec, dir)?;
+    if resume && !session_began(spec, &session) {
+        eprintln!(
+            "amux agent: Claude's session {session} never began; starting it rather than resuming"
+        );
+        return Ok((session, false));
+    }
+    Ok((session, resume))
 }
 
 /// Whether Claude has a transcript for this session: resuming needs one.

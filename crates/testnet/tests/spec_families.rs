@@ -347,6 +347,31 @@ async fn a_spawn_by_host_name_resolves_among_trusted_hosts_and_is_forwarded() {
     assert_eq!(row(&net, "box", "wanderer").await.unwrap().cwd, home);
     println!("spawn on \"box\" naming no directory: wanderer starts in {home}");
 
+    // Naming the parent's own host, by any of its names, is a spawn here:
+    // with no directory the child starts where its parent works.
+    let lead_cwd = row(&net, "desk", "lead").await.unwrap().cwd;
+    assert_ne!(
+        lead_cwd, home,
+        "the parent works outside the home directory"
+    );
+    let local = net
+        .spawn_child(
+            "lead",
+            child("neighbour", "desk", says("Here too.")).cwd(""),
+        )
+        .await
+        .unwrap();
+    assert_eq!(local.host_id, net.host("desk").unwrap().host_id.as_bytes());
+    assert_eq!(local.cwd, lead_cwd);
+    let named = tools
+        .create_agent(Request::new(request("DESK")))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(named.host_id, net.host("desk").unwrap().host_id.as_bytes());
+    assert_eq!(named.cwd, lead_cwd);
+    println!("spawn on \"desk\" or \"DESK\" naming no directory: the child starts in {lead_cwd}");
+
     // A host creates children only for its own agents.
     let desk = net.edge("desk").unwrap();
     let mut peer = desk.peer(box_id).await.unwrap();

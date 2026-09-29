@@ -793,6 +793,76 @@ fn a_terminal_session_that_never_began_is_started_not_resumed() {
     });
 }
 
+/// Headless Claude stopped before its first prompt never began its
+/// session, so Claude has no transcript to resume: the next incarnation
+/// starts the session under the same id instead, and takes a prompt.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_headless_session_that_never_began_is_started_not_resumed() {
+    let agent = Agent::start(Setup {
+        steps: vec![
+            Step::Text {
+                chunks: vec!["hello after all".into()],
+            },
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    let session = agent.provider_session();
+    daemon.stop(StopMode::Kill).await;
+    assert_eq!(agent.exit().await, ExitCause::Killed);
+
+    agent.resume();
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", "say hello").await, Verdict::Accepted);
+    agent
+        .wait("the turn ends", |log| log.turn_ends() == 1)
+        .await;
+    assert!(agent.log().has_text("hello after all"));
+    assert_eq!(agent.provider_session(), session, "the same session id");
+    daemon.stop(StopMode::Graceful).await;
+    assert_eq!(agent.exit().await, ExitCause::Stopped);
+}
+
+/// Headless Claude that ran a turn began its session: the next incarnation
+/// resumes it (Claude refuses to start a session under an id it has).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_headless_session_that_began_is_resumed() {
+    let agent = Agent::start(Setup {
+        steps: vec![
+            Step::Text {
+                chunks: vec!["first".into()],
+            },
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", "one").await, Verdict::Accepted);
+    agent
+        .wait("the first turn ends", |log| log.turn_ends() == 1)
+        .await;
+    let session = agent.provider_session();
+    daemon.stop(StopMode::Graceful).await;
+    assert_eq!(agent.exit().await, ExitCause::Stopped);
+
+    agent.resume();
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p2", "two").await, Verdict::Accepted);
+    agent
+        .wait("the second turn ends", |log| log.turn_ends() == 2)
+        .await;
+    assert_eq!(agent.provider_session(), session, "the same session id");
+    daemon.stop(StopMode::Graceful).await;
+    assert_eq!(agent.exit().await, ExitCause::Stopped);
+}
+
 /// Terminal Claude dies while its permission menu is open.
 // Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
 // docs/ARCHITECTURE.md, "Windows, as a stated cost").
