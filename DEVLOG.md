@@ -1,3 +1,22 @@
+2026-09-29 — **Agent processes no longer load AppKit.** The flood's
+agent process memory had grown 16% past its baseline (3.50 MiB against
+3.02), over the 10% drift limit. The baseline's commit, built and run
+today, still measured 3.00 MiB, so the growth was the code's. Memory maps
+of one agent from each build put most of the extra half mebibyte in
+system frameworks' data pages. Since the baseline, the amux binary has
+come to host the terminal client, and every agent process is that binary. The
+client's clipboard crate linked AppKit, Foundation, CoreGraphics and the
+Objective-C runtime, so the dynamic loader mapped all of them into
+every agent at launch, for a pasteboard only Ctrl+V reads. On macOS the
+client now opens AppKit and the runtime with dlopen when it pastes, and
+reads the pasteboard's PNG (or its TIFF, re-encoded), else its text. The
+other platforms keep the clipboard crate. The flood now measures 3.19-3.25
+MiB (+6-8%), and `just perf` passes on an idle machine. A test in the agent
+process suite fails if the binary links AppKit, Foundation or libobjc
+again; it was checked by linking the crate back in. Text, PNG, TIFF, a file
+path and an empty clipboard were each read through the new path on this
+Mac.
+
 2026-09-29 — **The phone's own performance suite is retired.** It ran
 inside the app: it generated forty invented agents and a thousand invented
 rows, handed them to the bridge's event callback as event batches and timed

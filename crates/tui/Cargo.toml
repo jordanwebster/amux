@@ -21,11 +21,9 @@ ui-state = { workspace = true }
 ui-view = { workspace = true }
 wire = { workspace = true }
 anyhow = { workspace = true }
-arboard = { workspace = true }
 base64 = "0.22"
 crossterm = { workspace = true, features = ["event-stream"] }
 futures-util = { workspace = true }
-png = { workspace = true }
 ratatui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -40,6 +38,13 @@ unicode-width = "0.2"
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 signal-hook = { workspace = true }
+
+# macOS reads its pasteboard through AppKit loaded at paste time (see
+# src/clipboard.rs); a clipboard crate would link AppKit into every process
+# the amux binary starts, agents included.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+arboard = { workspace = true }
+png = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
