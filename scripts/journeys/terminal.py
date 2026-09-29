@@ -184,7 +184,9 @@ def normalize(text: str) -> str:
 # Durations measured on the run's own clock ("380ms", "1.2s", "1m 4s") are
 # volatile: each becomes "<t>". Right-aligned meta (a run of blanks before it)
 # keeps its place, the blanks absorbing the difference; a duration flowing in
-# a sentence after one space just takes the mask's own width.
+# a sentence after one space just takes the mask's own width, what follows it
+# moving along, and the row keeps the pane's width: its last cell fills in or
+# gives way at the end, so the style map does not carry the duration's width.
 DURATION = re.compile(r"(?<= )(\d+m \d+s|\d+(?:\.\d+)?(?:ms|s))(?= · |$)")
 
 
@@ -218,6 +220,7 @@ def mask_durations(
     out_texts, out_styles = [], []
     for text, row in zip(texts, styles):
         row = list(row)
+        width = len(row)
         for match in reversed(list(DURATION.finditer(text))):
             start, end = match.span()
             blank = start
@@ -233,6 +236,8 @@ def mask_durations(
             fill = row[c_blank] if c_blank < c_start else row[c_start]
             row[c_blank:c_end] = [fill] * (c_start - c_blank + extra) + [row[c_start]] * 3
             text = text[:blank] + " " * (start - blank + extra) + "<t>" + text[end:]
+        if row:
+            row = (row + [row[-1]] * width)[:width]
         out_texts.append(text)
         out_styles.append(row)
     return out_texts, out_styles
