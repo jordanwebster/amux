@@ -4,17 +4,21 @@
 //! it, and neither does the server that serves manifests, so a compromised
 //! build runner or cloud cannot sign a binary that machines would install.
 //!
+//! A release is two acts at two times. `cut` makes the version exist: the
+//! number goes into the manifests, the commit is tagged and pushed, and the
+//! tag's workflow builds the binaries into a GitHub Release. `deploy` puts
+//! that release in front of machines: a channel and a rollout are chosen,
+//! the binaries' checksums are signed, and the channel manifest is uploaded
+//! to the release, where amux.sh serves it as `/releases/<channel>.json`.
+//! Deploying repeats against the same release (a wider rollout, preview
+//! promoted to stable); cutting does not.
+//!
 //! ```text
 //! xtask release key generate        make a seed, keep it, print its public half
 //! xtask release key public          print the keychain seed's public half
-//! xtask release manifest VERSION [--channel stable|preview] [--rollout N] [--publish]
+//! xtask release cut VERSION         bump, lock, release-check, commit, tag, push
+//! xtask release deploy VERSION [--channel stable|preview] [--rollout N]
 //! ```
-//!
-//! `manifest` takes the binaries a GitHub Release already holds, signs each
-//! one's checksum, verifies the signatures against the key the workflow
-//! compiles into those binaries, writes `<channel>.json`, and with
-//! `--publish` uploads it to the same release, where amux.sh serves it as
-//! `/releases/<channel>.json`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -43,8 +47,9 @@ pub fn main(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", release::hex(&release::public_key(&keychain_seed()?)));
             Ok(())
         }
-        ["manifest", version, rest @ ..] => manifest(version, rest),
-        _ => Err("usage: xtask release <key generate|key public|manifest VERSION [--channel stable|preview] [--rollout N] [--publish]>".into()),
+        ["cut", version] => cut(version),
+        ["deploy", version, rest @ ..] => deploy(version, rest),
+        _ => Err("usage: xtask release <key generate|key public|cut VERSION|deploy VERSION [--channel stable|preview] [--rollout N]>".into()),
     }
 }
 
@@ -109,17 +114,122 @@ pub fn workflow_key(workflow: &str) -> Option<[u8; 32]> {
         .find_map(|value| release::parse_key(value.trim().trim_matches(|c| c == '"' || c == '\'')))
 }
 
+/// The manifests that carry the version. The daemon announces its own
+/// crate's version to peers, so a release that moved only the CLI would
+/// have `amux --version` and the machine a person sees in their fleet
+/// disagree.
+const VERSIONED: &[&str] = &["crates/amux/Cargo.toml", "crates/node/Cargo.toml"];
+
+/// Makes the version exist: the number in the manifests and the lock,
+/// the release build checked, one commit tagged `v<version>`, branch and
+/// tag pushed. The tag starts the Release workflow. Refuses a tree with
+/// other changes in it, a version that is not above the current one, and
+/// a Mac without the release key, since a cut nobody can deploy is a tag
+/// for nothing.
+fn cut(version: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let version = version.strip_prefix('v').unwrap_or(version);
+    let wanted = semver::Version::parse(version)?;
+    let root = repository_root();
+    let status = git(&root, &["status", "--porcelain"])?;
+    if !status.trim().is_empty() {
+        return Err(
+            format!("the tree has changes; a cut commits only the version:\n{status}").into(),
+        );
+    }
+    let workflow = std::fs::read_to_string(root.join(WORKFLOW))?;
+    let key = release::public_key(&keychain_seed()?);
+    if workflow_key(&workflow) != Some(key) {
+        return Err(format!(
+            "{WORKFLOW} does not name this Mac's release key, so the release could not be deployed"
+        )
+        .into());
+    }
+    let current = current_version(&std::fs::read_to_string(root.join(VERSIONED[0]))?)?;
+    if wanted <= current {
+        return Err(format!("{wanted} is not above the current version {current}").into());
+    }
+    for manifest in VERSIONED {
+        let path = root.join(manifest);
+        let text = std::fs::read_to_string(&path)?;
+        let bumped = bump_version(&text, &current, &wanted)
+            .ok_or_else(|| format!("{manifest} does not carry version {current}"))?;
+        std::fs::write(&path, bumped)?;
+    }
+    run(
+        &root,
+        "cargo",
+        &["update", "--offline", "-p", "amux", "-p", "node"],
+    )?;
+    run(&root, "just", &["release-check"])?;
+    let mut add = vec!["add"];
+    add.extend(VERSIONED);
+    add.push("Cargo.lock");
+    git(&root, &add)?;
+    let tag = format!("v{wanted}");
+    git(&root, &["commit", "-q", "-m", &tag])?;
+    git(&root, &["tag", &tag])?;
+    git(&root, &["push"])?;
+    git(&root, &["push", "origin", &tag])?;
+    println!("cut {tag}; the Release workflow is building it. `just deploy {wanted}` when it has.");
+    Ok(())
+}
+
+/// The version the first versioned manifest carries.
+pub fn current_version(manifest: &str) -> Result<semver::Version, Box<dyn std::error::Error>> {
+    let line = manifest
+        .lines()
+        .find_map(|line| line.strip_prefix("version = \""))
+        .ok_or("the manifest has no version line")?;
+    Ok(semver::Version::parse(line.trim_end_matches('"'))?)
+}
+
+/// The manifest with its own version line moved from `from` to `to`, or
+/// None when it does not carry `from`.
+pub fn bump_version(
+    manifest: &str,
+    from: &semver::Version,
+    to: &semver::Version,
+) -> Option<String> {
+    let old = format!("version = \"{from}\"");
+    let new = format!("version = \"{to}\"");
+    manifest
+        .contains(&old)
+        .then(|| manifest.replacen(&old, &new, 1))
+}
+
+fn run(root: &Path, program: &str, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+    let status = Command::new(program)
+        .args(args)
+        .current_dir(root)
+        .status()?;
+    if !status.success() {
+        return Err(format!("{program} {} failed: {status}", args.join(" ")).into());
+    }
+    Ok(())
+}
+
+fn git(root: &Path, args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
+    let output = Command::new("git").args(args).current_dir(root).output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    Ok(String::from_utf8(output.stdout)?)
+}
+
 struct Options {
     channel: String,
     rollout: Option<u8>,
-    publish: bool,
 }
 
 fn options(rest: &[&str]) -> Result<Options, Box<dyn std::error::Error>> {
     let mut options = Options {
         channel: "stable".into(),
         rollout: None,
-        publish: false,
     };
     let mut words = rest.iter();
     while let Some(word) = words.next() {
@@ -141,18 +251,22 @@ fn options(rest: &[&str]) -> Result<Options, Box<dyn std::error::Error>> {
                 }
                 options.rollout = Some(percent);
             }
-            "--publish" => options.publish = true,
             other => return Err(format!("unknown argument {other}").into()),
         }
     }
     Ok(options)
 }
 
-fn manifest(version: &str, rest: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+/// Puts a cut release in front of a channel: waits for the tag's workflow
+/// to have published the binaries, signs their checksums, verifies every
+/// signature against the key the workflow compiles in, and uploads
+/// `<channel>.json` to the release, replacing one already there.
+fn deploy(version: &str, rest: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     let options = options(rest)?;
     let version = version.strip_prefix('v').unwrap_or(version);
     semver::Version::parse(version)?;
     let tag = format!("v{version}");
+    wait_for_release(&tag)?;
 
     let seed = keychain_seed()?;
     let key = release::public_key(&seed);
@@ -213,21 +327,54 @@ fn manifest(version: &str, rest: &[&str]) -> Result<(), Box<dyn std::error::Erro
     let file = dir.join(format!("{}.json", options.channel));
     std::fs::write(&file, format!("{json}\n"))?;
     println!("{json}");
-    eprintln!("wrote {}", file.display());
-    if options.publish {
-        gh(&[
-            "release",
-            "upload",
-            &tag,
-            &file.to_string_lossy(),
-            "--clobber",
-        ])?;
-        eprintln!(
-            "uploaded {}.json to {tag}; amux.sh serves it as /releases/{}.json",
-            options.channel, options.channel
-        );
-    }
+    gh(&[
+        "release",
+        "upload",
+        &tag,
+        &file.to_string_lossy(),
+        "--clobber",
+    ])?;
+    println!(
+        "deployed {tag} to {}{}; amux.sh serves it as /releases/{}.json",
+        options.channel,
+        options
+            .rollout
+            .map(|percent| format!(" at {percent}%"))
+            .unwrap_or_default(),
+        options.channel
+    );
     Ok(())
+}
+
+/// Waits until the tag's GitHub Release holds `checksums.txt`: the Release
+/// workflow is still building when a deploy follows a cut closely, and a
+/// release that never appears is reported as that after a bounded wait.
+fn wait_for_release(tag: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45 * 60);
+    let mut said = false;
+    loop {
+        let assets = gh(&[
+            "release",
+            "view",
+            tag,
+            "--json",
+            "assets",
+            "--jq",
+            ".assets[].name",
+        ])
+        .unwrap_or_default();
+        if assets.lines().any(|name| name.trim() == "checksums.txt") {
+            return Ok(());
+        }
+        if std::time::Instant::now() > deadline {
+            return Err(format!("{tag} has no release with checksums.txt after 45 minutes").into());
+        }
+        if !said {
+            eprintln!("waiting for the Release workflow to publish {tag}");
+            said = true;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(20));
+    }
 }
 
 /// The hex digest `checksums.txt` records for `asset`, as `sha256sum` writes
@@ -284,6 +431,21 @@ mod tests {
         );
         assert!(checksum(text, "amux-windows-x86_64.exe").is_some());
         assert_eq!(checksum(text, "amux-linux-x86_64"), None);
+    }
+
+    #[test]
+    fn a_cut_moves_the_crates_version_line_and_nothing_else() {
+        let manifest = "[package]\nname = \"amux\"\nversion = \"0.7.0\"\n\n[dependencies]\nnode = { version = \"0.7.0\" }\n";
+        let from = current_version(manifest).unwrap();
+        assert_eq!(from.to_string(), "0.7.0");
+        let to = semver::Version::parse("0.8.0").unwrap();
+        let bumped = bump_version(manifest, &from, &to).unwrap();
+        assert!(bumped.contains("version = \"0.8.0\"\n\n[dependencies]"));
+        assert!(
+            bumped.contains("node = { version = \"0.7.0\" }"),
+            "a dependency's version is not the crate's"
+        );
+        assert!(bump_version(manifest, &to, &from).is_none());
     }
 
     /// The committed workflow names a real key, so the release binaries it

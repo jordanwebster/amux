@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("restamp") => restamp(&std::env::args().skip(2).collect::<Vec<_>>()),
         _ => {
             eprintln!(
-                "usage: xtask <codegen|swift-types [--check]|proto-check [--update]|golden diff [ARGS]|restamp FROM TO [VERSION]|release <key generate|key public|manifest VERSION [--channel C] [--rollout N] [--publish]>|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
+                "usage: xtask <codegen|swift-types [--check]|proto-check [--update]|golden diff [ARGS]|restamp FROM TO [VERSION]|release <key generate|key public|cut VERSION|deploy VERSION [--channel C] [--rollout N]>|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
             );
             std::process::exit(2);
         }

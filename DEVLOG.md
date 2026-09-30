@@ -1,3 +1,19 @@
+2026-09-30 — **A release is cut and then deployed, as two recipes.**
+`make_release.sh` predated `just` and bundled the whole release into one
+script: bump, tag, push, and now also waiting for the workflow and
+signing. From first principles a release is two acts at two times. `just
+release 0.8.0` cuts: the version goes into the two manifests and the
+lock, the release build is checked, one commit is tagged and pushed, and
+the tag's workflow builds the binaries; it refuses a dirty tree, a
+version not above the current one, and a Mac without the signing key.
+`just deploy 0.8.0 [--channel preview] [--rollout N]` puts that release in
+front of machines: it waits for the workflow if it is still building,
+signs the checksums, verifies the signatures against the workflow's key
+and uploads the channel manifest. Deploying repeats against the same
+release, so the channel is a deployment's choice and not a version's:
+preview is `deploy --channel preview`, promotion is `deploy` again, and
+there are no prerelease version strings. Both live in the xtask.
+
 2026-09-30 — **The phone has its performance suite back, and the first numbers are findings.**
 `just ios perf` drives the optimised `Measured` app (Release-preset
 Swift with the door kept in) on the pinned simulator against a served

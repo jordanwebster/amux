@@ -7,8 +7,8 @@ Three things ship from this repository, each on its own schedule:
 | What | How it is cut | Tags |
 | --- | --- | --- |
 | The iPhone app | `just ios release`, from a Mac with the signing setup below | `ios-v<version>-b<build>` |
-| The `amux` binary | `./make_release.sh`, then the Release workflow on the pushed tag | `v<version>` |
-| The daemon's release feed | `make_release.sh` signs the workflow's binaries with the release Mac's key and publishes the channel manifest | none |
+| The `amux` binary | `just release <version>`, then the Release workflow on the pushed tag | `v<version>` |
+| The daemon's release feed | `just deploy <version>` signs the release's binaries with the release Mac's key and publishes the channel manifest | none |
 
 The daemon side of the feed is built and tested and the publishing side runs
 from the release Mac; the route that serves manifests from amux.sh is not
@@ -553,23 +553,35 @@ appear in any committed file, and none of them should be pasted into one.
 The desktop binary is versioned by the `version` of `crates/amux` and
 `crates/node`, which move together: the daemon reports its own crate's
 version, and a release that moved only the CLI would have `amux --version`
-and the fleet disagree. [`make_release.sh`](../make_release.sh) cuts a
-release from a Mac (it edits the manifests with BSD `sed -i ''`):
+and the fleet disagree. A release is two acts, at two times, each one
+recipe (both implemented by `xtask release` in
+[`crates/xtask/src/release.rs`](../crates/xtask/src/release.rs)):
 
 ```
-./make_release.sh          # bump the minor version: 0.7.0 -> 0.8.0
-./make_release.sh 0.7.1    # or name the version
+just release 0.8.0                 # cut: the version exists and its binaries are built
+just deploy 0.8.0 --channel preview   # machines on preview take it
+just deploy 0.8.0 --rollout 10        # a tenth of the machines on stable take it
+just deploy 0.8.0                     # all of stable
 ```
 
-It checks that this Mac holds the release signing key, writes the version
-into both `Cargo.toml` files, updates `Cargo.lock` offline, runs
-`just release-check`, commits `v<version>`, tags `v<version>`, and pushes
-the branch and the tag. Then it waits for the tag's Release workflow and
-signs what it published: `just release-manifest <version> --publish`
-(below, [Publishing a manifest](#publishing-a-manifest)) puts the channel
-manifest on the same GitHub Release. `--channel preview` publishes to the
-preview channel instead; `--rollout 10` opens the release to a tenth of
-the machines on the channel.
+**Cutting** makes the version exist. `just release <version>` refuses a
+tree with other changes in it, a version not above the current one, and a
+Mac without the release signing key (a cut nobody could deploy is a tag
+for nothing); then it writes the version into both `Cargo.toml` files,
+updates `Cargo.lock` offline, runs `just release-check`, commits
+`v<version>`, tags `v<version>` and pushes the branch and the tag. The tag
+starts the Release workflow, and the cut is done. It does not wait for the
+workflow.
+
+**Deploying** puts a cut release in front of machines, and is the act that
+chooses who: a channel, and how much of it. `just deploy <version>` waits
+for the tag's workflow to have published the binaries if it has not yet,
+then signs and publishes the channel manifest (below,
+[Deploying a release](#deploying-a-release)). It repeats against the same
+release: a wider rollout, or preview promoted to stable, is another deploy
+of the same version. Versions are plain; there is no preview version,
+only a preview deployment, and a bad preview is fixed by cutting the next
+version.
 
 `just release-check` builds the shipping binary —
 `cargo build --release -p amux --bins --no-default-features --features bundled`
@@ -645,9 +657,8 @@ triple.
   that has already activated is fixed by publishing a higher version — the
   previous code under a new number when the bad release changed no data
   shape, a forward fix otherwise.
-- Promoting a preview build to stable is putting the same entry in the
-  stable manifest. Semver orders `0.8.0-preview.3` below `0.8.0`, so a machine
-  on preview moves to the stable build of the same release when it switches.
+- Promoting a preview build to stable is deploying the same version to
+  stable: the same binary, the same entry, in the other manifest.
 
 ### Signing and verification
 
@@ -711,34 +722,33 @@ manifests until it has been replaced by hand with one built under the new
 key: publish the last release under the old key with the new public key
 compiled in, then switch.
 
-### Publishing a manifest
+### Deploying a release
 
 ```
-just release-manifest 0.8.0                       # write target/release-manifests/stable.json
-just release-manifest 0.8.0 --publish             # and upload it to the v0.8.0 GitHub Release
-just release-manifest 0.8.0 --channel preview --publish
-just release-manifest 0.8.0 --rollout 10 --publish
+just deploy 0.8.0                       # stable, every machine
+just deploy 0.8.0 --channel preview     # the preview channel
+just deploy 0.8.0 --rollout 10          # stable, a tenth of the machines; later --rollout 100
 ```
 
-The tool (`xtask release manifest`,
-[`crates/xtask/src/release.rs`](../crates/xtask/src/release.rs)) reads
-`checksums.txt` from the tagged GitHub Release, signs each target's hash
-with the keychain's seed, verifies every signature against the key the
-workflow compiles in, and writes the channel's manifest with each entry's
-URL pointing at the release's own asset. With `--publish` it uploads
-`<channel>.json` to that same release, replacing one already there. So:
+`xtask release deploy` waits until the tagged GitHub Release holds
+`checksums.txt` (the workflow may still be building after a cut; it gives
+up after 45 minutes), reads the checksums, signs each target's hash with
+the keychain's seed, verifies every signature against the key the workflow
+compiles in, writes the channel's manifest with each entry's URL pointing
+at the release's own asset (a copy stays in `target/release-manifests/`),
+and uploads `<channel>.json` to that same release, replacing one already
+there. So:
 
 - A staged rollout is the same command with a higher `--rollout`, which
   replaces the manifest on the release.
 - Promoting a preview build to stable is `--channel stable` for the version
   the preview manifest names.
-- Every manifest ever published stays on the release that carried it, and
-  a channel's current manifest is the newest release that carries a
-  manifest for that channel.
+- Every manifest ever deployed stays on the release that carried it, and a
+  channel's current manifest is the newest release that carries a manifest
+  for that channel.
 
-Because the key is local, publishing is a step on the release Mac after
-the workflow finishes; `make_release.sh` waits for the workflow and runs
-it. Nothing in the workflow can sign.
+Because the key is local, deploying is done on the release Mac. Nothing in
+the workflow can sign.
 
 ### What amux.sh serves
 

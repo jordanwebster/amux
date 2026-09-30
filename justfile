@@ -92,13 +92,23 @@ release-check *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p amux --bins --no-default-features {{desktop_features}} "$@"
     if [ "${1-}" = -- ]; then shift; fi; scripts/release-policy-check.sh "$@"
 
-# Sign a GitHub Release's binaries with the keychain's release key and write
-# the channel manifest: `just release-manifest 0.8.0 --channel stable --publish`.
-release-manifest *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked -q -p xtask -- release manifest "$@"
+# `just release 0.8.0` writes the version, checks the release build, commits,
+# tags v0.8.0 and pushes; the tag's workflow builds the binaries into a
+# GitHub Release.
+# Cut a release of the amux binary.
+release VERSION:
+    {{bounded}} 1800 cargo run --locked -q -p xtask -- release cut {{VERSION}}
 
-# The release signing key: `just release-key generate` makes one in the login
-# keychain and prints its public half; `just release-key public` prints it again.
+# `just deploy 0.8.0` signs the release's binaries with the keychain's key and
+# publishes the stable manifest; `--channel preview` and `--rollout 10`
+# choose who takes it.
+# Put a cut release in front of a channel.
+deploy VERSION *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 3600 cargo run --locked -q -p xtask -- release deploy {{VERSION}} "$@"
+
+# `just release-key generate` makes one in the login keychain and prints its
+# public half; `just release-key public` prints it again.
+# The release signing key.
 release-key *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked -q -p xtask -- release key "$@"
 
