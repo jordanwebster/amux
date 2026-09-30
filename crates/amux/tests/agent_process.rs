@@ -9,8 +9,7 @@
 //! redialling daemon finds it caught up and stops it; it resumes from a
 //! new spec as the same agent on the same provider session; and killed by
 //! process group it leaves nothing running and a directory the next
-//! incarnation starts from. And the binary links nothing an agent would
-//! carry for another process's sake.
+//! incarnation starts from.
 
 #![cfg(unix)]
 
@@ -584,27 +583,4 @@ async fn a_headless_claude_agent_outlives_its_daemon_and_resumes() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_codex_agent_outlives_its_daemon_and_resumes() {
     life_of_an_agent("codex").await;
-}
-
-/// Every agent is a process of this binary, so each framework it links is
-/// mapped into every agent at launch. AppKit (with Foundation and the
-/// Objective-C runtime under it) added about half a mebibyte to each agent's
-/// footprint when the terminal client's clipboard linked it; the client now
-/// loads it only when it pastes.
-#[cfg(target_os = "macos")]
-#[test]
-fn the_binary_agents_run_as_links_no_appkit() {
-    let output = Command::new("otool")
-        .arg("-L")
-        .arg(env!("CARGO_BIN_EXE_amux"))
-        .output()
-        .expect("otool runs");
-    assert!(output.status.success(), "otool -L failed");
-    let linked = String::from_utf8_lossy(&output.stdout);
-    for library in ["/AppKit.framework", "/Foundation.framework", "/libobjc"] {
-        assert!(
-            !linked.contains(library),
-            "amux links {library}, which every agent process would load:\n{linked}"
-        );
-    }
 }

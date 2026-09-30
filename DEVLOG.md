@@ -1,3 +1,17 @@
+2026-09-29 — **The clipboard crate is back; the agent memory baseline records it.**
+Loading AppKit lazily on macOS (a6f0c3fc) replaced the clipboard crate
+with hand-written dlopen and Objective-C pasteboard code so that each
+agent process, which is the same binary as the terminal client, stayed
+under the 10% memory drift limit: 3.50 MiB against a 3.02 MiB baseline.
+That traded a user-facing paste path for half a megabyte per agent, most
+of it shared framework pages that resident size counts but the machine
+does not pay per process, against a 48 MiB budget. The gate was wrong,
+not the code: the change is reverted, arboard is linked again, and the
+flood agent process memory baseline is re-recorded at 3.485 MiB (peak
+3.500) on the enrolled Mac in the reference state; the ingest-cost median
+recorded earlier today is kept. If per-agent size ever matters, a
+separate agent binary is the honest fix.
+
 2026-09-29 — **The cross-host stop test waits for the child's turn to run.**
 The test that a parent's stop reaches its child on another host sent the
 interrupt as soon as the parent's host held the child's row, and once in
