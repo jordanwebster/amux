@@ -79,6 +79,7 @@ fn nominal_ms(entry: &Entry) -> i64 {
         Entry::Tool(spec) => spec.took.map_or(1_500, |took| took.ms()),
         Entry::Wait(d) => d.ms(),
         Entry::Turn(_) | Entry::Phase(_) | Entry::WorkingOn(_) | Entry::Tasks(_) => 0,
+        Entry::Stream(_) | Entry::Said => 0,
         Entry::Context(_) | Entry::Exit(_) => 0,
         _ => 1_500,
     }
@@ -1719,6 +1720,26 @@ fn play_now(inner: &mut Inner, index: usize, entries: Vec<Entry>, at: &mut i64) 
                 sim.turn_open = None;
             }
             Entry::Tasks(tasks) => sim.facts.tasks = Some(task_list(&tasks)),
+            Entry::Stream(chunk) => {
+                let key = match sim.streaming.clone() {
+                    Some(key) => key,
+                    None => {
+                        let key = sim.fresh_key();
+                        sim.commit(&key, &Body::Message { complete: false }, "", *at, &[]);
+                        sim.streaming = Some(key.clone());
+                        key
+                    }
+                };
+                sim.append(&key, &chunk);
+            }
+            Entry::Said => {
+                if let Some(key) = sim.streaming.take()
+                    && let Some(&i) = sim.keys.get(&key)
+                {
+                    let text = sim.items[i].text.clone();
+                    sim.commit(&key, &Body::Message { complete: true }, &text, *at, &[]);
+                }
+            }
             Entry::Context(c) => {
                 sim.facts.context = Some(wire::ContextMeter {
                     known: true,

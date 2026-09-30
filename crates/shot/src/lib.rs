@@ -254,6 +254,17 @@ fn paint_cell(raster: &mut Raster, fonts: &Fonts, cell: &Cell, theme: Theme, x: 
     let left = u32::from(x) * CELL_WIDTH;
     let top = u32::from(y) * CELL_HEIGHT;
     fill_rect(raster, left, top, CELL_WIDTH, CELL_HEIGHT, bg);
+    // Lines the terminal draws across the cell, spaces included, so a
+    // link's underline runs unbroken between its words.
+    if fg != bg {
+        if cell.modifier.contains(Modifier::UNDERLINED) {
+            let at = (top as i32 + BASELINE + 2).min((top + CELL_HEIGHT) as i32 - 1) as u32;
+            fill_rect(raster, left, at, CELL_WIDTH, 1, fg);
+        }
+        if cell.modifier.contains(Modifier::CROSSED_OUT) {
+            fill_rect(raster, left, top + CELL_HEIGHT / 2 + 1, CELL_WIDTH, 1, fg);
+        }
+    }
 
     let symbol = cell.symbol();
     if symbol.trim().is_empty() || fg == bg {

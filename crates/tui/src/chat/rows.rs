@@ -262,6 +262,37 @@ pub(crate) fn markdown(
         .collect()
 }
 
+/// A link on a drawn line: its columns and where it goes.
+pub(crate) type Link = (usize, usize, String);
+
+/// Markdown drawn at the text's indent, each line with the links on it by
+/// column, for a feed that opens them on a click.
+pub(crate) fn markdown_linked(
+    source: &str,
+    width: usize,
+    wide: usize,
+    theme: Theme,
+) -> Vec<(Line<'static>, Vec<Link>)> {
+    crate::markdown::markdown_lines_wide(
+        source,
+        width.saturating_sub(INDENT).max(1),
+        wide.saturating_sub(INDENT).max(1),
+        theme,
+    )
+    .iter()
+    .map(|line| {
+        let mut spans = vec![Span::raw(" ".repeat(INDENT))];
+        spans.extend(line.spans.iter().cloned());
+        let links = line
+            .links
+            .iter()
+            .map(|(from, to, url)| (INDENT + from, INDENT + to, url.clone()))
+            .collect();
+        (Line::from(spans), links)
+    })
+    .collect()
+}
+
 /// An attachment's chip, from its reference alone.
 pub fn chip(view: &AttachmentView) -> String {
     match view {

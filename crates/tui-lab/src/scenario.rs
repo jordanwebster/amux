@@ -278,6 +278,11 @@ pub enum Entry {
     Exit(String),
     Tasks(Vec<TaskSpec>),
     Context(ContextSpec),
+    /// A chunk of the reply being streamed, opening one if none is; beats
+    /// of these let a frame catch a reply part way.
+    Stream(String),
+    /// The streamed reply is complete.
+    Said,
 }
 
 #[derive(Clone, Debug, Deserialize)]

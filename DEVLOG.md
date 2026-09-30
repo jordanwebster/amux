@@ -1,3 +1,20 @@
+2026-10-01 — **Agent replies render their markdown instead of showing it.**
+The redesigned chat parses replies with pulldown-cmark (tables, task lists,
+strikethrough) and renders them in its own inks: headings bold without `#`,
+bullets and hanging nested lists, quotes on a faint rail, links as
+underlined text that opens on click, rules as a hairline, task items as ✓/○.
+Code blocks lose their fences and box and are coloured by syntect with the
+terminal's own palette (keywords magenta, strings green, constants yellow,
+types cyan, functions blue, comments faint), loaded lazily off the draw
+thread and cached per block; syntect is a stand-in until a shared
+tree-sitter engine. Tables get inner hairline rules only (between columns,
+under the header, and between rows once any cell wraps), may use the chat's
+full width, share width out by content, and stack into "Key: value" records
+when a column would fall below 12; a streaming table re-lays out as rows
+arrive and holds its header back until the delimiter row. Rendered replies
+are cached by content, width and theme. The lab's markdown scenario streams
+a second reply with both kinds of table.
+
 2026-10-01 — **Permission asks take over the composer's box.** In the
 redesigned chat, a request to run a command, edit or create a file, or use a
 tool-server tool replaces the composer with the same box, bordered in the

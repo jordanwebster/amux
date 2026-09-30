@@ -106,6 +106,8 @@ pub enum ChatEffect {
     Review,
     /// The review page, at this changed file.
     ReviewAt(String),
+    /// Open a link from the agent's text in the person's browser.
+    OpenUrl(String),
     /// Back to home: the header's [Home].
     Home,
     /// A key a click stands for: a hint, the composer's mode. The app
@@ -1034,6 +1036,7 @@ impl ChatView {
 
     fn feed_hit(&mut self, state: &SessionState, hit: FeedHit) -> Vec<ChatEffect> {
         match hit {
+            FeedHit::Link(url) => return vec![ChatEffect::OpenUrl(url)],
             FeedHit::Stretch(oldest) => {
                 if !self.stretches.remove(&oldest) {
                     self.stretches.insert(oldest);

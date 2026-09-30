@@ -316,6 +316,11 @@ impl App {
                 at(Instant::now() + Duration::from_millis(250));
             }
         }
+        // Code drawn plain while the grammars load is drawn again once
+        // they arrive.
+        if crate::highlight::loading() {
+            at(Instant::now() + Duration::from_millis(50));
+        }
         next
     }
 
@@ -996,6 +1001,11 @@ impl App {
             }
             ChatEffect::Review => self.review(None),
             ChatEffect::ReviewAt(path) => self.review(Some(path)),
+            ChatEffect::OpenUrl(url) => {
+                if let Err(error) = open_url(&url) {
+                    self.notice(format!("could not open {url}: {error}"), Tone::Warn);
+                }
+            }
             ChatEffect::Home => self.close_chat(),
             ChatEffect::Press(key) => {
                 // The leader clicked shows its panel at once: the click is
@@ -1308,6 +1318,34 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
     lines.push(Line::default());
     lines.push(Line::from(Span::styled("  any key closes", theme.muted())));
     lines
+}
+
+/// Opens `url` with the system's handler, detached: the browser for a web
+/// link. Only web and mail links open; anything else in agent text is not
+/// run.
+fn open_url(url: &str) -> std::io::Result<()> {
+    if !["https://", "http://", "mailto:"]
+        .iter()
+        .any(|scheme| url.starts_with(scheme))
+    {
+        return Err(std::io::Error::other("not a web link"));
+    }
+    let mut command = if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else if cfg!(windows) {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "start", ""]);
+        command
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    command
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
 }
 
 fn ctrl_held(key: &KeyEvent) -> bool {

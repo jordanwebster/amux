@@ -35,6 +35,15 @@ pub struct Request<'a> {
 }
 
 pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
+    // A frame is drawn once, so its code is highlighted from the start.
+    let loaded = tui::highlight::preload();
+    if std::env::var_os("LAB_TIMING").is_some() {
+        let block = "/// A tunnel with no frames for this long is closed.\nconst IDLE_TIMEOUT: Duration = Duration::from_secs(90);\n\nif last_frame.elapsed() > IDLE_TIMEOUT {\n    tunnel.close(Reason::Idle).await;\n}\n";
+        eprintln!(
+            "grammars loaded in {loaded:?}; first rust block in {:?}",
+            tui::highlight::time_block(block, "rust")
+        );
+    }
     let place = Place {
         scenario: request.scenario.name.clone(),
         fired: request.step,

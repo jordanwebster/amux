@@ -487,6 +487,25 @@ impl Theme {
         Style::default().fg(self.color(self.tokens.code))
     }
 
+    /// A code token's colour: each kind takes one of the palette's hues,
+    /// the terminal's own when it reported them, and every one has been
+    /// lifted to read on the background. Names and punctuation stay in the
+    /// reading ink and comments recede, so the colour is on what differs.
+    pub(crate) fn syntax(self, kind: crate::highlight::TokenKind) -> Style {
+        use crate::highlight::TokenKind;
+        let token = match kind {
+            TokenKind::Plain => self.tokens.text,
+            TokenKind::Keyword => self.tokens.focus,
+            TokenKind::String | TokenKind::Inserted => self.tokens.ok,
+            TokenKind::Number => self.tokens.warn,
+            TokenKind::Type => self.tokens.code,
+            TokenKind::Function => self.tokens.accent,
+            TokenKind::Comment => self.tokens.faint,
+            TokenKind::Deleted => self.tokens.error,
+        };
+        Style::default().fg(self.color(token))
+    }
+
     /// Success accents (`✔`).
     pub(crate) fn ok(self) -> Style {
         Style::default().fg(self.color(self.tokens.ok))

@@ -19,7 +19,7 @@ use ui_view::{
 };
 
 use super::rows::{
-    RowFacts, call_verb, chip, detail, explore_verb, markdown, patch_lines, segment_lines,
+    RowFacts, call_verb, chip, detail, explore_verb, markdown_linked, patch_lines, segment_lines,
     state_meta, tail,
 };
 use crate::text::{self, first_line, pad_to, push, push_right};
@@ -45,6 +45,8 @@ pub enum FeedHit {
     Stretch(Key),
     /// Open or close a step's detail.
     Step(Key),
+    /// Open a link in the agent's text.
+    Link(String),
 }
 
 /// Clickable places on one feed line: column ranges, `None` for the whole
@@ -316,15 +318,27 @@ fn prose(drawn: &mut Drawn, words: &[Segment], streaming: bool, width: usize, th
     // A comfortable measure on a wide terminal: lines run to at most
     // READING columns of text, however wide the screen.
     let wrap = width.saturating_sub(2).min(READING + WORDS);
-    let mut lines = markdown(&source, wrap, false, theme);
+    let source = if streaming {
+        crate::markdown::streaming_source(&source)
+    } else {
+        source.as_str()
+    };
+    // Tables may run the chat's full width.
+    let mut lines = markdown_linked(source, wrap, width.saturating_sub(2), theme);
     if lines.is_empty() {
         return;
     }
-    if streaming && let Some(last) = lines.last_mut() {
+    if streaming && let Some((last, _)) = lines.last_mut() {
         last.spans.push(Span::styled(" ▍", theme.faint()));
     }
-    for line in lines {
-        drawn.line(line);
+    for (line, links) in lines {
+        drawn.lines.push(line);
+        drawn.hits.push(
+            links
+                .into_iter()
+                .map(|(from, to, url)| (Some((from, to)), FeedHit::Link(url)))
+                .collect(),
+        );
     }
     drawn.blank();
 }

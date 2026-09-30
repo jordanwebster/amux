@@ -57,3 +57,37 @@ agents:
           - [ ] Keepalive in the daemon
           - [ ] A test that idles past the timeout
       - turn: { took: 2m }
+timeline:
+  - after: 1s
+    agent: md
+    play:
+      - user: Compare the options side by side, and list the crates the keepalive touches.
+  - after: 1s
+    agent: md
+    play:
+      - stream: "Here is how the options compare:\n\n| Option | What changes | Latency | Risk |\n|---|---|--:|---|\n| Client keepalive | A ping frame every 30s from `ui-runtime`'s pump | 0 ms | Wakes phones in the background, which costs battery on every idle chat |\n"
+  - after: 1s
+    agent: md
+    play:
+      - stream: "| Daemon keepalive | The same frame from the host's `relay_client` | 0 ms | None found |\n"
+  - after: 1s
+    agent: md
+    play:
+      - stream: "| Raise the timeout | `IDLE_TIMEOUT` goes from 90s to 10m | 0 ms | Dead tunnels linger for up to ten minutes before the relay notices |\n| **Do nothing** | — | n/a | The phone keeps dropping chats that wait on an ask |\n\nThe daemon keepalive wins: no client release, no battery cost.\n\n"
+  - after: 1s
+    agent: md
+    play:
+      - stream: "The crates it touches:\n\n| Crate | Owner | Lines | Tests | Coverage | Unsafe | Deps | MSRV | Last release | Platforms | Notes |\n"
+  - after: 1s
+    agent: md
+    play:
+      - stream: "|---|---|--:|--:|--:|--:|--:|---|---|---|---|\n| relay_client | connections team | 4,210 | 118 | 86% lines | none | 14 | 1.85 | 2026-09-28 (v0.7.0) | macOS, Linux, Windows | Owns the tunnel and its reconnect loop |\n| relay | connections team | 6,904 | 203 | 79% lines | none | 22 | 1.85 | 2026-09-28 (v0.7.0) | Linux servers only | Closes idle tunnels after IDLE_TIMEOUT |\n"
+  - after: 1s
+    agent: md
+    play:
+      - stream: "| ui-runtime | client platform | 9,588 | 341 | 91% lines | none | 18 | 1.85 | 2026-09-30 (v0.7.1) | macOS, Linux, Windows, iOS | Session pump; would carry the client keepalive |\n| node | host platform | 12,730 | 402 | 83% lines | two blocks | 31 | 1.85 | 2026-09-30 (v0.7.1) | macOS, Linux, Windows | Hosts the daemon keepalive timer |\n| wire | protocol team | 3,120 | 57 | 95% lines | none | 6 | 1.80 | 2026-09-12 (v0.6.4) | everywhere | Gains a Keepalive frame kind |\n"
+  - after: 1s
+    agent: md
+    play:
+      - said
+      - turn: {}
