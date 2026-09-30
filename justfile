@@ -92,6 +92,16 @@ release-check *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p amux --bins --no-default-features {{desktop_features}} "$@"
     if [ "${1-}" = -- ]; then shift; fi; scripts/release-policy-check.sh "$@"
 
+# Sign a GitHub Release's binaries with the keychain's release key and write
+# the channel manifest: `just release-manifest 0.8.0 --channel stable --publish`.
+release-manifest *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked -q -p xtask -- release manifest "$@"
+
+# The release signing key: `just release-key generate` makes one in the login
+# keychain and prints its public half; `just release-key public` prints it again.
+release-key *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked -q -p xtask -- release key "$@"
+
 # Check the provider-free graph used by embedded clients.
 embedded-check:
     {{bounded}} 900 cargo check --locked -p node -p client -p ui-state -p ui-runtime -p app-runtime -p app-embedded

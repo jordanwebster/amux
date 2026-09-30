@@ -1,3 +1,25 @@
+2026-09-30 — **Releases are signed from the release Mac's keychain.**
+The daemon has verified release manifests against a compiled-in Ed25519
+key since the supervisor landed, but no key existed, the Release
+workflow set none, and nothing wrote a manifest. Now a 32-byte seed
+lives in the login keychain of the Mac that cuts releases, as the
+generic password item `amux-release-key`, and nowhere else: not in the
+repository, not on GitHub, not on amux.sh. Machines verify a release
+against the key in the binary they already run, so neither the build
+runner nor the manifest server can make them install anything; that is
+what end-to-end signing is for, and it is why the private half is kept
+off every hosted machine. `just release-key generate` makes the seed
+(refusing when one is there, so rotation is deliberate), the workflow
+compiles the public half into every published binary, and
+`just release-manifest <version> [--channel] [--rollout] --publish`
+signs the tagged release's `checksums.txt`, verifies each signature
+against the workflow's key, and uploads `<channel>.json` to that
+release. `make_release.sh` waits for the workflow and runs it, so a
+release is still one command. A dry run against v0.7.0 produced a
+verifying manifest. The one piece left is amux.sh serving
+`/releases/<channel>.json` from the newest release that carries one,
+which lives in the cloud repository.
+
 2026-09-29 — **The clipboard crate is back; the agent memory baseline records it.**
 Loading AppKit lazily on macOS (a6f0c3fc) replaced the clipboard crate
 with hand-written dlopen and Objective-C pasteboard code so that each

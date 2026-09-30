@@ -5433,11 +5433,13 @@ version = "0.1.0"
 dependencies = [
  "app-runtime",
  "model",
+ "node",
  "png 0.17.16",
  "prost",
  "prost-types",
  "protoc-bin-vendored",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

@@ -103,11 +103,40 @@ pub fn sign(seed: &[u8; 32], target: &str, version: &str, sha256_hex: &str) -> S
     base64::engine::general_purpose::STANDARD.encode(signature.as_ref())
 }
 
-pub fn sha256_hex(digest: &[u8]) -> String {
-    digest.iter().fold(String::new(), |mut out, byte| {
+/// A fresh seed from the system's randomness, for a new release key.
+pub fn new_seed() -> [u8; 32] {
+    use ring::rand::SecureRandom as _;
+    let mut seed = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut seed)
+        .expect("the system's randomness is available");
+    seed
+}
+
+/// The public half of the key whose seed this is; what a build compiles in
+/// as `AMUX_RELEASE_PUBLIC_KEY` to trust releases signed with the seed.
+pub fn public_key(seed: &[u8; 32]) -> [u8; 32] {
+    use ring::signature::KeyPair as _;
+    let pair = Ed25519KeyPair::from_seed_unchecked(seed).expect("an Ed25519 seed is any 32 bytes");
+    let mut key = [0u8; 32];
+    key.copy_from_slice(pair.public_key().as_ref());
+    key
+}
+
+/// Reads 64 hex digits as a key or seed.
+pub fn parse_key(text: &str) -> Option<[u8; 32]> {
+    parse_hex::<32>(text)
+}
+
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut out, byte| {
         let _ = write!(out, "{byte:02x}");
         out
     })
+}
+
+pub fn sha256_hex(digest: &[u8]) -> String {
+    hex(digest)
 }
 
 pub fn sha256_of(bytes: &[u8]) -> String {

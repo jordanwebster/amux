@@ -8,11 +8,11 @@ Three things ship from this repository, each on its own schedule:
 | --- | --- | --- |
 | The iPhone app | `just ios release`, from a Mac with the signing setup below | `ios-v<version>-b<build>` |
 | The `amux` binary | `./make_release.sh`, then the Release workflow on the pushed tag | `v<version>` |
-| The daemon's release feed | One signed manifest per channel, read by `amux supervise` | none |
+| The daemon's release feed | `make_release.sh` signs the workflow's binaries with the release Mac's key and publishes the channel manifest | none |
 
-The first two are working procedures. The third is built into the daemon and
-tested, but nothing publishes a manifest yet; see
-[What is not set up yet](#what-is-not-set-up-yet).
+The daemon side of the feed is built and tested and the publishing side runs
+from the release Mac; the route that serves manifests from amux.sh is not
+deployed yet, see [What amux.sh serves](#what-amuxsh-serves).
 
 ## The iPhone app
 
@@ -561,9 +561,15 @@ release from a Mac (it edits the manifests with BSD `sed -i ''`):
 ./make_release.sh 0.7.1    # or name the version
 ```
 
-It writes the version into both `Cargo.toml` files, updates `Cargo.lock`
-offline, runs `just release-check`, commits `v<version>`, tags
-`v<version>`, and pushes the branch and the tag.
+It checks that this Mac holds the release signing key, writes the version
+into both `Cargo.toml` files, updates `Cargo.lock` offline, runs
+`just release-check`, commits `v<version>`, tags `v<version>`, and pushes
+the branch and the tag. Then it waits for the tag's Release workflow and
+signs what it published: `just release-manifest <version> --publish`
+(below, [Publishing a manifest](#publishing-a-manifest)) puts the channel
+manifest on the same GitHub Release. `--channel preview` publishes to the
+preview channel instead; `--rollout 10` opens the release to a tenth of
+the machines on the channel.
 
 `just release-check` builds the shipping binary —
 `cargo build --release -p amux --bins --no-default-features --features bundled`
@@ -670,24 +676,78 @@ hex digits, set in the environment at build time:
 | Debug build without it | `TEST_RELEASE_KEY`, whose private half lives in the test suites |
 | Release build without it | None. It restarts its daemon but installs nothing, and `amux update` says so. |
 
+The Release workflow sets it, so every published binary trusts the release
+key; a release build made by hand trusts nothing and is replaced the way it
+was installed.
+
 The supervisor tests sign releases with the test key and serve manifests
 from a local server
 ([`crates/node/tests/supervisor.rs`](../crates/node/tests/supervisor.rs),
 [`crates/amux/tests/supervise_cli.rs`](../crates/amux/tests/supervise_cli.rs)).
 
-### What is not set up yet
+### The release key
 
-The installing side is complete; the publishing side does not exist yet.
+The private key is a 32-byte seed that exists in one place: the login
+keychain of the Mac that cuts releases, as the generic password item with
+service `amux-release-key`. It is never in this repository, never on GitHub
+and never on amux.sh. That is the point of signing at all: the machines
+that install a release verify it against a key compiled into the binary
+they already run, so neither the build runner nor the server that hands
+out manifests can make them install something else. A compromised
+amux.sh can serve a stale manifest or none, and nothing worse.
 
-- No manifest is published. Both default addresses answer 404, so a
-  supervised machine's hourly check finds nothing and `amux update` reports
-  the failed fetch.
-- No release key exists. The Release workflow does not set
-  `AMUX_RELEASE_PUBLIC_KEY`, so the binaries it publishes trust no key and
-  never install an update.
-- Nothing in this repository signs a build or writes a manifest outside the
-  tests. The GitHub Release's binaries and `checksums.txt` carry what a
-  manifest entry needs except the signature.
+`just release-key generate` makes a seed from the system's randomness,
+stores it in the keychain and prints the public half; it refuses when an
+item is already there, so a key is rotated deliberately by deleting the
+old item first (`security delete-generic-password -s amux-release-key`).
+`just release-key public` prints the public half again. The public half
+is committed as `AMUX_RELEASE_PUBLIC_KEY` in
+[`.github/workflows/release.yml`](../.github/workflows/release.yml), and
+the manifest tool refuses to sign when the keychain's key is not the one
+the workflow compiles in, because the binaries would refuse the result.
 
-Until those exist, an install moves to a new version the way it was
-installed: by replacing the binary.
+Rotating the key means every installed binary stops trusting new
+manifests until it has been replaced by hand with one built under the new
+key: publish the last release under the old key with the new public key
+compiled in, then switch.
+
+### Publishing a manifest
+
+```
+just release-manifest 0.8.0                       # write target/release-manifests/stable.json
+just release-manifest 0.8.0 --publish             # and upload it to the v0.8.0 GitHub Release
+just release-manifest 0.8.0 --channel preview --publish
+just release-manifest 0.8.0 --rollout 10 --publish
+```
+
+The tool (`xtask release manifest`,
+[`crates/xtask/src/release.rs`](../crates/xtask/src/release.rs)) reads
+`checksums.txt` from the tagged GitHub Release, signs each target's hash
+with the keychain's seed, verifies every signature against the key the
+workflow compiles in, and writes the channel's manifest with each entry's
+URL pointing at the release's own asset. With `--publish` it uploads
+`<channel>.json` to that same release, replacing one already there. So:
+
+- A staged rollout is the same command with a higher `--rollout`, which
+  replaces the manifest on the release.
+- Promoting a preview build to stable is `--channel stable` for the version
+  the preview manifest names.
+- Every manifest ever published stays on the release that carried it, and
+  a channel's current manifest is the newest release that carries a
+  manifest for that channel.
+
+Because the key is local, publishing is a step on the release Mac after
+the workflow finishes; `make_release.sh` waits for the workflow and runs
+it. Nothing in the workflow can sign.
+
+### What amux.sh serves
+
+A machine reads `https://amux.sh/releases/<channel>.json`. amux.sh answers
+with the manifest of the newest GitHub Release that carries
+`<channel>.json`, cached for a few minutes, the way it already projects the
+older `/manifest.json` from the latest release's `checksums.txt`. It never
+holds the key and cannot alter a manifest without the signatures failing.
+That route is the one piece that lives in the amuxcloud repository rather
+than here, and it is not deployed yet: until it is, both channel addresses
+answer 404, a supervised machine's hourly check finds nothing, and
+`amux update` reports the failed fetch.
