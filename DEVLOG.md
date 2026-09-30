@@ -1,3 +1,14 @@
+2026-09-30 — **The Overview scrolls, folds and groups its changes.** The pane's
+body scrolls as one list under a fixed title: the wheel scrolls whatever is
+under the pointer without moving the keys, j/k keep the focused item in
+view, and faint "↑ N more" / "↓ N more" lines show what is cut and page when
+clicked. Its headings fold like home's, remembered per chat in the layout
+preference. Jobs and files are one per line with a flat highlight, and
+changed files sit under a faint line naming their directory (shortened in
+the middle when long, so both ends survive), pinned to the top while its
+files are in view. The lab's rich-chat diff gains forty files, and key
+scripts take `wheelup:X,Y` / `wheeldown:X,Y`.
+
 2026-09-30 — **The chat gains an Overview pane beside it.** `ctrl+t`, or a
 click on the row above the composer, opens a pane on the right, about a
 third of the width, and the row hides while it is open. It holds what the

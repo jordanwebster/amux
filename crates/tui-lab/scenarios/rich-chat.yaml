@@ -63,6 +63,397 @@ agents:
       @@ -88,3 +88,4 @@
        | `RECONNECT_MAX_MS` | 5 s | ... |
       +| `BLOB_CACHE` | 64 MiB | A session's attachment bytes before least-recently-used eviction. |
+      diff --git a/apps/apple/Sources/Chat/BlobView.swift b/apps/apple/Sources/Chat/BlobView.swift
+      --- a/apps/apple/Sources/Chat/BlobView.swift
+      +++ b/apps/apple/Sources/Chat/BlobView.swift
+      @@ -20,2 +20,3 @@
+       // context
+      +// added 0
+       // context
+      diff --git a/apps/apple/Sources/Chat/ComposerView.swift b/apps/apple/Sources/Chat/ComposerView.swift
+      --- a/apps/apple/Sources/Chat/ComposerView.swift
+      +++ b/apps/apple/Sources/Chat/ComposerView.swift
+      @@ -21,3 +21,6 @@
+       // context
+      -// removed 0
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/apps/apple/Sources/Chat/FeedView.swift b/apps/apple/Sources/Chat/FeedView.swift
+      --- a/apps/apple/Sources/Chat/FeedView.swift
+      +++ b/apps/apple/Sources/Chat/FeedView.swift
+      @@ -22,4 +22,3 @@
+       // context
+      -// removed 0
+      -// removed 1
+      +// added 0
+       // context
+      diff --git a/apps/apple/Sources/Chat/FleetView.swift b/apps/apple/Sources/Chat/FleetView.swift
+      --- a/apps/apple/Sources/Chat/FleetView.swift
+      +++ b/apps/apple/Sources/Chat/FleetView.swift
+      @@ -23,5 +23,6 @@
+       // context
+      -// removed 0
+      -// removed 1
+      -// removed 2
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/apps/apple/Sources/Chat/HostsView.swift b/apps/apple/Sources/Chat/HostsView.swift
+      --- a/apps/apple/Sources/Chat/HostsView.swift
+      +++ b/apps/apple/Sources/Chat/HostsView.swift
+      @@ -24,2 +24,3 @@
+       // context
+      +// added 0
+       // context
+      diff --git a/apps/apple/Sources/Chat/LayoutView.swift b/apps/apple/Sources/Chat/LayoutView.swift
+      --- a/apps/apple/Sources/Chat/LayoutView.swift
+      +++ b/apps/apple/Sources/Chat/LayoutView.swift
+      @@ -25,3 +25,6 @@
+       // context
+      -// removed 0
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/apps/apple/Sources/Chat/MarkdownView.swift b/apps/apple/Sources/Chat/MarkdownView.swift
+      --- a/apps/apple/Sources/Chat/MarkdownView.swift
+      +++ b/apps/apple/Sources/Chat/MarkdownView.swift
+      @@ -10,4 +10,0 @@
+      -// old one
+      -// old two
+      -// old three
+      -// old four
+      diff --git a/apps/apple/Sources/Chat/ReconnectView.swift b/apps/apple/Sources/Chat/ReconnectView.swift
+      --- a/apps/apple/Sources/Chat/ReconnectView.swift
+      +++ b/apps/apple/Sources/Chat/ReconnectView.swift
+      @@ -27,5 +27,6 @@
+       // context
+      -// removed 0
+      -// removed 1
+      -// removed 2
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/apps/apple/Sources/Chat/SessionView.swift b/apps/apple/Sources/Chat/SessionView.swift
+      --- a/apps/apple/Sources/Chat/SessionView.swift
+      +++ b/apps/apple/Sources/Chat/SessionView.swift
+      @@ -28,2 +28,3 @@
+       // context
+      +// added 0
+       // context
+      diff --git a/apps/apple/Sources/Chat/ThemeView.swift b/apps/apple/Sources/Chat/ThemeView.swift
+      --- a/apps/apple/Sources/Chat/ThemeView.swift
+      +++ b/apps/apple/Sources/Chat/ThemeView.swift
+      @@ -29,3 +29,6 @@
+       // context
+      -// removed 0
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/apps/apple/Sources/Chat/WheelView.swift b/apps/apple/Sources/Chat/WheelView.swift
+      --- a/apps/apple/Sources/Chat/WheelView.swift
+      +++ b/apps/apple/Sources/Chat/WheelView.swift
+      @@ -30,4 +30,3 @@
+       // context
+      -// removed 0
+      -// removed 1
+      +// added 0
+       // context
+      diff --git a/crates/tui/src/chat/blob.rs b/crates/tui/src/chat/blob.rs
+      --- a/crates/tui/src/chat/blob.rs
+      +++ b/crates/tui/src/chat/blob.rs
+      @@ -31,5 +31,6 @@
+       // context
+      -// removed 0
+      -// removed 1
+      -// removed 2
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/tui/src/chat/clipboard.rs b/crates/tui/src/chat/clipboard.rs
+      --- a/crates/tui/src/chat/clipboard.rs
+      +++ b/crates/tui/src/chat/clipboard.rs
+      @@ -32,2 +32,3 @@
+       // context
+      +// added 0
+       // context
+      diff --git a/crates/tui/src/chat/hosts.rs b/crates/tui/src/chat/hosts.rs
+      --- a/crates/tui/src/chat/hosts.rs
+      +++ b/crates/tui/src/chat/hosts.rs
+      @@ -10,4 +10,0 @@
+      -// old one
+      -// old two
+      -// old three
+      -// old four
+      diff --git a/crates/tui/src/chat/markdown.rs b/crates/tui/src/chat/markdown.rs
+      --- a/crates/tui/src/chat/markdown.rs
+      +++ b/crates/tui/src/chat/markdown.rs
+      @@ -34,4 +34,3 @@
+       // context
+      -// removed 0
+      -// removed 1
+      +// added 0
+       // context
+      diff --git a/crates/tui/src/chat/pane.rs b/crates/tui/src/chat/pane.rs
+      --- a/crates/tui/src/chat/pane.rs
+      +++ b/crates/tui/src/chat/pane.rs
+      @@ -35,5 +35,6 @@
+       // context
+      -// removed 0
+      -// removed 1
+      -// removed 2
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/tui/src/chat/review.rs b/crates/tui/src/chat/review.rs
+      --- a/crates/tui/src/chat/review.rs
+      +++ b/crates/tui/src/chat/review.rs
+      @@ -36,2 +36,3 @@
+       // context
+      +// added 0
+       // context
+      diff --git a/crates/tui/src/chat/trace.rs b/crates/tui/src/chat/trace.rs
+      --- a/crates/tui/src/chat/trace.rs
+      +++ b/crates/tui/src/chat/trace.rs
+      @@ -37,3 +37,6 @@
+       // context
+      -// removed 0
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/ui-runtime/src/clipboard.rs b/crates/ui-runtime/src/clipboard.rs
+      --- a/crates/ui-runtime/src/clipboard.rs
+      +++ b/crates/ui-runtime/src/clipboard.rs
+      @@ -38,4 +38,3 @@
+       // context
+      -// removed 0
+      -// removed 1
+      +// added 0
+       // context
+      diff --git a/crates/ui-runtime/src/composer.rs b/crates/ui-runtime/src/composer.rs
+      --- a/crates/ui-runtime/src/composer.rs
+      +++ b/crates/ui-runtime/src/composer.rs
+      @@ -39,5 +39,6 @@
+       // context
+      -// removed 0
+      -// removed 1
+      -// removed 2
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/ui-runtime/src/fleet.rs b/crates/ui-runtime/src/fleet.rs
+      --- a/crates/ui-runtime/src/fleet.rs
+      +++ b/crates/ui-runtime/src/fleet.rs
+      @@ -10,4 +10,0 @@
+      -// old one
+      -// old two
+      -// old three
+      -// old four
+      diff --git a/crates/ui-runtime/src/hosts.rs b/crates/ui-runtime/src/hosts.rs
+      --- a/crates/ui-runtime/src/hosts.rs
+      +++ b/crates/ui-runtime/src/hosts.rs
+      @@ -41,3 +41,6 @@
+       // context
+      -// removed 0
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/ui-runtime/src/pane.rs b/crates/ui-runtime/src/pane.rs
+      --- a/crates/ui-runtime/src/pane.rs
+      +++ b/crates/ui-runtime/src/pane.rs
+      @@ -42,4 +42,3 @@
+       // context
+      -// removed 0
+      -// removed 1
+      +// added 0
+       // context
+      diff --git a/crates/ui-runtime/src/rows.rs b/crates/ui-runtime/src/rows.rs
+      --- a/crates/ui-runtime/src/rows.rs
+      +++ b/crates/ui-runtime/src/rows.rs
+      @@ -43,5 +43,6 @@
+       // context
+      -// removed 0
+      -// removed 1
+      -// removed 2
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/ui-state/src/composer.rs b/crates/ui-state/src/composer.rs
+      --- a/crates/ui-state/src/composer.rs
+      +++ b/crates/ui-state/src/composer.rs
+      @@ -44,2 +44,3 @@
+       // context
+      +// added 0
+       // context
+      diff --git a/crates/ui-state/src/hosts.rs b/crates/ui-state/src/hosts.rs
+      --- a/crates/ui-state/src/hosts.rs
+      +++ b/crates/ui-state/src/hosts.rs
+      @@ -45,3 +45,6 @@
+       // context
+      -// removed 0
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/ui-state/src/review.rs b/crates/ui-state/src/review.rs
+      --- a/crates/ui-state/src/review.rs
+      +++ b/crates/ui-state/src/review.rs
+      @@ -46,4 +46,3 @@
+       // context
+      -// removed 0
+      -// removed 1
+      +// added 0
+       // context
+      diff --git a/crates/ui-state/src/rows.rs b/crates/ui-state/src/rows.rs
+      --- a/crates/ui-state/src/rows.rs
+      +++ b/crates/ui-state/src/rows.rs
+      @@ -10,4 +10,0 @@
+      -// old one
+      -// old two
+      -// old three
+      -// old four
+      diff --git a/crates/ui-state/src/wheel.rs b/crates/ui-state/src/wheel.rs
+      --- a/crates/ui-state/src/wheel.rs
+      +++ b/crates/ui-state/src/wheel.rs
+      @@ -48,2 +48,3 @@
+       // context
+      +// added 0
+       // context
+      diff --git a/crates/ui-view/src/editor.rs b/crates/ui-view/src/editor.rs
+      --- a/crates/ui-view/src/editor.rs
+      +++ b/crates/ui-view/src/editor.rs
+      @@ -49,3 +49,6 @@
+       // context
+      -// removed 0
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/ui-view/src/fleet.rs b/crates/ui-view/src/fleet.rs
+      --- a/crates/ui-view/src/fleet.rs
+      +++ b/crates/ui-view/src/fleet.rs
+      @@ -50,4 +50,3 @@
+       // context
+      -// removed 0
+      -// removed 1
+      +// added 0
+       // context
+      diff --git a/crates/ui-view/src/keys.rs b/crates/ui-view/src/keys.rs
+      --- a/crates/ui-view/src/keys.rs
+      +++ b/crates/ui-view/src/keys.rs
+      @@ -51,5 +51,6 @@
+       // context
+      -// removed 0
+      -// removed 1
+      -// removed 2
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/ui-view/src/review.rs b/crates/ui-view/src/review.rs
+      --- a/crates/ui-view/src/review.rs
+      +++ b/crates/ui-view/src/review.rs
+      @@ -52,2 +52,3 @@
+       // context
+      +// added 0
+       // context
+      diff --git a/crates/ui-view/src/rows.rs b/crates/ui-view/src/rows.rs
+      --- a/crates/ui-view/src/rows.rs
+      +++ b/crates/ui-view/src/rows.rs
+      @@ -53,3 +53,6 @@
+       // context
+      -// removed 0
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/crates/ui-view/src/trace.rs b/crates/ui-view/src/trace.rs
+      --- a/crates/ui-view/src/trace.rs
+      +++ b/crates/ui-view/src/trace.rs
+      @@ -10,4 +10,0 @@
+      -// old one
+      -// old two
+      -// old three
+      -// old four
+      diff --git a/crates/ui-view/src/wheel.rs b/crates/ui-view/src/wheel.rs
+      --- a/crates/ui-view/src/wheel.rs
+      +++ b/crates/ui-view/src/wheel.rs
+      @@ -55,5 +55,6 @@
+       // context
+      -// removed 0
+      -// removed 1
+      -// removed 2
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/docs/HOSTS.md b/docs/HOSTS.md
+      --- a/docs/HOSTS.md
+      +++ b/docs/HOSTS.md
+      @@ -56,2 +56,3 @@
+       // context
+      +// added 0
+       // context
+      diff --git a/docs/PANE.md b/docs/PANE.md
+      --- a/docs/PANE.md
+      +++ b/docs/PANE.md
+      @@ -57,3 +57,6 @@
+       // context
+      -// removed 0
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
+      diff --git a/docs/SESSION.md b/docs/SESSION.md
+      --- a/docs/SESSION.md
+      +++ b/docs/SESSION.md
+      @@ -58,4 +58,3 @@
+       // context
+      -// removed 0
+      -// removed 1
+      +// added 0
+       // context
+      diff --git a/docs/THEME.md b/docs/THEME.md
+      --- a/docs/THEME.md
+      +++ b/docs/THEME.md
+      @@ -59,5 +59,6 @@
+       // context
+      -// removed 0
+      -// removed 1
+      -// removed 2
+      +// added 0
+      +// added 1
+      +// added 2
+      +// added 3
+       // context
     reply:
       - think: Checking what they asked against the change so far.
       - read: crates/ui-runtime/src/session.rs

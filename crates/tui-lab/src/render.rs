@@ -98,7 +98,8 @@ pub fn parse_size(text: &str) -> Result<(u16, u16)> {
 /// `backtab`, `up`, `down`, `left`, `right`, `pgup`, `pgdn`, `home`, `end`,
 /// `bs`, `del`, `space`, `f1`..`f12`), `C-x` for Ctrl+x and `C-enter`,
 /// `hover:X,Y` and `click:X,Y` for the mouse at a cell (zero-based),
-/// `wheelup` and `wheeldown` for one wheel event, and anything else typed
+/// `wheelup` and `wheeldown` for one wheel event (`wheeldown:X,Y` over a
+/// cell), and anything else typed
 /// as text (quote it to keep spaces:
 /// `'fix the bug' enter`).
 pub fn parse_keys(text: &str) -> Result<Vec<Event>> {
@@ -107,12 +108,13 @@ pub fn parse_keys(text: &str) -> Result<Vec<Event>> {
     for word in shell_words::split(text)? {
         if let Some((what, at)) = word.split_once(':')
             && let Some((x, y)) = at.split_once(',')
-            && matches!(what, "hover" | "click")
+            && matches!(what, "hover" | "click" | "wheelup" | "wheeldown")
         {
-            let kind = if what == "hover" {
-                MouseEventKind::Moved
-            } else {
-                MouseEventKind::Down(MouseButton::Left)
+            let kind = match what {
+                "hover" => MouseEventKind::Moved,
+                "wheelup" => MouseEventKind::ScrollUp,
+                "wheeldown" => MouseEventKind::ScrollDown,
+                _ => MouseEventKind::Down(MouseButton::Left),
             };
             out.push(Event::Mouse(MouseEvent {
                 kind,

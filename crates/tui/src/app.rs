@@ -3,6 +3,7 @@
 //! tasks against the drivers and report back as [`AppEvent`]s, so the
 //! loop never waits on the network with a key in hand.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -61,11 +62,46 @@ pub struct TuiConfig {
 
 /// How this client lays its screens out, kept between runs: a person's
 /// preference for this terminal, not state any other client shares.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Layout {
     /// The chat's overview pane stays open across chats until closed.
     #[serde(default)]
     pub overview: bool,
+    /// Each chat's folded overview sections, by agent id in hex.
+    #[serde(default)]
+    pub folds: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+impl Layout {
+    fn folds_of(&self, agent_id: &[u8]) -> HashSet<crate::chat::pane::Section> {
+        self.folds
+            .get(&hex(agent_id))
+            .into_iter()
+            .flatten()
+            .filter_map(|key| crate::chat::pane::Section::from_key(key))
+            .collect()
+    }
+
+    /// Records a chat's folds; returns whether they changed.
+    fn set_folds(&mut self, agent_id: &[u8], folds: &HashSet<crate::chat::pane::Section>) -> bool {
+        let mut keys: Vec<String> = folds.iter().map(|s| s.key().to_owned()).collect();
+        keys.sort();
+        let id = hex(agent_id);
+        let before = self.folds.get(&id).cloned().unwrap_or_default();
+        if before == keys {
+            return false;
+        }
+        if keys.is_empty() {
+            self.folds.remove(&id);
+        } else {
+            self.folds.insert(id, keys);
+        }
+        true
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl Layout {
@@ -76,14 +112,14 @@ impl Layout {
     }
 
     /// Best effort: a layout that cannot be written is only forgotten.
-    fn save(self, path: Option<&std::path::Path>) {
+    fn save(&self, path: Option<&std::path::Path>) {
         let Some(path) = path else {
             return;
         };
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if let Ok(bytes) = serde_json::to_vec_pretty(&self) {
+        if let Ok(bytes) = serde_json::to_vec_pretty(self) {
             let _ = std::fs::write(path, bytes);
         }
     }
@@ -365,6 +401,7 @@ impl App {
                         // The overview opens where it was left; the
                         // composer has the keys either way.
                         view.pane_open = self.layout.overview;
+                        view.pane_folds = self.layout.folds_of(&agent.agent);
                         self.fleet_view.select(agent.clone());
                         self.chat = Some(OpenChat {
                             session,
@@ -1141,8 +1178,12 @@ impl App {
         let Some(chat) = &self.chat else {
             return;
         };
-        if chat.view.pane_open != self.layout.overview {
-            self.layout.overview = chat.view.pane_open;
+        let mut changed = chat.view.pane_open != self.layout.overview;
+        self.layout.overview = chat.view.pane_open;
+        changed |= self
+            .layout
+            .set_folds(&chat.view.agent_id, &chat.view.pane_folds);
+        if changed {
             self.layout.save(self.config.layout.as_deref());
         }
     }

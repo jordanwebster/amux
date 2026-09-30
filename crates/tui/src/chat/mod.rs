@@ -204,8 +204,17 @@ pub struct ChatView {
     pub pane_open: bool,
     /// Whether the pane has the keys rather than the composer.
     pub pane_keys: bool,
-    /// The item the pane's keys are on, indexing [`pane::items`].
-    pane_focus: Option<usize>,
+    /// The item the pane's keys are on.
+    pane_focus: Option<pane::PaneItem>,
+    /// The pane's folded sections: the client's layout for this chat, kept
+    /// by the app.
+    pub pane_folds: HashSet<pane::Section>,
+    /// The pane body's first line on screen.
+    pane_scroll: usize,
+    /// The keys moved the focus: bring it into view on the next frame.
+    pane_follow: bool,
+    /// The pane body's height on the last frame, for paging.
+    pane_page: usize,
     /// The item under the mouse; hover and focus are one highlight.
     pane_hover: Option<pane::PaneItem>,
     /// The working tree's changed files, as last read with the diff stat.
@@ -268,6 +277,10 @@ impl ChatView {
             pane_open: false,
             pane_keys: false,
             pane_focus: None,
+            pane_folds: HashSet::new(),
+            pane_scroll: 0,
+            pane_follow: false,
+            pane_page: 0,
             pane_hover: None,
             diff_files: None,
             pane_rect: None,
@@ -668,34 +681,62 @@ impl ChatView {
         self.pane_hover = None;
     }
 
-    /// Gives the pane the keys, on its first item when none has them yet.
+    /// Gives the pane the keys; the item they land on is settled when the
+    /// pane is next drawn.
     fn focus_pane(&mut self) {
         self.pane_keys = true;
-        self.pane_focus.get_or_insert(0);
+        self.pane_follow = true;
+    }
+
+    /// The pane's items in its order, as this frame would draw them.
+    fn pane_items(&self, state: &SessionState) -> Vec<pane::PaneItem> {
+        let strip = session_strip(state);
+        let jobs = ui_view::background_jobs(state);
+        pane::Contents {
+            strip: &strip,
+            jobs: &jobs,
+            files: self.diff_files.as_deref(),
+            folded: &self.pane_folds,
+        }
+        .items()
+    }
+
+    /// Where the pane's keys are among `items`: the focused item while it
+    /// is still listed, else the first job, else the first item.
+    fn pane_at(&self, items: &[pane::PaneItem]) -> Option<usize> {
+        self.pane_focus
+            .as_ref()
+            .and_then(|focus| items.iter().position(|item| item == focus))
+            .or_else(|| {
+                items
+                    .iter()
+                    .position(|item| matches!(item, pane::PaneItem::Job(_)))
+            })
+            .or((!items.is_empty()).then_some(0))
     }
 
     /// A key while the pane has the keys: j/k and the arrows move across
-    /// its jobs and changed files as one list; Enter opens a job's step in
-    /// the chat or a file on the review page; Esc hands the keys back to
-    /// the composer, the pane staying open. It ignores the rest.
+    /// its headings, jobs and changed files as one list; Enter folds a
+    /// heading, opens a job's step in the chat or a file on the review
+    /// page; Esc hands the keys back to the composer, the pane staying
+    /// open. It ignores the rest.
     fn pane_key(&mut self, state: &SessionState, key: KeyEvent) -> Vec<ChatEffect> {
-        let jobs = ui_view::background_jobs(state);
-        let items = pane::items(&jobs, self.diff_files.as_deref());
-        let last = items.len().checked_sub(1);
+        let items = self.pane_items(state);
+        let at = self.pane_at(&items);
+        let last = items.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc => self.pane_keys = false,
             KeyCode::Char('j') | KeyCode::Down if key.modifiers.is_empty() => {
-                if let Some(last) = last {
-                    self.pane_focus = Some(self.pane_focus.map_or(0, |at| (at + 1).min(last)));
-                }
+                self.pane_focus = at.and_then(|at| items.get((at + 1).min(last))).cloned();
+                self.pane_follow = true;
             }
             KeyCode::Char('k') | KeyCode::Up if key.modifiers.is_empty() => {
-                if last.is_some() {
-                    self.pane_focus = Some(self.pane_focus.map_or(0, |at| at.saturating_sub(1)));
-                }
+                self.pane_focus = at.and_then(|at| items.get(at.saturating_sub(1))).cloned();
+                self.pane_follow = true;
             }
             KeyCode::Enter => {
-                if let Some(item) = self.pane_focus.and_then(|at| items.get(at)).cloned() {
+                if let Some(item) = at.and_then(|at| items.get(at)).cloned() {
+                    self.pane_focus = Some(item.clone());
                     return self.open_item(state, item);
                 }
             }
@@ -704,15 +745,28 @@ impl ChatView {
         vec![]
     }
 
-    /// A job opens its step in the chat; a file, the review page at it.
+    /// A heading folds or unfolds; a job opens its step in the chat; a
+    /// file, the review page at it.
     fn open_item(&mut self, state: &SessionState, item: pane::PaneItem) -> Vec<ChatEffect> {
         match item {
+            pane::PaneItem::Heading(section) => {
+                if !self.pane_folds.remove(&section) {
+                    self.pane_folds.insert(section);
+                }
+                self.pane_follow = true;
+                vec![]
+            }
             pane::PaneItem::Job(key) => {
                 self.reveal_step(state, &key);
                 vec![]
             }
             pane::PaneItem::File(path) => vec![ChatEffect::ReviewAt(path)],
         }
+    }
+
+    fn over_pane(&self, event: MouseEvent) -> bool {
+        self.pane_rect
+            .is_some_and(|rect| rect.contains(Position::new(event.column, event.row)))
     }
 
     /// Scrolls the chat to a step and opens it, and the stretch it sits in.
@@ -779,8 +833,20 @@ impl ChatView {
                     })
                     .and_then(|(_, _, hit)| match hit {
                         pane::PaneHit::Item(item) => Some(item.clone()),
-                        pane::PaneHit::Close => None,
+                        pane::PaneHit::Close | pane::PaneHit::Page { .. } => None,
                     });
+            }
+            // The wheel scrolls what is under the pointer; over the pane it
+            // leaves the keys where they are.
+            MouseEventKind::ScrollUp if self.over_pane(event) => {
+                self.pane_scroll = self
+                    .pane_scroll
+                    .saturating_sub(crate::wheel::lines(Direction::Up));
+                self.pane_hover = None;
+            }
+            MouseEventKind::ScrollDown if self.over_pane(event) => {
+                self.pane_scroll += crate::wheel::lines(Direction::Down);
+                self.pane_hover = None;
             }
             MouseEventKind::ScrollUp => self.scroll(state, -wheel_lines(Direction::Up), theme),
             MouseEventKind::ScrollDown => self.scroll(state, wheel_lines(Direction::Down), theme),
@@ -800,12 +866,17 @@ impl ChatView {
                 {
                     match hit {
                         pane::PaneHit::Close => self.close_pane(),
+                        pane::PaneHit::Page { up } => {
+                            let page = self.pane_page.saturating_sub(2).max(1);
+                            self.pane_scroll = if up {
+                                self.pane_scroll.saturating_sub(page)
+                            } else {
+                                self.pane_scroll + page
+                            };
+                        }
                         pane::PaneHit::Item(item) => {
                             self.pane_keys = true;
-                            let jobs = ui_view::background_jobs(state);
-                            self.pane_focus = pane::items(&jobs, self.diff_files.as_deref())
-                                .iter()
-                                .position(|each| *each == item);
+                            self.pane_focus = Some(item.clone());
                             return self.open_item(state, item);
                         }
                     }
@@ -1392,20 +1463,25 @@ impl ChatView {
         } else {
             Vec::new()
         };
-        let items = pane::items(&jobs, self.diff_files.as_deref());
-        // The item drawn as a card, in the pane and, for a job, at its step
-        // in the feed: the one under the mouse, else the one the pane's keys
-        // are on.
+        let items = pane::Contents {
+            strip: &strip,
+            jobs: &jobs,
+            files: self.diff_files.as_deref(),
+            folded: &self.pane_folds,
+        }
+        .items();
         let pane_keys = self.pane_open && self.pane_keys;
+        if pane_keys {
+            self.pane_focus = self.pane_at(&items).map(|at| items[at].clone());
+        }
+        // The item drawn highlighted, in the pane and, for a job, at its
+        // step in the feed: the one under the mouse, else the one the
+        // pane's keys are on.
         let lit = self
             .pane_hover
-            .as_ref()
-            .and_then(|hovered| items.iter().position(|item| item == hovered))
-            .or(self
-                .pane_focus
-                .filter(|_| pane_keys)
-                .map(|at| at.min(items.len().saturating_sub(1)))
-                .filter(|_| !items.is_empty()));
+            .clone()
+            .filter(|hovered| items.contains(hovered))
+            .or(self.pane_focus.clone().filter(|_| pane_keys));
         let (header, controls) = self.top_line(state, &name, &strip, full, theme);
         // A blank line above the header keeps it off the terminal's edge.
         self.header_spots = controls
@@ -1591,7 +1667,7 @@ impl ChatView {
             }
             // The lit job's step, when the feed shows it, carries the same
             // card, so the pane's line and the feed's line read as one.
-            if let Some(pane::PaneItem::Job(job)) = lit.and_then(|at| items.get(at))
+            if let Some(pane::PaneItem::Job(job)) = lit.as_ref()
                 && let Some(block) = laid.blocks.iter().position(|block| &block.key == job)
             {
                 let owners = line_owners(&laid, feed.len());
@@ -1721,7 +1797,7 @@ impl ChatView {
                 paint.render_widget(ratatui::widgets::Clear, cleared);
             }
             self.pane_rect = Some(rect);
-            self.draw_side_pane(paint, rect, &strip, &jobs, lit, now_ms, theme);
+            self.draw_side_pane(paint, rect, &strip, &jobs, lit.as_ref(), now_ms, theme);
         }
         // While the pane has the keys, the composer shows no cursor.
         if let Some((row, col)) = cursor.filter(|_| !pane_keys) {
@@ -1753,52 +1829,32 @@ impl ChatView {
         rect: Rect,
         strip: &ui_view::Strip,
         jobs: &[ui_view::JobView],
-        lit: Option<usize>,
+        lit: Option<&pane::PaneItem>,
         now_ms: i64,
         theme: Theme,
     ) {
         // The rule, a blank column, then the pane's lines out to the outer
-        // margin: a highlighted job's tint spans them, its words sit two
+        // margin: a highlighted item's tint spans them, its words sit two
         // columns further in, as on home.
         const LEFT: u16 = 2;
         const RIGHT: u16 = 2;
+        // The title line and the blank under it stay; the rest scrolls.
+        const TITLE: u16 = 2;
         let inner = rect.width.saturating_sub(LEFT + RIGHT);
         let focused = self.pane_keys;
-        let files = self.diff_files.as_deref();
-        let draw = |roomy| {
-            pane::pane_lines(
+        let content = pane::pane_lines(
+            &pane::Contents {
                 strip,
                 jobs,
-                files,
-                lit,
-                focused,
-                roomy,
-                now_ms,
-                usize::from(inner),
-                theme,
-            )
-        };
-        let mut content = draw(true);
-        let height = usize::from(rect.height);
-        if content.lines.len() > height {
-            content = draw(false);
-        }
-        // Still too tall: its last line says so rather than stopping short.
-        if content.lines.len() > height && height > 0 {
-            content.lines.truncate(height - 1);
-            while content
-                .lines
-                .last()
-                .is_some_and(|line| text::line_width(line) <= 2)
-            {
-                content.lines.pop();
-            }
-            let mut more = Line::from(Span::raw("  "));
-            push(&mut more, "… more below", theme.faint(), usize::from(inner));
-            content.lines.push(more);
-            let shown = content.lines.len() - 1;
-            content.hits.retain(|(row, _, _)| *row < shown);
-        }
+                files: self.diff_files.as_deref(),
+                folded: &self.pane_folds,
+            },
+            lit,
+            focused,
+            now_ms,
+            usize::from(inner),
+            theme,
+        );
         // Which area has the keys shows on the frame, never the content:
         // the rule turns grey while the pane has them.
         let rule_ink = if focused {
@@ -1816,21 +1872,121 @@ impl ChatView {
                 ..rect
             },
         );
-        let body = Rect {
-            x: rect.x + LEFT,
-            width: inner,
-            ..rect
-        };
+        let x = rect.x + LEFT;
+        for ((from, to), hit) in content.title_hits.iter().cloned() {
+            self.pane_spots
+                .push((rect.y, (x + from as u16, x + to as u16), hit));
+        }
+        paint.render_widget(
+            Paragraph::new(vec![content.title.clone()]),
+            Rect {
+                x,
+                width: inner,
+                height: 1.min(rect.height),
+                ..rect
+            },
+        );
+
+        // The body: one list, scrolled so the keys' item keeps a line of
+        // room from each edge when they move it.
+        let height = usize::from(rect.height.saturating_sub(TITLE));
+        self.pane_page = height;
+        let len = content.body.len();
+        let max = len.saturating_sub(height);
+        if self.pane_follow {
+            self.pane_follow = false;
+            let focus_line = self.pane_focus.as_ref().and_then(|focus| {
+                content
+                    .item_lines
+                    .iter()
+                    .find(|(item, _)| item == focus)
+                    .map(|(_, line)| *line)
+            });
+            if let Some(line) = focus_line.filter(|_| self.pane_keys) {
+                // One line of room, one more for an edge's count and, at
+                // the top, one more for a pinned directory.
+                const ROOM: usize = 2;
+                const TOP_ROOM: usize = ROOM + 1;
+                if line < self.pane_scroll + TOP_ROOM {
+                    self.pane_scroll = line.saturating_sub(TOP_ROOM);
+                } else if line + ROOM + 1 > self.pane_scroll + height {
+                    self.pane_scroll = (line + ROOM + 1).saturating_sub(height);
+                }
+                // Scrolled only past a heading, the list starts at its top,
+                // as long as the item still clears the bottom edge's line.
+                if pane::hidden(&content, self.pane_scroll, height, 0)
+                    .0
+                    .is_none()
+                    && line + 2 <= height
+                {
+                    self.pane_scroll = 0;
+                }
+            }
+        }
+        self.pane_scroll = self.pane_scroll.min(max);
+        let top = self.pane_scroll;
+        let (mut above, below) = pane::hidden(&content, top, height, 0);
+        // Scrolled into a group, its directory stays pinned on the first
+        // line under the top edge, over the row there, so nothing moves.
+        let pin_row = top + usize::from(above.is_some());
+        let pin = (pin_row < top + height)
+            .then(|| content.pin(pin_row))
+            .flatten();
+        if pin.is_some() {
+            above = pane::hidden(&content, top, height, 1).0.or(above);
+        }
+        let mut shown: Vec<Line<'static>> = content
+            .body
+            .iter()
+            .skip(top)
+            .take(height)
+            .cloned()
+            .collect();
+        let body_y = rect.y + TITLE;
         for (row, (from, to), hit) in content.hits {
-            if row < usize::from(rect.height) {
+            if (top..top + height).contains(&row) {
                 self.pane_spots.push((
-                    rect.y + row as u16,
-                    (body.x + from as u16, body.x + to as u16),
+                    body_y + (row - top) as u16,
+                    (x + from as u16, x + to as u16),
                     hit,
                 ));
             }
         }
-        paint.render_widget(Paragraph::new(content.lines), body);
+        // Cut content says how much lies past each edge, on the edge's own
+        // line; clicking it turns a page.
+        if let Some(above) = above
+            && !shown.is_empty()
+        {
+            shown[0] = pane::more_line(true, above, theme);
+            self.pane_spots.retain(|(row, _, _)| *row != body_y);
+            self.pane_spots
+                .push((body_y, (x, x + inner), pane::PaneHit::Page { up: true }));
+        }
+        if let Some(dir) = pin
+            && let Some(slot) = shown.get_mut(pin_row - top)
+        {
+            *slot = content.body[dir].clone();
+            let row = body_y + (pin_row - top) as u16;
+            self.pane_spots.retain(|(each, _, _)| *each != row);
+        }
+        if let Some(below) = below
+            && let Some(last) = shown.len().checked_sub(1)
+        {
+            shown[last] = pane::more_line(false, below, theme);
+            let row = body_y + last as u16;
+            self.pane_spots.retain(|(each, _, _)| *each != row);
+            self.pane_spots
+                .push((row, (x, x + inner), pane::PaneHit::Page { up: false }));
+        }
+        paint.render_widget(
+            Paragraph::new(shown),
+            Rect {
+                x,
+                y: body_y,
+                width: inner,
+                height: height as u16,
+            },
+        );
     }
 
     /// The header. At the left the agent's name, then faint where it runs:
