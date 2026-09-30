@@ -290,8 +290,14 @@ impl Frame<'_> {
                     if !is_step {
                         return None;
                     }
-                    let (row, _) = self.shown(state, order, runs)?;
-                    let first = self.first_drawn(state, &steps, runs) == Some(order);
+                    // Opened, a stretch lists every step on its own line:
+                    // merging its reads would only repeat its folded line.
+                    let row = flat_step(state, order)?;
+                    let first = steps
+                        .iter()
+                        .copied()
+                        .find(|step| flat_step(state, *step).is_some())
+                        == Some(order);
                     let placement = Placement::Step {
                         header: first.then(|| Header {
                             stretch: stretch.clone(),
@@ -398,20 +404,6 @@ impl Frame<'_> {
             hits: drawn.hits,
             toggle,
         })
-    }
-
-    /// The order of an open stretch's first step that draws: a collapsed
-    /// run's members above its summary do not.
-    fn first_drawn(
-        &self,
-        state: &SessionState,
-        steps: &[u64],
-        runs: &[RangeInclusive<u64>],
-    ) -> Option<u64> {
-        steps
-            .iter()
-            .copied()
-            .find(|step| self.shown(state, *step, runs).is_some())
     }
 
     /// A row the redesign leaves as it was.
@@ -681,4 +673,19 @@ fn after(state: &SessionState, order: u64) -> impl DoubleEndedIterator<Item = &u
             order + 1..=head
         })
         .filter(move |_| !empty)
+}
+
+/// One step of a stretch as its own row, never merged into a run: how an
+/// opened stretch draws each step. None when the step draws nothing.
+fn flat_step(state: &SessionState, order: u64) -> Option<Row> {
+    let held = state.transcript().at(order)?;
+    let everything = ChatOptions {
+        tools: ToolRows::ShowAll,
+    };
+    let mut row = chat_rows_for(state, std::slice::from_ref(&held.item.key), &everything).pop()?;
+    if row.collapsed || matches!(row.kind, ui_view::RowKind::Hidden) {
+        return None;
+    }
+    row.run = None;
+    Some(row)
 }

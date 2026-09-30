@@ -282,7 +282,8 @@ impl Default for Theme {
 impl Theme {
     /// amux's own dark palette: a cool near-black that is not quite
     /// black, one clearly lighter surface for the person's own words, and
-    /// accents pulled toward teal and moss so nothing in the feed shouts.
+    /// soft accents so nothing in the feed shouts. As in a terminal's own
+    /// palette, the accent ("needs you") is a blue and code a cyan.
     /// Tuned by eye at 120x40 against the working Claude and Codex
     /// screens; every hex is amux's, borrowed from no published scheme.
     pub const fn dark(mode: ColorMode) -> Self {
@@ -293,12 +294,14 @@ impl Theme {
                 muted: Token::new((138, 144, 160), Color::DarkGray),
                 faint: Token::new((96, 102, 116), Color::DarkGray),
                 emphasis: Token::new((242, 244, 247), Color::White),
-                accent: Token::new((95, 179, 198), Color::Cyan),
+                // The sixteen conventional blues are too dark to read on
+                // black, so in that face the accent takes light cyan.
+                accent: Token::new((108, 160, 232), Color::LightCyan),
                 user_surface: Token::new((24, 32, 40), Color::Black),
                 panel: Token::new((23, 27, 34), Color::Blue),
                 hairline: Token::new((44, 50, 58), Color::DarkGray),
                 focus: Token::new((156, 140, 214), Color::Magenta),
-                code: Token::new((184, 162, 232), Color::LightMagenta),
+                code: Token::new((86, 182, 194), Color::Cyan),
                 ok: Token::new((134, 184, 122), Color::Green),
                 warn: Token::new((210, 162, 76), Color::Yellow),
                 error: Token::new((222, 123, 132), Color::Red),
@@ -315,8 +318,8 @@ impl Theme {
     }
 
     /// amux's own light palette: a warm off-white that is easier to sit
-    /// in front of than pure white, the same teal accent darkened until
-    /// it holds its own on paper, and diff tints kept pale enough that a
+    /// in front of than pure white, the same blue accent and cyan code
+    /// darkened until they hold their own on paper, and diff tints kept pale enough that a
     /// hunk still reads as text.
     pub const fn light(mode: ColorMode) -> Self {
         Self {
@@ -326,14 +329,14 @@ impl Theme {
                 muted: Token::new((106, 112, 128), Color::Black),
                 faint: Token::new((134, 139, 150), Color::DarkGray),
                 emphasis: Token::new((21, 24, 31), Color::Black),
-                accent: Token::new((31, 111, 130), Color::Blue),
+                accent: Token::new((38, 94, 168), Color::Blue),
                 user_surface: Token::new((236, 241, 243), Color::Cyan),
                 panel: Token::new((240, 240, 238), Color::Gray),
                 hairline: Token::new((220, 223, 228), Color::Gray),
-                // In sixteen colours on a light ground only a few faces read;
-                // magenta goes to code, so the focus bar takes cyan.
-                focus: Token::new((109, 78, 156), Color::Cyan),
-                code: Token::new((116, 66, 170), Color::Magenta),
+                focus: Token::new((109, 78, 156), Color::Magenta),
+                // Conventional cyan does not read on paper; in the sixteen
+                // faces code shares the accent's blue, in a different context.
+                code: Token::new((14, 112, 122), Color::Blue),
                 ok: Token::new((47, 122, 68), Color::Green),
                 warn: Token::new((138, 91, 16), Color::Yellow),
                 error: Token::new((168, 50, 68), Color::Red),
@@ -419,13 +422,6 @@ impl Theme {
         };
 
         let mut tokens = tokens;
-        // The scheme's own magenta is what code most often wears when its
-        // cyan sits too near its blue.
-        keep_code_apart(
-            &mut tokens,
-            &Faces::of_terminal(&terminal),
-            &[hue(Semantic::Focus)],
-        );
         // Nothing here was authored by hand, so every mechanical choice is
         // open to repair. The three borrowed tokens are protected by being
         // borrowed rather than by being named here: repair leaves the
@@ -435,8 +431,6 @@ impl Theme {
             &BTreeSet::new(),
             &Faces::of_terminal(&terminal),
         );
-        // Repair may move a face; code must still not share the accent's.
-        keep_code_apart(&mut tokens, &Faces::of_terminal(&terminal), &[]);
 
         Self {
             tokens,
@@ -748,15 +742,7 @@ pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, Theme
         authored.insert(name.clone());
     }
 
-    if !authored.contains("code") {
-        let focus = tokens.focus;
-        keep_code_apart(&mut tokens, &Faces::CONVENTIONAL, &[focus]);
-    }
     make_readable(&mut tokens, &authored, &Faces::CONVENTIONAL);
-    // Repair may move a face; code must still not share the accent's.
-    if !authored.contains("code") {
-        keep_code_apart(&mut tokens, &Faces::CONVENTIONAL, &[]);
-    }
 
     Ok(Theme {
         tokens,
@@ -1111,88 +1097,6 @@ pub fn contrast(left: (u8, u8, u8), right: (u8, u8, u8)) -> f64 {
         (right, left)
     };
     (lighter + 0.05) / (darker + 0.05)
-}
-
-/// The least difference in hue at which two colours read as different
-/// colours rather than two shades of one.
-const HUES_APART: f64 = 40.0;
-
-/// Whether two colours' truecolor faces read as different colours rather
-/// than two shades of one. A grey against a hue always does.
-fn hues_apart(left: (u8, u8, u8), right: (u8, u8, u8)) -> bool {
-    let (left_hue, left_saturation, _) = to_hsl(left);
-    let (right_hue, right_saturation, _) = to_hsl(right);
-    if left_saturation < 0.15 || right_saturation < 0.15 {
-        return true;
-    }
-    let apart = (left_hue - right_hue).rem_euclid(360.0);
-    apart.min(360.0 - apart) >= HUES_APART
-}
-
-/// Whether two tokens read as different colours in both faces: apart in
-/// hue, and on different faces of the sixteen.
-#[cfg(test)]
-fn colours_apart(left: Token, right: Token) -> bool {
-    hues_apart(left.rgb, right.rgb) && (left.ansi != right.ansi || left.ansi == Color::Reset)
-}
-
-/// Code has a colour of its own, and it must never be mistaken for the
-/// accent, which means "needs you". Many schemes put their cyan and blue
-/// close together. When the code colour's hue sits too near the accent's,
-/// the scheme's own colours are tried first (`alternatives`, in order), so
-/// code keeps a colour the person chose; failing those it turns a quarter
-/// of the wheel away from the accent, keeping its saturation and lightness.
-/// When the two share a face of the sixteen, code takes a face no other
-/// meaning uses.
-fn keep_code_apart(tokens: &mut Tokens, faces: &Faces, alternatives: &[Token]) {
-    if !hues_apart(tokens.code.rgb, tokens.accent.rgb) {
-        match alternatives
-            .iter()
-            .find(|candidate| hues_apart(candidate.rgb, tokens.accent.rgb))
-        {
-            Some(found) => tokens.code = *found,
-            None => {
-                let (_, saturation, lightness) = to_hsl(tokens.code.rgb);
-                let (accent_hue, _, _) = to_hsl(tokens.accent.rgb);
-                tokens.code.rgb = from_hsl(accent_hue + 90.0, saturation.max(0.35), lightness);
-            }
-        }
-    }
-    if tokens.code.ansi == tokens.accent.ansi {
-        let taken = [
-            tokens.accent.ansi,
-            tokens.focus.ansi,
-            tokens.ok.ansi,
-            tokens.warn.ansi,
-            tokens.error.ansi,
-        ];
-        // The first free face that reads on this ground, else the free face
-        // that reads best.
-        // A borrowed ground is the terminal's own, whose colour is known.
-        let ground = if tokens.background.inherited {
-            tokens.background.rgb
-        } else {
-            faces.rgb_of_face(tokens.background.ansi)
-        };
-        let free: Vec<Color> = [
-            Color::Magenta,
-            Color::LightMagenta,
-            Color::Cyan,
-            Color::LightCyan,
-            Color::Blue,
-            Color::LightBlue,
-        ]
-        .into_iter()
-        .filter(|face| !taken.contains(face))
-        .collect();
-        let reads = |face: &Color| contrast(faces.rgb_of_face(*face), ground);
-        tokens.code.ansi = free
-            .iter()
-            .find(|face| reads(face) >= READABLE_LABEL)
-            .or_else(|| free.iter().max_by(|a, b| reads(a).total_cmp(&reads(b))))
-            .copied()
-            .unwrap_or(Color::Magenta);
-    }
 }
 
 fn to_hsl(rgb: (u8, u8, u8)) -> (f64, f64, f64) {
@@ -1561,7 +1465,7 @@ mod tests {
             (theme.tokens.error, (0x90, 0x00, 0x00), "error"),
             (theme.tokens.warn, (0xa0, 0x60, 0x00), "warn"),
             (theme.tokens.ok, (0x00, 0x90, 0x00), "ok"),
-            (theme.tokens.code, (0x00, 0x90, 0x60), "code"),
+            (theme.tokens.code, (0x00, 0x80, 0x90), "code"),
             (theme.tokens.accent, (0x00, 0x60, 0xa0), "accent"),
             (theme.tokens.focus, (0x70, 0x40, 0xa0), "focus"),
         ] {
@@ -1608,7 +1512,7 @@ mod tests {
             ),
             (
                 theme.tokens.code,
-                (0x30, 0xa0, 0x70),
+                (0x30, 0xa0, 0xa0),
                 (0x20, 0x80, 0x80),
                 "code",
             ),
@@ -1980,48 +1884,6 @@ mod tests {
                 .map(|(_, terminal)| Theme::from_terminal(terminal, ColorMode::TrueColor)),
         );
         palettes
-    }
-
-    /// Code wears its own colour, and it must never pass for the accent,
-    /// which means "needs you": in every palette amux can draw with, in both
-    /// faces, including a scheme whose cyan and blue sit side by side.
-    #[test]
-    fn code_never_reads_as_the_accent() {
-        let close = TerminalColors {
-            background: rgb(0x1e1e1e),
-            foreground: rgb(0xd4d4d4),
-            ansi: [
-                0x1e1e1e, 0xf44747, 0x6a9955, 0xd7ba7d, 0x3b8eea, 0xc586c0, 0x3a96dd, 0xd4d4d4,
-                0x808080, 0xf44747, 0x6a9955, 0xd7ba7d, 0x3b8eea, 0xc586c0, 0x3a96dd, 0xffffff,
-            ]
-            .map(rgb),
-        };
-        let mut palettes = Vec::new();
-        for mode in [ColorMode::TrueColor, ColorMode::Ansi] {
-            palettes.push(Theme::dark(mode));
-            palettes.push(Theme::light(mode));
-            palettes.push(imported_mapping(BASE16_SAMPLE, mode));
-            palettes.push(imported_mapping(BASE24_SAMPLE, mode));
-            // An imported scheme whose cyan sits beside its blue.
-            palettes.push(imported_mapping(
-                &BASE16_SAMPLE.replace("#009060", "#0070a0"),
-                mode,
-            ));
-            palettes.push(Theme::from_terminal(close, mode));
-            for (_, terminal) in terminal_schemes() {
-                palettes.push(Theme::from_terminal(terminal, mode));
-            }
-        }
-        for theme in palettes {
-            assert!(
-                colours_apart(theme.tokens.code, theme.tokens.accent),
-                "{:?} {:?}: code {:?} reads as the accent {:?}",
-                theme.name,
-                theme.mode,
-                theme.tokens.code,
-                theme.tokens.accent,
-            );
-        }
     }
 
     /// A palette derived from a terminal leaves the ground and the text as

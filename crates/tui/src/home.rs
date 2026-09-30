@@ -849,22 +849,24 @@ impl Home {
         if height < 3 || width < 2 * MARGIN + 8 {
             return;
         }
-        let mut laid: Vec<Laid> = Vec::with_capacity(height);
+        // A blank line above the top line keeps it off the terminal's edge.
+        let mut laid: Vec<Laid> = vec![Laid::default()];
         let mut cursor;
         if self.draft.open {
             laid.push(Laid::plain(self.draft_top(width, theme)));
             let (composer, at) = self.composer(fleet, place, width, height, theme);
-            let body = height.saturating_sub(2 + composer.len());
-            laid.resize_with(1 + body, Laid::default);
+            let body = height.saturating_sub(3 + composer.len());
+            laid.resize_with(2 + body, Laid::default);
             cursor = at.map(|(col, row)| (col, laid.len() + row));
             laid.extend(composer);
         } else {
             let (top, at) = self.top_line(fleet, width, theme, place);
             laid.push(Laid::plain(top));
-            cursor = at.map(|col| (col, 0));
+            cursor = at.map(|col| (col, 1));
             laid.push(Laid::default());
-            // The top line and a blank above, a blank and the hints below.
-            let room = height.saturating_sub(4);
+            // A blank, the top line and a blank above the list; a blank and
+            // the hints below it.
+            let room = height.saturating_sub(5);
             if matches!(self.overlay, Some(Overlay::Hosts)) {
                 laid.extend(
                     hosts::overlay_lines(fleet, place.local_host, width - MARGIN, theme)
@@ -1162,7 +1164,19 @@ impl Home {
             self.reveal = false;
         }
         self.top = self.top.min(laid.len().saturating_sub(room));
-        laid.into_iter().skip(self.top).take(room).collect()
+        let mut shown: Vec<Laid> = laid.into_iter().skip(self.top).take(room).collect();
+        // A card's padding shows only with its card.
+        if let Some(first) = shown.first_mut()
+            && text::is_padding(&first.line, '▀')
+        {
+            *first = Laid::default();
+        }
+        if let Some(last) = shown.last_mut()
+            && text::is_padding(&last.line, '▄')
+        {
+            *last = Laid::default();
+        }
+        shown
     }
 
     /// The composer of a new agent's chat, boxed, with what the agent will
@@ -1420,12 +1434,12 @@ fn pad_highlight(laid: &mut [Laid], (start, end): (usize, usize), width: usize, 
     while end > start && laid.get(end - 1).is_some_and(is_blank) {
         end -= 1;
     }
-    // The tint's own inset: from the second column to one short of the edge.
+    // The tint's own extent: the outer margin on each side.
     let edge = |glyph: &str| {
         Line::from(vec![
-            Span::raw(" "),
+            Span::raw(" ".repeat(MARGIN)),
             Span::styled(
-                glyph.repeat(width.saturating_sub(2)),
+                glyph.repeat(width.saturating_sub(2 * MARGIN)),
                 Style::default().fg(surface),
             ),
         ])
@@ -1485,21 +1499,17 @@ fn name_style(chosen: bool, dim: bool, theme: Theme) -> Style {
     }
 }
 
-/// The highlighted row's tint, inset one column from each edge. Every
-/// highlightable line starts with blank padding, so the first column is
-/// taken from that.
+/// The highlighted row's tint, from the outer margin on one side to the
+/// outer margin on the other. Every highlightable line starts with at least
+/// a margin of blank padding, so the tint's start is taken from that.
 fn tint(line: Line<'static>, chosen: bool, width: usize, theme: Theme) -> Line<'static> {
     let Some(surface) = theme.row_surface().filter(|_| chosen) else {
         return line;
     };
     let mut spans = line.spans.into_iter();
-    let mut out = Line::from(Span::raw(" "));
+    let mut out = Line::from(Span::raw(" ".repeat(MARGIN)));
     if let Some(first) = spans.next() {
-        let rest = first
-            .content
-            .strip_prefix(' ')
-            .unwrap_or(&first.content)
-            .to_owned();
+        let rest: String = first.content.chars().skip(MARGIN).collect();
         out.spans
             .push(Span::styled(rest, first.style.patch(surface)));
     }
@@ -1507,7 +1517,7 @@ fn tint(line: Line<'static>, chosen: bool, width: usize, theme: Theme) -> Line<'
         out.spans
             .push(Span::styled(span.content, span.style.patch(surface)));
     }
-    text::fill(&mut out, surface, width - 1);
+    text::fill(&mut out, surface, width - MARGIN);
     out
 }
 
@@ -1555,7 +1565,8 @@ fn agent_lines(
             .is_some_and(|host| host.presence() != Presence::Online || host.revoked == Some(true));
     let quiet = exited || unreached;
     let indent = 2 * entry.depth;
-    let end = width - MARGIN;
+    // Text sits a margin inside the card's edge, on the right as on the left.
+    let end = width - 2 * MARGIN;
 
     let mut first = lead(chosen, theme);
     let mut spots = vec![(None, Hit::Row(target.clone()))];

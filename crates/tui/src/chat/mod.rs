@@ -1081,13 +1081,18 @@ impl ChatView {
 
         let strip = session_strip(state);
         let (header, controls) = self.top_line(state, &name, &strip, width, theme);
+        // A blank line above the header keeps it off the terminal's edge.
         self.header_spots = controls
             .into_iter()
             .map(|((from, to), control)| {
-                (area.y, (area.x + from as u16, area.x + to as u16), control)
+                (
+                    area.y + 1,
+                    (area.x + from as u16, area.x + to as u16),
+                    control,
+                )
             })
             .collect();
-        let mut top: Vec<Line<'static>> = vec![header];
+        let mut top: Vec<Line<'static>> = vec![Line::default(), header];
         if let Some(family) = family {
             let mut line = family_line(family, width, theme);
             for span in &mut line.spans {
@@ -1150,7 +1155,11 @@ impl ChatView {
             let (lines, at) = boxed_composer(
                 editor,
                 &placeholder(&state.composer(), &name, &host, self.away),
-                &strip,
+                &EdgeWords {
+                    model: ui_view::model_words(state),
+                    effort: strip.effort.clone(),
+                    mode: ui_view::mode_words(state),
+                },
                 width,
                 theme,
             );
@@ -1225,7 +1234,9 @@ impl ChatView {
             self.laid = Laid::default();
         } else {
             let laid = self.frame(theme).layout(state);
-            lines.extend(laid.lines.iter().cloned());
+            let mut feed: Vec<Line<'static>> = laid.lines.clone();
+            text::drop_cut_padding(&mut feed);
+            lines.extend(feed);
             self.laid = laid;
         }
         let bottom_start = lines.len();
@@ -1272,9 +1283,11 @@ impl ChatView {
             .unwrap_or_default();
         // The right side, built first so the left knows its room.
         let mut right: Vec<Span<'static>> = Vec::new();
+        // Groups on both sides are split by the same faint bar.
+        let bar = || Span::styled("  │  ", theme.faint());
         let gap = |right: &mut Vec<Span<'static>>| {
             if !right.is_empty() {
-                right.push(Span::raw("   "));
+                right.push(bar());
             }
         };
         if let Some((words, style)) = problem_words(state, self.away, &host, theme) {
@@ -1322,15 +1335,21 @@ impl ChatView {
         let mut line = Line::from(Span::raw("  "));
         let room = right_at.saturating_sub(2);
         push(&mut line, name, theme.bright(), room);
-        let mut place = vec![project(&state.agent().cwd).to_owned()];
+        // Where it works: its path as the person would write it, and its
+        // host when that is not this machine. The branch goes before the
+        // path, as `main ~/source/amux`, once the inventory carries one.
+        let cwd = &state.agent().cwd;
+        let mut place = if self.local {
+            text::tilde(cwd)
+        } else {
+            cwd.clone()
+        };
         if !self.local && !host.is_empty() {
-            place.push(host);
+            place = format!("{place} · {host}");
         }
-        // The branch joins here once the inventory carries one.
-        let place: Vec<String> = place.into_iter().filter(|part| !part.is_empty()).collect();
-        if !place.is_empty() && text::line_width(&line) + 4 < room {
-            push(&mut line, "  ", theme.faint(), room);
-            push(&mut line, place.join(" · "), theme.faint(), room);
+        if !place.is_empty() && text::line_width(&line) + 6 < room {
+            line.spans.push(bar());
+            push(&mut line, place, theme.faint(), room);
         }
         let mut spots = Vec::new();
         if text::line_width(&line) + 2 <= right_at {
@@ -1348,15 +1367,6 @@ impl ChatView {
         }
         (line, spots)
     }
-}
-
-/// The last part of a working directory: its project, as home names it.
-fn project(cwd: &str) -> &str {
-    cwd.trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .filter(|part| !part.is_empty())
-        .unwrap_or(cwd)
 }
 
 /// "41K", "1.2M": a token count at a glance.
@@ -1419,12 +1429,20 @@ fn quiet_activity(activity: &ui_state::Activity, width: usize, theme: Theme) -> 
     line
 }
 
+/// What the composer's bottom edge says, in the words a person reads: the
+/// model by its name, its effort, and the mode.
+struct EdgeWords {
+    model: Option<String>,
+    effort: Option<String>,
+    mode: Option<String>,
+}
+
 /// The composer in its box, the model, effort and mode on the bottom edge.
 /// Returns its lines and the cursor's (line, column).
 fn boxed_composer(
     editor: &Editor,
     placeholder: &str,
-    strip: &ui_view::Strip,
+    edge_words: &EdgeWords,
     width: usize,
     theme: Theme,
 ) -> (Vec<Line<'static>>, (usize, usize)) {
@@ -1454,12 +1472,12 @@ fn boxed_composer(
         push(&mut boxed, "│", edge, width);
         out.push(boxed);
     }
-    // "Opus (high) · auto": the model faint as the agent names it, its
+    // "Opus (high) · accept edits": the model faint by its name, its
     // effort beside it, and the mode, which Shift+Tab changes, in the
-    // reading ink.
+    // reading ink. The edge is a status line, so the mode is lowercase.
     let known = |fact: &Option<String>| fact.clone().filter(|fact| !fact.is_empty());
     let mut label: Vec<Span<'static>> = Vec::new();
-    match (known(&strip.model), known(&strip.effort)) {
+    match (known(&edge_words.model), known(&edge_words.effort)) {
         (Some(model), Some(effort)) => {
             label.push(Span::styled(format!("{model} ({effort})"), theme.faint()))
         }
@@ -1467,11 +1485,11 @@ fn boxed_composer(
         (None, Some(effort)) => label.push(Span::styled(format!("({effort})"), theme.faint())),
         (None, None) => {}
     }
-    if let Some(mode) = known(&strip.mode) {
+    if let Some(mode) = known(&edge_words.mode) {
         if !label.is_empty() {
             label.push(Span::styled(" · ", theme.faint()));
         }
-        label.push(Span::styled(mode, theme.text()));
+        label.push(Span::styled(mode.to_lowercase(), theme.text()));
     }
     let label_width: usize = label
         .iter()

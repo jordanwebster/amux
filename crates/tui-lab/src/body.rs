@@ -278,12 +278,14 @@ pub fn encode_snapshot(kind: Kind, facts: &SnapshotFacts) -> Vec<u8> {
     }
 }
 
+/// Offered the way Claude offers them: an alias to pick by, and the name a
+/// person reads.
 fn offered_models() -> Vec<wire::OfferedModel> {
-    ["opus", "sonnet", "haiku"]
+    [("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
         .into_iter()
-        .map(|name| wire::OfferedModel {
+        .map(|(name, display)| wire::OfferedModel {
             value: name.into(),
-            display_name: name.into(),
+            display_name: display.into(),
             efforts: vec!["low".into(), "medium".into(), "high".into()],
             ..Default::default()
         })

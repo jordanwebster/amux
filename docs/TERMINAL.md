@@ -30,6 +30,12 @@ notice. See [the two draw loops](CLIENT.md#the-two-draw-loops).
 
 ## Screens
 
+Home and the chat share one geometry. A margin of two columns runs down each side, and every edge sits on it:
+tinted blocks (your messages, the highlighted row on home), the composer's box, the header, the key line and the
+arrows of sections and stretches. Text inside a block, the agent's text, labels and marks sit two columns further
+in. One blank line sits above the top line and one below it. A block's half line of padding is drawn only while
+its words are on screen, so a block scrolled half off leaves no band behind.
+
 ### The fleet
 
 The fleet is home: the client opens on it, and every chat returns to it. It is a framed grid titled `amux`, with
@@ -66,8 +72,9 @@ explains hosts, pairing and the relay.
 
 Enter on a fleet row opens its chat. From top to bottom:
 
-- **The header**: the agent's name, then faintly its project and, when it runs on another machine, its host. At
-  the right, how much of its context is used (`41K / 200K`, in the warning ink when near the limit), `[Diff +a
+- **The header**, under one blank line: the agent's name, a faint `│`, then faintly the directory it works in
+  (`~/source/amux`) and, when it runs on another machine, `· <host>`. At the right, split by the same faint `│`,
+  how much of its context is used (`41K / 200K`, in the warning ink when near the limit), `[Diff +a
   −b]` with the working tree's lines added and removed, which opens the review page, and `[Home]`, which goes
   back home; both brighten under the mouse. The totals are read when the chat opens and again each time a turn
   ends. The header says where the chat stands only when that is a problem: `exited` with its cause, `catching
@@ -79,11 +86,10 @@ Enter on a fleet row opens its chat. From top to bottom:
 - **The feed**, read one turn at a time, laid out upward from the newest or from wherever the reader scrolled:
   - your message is a tinted block with the time at its right;
   - everything the agent wrote is in one reading ink, to at most 100 columns a line on a wide terminal; code
-    and paths in it wear the code colour, the one colour kept for them and never the accent's; its thinking is
-    not drawn;
+    and paths in it wear the terminal's own cyan, straight from its palette; its thinking is not drawn;
   - each stretch of tool steps between two pieces of its text folds to one faint line of what the steps did
     (`▸ 3 commands · 2 edits · 4 reads`). Clicking it, or `<leader> o` on it, opens the stretch to one line per
-    step, with consecutive reads and searches merged into one; clicking a step opens its detail (a command's
+    step, every step on its own (merging reads would only repeat the folded line); clicking a step opens its detail (a command's
     output, an edit's patch, a call's result);
   - a failure the turn ended without fixing stays under its folded stretch in red; one fixed later in the turn
     folds away with the rest;
@@ -95,7 +101,8 @@ Enter on a fleet row opens its chat. From top to bottom:
   drawing for now.
 - **The ask card**, when the agent is waiting on you, docked where the composer was; the draft stays underneath
   it.
-- **The composer**, boxed, with `Model (effort) · mode` on its bottom edge; above it a quiet line while the
+- **The composer**, boxed, with `Model (effort) · mode` on its bottom edge, in the words a person reads
+  (`Opus (high) · accept edits`: the model's offered name, the mode never as its identifier); above it a quiet line while the
   agent works, the session strip, any foot card (a sign-in problem or a usage block) and the tray of queued and
   unconfirmed prompts; one blank line below it, a line of keys for the composer's current mode, all at the left
   with `shift+tab mode` last.

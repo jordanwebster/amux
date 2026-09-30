@@ -2430,7 +2430,7 @@ fn hovering_highlights_a_row_and_its_close_mark_asks_first() {
     // The × stops, after asking.
     let effects = home.mouse(
         &fleet,
-        mouse(MouseEventKind::Down(MouseButton::Left), W - 3, beta),
+        mouse(MouseEventKind::Down(MouseButton::Left), W - 5, beta),
         false,
     );
     assert!(effects.is_empty());
@@ -2519,7 +2519,8 @@ fn the_filter_lives_in_the_top_line_and_narrows_the_list() {
     }
     let screen = home_screen(&mut home, &fleet, theme());
     assert!(
-        screen.lines().next().unwrap().contains("/ arch"),
+        // The top line sits under one blank line.
+        screen.lines().nth(1).unwrap().contains("/ arch"),
         "{screen}"
     );
     // The filter looks through folded sections too.
@@ -2567,15 +2568,12 @@ fn a_stretch_folds_to_its_counts_and_opens_to_its_steps() {
     assert!(screen.contains("▸ 3 reads"), "{screen}");
     assert!(!screen.contains("src/file2.rs"), "{screen}");
 
-    // Opened, the consecutive reads read as one step.
+    // Opened, every step has its own line: no merged "Read 3 files",
+    // which would only repeat the folded line.
     assert!(click(&mut view, &state, &screen, "3 reads").is_empty());
     let (screen, _) = feed(&mut view, &state);
     assert!(screen.contains("▾ 3 reads"), "{screen}");
-    assert!(screen.contains("Read 3 files"), "{screen}");
-
-    // That step opens to its reads.
-    click(&mut view, &state, &screen, "Read 3 files");
-    let (screen, _) = feed(&mut view, &state);
+    assert!(!screen.contains("Read 3 files"), "{screen}");
     for order in 2..=4 {
         assert!(screen.contains(&format!("src/file{order}.rs")), "{screen}");
     }
@@ -2608,7 +2606,8 @@ fn a_stretch_under_way_shows_its_newest_steps() {
     assert!(!screen.contains("src/file6.rs"), "{screen}");
 }
 
-/// The top line names the agent under amux, and the composer is boxed.
+/// The header names the agent under one blank line, and the composer is
+/// boxed.
 #[test]
 fn the_chat_header_names_the_agent_and_offers_the_diff_and_home() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
@@ -2616,7 +2615,11 @@ fn the_chat_header_names_the_agent_and_offers_the_diff_and_home() {
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
     view.diff_stat = Some((42, 7));
     let (screen, _) = feed(&mut view, &state);
-    let first = screen.lines().next().unwrap_or_default();
+    assert!(
+        screen.lines().next().unwrap_or_default().trim().is_empty(),
+        "{screen}"
+    );
+    let first = screen.lines().nth(1).unwrap_or_default();
     // The name, then the controls; where the chat stands is left to the
     // feed while nothing is wrong.
     assert!(first.trim_start().starts_with("worker"), "{screen}");
@@ -2641,7 +2644,7 @@ fn the_chat_header_names_the_agent_and_offers_the_diff_and_home() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column,
-            row: 0,
+            row: 1,
             modifiers: KeyModifiers::NONE,
         },
         theme(),

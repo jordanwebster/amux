@@ -51,6 +51,50 @@ pub(crate) fn push(line: &mut Line<'static>, text: impl AsRef<str>, style: Style
     }
 }
 
+/// A path on this machine as the person would write it: their home
+/// directory as `~`.
+pub(crate) fn tilde(path: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let home = home.trim_end_matches('/');
+    match path.strip_prefix(home) {
+        Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => {
+            format!("~{rest}")
+        }
+        _ => path.to_owned(),
+    }
+}
+
+/// Whether a line is only half-block padding drawn with `glyph`: the edge a
+/// tinted block draws above (`▄`) or below (`▀`) its words.
+pub(crate) fn is_padding(line: &Line<'_>, glyph: char) -> bool {
+    let mut any = false;
+    for c in line.spans.iter().flat_map(|span| span.content.chars()) {
+        if c == glyph {
+            any = true;
+        } else if c != ' ' {
+            return false;
+        }
+    }
+    any
+}
+
+/// Padding is drawn only while its block's words are on screen: a lower
+/// edge at the top of a window, whose block scrolled off above, and an
+/// upper edge at the bottom, whose block is still below, would otherwise
+/// read as stray bands.
+pub(crate) fn drop_cut_padding(lines: &mut [Line<'static>]) {
+    if let Some(first) = lines.first_mut()
+        && is_padding(first, '▀')
+    {
+        *first = Line::default();
+    }
+    if let Some(last) = lines.last_mut()
+        && is_padding(last, '▄')
+    {
+        *last = Line::default();
+    }
+}
+
 /// Puts `text` at the right edge when it fits after what the line holds,
 /// with at least two cells between them; otherwise leaves the line alone.
 pub(crate) fn push_right(line: &mut Line<'static>, text: &str, style: Style, width: usize) {

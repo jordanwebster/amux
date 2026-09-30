@@ -214,7 +214,9 @@ pub fn is_step(row: &Row) -> bool {
 }
 
 /// Your message: a tinted block with half a line of padding above and
-/// below, the time at the right of its first line.
+/// below, the time at the right of its first line. The block runs from the
+/// outer margin to the outer margin; its words and time sit a margin inside
+/// it.
 fn prompt(
     drawn: &mut Drawn,
     row: &Row,
@@ -227,9 +229,9 @@ fn prompt(
     let tint = surface.bg;
     let edge = |glyph: &str| match tint {
         Some(color) => Line::from(vec![
-            Span::raw(" "),
+            Span::raw(" ".repeat(EDGE)),
             Span::styled(
-                glyph.repeat(width.saturating_sub(2)),
+                glyph.repeat(width.saturating_sub(2 * EDGE)),
                 Style::default().fg(color),
             ),
         ]),
@@ -241,29 +243,27 @@ fn prompt(
     } else {
         clock(row.at_ms)
     };
-    let room = width.saturating_sub(WORDS + 4 + text::str_width(&when) + 2);
+    // Inside the block: from the margin to the margin, with its own margin
+    // of the same width on each side.
+    let inner = width.saturating_sub(2 * EDGE);
+    let inset = WORDS - EDGE;
+    let room = inner.saturating_sub(2 * inset + text::str_width(&when) + 2);
     for (i, words) in segment_lines(words, room, theme.text(), theme)
         .into_iter()
         .enumerate()
     {
-        let mut line = Line::from(Span::raw(" "));
-        push(&mut line, " ".repeat(WORDS - 1), Style::default(), width);
+        let mut line = Line::from(Span::raw(" ".repeat(inset)));
         line.spans.extend(words.spans);
         if i == 0 {
-            push_right(&mut line, &format!("{when}  "), theme.faint(), width - 1);
+            push_right(&mut line, &when, theme.faint(), inner - inset);
         }
-        let mut tinted = Line::from(Span::raw(" "));
-        let mut first = true;
-        for span in line.spans.into_iter() {
-            if first {
-                first = false;
-                continue;
-            }
+        let mut tinted = Line::from(Span::raw(" ".repeat(EDGE)));
+        for span in line.spans {
             tinted
                 .spans
                 .push(Span::styled(span.content, span.style.patch(surface)));
         }
-        text::fill(&mut tinted, surface, width - 1);
+        text::fill(&mut tinted, surface, width - EDGE);
         drawn.line(tinted);
     }
     drawn.line(edge("▀"));

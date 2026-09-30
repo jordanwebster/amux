@@ -1,3 +1,23 @@
+2026-09-30 — **One margin, cyan code, and words for model and mode.** Home and
+the chat now share one geometry: a two-column margin each side that every
+edge sits on (message blocks, home's highlighted card and its padding, the
+composer's box, the header, the keys, the section and stretch arrows),
+with text two columns further in, and one blank line above the top line.
+A block's half-line padding is drawn only while its words are on screen;
+a message scrolled half off the top had left a stray band under the
+header. The chat header reads `name │ ~/path` (with `· host` off this
+machine), its right-hand groups split by the same faint bar. Code and
+paths take the terminal's cyan straight from its palette: the fallback
+that moved code away from the accent is gone, since code and needs-you
+never share a context, and the shipped palettes now pair a blue accent
+with cyan code (16-colour dark keeps light cyan for the accent, where the
+conventional blues do not read on black). An opened stretch lists every
+step on its own line; merging its reads only repeated the folded line.
+The composer's edge names the model and mode in words a person reads,
+`Opus (high) · accept edits`, from `ui_view::model_words`, `mode_words`
+and `mode_name`, shared so the phone can use the same wording; the lab's
+offered models carry real display names.
+
 2026-09-30 — **The chat's header, one [Diff], and a colour for code.** The
 chat's top line becomes a header: the agent's name, its project and (on
 another machine) its host in the faint ink, then at the right the context
