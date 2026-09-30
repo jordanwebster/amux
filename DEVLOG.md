@@ -1,3 +1,7 @@
+2026-10-01 — **A wrapped table's header stands apart.** In a table with rules
+between rows, the header's rule is one step stronger (the faint ink) than
+the row and column rules. Alignment follows the markdown's markers exactly.
+
 2026-10-01 — **Agent replies render their markdown instead of showing it.**
 The redesigned chat parses replies with pulldown-cmark (tables, task lists,
 strikethrough) and renders them in its own inks: headings bold without `#`,

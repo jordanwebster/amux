@@ -694,14 +694,24 @@ impl Drawer {
         let wraps = wrapped
             .iter()
             .any(|row| row.iter().any(|lines| lines.len() > 1));
+        // Alignment as the markdown's markers say, header included.
+        let aligns: Vec<Alignment> = (0..columns)
+            .map(|column| {
+                table
+                    .alignments
+                    .get(column)
+                    .copied()
+                    .unwrap_or(Alignment::None)
+            })
+            .collect();
         let bar = || Span::styled(RULE, theme.hairline());
-        let rule_line = || {
+        let rule_line = |ink: Style| {
             let mut spans = Vec::new();
             for (column, width) in widths.iter().enumerate() {
                 if column > 0 {
-                    spans.push(Span::styled("─┼─", theme.hairline()));
+                    spans.push(Span::styled("─┼─", ink));
                 }
-                spans.push(Span::styled("─".repeat(*width), theme.hairline()));
+                spans.push(Span::styled("─".repeat(*width), ink));
             }
             MdLine {
                 spans,
@@ -724,12 +734,7 @@ impl Drawer {
                     let pieces = cell.get(line).cloned().unwrap_or_default();
                     let used = runs_width(&pieces);
                     let slack = widths[column].saturating_sub(used);
-                    let (left, right) = match table
-                        .alignments
-                        .get(column)
-                        .copied()
-                        .unwrap_or(Alignment::None)
-                    {
+                    let (left, right) = match aligns[column] {
                         Alignment::Right => (slack, 0),
                         Alignment::Center => (slack / 2, slack - slack / 2),
                         Alignment::Left | Alignment::None => (0, slack),
@@ -750,8 +755,16 @@ impl Drawer {
                 }
                 lines.push(MdLine { spans, links });
             }
-            if r == 0 || (wraps && r + 1 < rows) {
-                lines.push(rule_line());
+            // With rules between rows, the header's is one ink stronger so
+            // the header stays apart from them.
+            if r == 0 {
+                lines.push(rule_line(if wraps {
+                    theme.faint()
+                } else {
+                    theme.hairline()
+                }));
+            } else if wraps && r + 1 < rows {
+                lines.push(rule_line(theme.hairline()));
             }
         }
         for (i, line) in lines.into_iter().enumerate() {
