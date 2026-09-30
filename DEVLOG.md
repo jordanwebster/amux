@@ -1,3 +1,16 @@
+2026-09-30 — **The row above the composer says what is in flight, in words.**
+The dotted strip ("Tasks 3/4 · … · Near the usage limit · 5h 81% · 7d 44%")
+becomes a row that rests on the composer's box and starts on its border's
+column, so it reads as the composer's rather than the chat's. Its groups
+are set apart by space, each naming itself: the task in progress in grey
+and "3 of 4 tasks" faint (shown only while tasks remain), failed tool
+servers in red, "1 background job" faint. Usage appears at the right only
+near a limit and only once something is typed, as "5-hour limit 81% used ·
+resets 23:24", with no warning colour; the blocked card is unchanged. On a
+narrow terminal the task's name shortens and then drops before anything
+else. A blank line always separates the chat from the row, and Jump to
+Bottom sits in that line instead of over the chat's last line.
+
 2026-09-30 — **The chat pins its turn's message, offers the way back, and
 says fewer keys.** The key line under the composer now names only what
 matters at that moment and always ends with the way to more: `shift+tab

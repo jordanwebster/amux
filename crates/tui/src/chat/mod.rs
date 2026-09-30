@@ -29,7 +29,8 @@ use wire::{Attachment, attachment};
 
 use self::ask::{AskAction, AskUi};
 use self::composer::{
-    COMPOSER_LINES, TrayRow, activity_line, editor_lines, foot_cards, placeholder, strip_line,
+    COMPOSER_LINES, TrayRow, activity_line, edge_row, editor_lines, foot_cards, placeholder,
+    strip_line,
 };
 use self::feed::FeedHit;
 use self::layout::{Anchor, Frame, Laid, StretchCache, Toggle};
@@ -1209,12 +1210,13 @@ impl ChatView {
         if let Some(activity) = &view.activity {
             bottom.push(quiet_activity(activity, width, theme));
         }
-        // The context lives in the header.
-        let foot = ui_view::Strip {
-            context: None,
-            ..strip.clone()
-        };
-        if let Some(line) = strip_line(&foot, width, theme) {
+        // The row rests on the composer's box; a blank line sets it apart
+        // from whatever is above, as the feed's last row already ends in
+        // one.
+        if let Some(line) = edge_row(&strip, !self.editor.is_empty(), now_ms, width, theme) {
+            if !bottom.is_empty() {
+                bottom.push(Line::default());
+            }
             bottom.push(line);
         }
         bottom.extend(foot_cards(&strip, width, theme));
@@ -1349,9 +1351,12 @@ impl ChatView {
             if self.anchor != Anchor::Bottom
                 && let Some(last) = feed.len().checked_sub(1)
             {
+                // The control sits in the blank line that sets the feed
+                // apart from what is below it, never over history.
                 let (control, from) = jump_control(state, width, theme);
                 let control_width = text::line_width(&control);
-                feed[last] = text::overlay(&feed[last], from, control, width);
+                feed[last] = text::overlay(&Line::default(), from, control, width);
+                text::drop_cut_padding(&mut feed[..last]);
                 self.jump_spot = Some((
                     area.y + (feed_top + last) as u16,
                     (area.x + from as u16, area.x + (from + control_width) as u16),

@@ -107,6 +107,141 @@ pub fn strip_line(strip: &Strip, width: usize, theme: Theme) -> Option<Line<'sta
     Some(line)
 }
 
+/// Columns between the groups of the row above the composer.
+const GROUP_GAP: usize = 4;
+
+/// The row that sits on the composer's box, starting on its border's
+/// column so it reads as the composer's and not the feed's: what is still
+/// in flight in this chat at the left (the task in progress and how many
+/// are done, failed tool servers, background jobs), set apart by space
+/// rather than dots, and at the right the usage limit, only near it and
+/// only while `typing`, since that is when it bears on a choice. None when
+/// there is nothing to say.
+pub fn edge_row(
+    strip: &Strip,
+    typing: bool,
+    now_ms: i64,
+    width: usize,
+    theme: Theme,
+) -> Option<Line<'static>> {
+    const MARGIN: usize = 2;
+    // The task's name is the one part that gives way: it shortens, then
+    // drops, before anything else does.
+    let mut name: Option<String> = None;
+    let mut groups: Vec<Vec<(String, ratatui::style::Style)>> = Vec::new();
+    if let Some(tasks) = strip.tasks.as_ref().filter(|t| t.done < t.total) {
+        let count = format!("{} of {} tasks", tasks.done, tasks.total);
+        if !tasks.current.is_empty() {
+            name = Some(tasks.current.clone());
+        }
+        groups.push(vec![(count, theme.faint())]);
+    }
+    for server in &strip.failed_servers {
+        let words = if server.needs_auth {
+            format!("{} needs sign-in", server.name)
+        } else {
+            format!("{} failed to start", server.name)
+        };
+        groups.push(vec![(words, theme.error())]);
+    }
+    if let Some(count) = strip.background {
+        let s = if count == 1 { "" } else { "s" };
+        groups.push(vec![(format!("{count} background job{s}"), theme.faint())]);
+    }
+    let usage = strip
+        .usage
+        .as_ref()
+        .filter(|usage| typing && !usage.blocked)
+        .and_then(|usage| {
+            usage
+                .windows
+                .iter()
+                .max_by(|a, b| a.used_percent.total_cmp(&b.used_percent))
+        })
+        .map(|window| usage_words(window, now_ms, theme));
+    if groups.is_empty() && usage.is_none() {
+        return None;
+    }
+    let end = width.saturating_sub(MARGIN);
+    let right_width = usage
+        .as_ref()
+        .map(|spans| spans.iter().map(|(w, _)| text::str_width(w)).sum::<usize>())
+        .unwrap_or(0);
+    let room = if right_width > 0 {
+        end.saturating_sub(right_width + GROUP_GAP)
+    } else {
+        end
+    };
+    let fixed: usize = MARGIN
+        + groups
+            .iter()
+            .flatten()
+            .map(|(words, _)| text::str_width(words))
+            .sum::<usize>()
+        + GROUP_GAP * groups.len().saturating_sub(1);
+    const NAME_MIN: usize = 12;
+    if let Some(name) = name {
+        let name_room = room.saturating_sub(fixed + 2);
+        if name_room >= NAME_MIN {
+            let first = &mut groups[0];
+            first[0].0 = format!("  {}", first[0].0);
+            first.insert(0, (text::ellipsize(&name, name_room), theme.muted()));
+        }
+    }
+    let mut line = Line::from(Span::raw(" ".repeat(MARGIN)));
+    for (i, group) in groups.into_iter().enumerate() {
+        if i > 0 {
+            push(&mut line, " ".repeat(GROUP_GAP), theme.faint(), room);
+        }
+        for (words, style) in group {
+            push(&mut line, words, style, room);
+        }
+    }
+    if let Some(spans) = usage
+        && text::line_width(&line) + GROUP_GAP + right_width <= end
+    {
+        text::pad_to(&mut line, end - right_width);
+        for (words, style) in spans {
+            line.spans.push(Span::styled(words, style));
+        }
+    }
+    Some(line)
+}
+
+/// "5-hour limit 81% used · resets 22:56": one usage window in words.
+fn usage_words(
+    window: &ui_view::UsageWindowView,
+    now_ms: i64,
+    theme: Theme,
+) -> Vec<(String, ratatui::style::Style)> {
+    let name = match window.name.as_str() {
+        "5h" => "5-hour limit".to_owned(),
+        "7d" => "Weekly limit".to_owned(),
+        other => format!("{other} limit"),
+    };
+    let mut spans = vec![
+        (name, theme.muted()),
+        (format!(" {:.0}% used", window.used_percent), theme.text()),
+    ];
+    if let Some(at) = window.resets_at_ms.filter(|at| *at > now_ms) {
+        spans.push((format!(" · resets {}", resets(at, now_ms)), theme.faint()));
+    }
+    spans
+}
+
+/// When a limit resets: the time today, else the weekday.
+fn resets(at_ms: i64, now_ms: i64) -> String {
+    use chrono::TimeZone;
+    let Some(at) = chrono::Local.timestamp_millis_opt(at_ms).single() else {
+        return String::new();
+    };
+    if at_ms - now_ms < 20 * 3_600_000 {
+        at.format("%H:%M").to_string()
+    } else {
+        at.format("%a").to_string()
+    }
+}
+
 /// Foot cards: a sign-in problem, or usage blocked.
 pub fn foot_cards(strip: &Strip, width: usize, theme: Theme) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
