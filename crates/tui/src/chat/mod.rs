@@ -10,6 +10,7 @@ pub mod ask;
 pub mod composer;
 pub mod feed;
 pub mod layout;
+pub mod pane;
 pub mod review;
 pub mod rows;
 
@@ -40,6 +41,14 @@ use crate::editor::{Edit, Editor};
 use crate::text::{self, push, push_right};
 use crate::theme::Theme;
 use crate::wheel::Direction;
+
+/// The in-flight pane beside the chat: about a third of the terminal,
+/// within these widths.
+const PANE_MIN: usize = 36;
+const PANE_MAX: usize = 56;
+/// The narrowest the chat gets beside the pane; narrower, the pane lies
+/// over the feed instead.
+const CHAT_MIN: usize = 60;
 
 /// The lines one wheel event scrolls, signed for the feed's arithmetic.
 fn wheel_lines(direction: Direction) -> isize {
@@ -95,6 +104,8 @@ pub enum ChatEffect {
     RawAttach,
     /// Open the working tree's diff on the review page.
     Review,
+    /// The review page, at this changed file.
+    ReviewAt(String),
     /// Back to home: the header's [Home].
     Home,
     /// A key a click stands for: a hint, the composer's mode. The app
@@ -188,6 +199,25 @@ pub struct ChatView {
     panel_spots: Vec<(u16, (u16, u16), char)>,
     /// The pinned prompt's rows and its key.
     pin_spot: Option<((u16, u16), Key)>,
+    /// The overview pane: the row above the composer, unfolded. Whether it
+    /// shows is the client's layout, kept across chats by the app.
+    pub pane_open: bool,
+    /// Whether the pane has the keys rather than the composer.
+    pub pane_keys: bool,
+    /// The item the pane's keys are on, indexing [`pane::items`].
+    pane_focus: Option<usize>,
+    /// The item under the mouse; hover and focus are one highlight.
+    pane_hover: Option<pane::PaneItem>,
+    /// The working tree's changed files, as last read with the diff stat.
+    pub diff_files: Option<Vec<pane::FileLine>>,
+    /// Where the pane was drawn: a click inside gives it the keys.
+    pane_rect: Option<Rect>,
+    /// A step was just scrolled to from the pane: if it sits within the
+    /// last screenful, the next frame follows the newest row instead.
+    revealed: bool,
+    pane_spots: Vec<(u16, (u16, u16), pane::PaneHit)>,
+    /// The row above the composer, which opens the pane.
+    row_spot: Option<(u16, (u16, u16))>,
     /// The jump-to-bottom control.
     jump_spot: Option<(u16, (u16, u16))>,
     /// The mode on the composer's edge.
@@ -235,6 +265,15 @@ impl ChatView {
             hint_spots: Vec::new(),
             panel_spots: Vec::new(),
             pin_spot: None,
+            pane_open: false,
+            pane_keys: false,
+            pane_focus: None,
+            pane_hover: None,
+            diff_files: None,
+            pane_rect: None,
+            revealed: false,
+            pane_spots: Vec::new(),
+            row_spot: None,
             jump_spot: None,
             mode_spot: None,
             composer_spot: None,
@@ -291,6 +330,9 @@ impl ChatView {
     pub fn field_text(&self, state: &SessionState) -> bool {
         if self.review_open {
             return self.review.as_ref().is_some_and(ReviewPage::editing);
+        }
+        if self.redesigned() && self.pane_open && self.pane_keys {
+            return false;
         }
         if let Some(card) = self.card_takes_keys(state) {
             return self.ask.field_text(&card);
@@ -376,6 +418,10 @@ impl ChatView {
             }
             return vec![];
         }
+        if self.redesigned() && key.code == KeyCode::Char('t') && ctrl {
+            self.pane_toggle_key();
+            return vec![];
+        }
         match key.code {
             KeyCode::Char('x') if ctrl => {
                 return if state.phase() == PhaseView::Working || !state.open_asks().is_empty() {
@@ -410,6 +456,11 @@ impl ChatView {
                 return vec![];
             }
             _ => {}
+        }
+        // The pane has the keys: it takes the ones it uses and ignores the
+        // rest; Esc hands the keys back to the composer.
+        if self.redesigned() && self.pane_open && self.pane_keys {
+            return self.pane_key(state, key);
         }
         if let Some(card) = self.card_takes_keys(state) {
             self.ask.sync(&card);
@@ -592,6 +643,94 @@ impl ChatView {
         self.anchor = Anchor::Bottom;
     }
 
+    /// Ctrl+T: closed, the pane opens with the keys; open with the
+    /// composer holding the keys, the pane takes them; holding them, it
+    /// closes.
+    pub fn pane_toggle_key(&mut self) {
+        if !self.pane_open {
+            self.open_pane();
+        } else if !self.pane_keys {
+            self.focus_pane();
+        } else {
+            self.close_pane();
+        }
+    }
+
+    /// Opens the pane with the keys.
+    pub fn open_pane(&mut self) {
+        self.pane_open = true;
+        self.focus_pane();
+    }
+
+    pub fn close_pane(&mut self) {
+        self.pane_open = false;
+        self.pane_keys = false;
+        self.pane_hover = None;
+    }
+
+    /// Gives the pane the keys, on its first item when none has them yet.
+    fn focus_pane(&mut self) {
+        self.pane_keys = true;
+        self.pane_focus.get_or_insert(0);
+    }
+
+    /// A key while the pane has the keys: j/k and the arrows move across
+    /// its jobs and changed files as one list; Enter opens a job's step in
+    /// the chat or a file on the review page; Esc hands the keys back to
+    /// the composer, the pane staying open. It ignores the rest.
+    fn pane_key(&mut self, state: &SessionState, key: KeyEvent) -> Vec<ChatEffect> {
+        let jobs = ui_view::background_jobs(state);
+        let items = pane::items(&jobs, self.diff_files.as_deref());
+        let last = items.len().checked_sub(1);
+        match key.code {
+            KeyCode::Esc => self.pane_keys = false,
+            KeyCode::Char('j') | KeyCode::Down if key.modifiers.is_empty() => {
+                if let Some(last) = last {
+                    self.pane_focus = Some(self.pane_focus.map_or(0, |at| (at + 1).min(last)));
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up if key.modifiers.is_empty() => {
+                if last.is_some() {
+                    self.pane_focus = Some(self.pane_focus.map_or(0, |at| at.saturating_sub(1)));
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(item) = self.pane_focus.and_then(|at| items.get(at)).cloned() {
+                    return self.open_item(state, item);
+                }
+            }
+            _ => {}
+        }
+        vec![]
+    }
+
+    /// A job opens its step in the chat; a file, the review page at it.
+    fn open_item(&mut self, state: &SessionState, item: pane::PaneItem) -> Vec<ChatEffect> {
+        match item {
+            pane::PaneItem::Job(key) => {
+                self.reveal_step(state, &key);
+                vec![]
+            }
+            pane::PaneItem::File(path) => vec![ChatEffect::ReviewAt(path)],
+        }
+    }
+
+    /// Scrolls the chat to a step and opens it, and the stretch it sits in.
+    fn reveal_step(&mut self, state: &SessionState, key: &Key) {
+        let Some(order) = state.transcript().get(key).map(|held| held.item.order) else {
+            return;
+        };
+        if let Some(stretch) = ui_view::stretch_at(state, order) {
+            self.stretches.insert(stretch.oldest);
+        }
+        self.expanded.insert(key.clone());
+        self.anchor = Anchor::Top {
+            key: key.clone(),
+            offset: 0,
+        };
+        self.revealed = true;
+    }
+
     /// Whether the reader follows the newest row, when that changed since
     /// the session was last told: the one thing about the view the session
     /// needs, to trim its window while following and hold arrivals while
@@ -630,7 +769,19 @@ impl ChatView {
             .find(|(y, (from, to), _)| *y == event.row && (*from..*to).contains(&event.column))
             .map(|(_, _, control)| *control);
         match event.kind {
-            MouseEventKind::Moved => self.hover = control,
+            MouseEventKind::Moved => {
+                self.hover = control;
+                self.pane_hover = self
+                    .pane_spots
+                    .iter()
+                    .find(|(row, (from, to), _)| {
+                        *row == event.row && (*from..*to).contains(&event.column)
+                    })
+                    .and_then(|(_, _, hit)| match hit {
+                        pane::PaneHit::Item(item) => Some(item.clone()),
+                        pane::PaneHit::Close => None,
+                    });
+            }
             MouseEventKind::ScrollUp => self.scroll(state, -wheel_lines(Direction::Up), theme),
             MouseEventKind::ScrollDown => self.scroll(state, wheel_lines(Direction::Down), theme),
             MouseEventKind::Down(MouseButton::Left) if self.reader.is_none() => {
@@ -641,6 +792,37 @@ impl ChatView {
                 }
                 let (x, y) = (event.column, event.row);
                 let on = |row: u16, (from, to): (u16, u16)| row == y && (from..to).contains(&x);
+                if let Some((_, _, hit)) = self
+                    .pane_spots
+                    .iter()
+                    .find(|(row, cols, _)| on(*row, *cols))
+                    .cloned()
+                {
+                    match hit {
+                        pane::PaneHit::Close => self.close_pane(),
+                        pane::PaneHit::Item(item) => {
+                            self.pane_keys = true;
+                            let jobs = ui_view::background_jobs(state);
+                            self.pane_focus = pane::items(&jobs, self.diff_files.as_deref())
+                                .iter()
+                                .position(|each| *each == item);
+                            return self.open_item(state, item);
+                        }
+                    }
+                    return vec![];
+                }
+                // A click anywhere else in the pane gives it the keys.
+                if self
+                    .pane_rect
+                    .is_some_and(|rect| rect.contains(Position::new(x, y)))
+                {
+                    self.focus_pane();
+                    return vec![];
+                }
+                if self.row_spot.is_some_and(|(row, cols)| on(row, cols)) {
+                    self.open_pane();
+                    return vec![];
+                }
                 if let Some((_, _, chord)) = self
                     .panel_spots
                     .iter()
@@ -683,6 +865,7 @@ impl ChatView {
                     && (spot.y..spot.y + spot.rows).contains(&y)
                     && x >= spot.x.saturating_sub(2)
                 {
+                    self.pane_keys = false;
                     let row = usize::from(y - spot.y) + spot.skip;
                     let col = usize::from(x.saturating_sub(spot.x));
                     let at = composer::cursor_at(&self.editor, spot.wrap, row, col);
@@ -935,8 +1118,24 @@ impl ChatView {
 
     /// A frozen diff and its patch: the review page opens over the chat.
     pub fn open_review(&mut self, diff: wire::Diff, patch: String) {
-        self.review = Some(ReviewPage::new(diff, patch));
+        self.open_review_at(diff, patch, None);
+    }
+
+    /// The review page, at the file `at` when one is named.
+    pub fn open_review_at(&mut self, diff: wire::Diff, patch: String, at: Option<&str>) {
+        let mut page = ReviewPage::new(diff, patch);
+        if let Some(path) = at {
+            page.show_file(path);
+        }
+        self.review = Some(page);
         self.review_open = true;
+    }
+
+    /// The review page already held, turned to the file `at`.
+    pub fn review_file(&mut self, at: &str) {
+        if let Some(page) = &mut self.review {
+            page.show_file(at);
+        }
     }
 
     /// Keeps the draft's Review token in step with the page: the first
@@ -1168,7 +1367,14 @@ impl ChatView {
         now_ms: i64,
         theme: Theme,
     ) -> Option<u32> {
-        let width = usize::from(area.width);
+        // The in-flight pane beside the chat narrows everything under the
+        // header, unless the chat would be left too narrow: then it lies
+        // over the feed's right side instead.
+        let full = usize::from(area.width);
+        let side = self.pane_open;
+        let pane_width = (full / 3).clamp(PANE_MIN, PANE_MAX).min(full);
+        let beside = side && full.saturating_sub(pane_width) >= CHAT_MIN;
+        let width = if beside { full - pane_width } else { full };
         let name = state
             .agent()
             .name
@@ -1181,7 +1387,26 @@ impl ChatView {
             .unwrap_or_else(|| "its host".into());
 
         let strip = session_strip(state);
-        let (header, controls) = self.top_line(state, &name, &strip, width, theme);
+        let jobs = if self.pane_open {
+            ui_view::background_jobs(state)
+        } else {
+            Vec::new()
+        };
+        let items = pane::items(&jobs, self.diff_files.as_deref());
+        // The item drawn as a card, in the pane and, for a job, at its step
+        // in the feed: the one under the mouse, else the one the pane's keys
+        // are on.
+        let pane_keys = self.pane_open && self.pane_keys;
+        let lit = self
+            .pane_hover
+            .as_ref()
+            .and_then(|hovered| items.iter().position(|item| item == hovered))
+            .or(self
+                .pane_focus
+                .filter(|_| pane_keys)
+                .map(|at| at.min(items.len().saturating_sub(1)))
+                .filter(|_| !items.is_empty()));
+        let (header, controls) = self.top_line(state, &name, &strip, full, theme);
         // A blank line above the header keeps it off the terminal's edge.
         self.header_spots = controls
             .into_iter()
@@ -1212,11 +1437,15 @@ impl ChatView {
         }
         // The row rests on the composer's box; a blank line sets it apart
         // from whatever is above, as the feed's last row already ends in
-        // one.
-        if let Some(line) = edge_row(&strip, !self.editor.is_empty(), now_ms, width, theme) {
+        // one. It is the pane folded: while the pane is open it takes the
+        // row's place.
+        let mut row_at = None;
+        if !side && let Some(line) = edge_row(&strip, !self.editor.is_empty(), now_ms, width, theme)
+        {
             if !bottom.is_empty() {
                 bottom.push(Line::default());
             }
+            row_at = Some((bottom.len(), text::line_width(&line)));
             bottom.push(line);
         }
         bottom.extend(foot_cards(&strip, width, theme));
@@ -1250,6 +1479,7 @@ impl ChatView {
                     effort: strip.effort.clone(),
                     mode: ui_view::mode_words(state),
                 },
+                !pane_keys,
                 width,
                 theme,
             );
@@ -1260,7 +1490,13 @@ impl ChatView {
             bottom.extend(boxed.lines.iter().cloned());
             boxed_at = Some((at, boxed));
         };
-        let legend = || turn_hint_words(state, &self.editor, self.away, self.leader);
+        let legend = || {
+            if pane_keys {
+                "j/k move · enter open · esc back · ctrl+t close".to_owned()
+            } else {
+                turn_hint_words(state, &self.editor, self.away, self.leader)
+            }
+        };
         let mut hint: Result<Line<'static>, String> = match &footer {
             Some(footer) => Ok(footer.clone()),
             None => Ok(Line::default()),
@@ -1329,6 +1565,11 @@ impl ChatView {
             self.laid = Laid::default();
         } else {
             let laid = self.frame(theme).layout(state);
+            // A step revealed within the last screenful cannot reach the
+            // top; the feed simply shows the newest row.
+            if std::mem::take(&mut self.revealed) && laid.at_bottom {
+                self.anchor = Anchor::Bottom;
+            }
             let mut feed: Vec<Line<'static>> = laid.lines.clone();
             text::drop_cut_padding(&mut feed);
             if let Some((pinned, key)) = pinned(state, &laid, feed_height, width, theme) {
@@ -1346,6 +1587,33 @@ impl ChatView {
                 // block's padding there would read as a stray band.
                 if let Some(rest) = feed.get_mut(rows..) {
                     text::drop_cut_padding(rest);
+                }
+            }
+            // The lit job's step, when the feed shows it, carries the same
+            // card, so the pane's line and the feed's line read as one.
+            if let Some(pane::PaneItem::Job(job)) = lit.and_then(|at| items.get(at))
+                && let Some(block) = laid.blocks.iter().position(|block| &block.key == job)
+            {
+                let owners = line_owners(&laid, feed.len());
+                // Exactly the step's own lines, flat: a block may end in
+                // the blank line that sets it apart, which is not the step's.
+                let rows: Vec<usize> = owners
+                    .iter()
+                    .enumerate()
+                    .filter(|(at, owner)| {
+                        **owner == Some(block) && text::line_width(&feed[*at]) > 0
+                    })
+                    .map(|(at, _)| at)
+                    .collect();
+                if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
+                    pane::card_highlight(
+                        &mut feed,
+                        *first..*last + 1,
+                        2,
+                        width.saturating_sub(2),
+                        false,
+                        theme,
+                    );
                 }
             }
             if self.anchor != Anchor::Bottom
@@ -1399,6 +1667,14 @@ impl ChatView {
             .into_iter()
             .map(|(row, i)| (bottom_y(row), i))
             .collect();
+        self.row_spot = match row_at {
+            Some((at, row_width)) if !self.pane_open => {
+                Some((bottom_y(at), (area.x + 2, area.x + row_width as u16)))
+            }
+            _ => None,
+        };
+        self.pane_spots.clear();
+        self.pane_rect = None;
         self.mode_spot = None;
         self.composer_spot = None;
         if let Some((at, boxed)) = &boxed_at {
@@ -1418,7 +1694,37 @@ impl ChatView {
         }
         lines.extend(bottom);
         paint.render_widget(Paragraph::new(lines), area);
-        if let Some((row, col)) = cursor {
+        if side {
+            // Beside the chat from the feed's first line down to the line
+            // above the keys; over the feed alone when it lies on top.
+            let x = area.x + (full - pane_width) as u16;
+            let y = area.y + feed_top as u16;
+            let bottom_edge = if beside {
+                area.y + area.height.saturating_sub(1)
+            } else {
+                y + feed_height as u16
+            };
+            let rect = Rect {
+                x,
+                y,
+                width: pane_width as u16,
+                height: bottom_edge.saturating_sub(y),
+            };
+            if !beside {
+                // Lying over the feed, it clears a column more than it
+                // draws, so the feed's cut text never touches the rule.
+                let cleared = Rect {
+                    x: rect.x.saturating_sub(1),
+                    width: rect.width + 1,
+                    ..rect
+                };
+                paint.render_widget(ratatui::widgets::Clear, cleared);
+            }
+            self.pane_rect = Some(rect);
+            self.draw_side_pane(paint, rect, &strip, &jobs, lit, now_ms, theme);
+        }
+        // While the pane has the keys, the composer shows no cursor.
+        if let Some((row, col)) = cursor.filter(|_| !pane_keys) {
             let y = area.y as usize + bottom_start + row;
             let x = area.x as usize + col.min(width.saturating_sub(1));
             if y < (area.y + area.height) as usize {
@@ -1436,6 +1742,95 @@ impl ChatView {
             }
             _ => None,
         }
+    }
+
+    /// The pane beside the chat: a hairline rule down its left edge, then
+    /// its lines past the margin, cut at the rect's foot.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_side_pane(
+        &mut self,
+        paint: &mut Paint<'_>,
+        rect: Rect,
+        strip: &ui_view::Strip,
+        jobs: &[ui_view::JobView],
+        lit: Option<usize>,
+        now_ms: i64,
+        theme: Theme,
+    ) {
+        // The rule, a blank column, then the pane's lines out to the outer
+        // margin: a highlighted job's tint spans them, its words sit two
+        // columns further in, as on home.
+        const LEFT: u16 = 2;
+        const RIGHT: u16 = 2;
+        let inner = rect.width.saturating_sub(LEFT + RIGHT);
+        let focused = self.pane_keys;
+        let files = self.diff_files.as_deref();
+        let draw = |roomy| {
+            pane::pane_lines(
+                strip,
+                jobs,
+                files,
+                lit,
+                focused,
+                roomy,
+                now_ms,
+                usize::from(inner),
+                theme,
+            )
+        };
+        let mut content = draw(true);
+        let height = usize::from(rect.height);
+        if content.lines.len() > height {
+            content = draw(false);
+        }
+        // Still too tall: its last line says so rather than stopping short.
+        if content.lines.len() > height && height > 0 {
+            content.lines.truncate(height - 1);
+            while content
+                .lines
+                .last()
+                .is_some_and(|line| text::line_width(line) <= 2)
+            {
+                content.lines.pop();
+            }
+            let mut more = Line::from(Span::raw("  "));
+            push(&mut more, "… more below", theme.faint(), usize::from(inner));
+            content.lines.push(more);
+            let shown = content.lines.len() - 1;
+            content.hits.retain(|(row, _, _)| *row < shown);
+        }
+        // Which area has the keys shows on the frame, never the content:
+        // the rule turns grey while the pane has them.
+        let rule_ink = if focused {
+            theme.muted()
+        } else {
+            theme.hairline()
+        };
+        let rule: Vec<Line<'static>> = (0..rect.height)
+            .map(|_| Line::from(Span::styled("│", rule_ink)))
+            .collect();
+        paint.render_widget(
+            Paragraph::new(rule),
+            Rect {
+                width: 1.min(rect.width),
+                ..rect
+            },
+        );
+        let body = Rect {
+            x: rect.x + LEFT,
+            width: inner,
+            ..rect
+        };
+        for (row, (from, to), hit) in content.hits {
+            if row < usize::from(rect.height) {
+                self.pane_spots.push((
+                    rect.y + row as u16,
+                    (body.x + from as u16, body.x + to as u16),
+                    hit,
+                ));
+            }
+        }
+        paint.render_widget(Paragraph::new(content.lines), body);
     }
 
     /// The header. At the left the agent's name, then faint where it runs:
@@ -1631,6 +2026,7 @@ fn boxed_composer(
     editor: &Editor,
     placeholder: &str,
     edge_words: &EdgeWords,
+    focused: bool,
     width: usize,
     theme: Theme,
 ) -> Boxed {
@@ -1644,7 +2040,13 @@ fn boxed_composer(
         }
     }
     let skip = (row + 1).saturating_sub(COMPOSER_LINES);
-    let edge = theme.hairline();
+    // Holding the keys, the box's edge is grey; otherwise it recedes to a
+    // hairline. The words on its edge keep their own inks.
+    let edge = if focused {
+        theme.muted()
+    } else {
+        theme.hairline()
+    };
     let span = width.saturating_sub(2 * MARGIN + 2);
     let mut out = Vec::new();
     let mut top = Line::from(Span::raw(" ".repeat(MARGIN)));

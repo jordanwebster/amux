@@ -347,9 +347,11 @@ fn folded(drawn: &mut Drawn, stretch: &Stretch, unresolved: &[Row], width: usize
         push(&mut line, "✗", theme.error(), width);
         pad_to(&mut line, WORDS);
         let (verb, subject, meta) = step_words(row, false);
-        push(&mut line, verb, theme.error(), width);
+        push(&mut line, verb.clone(), theme.error(), width);
         if !subject.is_empty() {
-            push(&mut line, " ", theme.error(), width);
+            if !verb.is_empty() {
+                push(&mut line, " ", theme.error(), width);
+            }
             push(
                 &mut line,
                 subject,
@@ -438,10 +440,12 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
             ..
         } => {
             let verb = call_verb(*state, row, ["Wants to use", "Using", "Used"]);
+            // "Used tracker sign_in": the server, then the tool, which
+            // `step` draws in the reading ink.
             let subject = if server.is_empty() {
                 tool.clone()
             } else {
-                format!("{server} · {tool}")
+                format!("{server} {tool}")
             };
             let mut meta = fact.clone();
             if *state == ToolStateView::Failed {
@@ -490,22 +494,36 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
                 "{tool_count} tool{}",
                 if *tool_count == 1 { "" } else { "s" }
             )];
-            if *running {
-                meta.push("running".into());
-            } else if let Some(ms) = duration_ms {
+            if !*running && let Some(ms) = duration_ms {
                 meta.push(text::duration(*ms));
             }
+            let verb = if *running {
+                "Running subagent"
+            } else {
+                "Ran subagent"
+            };
             (
-                "Agent".to_owned(),
+                verb.to_owned(),
                 first_line(description).to_owned(),
                 meta.join(" · "),
             )
         }
-        RowKind::Background { command, running } => (
-            "In background".to_owned(),
-            first_line(command).to_owned(),
-            if *running { "running" } else { "finished" }.to_owned(),
-        ),
+        // A command like any other, where it runs said after it.
+        RowKind::Background {
+            command,
+            running,
+            duration_ms,
+        } => {
+            let mut meta = vec!["in background".to_owned()];
+            if !*running && let Some(ms) = duration_ms {
+                meta.push(text::duration(*ms));
+            }
+            (
+                if *running { "Running" } else { "Ran" }.to_owned(),
+                first_line(command).to_owned(),
+                meta.join(" · "),
+            )
+        }
         RowKind::Image {
             image,
             path,
@@ -519,7 +537,7 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
             let verb = if *generated {
                 "Generated image"
             } else {
-                "Image"
+                "Viewed image"
             };
             (verb.to_owned(), subject, String::new())
         }
@@ -622,16 +640,29 @@ fn step(
     // Two blank columns at the right, as at the left.
     let width = width.saturating_sub(2);
     let room = width.saturating_sub(tail_width);
-    push(&mut line, verb, words, room);
+    push(&mut line, verb.clone(), words, room);
     if !subject.is_empty() {
-        push(&mut line, " ", words, room);
+        if !verb.is_empty() {
+            push(&mut line, " ", words, room);
+        }
         let left = room.saturating_sub(text::line_width(&line));
         let shown = if text::str_width(&subject) > left && left > 8 {
             tail(&subject, left)
         } else {
             subject
         };
-        push(&mut line, shown, subject_style, room);
+        // A tool-server call names its tool in the reading ink after the
+        // server, unless the line has its own ink.
+        match &row.kind {
+            RowKind::ToolCall { tool, .. }
+                if !failed && !current && shown.ends_with(tool.as_str()) && !tool.is_empty() =>
+            {
+                let (server, tool) = shown.split_at(shown.len() - tool.len());
+                push(&mut line, server, subject_style, room);
+                push(&mut line, tool, theme.text(), room);
+            }
+            _ => push(&mut line, shown, subject_style, room),
+        }
     }
     if !meta.is_empty() {
         push(&mut line, format!(" · {meta}"), theme.faint(), width);

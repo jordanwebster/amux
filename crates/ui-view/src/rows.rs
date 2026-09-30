@@ -129,6 +129,8 @@ pub enum RowKind {
     Background {
         command: String,
         running: bool,
+        /// How long it ran, once it ended.
+        duration_ms: Option<i64>,
     },
     Image {
         image: Option<BlobRef>,
@@ -919,6 +921,7 @@ fn claude_tool(
             "Bash" if tool.background => RowKind::Background {
                 command: field(&input, "command"),
                 running: in_flight(view),
+                duration_ms,
             },
             "Bash" => {
                 let (output_head, more_lines) = output_head(&tool.outcome_text);
@@ -1138,6 +1141,7 @@ fn codex_work(held: &Held, work: &wire::Work) -> (RowKind, Option<Decision>, boo
         Some(Of::Command(command)) if command.background => RowKind::Background {
             command: command.command.clone(),
             running: in_flight(view),
+            duration_ms: duration(held, work.ended_at_ms),
         },
         Some(Of::Command(command)) => {
             let (output_head, more_lines) = output_head(&held.item.text);

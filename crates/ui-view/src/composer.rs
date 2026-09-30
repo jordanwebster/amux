@@ -325,3 +325,34 @@ pub fn outbox_rows(state: &SessionState) -> Vec<OutboxRow> {
         })
         .collect()
 }
+
+/// A background job the agent started and that is still running, found
+/// from its step in the transcript: the agent's own state counts them but
+/// does not name them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct JobView {
+    /// The step that started it, to open from the list.
+    pub key: ui_state::Key,
+    pub command: String,
+    pub started_at_ms: i64,
+}
+
+/// The running background jobs among the held rows, oldest first.
+pub fn background_jobs(state: &SessionState) -> Vec<JobView> {
+    state
+        .transcript()
+        .iter()
+        .filter_map(|held| match crate::rows::kind_of(state, held).0 {
+            crate::rows::RowKind::Background {
+                command,
+                running: true,
+                ..
+            } => Some(JobView {
+                key: held.item.key.clone(),
+                command,
+                started_at_ms: held.item.at_ms,
+            }),
+            _ => None,
+        })
+        .collect()
+}

@@ -24,6 +24,7 @@ pub async fn boot(
     place: Option<&Place>,
     instant: bool,
     theme: Theme,
+    layout: Option<std::path::PathBuf>,
 ) -> Result<Booted> {
     let fired = place.map_or(0, |p| p.fired);
     let world = World::new(scenario.clone(), fired, instant);
@@ -40,6 +41,7 @@ pub async fn boot(
         attach: false,
         version: "lab".into(),
         local_host: world.local_host(),
+        layout,
     };
     let mut app = App::new(client, fleet, config);
     // The fleet has already caught up, so no change will arrive to open the

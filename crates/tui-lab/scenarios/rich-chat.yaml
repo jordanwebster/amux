@@ -16,7 +16,7 @@ agents:
       windows:
         - { name: 5h, used: 81, resets_in: 2h }
         - { name: 7d, used: 44, resets_in: 4d }
-    background: 1
+    background: 2
     tasks:
       - { subject: Measure the cache's size under the flood, status: done }
       - { subject: Evict least recently used blobs past the cap, status: done }
@@ -137,6 +137,7 @@ agents:
           path: docs/PARAMETERS.md
           old: "| `RECONNECT_MAX_MS` | 5 s | ... |"
           new: "| `RECONNECT_MAX_MS` | 5 s | ... |\n| `BLOB_CACHE` | 64 MiB | A session's attachment bytes before least-recently-used eviction. |"
+      - bash: { command: "scripts/flood --screenshots 600 --watch", running: true, background: true }
       - bash: { command: "cargo test -p ui-runtime --doc", running: true, background: true }
       - say: Added the row to the parameters table; the doc tests are running in the background.
       - turn: { took: 3m }

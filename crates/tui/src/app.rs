@@ -54,6 +54,39 @@ pub struct TuiConfig {
     /// The profile's host on this machine: only its agents' terminals are
     /// here to attach to.
     pub local_host: Vec<u8>,
+    /// Where this client keeps its layout between runs; None keeps it for
+    /// this run only.
+    pub layout: Option<std::path::PathBuf>,
+}
+
+/// How this client lays its screens out, kept between runs: a person's
+/// preference for this terminal, not state any other client shares.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Layout {
+    /// The chat's overview pane stays open across chats until closed.
+    #[serde(default)]
+    pub overview: bool,
+}
+
+impl Layout {
+    fn load(path: Option<&std::path::Path>) -> Layout {
+        path.and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    /// Best effort: a layout that cannot be written is only forgotten.
+    fn save(self, path: Option<&std::path::Path>) {
+        let Some(path) = path else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(bytes) = serde_json::to_vec_pretty(&self) {
+            let _ = std::fs::write(path, bytes);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,12 +128,16 @@ pub enum AppEvent {
         agent_id: Vec<u8>,
         diff: Diff,
         patch: String,
+        /// The file to open the page at.
+        at: Option<String>,
     },
-    /// The working tree's lines added and removed, for the chat's header.
+    /// The working tree's lines added and removed, for the chat's header,
+    /// and each changed file's, for its overview.
     DiffStat {
         agent_id: Vec<u8>,
         added: u32,
         removed: u32,
+        files: Vec<crate::chat::pane::FileLine>,
     },
 }
 
@@ -141,6 +178,7 @@ pub struct App {
     help: bool,
     notice: Option<(String, Tone, Instant)>,
     opening: Option<AgentKey>,
+    layout: Layout,
     events: mpsc::UnboundedSender<AppEvent>,
     pub receiver: mpsc::UnboundedReceiver<AppEvent>,
 }
@@ -178,7 +216,9 @@ impl App {
         fleet_view.version = config.version.clone();
         fleet_view.local_host = config.local_host.clone();
         fleet_view.working_dir = config.working_dir.to_string_lossy().into_owned();
+        let layout = Layout::load(config.layout.as_deref());
         App {
+            layout,
             client,
             fleet,
             fleet_view,
@@ -322,6 +362,9 @@ impl App {
                         let mut view = ChatView::new(agent.agent.clone(), now_ms(), terminal);
                         view.leader = self.config.leader;
                         view.local = agent.host == self.config.local_host;
+                        // The overview opens where it was left; the
+                        // composer has the keys either way.
+                        view.pane_open = self.layout.overview;
                         self.fleet_view.select(agent.clone());
                         self.chat = Some(OpenChat {
                             session,
@@ -365,13 +408,14 @@ impl App {
                 agent_id,
                 diff,
                 patch,
+                at,
             } => {
                 if let Some(chat) = self
                     .chat
                     .as_mut()
                     .filter(|chat| chat.view.agent_id == agent_id)
                 {
-                    chat.view.open_review(diff, patch);
+                    chat.view.open_review_at(diff, patch, at.as_deref());
                     // The page answers "reading the working tree…".
                     self.notice = None;
                 }
@@ -380,6 +424,7 @@ impl App {
                 agent_id,
                 added,
                 removed,
+                files,
             } => {
                 if let Some(chat) = self
                     .chat
@@ -387,6 +432,7 @@ impl App {
                     .filter(|chat| chat.view.agent_id == agent_id)
                 {
                     chat.view.diff_stat = Some((added, removed));
+                    chat.view.diff_files = Some(files);
                 }
             }
             AppEvent::Created(agent) => {
@@ -552,6 +598,8 @@ impl App {
             KeyCode::Char('k') => chat.view.move_focus(&state, true, theme),
             KeyCode::Char('j') => chat.view.move_focus(&state, false, theme),
             KeyCode::Char('o') => chat.view.toggle_expanded(&state),
+            KeyCode::Char(PANE_CHORD) => chat.view.pane_toggle_key(),
+            KeyCode::Char('t') if ctrl_held(&key) => chat.view.pane_toggle_key(),
             KeyCode::Char('y') => {
                 if let Some(text) = chat.view.copy_text() {
                     drop(state);
@@ -568,7 +616,7 @@ impl App {
             }
             KeyCode::Char('r') => {
                 drop(state);
-                self.review();
+                self.review(None);
             }
             KeyCode::Char('t') if self.config.attach => {
                 let agent = chat.agent.clone();
@@ -582,11 +630,15 @@ impl App {
 
     /// `<leader> r`, or a `[diff]` clicked: the review page over the
     /// agent's working tree, or back to the one already in the draft.
-    fn review(&mut self) {
+    /// The review page, at the file `at` when one is named.
+    fn review(&mut self, at: Option<String>) {
         let Some(chat) = &mut self.chat else {
             return;
         };
         if chat.view.resume_review() {
+            if let Some(path) = &at {
+                chat.view.review_file(path);
+            }
             return;
         }
         let state = chat.session.state();
@@ -611,6 +663,7 @@ impl App {
                             agent_id,
                             diff,
                             patch,
+                            at,
                         },
                         Err(error) => AppEvent::Notice(
                             format!("could not read the working tree: {error}"),
@@ -904,7 +957,8 @@ impl App {
             ChatEffect::Copy(text) => {
                 let _ = crate::terminal::write_osc52(&mut std::io::stdout(), &text);
             }
-            ChatEffect::Review => self.review(),
+            ChatEffect::Review => self.review(None),
+            ChatEffect::ReviewAt(path) => self.review(Some(path)),
             ChatEffect::Home => self.close_chat(),
             ChatEffect::Press(key) => {
                 // The leader clicked shows its panel at once: the click is
@@ -974,6 +1028,15 @@ impl App {
                     agent_id,
                     added: doc.added,
                     removed: doc.removed,
+                    files: doc
+                        .files
+                        .iter()
+                        .map(|file| crate::chat::pane::FileLine {
+                            path: file.path.clone(),
+                            added: file.added,
+                            removed: file.removed,
+                        })
+                        .collect(),
                 })
             });
         }
@@ -1013,6 +1076,7 @@ impl App {
     /// Paints the screen and asks for an older page when the reader is
     /// within one of the oldest held row.
     pub fn draw(&mut self, paint: &mut Paint<'_>) {
+        self.keep_layout();
         let area = paint.area();
         let theme = self.theme();
         let width = usize::from(area.width);
@@ -1067,6 +1131,23 @@ impl App {
     }
 }
 
+/// The chord the leader's panel names for the in-flight pane: Ctrl+T, which
+/// also works on its own.
+const PANE_CHORD: char = '\u{14}';
+
+impl App {
+    /// Takes in a layout change the open chat made, and keeps it.
+    fn keep_layout(&mut self) {
+        let Some(chat) = &self.chat else {
+            return;
+        };
+        if chat.view.pane_open != self.layout.overview {
+            self.layout.overview = chat.view.pane_open;
+            self.layout.save(self.config.layout.as_deref());
+        }
+    }
+}
+
 /// The leader's panel in a chat: every chord and what it does.
 fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
     let entry = |key: &str, action: &str, chord: char| (key.to_owned(), action.to_owned(), chord);
@@ -1078,6 +1159,7 @@ fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
         entry("j", "focus a newer row", 'j'),
         entry("o", "open the focused row", 'o'),
         entry("y", "copy the focused row", 'y'),
+        entry("ctrl+t", "overview", PANE_CHORD),
     ];
     if attach {
         entries.push(entry("t", "the agent's own terminal", 't'));
@@ -1122,6 +1204,10 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
             "queued and unconfirmed messages: send now, withdraw, resend, discard".into(),
         ),
         ("ctrl+x", "stop the turn; the agent stays".into()),
+        (
+            "ctrl+t",
+            "the overview: tasks, background jobs, changes; again to switch or close".into(),
+        ),
         (
             "shift+tab",
             "the agent's next mode, where it has one to move to".into(),
@@ -1181,4 +1267,8 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
     lines.push(Line::default());
     lines.push(Line::from(Span::styled("  any key closes", theme.muted())));
     lines
+}
+
+fn ctrl_held(key: &KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL)
 }

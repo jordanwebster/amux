@@ -70,6 +70,7 @@ async fn open(
         attach: false,
         version: node::version().to_owned(),
         local_host: attacher.local_host().to_vec(),
+        layout: Some(config.root.join("tui").join("layout.json")),
     };
     tui::run(Arc::new(client), tui_config, Some(attach_fn(attacher))).await
 }

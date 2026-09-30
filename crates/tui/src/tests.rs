@@ -1355,6 +1355,7 @@ fn raw_attach_is_only_for_terminals_on_this_machine() {
         attach: true,
         version: "0.7.0".into(),
         local_host: b"a".to_vec(),
+        layout: None,
     };
     let agent = |host: &[u8], kind: Kind| wire::Agent {
         host_id: host.to_vec(),

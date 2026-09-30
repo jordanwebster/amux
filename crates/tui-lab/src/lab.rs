@@ -62,7 +62,10 @@ fn lab_chord(key: &KeyEvent) -> bool {
 const HELP: &str = "lab: F2 feedback · F3 variant · ^] r restart scenario · ^] ? keys";
 
 pub async fn run(scenario: &Scenario, place: Option<Place>, theme: Theme) -> Result<Leave> {
-    let mut booted = boot(scenario, place.as_ref(), false, theme).await?;
+    // The client's layout lives with the lab's other state, so it outlasts
+    // a relaunch as it outlasts a real client's restart.
+    let layout = Some(place::dir().join("layout.json"));
+    let mut booted = boot(scenario, place.as_ref(), false, theme, layout).await?;
     booted.world.start_timeline();
     let world = booted.world.clone();
     let app = &mut booted.app;

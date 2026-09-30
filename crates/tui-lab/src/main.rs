@@ -70,6 +70,9 @@ enum Command {
         /// The design variant to draw.
         #[arg(long, default_value_t = 0)]
         variant: u8,
+        /// A client layout file to start from, as after a relaunch.
+        #[arg(long)]
+        layout: Option<PathBuf>,
     },
 }
 
@@ -224,6 +227,7 @@ async fn main() -> Result<()> {
             out,
             theme: theme_arg,
             variant,
+            layout,
         } => {
             let loaded = scenario::load(&scenario)?;
             let sizes = sizes
@@ -238,6 +242,7 @@ async fn main() -> Result<()> {
                 out: &out,
                 theme: theme(theme_arg, ColorMode::TrueColor),
                 variant,
+                layout,
             })
             .await?;
             for stem in written {
@@ -263,6 +268,7 @@ mod tests {
             out: dir.path(),
             theme: Theme::dark(ColorMode::TrueColor),
             variant: 0,
+            layout: None,
         })
         .await
         .unwrap();

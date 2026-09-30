@@ -14,6 +14,7 @@ agents:
       - boundary: started
       - user: Check the docs' links before we touch anything.
       - read: docs/README.md
+      - tool: { name: list_issues, server: linear, input: { label: docs }, output: "3 issues", took: 2s }
       - bash:
           command: just docs-check
           output: "docs/HOW_IT_WORKS.md:88: broken link to PROTOCOL.md#relay\ndocs-check failed (1 of 47 pages)"

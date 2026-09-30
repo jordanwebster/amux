@@ -1,3 +1,26 @@
+2026-09-30 — **The chat gains an Overview pane beside it.** `ctrl+t`, or a
+click on the row above the composer, opens a pane on the right, about a
+third of the width, and the row hides while it is open. It holds what the
+agent is doing and has done: Tasks (done faint with ✓, the current one
+bright with ●, the rest ○), Background jobs (the command in the code colour
+and how long it has run; opening one scrolls the chat to the step that
+started it and highlights it), and Changes (each changed file shortened from
+the left, with green additions and red removals; opening one shows the
+full-screen diff at that file). Whichever area has the keys shows it on its
+frame alone: the composer's box, or the pane's rule and title, turns from
+the hairline to grey, and the other's cursor or highlight goes. `ctrl+t`
+opens the pane, moves the keys to it, or closes it; Esc hands the keys back
+and leaves it open, and the pane stays open across chats and relaunches as
+a client layout preference in `<root>/tui/layout.json`. Below about 60
+columns of chat it lies over the chat instead of narrowing it. A placement
+over the bottom of the chat was tried and dropped: it fought the chat for
+height and could not fit at 100x30. Background jobs show no output tails,
+since streaming every job's output to every client is not worth it. Step
+lines now all lead with their verb, facts after a faint dot ("Running
+scripts/flood --watch · in background", "Ran subagent … · 14 tools",
+"Used linear list_issues"), and an opened live stretch marks its current
+step again.
+
 2026-09-30 — **The row above the composer says what is in flight, in words.**
 The dotted strip ("Tasks 3/4 · … · Near the usage limit · 5h 81% · 7d 44%")
 becomes a row that rests on the composer's box and starts on its border's

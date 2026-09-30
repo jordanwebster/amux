@@ -747,7 +747,9 @@ fn body(
             }
             lines
         }
-        RowKind::Background { command, running } => vec![head(
+        RowKind::Background {
+            command, running, ..
+        } => vec![head(
             ("◷", theme.muted()),
             "In background",
             first_line(command),

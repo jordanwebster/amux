@@ -180,6 +180,16 @@ impl ReviewPage {
         ReviewAction::None
     }
 
+    /// Selects the header of the file at `path`, when the diff has it.
+    pub fn show_file(&mut self, path: &str) {
+        let found = self.targets.iter().position(|target| {
+            matches!(target, Target::File(file) if self.doc.files.get(*file).is_some_and(|f| f.path == path))
+        });
+        if let Some(at) = found {
+            self.select(at);
+        }
+    }
+
     pub fn scroll_by(&mut self, delta: isize) {
         self.select(self.at.saturating_add_signed(delta));
     }

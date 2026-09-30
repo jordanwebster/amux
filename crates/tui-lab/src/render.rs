@@ -28,6 +28,8 @@ pub struct Request<'a> {
     pub out: &'a Path,
     pub theme: Theme,
     pub variant: u8,
+    /// A client layout file to start from, as a relaunch would.
+    pub layout: Option<std::path::PathBuf>,
 }
 
 pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
@@ -38,7 +40,14 @@ pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
         variant: request.variant,
         ..Place::default()
     };
-    let mut booted = boot(request.scenario, Some(&place), true, request.theme).await?;
+    let mut booted = boot(
+        request.scenario,
+        Some(&place),
+        true,
+        request.theme,
+        request.layout.clone(),
+    )
+    .await?;
     let app = &mut booted.app;
     let (width, height) = request.sizes.first().copied().unwrap_or((120, 40));
     let mut terminal = Terminal::new(TestBackend::new(width, height))?;

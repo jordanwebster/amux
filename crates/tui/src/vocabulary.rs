@@ -740,6 +740,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Background {
                         command: "npm run dev".into(),
                         running: true,
+                        duration_ms: None,
                     }),
                     CLOSED,
                 ),
@@ -747,6 +748,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Background {
                         command: "cargo watch".into(),
                         running: false,
+                        duration_ms: Some(240_000),
                     }),
                     CLOSED,
                 ),

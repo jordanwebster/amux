@@ -305,7 +305,11 @@ impl Frame<'_> {
                             earlier: 0,
                         }),
                         joined: order != stretch.newest_order,
-                        current: false,
+                        // Opened while under way, the step running now is
+                        // still the bright one, as it is folded.
+                        current: !stretch.closed
+                            && order == stretch.newest_order
+                            && stretch.running,
                     };
                     let toggle = Toggle::Step(row.id.clone());
                     (placement, row, toggle)

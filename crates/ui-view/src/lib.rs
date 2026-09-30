@@ -22,9 +22,9 @@ pub use ask::{
     Scope, answer_input, ask_card, question_answer, with_form_content,
 };
 pub use composer::{
-    CONTEXT_STRIP_PERCENT, ComposerView, ContextView, OutboxRow, OutboxState, QueuedRow,
+    CONTEXT_STRIP_PERCENT, ComposerView, ContextView, JobView, OutboxRow, OutboxState, QueuedRow,
     ServerView, SignInView, Strip, TaskLine, TaskMark, TasksView, UsageView, UsageWindowView,
-    composer, composer_tokens, outbox_rows, queue_rows, session_strip, waiting,
+    background_jobs, composer, composer_tokens, outbox_rows, queue_rows, session_strip, waiting,
 };
 pub use fleet::{
     Away, FamilyHeader, FleetCard, FleetRow, away, family_header, fleet_card, fleet_list,

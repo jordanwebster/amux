@@ -148,6 +148,10 @@ pub fn edge_row(
         let s = if count == 1 { "" } else { "s" };
         groups.push(vec![(format!("{count} background job{s}"), theme.faint())]);
     }
+    // The key that unfolds the row into the pane, named last.
+    if !groups.is_empty() {
+        groups.push(vec![("ctrl+t".to_owned(), theme.faint())]);
+    }
     let usage = strip
         .usage
         .as_ref()
