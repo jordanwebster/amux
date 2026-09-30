@@ -1038,47 +1038,66 @@ impl Home {
         let selected = self.settle(&targets);
         let roomy = height >= ROOMY;
         let mut laid: Vec<Laid> = Vec::new();
+        // The lines the highlight covers, and the lines scrolling keeps in
+        // view with it: a highlighted heading brings its section along, so
+        // opening one shows what it holds.
         let mut highlight = (0, 0);
-        // Whether the items being laid belong to the highlighted heading.
+        let mut in_view = (0, 0);
         let mut section_open = false;
         for item in &items {
             let start = laid.len();
             match item {
                 Item::New => {
+                    // A control, not a card: highlighted, its words brighten
+                    // rather than the row filling in, and only the words
+                    // answer the mouse.
                     let chosen = selected == Target::New;
-                    let mut line = lead(chosen, theme);
+                    let (mark, words) = if chosen {
+                        (theme.emphasis(), theme.emphasis())
+                    } else {
+                        (theme.faint(), theme.muted())
+                    };
+                    let mut line = Line::default();
                     pad_to(&mut line, MARK_COL);
-                    push(&mut line, "+", theme.muted(), width);
+                    push(&mut line, "+", mark, width);
                     pad_to(&mut line, NAME_COL);
-                    push(
-                        &mut line,
-                        "New Agent",
-                        name_style(chosen, false, theme),
-                        width,
-                    );
-                    laid.push(Laid::row(tint(line, chosen, width, theme), Target::New));
+                    push(&mut line, "New Agent", words, width);
+                    let to = text::line_width(&line);
+                    laid.push(Laid {
+                        line,
+                        spots: vec![(Some((MARK_COL, to)), Hit::Row(Target::New))],
+                    });
                 }
                 Item::Heading(section, count) => {
                     // A fold marker, the label, its count, and a faint rule
                     // to the right edge, so a section's end is visible at a
                     // glance. The label lines up with the rows' marks.
+                    // Like "+ New Agent", a control: highlighted, the marker
+                    // and label brighten, and only they answer the mouse.
                     let target = Target::Section(*section);
                     let chosen = selected == target;
                     let mut line = Line::default();
                     pad_to(&mut line, HEAD_COL);
                     let marker = if self.folded(*section) { "▸" } else { "▾" };
-                    push(&mut line, marker, theme.faint(), width);
-                    pad_to(&mut line, MARK_COL);
-                    let label = match section {
-                        Section::NeedsYou => theme.accent().add_modifier(Modifier::BOLD),
-                        _ => theme.emphasis(),
+                    let (marker_style, label) = match (chosen, section) {
+                        (true, _) => (theme.emphasis(), theme.emphasis()),
+                        (false, Section::NeedsYou) => {
+                            (theme.faint(), theme.accent().add_modifier(Modifier::BOLD))
+                        }
+                        (false, _) => (theme.faint(), theme.muted().add_modifier(Modifier::BOLD)),
                     };
+                    push(&mut line, marker, marker_style, width);
+                    pad_to(&mut line, MARK_COL);
                     push(&mut line, section.words(), label, width);
+                    let to = text::line_width(&line);
                     push(&mut line, format!(" {count} "), theme.faint(), width);
                     let end = width.saturating_sub(MARGIN);
                     let rule = end.saturating_sub(text::line_width(&line));
                     push(&mut line, "─".repeat(rule), theme.hairline(), width);
-                    laid.push(Laid::row(tint(line, chosen, width, theme), target));
+                    laid.push(Laid {
+                        line,
+                        spots: vec![(Some((HEAD_COL, to)), Hit::Row(target))],
+                    });
                 }
                 Item::Gap => blank(&mut laid),
                 Item::Space => laid.push(Laid::default()),
@@ -1106,15 +1125,10 @@ impl Home {
             };
             if is_selected {
                 highlight = (start, laid.len());
+                in_view = highlight;
             }
-            // A highlighted heading brings its section into view with it, so
-            // opening one shows what it holds.
-            if matches!(item, Item::Agent(_))
-                && matches!(selected, Target::Section(_))
-                && highlight.1 > 0
-                && section_open
-            {
-                highlight.1 = laid.len();
+            if matches!(item, Item::Agent(_)) && section_open {
+                in_view.1 = laid.len();
             }
             if let Item::Heading(section, _) = item {
                 section_open = selected == Target::Section(*section);
@@ -1126,7 +1140,10 @@ impl Home {
         {
             laid.pop();
         }
-        pad_highlight(&mut laid, highlight, width, theme);
+        if matches!(selected, Target::Agent(_)) {
+            pad_highlight(&mut laid, highlight, width, theme);
+        }
+        let highlight = in_view;
         if self.reveal {
             if highlight.0 < self.top {
                 self.top = highlight.0;

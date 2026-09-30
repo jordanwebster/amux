@@ -1,3 +1,13 @@
+2026-09-30 — **Headings and New Agent highlight as controls.** A highlighted
+heading tinted its whole row, and because the highlight had been widened to
+the heading's section (so opening a section scrolls it into view), the new
+card padding drew a stray band along the section's bottom edge. The range
+scrolling keeps in view is now separate from the range the highlight
+covers. Headings and "+ New Agent" no longer tint: highlighted, their
+marker and words brighten, as Grok's do, and only those words answer the
+mouse. At rest a heading's label is grey (Needs you keeps its accent) and
+New Agent is grey, so the brightening reads.
+
 2026-09-30 — **The highlight becomes a card, and inks spread apart.** The
 highlighted home row gets half a line of its tint above and below, drawn
 with half blocks in the blank lines around it, so it reads as a card with
