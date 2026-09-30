@@ -1,3 +1,14 @@
+2026-09-30 — **The highlight becomes a card, and inks spread apart.** The
+highlighted home row gets half a line of its tint above and below, drawn
+with half blocks in the blank lines around it, so it reads as a card with
+room around its words; packed rows keep a flat highlight. Names use the
+brightest ink, a hint's key is bright and bold and its action faint, and
+the faint ink is now held to the repair pass's trim floor like the others.
+"+ New Agent" takes Title Case, following the phone's rule that what you
+act on is Title Case and what you read is sentence case. The screenshot
+rasterizer draws full and half blocks edge to edge, as terminals do,
+rather than from the font, so frames show seamless blocks.
+
 2026-09-30 — **Home by state, in three inks.** Home's sections are now
 Needs you, Running and Exited, drawn alike (a fold marker, the label, a
 faint count and a faint rule to the right edge) and each foldable from its

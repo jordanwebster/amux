@@ -259,6 +259,16 @@ fn paint_cell(raster: &mut Raster, fonts: &Fonts, cell: &Cell, theme: Theme, x: 
     if symbol.trim().is_empty() || fg == bg {
         return;
     }
+    // Terminals draw block elements themselves, edge to edge, rather than
+    // from the font, so rows of them join without seams. Drawn the same way
+    // here, a picture shows what the terminal shows.
+    let half = CELL_HEIGHT / 2;
+    match symbol {
+        "█" => return fill_rect(raster, left, top, CELL_WIDTH, CELL_HEIGHT, fg),
+        "▀" => return fill_rect(raster, left, top, CELL_WIDTH, half, fg),
+        "▄" => return fill_rect(raster, left, top + half, CELL_WIDTH, CELL_HEIGHT - half, fg),
+        _ => {}
+    }
 
     let chars = symbol.chars().filter(|character| !character.is_control());
     let mut pen_x = left as i32;

@@ -533,7 +533,7 @@ impl Home {
     }
 
     /// The highlight, kept on something still listed: when its agent left,
-    /// the first agent, else "+ New agent".
+    /// the first agent, else "+ New Agent".
     fn settle(&mut self, targets: &[Target]) -> Target {
         if let Some(selected) = self.selected.as_ref().filter(|t| targets.contains(t)) {
             return selected.clone();
@@ -1052,7 +1052,7 @@ impl Home {
                     pad_to(&mut line, NAME_COL);
                     push(
                         &mut line,
-                        "New agent",
+                        "New Agent",
                         name_style(chosen, false, theme),
                         width,
                     );
@@ -1126,6 +1126,7 @@ impl Home {
         {
             laid.pop();
         }
+        pad_highlight(&mut laid, highlight, width, theme);
         if self.reveal {
             if highlight.0 < self.top {
                 self.top = highlight.0;
@@ -1133,7 +1134,7 @@ impl Home {
                 // Never scroll the highlight's own first line out of view.
                 self.top = (highlight.1 - room).min(highlight.0);
             }
-            // The first rows sit under "+ New agent" and a heading: keep
+            // The first rows sit under "+ New Agent" and a heading: keep
             // those in view with them.
             if targets.iter().position(|t| *t == selected).unwrap_or(0) <= 1 {
                 self.top = 0;
@@ -1372,11 +1373,52 @@ fn append_hints(
         }
         line.spans.push(Span::raw(" ".repeat(gap)));
         let from = at + gap;
-        line.spans.push(Span::styled(key.to_string(), theme.text()));
+        // The key is what you press, so it reads first; its action recedes.
         line.spans
-            .push(Span::styled(format!(" {word}"), theme.muted()));
+            .push(Span::styled(key.to_string(), theme.emphasis()));
+        line.spans
+            .push(Span::styled(format!(" {word}"), theme.faint()));
         at += need;
         spots.push((Some((from, at)), hit.clone()));
+    }
+}
+
+/// Half a line of the highlight's tint above and below it, drawn with half
+/// blocks into the blank lines around the row, so the highlighted row reads
+/// as a card with room around its words. Where rows are packed with no
+/// blank line between them, the highlight stays flat.
+fn pad_highlight(laid: &mut [Laid], (start, end): (usize, usize), width: usize, theme: Theme) {
+    let Some(surface) = theme.row_surface().and_then(|style| style.bg) else {
+        return;
+    };
+    if end <= start {
+        return;
+    }
+    let is_blank = |laid: &Laid| laid.spots.is_empty() && laid.line.spans.is_empty();
+    // The range may take in the blank line laid after a row.
+    let mut end = end;
+    while end > start && laid.get(end - 1).is_some_and(is_blank) {
+        end -= 1;
+    }
+    // The tint's own inset: from the second column to one short of the edge.
+    let edge = |glyph: &str| {
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                glyph.repeat(width.saturating_sub(2)),
+                Style::default().fg(surface),
+            ),
+        ])
+    };
+    if let Some(above) = start.checked_sub(1).and_then(|at| laid.get_mut(at))
+        && is_blank(above)
+    {
+        above.line = edge("▄");
+    }
+    if let Some(below) = laid.get_mut(end)
+        && is_blank(below)
+    {
+        below.line = edge("▀");
     }
 }
 
@@ -1419,7 +1461,7 @@ fn name_style(chosen: bool, dim: bool, theme: Theme) -> Style {
     } else if dim {
         theme.muted()
     } else {
-        theme.text()
+        theme.bright()
     }
 }
 

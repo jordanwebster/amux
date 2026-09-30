@@ -457,6 +457,12 @@ impl Theme {
         Style::default().fg(self.color(self.tokens.faint))
     }
 
+    /// The brightest ink without weight: what the eye should land on first,
+    /// like a name in a list.
+    pub(crate) fn bright(self) -> Style {
+        Style::default().fg(self.color(self.tokens.emphasis))
+    }
+
     /// Markdown emphasis (bold) and headings.
     pub(crate) fn emphasis(self) -> Style {
         Style::default()
@@ -824,6 +830,7 @@ fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>, faces: &Faces
         false,
     );
     lift(&mut tokens.muted, "muted", &surfaces, READABLE_LABEL, true);
+    lift(&mut tokens.faint, "faint", &surfaces, READABLE_TRIM, true);
     lift(
         &mut tokens.accent,
         "accent",
@@ -1161,6 +1168,7 @@ fn set_token(tokens: &mut Tokens, name: &str, token: Token) -> Result<(), ThemeE
         "background" => &mut tokens.background,
         "text" => &mut tokens.text,
         "muted" => &mut tokens.muted,
+        "faint" => &mut tokens.faint,
         "emphasis" => &mut tokens.emphasis,
         "accent" => &mut tokens.accent,
         "user_surface" => &mut tokens.user_surface,
