@@ -84,7 +84,12 @@ Enter on a fleet row opens its chat. From top to bottom:
 - **The family line**, for an agent with a parent or children: the parent, the number of subagents and how many
   need you.
 - **The feed**, read one turn at a time, laid out upward from the newest or from wherever the reader scrolled:
-  - your message is a tinted block with the time at its right;
+  - your message is a tinted block, a whole tinted line above and below its words, with the time at its right;
+  - the message that started the turn owning the feed's top line stays pinned under the header, cut to one
+    line, as you scroll through a long answer or through history; as the next turn's message nears the top the
+    pinned one fades to the faint ink, then that message takes the pin. It is best effort: a message older than
+    the rows held pins once the page bringing it lands, and one whose own block is on screen is not pinned
+    twice. Clicking the pinned message scrolls to it;
   - everything the agent wrote is in one reading ink, to at most 100 columns a line on a wide terminal; code
     and paths in it wear the terminal's own cyan, straight from its palette; its thinking is not drawn;
   - each stretch of tool steps between two pieces of its text folds to one faint line of what the steps did
@@ -104,8 +109,22 @@ Enter on a fleet row opens its chat. From top to bottom:
 - **The composer**, boxed, with `Model (effort) · mode` on its bottom edge, in the words a person reads
   (`Opus (high) · accept edits`: the model's offered name, the mode never as its identifier); above it a quiet line while the
   agent works, the session strip, any foot card (a sign-in problem or a usage block) and the tray of queued and
-  unconfirmed prompts; one blank line below it, a line of keys for the composer's current mode, all at the left
-  with `shift+tab mode` last.
+  unconfirmed prompts; one blank line below it, a line of keys, all at the left. The keys are the few that
+  matter now and always end with the way to more: `shift+tab mode · ctrl+a more` at rest, `enter queue ·
+  ctrl+x stop` added while the agent works, `enter resume` once it has exited. What everyone knows (Enter
+  sends, pasting attaches) is not said; `ctrl+j newline` appears while typing only where the terminal cannot
+  tell Shift+Enter from Enter. Every key in the line can be clicked.
+
+Scrolled back, a control floats at the bottom centre of the feed, `↓ Jump to Bottom  ctrl+end`, or `↓ 3 new`
+when rows arrived meanwhile; clicking it or Ctrl+End returns to the newest. The mouse also cycles the mode by
+the mode on the composer's edge, places the cursor in the draft, and selects a queued or unconfirmed prompt in
+the tray. Because the client reads the mouse, the terminal's own text selection takes its modifier: Shift+drag,
+or Option+drag in iTerm2 and Ghostty.
+
+A mouse-wheel event scrolls one line, so a trackpad's stream of small events moves smoothly; events arriving
+close together in one direction step up to two and then three lines, and input already waiting is applied
+before the next frame is drawn, so a burst never draws once per event. The rule is `tui::wheel`, shared by the
+chat, the review page and home.
 
 Design variant 1 (F3 in [the lab](#the-lab)) draws the chat as it was before this redesign: a header with
 the kind, host, model and mode, every row drawn in full, and an unboxed composer.
@@ -189,7 +208,7 @@ keys; any key closes it.
 | Key | Action |
 |---|---|
 | Enter | Send; queue while the agent works; resume an exited agent |
-| Ctrl+J or Shift+Enter | New line |
+| Shift+Enter, or Ctrl+J in any terminal | New line |
 | Ctrl+V | Attach an image or file from the clipboard |
 | ↑ on the first line | Into the tray of queued and unconfirmed prompts |
 | Ctrl+X | Stop the turn; the agent stays live and idle |
@@ -244,7 +263,9 @@ While writing a comment, Enter saves it, Ctrl+J adds a line, and Esc cancels.
 ## The leader key
 
 The leader is a control key, Ctrl+A unless `keybinds.leader` names another `ctrl+<letter>`. Pressed on its own it
-waits for one more key, and the footer lists the chords. In the chat:
+waits for one more key. In the chat, after a pause of 400 ms a panel lists every chord and what it does, and a
+chord typed quickly never draws it; each line of the panel can be clicked, and clicking `ctrl+a more` in the key
+line opens it at once. In the old chat (design variant 1) the footer lists the chords instead. In the chat:
 
 | Chord | Action |
 |---|---|
@@ -256,6 +277,7 @@ waits for one more key, and the footer lists the chords. In the chat:
 | `<leader> r` | Review the working tree; comments go in the draft |
 | `<leader> n` | Open the next agent in this agent's family, wrapping |
 | `<leader> t` | Attach to the agent's own terminal, when it is on this machine |
+| `<leader> ?` | Every key, the full reference |
 
 In the fleet the leader has no chords. During raw attach the leader is read out of the bytes you type:
 `<leader> d` detaches to the shell, `<leader> s` opens the fleet over the attached agent, and a leader followed by
@@ -382,7 +404,8 @@ is rebuilt from the scenario and those beats.
 
 `tui-lab render` draws frames without a terminal: the scenario after `--step N` beats and a sequence of keys
 and mouse events (`--keys "down enter 'fix it' enter"`, with named keys, `C-x` and `C-enter` for Ctrl, and
-`hover:X,Y` or `click:X,Y` for the mouse at a zero-based cell), in `--variant N`, at each `--size`, to text and
+`hover:X,Y` or `click:X,Y` for the mouse at a zero-based cell, `wheelup` and `wheeldown` for one wheel event),
+in `--variant N`, at each `--size`, to text and
 PNG. By default it draws in the colours the person's terminal reported the last time the lab ran in it (kept in
 `notes/tui-lab/terminal-colors.json`), so frames look like theirs; `--theme sample` draws as if a fixed dark
 terminal had reported its colours, and `dark` and `light` are amux's own palettes, drawn as for a terminal that

@@ -88,8 +88,9 @@ pub fn parse_size(text: &str) -> Result<(u16, u16)> {
 /// Keys written like a shell line: named keys (`enter`, `esc`, `tab`,
 /// `backtab`, `up`, `down`, `left`, `right`, `pgup`, `pgdn`, `home`, `end`,
 /// `bs`, `del`, `space`, `f1`..`f12`), `C-x` for Ctrl+x and `C-enter`,
-/// `hover:X,Y` and `click:X,Y` for the mouse at a cell (zero-based), and
-/// anything else typed as text (quote it to keep spaces:
+/// `hover:X,Y` and `click:X,Y` for the mouse at a cell (zero-based),
+/// `wheelup` and `wheeldown` for one wheel event, and anything else typed
+/// as text (quote it to keep spaces:
 /// `'fix the bug' enter`).
 pub fn parse_keys(text: &str) -> Result<Vec<Event>> {
     let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
@@ -108,6 +109,19 @@ pub fn parse_keys(text: &str) -> Result<Vec<Event>> {
                 kind,
                 column: x.parse()?,
                 row: y.parse()?,
+                modifiers: KeyModifiers::NONE,
+            }));
+            continue;
+        }
+        if let Some(kind) = match word.as_str() {
+            "wheelup" => Some(MouseEventKind::ScrollUp),
+            "wheeldown" => Some(MouseEventKind::ScrollDown),
+            _ => None,
+        } {
+            out.push(Event::Mouse(MouseEvent {
+                kind,
+                column: 0,
+                row: 0,
                 modifiers: KeyModifiers::NONE,
             }));
             continue;

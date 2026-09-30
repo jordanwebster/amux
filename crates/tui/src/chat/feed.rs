@@ -213,10 +213,10 @@ pub fn is_step(row: &Row) -> bool {
     )
 }
 
-/// Your message: a tinted block with half a line of padding above and
-/// below, the time at the right of its first line. The block runs from the
-/// outer margin to the outer margin; its words and time sit a margin inside
-/// it.
+/// Your message: a tinted block with a whole tinted line above and below
+/// its words, the time at the right of its first line. The block runs from
+/// the outer margin to the outer margin; its words and time sit a margin
+/// inside it.
 fn prompt(
     drawn: &mut Drawn,
     row: &Row,
@@ -226,25 +226,12 @@ fn prompt(
     theme: Theme,
 ) {
     let surface = theme.user_surface();
-    let tint = surface.bg;
-    let edge = |glyph: &str| match tint {
-        Some(color) => Line::from(vec![
-            Span::raw(" ".repeat(EDGE)),
-            Span::styled(
-                glyph.repeat(width.saturating_sub(2 * EDGE)),
-                Style::default().fg(color),
-            ),
-        ]),
-        None => Line::default(),
-    };
-    drawn.line(edge("▄"));
+    drawn.line(tinted(Line::default(), surface, width));
     let when = if steered {
         format!("steered · {}", clock(row.at_ms))
     } else {
         clock(row.at_ms)
     };
-    // Inside the block: from the margin to the margin, with its own margin
-    // of the same width on each side.
     let inner = width.saturating_sub(2 * EDGE);
     let inset = WORDS - EDGE;
     let room = inner.saturating_sub(2 * inset + text::str_width(&when) + 2);
@@ -257,17 +244,63 @@ fn prompt(
         if i == 0 {
             push_right(&mut line, &when, theme.faint(), inner - inset);
         }
-        let mut tinted = Line::from(Span::raw(" ".repeat(EDGE)));
-        for span in line.spans {
-            tinted
-                .spans
-                .push(Span::styled(span.content, span.style.patch(surface)));
-        }
-        text::fill(&mut tinted, surface, width - EDGE);
-        drawn.line(tinted);
+        drawn.line(tinted(line, surface, width));
     }
-    drawn.line(edge("▀"));
+    drawn.line(tinted(Line::default(), surface, width));
     drawn.blank();
+}
+
+/// A turn's prompt pinned under the header while that turn owns the top of
+/// the feed: the same block as the prompt, cut to its first line with "…".
+/// Faint while the next turn's prompt is about to take the pin.
+pub fn pinned_prompt(row: &Row, faint: bool, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let RowKind::Prompt { text: words, .. } = &row.kind else {
+        return Vec::new();
+    };
+    let surface = theme.user_surface();
+    let ink = if faint { theme.faint() } else { theme.text() };
+    let when = clock(row.at_ms);
+    let inner = width.saturating_sub(2 * EDGE);
+    let inset = WORDS - EDGE;
+    let room = inner.saturating_sub(2 * inset + text::str_width(&when) + 2);
+    let source: String = words
+        .iter()
+        .map(|segment| match segment {
+            Segment::Text(text) => text.clone(),
+            Segment::Attachment(view) => chip(view),
+        })
+        .collect();
+    let joined = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut line = Line::from(Span::raw(" ".repeat(inset)));
+    push(
+        &mut line,
+        text::ellipsize(&joined, room.max(1)),
+        ink,
+        inset + room,
+    );
+    push_right(&mut line, &when, theme.faint(), inner - inset);
+    vec![
+        tinted(Line::default(), surface, width),
+        tinted(line, surface, width),
+        tinted(Line::default(), surface, width),
+    ]
+}
+
+/// One line of a tinted block: its words on the surface, which runs from
+/// the outer margin to the outer margin.
+fn tinted(line: Line<'static>, surface: Style, width: usize) -> Line<'static> {
+    // Only the ground: each span keeps its own ink.
+    let surface = Style {
+        bg: surface.bg,
+        ..Style::default()
+    };
+    let mut out = Line::from(Span::raw(" ".repeat(EDGE)));
+    for span in line.spans {
+        out.spans
+            .push(Span::styled(span.content, span.style.patch(surface)));
+    }
+    text::fill(&mut out, surface, width - EDGE);
+    out
 }
 
 /// The agent's text, in the reading ink.

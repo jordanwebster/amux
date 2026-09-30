@@ -73,6 +73,16 @@ pub async fn run(
     }
 }
 
+/// The next input event if one is already waiting, without waiting for
+/// one. A zero timeout still polls the stream once, with this task's own
+/// waker, so nothing is lost when none is ready.
+pub async fn ready(events: &mut EventStream) -> Option<io::Result<crossterm::event::Event>> {
+    tokio::time::timeout(std::time::Duration::ZERO, events.next())
+        .await
+        .ok()
+        .flatten()
+}
+
 /// One stretch on the alternate screen, until a quit or an attach.
 async fn session(app: &mut App) -> Result<Leave> {
     let guard = TerminalGuard::enter()?;
@@ -94,7 +104,17 @@ async fn session(app: &mut App) -> Result<Leave> {
         let tick = app.next_tick();
         let flow = tokio::select! {
             event = events.next() => match event {
-                Some(Ok(event)) => app.input(event),
+                Some(Ok(event)) => {
+                    let mut flow = app.input(event);
+                    // Whatever input is already waiting (a trackpad's burst
+                    // of wheel events) applies before the one redraw.
+                    while matches!(flow, Flow::Continue)
+                        && let Some(event) = ready(&mut events).await
+                    {
+                        flow = app.input(event?);
+                    }
+                    flow
+                }
                 Some(Err(error)) => return Err(error.into()),
                 None => Flow::Quit,
             },

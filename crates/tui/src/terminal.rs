@@ -43,6 +43,13 @@ static KITTY_SUPPORTED: OnceLock<bool> = OnceLock::new();
 /// stacks, so the pop must happen before leaving the alternate screen.
 static KITTY_PUSHED: AtomicBool = AtomicBool::new(false);
 
+/// Whether Shift+Enter reaches the client as itself rather than as Enter:
+/// the terminal answered the keyboard-enhancement probe. Until the probe
+/// has run (a frame drawn without a terminal) it is taken to.
+pub fn shift_enter_reported() -> bool {
+    KITTY_SUPPORTED.get().copied().unwrap_or(true)
+}
+
 /// Bytes that put the terminal into chrome mode (alternate screen, hidden
 /// cursor, bracketed paste, and mouse capture. Bracketed paste prevents a
 /// pasted CR from submitting a partial prompt; mouse capture lets the

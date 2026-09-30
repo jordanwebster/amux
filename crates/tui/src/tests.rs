@@ -2635,7 +2635,7 @@ fn the_chat_header_names_the_agent_and_offers_the_diff_and_home() {
         .rposition(|line| line.contains('╯'))
         .expect(&screen);
     assert!(lines[edge + 1].trim().is_empty(), "{screen}");
-    assert!(lines[edge + 2].contains("enter"), "{screen}");
+    assert!(lines[edge + 2].contains("ctrl+a more"), "{screen}");
     // [Home] goes home.
     let column = first.find("[Home]").expect(&screen);
     let column = first[..column].chars().count() as u16 + 1;
@@ -2650,4 +2650,143 @@ fn the_chat_header_names_the_agent_and_offers_the_diff_and_home() {
         theme(),
     );
     assert!(matches!(effects.as_slice(), [ChatEffect::Home]));
+}
+
+// --- the redesigned chat: keys, the pinned prompt ---------------------------
+
+/// Your message at `order`, as the agent reflected it.
+fn prompt_item(order: u64, words: &str) -> Item {
+    use wire::claude_sdk_item::Kind as K;
+    Item {
+        key: format!("k{order}"),
+        order,
+        revision: order,
+        text: words.into(),
+        kind: wire::kind_tag(Kind::ClaudeSdk).into(),
+        body: wire::ClaudeSdkItem {
+            kind: Some(K::Prompt(wire::Prompt {})),
+        }
+        .encode_to_vec(),
+        at_ms: order as i64 * 1_000,
+        ..Item::default()
+    }
+}
+
+/// The key line: the screen's last line with anything on it.
+fn keys_of(screen: &str) -> String {
+    screen
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[test]
+fn the_keys_under_the_composer_follow_what_is_happening() {
+    let mut state = chat(replies(1, 3));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    // Idle: nothing everyone knows, and always the way to more.
+    let keys = keys_of(&feed(&mut view, &state).0);
+    assert!(keys.trim_end().ends_with("ctrl+a more"), "{keys}");
+    assert!(!keys.contains("enter"), "{keys}");
+    assert!(
+        !keys.contains("attach") && !keys.contains("review"),
+        "{keys}"
+    );
+    // Working: Enter queues, and stopping is at hand.
+    state.update(snapshot(Phase::Working, vec![], vec![]));
+    let keys = keys_of(&feed(&mut view, &state).0);
+    assert!(keys.contains("enter queue"), "{keys}");
+    assert!(keys.contains("ctrl+x stop"), "{keys}");
+    // Exited: Enter resumes.
+    let mut exited = fixtures::agent(Kind::ClaudeSdk);
+    exited.lifecycle = wire::Lifecycle::Exited as i32;
+    exited.exit_cause = Some("finished".into());
+    state.update(Msg::Entry(exited));
+    let keys = keys_of(&feed(&mut view, &state).0);
+    assert!(keys.contains("enter resume"), "{keys}");
+    assert!(keys.trim_end().ends_with("ctrl+a more"), "{keys}");
+}
+
+#[test]
+fn the_prompt_of_the_turn_at_the_top_is_pinned_under_the_header() {
+    let mut items = vec![prompt_item(1, "first question")];
+    items.extend(replies(2, 30));
+    items.push(prompt_item(31, "second question"));
+    items.extend(replies(32, 60));
+    let state = chat(items);
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let pinned = |view: &mut ChatView, state: &SessionState| {
+        let (screen, _) = feed(view, state);
+        // The header, a blank line, then the pin's padding and words.
+        screen.lines().nth(4).unwrap_or_default().to_owned()
+    };
+    // Deep in the first turn: its prompt is pinned.
+    view.anchor = crate::chat::layout::Anchor::Top {
+        key: "k12".into(),
+        offset: 0,
+    };
+    let line = pinned(&mut view, &state);
+    assert!(line.contains("first question"), "{line}");
+    // Deep in the second: the second's.
+    view.anchor = crate::chat::layout::Anchor::Top {
+        key: "k45".into(),
+        offset: 0,
+    };
+    let line = pinned(&mut view, &state);
+    assert!(line.contains("second question"), "{line}");
+    // Clicking the pin scrolls to the prompt itself.
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    view.mouse(
+        &state,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        },
+        theme(),
+    );
+    assert_eq!(
+        view.anchor,
+        crate::chat::layout::Anchor::Top {
+            key: "k31".into(),
+            offset: 0
+        }
+    );
+    // With the prompt's own block on screen below the top, nothing is
+    // pinned: it is its own landmark.
+    let (screen, _) = feed(&mut view, &state);
+    assert_eq!(screen.matches("second question").count(), 1, "{screen}");
+}
+
+#[test]
+fn scrolled_back_offers_the_way_to_the_newest() {
+    let state = chat(replies(1, 60));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.anchor = crate::chat::layout::Anchor::Top {
+        key: "k20".into(),
+        offset: 0,
+    };
+    let (screen, _) = feed(&mut view, &state);
+    let row = screen
+        .lines()
+        .position(|line| line.contains("Jump to Bottom"))
+        .expect(&screen);
+    let line = screen.lines().nth(row).unwrap_or_default();
+    let column = line.find("Jump").expect(&screen);
+    let column = line[..column].chars().count() as u16;
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    view.mouse(
+        &state,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row: row as u16,
+            modifiers: KeyModifiers::NONE,
+        },
+        theme(),
+    );
+    assert_eq!(view.anchor, crate::chat::layout::Anchor::Bottom);
 }

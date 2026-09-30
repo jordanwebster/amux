@@ -31,6 +31,9 @@ use crate::theme::Theme;
 const QUIT_WINDOW: Duration = Duration::from_secs(3);
 /// How long a notice stays in the footer.
 const NOTICE_FOR: Duration = Duration::from_secs(5);
+/// How long the leader waits before its panel shows: typed quickly, a
+/// chord never draws it.
+const PANEL_AFTER: Duration = Duration::from_millis(400);
 
 /// What the terminal client is configured with at the CLI edge; the TUI
 /// itself reads no environment.
@@ -132,6 +135,8 @@ pub struct App {
     pub chat: Option<OpenChat>,
     pub config: TuiConfig,
     leader_pending: bool,
+    /// When the leader was pressed, for its panel's pause.
+    leader_since: Option<Instant>,
     quit_armed: Option<Instant>,
     help: bool,
     notice: Option<(String, Tone, Instant)>,
@@ -180,6 +185,7 @@ impl App {
             chat: None,
             config,
             leader_pending: false,
+            leader_since: None,
             quit_armed: None,
             help: false,
             notice: None,
@@ -218,6 +224,12 @@ impl App {
         };
         if let Some(armed) = self.quit_armed {
             at(armed + QUIT_WINDOW);
+        }
+        if self.leader_pending
+            && let Some(since) = self.leader_since
+            && since.elapsed() < PANEL_AFTER
+        {
+            at(since + PANEL_AFTER);
         }
         if let Some((_, _, since)) = &self.notice {
             at(*since + NOTICE_FOR);
@@ -511,9 +523,11 @@ impl App {
         self.quit_armed = None;
         if key.code == KeyCode::Char(self.config.leader) && ctrl {
             self.leader_pending = true;
+            self.leader_since = Some(Instant::now());
             return Flow::Continue;
         }
         if std::mem::take(&mut self.leader_pending) {
+            self.leader_since = None;
             return self.chord(key);
         }
         match self.chat.is_some() {
@@ -529,6 +543,7 @@ impl App {
         };
         let state = chat.session.state();
         match key.code {
+            KeyCode::Char('?') => self.help = true,
             KeyCode::Char('s') => {
                 drop(state);
                 self.close_chat();
@@ -891,6 +906,23 @@ impl App {
             }
             ChatEffect::Review => self.review(),
             ChatEffect::Home => self.close_chat(),
+            ChatEffect::Press(key) => {
+                // The leader clicked shows its panel at once: the click is
+                // the pause.
+                if key.code == KeyCode::Char(self.config.leader)
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    self.leader_pending = true;
+                    self.leader_since = Instant::now().checked_sub(PANEL_AFTER);
+                    return None;
+                }
+                return Some(self.key(key));
+            }
+            ChatEffect::Chord(letter) => {
+                self.leader_pending = false;
+                self.leader_since = None;
+                return Some(self.chord(KeyEvent::new(KeyCode::Char(letter), KeyModifiers::NONE)));
+            }
             ChatEffect::RawAttach => {
                 let agent = chat.agent.clone();
                 return self.raw_attach(&agent);
@@ -954,7 +986,11 @@ impl App {
             push(&mut line, "press ctrl+c again to quit", theme.warn(), width);
             return Some(line);
         }
-        if self.leader_pending {
+        let panel_chat = self
+            .chat
+            .as_ref()
+            .is_some_and(|chat| chat.view.redesigned());
+        if self.leader_pending && !panel_chat {
             let mut line = Line::from(Span::raw("  "));
             let words = if self.chat.is_some() {
                 "s fleet · d leave to the shell · k/j focus · o open · y copy · r review · n next in family"
@@ -1004,6 +1040,11 @@ impl App {
                     )
                 };
                 chat.view.away = away;
+                let panel_due = self.leader_pending
+                    && self
+                        .leader_since
+                        .is_none_or(|since| since.elapsed() >= PANEL_AFTER);
+                chat.view.panel = panel_due.then(|| panel_entries(self.config.attach));
                 let page = {
                     let state = chat.session.state();
                     chat.view
@@ -1024,6 +1065,26 @@ impl App {
             self.chat_effect(ChatEffect::Page(n));
         }
     }
+}
+
+/// The leader's panel in a chat: every chord and what it does.
+fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
+    let entry = |key: &str, action: &str, chord: char| (key.to_owned(), action.to_owned(), chord);
+    let mut entries = vec![
+        entry("s", "home", 's'),
+        entry("r", "review the working tree", 'r'),
+        entry("n", "next agent in this family", 'n'),
+        entry("k", "focus an older row", 'k'),
+        entry("j", "focus a newer row", 'j'),
+        entry("o", "open the focused row", 'o'),
+        entry("y", "copy the focused row", 'y'),
+    ];
+    if attach {
+        entries.push(entry("t", "the agent's own terminal", 't'));
+    }
+    entries.push(entry("d", "leave to the shell", 'd'));
+    entries.push(entry("?", "all keys", '?'));
+    entries
 }
 
 fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec<Line<'static>> {
@@ -1051,7 +1112,7 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
             "enter",
             "send; queue while it works; resume an exited agent".into(),
         ),
-        ("ctrl+j", "new line".into()),
+        ("shift+enter / ctrl+j", "new line".into()),
         (
             "ctrl+v",
             "attach an image or file from the clipboard".into(),
@@ -1067,7 +1128,15 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
         ),
         (
             "pgup / pgdn, wheel",
-            "scroll; ctrl+end follows the newest".into(),
+            "scroll; ctrl+end (or the ↓ button) jumps to the newest".into(),
+        ),
+        (
+            "click",
+            "hints, [Diff], [Home], the mode, a pinned message, a folded line".into(),
+        ),
+        (
+            "shift+drag",
+            "select text to copy (option+drag in iTerm2 and Ghostty)".into(),
         ),
         (
             "esc",
@@ -1091,6 +1160,7 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
             format!("{leader} r  review the working tree; comments go in the draft"),
         ),
         ("n", format!("{leader} n  next agent in this family")),
+        ("?", format!("{leader} ?  these keys")),
         ("", String::new()),
         ("ctrl+c", "clear the field; twice on nothing quits".into()),
     ]);

@@ -35,8 +35,6 @@ const HEAD_COL: usize = MARGIN;
 /// Where a row's mark sits, and the text after it.
 const MARK_COL: usize = MARGIN + 2;
 const NAME_COL: usize = MARK_COL + 2;
-/// Lines one mouse-wheel notch scrolls.
-const WHEEL: usize = 3;
 /// From this height on, rows keep a blank line between them.
 const ROOMY: u16 = 30;
 /// The composer takes at most this share of the draft screen's height.
@@ -799,12 +797,14 @@ impl Home {
                 vec![]
             }
             MouseEventKind::ScrollUp if listing => {
-                self.top = self.top.saturating_sub(WHEEL);
+                self.top = self
+                    .top
+                    .saturating_sub(crate::wheel::lines(crate::wheel::Direction::Up));
                 self.reveal = false;
                 vec![]
             }
             MouseEventKind::ScrollDown if listing => {
-                self.top += WHEEL;
+                self.top += crate::wheel::lines(crate::wheel::Direction::Down);
                 self.reveal = false;
                 vec![]
             }

@@ -86,7 +86,7 @@ pub async fn run(scenario: &Scenario, place: Option<Place>, theme: Theme) -> Res
     // Time moves in a scenario even when nothing on screen asks for a tick.
     let mut heartbeat = tokio::time::interval(Duration::from_millis(500));
 
-    let leave = loop {
+    let leave = 'lab: loop {
         app.housekeep();
         if let Some(saved) = &restore
             && restore_chat(app, saved)
@@ -123,24 +123,24 @@ pub async fn run(scenario: &Scenario, place: Option<Place>, theme: Theme) -> Res
 
         let flow = tokio::select! {
             event = events.next() => match event {
-                Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => {
-                    match lab_key(app, &mut mode, &last, key, theme, scenario, world.fired()) {
-                        LabKey::Pass => app.input(Event::Key(key)),
-                        LabKey::Handled => Flow::Continue,
-                        LabKey::Reset => break Leave::Reset,
-                    }
-                }
                 Some(Ok(event)) => {
-                    if matches!(mode, Mode::Note { .. }) {
-                        if let Event::Paste(pasted) = &event
-                            && let Mode::Note { text, .. } = &mut mode
+                    let Some(mut flow) =
+                        lab_event(app, &mut mode, &last, event, theme, scenario, world.fired())
+                    else {
+                        break Leave::Reset;
+                    };
+                    // Input already waiting (a trackpad's burst of wheel
+                    // events) applies before the one redraw.
+                    while matches!(flow, Flow::Continue)
+                        && let Some(event) = tui::run::ready(&mut events).await
+                    {
+                        match lab_event(app, &mut mode, &last, event?, theme, scenario, world.fired())
                         {
-                            text.push_str(pasted);
+                            Some(next) => flow = next,
+                            None => break 'lab Leave::Reset,
                         }
-                        Flow::Continue
-                    } else {
-                        app.input(event)
                     }
+                    flow
                 }
                 Some(Err(error)) => return Err(error.into()),
                 None => Flow::Quit,
@@ -204,6 +204,40 @@ enum LabKey {
     Pass,
     Handled,
     Reset,
+}
+
+/// One input event: the lab's own keys first, the note being typed, then
+/// the client. None asks for the scenario to restart.
+fn lab_event(
+    app: &mut tui::App,
+    mode: &mut Mode,
+    last: &Buffer,
+    event: Event,
+    theme: Theme,
+    scenario: &Scenario,
+    fired: usize,
+) -> Option<Flow> {
+    match event {
+        Event::Key(key) if key.kind != KeyEventKind::Release => {
+            match lab_key(app, mode, last, key, theme, scenario, fired) {
+                LabKey::Pass => Some(app.input(Event::Key(key))),
+                LabKey::Handled => Some(Flow::Continue),
+                LabKey::Reset => None,
+            }
+        }
+        event => {
+            if matches!(mode, Mode::Note { .. }) {
+                if let Event::Paste(pasted) = &event
+                    && let Mode::Note { text, .. } = mode
+                {
+                    text.push_str(pasted);
+                }
+                Some(Flow::Continue)
+            } else {
+                Some(app.input(event))
+            }
+        }
+    }
 }
 
 fn lab_key(

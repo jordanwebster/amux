@@ -1,3 +1,29 @@
+2026-09-30 — **The chat pins its turn's message, offers the way back, and
+says fewer keys.** The key line under the composer now names only what
+matters at that moment and always ends with the way to more: `shift+tab
+mode · ctrl+a more` at rest, `enter queue · ctrl+x stop` while the agent
+works, `enter resume` once it has exited. What everyone knows (Enter sends,
+pasting attaches) is gone, and `ctrl+j newline` appears only where the
+terminal cannot report Shift+Enter; every key in the line can be clicked.
+The leader shows a which-key panel after a 400 ms pause, listing every
+chord (including `?` for the full reference); typed quickly it never draws.
+Your messages carry a whole tinted line above and below their words, and
+the message that started the turn owning the top of the feed stays pinned
+under the header, fading as the next turn's message arrives to take the
+pin; it is best effort, pinning nothing until a message older than the
+window is paged in. Scrolled back, a floating `↓ Jump to Bottom  ctrl+end`
+control (or `↓ N new`) returns to the newest and replaces the old
+"scrolled back" line. The mouse also cycles the mode from the composer's
+edge, places the cursor in the draft and selects tray prompts, and the
+reference teaches Shift/Option+drag for selecting text. The header's
+separators take one space either side. Scrolling is smoother: a wheel event
+moves one line, rising to two and three through a fast burst in one
+direction (`tui::wheel`, shared by the chat, the review page and home), and
+input already waiting is applied before the next frame, in the client and
+the lab alike, so a trackpad burst draws once. The lab's key scripts gain
+`wheelup` and `wheeldown`. Tinted blocks now keep each span's own ink on
+their surface, which also lets a message's time read faint as intended.
+
 2026-09-30 — **One margin, cyan code, and words for model and mode.** Home and
 the chat now share one geometry: a two-column margin each side that every
 edge sits on (message blocks, home's highlighted card and its padding, the

@@ -53,6 +53,15 @@ impl Editor {
         self.text[..self.cursor].chars().count()
     }
 
+    /// Puts the cursor after `chars` characters, or at the end.
+    pub fn set_cursor_chars(&mut self, chars: usize) {
+        self.cursor = self
+            .text
+            .char_indices()
+            .nth(chars)
+            .map_or(self.text.len(), |(at, _)| at);
+    }
+
     /// Replaces the whole draft and puts the cursor at its end.
     pub fn set(&mut self, text: &str, attachments: Vec<Attachment>) {
         self.text = text.to_owned();

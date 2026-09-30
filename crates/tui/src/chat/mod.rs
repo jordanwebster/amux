@@ -38,11 +38,15 @@ use crate::clipboard::ClipboardContent;
 use crate::editor::{Edit, Editor};
 use crate::text::{self, push, push_right};
 use crate::theme::Theme;
+use crate::wheel::Direction;
+
+/// The lines one wheel event scrolls, signed for the feed's arithmetic.
+fn wheel_lines(direction: Direction) -> isize {
+    crate::wheel::lines(direction) as isize
+}
 
 /// How long an empty chat waits before saying it is loading.
 pub const LOADING_HINT_MS: i64 = 300;
-/// Feed lines one wheel notch scrolls.
-const WHEEL_LINES: isize = 3;
 
 /// What a key asks the event loop to do with the session.
 #[derive(Clone, Debug, PartialEq)]
@@ -92,7 +96,29 @@ pub enum ChatEffect {
     Review,
     /// Back to home: the header's [Home].
     Home,
+    /// A key a click stands for: a hint, the composer's mode. The app
+    /// handles it as if pressed, so the leader and its panel work too.
+    Press(KeyEvent),
+    /// A leader chord picked from the which-key panel.
+    Chord(char),
 }
+
+/// Where the composer's words were drawn, for a click to place the cursor:
+/// the screen cell of the first wrapped line's first column, how many
+/// wrapped lines show, how many are scrolled off above, and the width the
+/// draft wraps at.
+#[derive(Clone, Copy, Debug, Default)]
+struct ComposerSpot {
+    x: u16,
+    y: u16,
+    rows: u16,
+    skip: usize,
+    wrap: usize,
+}
+
+/// A line of the which-key panel: the key, what it does, and the chord's
+/// letter.
+pub type PanelEntry = (String, String, char);
 
 /// A control in the chat's header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +178,22 @@ pub struct ChatView {
     header_spots: Vec<(u16, (u16, u16), HeaderControl)>,
     /// The header control under the mouse.
     hover: Option<HeaderControl>,
+    /// The which-key panel's entries while it shows; the app sets them
+    /// before each frame.
+    pub panel: Option<Vec<PanelEntry>>,
+    /// Clickable places drawn on the last frame, as (row, columns, what):
+    /// hints and panel lines stand for keys.
+    hint_spots: Vec<(u16, (u16, u16), KeyEvent)>,
+    panel_spots: Vec<(u16, (u16, u16), char)>,
+    /// The pinned prompt's rows and its key.
+    pin_spot: Option<((u16, u16), Key)>,
+    /// The jump-to-bottom control.
+    jump_spot: Option<(u16, (u16, u16))>,
+    /// The mode on the composer's edge.
+    mode_spot: Option<(u16, (u16, u16))>,
+    composer_spot: Option<ComposerSpot>,
+    /// Tray rows by screen row.
+    tray_spots: Vec<(u16, usize)>,
     stretch_cache: StretchCache,
     /// Where the feed's first line was drawn, for clicks.
     feed_origin: (u16, u16),
@@ -188,6 +230,14 @@ impl ChatView {
             stat_seen: None,
             header_spots: Vec::new(),
             hover: None,
+            panel: None,
+            hint_spots: Vec::new(),
+            panel_spots: Vec::new(),
+            pin_spot: None,
+            jump_spot: None,
+            mode_spot: None,
+            composer_spot: None,
+            tray_spots: Vec::new(),
             stretch_cache: StretchCache::default(),
             feed_origin: (0, 0),
             epoch: 0,
@@ -567,8 +617,8 @@ impl ChatView {
             && let Some(page) = &mut self.review
         {
             match event.kind {
-                MouseEventKind::ScrollUp => page.scroll_by(-WHEEL_LINES),
-                MouseEventKind::ScrollDown => page.scroll_by(WHEEL_LINES),
+                MouseEventKind::ScrollUp => page.scroll_by(-wheel_lines(Direction::Up)),
+                MouseEventKind::ScrollDown => page.scroll_by(wheel_lines(Direction::Down)),
                 _ => {}
             }
             return vec![];
@@ -580,13 +630,63 @@ impl ChatView {
             .map(|(_, _, control)| *control);
         match event.kind {
             MouseEventKind::Moved => self.hover = control,
-            MouseEventKind::ScrollUp => self.scroll(state, -WHEEL_LINES, theme),
-            MouseEventKind::ScrollDown => self.scroll(state, WHEEL_LINES, theme),
+            MouseEventKind::ScrollUp => self.scroll(state, -wheel_lines(Direction::Up), theme),
+            MouseEventKind::ScrollDown => self.scroll(state, wheel_lines(Direction::Down), theme),
             MouseEventKind::Down(MouseButton::Left) if self.reader.is_none() => {
                 match control {
                     Some(HeaderControl::Diff) => return vec![ChatEffect::Review],
                     Some(HeaderControl::Home) => return vec![ChatEffect::Home],
                     None => {}
+                }
+                let (x, y) = (event.column, event.row);
+                let on = |row: u16, (from, to): (u16, u16)| row == y && (from..to).contains(&x);
+                if let Some((_, _, chord)) = self
+                    .panel_spots
+                    .iter()
+                    .find(|(row, cols, _)| on(*row, *cols))
+                {
+                    return vec![ChatEffect::Chord(*chord)];
+                }
+                if let Some((_, _, key)) = self
+                    .hint_spots
+                    .iter()
+                    .find(|(row, cols, _)| on(*row, *cols))
+                {
+                    return vec![ChatEffect::Press(*key)];
+                }
+                if self.jump_spot.is_some_and(|(row, cols)| on(row, cols)) {
+                    self.follow();
+                    return vec![];
+                }
+                if let Some(((from, to), key)) = &self.pin_spot
+                    && (*from..*to).contains(&y)
+                {
+                    self.anchor = Anchor::Top {
+                        key: key.clone(),
+                        offset: 0,
+                    };
+                    return vec![];
+                }
+                if self.mode_spot.is_some_and(|(row, cols)| on(row, cols)) {
+                    return vec![ChatEffect::Press(KeyEvent::new(
+                        KeyCode::BackTab,
+                        KeyModifiers::SHIFT,
+                    ))];
+                }
+                if let Some((_, i)) = self.tray_spots.iter().find(|(row, _)| *row == y) {
+                    self.tray = Some(*i);
+                    return vec![];
+                }
+                if let Some(spot) = self.composer_spot
+                    && self.tray.is_none()
+                    && (spot.y..spot.y + spot.rows).contains(&y)
+                    && x >= spot.x.saturating_sub(2)
+                {
+                    let row = usize::from(y - spot.y) + spot.skip;
+                    let col = usize::from(x.saturating_sub(spot.x));
+                    let at = composer::cursor_at(&self.editor, spot.wrap, row, col);
+                    self.editor.set_cursor_chars(at);
+                    return vec![];
                 }
                 if let Some(hit) = self.hit_at(event.column, event.row) {
                     return self.feed_hit(state, hit);
@@ -1105,22 +1205,6 @@ impl ChatView {
         top.push(Line::default());
 
         let mut bottom: Vec<Line<'static>> = Vec::new();
-        if self.anchor != Anchor::Bottom {
-            let words = if state.arrivals_held() {
-                "↓ new activity below"
-            } else {
-                "↓ scrolled back"
-            };
-            let mut line = Line::from(Span::raw("  "));
-            push(&mut line, words, theme.muted(), width);
-            push(
-                &mut line,
-                " · pgdn or ctrl+end for the newest",
-                theme.faint(),
-                width,
-            );
-            bottom.push(line);
-        }
         let view = composer(state, now_ms);
         if let Some(activity) = &view.activity {
             bottom.push(quiet_activity(activity, width, theme));
@@ -1142,17 +1226,21 @@ impl ChatView {
                 self.tray = Some(tray.len() - 1);
             }
         }
+        let mut tray_at = Vec::new();
         for (i, row) in tray.iter().enumerate() {
+            tray_at.push((bottom.len(), i));
             bottom.push(row.line(self.tray == Some(i), width, theme));
         }
 
         let mut cursor = None;
         let card = self.card(state);
-        let composer_box = |bottom: &mut Vec<Line<'static>>,
-                            cursor: &mut Option<(usize, usize)>,
-                            editor: &Editor,
-                            takes_keys: bool| {
-            let (lines, at) = boxed_composer(
+        // Where the composer's box sits among the bottom lines, once drawn.
+        let mut boxed_at: Option<(usize, Boxed)> = None;
+        let mut composer_box = |bottom: &mut Vec<Line<'static>>,
+                                cursor: &mut Option<(usize, usize)>,
+                                editor: &Editor,
+                                takes_keys: bool| {
+            let boxed = boxed_composer(
                 editor,
                 &placeholder(&state.composer(), &name, &host, self.away),
                 &EdgeWords {
@@ -1164,11 +1252,17 @@ impl ChatView {
                 theme,
             );
             if takes_keys {
-                *cursor = Some((bottom.len() + at.0, at.1));
+                *cursor = Some((bottom.len() + boxed.cursor.0, boxed.cursor.1));
             }
-            bottom.extend(lines);
+            let at = bottom.len();
+            bottom.extend(boxed.lines.iter().cloned());
+            boxed_at = Some((at, boxed));
         };
-        let mut hint = footer.clone().unwrap_or_default();
+        let legend = || turn_hint_words(state, &self.editor, self.away, self.leader);
+        let mut hint: Result<Line<'static>, String> = match &footer {
+            Some(footer) => Ok(footer.clone()),
+            None => Ok(Line::default()),
+        };
         let mut boxed = false;
         match &card {
             Some(card) => {
@@ -1188,27 +1282,17 @@ impl ChatView {
                 if footer.is_none() && card.state == CardState::Dismissed {
                     composer_box(&mut bottom, &mut cursor, &self.editor, true);
                     boxed = true;
-                    hint = keys_line(
-                        &composer_hint_words(state, &self.editor, self.away, self.leader),
-                        width,
-                        theme,
-                    );
+                    hint = Err(legend());
                 }
             }
             None => {
                 composer_box(&mut bottom, &mut cursor, &self.editor, self.tray.is_none());
                 boxed = true;
                 if footer.is_none() {
-                    hint = match self.tray.and_then(|i| tray.get(i)) {
-                        Some(row) => {
-                            keys_line(&(row.hint().to_owned(), String::new()), width, theme)
-                        }
-                        None => keys_line(
-                            &composer_hint_words(state, &self.editor, self.away, self.leader),
-                            width,
-                            theme,
-                        ),
-                    };
+                    hint = Err(match self.tray.and_then(|i| tray.get(i)) {
+                        Some(row) => row.hint().to_owned(),
+                        None => legend(),
+                    });
                 }
             }
         }
@@ -1216,13 +1300,22 @@ impl ChatView {
         if boxed {
             bottom.push(Line::default());
         }
+        let (hint, hint_keys) = match hint {
+            Ok(line) => (line, Vec::new()),
+            Err(words) => keys_line(&words, width, theme),
+        };
+        let hint_row = bottom.len();
         bottom.push(hint);
 
         let height = usize::from(area.height);
         let feed_height = height.saturating_sub(top.len() + bottom.len());
         self.feed = (width, feed_height);
         self.feed_origin = (area.x, area.y + top.len() as u16);
+        let feed_top = top.len();
         let mut lines = top;
+        self.pin_spot = None;
+        self.jump_spot = None;
+        self.panel_spots.clear();
         if state.transcript().is_empty() {
             lines.extend(empty_feed(
                 state,
@@ -1236,10 +1329,88 @@ impl ChatView {
             let laid = self.frame(theme).layout(state);
             let mut feed: Vec<Line<'static>> = laid.lines.clone();
             text::drop_cut_padding(&mut feed);
+            if let Some((pinned, key)) = pinned(state, &laid, feed_height, width, theme) {
+                let rows = pinned.len();
+                // The blank line under the block is not the pin's to click.
+                let block_rows = rows.saturating_sub(1);
+                for (at, line) in pinned.into_iter().enumerate() {
+                    if let Some(slot) = feed.get_mut(at) {
+                        *slot = line;
+                    }
+                }
+                let y = area.y + feed_top as u16;
+                self.pin_spot = Some(((y, y + block_rows as u16), key));
+                // The line under the pin is the feed's new edge: a cut
+                // block's padding there would read as a stray band.
+                if let Some(rest) = feed.get_mut(rows..) {
+                    text::drop_cut_padding(rest);
+                }
+            }
+            if self.anchor != Anchor::Bottom
+                && let Some(last) = feed.len().checked_sub(1)
+            {
+                let (control, from) = jump_control(state, width, theme);
+                let control_width = text::line_width(&control);
+                feed[last] = text::overlay(&feed[last], from, control, width);
+                self.jump_spot = Some((
+                    area.y + (feed_top + last) as u16,
+                    (area.x + from as u16, area.x + (from + control_width) as u16),
+                ));
+            }
+            if let Some(entries) = self.panel.clone() {
+                let panel = which_key_panel(&entries, self.leader, width, theme);
+                let first = feed.len().saturating_sub(panel.len());
+                for (i, (line, chord)) in panel.into_iter().enumerate() {
+                    let at = first + i;
+                    if let Some(slot) = feed.get_mut(at) {
+                        let line_width = text::line_width(&line);
+                        *slot = text::overlay(slot, 0, line, width);
+                        if let Some(chord) = chord {
+                            self.panel_spots.push((
+                                area.y + (feed_top + at) as u16,
+                                (area.x, area.x + line_width as u16),
+                                chord,
+                            ));
+                        }
+                    }
+                }
+            }
             lines.extend(feed);
             self.laid = laid;
         }
         let bottom_start = lines.len();
+        let bottom_y = |row: usize| area.y + (bottom_start + row) as u16;
+        self.hint_spots = hint_keys
+            .into_iter()
+            .map(|((from, to), key)| {
+                (
+                    bottom_y(hint_row),
+                    (area.x + from as u16, area.x + to as u16),
+                    key,
+                )
+            })
+            .collect();
+        self.tray_spots = tray_at
+            .into_iter()
+            .map(|(row, i)| (bottom_y(row), i))
+            .collect();
+        self.mode_spot = None;
+        self.composer_spot = None;
+        if let Some((at, boxed)) = &boxed_at {
+            if let Some((from, to)) = boxed.mode {
+                self.mode_spot = Some((
+                    bottom_y(at + boxed.lines.len() - 1),
+                    (area.x + from as u16, area.x + to as u16),
+                ));
+            }
+            self.composer_spot = Some(ComposerSpot {
+                x: area.x + boxed.text_x as u16,
+                y: bottom_y(at + 1),
+                rows: boxed.lines.len().saturating_sub(2) as u16,
+                skip: boxed.skip,
+                wrap: boxed.wrap,
+            });
+        }
         lines.extend(bottom);
         paint.render_widget(Paragraph::new(lines), area);
         if let Some((row, col)) = cursor {
@@ -1284,7 +1455,7 @@ impl ChatView {
         // The right side, built first so the left knows its room.
         let mut right: Vec<Span<'static>> = Vec::new();
         // Groups on both sides are split by the same faint bar.
-        let bar = || Span::styled("  │  ", theme.faint());
+        let bar = || Span::styled(" │ ", theme.faint());
         let gap = |right: &mut Vec<Span<'static>>| {
             if !right.is_empty() {
                 right.push(bar());
@@ -1437,15 +1608,27 @@ struct EdgeWords {
     mode: Option<String>,
 }
 
+/// The composer in its box, as drawn: its lines, the cursor's (line,
+/// column), the mode's columns on the bottom edge, where the draft's words
+/// start, how many wrapped lines are scrolled off above, and the width the
+/// draft wraps at.
+struct Boxed {
+    lines: Vec<Line<'static>>,
+    cursor: (usize, usize),
+    mode: Option<(usize, usize)>,
+    text_x: usize,
+    skip: usize,
+    wrap: usize,
+}
+
 /// The composer in its box, the model, effort and mode on the bottom edge.
-/// Returns its lines and the cursor's (line, column).
 fn boxed_composer(
     editor: &Editor,
     placeholder: &str,
     edge_words: &EdgeWords,
     width: usize,
     theme: Theme,
-) -> (Vec<Line<'static>>, (usize, usize)) {
+) -> Boxed {
     const MARGIN: usize = 2;
     let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
     let (mut body, (row, col)) = editor_lines(editor, placeholder, inner, theme);
@@ -1473,8 +1656,9 @@ fn boxed_composer(
         out.push(boxed);
     }
     // "Opus (high) · accept edits": the model faint by its name, its
-    // effort beside it, and the mode, which Shift+Tab changes, in the
-    // reading ink. The edge is a status line, so the mode is lowercase.
+    // effort beside it, and the mode, which Shift+Tab (or a click) changes,
+    // in the reading ink. The edge is a status line, so the mode is
+    // lowercase.
     let known = |fact: &Option<String>| fact.clone().filter(|fact| !fact.is_empty());
     let mut label: Vec<Span<'static>> = Vec::new();
     match (known(&edge_words.model), known(&edge_words.effort)) {
@@ -1485,11 +1669,12 @@ fn boxed_composer(
         (None, Some(effort)) => label.push(Span::styled(format!("({effort})"), theme.faint())),
         (None, None) => {}
     }
-    if let Some(mode) = known(&edge_words.mode) {
+    let mode_words = known(&edge_words.mode).map(|mode| mode.to_lowercase());
+    if let Some(mode) = &mode_words {
         if !label.is_empty() {
             label.push(Span::styled(" · ", theme.faint()));
         }
-        label.push(Span::styled(mode.to_lowercase(), theme.text()));
+        label.push(Span::styled(mode.clone(), theme.text()));
     }
     let label_width: usize = label
         .iter()
@@ -1497,6 +1682,7 @@ fn boxed_composer(
         .sum();
     let mut bottom = Line::from(Span::raw(" ".repeat(MARGIN)));
     push(&mut bottom, "╰", edge, width);
+    let mut mode = None;
     if label.is_empty() || label_width + 6 > span {
         push(&mut bottom, "─".repeat(span), edge, width);
     } else {
@@ -1504,105 +1690,301 @@ fn boxed_composer(
         push(&mut bottom, "─".repeat(rule), edge, width);
         push(&mut bottom, " ", edge, width);
         bottom.spans.extend(label);
+        if let Some(words) = &mode_words {
+            let to = text::line_width(&bottom);
+            mode = Some((to - text::str_width(words), to));
+        }
         push(&mut bottom, " ─", edge, width);
     }
     text::pad_to(&mut bottom, width - MARGIN - 1);
     push(&mut bottom, "╯", edge, width);
     out.push(bottom);
-    (out, (1 + row - skip, MARGIN + 2 + col))
+    Boxed {
+        lines: out,
+        cursor: (1 + row - skip, MARGIN + 2 + col),
+        mode,
+        text_x: MARGIN + 4,
+        skip,
+        wrap: inner,
+    }
 }
 
-/// The keys under the composer as (left, right) legend text.
-fn composer_hint_words(
-    state: &SessionState,
-    editor: &Editor,
-    away: Away,
-    leader: char,
-) -> (String, String) {
+/// The keys under the composer, by what is happening, few enough to read
+/// at a glance and always ending with the way to more (the leader's
+/// panel). What everyone knows (Enter sends, pasting attaches) is not
+/// said; Enter is named only when it does something else. Words that are
+/// not a legend start with a capital and read as a sentence.
+fn turn_hint_words(state: &SessionState, editor: &Editor, away: Away, leader: char) -> String {
     let working = state.phase() == PhaseView::Working;
-    let mode = next_mode(state).is_some() && state.composer() == Composer::Send;
-    let review = format!("ctrl+{leader} r review");
-    let left = match state.composer() {
-        Composer::Send if working => {
-            "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop".to_owned()
+    let mode = next_mode(state).is_some();
+    let more = format!("ctrl+{leader} more");
+    let mut pairs: Vec<String> = Vec::new();
+    match state.composer() {
+        Composer::Send => {
+            if working {
+                pairs.push("enter queue".into());
+                pairs.push("ctrl+x stop".into());
+            } else if !editor.is_empty() && !crate::terminal::shift_enter_reported() {
+                // Shift+Enter is the newline everyone expects; where the
+                // terminal cannot tell it from Enter, say the key that works.
+                pairs.push("ctrl+j newline".into());
+            }
+            if mode {
+                pairs.push("shift+tab mode".into());
+            }
         }
-        Composer::Send if editor.is_empty() => {
-            format!("enter send · ctrl+j newline · ctrl+v attach · {review} · ? help")
-        }
-        Composer::Send => format!("enter send · ctrl+j newline · ctrl+v attach · {review}"),
-        Composer::Resume => "enter resume · ctrl+j newline".to_owned(),
+        Composer::Resume => pairs.push("enter resume".into()),
         Composer::Disabled(Waiting::Detached) if away == Away::SignedOut => {
-            "Draft kept · sending waits until this machine signs in".to_owned()
+            return "Draft kept · sending waits until this machine signs in".to_owned();
         }
         Composer::Disabled(Waiting::Detached) if away == Away::Revoked => {
-            "Draft kept · sending waits until you pair again".to_owned()
+            return "Draft kept · sending waits until you pair again".to_owned();
         }
-        Composer::Disabled(_) => "Draft kept · sending waits".to_owned(),
-    };
-    // Last on the left, so the bottom right stays clear under the
-    // composer's edge, and the first pair to go when the line is short.
-    let left = if mode && !left.starts_with(char::is_uppercase) {
-        format!("{left} · shift+tab mode")
-    } else {
-        left
-    };
-    (left, String::new())
+        Composer::Disabled(_) => return "Draft kept · sending waits".to_owned(),
+    }
+    pairs.push(more);
+    pairs.join(" · ")
 }
+
+/// Where each drawn key pair sits on its line, and the key it presses.
+type KeySpots = Vec<((usize, usize), KeyEvent)>;
 
 /// A key legend in home's style: each key bright and bold, its action
-/// faint, three blanks apart. Words that are not a legend (they start with
-/// a capital) read as one faint sentence.
-fn keys_line((left, right): &(String, String), width: usize, theme: Theme) -> Line<'static> {
+/// faint, three blanks apart, whole pairs or none. Words that are not a
+/// legend (they start with a capital) read as one faint sentence. Returns
+/// the line and, for each pair drawn, its columns and the key it stands
+/// for, so a click can press it.
+fn keys_line(words: &str, width: usize, theme: Theme) -> (Line<'static>, KeySpots) {
     let mut line = Line::from(Span::raw("  "));
-    let legend = |line: &mut Line<'static>, words: &str, room: usize| {
-        if words.chars().next().is_some_and(char::is_uppercase) {
-            push(line, words, theme.faint(), room);
-            return;
+    let mut spots = Vec::new();
+    if words.chars().next().is_some_and(char::is_uppercase) {
+        push(&mut line, words, theme.faint(), width);
+        return (line, spots);
+    }
+    let room = width.saturating_sub(2);
+    for (i, pair) in words.split(" · ").enumerate() {
+        let gap = if i > 0 { 3 } else { 0 };
+        if text::line_width(&line) + gap + text::str_width(pair) > room {
+            break;
         }
-        // Whole pairs or none: a key without its action says nothing.
-        for (i, pair) in words.split(" · ").enumerate() {
-            let gap = if i > 0 { 3 } else { 0 };
-            if text::line_width(line) + gap + text::str_width(pair) > room {
-                break;
-            }
-            if i > 0 {
-                push(line, "   ", theme.faint(), room);
-            }
-            let (key, action) = split_key(pair);
-            push(line, key, theme.emphasis(), room);
-            if !action.is_empty() {
-                push(line, format!(" {action}"), theme.faint(), room);
-            }
+        if i > 0 {
+            push(&mut line, "   ", theme.faint(), room);
         }
-    };
-    let right_width = text::str_width(right);
-    legend(&mut line, left, width.saturating_sub(right_width + 4));
-    if !right.is_empty() {
-        let mut tail = Line::default();
-        legend(&mut tail, right, width);
-        let used = text::line_width(&line);
-        let at = width.saturating_sub(right_width + 2);
-        if at > used + 2 {
-            line.spans.push(Span::raw(" ".repeat(at - used)));
-            line.spans.extend(tail.spans);
+        let from = text::line_width(&line);
+        let (key, action) = split_key(pair);
+        push(&mut line, key.clone(), theme.emphasis(), room);
+        if !action.is_empty() {
+            push(&mut line, format!(" {action}"), theme.faint(), room);
+        }
+        if let Some(event) = key_event(&key) {
+            spots.push(((from, text::line_width(&line)), event));
         }
     }
-    line
+    (line, spots)
 }
 
-/// "ctrl+a r review" → ("ctrl+a r", "review"); "enter send" → ("enter", "send").
-fn split_key(pair: &str) -> (String, String) {
-    let words: Vec<&str> = pair.split(' ').collect();
-    // A leader chord names two keys before its action.
-    let keys = if words.first().is_some_and(|w| w.starts_with("ctrl+")) && words.len() > 2 {
-        2
-    } else {
-        1
+/// The key a legend names, as the event pressing it sends: `enter`,
+/// `shift+tab`, `ctrl+x`, a letter.
+fn key_event(key: &str) -> Option<KeyEvent> {
+    let (modifiers, name) = match key.split_once('+') {
+        Some(("ctrl", name)) => (KeyModifiers::CONTROL, name),
+        Some(("shift", "tab")) => {
+            return Some(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+        }
+        Some(_) => return None,
+        None => (KeyModifiers::NONE, key),
     };
-    (
-        words[..keys.min(words.len())].join(" "),
-        words[keys.min(words.len())..].join(" "),
+    let code = match name {
+        "enter" => KeyCode::Enter,
+        "esc" => KeyCode::Esc,
+        "end" => KeyCode::End,
+        "↑" => KeyCode::Up,
+        name if name.chars().count() == 1 => KeyCode::Char(name.chars().next()?),
+        _ => return None,
+    };
+    Some(KeyEvent::new(code, modifiers))
+}
+
+/// "enter send now" → ("enter", "send now"); "ctrl+x stop" → ("ctrl+x", "stop").
+fn split_key(pair: &str) -> (String, String) {
+    match pair.split_once(' ') {
+        Some((key, action)) => (key.to_owned(), action.to_owned()),
+        None => (pair.to_owned(), String::new()),
+    }
+}
+
+/// The prompt to pin under the header, and its key: the prompt of the turn
+/// that owns the feed's first line under the pin. Best effort: nothing when
+/// that turn's prompt is not held (older than the window; a page will bring
+/// it), when the line belongs to no turn, or when the feed is too short to
+/// spare the rows. Faint while the next turn's prompt is about to take the
+/// pin.
+fn pinned(
+    state: &SessionState,
+    laid: &Laid,
+    height: usize,
+    width: usize,
+    theme: Theme,
+) -> Option<(Vec<Line<'static>>, Key)> {
+    // The block's three lines and the blank line a message keeps under it.
+    const ROWS: usize = 4;
+    // The next prompt within this many lines of the pin fades it.
+    const FADE: usize = 3;
+    if height < ROWS + 6 {
+        return None;
+    }
+    let owners = line_owners(laid, height);
+    let owner = (*owners.get(ROWS)?)?;
+    let order = laid.blocks.get(owner)?.order;
+    let transcript = state.transcript();
+    let oldest = transcript.oldest_held()?;
+    let mut prompt = None;
+    for held in transcript.range(oldest..=order).rev() {
+        match held.class {
+            ui_state::ItemClass::Prompt => {
+                prompt = Some(held.item.key.clone());
+                break;
+            }
+            // Another turn's end: the line belongs to no turn.
+            ui_state::ItemClass::Turn if held.item.order != order => return None,
+            _ => {}
+        }
+    }
+    let key = prompt?;
+    // A prompt whose own block starts on screen below the top is its own
+    // landmark: pinning it too would draw it twice.
+    if let Some(first) = owners
+        .iter()
+        .position(|block| block.is_some_and(|block| laid.blocks[block].key == key))
+        && first > 0
+    {
+        return None;
+    }
+    let row = chat_rows_for(
+        state,
+        std::slice::from_ref(&key),
+        &ChatOptions {
+            tools: ToolRows::ShowAll,
+        },
     )
+    .pop()?;
+    let next = owners
+        .iter()
+        .enumerate()
+        .skip(ROWS + 1)
+        .find(|(_, block)| {
+            block.is_some_and(|block| {
+                block != owner && matches!(laid.blocks[block].row.kind, RowKind::Prompt { .. })
+            })
+        })
+        .map(|(at, _)| at);
+    let faint = next.is_some_and(|at| at - ROWS <= FADE);
+    let mut lines = feed::pinned_prompt(&row, faint, width, theme);
+    if lines.is_empty() {
+        return None;
+    }
+    lines.push(Line::default());
+    Some((lines, key))
+}
+
+/// Which drawn block each of the feed's `height` lines belongs to, top
+/// first; `None` for the blank lines that pad a short chat.
+fn line_owners(laid: &Laid, height: usize) -> Vec<Option<usize>> {
+    let mut owners: Vec<Option<usize>> = laid
+        .blocks
+        .iter()
+        .enumerate()
+        .flat_map(|(i, block)| std::iter::repeat_n(Some(i), block.lines.len()))
+        .skip(laid.top_offset)
+        .take(height)
+        .collect();
+    if owners.len() < height {
+        let mut padded = vec![None; height - owners.len()];
+        padded.append(&mut owners);
+        owners = padded;
+    }
+    owners
+}
+
+/// The control that returns to the newest row while the reader is in
+/// history, centred: "↓ Jump to Bottom  ctrl+end", or how many rows arrived
+/// meanwhile. Returns it and its first column.
+fn jump_control(state: &SessionState, width: usize, theme: Theme) -> (Line<'static>, usize) {
+    let surface = ratatui::style::Style {
+        bg: theme.user_surface().bg,
+        ..Default::default()
+    };
+    let arrived = state.held_arrivals();
+    let words = if arrived > 0 {
+        format!("↓ {arrived} new")
+    } else if state.arrivals_held() {
+        "↓ New Activity".to_owned()
+    } else {
+        "↓ Jump to Bottom".to_owned()
+    };
+    let line = Line::from(vec![
+        Span::styled(format!(" {words}  "), theme.text().patch(surface)),
+        Span::styled("ctrl+end ", theme.faint().patch(surface)),
+    ]);
+    let from = width.saturating_sub(text::line_width(&line)) / 2;
+    (line, from)
+}
+
+/// The leader's panel: every next key and what it does, on the tinted
+/// surface at the left margin, with a line of padding above and below.
+/// Each line comes with the chord it picks, for clicks.
+fn which_key_panel(
+    entries: &[PanelEntry],
+    leader: char,
+    width: usize,
+    theme: Theme,
+) -> Vec<(Line<'static>, Option<char>)> {
+    const MARGIN: usize = 2;
+    const INSET: usize = 2;
+    let surface = ratatui::style::Style {
+        bg: theme.user_surface().bg,
+        ..Default::default()
+    };
+    let key_width = entries
+        .iter()
+        .map(|(key, _, _)| text::str_width(key))
+        .max()
+        .unwrap_or(1);
+    let title = format!("ctrl+{leader}");
+    let inner = entries
+        .iter()
+        .map(|(_, action, _)| key_width + 3 + text::str_width(action))
+        .max()
+        .unwrap_or(0)
+        .max(text::str_width(&title));
+    let panel_width = (inner + 2 * INSET).min(width.saturating_sub(2 * MARGIN));
+    let row = |spans: Vec<Span<'static>>| {
+        let mut line = Line::from(Span::raw(" ".repeat(MARGIN)));
+        line.spans.push(Span::styled(" ".repeat(INSET), surface));
+        for span in spans {
+            line.spans
+                .push(Span::styled(span.content, span.style.patch(surface)));
+        }
+        text::fill(&mut line, surface, MARGIN + panel_width);
+        line
+    };
+    let mut out = vec![
+        (row(Vec::new()), None),
+        (row(vec![Span::styled(title, theme.faint())]), None),
+    ];
+    for (key, action, chord) in entries {
+        let pad = key_width.saturating_sub(text::str_width(key));
+        out.push((
+            row(vec![
+                Span::styled(key.clone(), theme.emphasis()),
+                Span::raw(" ".repeat(pad + 3)),
+                Span::styled(action.clone(), theme.faint()),
+            ]),
+            Some(*chord),
+        ));
+    }
+    out.push((row(Vec::new()), None));
+    out
 }
 
 fn mime_of(name: &str) -> &'static str {

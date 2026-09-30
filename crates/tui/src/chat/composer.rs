@@ -232,6 +232,64 @@ pub fn placeholder(mode: &Composer, name: &str, host: &str, away: Away) -> Strin
 
 /// The composer's lines at `width` and where its cursor is: text runs and
 /// attachment chips at their places, a chip one cursor position.
+/// The draft position under a click in the composer: `row` and `col`
+/// count from the first wrapped line and the first column after the
+/// prompt mark, wrapped at `width` as [`editor_lines`] wraps. The answer is
+/// a count of characters, an attachment's placeholder one.
+pub fn cursor_at(editor: &Editor, width: usize, target_row: usize, target_col: usize) -> usize {
+    let room = width.saturating_sub(2).max(1);
+    let mut row = 0usize;
+    let mut used = 0usize;
+    let mut at = 0usize;
+    for segment in composer_tokens(editor.text(), editor.attachments()) {
+        match segment {
+            Segment::Text(text) => {
+                for c in text.chars() {
+                    if c == '\n' {
+                        if row >= target_row {
+                            return at;
+                        }
+                        row += 1;
+                        used = 0;
+                        at += 1;
+                        continue;
+                    }
+                    let shown = if editor.secret { '•' } else { c };
+                    let w = text::str_width(shown.encode_utf8(&mut [0; 4]));
+                    if used + w > room {
+                        if row >= target_row {
+                            return at;
+                        }
+                        row += 1;
+                        used = 0;
+                    }
+                    if row > target_row || (row == target_row && used + w > target_col) {
+                        return at;
+                    }
+                    used += w;
+                    at += 1;
+                }
+            }
+            Segment::Attachment(view) => {
+                let w = text::str_width(&text::ellipsize(&chip(&view), room));
+                if used > 0 && used + w > room {
+                    if row >= target_row {
+                        return at;
+                    }
+                    row += 1;
+                    used = 0;
+                }
+                if row > target_row || (row == target_row && used + w > target_col) {
+                    return at;
+                }
+                used += w;
+                at += 1;
+            }
+        }
+    }
+    at
+}
+
 pub fn editor_lines(
     editor: &Editor,
     placeholder: &str,

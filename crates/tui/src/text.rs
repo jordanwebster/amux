@@ -78,21 +78,98 @@ pub(crate) fn is_padding(line: &Line<'_>, glyph: char) -> bool {
     any
 }
 
+/// Whether a line is a tinted block's blank padding line: nothing but
+/// blanks, painted on a surface.
+fn is_tinted_blank(line: &Line<'_>) -> bool {
+    line.spans
+        .iter()
+        .all(|span| span.content.chars().all(|c| c == ' '))
+        && line
+            .spans
+            .iter()
+            .any(|span| span.style.bg.is_some() && !span.content.is_empty())
+}
+
+/// Whether a line is painted on a surface at all.
+fn is_tinted(line: &Line<'_>) -> bool {
+    line.spans
+        .iter()
+        .any(|span| span.style.bg.is_some() && !span.content.is_empty())
+}
+
 /// Padding is drawn only while its block's words are on screen: a lower
 /// edge at the top of a window, whose block scrolled off above, and an
 /// upper edge at the bottom, whose block is still below, would otherwise
-/// read as stray bands.
+/// read as stray bands. Half-block edges say which they are by their
+/// glyph; a whole tinted padding line by whether its neighbour inside the
+/// window is part of the same block.
 pub(crate) fn drop_cut_padding(lines: &mut [Line<'static>]) {
-    if let Some(first) = lines.first_mut()
-        && is_padding(first, '▀')
-    {
-        *first = Line::default();
+    let len = lines.len();
+    if len == 0 {
+        return;
     }
-    if let Some(last) = lines.last_mut()
-        && is_padding(last, '▄')
-    {
-        *last = Line::default();
+    let cut_top = is_padding(&lines[0], '▀')
+        || (is_tinted_blank(&lines[0]) && lines.get(1).is_none_or(|next| !is_tinted(next)));
+    if cut_top {
+        lines[0] = Line::default();
     }
+    let last = len - 1;
+    let cut_bottom = is_padding(&lines[last], '▄')
+        || (last > 0 && is_tinted_blank(&lines[last]) && !is_tinted(&lines[last - 1]));
+    if cut_bottom {
+        lines[last] = Line::default();
+    }
+}
+
+/// `over` laid on top of `under` from column `at`: what `under` holds
+/// left and right of it stays, cut at cell boundaries.
+pub(crate) fn overlay(
+    under: &Line<'static>,
+    at: usize,
+    over: Line<'static>,
+    width: usize,
+) -> Line<'static> {
+    let over_width = line_width(&over);
+    let mut out = Line::default();
+    let mut out_col = 0usize;
+    let mut under_col = 0usize;
+    let mut placed = false;
+    let place = |out: &mut Line<'static>, out_col: &mut usize| {
+        if *out_col < at {
+            out.spans.push(Span::raw(" ".repeat(at - *out_col)));
+        }
+        out.spans.extend(over.spans.iter().cloned());
+        *out_col = at + over_width;
+    };
+    for span in &under.spans {
+        for c in span.content.chars() {
+            let w = str_width(c.encode_utf8(&mut [0; 4]));
+            let start = under_col;
+            let end = start + w;
+            under_col = end;
+            if end <= at {
+                out.spans.push(Span::styled(c.to_string(), span.style));
+                out_col = end;
+            } else if start >= at + over_width {
+                if !placed {
+                    place(&mut out, &mut out_col);
+                    placed = true;
+                }
+                if out_col < start {
+                    out.spans.push(Span::raw(" ".repeat(start - out_col)));
+                }
+                out.spans.push(Span::styled(c.to_string(), span.style));
+                out_col = end;
+            } else if !placed {
+                place(&mut out, &mut out_col);
+                placed = true;
+            }
+        }
+    }
+    if !placed && at < width {
+        place(&mut out, &mut out_col);
+    }
+    out
 }
 
 /// Puts `text` at the right edge when it fits after what the line holds,

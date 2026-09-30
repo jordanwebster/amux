@@ -22,6 +22,7 @@ pub mod theme;
 pub mod variant;
 #[cfg(feature = "fixtures")]
 pub mod vocabulary;
+pub mod wheel;
 
 #[cfg(test)]
 mod fixtures;
