@@ -109,6 +109,13 @@ pub struct AskUi {
     /// Whether the person has the ask's keys, or has handed them to the
     /// composer for a moment to keep drafting.
     pub drafting: bool,
+    /// The boxed ask's command or arguments shown whole.
+    show_all: bool,
+    /// The choice last sent, for the line the box shows until the agent
+    /// confirms it.
+    sent: Option<usize>,
+    /// The boxed ask's deny note is open for typing.
+    noting: bool,
 }
 
 fn scope_words(scope: &Scope) -> String {
@@ -1289,4 +1296,507 @@ impl AskUi {
         }
         cursor
     }
+}
+
+/// Lines of a command or arguments shown before "… [Show all]".
+const SUBJECT_LINES: usize = 6;
+/// Diff lines shown before "[Full diff]".
+const DIFF_LINES: usize = 7;
+
+/// What a click in the boxed ask reaches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoxSpot {
+    /// A choice, by its place in the box's list.
+    Choice(usize),
+    ShowAll,
+    FullDiff,
+}
+
+/// A place in the boxed ask a click reaches: its line, columns and what.
+pub type Spot = (usize, (usize, usize), BoxSpot);
+
+/// The boxed ask drawn: its lines inside the box, where the cursor sits
+/// when the deny note has it, and what clicks reach.
+pub struct BoxLines {
+    pub lines: Vec<Line<'static>>,
+    pub cursor: Option<(usize, usize)>,
+    pub spots: Vec<Spot>,
+}
+
+/// Whether the redesigned chat draws `card` in the composer's box: the
+/// permission kinds, from the moment they open until the agent confirms
+/// the answer. Other kinds keep their card.
+pub fn boxed(card: &AskCard) -> bool {
+    matches!(
+        card.body,
+        AskBody::Command { .. } | AskBody::Edit { .. } | AskBody::Tool { .. }
+    ) && !matches!(card.state, CardState::Dismissed)
+}
+
+/// The box's choices, as indices into the card's: the ways to allow in the
+/// agent's order, then the one way to refuse, last. Stopping is Ctrl+X's,
+/// so "deny and stop" is not offered where denying lets the agent carry on.
+fn box_choices(card: &AskCard) -> Vec<usize> {
+    let mut list = Vec::new();
+    let mut deny = None;
+    for (i, choice) in card.choices.iter().enumerate() {
+        match choice.outcome {
+            ChoiceOutcome::Deny { .. } => {
+                deny.get_or_insert(i);
+            }
+            ChoiceOutcome::DenyAndStop => {}
+            _ => list.push(i),
+        }
+    }
+    list.extend(deny);
+    list
+}
+
+/// A choice in the box, worded as what happens: "Yes", "Yes, and always
+/// allow cargo test in this project", "No, and stop".
+fn box_label(choice: &Choice) -> String {
+    match &choice.outcome {
+        ChoiceOutcome::AllowOnce => "Yes".to_owned(),
+        ChoiceOutcome::AllowForSession => "Yes, and don't ask again this session".to_owned(),
+        ChoiceOutcome::AllowAlways { mode, .. } if !mode.is_empty() => format!(
+            "Yes, and switch to {}",
+            crate::words::mode_name(&ui_view::ModeValue::Claude(mode.clone())).to_lowercase()
+        ),
+        ChoiceOutcome::Deny { stops: true } | ChoiceOutcome::DenyAndStop => {
+            "No, and stop".to_owned()
+        }
+        ChoiceOutcome::Deny { stops: false } => "No".to_owned(),
+        _ => {
+            let words = choice_label(choice);
+            let mut chars = words.chars();
+            let first = chars
+                .next()
+                .map(|c| c.to_lowercase().to_string())
+                .unwrap_or_default();
+            format!("Yes, and {first}{}", chars.as_str())
+        }
+    }
+}
+
+/// "cargo test -p ui-runtime…": the subject short enough for one line.
+fn short_subject(card: &AskCard) -> String {
+    let subject = match &card.body {
+        AskBody::Command { command, .. } => text::first_line(command).to_owned(),
+        AskBody::Edit { path, .. } => path.clone(),
+        AskBody::Tool { server, tool, .. } => format!("{server} {tool}").trim().to_owned(),
+        _ => String::new(),
+    };
+    text::ellipsize(&subject, 48)
+}
+
+/// The step's asking verb.
+fn asking_verb(card: &AskCard) -> &'static str {
+    match &card.body {
+        AskBody::Command { .. } => "Wants to run",
+        AskBody::Edit { created: true, .. } => "Wants to create",
+        AskBody::Edit { .. } => "Wants to edit",
+        _ => "Wants to use",
+    }
+}
+
+impl AskUi {
+    /// Whether the boxed ask's note holds something, for Ctrl+C.
+    pub fn box_note_text(&self, card: &AskCard) -> bool {
+        self.in_box_note(card) && !self.note.is_empty()
+    }
+
+    /// Clears the boxed ask's note, as a kill.
+    pub fn kill_box_note(&mut self) -> bool {
+        self.note.kill_all()
+    }
+
+    /// A paste into the boxed ask's note, when it has the keys.
+    pub fn paste_box_note(&mut self, card: &AskCard, text: &str) {
+        if self.in_box_note(card) {
+            self.note.insert_str(text);
+        }
+    }
+
+    /// Whether the highlight is on a refusal that can carry a note.
+    pub fn on_noted_deny(&self, card: &AskCard) -> bool {
+        let list = box_choices(card);
+        list.len().checked_sub(1) == Some(self.selected)
+            && list
+                .last()
+                .and_then(|i| card.choices.get(*i))
+                .is_some_and(|choice| {
+                    matches!(choice.outcome, ChoiceOutcome::Deny { .. }) && choice.takes_note
+                })
+    }
+
+    /// Whether the deny note is open, with the keys.
+    fn box_note(&self, card: &AskCard) -> bool {
+        self.noting && self.on_noted_deny(card)
+    }
+
+    /// Whether the boxed ask's deny note has the keys.
+    pub fn in_box_note(&self, card: &AskCard) -> bool {
+        matches!(card.state, CardState::Open | CardState::Rejected(_)) && self.box_note(card)
+    }
+
+    /// The whole diff, for the reader.
+    fn full_diff(card: &AskCard) -> AskAction {
+        Self::reader(card).unwrap_or(AskAction::None)
+    }
+
+    /// Sends the box's choice at `at`, the deny with its note.
+    fn box_send(&mut self, card: &AskCard, at: usize) -> AskAction {
+        let Some(&index) = box_choices(card).get(at) else {
+            return AskAction::None;
+        };
+        let choice = &card.choices[index];
+        let note = if choice.takes_note {
+            self.note.text().trim().to_owned()
+        } else {
+            String::new()
+        };
+        match answer_input(card, &choice.answer, &note) {
+            Some(input) => {
+                self.sent = Some(index);
+                AskAction::Answer(Box::new(input))
+            }
+            None => AskAction::None,
+        }
+    }
+
+    /// One key on a boxed ask. ↑/↓ and j/k move, 1–9 answer at once,
+    /// Enter answers with the highlighted choice. On a refusal that can
+    /// carry a note, Tab opens the note; in it, Enter sends and Esc clears
+    /// it and closes it. Esc at the list does nothing. Ctrl+X is the chat's.
+    pub fn box_key(&mut self, card: &AskCard, key: KeyEvent) -> AskAction {
+        match card.state {
+            CardState::Open | CardState::Rejected(_) => {}
+            _ => return self.key(card, key, false),
+        }
+        let count = box_choices(card).len();
+        if self.box_note(card) {
+            match key.code {
+                KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    return self.box_send(card, self.selected);
+                }
+                KeyCode::Esc => {
+                    self.note = Editor::default();
+                    self.noting = false;
+                }
+                _ => {
+                    self.note.key(key);
+                }
+            }
+            return AskAction::None;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.selected = (self.selected + 1).min(count.saturating_sub(1))
+            }
+            KeyCode::Char(c @ '1'..='9') => {
+                let at = c as usize - '1' as usize;
+                if at < count {
+                    self.selected = at;
+                    return self.box_send(card, at);
+                }
+            }
+            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                return self.box_send(card, self.selected);
+            }
+            KeyCode::Tab if self.on_noted_deny(card) => self.noting = true,
+            KeyCode::Char('f') => match card.body {
+                AskBody::Edit { .. } => return Self::full_diff(card),
+                _ => self.show_all = !self.show_all,
+            },
+            _ => {}
+        }
+        AskAction::None
+    }
+
+    /// A click on a boxed ask.
+    pub fn box_click(&mut self, card: &AskCard, spot: BoxSpot) -> AskAction {
+        if !matches!(card.state, CardState::Open | CardState::Rejected(_)) {
+            return AskAction::None;
+        }
+        match spot {
+            BoxSpot::Choice(at) => {
+                self.selected = at;
+                self.box_send(card, at)
+            }
+            BoxSpot::ShowAll => {
+                self.show_all = !self.show_all;
+                AskAction::None
+            }
+            BoxSpot::FullDiff => Self::full_diff(card),
+        }
+    }
+
+    /// The boxed ask's lines, `width` columns wide: what it wants, the
+    /// subject verbatim, the agent's reason, then the choices.
+    pub fn box_lines(&self, card: &AskCard, width: usize, theme: Theme) -> BoxLines {
+        let mut out = BoxLines {
+            lines: Vec::new(),
+            cursor: None,
+            spots: Vec::new(),
+        };
+        let line = |words: String, style: Style| {
+            let mut line = Line::default();
+            push(&mut line, words, style, width);
+            line
+        };
+        match &card.state {
+            // Answered: one line until the agent confirms.
+            CardState::Sending => {
+                let chose = self
+                    .sent
+                    .and_then(|i| card.choices.get(i))
+                    .map(|choice| &choice.outcome);
+                let words = match chose {
+                    Some(ChoiceOutcome::Deny { .. } | ChoiceOutcome::DenyAndStop) => {
+                        "Denying…".to_owned()
+                    }
+                    _ => format!("Allowing {}…", short_subject(card)),
+                };
+                out.lines.push(line(words, theme.faint()));
+                return out;
+            }
+            CardState::NotConfirmed => {
+                out.lines.push(line(
+                    "Your answer was not confirmed: the connection dropped before the agent replied."
+                        .into(),
+                    theme.warn(),
+                ));
+                out.lines
+                    .push(line("r resend · d discard".into(), theme.faint()));
+                return out;
+            }
+            _ => {}
+        }
+        let mut head = Line::from(Span::styled("● ", theme.accent()));
+        push(&mut head, asking_verb(card), theme.text(), width);
+        if card.count > 1 {
+            push_right(
+                &mut head,
+                &format!("{} of {}", card.position, card.count),
+                theme.faint(),
+                width,
+            );
+        }
+        out.lines.push(head);
+        if let CardState::Rejected(reason) = &card.state {
+            out.lines
+                .push(line(format!("Not sent: {reason}"), theme.error()));
+        }
+
+        // The subject, verbatim in the code colour: never cut short
+        // without saying so.
+        let capped = |out: &mut BoxLines, words: &str, show_all: bool| {
+            let wrapped: Vec<String> = words
+                .lines()
+                .flat_map(|l| text::wrap(l, width.max(1)))
+                .collect();
+            let cut = !show_all && wrapped.len() > SUBJECT_LINES;
+            let take = if cut {
+                SUBJECT_LINES - 1
+            } else {
+                wrapped.len()
+            };
+            for part in wrapped.iter().take(take) {
+                out.lines.push(line(part.clone(), theme.code()));
+            }
+            if cut {
+                let mut more = Line::default();
+                let hidden = wrapped.len() - take;
+                let s = if hidden == 1 { "" } else { "s" };
+                push(
+                    &mut more,
+                    format!("… {hidden} more line{s} "),
+                    theme.faint(),
+                    width,
+                );
+                let from = text::line_width(&more);
+                push(&mut more, "[Show all]", theme.muted(), width);
+                out.spots
+                    .push((out.lines.len(), (from, from + 10), BoxSpot::ShowAll));
+                out.lines.push(more);
+            }
+        };
+        let reason = match &card.body {
+            AskBody::Command {
+                command,
+                reason,
+                description,
+                ..
+            } => {
+                capped(&mut out, command, self.show_all);
+                if reason.is_empty() {
+                    description.clone()
+                } else {
+                    reason.clone()
+                }
+            }
+            AskBody::Tool {
+                server,
+                tool,
+                arguments,
+            } => {
+                let mut name = Line::default();
+                if !server.is_empty() {
+                    push(&mut name, format!("{server} "), theme.code(), width);
+                }
+                push(&mut name, tool.clone(), theme.code(), width);
+                out.lines.push(name);
+                if !arguments.is_empty() {
+                    capped(&mut out, arguments, self.show_all);
+                }
+                String::new()
+            }
+            AskBody::Edit {
+                path,
+                files,
+                diff,
+                reason,
+                ..
+            } => {
+                // The path and where in the file, then why, then the patch.
+                let mut name = Line::default();
+                push(&mut name, path.clone(), theme.code(), width);
+                if *files > 1 {
+                    push(
+                        &mut name,
+                        format!(" and {} more files", files - 1),
+                        theme.faint(),
+                        width,
+                    );
+                }
+                if let Some(line) = first_hunk_line(diff) {
+                    push(&mut name, format!(" · line {line}"), theme.faint(), width);
+                }
+                out.lines.push(name);
+                for part in text::wrap(reason, width.max(1)) {
+                    out.lines.push(line(part, theme.faint()));
+                }
+                // The patch's first lines as the review page draws them.
+                let lines: Vec<&str> = diff
+                    .lines()
+                    .filter(|l| {
+                        !l.starts_with("@@") && !l.starts_with("---") && !l.starts_with("+++")
+                    })
+                    .collect();
+                let cut = lines.len() > DIFF_LINES;
+                let take = if cut { DIFF_LINES - 1 } else { lines.len() };
+                for l in lines.iter().take(take) {
+                    let (mark, style) = match l.chars().next() {
+                        Some('+') => ('+', theme.diff_added()),
+                        Some('-') => ('-', theme.diff_removed()),
+                        _ => (' ', theme.diff_context()),
+                    };
+                    let body = l.get(1..).unwrap_or_default();
+                    let mut row = Line::default();
+                    push(
+                        &mut row,
+                        format!("{mark} {}", text::ellipsize(body, width.saturating_sub(2))),
+                        style,
+                        width,
+                    );
+                    text::fill(&mut row, style, width);
+                    out.lines.push(row);
+                }
+                if cut {
+                    let hidden = lines.len() - take;
+                    let s = if hidden == 1 { "" } else { "s" };
+                    let mut more = Line::default();
+                    push(
+                        &mut more,
+                        format!("… {hidden} more line{s} "),
+                        theme.faint(),
+                        width,
+                    );
+                    let from = text::line_width(&more);
+                    push(&mut more, "[Full diff]", theme.muted(), width);
+                    out.spots
+                        .push((out.lines.len(), (from, from + 11), BoxSpot::FullDiff));
+                    out.lines.push(more);
+                }
+                String::new()
+            }
+            _ => String::new(),
+        };
+        if !reason.is_empty() {
+            for part in text::wrap(&reason, width.max(1)) {
+                out.lines.push(line(part, theme.faint()));
+            }
+        }
+        out.lines.push(Line::default());
+
+        // The choices, numbered, the highlighted one bright. The refusal is
+        // last, and where it can carry a note its line is the note's field.
+        let list = box_choices(card);
+        for (at, index) in list.iter().enumerate() {
+            let choice = &card.choices[*index];
+            let lit = at == self.selected;
+            let ink = if lit { theme.bright() } else { theme.text() };
+            let mut row = Line::default();
+            push(
+                &mut row,
+                if lit { "› " } else { "  " },
+                theme.accent(),
+                width,
+            );
+            push(&mut row, format!("{}. ", at + 1), ink, width);
+            let deny = matches!(choice.outcome, ChoiceOutcome::Deny { .. });
+            let said = box_label(choice);
+            let typed = self.note.text();
+            if deny && choice.takes_note && (self.noting || !typed.is_empty()) {
+                // "No: <note>", the note as typed.
+                push(&mut row, format!("{said}: "), ink, width);
+                let at_col = text::line_width(&row);
+                let shown = text_tail(typed, width.saturating_sub(at_col + 1));
+                push(&mut row, shown.clone(), ink, width);
+                if lit && self.noting {
+                    out.cursor = Some((out.lines.len(), at_col + text::str_width(&shown)));
+                }
+            } else {
+                push(&mut row, said, ink, width);
+                if deny && choice.takes_note {
+                    push(&mut row, " · tab to add a note", theme.faint(), width);
+                }
+            }
+            out.spots
+                .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
+            out.lines.push(row);
+        }
+        out
+    }
+}
+
+/// The new file's first line a patch touches: "@@ -10,3 +12,4 @@" is 12.
+fn first_hunk_line(diff: &str) -> Option<u32> {
+    let header = diff.lines().find(|line| line.starts_with("@@"))?;
+    let new = header
+        .split_whitespace()
+        .find(|part| part.starts_with('+'))?;
+    new[1..].split(',').next()?.parse().ok()
+}
+
+/// The end of `words` in at most `max` columns, "…" where it is cut.
+fn text_tail(words: &str, max: usize) -> String {
+    if text::str_width(words) <= max {
+        return words.to_owned();
+    }
+    let keep = max.saturating_sub(1);
+    let chars: Vec<char> = words.chars().collect();
+    let mut out: Vec<char> = Vec::new();
+    let mut used = 0;
+    for c in chars.iter().rev() {
+        let w = text::str_width(c.encode_utf8(&mut [0; 4]));
+        if used + w > keep {
+            break;
+        }
+        used += w;
+        out.push(*c);
+    }
+    out.reverse();
+    format!("…{}", out.into_iter().collect::<String>())
 }

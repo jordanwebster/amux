@@ -30,13 +30,18 @@ pub struct Request<'a> {
     pub variant: u8,
     /// A client layout file to start from, as a relaunch would.
     pub layout: Option<std::path::PathBuf>,
+    /// The agent whose chat to open, instead of the scenario's.
+    pub open: Option<String>,
 }
 
 pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
     let place = Place {
         scenario: request.scenario.name.clone(),
         fired: request.step,
-        open: request.scenario.open.clone(),
+        open: request
+            .open
+            .clone()
+            .or_else(|| request.scenario.open.clone()),
         variant: request.variant,
         ..Place::default()
     };

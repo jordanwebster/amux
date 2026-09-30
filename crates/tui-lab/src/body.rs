@@ -153,6 +153,11 @@ pub fn codex_work(tool: &ToolCall) -> Work {
 
 /// A one-hunk unified diff replacing `old` with `new`.
 pub fn unified(path: &str, old: &str, new: &str) -> String {
+    unified_at(path, old, new, 1)
+}
+
+/// [`unified`] with its one hunk starting at `line`.
+pub fn unified_at(path: &str, old: &str, new: &str, line: u64) -> String {
     let old: Vec<&str> = if old.is_empty() {
         Vec::new()
     } else {
@@ -160,7 +165,7 @@ pub fn unified(path: &str, old: &str, new: &str) -> String {
     };
     let new: Vec<&str> = new.lines().collect();
     let mut out = format!(
-        "--- a/{path}\n+++ b/{path}\n@@ -1,{} +1,{} @@\n",
+        "--- a/{path}\n+++ b/{path}\n@@ -{line},{} +{line},{} @@\n",
         old.len(),
         new.len()
     );

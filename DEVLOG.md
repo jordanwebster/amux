@@ -1,3 +1,19 @@
+2026-10-01 — **Permission asks take over the composer's box.** In the
+redesigned chat, a request to run a command, edit or create a file, or use a
+tool-server tool replaces the composer with the same box, bordered in the
+accent, keeping the draft behind it. The box reads "● Wants to run / edit /
+create / use", the subject verbatim in the code colour (a command wraps and
+cuts past six lines to "… N more lines [Show all]"; an edit gives its path
+and first hunk's line, the agent's reason, then its diff in the theme's diff
+tints, cut to "… N more lines [Full diff]"), and numbered choices worded as
+outcomes. "No" is always last and answers at once; Tab adds a note to it
+where the agent accepts one ("No: …"), Esc clears the note. Stopping is only
+`ctrl+x`, so the separate "Deny and stop" and "Stop the turn" choices are
+gone. While the box shows the ask the chat leaves out the waiting step, and
+once answered the step carries the decision ("Ran … · allowed", "Denied …"
+with the note beneath). Model ids without a display name are tidied into
+names ("GPT-5 Codex"). The lab gains a markdown scenario and `--open`.
+
 2026-09-30 — **Model and mode words live in the TUI, not the shared views.**
 The helpers that read a model as "Opus" and a mode as "Accept edits" had been
 added to ui-view, but the views carry facts and each client words them (the

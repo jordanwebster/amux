@@ -61,6 +61,58 @@ agents:
             tool: Bash
             input: { command: "git log --oneline v0.5.0..HEAD" }
             reason: Lists commits since the last tag.
+  - id: long-command
+    name: flood bench
+    kind: claude_sdk
+    ago: 1m
+    transcript:
+      - user: Measure the phone's memory under a screenshot flood, before and after the cap.
+      - say: I'll build both revisions and run the flood against each.
+      - ask:
+          permission:
+            tool: Bash
+            input:
+              command: |
+                set -euo pipefail
+                for rev in main blob-cap; do
+                  git worktree add "/tmp/flood-$rev" "$rev"
+                  (cd "/tmp/flood-$rev" && cargo build --release -p amux -p testnet)
+                  "/tmp/flood-$rev/target/release/testnet" serve --topology phone+laptop &
+                  server=$!
+                  scripts/flood --screenshots 600 --report "/tmp/flood-$rev.json"
+                  kill "$server"
+                  git worktree remove --force "/tmp/flood-$rev"
+                done
+                jq -s '.[0].peak_mib, .[1].peak_mib' /tmp/flood-main.json /tmp/flood-blob-cap.json
+            reason: Builds both revisions and compares their peak memory under the same flood.
+  - id: long-edit
+    name: reconnect backoff
+    kind: codex
+    ago: 2m
+    transcript:
+      - user: Make the reconnect backoff jittered and capped.
+      - say: I'll replace the fixed doubling with capped, jittered backoff.
+      - ask:
+          permission:
+            tool: Edit
+            input:
+              file_path: crates/ui-runtime/src/pump.rs
+              line: 142
+              old_string: |
+                let delay = self.delay;
+                self.delay = (self.delay * 2).min(RECONNECT_MAX);
+              new_string: |
+                // Full jitter: a random delay up to the capped exponential, so
+                // many clients reconnecting after an outage spread out instead
+                // of arriving together.
+                let ceiling = RECONNECT_FIRST
+                    .saturating_mul(1 << self.attempt.min(16))
+                    .min(RECONNECT_MAX);
+                let delay = rand::random_range(Duration::ZERO..=ceiling);
+                self.attempt += 1;
+                tracing::debug!(attempt = self.attempt, ?delay, "reconnect backoff");
+                delay
+            reason: Replaces the fixed doubling with capped full-jitter backoff.
   - id: question
     name: attach redesign
     kind: claude_sdk

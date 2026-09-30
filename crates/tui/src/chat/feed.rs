@@ -14,12 +14,13 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_state::Key;
 use ui_view::{
-    FileChangeView, Row, RowKind, RunInfo, Segment, Stretch, StretchCounts, ToolStateView,
+    DecisionView, FileChangeView, Row, RowKind, RunInfo, Segment, Stretch, StretchCounts,
+    ToolStateView,
 };
 
 use super::rows::{
     RowFacts, call_verb, chip, detail, explore_verb, markdown, patch_lines, segment_lines,
-    state_meta, tail, with_decision_after,
+    state_meta, tail,
 };
 use crate::text::{self, first_line, pad_to, push, push_right};
 use crate::theme::Theme;
@@ -414,10 +415,11 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
                 (None, ToolStateView::Failed) => meta.push("failed".into()),
                 _ => {}
             }
-            if let Some(ms) = duration_ms {
-                meta.push(text::duration(*ms));
+            // A denied call never ran, so it took no time.
+            if let Some(ms) = duration_ms.filter(|_| verb != "Denied") {
+                meta.push(text::duration(ms));
             }
-            let meta = with_decision_after(meta.join(" · "), row, verb);
+            let meta = decided(meta.join(" · "), row, verb);
             (verb.to_owned(), first_line(command).to_owned(), meta)
         }
         RowKind::Explore {
@@ -428,8 +430,7 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
             if let Some(run) = row.run.as_ref().filter(|run| run.is_summary && !open) {
                 return (run_words(run), String::new(), String::new());
             }
-            let meta =
-                with_decision_after(state_meta(*state).unwrap_or_default().to_owned(), row, "");
+            let meta = decided(state_meta(*state).unwrap_or_default().to_owned(), row, "");
             (explore_verb(*verb).to_owned(), subject.clone(), meta)
         }
         RowKind::ToolCall {
@@ -455,7 +456,7 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
                     format!("{meta} · failed")
                 };
             }
-            let meta = with_decision_after(meta, row, verb);
+            let meta = decided(meta, row, verb);
             (verb.to_owned(), subject, meta)
         }
         RowKind::FileChange { files, state } => {
@@ -477,11 +478,7 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
                     FileChangeView::Deleted => String::new(),
                 })
                 .unwrap_or_default();
-            (
-                verb.to_owned(),
-                subject,
-                with_decision_after(meta, row, verb),
-            )
+            (verb.to_owned(), subject, decided(meta, row, verb))
         }
         RowKind::Subagent {
             description,
@@ -543,6 +540,33 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
         }
         _ => (String::new(), String::new(), String::new()),
     }
+}
+
+/// The step's facts with how the person answered its ask after them:
+/// "allowed", "always allowed" when the answer made a rule, "denied"
+/// unless the verb already says so. A refusal's note goes on its own line,
+/// not here.
+fn decided(meta: String, row: &Row, verb: &str) -> String {
+    let Some(decision) = &row.decision else {
+        return meta;
+    };
+    let mut parts: Vec<String> = meta
+        .split(" · ")
+        .filter(|part| !part.is_empty() && !matches!(*part, "denied" | "cancelled" | "waiting"))
+        .map(str::to_owned)
+        .collect();
+    match decision.outcome {
+        DecisionView::Allowed if decision.scope.is_some() => parts.push("always allowed".into()),
+        DecisionView::Allowed => parts.push("allowed".into()),
+        DecisionView::AutoApproved => parts.push("auto-approved".into()),
+        DecisionView::Denied if verb == "Denied" => {}
+        DecisionView::Denied => parts.push("denied".into()),
+        DecisionView::Dismissed => parts.push("dismissed".into()),
+    }
+    if decision.elsewhere {
+        parts.push("in the terminal".into());
+    }
+    parts.join(" · ")
 }
 
 /// "Read 4 files · searched 2".
@@ -670,6 +694,25 @@ fn step(
     let hits = vec![(None, FeedHit::Step(row.id.clone()))];
     drawn.lines.push(line);
     drawn.hits.push(hits);
+    // A refusal's note, what the person told the agent instead, under it.
+    if let Some(note) = row
+        .decision
+        .as_ref()
+        .filter(|decision| decision.outcome == DecisionView::Denied)
+        .and_then(|decision| decision.note.as_ref())
+    {
+        let mut said = Line::default();
+        pad_to(&mut said, EDGE);
+        push(&mut said, "│", theme.hairline(), width);
+        pad_to(&mut said, WORDS);
+        push(
+            &mut said,
+            format!("\u{201c}{}\u{201d}", first_line(note)),
+            theme.faint(),
+            width,
+        );
+        drawn.hit_line(said, FeedHit::Step(row.id.clone()));
+    }
     // A multi-file change names each further file on its own line.
     if let RowKind::FileChange { files, .. } = &row.kind {
         for file in files.iter().skip(1) {

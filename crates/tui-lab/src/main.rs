@@ -73,6 +73,9 @@ enum Command {
         /// A client layout file to start from, as after a relaunch.
         #[arg(long)]
         layout: Option<PathBuf>,
+        /// The agent whose chat to open, instead of the scenario's.
+        #[arg(long)]
+        open: Option<String>,
     },
 }
 
@@ -228,6 +231,7 @@ async fn main() -> Result<()> {
             theme: theme_arg,
             variant,
             layout,
+            open,
         } => {
             let loaded = scenario::load(&scenario)?;
             let sizes = sizes
@@ -243,6 +247,7 @@ async fn main() -> Result<()> {
                 theme: theme(theme_arg, ColorMode::TrueColor),
                 variant,
                 layout,
+                open,
             })
             .await?;
             for stem in written {
@@ -269,6 +274,7 @@ mod tests {
             theme: Theme::dark(ColorMode::TrueColor),
             variant: 0,
             layout: None,
+            open: None,
         })
         .await
         .unwrap();

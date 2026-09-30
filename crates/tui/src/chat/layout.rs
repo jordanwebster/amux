@@ -113,6 +113,9 @@ pub struct Frame<'a> {
     /// Stretches the reader opened, by their oldest step.
     pub stretches: &'a HashSet<Key>,
     pub cache: &'a StretchCache,
+    /// The step an ask in the composer's box points at: the box shows it,
+    /// so the feed does not draw it twice.
+    pub asking: Option<&'a Key>,
 }
 
 impl Frame<'_> {
@@ -282,9 +285,24 @@ impl Frame<'_> {
         };
         let transcript = state.transcript();
         let held = transcript.at(order)?;
+        if self.asking == Some(&held.item.key) {
+            return None;
+        }
         let (placement, row, toggle) = match self.stretch(state, order) {
             Some((stretch, steps)) => {
                 let is_step = steps.binary_search(&order).is_ok();
+                // The stretch's last step drawn: its newest, unless that is
+                // the one the composer's box is asking about.
+                let newest = steps
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|step| {
+                        transcript
+                            .at(*step)
+                            .is_none_or(|held| self.asking != Some(&held.item.key))
+                    })
+                    .unwrap_or(stretch.newest_order);
                 let open = self.stretches.contains(&stretch.oldest);
                 if open {
                     if !is_step {
@@ -304,7 +322,7 @@ impl Frame<'_> {
                             open: true,
                             earlier: 0,
                         }),
-                        joined: order != stretch.newest_order,
+                        joined: order != newest,
                         // Opened while under way, the step running now is
                         // still the bright one, as it is folded.
                         current: !stretch.closed
@@ -332,7 +350,7 @@ impl Frame<'_> {
                             open: false,
                             earlier: shown_from,
                         }),
-                        joined: order != stretch.newest_order,
+                        joined: order != newest,
                         current: order == stretch.newest_order && stretch.running,
                     };
                     let toggle = Toggle::Step(row.id.clone());

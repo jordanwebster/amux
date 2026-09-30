@@ -967,6 +967,10 @@ impl World {
                 } else {
                     ToolState::Denied
                 } as i32;
+                // A denied call never ran, so it has no exit.
+                if !allowed {
+                    tool.exit_code = None;
+                }
                 tool.decision = Some(ToolDecision {
                     outcome: if allowed {
                         wire::DecisionOutcome::Allowed
@@ -1852,9 +1856,18 @@ fn open_ask(sim: &mut Sim, ask: AskSpec, rest: Vec<Entry>, at: i64) {
                         reason: p.reason.clone(),
                         grant_root: String::new(),
                         changes: vec![wire::FileChange {
-                            patch: body::unified(&path, &field("old_string"), &new),
+                            patch: body::unified_at(
+                                &path,
+                                &field("old_string"),
+                                &new,
+                                p.input.get("line").and_then(Value::as_u64).unwrap_or(1),
+                            ),
                             path,
-                            kind: wire::FileChangeKind::Update as i32,
+                            kind: if p.tool == "Write" {
+                                wire::FileChangeKind::Add
+                            } else {
+                                wire::FileChangeKind::Update
+                            } as i32,
                             move_to: String::new(),
                         }],
                     })

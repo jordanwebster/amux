@@ -227,6 +227,10 @@ pub struct ChatView {
     pane_spots: Vec<(u16, (u16, u16), pane::PaneHit)>,
     /// The row above the composer, which opens the pane.
     row_spot: Option<(u16, (u16, u16))>,
+    /// A boxed ask's choices and controls.
+    ask_spots: Vec<(u16, (u16, u16), ask::BoxSpot)>,
+    /// The step the boxed ask points at, which the feed leaves out.
+    asking: Option<Key>,
     /// The jump-to-bottom control.
     jump_spot: Option<(u16, (u16, u16))>,
     /// The mode on the composer's edge.
@@ -287,6 +291,8 @@ impl ChatView {
             revealed: false,
             pane_spots: Vec::new(),
             row_spot: None,
+            ask_spots: Vec::new(),
+            asking: None,
             jump_spot: None,
             mode_spot: None,
             composer_spot: None,
@@ -314,6 +320,7 @@ impl ChatView {
             redesigned: self.redesigned(),
             stretches: &self.stretches,
             cache: &self.stretch_cache,
+            asking: self.asking.as_ref(),
         }
     }
 
@@ -348,6 +355,9 @@ impl ChatView {
             return false;
         }
         if let Some(card) = self.card_takes_keys(state) {
+            if self.redesigned() && ask::boxed(&card) {
+                return self.ask.box_note_text(&card);
+            }
             return self.ask.field_text(&card);
         }
         self.tray.is_none() && !self.editor.is_empty()
@@ -372,6 +382,9 @@ impl ChatView {
             return self.review.as_mut().is_some_and(ReviewPage::kill_field);
         }
         if let Some(card) = self.card_takes_keys(state) {
+            if self.redesigned() && ask::boxed(&card) {
+                return self.ask.in_box_note(&card) && self.ask.kill_box_note();
+            }
             return self.ask.editing_on(&card) && self.ask.kill_field();
         }
         self.tray.is_none() && self.editor.kill_all()
@@ -391,7 +404,11 @@ impl ChatView {
         }
         if let Some(card) = self.card_takes_keys(state) {
             self.ask.sync(&card);
-            self.ask.paste(&card, text);
+            if self.redesigned() && ask::boxed(&card) {
+                self.ask.paste_box_note(&card, text);
+            } else {
+                self.ask.paste(&card, text);
+            }
             return;
         }
         if self.tray.is_none() {
@@ -477,44 +494,67 @@ impl ChatView {
         }
         if let Some(card) = self.card_takes_keys(state) {
             self.ask.sync(&card);
+            // The permission kinds take over the composer's box, and Esc
+            // there never leaves the ask.
+            if self.redesigned() && ask::boxed(&card) {
+                let action = self.ask.box_key(&card, key);
+                return self.ask_effects(state, &card, action);
+            }
             if key.code == KeyCode::Esc && !self.ask.takes_escape(&card) {
                 self.escape();
                 return vec![];
             }
-            return match self.ask.key(&card, key, self.attach) {
-                AskAction::None => vec![],
-                AskAction::Attach => vec![ChatEffect::RawAttach],
-                AskAction::Answer(input) => vec![ChatEffect::Answer(*input)],
-                AskAction::Interrupt => vec![ChatEffect::Interrupt],
-                AskAction::Resend => state
-                    .answering(&card.key)
-                    .map(|sent| {
-                        vec![ChatEffect::Resend {
-                            id: sent.id.clone(),
-                        }]
-                    })
-                    .unwrap_or_default(),
-                AskAction::Discard => state
-                    .answering(&card.key)
-                    .map(|sent| {
-                        vec![ChatEffect::Discard {
-                            id: sent.id.clone(),
-                        }]
-                    })
-                    .unwrap_or_default(),
-                AskAction::Read { title, text } => {
-                    self.reader = Some(Reader {
-                        title,
-                        text,
-                        scroll: 0,
-                    });
-                    vec![]
-                }
-            };
+            let action = self.ask.key(&card, key, self.attach);
+            return self.ask_effects(state, &card, action);
         }
         if let Some(selected) = self.tray {
             return self.tray_key(state, selected, key);
         }
+        self.composer_key(state, key)
+    }
+
+    /// What the chat does for an action on the ask card.
+    fn ask_effects(
+        &mut self,
+        state: &SessionState,
+        card: &AskCard,
+        action: AskAction,
+    ) -> Vec<ChatEffect> {
+        match action {
+            AskAction::None => vec![],
+            AskAction::Attach => vec![ChatEffect::RawAttach],
+            AskAction::Answer(input) => vec![ChatEffect::Answer(*input)],
+            AskAction::Interrupt => vec![ChatEffect::Interrupt],
+            AskAction::Resend => state
+                .answering(&card.key)
+                .map(|sent| {
+                    vec![ChatEffect::Resend {
+                        id: sent.id.clone(),
+                    }]
+                })
+                .unwrap_or_default(),
+            AskAction::Discard => state
+                .answering(&card.key)
+                .map(|sent| {
+                    vec![ChatEffect::Discard {
+                        id: sent.id.clone(),
+                    }]
+                })
+                .unwrap_or_default(),
+            AskAction::Read { title, text } => {
+                self.reader = Some(Reader {
+                    title,
+                    text,
+                    scroll: 0,
+                });
+                vec![]
+            }
+        }
+    }
+
+    /// A key for the composer, when nothing else takes it.
+    fn composer_key(&mut self, state: &SessionState, key: KeyEvent) -> Vec<ChatEffect> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
                 self.escape();
@@ -858,6 +898,17 @@ impl ChatView {
                 }
                 let (x, y) = (event.column, event.row);
                 let on = |row: u16, (from, to): (u16, u16)| row == y && (from..to).contains(&x);
+                if let Some(spot) = self
+                    .ask_spots
+                    .iter()
+                    .find(|(row, cols, _)| on(*row, *cols))
+                    .map(|(_, _, spot)| *spot)
+                    && let Some(card) = self.card_takes_keys(state)
+                {
+                    self.ask.sync(&card);
+                    let action = self.ask.box_click(&card, spot);
+                    return self.ask_effects(state, &card, action);
+                }
                 if let Some((_, _, hit)) = self
                     .pane_spots
                     .iter()
@@ -1541,6 +1592,10 @@ impl ChatView {
 
         let mut cursor = None;
         let card = self.card(state);
+        self.asking = card
+            .as_ref()
+            .filter(|card| ask::boxed(card))
+            .map(|card| card.item_key.clone());
         // Where the composer's box sits among the bottom lines, once drawn.
         let mut boxed_at: Option<(usize, Boxed)> = None;
         let mut composer_box = |bottom: &mut Vec<Line<'static>>,
@@ -1578,7 +1633,53 @@ impl ChatView {
             None => Ok(Line::default()),
         };
         let mut boxed = false;
+        // A permission ask takes over the composer's box: its edge in the
+        // accent, the draft kept behind it.
+        let mut ask_box: Option<(usize, Vec<ask::Spot>)> = None;
+        let mut ask_mode: Option<(usize, (usize, usize))> = None;
         match &card {
+            Some(card) if ask::boxed(card) => {
+                const MARGIN: usize = 2;
+                let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
+                let drawn = self.ask.box_lines(card, inner, theme);
+                let (lines, mode) = framed(
+                    drawn.lines,
+                    theme.accent(),
+                    &EdgeWords {
+                        model: crate::words::model_words(state),
+                        effort: strip.effort.clone(),
+                        mode: crate::words::mode_words(state),
+                    },
+                    width,
+                    theme,
+                );
+                let at = bottom.len();
+                if let Some((row, col)) = drawn.cursor {
+                    cursor = Some((at + 1 + row, MARGIN + 2 + col));
+                }
+                if let Some(cols) = mode {
+                    ask_mode = Some((at + lines.len() - 1, cols));
+                }
+                ask_box = Some((at, drawn.spots));
+                bottom.extend(lines);
+                boxed = true;
+                if footer.is_none() {
+                    hint = Err(if self.ask.in_box_note(card) {
+                        "enter send · esc clear · ctrl+x stop".to_owned()
+                    } else if !matches!(card.state, CardState::Open | CardState::Rejected(_)) {
+                        format!("ctrl+x stop · ctrl+{} more", self.leader)
+                    } else if self.ask.on_noted_deny(card) {
+                        format!(
+                            "enter choose · tab note · ctrl+x stop · ctrl+{} more",
+                            self.leader
+                        )
+                    } else if matches!(card.state, CardState::Open | CardState::Rejected(_)) {
+                        format!("enter choose · ctrl+x stop · ctrl+{} more", self.leader)
+                    } else {
+                        format!("ctrl+x stop · ctrl+{} more", self.leader)
+                    });
+                }
+            }
             Some(card) => {
                 let lines = self.ask.render(card, &name, self.attach, width, theme);
                 let cap = (usize::from(area.height) / 2).max(4);
@@ -1753,6 +1854,22 @@ impl ChatView {
         self.pane_rect = None;
         self.mode_spot = None;
         self.composer_spot = None;
+        self.ask_spots = match ask_box {
+            Some((at, spots)) => spots
+                .into_iter()
+                .map(|(row, (from, to), spot)| {
+                    (
+                        bottom_y(at + 1 + row),
+                        (area.x + (4 + from) as u16, area.x + (4 + to) as u16),
+                        spot,
+                    )
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        if let Some((row, (from, to))) = ask_mode {
+            self.mode_spot = Some((bottom_y(row), (area.x + from as u16, area.x + to as u16)));
+        }
         if let Some((at, boxed)) = &boxed_at {
             if let Some((from, to)) = boxed.mode {
                 self.mode_spot = Some((
@@ -2203,6 +2320,29 @@ fn boxed_composer(
     } else {
         theme.hairline()
     };
+    let body = body.into_iter().skip(skip).take(COMPOSER_LINES).collect();
+    let (lines, mode) = framed(body, edge, edge_words, width, theme);
+    Boxed {
+        lines,
+        cursor: (1 + row - skip, MARGIN + 2 + col),
+        mode,
+        text_x: MARGIN + 4,
+        skip,
+        wrap: inner,
+    }
+}
+
+/// `body` in the composer's box at the margin, its edge in `edge`, with
+/// the model, effort and mode on the bottom edge. Returns the lines and
+/// the mode's columns on the last line, for clicks.
+fn framed(
+    body: Vec<Line<'static>>,
+    edge: ratatui::style::Style,
+    edge_words: &EdgeWords,
+    width: usize,
+    theme: Theme,
+) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
+    const MARGIN: usize = 2;
     let span = width.saturating_sub(2 * MARGIN + 2);
     let mut out = Vec::new();
     let mut top = Line::from(Span::raw(" ".repeat(MARGIN)));
@@ -2210,7 +2350,7 @@ fn boxed_composer(
     push(&mut top, "─".repeat(span), edge, width);
     push(&mut top, "╮", edge, width);
     out.push(top);
-    for line in body.into_iter().skip(skip).take(COMPOSER_LINES) {
+    for line in body {
         let mut boxed = Line::from(Span::raw(" ".repeat(MARGIN)));
         push(&mut boxed, "│ ", edge, width);
         boxed.spans.extend(line.spans);
@@ -2262,14 +2402,7 @@ fn boxed_composer(
     text::pad_to(&mut bottom, width - MARGIN - 1);
     push(&mut bottom, "╯", edge, width);
     out.push(bottom);
-    Boxed {
-        lines: out,
-        cursor: (1 + row - skip, MARGIN + 2 + col),
-        mode,
-        text_x: MARGIN + 4,
-        skip,
-        wrap: inner,
-    }
+    (out, mode)
 }
 
 /// The keys under the composer, by what is happening, few enough to read
