@@ -20,7 +20,8 @@ use crossterm::event::{
 };
 use crossterm::style::ResetColor;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode,
 };
 
 use crate::theme::TerminalColors;
@@ -63,6 +64,22 @@ pub fn write_enter_chrome(out: &mut impl Write) -> io::Result<()> {
         EnableBracketedPaste,
         EnableMouseCapture
     )
+}
+
+/// Bytes that open one frame: the terminal holds what follows until
+/// [`write_end_frame`] and then shows it whole, and the cursor stays hidden
+/// while the frame's cells are written. Without this a terminal can show a
+/// frame part-drawn, with the cursor caught wherever the last cell went,
+/// which reads as the composer's cursor jumping around the chat while it
+/// scrolls. Terminals without synchronized output ignore the request, and
+/// hiding the cursor still keeps it out of sight there.
+pub fn write_begin_frame(out: &mut impl Write) -> io::Result<()> {
+    crossterm::queue!(out, BeginSynchronizedUpdate, Hide)
+}
+
+/// Bytes that close a frame opened by [`write_begin_frame`].
+pub fn write_end_frame(out: &mut impl Write) -> io::Result<()> {
+    crossterm::execute!(out, EndSynchronizedUpdate)
 }
 
 /// Bytes that restore the terminal from chrome mode. Input modes are

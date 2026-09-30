@@ -100,7 +100,9 @@ async fn session(app: &mut App) -> Result<Leave> {
                 .as_ref()
                 .map(|open| (open.view.agent_id.clone(), open.session.changed()));
         }
+        crate::terminal::write_begin_frame(terminal.backend_mut())?;
         terminal.draw(|frame| app.draw(frame))?;
+        crate::terminal::write_end_frame(terminal.backend_mut())?;
         let tick = app.next_tick();
         let flow = tokio::select! {
             event = events.next() => match event {

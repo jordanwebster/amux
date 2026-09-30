@@ -1,3 +1,9 @@
+2026-10-01 — **Frames draw whole, so the cursor no longer wanders.** Each
+redraw is wrapped in the terminal's synchronized-output markers with the
+cursor hidden until the frame's cells are written. Before, a terminal could
+show a frame part-drawn with the cursor wherever the last cell went, which
+read as the composer's cursor jumping around the chat while scrolling fast.
+
 2026-10-01 — **A wrapped table's header stands apart.** In a table with rules
 between rows, the header's rule is one step stronger (the faint ink) than
 the row and column rules. Alignment follows the markdown's markers exactly.

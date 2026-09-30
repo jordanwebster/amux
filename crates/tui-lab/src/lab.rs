@@ -103,14 +103,17 @@ pub async fn run(scenario: &Scenario, place: Option<Place>, theme: Theme) -> Res
                 .as_ref()
                 .map(|open| (open.view.agent_id.clone(), open.session.changed()));
         }
+        tui::terminal::write_begin_frame(terminal.backend_mut())?;
         let completed = terminal.draw(|frame| {
             app.draw(frame);
             if let Mode::Note { text, .. } = &mode {
                 note_overlay(frame, text);
             }
         })?;
+        let last_frame = completed.buffer.clone();
+        tui::terminal::write_end_frame(terminal.backend_mut())?;
         if !matches!(mode, Mode::Note { .. }) {
-            last = completed.buffer.clone();
+            last = last_frame;
         }
         let tick = app.next_tick();
 
