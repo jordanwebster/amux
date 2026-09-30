@@ -1,3 +1,24 @@
+2026-09-30 — **The chat's header, one [Diff], and a colour for code.** The
+chat's top line becomes a header: the agent's name, its project and (on
+another machine) its host in the faint ink, then at the right the context
+used, `[Diff +a −b]` and `[Home]`, controls that brighten under the mouse.
+The state word is gone; the header names a state only when it is a
+problem (away, reconnecting, catching up, refreshing, exited), since the
+feed shows work and asks. The diff totals are read from the working tree
+when the chat opens and each time a turn ends, never per frame, through
+the per-frame `App::housekeep` (formerly `check_ended`). Edit steps lose
+their own `[diff]`. The composer's edge reads `Model (effort) · mode`, the
+mode in the reading ink; the key legend sits a blank line below the box,
+all at the left with `shift+tab mode` last. The agent's text wraps at 100
+columns on wide terminals. Code and paths in it wear a colour again: many
+schemes put cyan beside blue, so when the code colour's hue is within 40°
+of the accent's the scheme's own magenta is tried, then a hue a quarter of
+the wheel away, and in sixteen colours code takes a readable face no other
+meaning uses. The shipped palettes' code turns lavender (the light
+palette's focus bar takes cyan in sixteen colours to leave magenta to
+code), the base16 fixtures' code slots move clear of their blues, and a
+test holds code apart from the accent in every palette and both faces.
+
 2026-09-30 — **Chat polish after the first look.** Session boundaries drew a
 rule past the right margin in the old muted ink; they now read like home's
 headings, faint words and a hairline that stops at the margin. The leader

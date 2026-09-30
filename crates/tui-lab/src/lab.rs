@@ -87,7 +87,7 @@ pub async fn run(scenario: &Scenario, place: Option<Place>, theme: Theme) -> Res
     let mut heartbeat = tokio::time::interval(Duration::from_millis(500));
 
     let leave = loop {
-        app.check_ended();
+        app.housekeep();
         if let Some(saved) = &restore
             && restore_chat(app, saved)
         {

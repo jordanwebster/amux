@@ -97,7 +97,7 @@ pub fn restore_chat(app: &mut App, place: &Place) -> bool {
 pub async fn settle(app: &mut App, quiet: Duration) {
     let mut fleet_changed = app.fleet.changed();
     loop {
-        app.check_ended();
+        app.housekeep();
         let mut chat = app.chat.as_ref().map(|chat| chat.session.changed());
         tokio::select! {
             Some(event) = app.receiver.recv() => {

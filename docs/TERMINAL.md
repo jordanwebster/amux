@@ -66,19 +66,25 @@ explains hosts, pairing and the relay.
 
 Enter on a fleet row opens its chat. From top to bottom:
 
-- **The top line**: `amux › ` and the agent's name, with one status word at the right: `needs you` (in the
-  accent), `working`, `idle`, `starting`, `exited` with its cause, `catching up` before the first CaughtUp,
-  `reconnecting` while the local runtime is being reconnected, `refreshing` while a rebuilt history is on its way,
-  or why the host is away (not current, this machine signed out, or the host has stopped trusting this machine).
+- **The header**: the agent's name, then faintly its project and, when it runs on another machine, its host. At
+  the right, how much of its context is used (`41K / 200K`, in the warning ink when near the limit), `[Diff +a
+  −b]` with the working tree's lines added and removed, which opens the review page, and `[Home]`, which goes
+  back home; both brighten under the mouse. The totals are read when the chat opens and again each time a turn
+  ends. The header says where the chat stands only when that is a problem: `exited` with its cause, `catching
+  up` before the first CaughtUp, `reconnecting` while the local runtime is being reconnected, `refreshing` while
+  a rebuilt history is on its way, or why the host is away (not current, this machine signed out, or the host
+  has stopped trusting this machine). Working and asks show in the feed.
 - **The family line**, for an agent with a parent or children: the parent, the number of subagents and how many
   need you.
 - **The feed**, read one turn at a time, laid out upward from the newest or from wherever the reader scrolled:
   - your message is a tinted block with the time at its right;
-  - everything the agent wrote is in one reading ink; its thinking is not drawn;
+  - everything the agent wrote is in one reading ink, to at most 100 columns a line on a wide terminal; code
+    and paths in it wear the code colour, the one colour kept for them and never the accent's; its thinking is
+    not drawn;
   - each stretch of tool steps between two pieces of its text folds to one faint line of what the steps did
     (`▸ 3 commands · 2 edits · 4 reads`). Clicking it, or `<leader> o` on it, opens the stretch to one line per
     step, with consecutive reads and searches merged into one; clicking a step opens its detail (a command's
-    output, an edit's patch, a call's result), and an edit's `[diff]` opens the review page;
+    output, an edit's patch, a call's result);
   - a failure the turn ended without fixing stays under its folded stretch in red; one fixed later in the turn
     folds away with the rest;
   - while the agent is at a stretch, its newest three steps show as they happen, the current one bright, with a
@@ -89,9 +95,10 @@ Enter on a fleet row opens its chat. From top to bottom:
   drawing for now.
 - **The ask card**, when the agent is waiting on you, docked where the composer was; the draft stays underneath
   it.
-- **The composer**, boxed, with the model, effort and mode on its bottom edge; above it a quiet line while the
+- **The composer**, boxed, with `Model (effort) · mode` on its bottom edge; above it a quiet line while the
   agent works, the session strip, any foot card (a sign-in problem or a usage block) and the tray of queued and
-  unconfirmed prompts; below it a line of keys for the composer's current mode.
+  unconfirmed prompts; one blank line below it, a line of keys for the composer's current mode, all at the left
+  with `shift+tab mode` last.
 
 Design variant 1 (F3 in [the lab](#the-lab)) draws the chat as it was before this redesign: a header with
 the kind, host, model and mode, every row drawn in full, and an unboxed composer.
@@ -125,7 +132,7 @@ fresh diff. The page opens only while the chat is current, and says so when the 
 
 The terminal client has no settings sheet. Shift+Tab moves the agent to its next mode where it has one to move to
 (terminal Claude cycles its own permission modes; for the others the next offered mode that still asks before
-acting), and the header shows the model, effort and mode. Terminal Claude's model and effort change by typing its
+acting), and the composer's bottom edge shows the model, effort and mode. Terminal Claude's model and effort change by typing its
 own command in the composer. The phone's settings sheet offers every model, effort and mode the agent reports.
 
 The terminal's own appearance and leader key come from the installation config file

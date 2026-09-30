@@ -90,7 +90,19 @@ pub enum ChatEffect {
     RawAttach,
     /// Open the working tree's diff on the review page.
     Review,
+    /// Back to home: the header's [Home].
+    Home,
 }
+
+/// A control in the chat's header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeaderControl {
+    Diff,
+    Home,
+}
+
+/// Where each header control was drawn: its columns, and what it does.
+type HeaderSpots = Vec<((usize, usize), HeaderControl)>;
 
 /// A full-screen reader over a diff, a plan or arguments.
 #[derive(Clone, Debug, PartialEq)]
@@ -127,6 +139,19 @@ pub struct ChatView {
     /// Draw the old chat regardless of the design variant: the tests that
     /// still describe it set this, since the variant is process-wide.
     pub legacy: bool,
+    /// Whether the agent runs on this machine; the header names its host
+    /// only when it does not.
+    pub local: bool,
+    /// The working tree's lines added and removed, as last read: after the
+    /// chat opens and after each turn ends.
+    pub diff_stat: Option<(u32, u32)>,
+    /// Whether the agent was working when the diff stat was last asked
+    /// for; `None` until the first ask.
+    stat_seen: Option<bool>,
+    /// The header's controls on the last frame: row, columns, control.
+    header_spots: Vec<(u16, (u16, u16), HeaderControl)>,
+    /// The header control under the mouse.
+    hover: Option<HeaderControl>,
     stretch_cache: StretchCache,
     /// Where the feed's first line was drawn, for clicks.
     feed_origin: (u16, u16),
@@ -158,6 +183,11 @@ impl ChatView {
             leader: 'a',
             stretches: HashSet::new(),
             legacy: false,
+            local: true,
+            diff_stat: None,
+            stat_seen: None,
+            header_spots: Vec::new(),
+            hover: None,
             stretch_cache: StretchCache::default(),
             feed_origin: (0, 0),
             epoch: 0,
@@ -543,10 +573,21 @@ impl ChatView {
             }
             return vec![];
         }
+        let control = self
+            .header_spots
+            .iter()
+            .find(|(y, (from, to), _)| *y == event.row && (*from..*to).contains(&event.column))
+            .map(|(_, _, control)| *control);
         match event.kind {
+            MouseEventKind::Moved => self.hover = control,
             MouseEventKind::ScrollUp => self.scroll(state, -WHEEL_LINES, theme),
             MouseEventKind::ScrollDown => self.scroll(state, WHEEL_LINES, theme),
             MouseEventKind::Down(MouseButton::Left) if self.reader.is_none() => {
+                match control {
+                    Some(HeaderControl::Diff) => return vec![ChatEffect::Review],
+                    Some(HeaderControl::Home) => return vec![ChatEffect::Home],
+                    None => {}
+                }
                 if let Some(hit) = self.hit_at(event.column, event.row) {
                     return self.feed_hit(state, hit);
                 }
@@ -554,6 +595,22 @@ impl ChatView {
             _ => {}
         }
         vec![]
+    }
+
+    /// Whether the working tree's totals should be read now: once the chat
+    /// is current after opening, and again each time a turn ends, since
+    /// that is when the agent's changes land. Never on every frame.
+    pub fn wants_diff_stat(&mut self, state: &SessionState) -> bool {
+        if !self.redesigned() || !matches!(state.composer(), Composer::Send | Composer::Resume) {
+            return false;
+        }
+        let working = state.phase() == PhaseView::Working;
+        let wanted = match self.stat_seen {
+            None => true,
+            Some(was_working) => was_working && !working,
+        };
+        self.stat_seen = Some(working);
+        wanted
     }
 
     /// What the feed line under a click does there.
@@ -597,7 +654,6 @@ impl ChatView {
                     self.expanded.insert(key);
                 }
             }
-            FeedHit::Diff => return vec![ChatEffect::Review],
         }
         vec![]
     }
@@ -1023,7 +1079,15 @@ impl ChatView {
             .map(|host| host.name.clone())
             .unwrap_or_else(|| "its host".into());
 
-        let mut top: Vec<Line<'static>> = vec![self.top_line(state, &name, width, theme)];
+        let strip = session_strip(state);
+        let (header, controls) = self.top_line(state, &name, &strip, width, theme);
+        self.header_spots = controls
+            .into_iter()
+            .map(|((from, to), control)| {
+                (area.y, (area.x + from as u16, area.x + to as u16), control)
+            })
+            .collect();
+        let mut top: Vec<Line<'static>> = vec![header];
         if let Some(family) = family {
             let mut line = family_line(family, width, theme);
             for span in &mut line.spans {
@@ -1056,8 +1120,12 @@ impl ChatView {
         if let Some(activity) = &view.activity {
             bottom.push(quiet_activity(activity, width, theme));
         }
-        let strip = session_strip(state);
-        if let Some(line) = strip_line(&strip, width, theme) {
+        // The context lives in the header.
+        let foot = ui_view::Strip {
+            context: None,
+            ..strip.clone()
+        };
+        if let Some(line) = strip_line(&foot, width, theme) {
             bottom.push(line);
         }
         bottom.extend(foot_cards(&strip, width, theme));
@@ -1092,6 +1160,7 @@ impl ChatView {
             bottom.extend(lines);
         };
         let mut hint = footer.clone().unwrap_or_default();
+        let mut boxed = false;
         match &card {
             Some(card) => {
                 let lines = self.ask.render(card, &name, self.attach, width, theme);
@@ -1109,6 +1178,7 @@ impl ChatView {
                 ));
                 if footer.is_none() && card.state == CardState::Dismissed {
                     composer_box(&mut bottom, &mut cursor, &self.editor, true);
+                    boxed = true;
                     hint = keys_line(
                         &composer_hint_words(state, &self.editor, self.away, self.leader),
                         width,
@@ -1118,6 +1188,7 @@ impl ChatView {
             }
             None => {
                 composer_box(&mut bottom, &mut cursor, &self.editor, self.tray.is_none());
+                boxed = true;
                 if footer.is_none() {
                     hint = match self.tray.and_then(|i| tray.get(i)) {
                         Some(row) => {
@@ -1131,6 +1202,10 @@ impl ChatView {
                     };
                 }
             }
+        }
+        // A blank line lets the composer's box breathe above the keys.
+        if boxed {
+            bottom.push(Line::default());
         }
         bottom.push(hint);
 
@@ -1176,32 +1251,151 @@ impl ChatView {
         }
     }
 
-    /// "amux › blob cache eviction" at the left, where it stands at the
-    /// right: the same line as home's, one level in.
+    /// The header. At the left the agent's name, then faint where it runs:
+    /// its project, and its host when that is not this machine. At the
+    /// right how much of its context is used, the working tree's `[Diff]`
+    /// and `[Home]`. Where the chat stands is not repeated here, since the
+    /// feed shows work and asks; only a problem is (host away,
+    /// reconnecting, catching up, exited). Returns the line and the
+    /// controls' column ranges.
     fn top_line(
         &self,
         state: &SessionState,
         name: &str,
+        strip: &ui_view::Strip,
         width: usize,
         theme: Theme,
-    ) -> Line<'static> {
+    ) -> (Line<'static>, HeaderSpots) {
         let host = state
             .host()
             .map(|host| host.name.clone())
             .unwrap_or_default();
-        let (words, style) = state_words(state, self.away, &host, theme);
-        let style = if style == theme.muted() {
-            theme.faint()
-        } else {
-            style
+        // The right side, built first so the left knows its room.
+        let mut right: Vec<Span<'static>> = Vec::new();
+        let gap = |right: &mut Vec<Span<'static>>| {
+            if !right.is_empty() {
+                right.push(Span::raw("   "));
+            }
         };
+        if let Some((words, style)) = problem_words(state, self.away, &host, theme) {
+            right.push(Span::styled(words, style));
+        }
+        if let Some(context) = &strip.context {
+            gap(&mut right);
+            let used = tokens_short(context.used_tokens);
+            let words = match context.window_tokens {
+                Some(window) => format!("{used} / {}", tokens_short(window)),
+                None => used,
+            };
+            let style = if context.in_strip {
+                theme.warn()
+            } else {
+                theme.faint()
+            };
+            right.push(Span::styled(words, style));
+        }
+        let diff = match self.diff_stat {
+            Some((added, removed)) if added + removed > 0 => format!("[Diff +{added} −{removed}]"),
+            _ => "[Diff]".to_owned(),
+        };
+        let mut controls = Vec::new();
+        for (words, control) in [
+            (diff, HeaderControl::Diff),
+            ("[Home]".to_owned(), HeaderControl::Home),
+        ] {
+            gap(&mut right);
+            let style = if self.hover == Some(control) {
+                theme.emphasis()
+            } else {
+                theme.muted()
+            };
+            controls.push((right.len(), text::str_width(&words), control));
+            right.push(Span::styled(words, style));
+        }
+        let right_width: usize = right
+            .iter()
+            .map(|span| text::str_width(&span.content))
+            .sum();
+        let end = width.saturating_sub(2);
+        let right_at = end.saturating_sub(right_width);
+
         let mut line = Line::from(Span::raw("  "));
-        push(&mut line, "amux", theme.emphasis(), width);
-        push(&mut line, " › ", theme.faint(), width);
-        let room = width.saturating_sub(text::str_width(&words) + 4);
+        let room = right_at.saturating_sub(2);
         push(&mut line, name, theme.bright(), room);
-        push_right(&mut line, &words, style, width.saturating_sub(2));
-        line
+        let mut place = vec![project(&state.agent().cwd).to_owned()];
+        if !self.local && !host.is_empty() {
+            place.push(host);
+        }
+        // The branch joins here once the inventory carries one.
+        let place: Vec<String> = place.into_iter().filter(|part| !part.is_empty()).collect();
+        if !place.is_empty() && text::line_width(&line) + 4 < room {
+            push(&mut line, "  ", theme.faint(), room);
+            push(&mut line, place.join(" · "), theme.faint(), room);
+        }
+        let mut spots = Vec::new();
+        if text::line_width(&line) + 2 <= right_at {
+            text::pad_to(&mut line, right_at);
+            let mut at = right_at;
+            for (i, span) in right.into_iter().enumerate() {
+                if let Some((_, span_width, control)) =
+                    controls.iter().find(|(index, _, _)| *index == i)
+                {
+                    spots.push(((at, at + span_width), *control));
+                }
+                at += text::str_width(&span.content);
+                line.spans.push(span);
+            }
+        }
+        (line, spots)
+    }
+}
+
+/// The last part of a working directory: its project, as home names it.
+fn project(cwd: &str) -> &str {
+    cwd.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|part| !part.is_empty())
+        .unwrap_or(cwd)
+}
+
+/// "41K", "1.2M": a token count at a glance.
+fn tokens_short(count: u64) -> String {
+    match count {
+        0..1_000 => count.to_string(),
+        1_000..1_000_000 => format!("{}K", (count + 500) / 1_000),
+        _ => {
+            let tenths = (count + 50_000) / 100_000;
+            if tenths.is_multiple_of(10) {
+                format!("{}M", tenths / 10)
+            } else {
+                format!("{}.{}M", tenths / 10, tenths % 10)
+            }
+        }
+    }
+}
+
+/// Where the chat stands, only when that is a problem the person should
+/// see: the host away, reconnecting, catching up, a rebuilt history on its
+/// way, or the agent exited. Working, idle and needs-you show in the feed.
+fn problem_words(
+    state: &SessionState,
+    away: Away,
+    host: &str,
+    theme: Theme,
+) -> Option<(String, ratatui::style::Style)> {
+    let (words, style) = state_words(state, away, host, theme);
+    match (state.composer(), state.phase()) {
+        (_, PhaseView::Exited { .. }) | (Composer::Disabled(_), _) => Some((
+            words,
+            if style == theme.muted() {
+                theme.faint()
+            } else {
+                style
+            },
+        )),
+        _ if state.reset_pending() => Some((words, theme.faint())),
+        _ => None,
     }
 }
 
@@ -1260,25 +1454,38 @@ fn boxed_composer(
         push(&mut boxed, "│", edge, width);
         out.push(boxed);
     }
-    let facts: Vec<String> = [
-        strip.model.clone(),
-        strip.effort.clone(),
-        strip.mode.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|fact| !fact.is_empty())
-    .collect();
-    let label = facts.join(" · ");
+    // "Opus (high) · auto": the model faint as the agent names it, its
+    // effort beside it, and the mode, which Shift+Tab changes, in the
+    // reading ink.
+    let known = |fact: &Option<String>| fact.clone().filter(|fact| !fact.is_empty());
+    let mut label: Vec<Span<'static>> = Vec::new();
+    match (known(&strip.model), known(&strip.effort)) {
+        (Some(model), Some(effort)) => {
+            label.push(Span::styled(format!("{model} ({effort})"), theme.faint()))
+        }
+        (Some(model), None) => label.push(Span::styled(model, theme.faint())),
+        (None, Some(effort)) => label.push(Span::styled(format!("({effort})"), theme.faint())),
+        (None, None) => {}
+    }
+    if let Some(mode) = known(&strip.mode) {
+        if !label.is_empty() {
+            label.push(Span::styled(" · ", theme.faint()));
+        }
+        label.push(Span::styled(mode, theme.text()));
+    }
+    let label_width: usize = label
+        .iter()
+        .map(|part| text::str_width(&part.content))
+        .sum();
     let mut bottom = Line::from(Span::raw(" ".repeat(MARGIN)));
     push(&mut bottom, "╰", edge, width);
-    if label.is_empty() {
+    if label.is_empty() || label_width + 6 > span {
         push(&mut bottom, "─".repeat(span), edge, width);
     } else {
-        let rule = span.saturating_sub(text::str_width(&label) + 3).max(1);
+        let rule = span.saturating_sub(label_width + 3).max(1);
         push(&mut bottom, "─".repeat(rule), edge, width);
         push(&mut bottom, " ", edge, width);
-        push(&mut bottom, label, theme.faint(), width);
+        bottom.spans.extend(label);
         push(&mut bottom, " ─", edge, width);
     }
     text::pad_to(&mut bottom, width - MARGIN - 1);
@@ -1314,12 +1521,14 @@ fn composer_hint_words(
         }
         Composer::Disabled(_) => "Draft kept · sending waits".to_owned(),
     };
-    let right = if mode {
-        "shift+tab mode".to_owned()
+    // Last on the left, so the bottom right stays clear under the
+    // composer's edge, and the first pair to go when the line is short.
+    let left = if mode && !left.starts_with(char::is_uppercase) {
+        format!("{left} · shift+tab mode")
     } else {
-        String::new()
+        left
     };
-    (left, right)
+    (left, String::new())
 }
 
 /// A key legend in home's style: each key bright and bold, its action

@@ -30,6 +30,8 @@ pub const LIVE_STEPS: usize = 3;
 const EDGE: usize = 2;
 /// Where words start.
 const WORDS: usize = 4;
+/// The longest line of the agent's text, in columns, on a wide terminal.
+const READING: usize = 100;
 /// Where a step's detail starts, under its words.
 const DETAIL: usize = 6;
 /// Lines of a step's detail before it is cut with a count.
@@ -42,8 +44,6 @@ pub enum FeedHit {
     Stretch(Key),
     /// Open or close a step's detail.
     Step(Key),
-    /// Open the working tree's diff.
-    Diff,
 }
 
 /// Clickable places on one feed line: column ranges, `None` for the whole
@@ -279,19 +279,12 @@ fn prose(drawn: &mut Drawn, words: &[Segment], streaming: bool, width: usize, th
             Segment::Attachment(view) => chip(view),
         })
         .collect();
-    let mut lines = markdown(&source, width.saturating_sub(2), false, theme);
+    // A comfortable measure on a wide terminal: lines run to at most
+    // READING columns of text, however wide the screen.
+    let wrap = width.saturating_sub(2).min(READING + WORDS);
+    let mut lines = markdown(&source, wrap, false, theme);
     if lines.is_empty() {
         return;
-    }
-    // Code and paths stand out by ink, not by a hue: colour is kept for
-    // what needs the person and what failed.
-    let code = theme.code().fg;
-    for line in &mut lines {
-        for span in &mut line.spans {
-            if span.style.fg.is_some() && span.style.fg == code {
-                span.style = span.style.patch(theme.bright());
-            }
-        }
     }
     if streaming && let Some(last) = lines.last_mut() {
         last.spans.push(Span::styled(" ▍", theme.faint()));
@@ -586,23 +579,12 @@ fn step(
         push(&mut line, "│", theme.hairline(), width);
     }
     pad_to(&mut line, WORDS);
-    let diff = matches!(row.kind, RowKind::FileChange { .. })
-        && !matches!(
-            row.kind,
-            RowKind::FileChange {
-                state: ToolStateView::Pending | ToolStateView::Running,
-                ..
-            }
-        );
-    let control = if diff { "[diff]" } else { "" };
+    // The diff has one place, the header's [Diff]; a step opens to its
+    // own patch.
     let tail_width = if meta.is_empty() {
         0
     } else {
         text::str_width(&meta) + 3
-    } + if diff {
-        text::str_width(control) + 2
-    } else {
-        0
     };
     // Two blank columns at the right, as at the left.
     let width = width.saturating_sub(2);
@@ -621,13 +603,7 @@ fn step(
     if !meta.is_empty() {
         push(&mut line, format!(" · {meta}"), theme.faint(), width);
     }
-    let mut hits = vec![(None, FeedHit::Step(row.id.clone()))];
-    if diff {
-        push(&mut line, "  ", theme.faint(), width);
-        let from = text::line_width(&line);
-        push(&mut line, control, theme.faint(), width);
-        hits.insert(0, (Some((from, text::line_width(&line))), FeedHit::Diff));
-    }
+    let hits = vec![(None, FeedHit::Step(row.id.clone()))];
     drawn.lines.push(line);
     drawn.hits.push(hits);
     // A multi-file change names each further file on its own line.

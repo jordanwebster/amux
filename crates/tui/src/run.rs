@@ -82,7 +82,7 @@ async fn session(app: &mut App) -> Result<Leave> {
     let mut fleet_changed = app.fleet.changed();
     let mut chat: Option<(Vec<u8>, watch::Receiver<()>)> = None;
     let leave = loop {
-        app.check_ended();
+        app.housekeep();
         let open = app.chat.as_ref().map(|chat| chat.view.agent_id.clone());
         if chat.as_ref().map(|(id, _)| id) != open.as_ref() {
             chat = app

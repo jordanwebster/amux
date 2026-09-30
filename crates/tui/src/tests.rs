@@ -2610,11 +2610,41 @@ fn a_stretch_under_way_shows_its_newest_steps() {
 
 /// The top line names the agent under amux, and the composer is boxed.
 #[test]
-fn the_chat_names_its_agent_under_amux_and_boxes_the_composer() {
+fn the_chat_header_names_the_agent_and_offers_the_diff_and_home() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let state = chat(replies(1, 2));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.diff_stat = Some((42, 7));
     let (screen, _) = feed(&mut view, &state);
     let first = screen.lines().next().unwrap_or_default();
-    assert!(first.contains("amux › "), "{screen}");
-    assert!(screen.contains('╭') && screen.contains('╯'), "{screen}");
+    // The name, then the controls; where the chat stands is left to the
+    // feed while nothing is wrong.
+    assert!(first.trim_start().starts_with("worker"), "{screen}");
+    assert!(
+        first.contains("[Diff +42 −7]") && first.contains("[Home]"),
+        "{screen}"
+    );
+    assert!(!first.contains("idle"), "{screen}");
+    // The composer is boxed and the keys sit one blank line under it.
+    let lines: Vec<&str> = screen.lines().collect();
+    let edge = lines
+        .iter()
+        .rposition(|line| line.contains('╯'))
+        .expect(&screen);
+    assert!(lines[edge + 1].trim().is_empty(), "{screen}");
+    assert!(lines[edge + 2].contains("enter"), "{screen}");
+    // [Home] goes home.
+    let column = first.find("[Home]").expect(&screen);
+    let column = first[..column].chars().count() as u16 + 1;
+    let effects = view.mouse(
+        &state,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+        theme(),
+    );
+    assert!(matches!(effects.as_slice(), [ChatEffect::Home]));
 }

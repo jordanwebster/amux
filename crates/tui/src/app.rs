@@ -93,6 +93,12 @@ pub enum AppEvent {
         diff: Diff,
         patch: String,
     },
+    /// The working tree's lines added and removed, for the chat's header.
+    DiffStat {
+        agent_id: Vec<u8>,
+        added: u32,
+        removed: u32,
+    },
 }
 
 /// What the loop does after a key.
@@ -303,6 +309,7 @@ impl App {
                         });
                         let mut view = ChatView::new(agent.agent.clone(), now_ms(), terminal);
                         view.leader = self.config.leader;
+                        view.local = agent.host == self.config.local_host;
                         self.fleet_view.select(agent.clone());
                         self.chat = Some(OpenChat {
                             session,
@@ -355,6 +362,19 @@ impl App {
                     chat.view.open_review(diff, patch);
                     // The page answers "reading the working tree…".
                     self.notice = None;
+                }
+            }
+            AppEvent::DiffStat {
+                agent_id,
+                added,
+                removed,
+            } => {
+                if let Some(chat) = self
+                    .chat
+                    .as_mut()
+                    .filter(|chat| chat.view.agent_id == agent_id)
+                {
+                    chat.view.diff_stat = Some((added, removed));
                 }
             }
             AppEvent::Created(agent) => {
@@ -870,6 +890,7 @@ impl App {
                 let _ = crate::terminal::write_osc52(&mut std::io::stdout(), &text);
             }
             ChatEffect::Review => self.review(),
+            ChatEffect::Home => self.close_chat(),
             ChatEffect::RawAttach => {
                 let agent = chat.agent.clone();
                 return self.raw_attach(&agent);
@@ -891,12 +912,38 @@ impl App {
         }
     }
 
-    /// A deleted agent's open chat closes to the fleet.
-    pub fn check_ended(&mut self) {
+    /// What the loop does before each frame: a deleted agent's open chat
+    /// closes to the fleet, and the open chat's working-tree totals are
+    /// read when it asks (after opening and after each turn ends).
+    pub fn housekeep(&mut self) {
         let ended = self.chat.as_ref().and_then(|chat| chat.session.ended());
         if let Some(error) = ended {
             self.close_chat();
             self.notice(format!("the chat closed: {error}"), Tone::Warn);
+            return;
+        }
+        let Some(chat) = &mut self.chat else {
+            return;
+        };
+        let wanted = {
+            let state = chat.session.state();
+            chat.view.wants_diff_stat(&state)
+        };
+        if wanted {
+            let client = self.client.clone();
+            let agent_id = chat.view.agent_id.clone();
+            self.spawn(async move {
+                let (diff, patch) =
+                    ui_runtime::review::working_tree_review(client.as_ref(), &agent_id)
+                        .await
+                        .ok()?;
+                let doc = ui_view::review_doc(&diff, &patch, &[]);
+                Some(AppEvent::DiffStat {
+                    agent_id,
+                    added: doc.added,
+                    removed: doc.removed,
+                })
+            });
         }
     }
 
