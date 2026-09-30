@@ -792,6 +792,12 @@ fn every_door_verb_maps_to_one_capability_and_the_crate_docs_list_the_same_map()
             text: "hi".into(),
         },
         Control::OpenGate { name: "g".into() },
+        Control::LanGate { host: "a".into() },
+        Control::LanFaults {
+            host: "a".into(),
+            delay_ms: 100,
+            loss_percent: 0,
+        },
         Control::Inventory { host: "a".into() },
         Control::Block {
             host: "a".into(),

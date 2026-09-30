@@ -43,6 +43,7 @@ impl ProfileRuntime {
             presence: Presence::Online as i32,
             version: Some(crate::version().to_owned()),
             platform: Some(crate::routing::local_platform().to_owned()),
+            current: Some(true),
             ..HostEntry::default()
         }
     }
@@ -91,6 +92,7 @@ impl ProfileRuntime {
                         revoked: revoked.then_some(true),
                         trust: Trust::Trusted as i32,
                         presence: presence as i32,
+                        current: Some(self.host_ready(host)),
                         ..HostEntry::default()
                     },
                 );
@@ -159,6 +161,22 @@ impl ProfileRuntime {
             }
         }
         *published = fresh;
+    }
+
+    /// Records whether a trusted host's inventory is current on its
+    /// published entry, and publishes it. Called with the store held, by
+    /// the catch-up that made it current or the loss that made it stale,
+    /// so a client reads the change in the same sequence as the agents it
+    /// wrote.
+    pub(crate) fn host_current_changed(&self, host: &[u8], current: bool) {
+        let mut published = self.hosts.lock().unwrap();
+        if let Some(entry) = published.get_mut(host)
+            && entry.current != Some(current)
+        {
+            entry.current = Some(current);
+            self.fanout
+                .publish_inventory(inventory(inventory_event::Of::Host(entry.clone())));
+        }
     }
 
     /// Records a trusted host's new generation on its published entry, and

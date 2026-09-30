@@ -36,7 +36,9 @@ use wire::{
 
 use crate::binaries::Binaries;
 use crate::clock::DrivenClock;
-use crate::gate::UdpGate;
+use std::net::SocketAddr;
+
+use crate::gate::{Faults, UdpGate};
 use crate::invariant::{self, BlockViolation};
 use crate::observe::{self, InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
 use crate::relay::Relay;
@@ -222,6 +224,10 @@ pub struct Net {
     relay: Option<Relay>,
     /// Each host's way to the relay's QUIC carrier, kept across restarts.
     udp: BTreeMap<String, UdpGate>,
+    /// A gate in front of a host's LAN listener, started on request: what a
+    /// client dials instead of the host so its packets can be delayed or
+    /// lost, the way a household network treats them.
+    lan_gates: BTreeMap<String, UdpGate>,
 }
 
 impl Net {
@@ -267,6 +273,7 @@ impl Net {
             agents: BTreeMap::new(),
             relay: None,
             udp: BTreeMap::new(),
+            lan_gates: BTreeMap::new(),
         };
         if let Some(relay) = &topology.relay {
             net.relay = Some(Relay::start(relay, net.clock.clone()).await?);
@@ -1110,6 +1117,47 @@ impl Net {
                 })?;
         }
         Ok(self.ack(format!("{account} is on {tier:?}")))
+    }
+
+    /// The address of a gate in front of `host`'s LAN listener, started
+    /// the first time it is asked for. A client that dials it instead of
+    /// the host reaches the host through a network the net can slow down
+    /// or make lossy with [`Net::set_lan_faults`]; the host's own address
+    /// stays as it was, so a pairing link has to be rewritten to name the
+    /// gate. Only a running host with a LAN listener has one.
+    pub async fn lan_gate(&mut self, host: &str) -> Result<SocketAddr, NetError> {
+        if let Some(gate) = self.lan_gates.get(host) {
+            return Ok(gate.addr());
+        }
+        let info = self.host(host)?;
+        let port = std::fs::read_to_string(
+            node::profile_dir(&info.data_dir, info.profile).join(node::LAN_PORT_FILE),
+        )
+        .ok()
+        .and_then(|text| text.trim().parse::<u16>().ok())
+        .ok_or_else(|| NetError::Host {
+            host: host.to_owned(),
+            error: "has no LAN listener to gate".to_owned(),
+        })?;
+        let gate = UdpGate::start(SocketAddr::from(([127, 0, 0, 1], port))).await?;
+        let addr = gate.addr();
+        self.lan_gates.insert(host.to_owned(), gate);
+        Ok(addr)
+    }
+
+    /// What the gate in front of `host`'s LAN listener does to each
+    /// datagram from now on: delay, loss, or neither.
+    pub fn set_lan_faults(&self, host: &str, faults: Faults) -> Result<Ack, NetError> {
+        let gate = self.lan_gates.get(host).ok_or_else(|| NetError::Host {
+            host: host.to_owned(),
+            error: "has no LAN gate; ask for one first".to_owned(),
+        })?;
+        gate.set_faults(faults);
+        Ok(self.ack(format!(
+            "{host}'s LAN gate delays {} ms and loses {}%",
+            faults.delay.as_millis(),
+            faults.loss_percent
+        )))
     }
 
     /// Takes UDP away from the host's way to the relay, or gives it back:

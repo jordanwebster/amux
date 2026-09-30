@@ -4598,6 +4598,12 @@ pub struct HostEntry {
     /// machine; cleared when it links to this machine again.
     #[prost(bool, optional, tag = "15")]
     pub revoked: ::core::option::Option<bool>,
+    /// Whether this machine's copy of the host's inventory has caught up on a
+    /// live stream from it: its agents are as the host lists them now, not as
+    /// they were remembered. Cleared when the host is lost; a client that
+    /// reads every trusted host current has reconciled with its fleet.
+    #[prost(bool, optional, tag = "16")]
+    pub current: ::core::option::Option<bool>,
 }
 impl ::prost::Name for HostEntry {
     const NAME: &'static str = "HostEntry";

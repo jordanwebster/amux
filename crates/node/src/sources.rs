@@ -366,6 +366,7 @@ impl ProfileRuntime {
             }
             let Some(me) = runtime.upgrade() else { return };
             let mut store = me.store.lock().await;
+            me.host_current_changed(&host_bytes, false);
             let Ok(rows) = store.agents() else { return };
             for row in rows.iter().filter(|row| row.agent.host == host_bytes) {
                 me.detach(&mut store, &row.agent);
@@ -429,8 +430,9 @@ impl ProfileRuntime {
         let mut sources = self.sources.lock().unwrap();
         sources.next_session += 1;
         let session = sources.next_session;
-        sources.ready.insert(host_bytes, session);
+        sources.ready.insert(host_bytes.clone(), session);
         drop(sources);
+        self.host_current_changed(&host_bytes, true);
         // Deliveries to a parent on that host may have waited for it.
         self.deliveries_due.notify_one();
         Ok(session)

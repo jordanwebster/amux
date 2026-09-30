@@ -1,3 +1,17 @@
+2026-09-30 — **A host's entry says whether its agents are current; a served host can sit behind a slow gate.**
+The fleet told a client whether a trusted host was online, but not
+whether this machine's copy of its agents had caught up with it since:
+after a launch the remembered rows and the fresh ones look the same.
+Each host entry now carries `current`, set when the host's inventory
+stream reaches CaughtUp and cleared when the host is lost, published
+under the store lock with the agents it describes; a client that reads
+every trusted host current has reconciled with its fleet, which is the
+mark the phone's cold-start measurement needs. The served test network
+gains `LanGate` and `LanFaults`: a UDP gate in front of a host's LAN
+listener that a client dials in the host's place, with delay and loss
+set from the door, so a phone can be measured over a household
+network's latency without leaving loopback.
+
 2026-09-30 — **A provider state write that fails ends the incarnation too.**
 A journal write that failed already ended the incarnation with "could
 not write to its directory", but the provider's own state in private/

@@ -993,3 +993,45 @@ async fn pairing_again_with_a_peer_that_revoked_trust_clears_the_mark_at_once() 
         .unwrap();
     net.shutdown().await.unwrap();
 }
+
+/// A trusted host's entry says whether this machine's copy of its agents
+/// has caught up with it on a live stream: true once the inventory stream
+/// reaches CaughtUp, false again when the host is lost, true again after
+/// the stream reopens and catches up. A client that reads every trusted
+/// host current has reconciled with its fleet, which is what the phone's
+/// cold-start reconciliation measures.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hosts_entry_says_whether_its_inventory_is_current() {
+    let mut net = Net::start(
+        Topology::new()
+            .host("desk")
+            .host("tablet")
+            .link("desk", "tablet"),
+    )
+    .await
+    .unwrap();
+    net.trust("desk", "tablet").await.unwrap();
+    net.trust("tablet", "desk").await.unwrap();
+    let desk_id = net.host("desk").unwrap().host_id;
+    let current = move |events: &[InventoryEvent], wanted: bool| {
+        inventory_hosts(events)
+            .into_iter()
+            .find(|host| host.host_id == desk_id.as_bytes())
+            .is_some_and(|entry| entry.current == Some(wanted))
+    };
+    let mut fleet = net.observe_inventory("tablet").await.unwrap();
+    fleet
+        .observe_until(|events| current(events, true), PATIENCE)
+        .await
+        .unwrap();
+
+    net.sever_link("desk", "tablet").unwrap();
+    fleet
+        .observe_until(|events| current(events, false), PATIENCE)
+        .await
+        .unwrap();
+
+    net.restore_link("desk", "tablet").await.unwrap();
+    reconnecting_until(&net, &mut fleet, |events| current(events, true)).await;
+    net.shutdown().await.unwrap();
+}

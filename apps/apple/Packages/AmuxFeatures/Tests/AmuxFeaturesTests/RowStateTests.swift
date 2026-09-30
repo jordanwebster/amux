@@ -34,7 +34,7 @@ final class RowStateTests: XCTestCase {
     private func host(_ presence: Presence, via: HostVia = .direct) -> HostView {
         HostView(
             hostId: machine.bytes, name: "Studio.local", local: false, trusted: true,
-            candidate: false, presence: presence, away: .plain, addrs: [], via: via,
+            candidate: false, presence: presence, away: .plain, addrs: [], via: via, current: true,
             lastDialError: nil, platform: nil, signedIn: nil, version: nil)
     }
 

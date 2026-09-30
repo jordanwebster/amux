@@ -2048,6 +2048,10 @@ public struct HostView: Codable, Hashable, Sendable {
     public var addrs: [String]
     /// The route a live link runs over.
     public var via: HostVia
+    /// This device's copy of the host's agents has caught up with the host
+    /// on a live stream: what the fleet shows for it is what it lists now.
+    /// Always true for this device.
+    public var current: Bool
     public var lastDialError: String?
     public var platform: String?
     /// For this device: whether it is signed in to the account its profile
@@ -2055,7 +2059,7 @@ public struct HostView: Codable, Hashable, Sendable {
     public var signedIn: Bool?
     public var version: String?
 
-    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, presence: Presence, away: Away, addrs: [String], via: HostVia, lastDialError: String?, platform: String?, signedIn: Bool?, version: String?) {
+    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, presence: Presence, away: Away, addrs: [String], via: HostVia, current: Bool, lastDialError: String?, platform: String?, signedIn: Bool?, version: String?) {
         self.hostId = hostId
         self.name = name
         self.local = local
@@ -2065,6 +2069,7 @@ public struct HostView: Codable, Hashable, Sendable {
         self.away = away
         self.addrs = addrs
         self.via = via
+        self.current = current
         self.lastDialError = lastDialError
         self.platform = platform
         self.signedIn = signedIn
@@ -2081,6 +2086,7 @@ public struct HostView: Codable, Hashable, Sendable {
         case away
         case addrs
         case via
+        case current
         case lastDialError = "last_dial_error"
         case platform
         case signedIn = "signed_in"

@@ -95,6 +95,19 @@ pub enum Control {
     OpenGate {
         name: String,
     },
+    /// A gate in front of the host's LAN listener, for a client to dial in
+    /// place of the host; answers its address.
+    LanGate {
+        host: String,
+    },
+    /// What that gate does to every datagram from now on.
+    LanFaults {
+        host: String,
+        #[serde(default)]
+        delay_ms: u64,
+        #[serde(default)]
+        loss_percent: u32,
+    },
     Inventory {
         host: String,
     },
@@ -135,6 +148,8 @@ pub const CAPABILITIES: &[(&str, &str)] = &[
     ("Resume", "Net::resume"),
     ("Send", "Net::send"),
     ("OpenGate", "Net::open_gate"),
+    ("LanGate", "Net::lan_gate"),
+    ("LanFaults", "Net::set_lan_faults"),
     (
         "Inventory",
         "Net::observe_inventory + observe_until(CaughtUp)",
@@ -169,6 +184,8 @@ impl Control {
             Self::Resume { .. } => "Resume",
             Self::Send { .. } => "Send",
             Self::OpenGate { .. } => "OpenGate",
+            Self::LanGate { .. } => "LanGate",
+            Self::LanFaults { .. } => "LanFaults",
             Self::Inventory { .. } => "Inventory",
             Self::Block { .. } => "Block",
             Self::Chat { .. } => "Chat",
@@ -468,6 +485,18 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
             json!({ "verdict": format!("{:?}", verdict.of) })
         }
         Control::OpenGate { name } => value(net.open_gate(&name)?),
+        Control::LanGate { host } => json!({ "addr": net.lan_gate(&host).await?.to_string() }),
+        Control::LanFaults {
+            host,
+            delay_ms,
+            loss_percent,
+        } => value(net.set_lan_faults(
+            &host,
+            crate::Faults {
+                loss_percent,
+                delay: Duration::from_millis(delay_ms),
+            },
+        )?),
         Control::Inventory { host } => {
             let mut inventory = net.observe_inventory(&host).await?;
             let events = inventory
