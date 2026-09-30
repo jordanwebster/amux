@@ -204,9 +204,18 @@ def simctl(*arguments: str, timeout: float = 120) -> str:
 
 class PhoneJourney:
     def __init__(
-        self, story: dict, topology: Path, udid: str, output: Path | None = None, goldens: Path | None = None
+        self,
+        story: dict,
+        topology: Path,
+        udid: str,
+        output: Path | None = None,
+        goldens: Path | None = None,
+        app: Path = APP,
     ):
         self.story = story
+        # The build driven: the debug app, or the optimised one the
+        # performance suite measures.
+        self.build = app
         self.name = story["id"]
         self.udid = udid
         self.output = output or OUTPUT / self.name
@@ -336,7 +345,7 @@ class PhoneJourney:
         trust is on the phone, launched against this net."""
         simctl("terminate", self.udid, BUNDLE_ID, timeout=60) if self._running() else None
         subprocess.run(["xcrun", "simctl", "uninstall", self.udid, BUNDLE_ID], capture_output=True, timeout=120)
-        simctl("install", self.udid, str(APP), timeout=300)
+        simctl("install", self.udid, str(self.build), timeout=300)
         self.relaunch(*extra, found=found)
 
     def relaunch(self, *extra: str, found: list[str] | None = None) -> None:

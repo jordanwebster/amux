@@ -104,6 +104,9 @@ public enum DoorRequest: Sendable, Equatable {
     /// Every moment this launch has marked, in order. A driver reads them to
     /// tell a screen that was drawn from a frame that was shown, and to see
     /// when the fleet stopped being a memory.
+    /// Watch the display, the main thread and the footprint for this long
+    /// and answer what they did; the driver runs the workload meanwhile.
+    case measure(seconds: Double)
     case signposts
     case appearance(Appearance)
     case dynamicType(String)
@@ -320,6 +323,7 @@ public enum DoorReply: Sendable, Equatable {
     case runtimeLog(String)
     case conversation(ConversationReading)
     case signposts([SignpostMark])
+    case measurement(Measurement)
     case captured(path: String, width: Int, height: Int, scale: Int)
     /// A bundle was written at this path, holding these files.
     case bundle(path: String, parts: [String], reportJSON: String? = nil)
@@ -639,6 +643,8 @@ extension DoorRequest: Codable {
             self = .runtimeLog(
                 bytes: try fields.decodeIfPresent(Int.self, forKey: .bytes) ?? 64_000)
         case "signposts": self = .signposts
+        case "measure":
+            self = .measure(seconds: try fields.decode(Double.self, forKey: .seconds))
         case "appearance":
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
         case "dynamicType":
@@ -802,6 +808,9 @@ extension DoorRequest: Codable {
             try fields.encode(bytes, forKey: .bytes)
         case .signposts:
             try fields.encode("signposts", forKey: .kind)
+        case .measure(let seconds):
+            try fields.encode("measure", forKey: .kind)
+            try fields.encode(seconds, forKey: .seconds)
         case .appearance(let appearance):
             try fields.encode("appearance", forKey: .kind)
             try fields.encode(appearance, forKey: .appearance)
@@ -927,7 +936,7 @@ extension DoorRequest: Codable {
 
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
-        case kind, state, bridge, path, width, height, scale, message, parts, marks
+        case kind, state, bridge, path, width, height, scale, message, parts, marks, measurement
         case host, delivered, reason, cloud, store, known, states, conversation, reportJSON
         case log
     }
@@ -947,6 +956,8 @@ extension DoorReply: Codable {
             self = .runtimeLog(try fields.decode(String.self, forKey: .log))
         case "signposts":
             self = .signposts(try fields.decode([SignpostMark].self, forKey: .marks))
+        case "measurement":
+            self = .measurement(try fields.decode(Measurement.self, forKey: .measurement))
         case "captured":
             self = .captured(
                 path: try fields.decode(String.self, forKey: .path),
@@ -1000,6 +1011,9 @@ extension DoorReply: Codable {
         case .signposts(let marks):
             try fields.encode("signposts", forKey: .kind)
             try fields.encode(marks, forKey: .marks)
+        case .measurement(let measurement):
+            try fields.encode("measurement", forKey: .kind)
+            try fields.encode(measurement, forKey: .measurement)
         case .captured(let path, let width, let height, let scale):
             try fields.encode("captured", forKey: .kind)
             try fields.encode(path, forKey: .path)

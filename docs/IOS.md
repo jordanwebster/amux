@@ -460,9 +460,10 @@ prose are judged on their name only and listed in the record, which lands in
 | Recipe | Runs |
 | --- | --- |
 | `just ios gate` | The iOS graph checks, lint, script tests, bridge graph check, bridge, simulator, app, component snapshots, loopback smoke and unit suites. What CI runs on every push. |
-| `just ios captures` | Goldens and their perturbation, the store suite on the simulator, journeys, the accessibility audit and the measured run. Nightly and on demand in CI. |
+| `just ios captures` | Goldens and their perturbation, the store suite on the simulator, journeys and the accessibility audit. Nightly and on demand in CI. |
 | `just ios shipping` | The shipping XCFramework and the Release scope audit. `just ios release` depends on both. |
-| `just ios verify` | The workspace's format, lint, tests and specs, then all three of the above, stopping at the first failure. |
+| `just ios measured` | The phone measured on this Mac: `just ios perf`, on an enrolled Mac only ([Performance](PERFORMANCE.md)). |
+| `just ios verify` | The workspace's format, lint, tests and specs, then all four of the above, stopping at the first failure. |
 
 `just ios loopback-smoke` links the driving bridge from a bare Swift
 executable, pairs it with a served machine by the link that machine prints,
@@ -515,8 +516,9 @@ iPhone running a Release build before a release:
   the system pickers, on supported phones.
 - Timing on the oldest supported phone: cold start, reaching a paired host's
   fleet, scrolling a long chat while it streams on ProMotion and standard
-  displays, thermal state and battery. No suite times the app on a
-  simulator; [performance](PERFORMANCE.md) says what is timed instead.
+  displays, thermal state and battery. The simulator's numbers for the same
+  workloads come from `just ios perf` ([performance](PERFORMANCE.md)) and
+  stand in for a phone's until somebody measures one.
 
 ## Registered UIKit leaves
 
@@ -562,28 +564,17 @@ content height swung by thousands of points on each step and no correction
 could hold the reader's place; laid out whole, each row taken in or let go
 moves the others by exactly its height.
 
-What was measured earlier, when the list was a `LazyVStack` over every row:
-
-What was measured: the rows the app ships, projected and drawn by the same
-code, with a thousand of them on screen and fifty more arriving every second
-for twenty seconds, on the pinned Mac's simulator, five samples each:
-
-| | Measured | Budget |
-| --- | --- | --- |
-| Hitch time ratio | 0.0 ms/s | ≤ 5 ms/s |
-| Main-thread CPU over the stream | 34.3% of one core (worst 34.5%) | ≤ 60% |
-| Footprint at 2,000 rows | 62.1 MB (worst 67.7 MB) | ≤ 250 MB |
-| Commits over 5 s of idle | 0 | 0 |
-
-None of those was close to its limit under a stream into a list that
-stayed put; the freeze came from a reader moving through a long one. The app
-imposes no frame cap of its own, so what the display offers is what it uses.
-
-These figures come from the simulator, which reports 60 Hz and composites
-through the Mac's display, so the frame-rate ones are proxies. They were
-taken by an in-app performance suite on an earlier build of the app, before
-its rows were redrawn, and that suite has since been retired. What would
-reopen the question: a transcript that stutters on a real phone.
+What was measured earlier, when the list was a `LazyVStack` over every row,
+by the app's own performance suite on the pinned Mac's simulator: a thousand
+rows on screen and fifty more arriving every second for twenty seconds, five
+samples each, gave a hitch time ratio of 0.0 ms/s (budget 5), main-thread
+CPU of 34.3% of one core (budget 60), a footprint of 62.1 MB at 2,000 rows
+(budget 250) and zero commits over 5 s of idle. None of those was close to
+its limit under a stream into a list that stayed put; the freeze came from a
+reader moving through a long one. The app imposes no frame cap of its own,
+so what the display offers is what it uses. The same workloads are measured
+today by `just ios perf` ([performance](PERFORMANCE.md), "The phone"), whose
+report carries the current numbers.
 
 ### Holding the reader's place is a UIKit leaf
 

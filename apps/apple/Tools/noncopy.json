@@ -758,6 +758,10 @@
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Door.swift": [
       {"literal": "\"scroll\"", "context": "case \"scroll\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"scroll\"", "context": "try fields.encode(\"scroll\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"measure\"", "context": "case \"measure\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"measure\"", "context": "try fields.encode(\"measure\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"measurement\"", "context": "case \"measurement\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"measurement\"", "context": "try fields.encode(\"measurement\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"amux-element-geometry\"", "context": "public static let elementGeometryArgument = \"amux-element-geometry\"", "reason": "Debug launch protocol spelling shared by the app and its UI-test driver, not displayed copy.", "count": 1},
       {"literal": "\"open\"", "context": "case \"open\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"cloud\"", "context": "case \"cloud\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},

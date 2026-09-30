@@ -8,8 +8,9 @@ the qualification lane on enrolled machines, never in an ordinary push. Claims t
 (rows and bytes retained, message counts, cache misses) belong in ordinary tests; elapsed time and memory belong
 here. How this lane sits beside the others is on [Testing](TESTING.md).
 
-The harness is the `qualification` crate (`crates/qualification/src/perf`). The phone is measured through it:
-the flood's viewer stands in for it (see [The phone](#the-phone)).
+The desktop harness is the `qualification` crate (`crates/qualification/src/perf`); the phone has a suite of
+its own, `just ios perf`, which drives the optimised app on the enrolled Mac's simulator (see
+[The phone](#the-phone)).
 
 ## Running it
 
@@ -142,12 +143,62 @@ without a drift gate. The run fails if any verdict is `FAIL`.
 
 ## The phone
 
-The flood's viewer holds nothing and reads the fleet and one chat through the same subscriptions the iPhone app
-reads, from the same node the app runs inside itself, so its fleet and chat budgets are the phone's catching up under
-load, without a simulator's timing in the number. The phone's own screen under the
-flood is seen, not timed: serve `journeys/topologies/flood.json` with `testnet serve` and pair the app with its
-`desk` host as [the iPhone app](IOS.md) describes for any served topology. Every flood message carries its number
-(`message 1234: ...`), so the newest row the phone draws can be read against the newest row `desk` holds (the served
-net's `Chat` verb), and a page of history shows by its numbers where it starts. On the app's debug door, scrolling up
-leaves the newest row as a person's drag does, and the `conversation` reading of the chat on screen is the rows its
-page holds.
+`just ios perf` measures the iPhone app itself, on this Mac's pinned simulator, against a served network built for
+it: three machines on the phone's local network, forty agents dealt across them, and one conversation a thousand
+rows long that streams on cue (`crates/qualification/src/perf/phone.rs` generates the topology; `scripts/ios-perf.py`
+runs the suite). The app is the `Measured` build: compiled the way the shipped build is, with the driving door kept
+in, because an unoptimised Swift build measures the compiler rather than the app. Every packet between the phone
+and a machine crosses a gate the run can delay (the served net's `LanGate` and `LanFaults` verbs), so reaching the
+fleet is measured over a household network's latency as well as over none.
+
+Every number is taken by the app: the launch marks (`Signposts` in `AmuxCore`, emitted in every build) and the
+door's `measure` verb, which watches the display, the main thread and the footprint for a stretch while the run
+streams into the chat on screen. The script only arranges the workload and judges. Five samples per metric, the
+median against the budget; the run stops and says so if a mark it needs never appears or a stream never reached
+the phone, rather than reporting a number about an idle screen.
+
+| Metric | Group | What is measured | Budget | Worst | Tolerance |
+| --- | --- | --- | --- | --- | --- |
+| `cold first frame` | cold | Kernel process start to the first presented frame carrying the remembered fleet's rows, the app terminated between the five launches, the machines up | 500 ms | 600 ms | 15% |
+| `cold store read` | cold | Inside each of those launches, the embedded node starting to open the installation to the fleet on screen having caught up with its own store: the store's share of a launch, before any host is reached | 300 ms | | 15% |
+| `reconciliation at 0 ms` | reconciliation | From that point to the first presented frame after every trusted machine's agents were current with the machine, over loopback | 1,000 ms | | 15% |
+| `reconciliation at 100 ms` | reconciliation | The same, with every gate holding each packet 100 ms | 1,000 ms | | 15% |
+| `streaming hitch time` | streaming | Missed frame time per second while fifty rows a second arrive for twenty seconds into the conversation on screen, resting at its tail | 5 ms/s | | 15% |
+| `streaming main-thread CPU` | streaming | The main thread's share of one core over the same stream | 60 % | | 15% |
+| `streaming footprint` | streaming | The process's footprint at the end of the stream | 250 MB | | 10% |
+| `idle transcript commits` | idle | Rows the chat on screen took over five seconds with nothing arriving, after a two-second settle | 0 count | 0 | 0% |
+| `idle display ticks` | idle | Display refreshes the app asked for over the same five seconds | 0 count | 0 | 0% |
+
+The cold-start budgets are a simulator's: an empty SwiftUI app linking the frameworks this one links draws its first
+frame at about 414 ms on the pinned simulator, so the gate is the floor plus room for the app's own work, and the
+400 ms a phone is asked for stays on the physical-phone checklist in [the iPhone app](IOS.md). The simulator reports
+60 Hz and composites through the Mac's display, so hitch time is display-link missed-frame accounting, a proxy for a
+device's hitch metric. The store-read budget is the node's own start as first measured on the pinned Mac, about
+270 ms from the app asking for the installation to the fleet on screen having caught up with its store, with a
+little room; it is a number to bring down, not one to grow into, and the launch it sits inside is over its own
+budget as of the first runs (the report says by how much).
+
+`--only cold|reconciliation|streaming|idle` takes one group, for working on it; `--baseline` needs a whole run.
+`--describe` says which enrolled machine this is and whether its baseline exists without building or launching
+anything. Baselines live beside the desktop's:
+
+```text
+perf/baselines/phone/<machine>.json      e.g. phone/pinned-mac.json
+```
+
+with the same drift rules: the median may grow past the recorded one by the tolerance in the table and no more;
+a metric with no baseline is judged on its budget alone and the report says so. The machines:
+
+| Machine | Model |
+| --- | --- |
+| `pinned-mac` | `Mac14,6` |
+
+A Mac not in the table is refused, not skipped: `scripts/tests/ios_perf_test.py` holds this page's tables to the
+script's, so enrolling a machine or changing a budget is a change here and there in one commit. The report lands in
+`target/ios/perf/report.md` with `verdict.json` and `samples.json` beside it; the served net's own record is under
+`target/ios/perf/journey/`. `just ios verify` runs the suite last, as `just ios measured`; the hosted runners are not
+enrolled, so it is not in `just ios captures`.
+
+The flood's viewer (above) still reads the fleet and one chat through the same subscriptions the app reads, from a
+runtime holding nothing, so its budgets say what the phone waits for on the host's side, without a simulator in the
+number; the phone suite says what the app does with it.

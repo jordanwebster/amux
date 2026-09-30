@@ -1,3 +1,31 @@
+2026-09-30 — **The phone has its performance suite back, and the first numbers are findings.**
+`just ios perf` drives the optimised `Measured` app (Release-preset
+Swift with the door kept in) on the pinned simulator against a served
+network made for it: three machines behind delayable gates, forty
+agents, one conversation a thousand rows long that streams five cued
+bursts of fifty rows a second. Every number is the app's own: launch
+marks (process start, images loaded, store read, first remembered
+frame, reconciled) and a `measure` door verb that watches the display,
+the main thread and the footprint. Budgets, drift and enrolment follow
+the desktop suite's rules; the page's tables are held to the runner's
+by a script test. The verifier runs it last, as `just ios measured`,
+never in the hosted captures. The first runs on the pinned Mac, five
+samples each, fail three budgets and that is what the suite is for:
+the cold first frame is about 910 ms against 500 (300 ms of linker,
+then 100 ms to the node starting, 270 ms of node start and store
+catch-up, 220 ms from the fleet's read to the presented frame);
+reconciling over 100 ms of latency takes about 2.3 s against 1,000 ms;
+and the transcript under the stream holds the main thread at 100% and
+presents about eighteen frames a second (hitch 650 ms/s against 5),
+with glass off as well as on, so the cost is the row pipeline, not the
+material. The store read, footprint (130 MB) and idle (zero commits,
+zero ticks) are inside their budgets. No baseline is recorded: a run
+over budget cannot become one. Two things the runs taught about the
+daemons: ten handshakes a minute from one address is the limit, so the
+runner spaces launches ten seconds apart; and a remembered direct
+address that fails its startup dial is not dialled again unless
+discovery lists the host.
+
 2026-09-30 — **A host's entry says whether its agents are current; a served host can sit behind a slow gate.**
 The fleet told a client whether a trusted host was online, but not
 whether this machine's copy of its agents had caught up with it since:

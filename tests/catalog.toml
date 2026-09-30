@@ -595,6 +595,42 @@ update = "FLOOD_TOPOLOGY_UPDATE=1 just test-crate qualification -- --test flood"
 cargo = [{ package = "qualification", targets = ["flood"], features = ["bundled"] }]
 
 [[suite]]
+name = "phone-workload-topology"
+contract = "The phone's performance topology loads as testnet serves it and holds the workload the suite describes: three machines, forty agents, and a conversation a thousand rows long that streams five cued bursts."
+paths = ["crates/qualification/tests/phone.rs", "crates/qualification/src/perf/phone.rs", "crates/qualification/src/bin/phone_topology.rs"]
+recipe = "just test-crate qualification -- --test phone"
+boundary = "System composition"
+oracle = "The generated topology round-trips through the served form and its counts are the suite's constants."
+real = ["topology generator"]
+substituted = []
+time = "none"
+capabilities = []
+lane = "fast"
+evidence = ""
+update = "Change the constants in crates/qualification/src/perf/phone.rs and this test together."
+cargo = [
+  { package = "qualification", targets = ["phone"], features = ["bundled"] },
+  { package = "qualification", kind = "bin", targets = ["phone-topology"], features = ["bundled"] },
+]
+
+[[suite]]
+name = "phone-performance-qualification"
+contract = "The optimised iPhone app on the enrolled Mac's simulator, against the served performance network, stays within its budgets for cold launch, store read, reconciliation over none and over 100 ms of latency, streaming and idle, and within reviewed drift of the machine's baseline."
+paths = ["scripts/ios-perf.py", "crates/qualification/src/perf/phone.rs"]
+recipe = "just ios perf"
+boundary = "System composition"
+oracle = "Marks and measurements the app takes itself, read through its door, judged against the budgets in docs/PERFORMANCE.md and the machine's baseline."
+real = ["Measured app on the pinned simulator", "served daemons", "agent processes", "SQLite store", "gated loopback network"]
+substituted = ["providers by the scripted fakes", "cloud account"]
+time = "real"
+capabilities = ["enrolled Mac14,6", "quiet machine", "iPhone simulator"]
+lane = "qualification"
+evidence = "target/ios/perf"
+update = "just ios perf --baseline, once every budget passes; no baseline is recorded yet"
+cases = ["scripts/ios-perf.py"]
+cargo = []
+
+[[suite]]
 name = "terminal-native-presentation"
 contract = "Terminal views render stable semantic cells and dispatch the commands promised by their visible controls."
 paths = ["crates/tui/tests", "crates/tui/src/fixtures.rs"]

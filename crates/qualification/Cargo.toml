@@ -22,6 +22,12 @@ name = "perf"
 path = "src/bin/perf.rs"
 required-features = ["perf"]
 
+# The phone's performance topology, written for `testnet serve` by
+# `just ios perf`; needs no feature, so the ordinary tools build carries it.
+[[bin]]
+name = "phone-topology"
+path = "src/bin/phone_topology.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }

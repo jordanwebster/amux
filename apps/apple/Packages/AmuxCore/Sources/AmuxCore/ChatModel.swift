@@ -200,6 +200,9 @@ public final class ChatModel {
     /// cells again, and read the frame, the card and the strip.
     public func woke() {
         let changes = source.takeChanges()
+        if changes.reloaded || !changes.keys.isEmpty {
+            Signposts.emit(.transcriptCommit)
+        }
         if changes.reloaded {
             swap()
         } else if !changes.keys.isEmpty {

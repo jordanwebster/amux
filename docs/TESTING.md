@@ -142,7 +142,7 @@ production code, and small authored scenarios. Ordinary runs compare and never r
 | Phone whole-screen goldens | `apps/apple/Goldens` | `just ios goldens -- --update` |
 | Phone component snapshots | `apps/apple/AmuxComponentSnapshotTests/__Snapshots__` | `just ios component-snapshots -- --record` |
 | A dump bundle replayed through its three stages | `crates/replay-support/tests/fixtures/bundle` | a fresh `amux dump`; see [Debugging](DEBUGGING.md) |
-| Performance baselines | `perf/baselines` | `just perf --baseline`; see [Performance](PERFORMANCE.md) |
+| Performance baselines | `perf/baselines` | `just perf --baseline` and `just ios perf --baseline`; see [Performance](PERFORMANCE.md) |
 
 Every update is reviewed as a diff before it is committed. The phone's pictures with their glass on are review
 captures written wherever they are asked for (`just ios goldens -- --review DIR`, `just ios component-snapshots --
@@ -187,3 +187,4 @@ goldens.
 | Phone accessibility audit | `target/ios/accessibility` |
 | TUI evidence bundle | `just tui-evidence`; rendered PNGs from `just shot` (see [amux-shot](../crates/shot/README.md)) |
 | Desktop performance | printed report; `--baseline` writes `perf/baselines/desktop/<model>.json` |
+| Phone performance | `target/ios/perf/report.md`; `--baseline` writes `perf/baselines/phone/<machine>.json` |

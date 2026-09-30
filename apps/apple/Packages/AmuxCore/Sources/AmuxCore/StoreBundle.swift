@@ -25,6 +25,9 @@ public final class StoreBundle {
     public let newAgent: NewAgentStore
     /// How many times the fleet was read, for a driver waiting on one.
     public private(set) var applied = 0
+    /// The launch's reconciliation is marked once: the first read in which
+    /// every trusted host was current.
+    @ObservationIgnored private var markedReconciled = false
 
     /// The profile serving this account, while it is on screen.
     @ObservationIgnored public private(set) var profile: Profile?
@@ -89,6 +92,13 @@ public final class StoreBundle {
         let views = profile.hosts()
         fleet.show(profile.fleetRows(expanding: Array(fleet.expanded)), hosts: views)
         hosts.show(views)
+        if !markedReconciled {
+            let trusted = views.filter { $0.trusted && !$0.local }
+            if !trusted.isEmpty, trusted.allSatisfy(\.current) {
+                markedReconciled = true
+                Signposts.emitWhenPresented(.reconciled)
+            }
+        }
         newAgent.remember(fleet.rows)
         saw?(fleet.machines.filter(\.trusted).count, fleet.rows.filter(\.needsYou).count)
         applied += 1

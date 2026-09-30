@@ -110,6 +110,7 @@ final class DoorHost {
             return .runtimeLog(composition?.runtime.logTail(bytes: bytes) ?? "")
         case .conversation(let agent): return reading(agent)
         case .signposts: return .signposts(Signposts.marks)
+        case .measure(let seconds): return await measure(seconds)
         case .appearance(let appearance):
             await wear(appearance)
             events.append(.appearance(appearance))
@@ -331,6 +332,26 @@ final class DoorHost {
             try? await Task.sleep(for: .milliseconds(50))
         }
         return .ack
+    }
+
+    /// Watches the display, the main thread and the footprint for `seconds`
+    /// while the driver runs its workload, and answers what they did. Taken
+    /// on the main actor so the CPU reading is the main thread's own; the
+    /// watch's display link is not one the app asked for, so the idle count
+    /// reads only the app's ticks.
+    private func measure(_ seconds: Double) async -> DoorReply {
+        let watch = FrameWatch()
+        let cpu = CPUWatch()
+        let idleTicks = Signposts.count(.idleTick)
+        let commits = Signposts.count(.transcriptCommit)
+        watch.start()
+        try? await Task.sleep(for: .seconds(seconds))
+        let hitch = watch.stop()
+        return .measurement(Measurement(
+            seconds: seconds, frames: watch.frames, hitchMsPerS: hitch,
+            mainThreadCpuPercent: cpu.percent(), footprintMB: Footprint.megabytes(),
+            idleTicks: Signposts.count(.idleTick) - idleTicks,
+            transcriptCommits: Signposts.count(.transcriptCommit) - commits))
     }
 
     /// The chat a page holds for the agent a driver names, opened as the page

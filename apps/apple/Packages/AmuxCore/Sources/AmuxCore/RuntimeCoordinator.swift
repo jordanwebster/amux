@@ -82,6 +82,8 @@ public final class RuntimeCoordinator {
     @ObservationIgnored private var shown: StoreBundle?
     /// Which opening of a profile the wakes belong to.
     @ObservationIgnored private var opening = 0
+    /// The launch's store read is marked once, however many profiles open.
+    @ObservationIgnored private var markedStoreRead = false
     @ObservationIgnored private var waiting: [CheckedContinuation<Runtime?, Never>] = []
     @ObservationIgnored private var starting: Task<Void, Never>?
     /// Which start a started runtime answers; one a stop overtook is stopped.
@@ -141,6 +143,7 @@ public final class RuntimeCoordinator {
         let starter = starter
         launch += 1
         let expected = launch
+        Signposts.emit(.storeReadBegan)
         starting = Task.detached {
             let started: Result<Runtime, RuntimeFailure>
             do {
@@ -171,7 +174,6 @@ public final class RuntimeCoordinator {
             storeFailure = nil
             if !found.isEmpty { runtime.discovered(found.map(\.found)) }
             profilesMoved()
-            Signposts.emit(.reconciled)
             answer(runtime)
         case .failure(let reason):
             failure = reason.description
@@ -224,6 +226,10 @@ public final class RuntimeCoordinator {
                 }
                 profile = opened
                 fed = stores
+                if !markedStoreRead {
+                    markedStoreRead = true
+                    Signposts.emit(.storeReadEnded)
+                }
                 stores.hosts.sawLocalNetwork(permission)
                 stores.attach(opened)
             } catch {
