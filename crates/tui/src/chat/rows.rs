@@ -119,7 +119,7 @@ pub fn row_lines(
     lines
 }
 
-fn state_meta(state: ToolStateView) -> Option<&'static str> {
+pub(crate) fn state_meta(state: ToolStateView) -> Option<&'static str> {
     match state {
         ToolStateView::Pending => Some("waiting"),
         ToolStateView::Running => Some("running"),
@@ -132,7 +132,7 @@ fn state_meta(state: ToolStateView) -> Option<&'static str> {
 
 /// A call's verb says what happened to it: waiting for the person, under
 /// way, refused, cancelled or done. The meta then never repeats it.
-fn call_verb(
+pub(crate) fn call_verb(
     state: ToolStateView,
     row: &Row,
     [wants, doing, done]: [&'static str; 3],
@@ -214,7 +214,7 @@ fn hang(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
 }
 
 /// Indented body lines, cut with a count past `limit`.
-fn detail(
+pub(crate) fn detail(
     text: &str,
     width: usize,
     style: Style,
@@ -242,7 +242,12 @@ fn detail(
     lines
 }
 
-fn markdown(source: &str, width: usize, style_note: bool, theme: Theme) -> Vec<Line<'static>> {
+pub(crate) fn markdown(
+    source: &str,
+    width: usize,
+    style_note: bool,
+    theme: Theme,
+) -> Vec<Line<'static>> {
     markdown_rows(source, width.saturating_sub(INDENT).max(1), theme)
         .into_iter()
         .map(|mut spans| {
@@ -357,7 +362,7 @@ fn with_decision(meta: String, row: &Row) -> String {
 
 /// [`with_decision`] on a row whose verb may already say the outcome, as
 /// "Denied" does.
-fn with_decision_after(meta: String, row: &Row, verb: &str) -> String {
+pub(crate) fn with_decision_after(meta: String, row: &Row, verb: &str) -> String {
     let Some(decision) = &row.decision else {
         return meta;
     };
@@ -400,7 +405,7 @@ fn run_summary(run: &RunInfo) -> String {
     parts.join(" · ")
 }
 
-fn explore_verb(verb: ExploreVerb) -> &'static str {
+pub(crate) fn explore_verb(verb: ExploreVerb) -> &'static str {
     match verb {
         ExploreVerb::Read => "Read",
         ExploreVerb::Search => "Searched",
@@ -974,7 +979,7 @@ fn body(
 
 /// A landed edit's patch under its row: numbered lines in the diff
 /// colours, then how much more there is and the key that opens it.
-fn patch_lines(
+pub(crate) fn patch_lines(
     patch: &PatchHead,
     open: bool,
     leader: char,
@@ -1019,7 +1024,7 @@ fn patch_lines(
 }
 
 /// The end of `text` in at most `max` characters, "…" marking a cut.
-fn tail(text: &str, max: usize) -> String {
+pub(crate) fn tail(text: &str, max: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     if chars.len() <= max {
         return text.to_owned();

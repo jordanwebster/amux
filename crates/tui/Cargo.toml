@@ -25,6 +25,7 @@ base64 = "0.22"
 crossterm = { workspace = true, features = ["event-stream"] }
 futures-util = { workspace = true }
 ratatui = { workspace = true }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

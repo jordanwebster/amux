@@ -66,21 +66,35 @@ explains hosts, pairing and the relay.
 
 Enter on a fleet row opens its chat. From top to bottom:
 
-- **The header**: the agent's name, kind and host, then at the right its model, effort and mode where known, and
-  one status word: `needs you`, `working`, `idle`, `starting`, `exited` with its cause, `catching up` before the
-  first CaughtUp, `reconnecting` while the local runtime is being reconnected, `refreshing` while a rebuilt
-  history is on its way, or why the host is away (not current, this machine signed out, or the host has stopped
-  trusting this machine).
+- **The top line**: `amux › ` and the agent's name, with one status word at the right: `needs you` (in the
+  accent), `working`, `idle`, `starting`, `exited` with its cause, `catching up` before the first CaughtUp,
+  `reconnecting` while the local runtime is being reconnected, `refreshing` while a rebuilt history is on its way,
+  or why the host is away (not current, this machine signed out, or the host has stopped trusting this machine).
 - **The family line**, for an agent with a parent or children: the parent, the number of subagents and how many
   need you.
-- **The feed**: the chat rows, laid out upward from the newest or from wherever the reader scrolled. Runs of reads
-  and searches collapse into one summary row. [CHAT_VOCABULARY.md](CHAT_VOCABULARY.md) shows every row, ask and
-  strip field as this client draws them.
+- **The feed**, read one turn at a time, laid out upward from the newest or from wherever the reader scrolled:
+  - your message is a tinted block with the time at its right;
+  - everything the agent wrote is in one reading ink; its thinking is not drawn;
+  - each stretch of tool steps between two pieces of its text folds to one faint line of what the steps did
+    (`▸ 3 commands · 2 edits · 4 reads`). Clicking it, or `<leader> o` on it, opens the stretch to one line per
+    step, with consecutive reads and searches merged into one; clicking a step opens its detail (a command's
+    output, an edit's patch, a call's result), and an edit's `[diff]` opens the review page;
+  - a failure the turn ended without fixing stays under its folded stretch in red; one fixed later in the turn
+    folds away with the rest;
+  - while the agent is at a stretch, its newest three steps show as they happen, the current one bright, with a
+    line for the ones above them, and the stretch folds once the agent writes again;
+  - a turn ends with a faint `Worked 6m`.
+
+  Asks, errors, boundaries and the other rows [CHAT_VOCABULARY.md](CHAT_VOCABULARY.md) lists keep their own
+  drawing for now.
 - **The ask card**, when the agent is waiting on you, docked where the composer was; the draft stays underneath
   it.
-- **The composer**, with the activity line inside it while the agent works, the session strip, any foot card
-  (a sign-in problem or a usage block), the tray of queued and unconfirmed prompts, and a line of keys for the
-  composer's current mode.
+- **The composer**, boxed, with the model, effort and mode on its bottom edge; above it a quiet line while the
+  agent works, the session strip, any foot card (a sign-in problem or a usage block) and the tray of queued and
+  unconfirmed prompts; below it a line of keys for the composer's current mode.
+
+Design variant 1 (F3 in [the lab](#the-lab)) draws the chat as it was before this redesign: a header with
+the kind, host, model and mode, every row drawn in full, and an unboxed composer.
 
 The composer takes a draft at any time. Enter sends only while the chat is current and the agent is live; while
 the agent works, Enter queues the prompt behind the running turn. When the agent has exited, Enter resumes it with

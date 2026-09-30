@@ -1,3 +1,29 @@
+2026-09-30 — **The chat reads as turns, with its work folded.** The chat drew
+every tool call, its output and its diff at the weight of the agent's
+answer, so a busy chat was a wall of steps. The redesigned chat (design
+variant 0; variant 1 keeps the old one) reads one turn at a time: your
+message as a tinted block with the time, everything the agent wrote in
+one reading ink, and each stretch of tool steps between two pieces of its
+text folded to one faint line of counts ("3 commands · 2 edits · 4
+reads"). A stretch opens to one line per step, consecutive reads and
+searches merged, and a step opens to its detail; an edit's `[diff]` opens
+the review page. While the agent is at a stretch its newest three steps
+show live, the current one bright, and the stretch folds when it writes
+again. A failure the ended turn never fixed stays under its folded
+stretch; one a later step in the turn redid successfully folds away. A
+turn ends with "Worked 6m", without its cost. The top line is home's, one
+level in (`amux › name`, one status word), and the composer is boxed with
+the model, effort and mode on its bottom edge; hints use home's key
+legend. The grouping lives in the shared views (`ui_view::stretch_at`,
+`stretch_steps`), since the phone will want the same folding. Markdown now
+reflows a paragraph's source lines into one, as markdown reads them, so
+text wrapped at its author's width no longer breaks mid-sentence at ours.
+Asks, errors and boundaries keep their old drawing for now; the tests and
+vocabulary fixtures that describe the old chat ask for it by
+`ChatView::legacy`. The lab gains a `mid-turn` scenario: a turn left with
+an unresolved failure, then one whose text and steps interleave and whose
+newest stretch is still running.
+
 2026-09-30 — **Home lines up on two columns.** "+ New Agent" moves left so its
 `+` shares the screen's left edge with `amux` and the headings' arrows, and
 its words share the column of the heading labels and the agents' marks.

@@ -15,6 +15,7 @@ mod review;
 mod rows;
 mod segments;
 mod settings;
+mod stretch;
 
 pub use ask::{
     Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, OptionView, Pick, QuestionView,
@@ -40,3 +41,4 @@ pub use settings::{
     CommandView, EffortChoice, ModeChoice, ModeValue, ModelChoice, SettingChange, SettingsView,
     setting_input, settings,
 };
+pub use stretch::{Stretch, StretchCounts, stretch_at, stretch_steps};

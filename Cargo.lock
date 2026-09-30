@@ -4751,6 +4751,7 @@ dependencies = [
  "async-trait",
  "attachments",
  "base64 0.22.1",
+ "chrono",
  "client",
  "crossterm 0.29.0",
  "futures-util",

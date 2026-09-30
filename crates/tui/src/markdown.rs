@@ -23,8 +23,32 @@ pub(crate) fn markdown_rows(source: &str, width: usize, theme: Theme) -> Vec<Vec
     let width = width.max(1);
     let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
     let mut in_fence = false;
+    // Consecutive plain lines are one paragraph, as markdown reads them: a
+    // source wrapped at its own width reflows to ours rather than breaking
+    // where the author's editor did.
+    let mut paragraph = String::new();
+    let flush = |paragraph: &mut String, rows: &mut Vec<Vec<Span<'static>>>| {
+        if !paragraph.is_empty() {
+            rows.extend(wrap_runs(&inline_runs(paragraph, theme), width, 0));
+            paragraph.clear();
+        }
+    };
     for line in source.lines() {
         let trimmed = line.trim_start();
+        let plain = !in_fence
+            && !line.trim().is_empty()
+            && !trimmed.starts_with("```")
+            && !trimmed.starts_with('|')
+            && !trimmed.starts_with('#')
+            && split_list_marker(line).is_none();
+        if plain {
+            if !paragraph.is_empty() {
+                paragraph.push(' ');
+            }
+            paragraph.push_str(if paragraph.is_empty() { line } else { trimmed });
+            continue;
+        }
+        flush(&mut paragraph, &mut rows);
         if trimmed.starts_with("```") {
             // Fence markers stay visible, muted — the same keep-the-source
             // honesty as headings keeping their `#`.
@@ -59,6 +83,7 @@ pub(crate) fn markdown_rows(source: &str, width: usize, theme: Theme) -> Vec<Vec
         }
         rows.extend(wrap_runs(&inline_runs(line, theme), width, 0));
     }
+    flush(&mut paragraph, &mut rows);
     rows
 }
 

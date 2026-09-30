@@ -437,11 +437,16 @@ impl App {
                 }
                 let theme = self.theme();
                 if let Some(chat) = &mut self.chat {
-                    {
+                    let effects = {
                         let state = chat.session.state();
-                        chat.view.mouse(&state, mouse, theme);
-                    }
+                        chat.view.mouse(&state, mouse, theme)
+                    };
                     chat.tell_following();
+                    for effect in effects {
+                        if let Some(flow) = self.chat_effect(effect) {
+                            return flow;
+                        }
+                    }
                     return Flow::Continue;
                 }
                 let effects = {
@@ -527,39 +532,8 @@ impl App {
                 self.next_in_family();
             }
             KeyCode::Char('r') => {
-                if chat.view.resume_review() {
-                    return Flow::Continue;
-                }
-                let writable = matches!(state.composer(), Composer::Send | Composer::Resume);
-                let agent_id = chat.view.agent_id.clone();
                 drop(state);
-                if !writable {
-                    self.notice("review waits until the chat is current", Tone::Warn);
-                    return Flow::Continue;
-                }
-                let client = self.client.clone();
-                self.notice("reading the working tree…", Tone::Info);
-                self.spawn(async move {
-                    Some(
-                        match ui_runtime::review::working_tree_review(client.as_ref(), &agent_id)
-                            .await
-                        {
-                            Ok((_, patch)) if patch.trim().is_empty() => AppEvent::Notice(
-                                "no changes in the working tree".into(),
-                                Tone::Info,
-                            ),
-                            Ok((diff, patch)) => AppEvent::Review {
-                                agent_id,
-                                diff,
-                                patch,
-                            },
-                            Err(error) => AppEvent::Notice(
-                                format!("could not read the working tree: {error}"),
-                                Tone::Warn,
-                            ),
-                        },
-                    )
-                });
+                self.review();
             }
             KeyCode::Char('t') if self.config.attach => {
                 let agent = chat.agent.clone();
@@ -569,6 +543,48 @@ impl App {
             _ => {}
         }
         Flow::Continue
+    }
+
+    /// `<leader> r`, or a `[diff]` clicked: the review page over the
+    /// agent's working tree, or back to the one already in the draft.
+    fn review(&mut self) {
+        let Some(chat) = &mut self.chat else {
+            return;
+        };
+        if chat.view.resume_review() {
+            return;
+        }
+        let state = chat.session.state();
+        let writable = matches!(state.composer(), Composer::Send | Composer::Resume);
+        let agent_id = chat.view.agent_id.clone();
+        drop(state);
+        if !writable {
+            self.notice("review waits until the chat is current", Tone::Warn);
+            return;
+        }
+        {
+            let client = self.client.clone();
+            self.notice("reading the working tree…", Tone::Info);
+            self.spawn(async move {
+                Some(
+                    match ui_runtime::review::working_tree_review(client.as_ref(), &agent_id).await
+                    {
+                        Ok((_, patch)) if patch.trim().is_empty() => {
+                            AppEvent::Notice("no changes in the working tree".into(), Tone::Info)
+                        }
+                        Ok((diff, patch)) => AppEvent::Review {
+                            agent_id,
+                            diff,
+                            patch,
+                        },
+                        Err(error) => AppEvent::Notice(
+                            format!("could not read the working tree: {error}"),
+                            Tone::Warn,
+                        ),
+                    },
+                )
+            });
+        }
     }
 
     /// `<leader> n`: the next agent in this agent's family, wrapping.
@@ -853,6 +869,7 @@ impl App {
             ChatEffect::Copy(text) => {
                 let _ = crate::terminal::write_osc52(&mut std::io::stdout(), &text);
             }
+            ChatEffect::Review => self.review(),
             ChatEffect::RawAttach => {
                 let agent = chat.agent.clone();
                 return self.raw_attach(&agent);

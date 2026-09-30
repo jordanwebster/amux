@@ -8,13 +8,14 @@
 
 pub mod ask;
 pub mod composer;
+pub mod feed;
 pub mod layout;
 pub mod review;
 pub mod rows;
 
 use std::collections::HashSet;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
@@ -30,7 +31,8 @@ use self::ask::{AskAction, AskUi};
 use self::composer::{
     COMPOSER_LINES, TrayRow, activity_line, editor_lines, foot_cards, placeholder, strip_line,
 };
-use self::layout::{Anchor, Frame, Laid};
+use self::feed::FeedHit;
+use self::layout::{Anchor, Frame, Laid, StretchCache, Toggle};
 use self::review::{ReviewAction, ReviewPage};
 use crate::clipboard::ClipboardContent;
 use crate::editor::{Edit, Editor};
@@ -86,6 +88,8 @@ pub enum ChatEffect {
     Copy(String),
     /// Hand the terminal to the agent's own interface.
     RawAttach,
+    /// Open the working tree's diff on the review page.
+    Review,
 }
 
 /// A full-screen reader over a diff, a plan or arguments.
@@ -118,6 +122,14 @@ pub struct ChatView {
     pub away: Away,
     /// The leader key, for the keys the chat names.
     pub leader: char,
+    /// Stretches of steps the reader opened, by their oldest step.
+    pub stretches: HashSet<Key>,
+    /// Draw the old chat regardless of the design variant: the tests that
+    /// still describe it set this, since the variant is process-wide.
+    pub legacy: bool,
+    stretch_cache: StretchCache,
+    /// Where the feed's first line was drawn, for clicks.
+    feed_origin: (u16, u16),
     epoch: u64,
     opened_at_ms: i64,
     /// The last frame's layout, for scrolling and focus.
@@ -144,6 +156,10 @@ impl ChatView {
             attach,
             away: Away::Plain,
             leader: 'a',
+            stretches: HashSet::new(),
+            legacy: false,
+            stretch_cache: StretchCache::default(),
+            feed_origin: (0, 0),
             epoch: 0,
             opened_at_ms: now_ms,
             laid: Laid::default(),
@@ -162,7 +178,15 @@ impl ChatView {
             height: self.feed.1,
             theme,
             leader: self.leader,
+            redesigned: self.redesigned(),
+            stretches: &self.stretches,
+            cache: &self.stretch_cache,
         }
+    }
+
+    /// Whether the chat draws as redesigned.
+    pub fn redesigned(&self) -> bool {
+        !self.legacy && crate::variant::get() == 0
     }
 
     /// The card to draw, synced with this client's picks. With no ask
@@ -503,7 +527,12 @@ impl ChatView {
         self.anchor = self.frame(theme).scrolled(state, &self.laid, delta);
     }
 
-    pub fn mouse(&mut self, state: &SessionState, event: MouseEvent, theme: Theme) {
+    pub fn mouse(
+        &mut self,
+        state: &SessionState,
+        event: MouseEvent,
+        theme: Theme,
+    ) -> Vec<ChatEffect> {
         if self.review_open
             && let Some(page) = &mut self.review
         {
@@ -512,13 +541,65 @@ impl ChatView {
                 MouseEventKind::ScrollDown => page.scroll_by(WHEEL_LINES),
                 _ => {}
             }
-            return;
+            return vec![];
         }
         match event.kind {
             MouseEventKind::ScrollUp => self.scroll(state, -WHEEL_LINES, theme),
             MouseEventKind::ScrollDown => self.scroll(state, WHEEL_LINES, theme),
+            MouseEventKind::Down(MouseButton::Left) if self.reader.is_none() => {
+                if let Some(hit) = self.hit_at(event.column, event.row) {
+                    return self.feed_hit(state, hit);
+                }
+            }
             _ => {}
         }
+        vec![]
+    }
+
+    /// What the feed line under a click does there.
+    fn hit_at(&self, column: u16, row: u16) -> Option<FeedHit> {
+        let (x, y) = self.feed_origin;
+        let line = usize::from(row.checked_sub(y)?);
+        let column = usize::from(column.checked_sub(x)?);
+        self.laid
+            .hits
+            .get(line)?
+            .iter()
+            .find(|(span, _)| span.is_none_or(|(from, to)| (from..to).contains(&column)))
+            .map(|(_, hit)| hit.clone())
+    }
+
+    fn feed_hit(&mut self, state: &SessionState, hit: FeedHit) -> Vec<ChatEffect> {
+        match hit {
+            FeedHit::Stretch(oldest) => {
+                if !self.stretches.remove(&oldest) {
+                    self.stretches.insert(oldest);
+                }
+            }
+            FeedHit::Step(key) => {
+                // A run opens from any member and closes as a whole.
+                let transcript = state.transcript();
+                let run = transcript
+                    .get(&key)
+                    .and_then(|held| transcript.run_at(held.item.order));
+                let members: Vec<Key> = match run {
+                    Some(run) => transcript
+                        .range(run.oldest..=run.newest)
+                        .map(|held| held.item.key.clone())
+                        .collect(),
+                    None => vec![key.clone()],
+                };
+                if members.iter().any(|member| self.expanded.contains(member)) {
+                    for member in &members {
+                        self.expanded.remove(member);
+                    }
+                } else {
+                    self.expanded.insert(key);
+                }
+            }
+            FeedHit::Diff => return vec![ChatEffect::Review],
+        }
+        vec![]
     }
 
     /// `<leader> k` / `<leader> j`: focus the older or newer drawn row and
@@ -562,11 +643,38 @@ impl ChatView {
         self.focus = Some(key);
     }
 
-    /// `<leader> o`: expand or collapse the focused row, or its run.
+    /// `<leader> o`: expand or collapse the focused row, or its run; in
+    /// the redesigned feed, a folded stretch opens, an open stretch's first
+    /// step folds it again, and any other step opens its detail.
     pub fn toggle_expanded(&mut self, state: &SessionState) {
         let Some(key) = self.focus.clone() else {
             return;
         };
+        if let Some(block) = self.laid.blocks.iter().find(|block| block.key == key) {
+            match block.toggle.clone() {
+                Toggle::Row => {}
+                Toggle::Stretch(oldest) => {
+                    self.feed_hit(state, FeedHit::Stretch(oldest));
+                    return;
+                }
+                Toggle::Step(step) => {
+                    let header =
+                        block
+                            .hits
+                            .first()
+                            .and_then(|hits| hits.first())
+                            .and_then(|(_, hit)| match hit {
+                                FeedHit::Stretch(oldest) => Some(oldest.clone()),
+                                _ => None,
+                            });
+                    match header {
+                        Some(oldest) => self.feed_hit(state, FeedHit::Stretch(oldest)),
+                        None => self.feed_hit(state, FeedHit::Step(step)),
+                    };
+                    return;
+                }
+            }
+        }
         let transcript = state.transcript();
         let run = transcript
             .get(&key)
@@ -727,6 +835,9 @@ impl ChatView {
             draw_reader(paint, area, reader, theme);
             return None;
         }
+        if self.redesigned() {
+            return self.draw_turns(paint, area, state, family, footer, now_ms, theme);
+        }
         let mut top: Vec<Line<'static>> = vec![header(state, self.away, width, theme)];
         if let Some(family) = family {
             top.push(family_line(family, width, theme));
@@ -885,6 +996,388 @@ impl ChatView {
     }
 }
 
+impl ChatView {
+    /// The redesigned chat: a top line naming the agent and where it
+    /// stands, the feed as turns, and the composer boxed with the model and
+    /// mode on its bottom edge. Returns the page to ask for, as `draw` does.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_turns(
+        &mut self,
+        paint: &mut Paint<'_>,
+        area: Rect,
+        state: &SessionState,
+        family: Option<&FamilyHeader>,
+        footer: Option<Line<'static>>,
+        now_ms: i64,
+        theme: Theme,
+    ) -> Option<u32> {
+        let width = usize::from(area.width);
+        let name = state
+            .agent()
+            .name
+            .clone()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "the agent".into());
+        let host = state
+            .host()
+            .map(|host| host.name.clone())
+            .unwrap_or_else(|| "its host".into());
+
+        let mut top: Vec<Line<'static>> = vec![self.top_line(state, &name, width, theme)];
+        if let Some(family) = family {
+            let mut line = family_line(family, width, theme);
+            for span in &mut line.spans {
+                if span.style == theme.muted() {
+                    span.style = theme.faint();
+                }
+            }
+            top.push(line);
+        }
+        top.push(Line::default());
+
+        let mut bottom: Vec<Line<'static>> = Vec::new();
+        if self.anchor != Anchor::Bottom {
+            let words = if state.arrivals_held() {
+                "↓ new activity below"
+            } else {
+                "↓ scrolled back"
+            };
+            let mut line = Line::from(Span::raw("  "));
+            push(&mut line, words, theme.muted(), width);
+            push(
+                &mut line,
+                " · pgdn or ctrl+end for the newest",
+                theme.faint(),
+                width,
+            );
+            bottom.push(line);
+        }
+        let view = composer(state, now_ms);
+        if let Some(activity) = &view.activity {
+            bottom.push(quiet_activity(activity, width, theme));
+        }
+        let strip = session_strip(state);
+        if let Some(line) = strip_line(&strip, width, theme) {
+            bottom.push(line);
+        }
+        bottom.extend(foot_cards(&strip, width, theme));
+        let tray = Self::tray_rows(state);
+        if let Some(selected) = self.tray {
+            if tray.is_empty() {
+                self.tray = None;
+            } else if selected >= tray.len() {
+                self.tray = Some(tray.len() - 1);
+            }
+        }
+        for (i, row) in tray.iter().enumerate() {
+            bottom.push(row.line(self.tray == Some(i), width, theme));
+        }
+
+        let mut cursor = None;
+        let card = self.card(state);
+        let composer_box = |bottom: &mut Vec<Line<'static>>,
+                            cursor: &mut Option<(usize, usize)>,
+                            editor: &Editor,
+                            takes_keys: bool| {
+            let (lines, at) = boxed_composer(
+                editor,
+                &placeholder(&state.composer(), &name, &host, self.away),
+                &strip,
+                width,
+                theme,
+            );
+            if takes_keys {
+                *cursor = Some((bottom.len() + at.0, at.1));
+            }
+            bottom.extend(lines);
+        };
+        let mut hint = footer.clone().unwrap_or_default();
+        match &card {
+            Some(card) => {
+                let lines = self.ask.render(card, &name, self.attach, width, theme);
+                let cap = (usize::from(area.height) / 2).max(4);
+                // The feed's last row already ends in a blank line.
+                let start = bottom.len();
+                let skip = lines.lines.len().saturating_sub(cap);
+                if let Some((row, col)) = lines.cursor.filter(|(row, _)| *row >= skip) {
+                    cursor = Some((start + row - skip, col));
+                }
+                bottom.extend(on_panel(
+                    lines.lines.into_iter().skip(skip).collect(),
+                    width,
+                    theme,
+                ));
+                if footer.is_none() && card.state == CardState::Dismissed {
+                    composer_box(&mut bottom, &mut cursor, &self.editor, true);
+                    hint = keys_line(
+                        &composer_hint_words(state, &self.editor, self.away, self.leader),
+                        width,
+                        theme,
+                    );
+                }
+            }
+            None => {
+                composer_box(&mut bottom, &mut cursor, &self.editor, self.tray.is_none());
+                if footer.is_none() {
+                    hint = match self.tray.and_then(|i| tray.get(i)) {
+                        Some(row) => {
+                            keys_line(&(row.hint().to_owned(), String::new()), width, theme)
+                        }
+                        None => keys_line(
+                            &composer_hint_words(state, &self.editor, self.away, self.leader),
+                            width,
+                            theme,
+                        ),
+                    };
+                }
+            }
+        }
+        bottom.push(hint);
+
+        let height = usize::from(area.height);
+        let feed_height = height.saturating_sub(top.len() + bottom.len());
+        self.feed = (width, feed_height);
+        self.feed_origin = (area.x, area.y + top.len() as u16);
+        let mut lines = top;
+        if state.transcript().is_empty() {
+            lines.extend(empty_feed(
+                state,
+                feed_height,
+                now_ms - self.opened_at_ms,
+                width,
+                theme,
+            ));
+            self.laid = Laid::default();
+        } else {
+            let laid = self.frame(theme).layout(state);
+            lines.extend(laid.lines.iter().cloned());
+            self.laid = laid;
+        }
+        let bottom_start = lines.len();
+        lines.extend(bottom);
+        paint.render_widget(Paragraph::new(lines), area);
+        if let Some((row, col)) = cursor {
+            let y = area.y as usize + bottom_start + row;
+            let x = area.x as usize + col.min(width.saturating_sub(1));
+            if y < (area.y + area.height) as usize {
+                paint.set_cursor_position(Position::new(x as u16, y as u16));
+            }
+        }
+        let page = if state.transcript().is_empty() {
+            state.transcript().has_older().then_some(layout::PAGE)
+        } else {
+            self.laid.page
+        };
+        match page {
+            Some(n) if self.page_asked != state.oldest_order() || self.page_asked.is_none() => {
+                Some(n)
+            }
+            _ => None,
+        }
+    }
+
+    /// "amux › blob cache eviction" at the left, where it stands at the
+    /// right: the same line as home's, one level in.
+    fn top_line(
+        &self,
+        state: &SessionState,
+        name: &str,
+        width: usize,
+        theme: Theme,
+    ) -> Line<'static> {
+        let host = state
+            .host()
+            .map(|host| host.name.clone())
+            .unwrap_or_default();
+        let (words, style) = state_words(state, self.away, &host, theme);
+        let style = if style == theme.muted() {
+            theme.faint()
+        } else {
+            style
+        };
+        let mut line = Line::from(Span::raw("  "));
+        push(&mut line, "amux", theme.emphasis(), width);
+        push(&mut line, " › ", theme.faint(), width);
+        let room = width.saturating_sub(text::str_width(&words) + 4);
+        push(&mut line, name, theme.bright(), room);
+        push_right(&mut line, &words, style, width.saturating_sub(2));
+        line
+    }
+}
+
+/// While the agent works, one quiet line that it is, and for how long.
+/// What it is doing shows as live steps in the feed.
+fn quiet_activity(activity: &ui_state::Activity, width: usize, theme: Theme) -> Line<'static> {
+    let elapsed = text::duration(activity.elapsed_ms - activity.elapsed_ms % 1_000);
+    let words = match &activity.kind {
+        ActivityKind::Thinking => "Thinking".to_owned(),
+        ActivityKind::Subagents { count } => format!(
+            "{count} subagent{} working",
+            if *count == 1 { "" } else { "s" }
+        ),
+        ActivityKind::Compacting => "Compacting".to_owned(),
+        ActivityKind::Retrying { attempt, .. } => format!("Retrying · attempt {attempt}"),
+        ActivityKind::Working | ActivityKind::Running { .. } => "Working".to_owned(),
+    };
+    let mut line = Line::from(Span::raw("    "));
+    push(&mut line, words, theme.muted(), width);
+    push(&mut line, format!(" · {elapsed}"), theme.faint(), width);
+    line
+}
+
+/// The composer in its box, the model, effort and mode on the bottom edge.
+/// Returns its lines and the cursor's (line, column).
+fn boxed_composer(
+    editor: &Editor,
+    placeholder: &str,
+    strip: &ui_view::Strip,
+    width: usize,
+    theme: Theme,
+) -> (Vec<Line<'static>>, (usize, usize)) {
+    const MARGIN: usize = 2;
+    let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
+    let (mut body, (row, col)) = editor_lines(editor, placeholder, inner, theme);
+    // The box already says where to type, so the edge mark becomes a prompt.
+    for (i, line) in body.iter_mut().enumerate() {
+        if let Some(first) = line.spans.first_mut() {
+            *first = Span::styled(if i == 0 { "› " } else { "  " }, theme.muted());
+        }
+    }
+    let skip = (row + 1).saturating_sub(COMPOSER_LINES);
+    let edge = theme.hairline();
+    let span = width.saturating_sub(2 * MARGIN + 2);
+    let mut out = Vec::new();
+    let mut top = Line::from(Span::raw(" ".repeat(MARGIN)));
+    push(&mut top, "╭", edge, width);
+    push(&mut top, "─".repeat(span), edge, width);
+    push(&mut top, "╮", edge, width);
+    out.push(top);
+    for line in body.into_iter().skip(skip).take(COMPOSER_LINES) {
+        let mut boxed = Line::from(Span::raw(" ".repeat(MARGIN)));
+        push(&mut boxed, "│ ", edge, width);
+        boxed.spans.extend(line.spans);
+        text::pad_to(&mut boxed, width - MARGIN - 1);
+        push(&mut boxed, "│", edge, width);
+        out.push(boxed);
+    }
+    let facts: Vec<String> = [
+        strip.model.clone(),
+        strip.effort.clone(),
+        strip.mode.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|fact| !fact.is_empty())
+    .collect();
+    let label = facts.join(" · ");
+    let mut bottom = Line::from(Span::raw(" ".repeat(MARGIN)));
+    push(&mut bottom, "╰", edge, width);
+    if label.is_empty() {
+        push(&mut bottom, "─".repeat(span), edge, width);
+    } else {
+        let rule = span.saturating_sub(text::str_width(&label) + 3).max(1);
+        push(&mut bottom, "─".repeat(rule), edge, width);
+        push(&mut bottom, " ", edge, width);
+        push(&mut bottom, label, theme.faint(), width);
+        push(&mut bottom, " ─", edge, width);
+    }
+    text::pad_to(&mut bottom, width - MARGIN - 1);
+    push(&mut bottom, "╯", edge, width);
+    out.push(bottom);
+    (out, (1 + row - skip, MARGIN + 2 + col))
+}
+
+/// The keys under the composer as (left, right) legend text.
+fn composer_hint_words(
+    state: &SessionState,
+    editor: &Editor,
+    away: Away,
+    leader: char,
+) -> (String, String) {
+    let working = state.phase() == PhaseView::Working;
+    let mode = next_mode(state).is_some() && state.composer() == Composer::Send;
+    let review = format!("C-{leader} r review");
+    let left = match state.composer() {
+        Composer::Send if working => {
+            "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop".to_owned()
+        }
+        Composer::Send if editor.is_empty() => {
+            format!("enter send · ctrl+j newline · ctrl+v attach · {review} · ? help")
+        }
+        Composer::Send => format!("enter send · ctrl+j newline · ctrl+v attach · {review}"),
+        Composer::Resume => "enter resume · ctrl+j newline".to_owned(),
+        Composer::Disabled(Waiting::Detached) if away == Away::SignedOut => {
+            "Draft kept · sending waits until this machine signs in".to_owned()
+        }
+        Composer::Disabled(Waiting::Detached) if away == Away::Revoked => {
+            "Draft kept · sending waits until you pair again".to_owned()
+        }
+        Composer::Disabled(_) => "Draft kept · sending waits".to_owned(),
+    };
+    let right = if mode {
+        "shift+tab mode".to_owned()
+    } else {
+        String::new()
+    };
+    (left, right)
+}
+
+/// A key legend in home's style: each key bright and bold, its action
+/// faint, three blanks apart. Words that are not a legend (they start with
+/// a capital) read as one faint sentence.
+fn keys_line((left, right): &(String, String), width: usize, theme: Theme) -> Line<'static> {
+    let mut line = Line::from(Span::raw("  "));
+    let legend = |line: &mut Line<'static>, words: &str, room: usize| {
+        if words.chars().next().is_some_and(char::is_uppercase) {
+            push(line, words, theme.faint(), room);
+            return;
+        }
+        // Whole pairs or none: a key without its action says nothing.
+        for (i, pair) in words.split(" · ").enumerate() {
+            let gap = if i > 0 { 3 } else { 0 };
+            if text::line_width(line) + gap + text::str_width(pair) > room {
+                break;
+            }
+            if i > 0 {
+                push(line, "   ", theme.faint(), room);
+            }
+            let (key, action) = split_key(pair);
+            push(line, key, theme.emphasis(), room);
+            if !action.is_empty() {
+                push(line, format!(" {action}"), theme.faint(), room);
+            }
+        }
+    };
+    let right_width = text::str_width(right);
+    legend(&mut line, left, width.saturating_sub(right_width + 4));
+    if !right.is_empty() {
+        let mut tail = Line::default();
+        legend(&mut tail, right, width);
+        let used = text::line_width(&line);
+        let at = width.saturating_sub(right_width + 2);
+        if at > used + 2 {
+            line.spans.push(Span::raw(" ".repeat(at - used)));
+            line.spans.extend(tail.spans);
+        }
+    }
+    line
+}
+
+/// "C-a r review" → ("C-a r", "review"); "enter send" → ("enter", "send").
+fn split_key(pair: &str) -> (String, String) {
+    let words: Vec<&str> = pair.split(' ').collect();
+    // A leader chord names two keys before its action.
+    let keys = if words.first().is_some_and(|w| w.starts_with("C-")) && words.len() > 2 {
+        2
+    } else {
+        1
+    };
+    (
+        words[..keys.min(words.len())].join(" "),
+        words[keys.min(words.len())..].join(" "),
+    )
+}
+
 fn mime_of(name: &str) -> &'static str {
     let extension = name.rsplit('.').next().unwrap_or_default().to_lowercase();
     match extension.as_str() {
@@ -940,43 +1433,7 @@ fn header(state: &SessionState, away: Away, width: usize, theme: Theme) -> Line<
         about.push_str(&format!(" @ {host}"));
     }
     push(&mut line, about, theme.muted(), width);
-    let away_words = || {
-        let host = if host.is_empty() { "host" } else { &host };
-        match away {
-            Away::Plain => format!("{host} away · not current"),
-            Away::SignedOut => format!("{host} away · this machine is signed out"),
-            Away::Revoked => format!("{host} no longer trusts this machine"),
-        }
-    };
-    // The session's host entry follows the fleet; this machine's own is
-    // always online.
-    let host_away = state
-        .host()
-        .is_some_and(|entry| entry.presence != wire::Presence::Online as i32);
-    let (words, style) = match (state.composer(), state.phase()) {
-        // Resuming asks the host, so why it is away matters more than how
-        // the agent ended.
-        (_, PhaseView::Exited { .. }) if host_away => {
-            (format!("exited · {}", away_words()), theme.warn())
-        }
-        (_, PhaseView::Exited { cause }) => (
-            match cause {
-                Some(cause) if !cause.is_empty() && cause != "exited" => {
-                    format!("exited · {cause}")
-                }
-                _ => "exited".to_owned(),
-            },
-            theme.muted(),
-        ),
-        (Composer::Disabled(Waiting::Detached), _) => (away_words(), theme.warn()),
-        (Composer::Disabled(Waiting::Reconnecting), _) => ("reconnecting".to_owned(), theme.warn()),
-        (Composer::Disabled(Waiting::CatchingUp), _) => ("catching up".to_owned(), theme.muted()),
-        (_, _) if state.reset_pending() => ("refreshing".to_owned(), theme.muted()),
-        (_, PhaseView::NeedsYou) => ("needs you".to_owned(), theme.accent()),
-        (_, PhaseView::Working) => ("working".to_owned(), theme.muted()),
-        (_, PhaseView::Idle) => ("idle".to_owned(), theme.muted()),
-        (_, PhaseView::Starting) => ("starting".to_owned(), theme.muted()),
-    };
+    let (words, style) = state_words(state, away, &host, theme);
     let strip = session_strip(state);
     let facts: Vec<String> = [strip.model, strip.effort, strip.mode]
         .into_iter()
@@ -1004,6 +1461,53 @@ fn header(state: &SessionState, away: Away, width: usize, theme: Theme) -> Line<
         push_right(&mut line, &right, theme.muted(), width);
     }
     line
+}
+
+/// The one word, or few, for where the chat stands: needs you, working,
+/// idle, exited with its cause, or why it cannot be current.
+fn state_words(
+    state: &SessionState,
+    away: Away,
+    host: &str,
+    theme: Theme,
+) -> (String, ratatui::style::Style) {
+    let away_words = || {
+        let host = if host.is_empty() { "host" } else { host };
+        match away {
+            Away::Plain => format!("{host} away · not current"),
+            Away::SignedOut => format!("{host} away · this machine is signed out"),
+            Away::Revoked => format!("{host} no longer trusts this machine"),
+        }
+    };
+    // The session's host entry follows the fleet; this machine's own is
+    // always online.
+    let host_away = state
+        .host()
+        .is_some_and(|entry| entry.presence != wire::Presence::Online as i32);
+    match (state.composer(), state.phase()) {
+        // Resuming asks the host, so why it is away matters more than how
+        // the agent ended.
+        (_, PhaseView::Exited { .. }) if host_away => {
+            (format!("exited · {}", away_words()), theme.warn())
+        }
+        (_, PhaseView::Exited { cause }) => (
+            match cause {
+                Some(cause) if !cause.is_empty() && cause != "exited" => {
+                    format!("exited · {cause}")
+                }
+                _ => "exited".to_owned(),
+            },
+            theme.muted(),
+        ),
+        (Composer::Disabled(Waiting::Detached), _) => (away_words(), theme.warn()),
+        (Composer::Disabled(Waiting::Reconnecting), _) => ("reconnecting".to_owned(), theme.warn()),
+        (Composer::Disabled(Waiting::CatchingUp), _) => ("catching up".to_owned(), theme.muted()),
+        (_, _) if state.reset_pending() => ("refreshing".to_owned(), theme.muted()),
+        (_, PhaseView::NeedsYou) => ("needs you".to_owned(), theme.accent()),
+        (_, PhaseView::Working) => ("working".to_owned(), theme.muted()),
+        (_, PhaseView::Idle) => ("idle".to_owned(), theme.muted()),
+        (_, PhaseView::Starting) => ("starting".to_owned(), theme.muted()),
+    }
 }
 
 /// "↑ planner · 3 subagents · 1 needs you"

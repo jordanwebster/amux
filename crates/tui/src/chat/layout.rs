@@ -8,15 +8,39 @@
 //! can be thousands of calls long. Members of a collapsed run other than
 //! its summary are skipped here before any row is built.
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use ratatui::text::Line;
 use ui_state::{Key, SessionState};
-use ui_view::{ChatOptions, Row, ToolRows, chat_rows, chat_rows_for};
+use ui_view::{ChatOptions, Row, Stretch, ToolRows, chat_rows, chat_rows_for, stretch_at};
 
+use super::feed::{self, Header, LIVE_STEPS, LineHits, Placement};
 use super::rows::{OPEN_LINES, PATCH_HEAD_LINES, RowFacts, RowState, on_rail, row_lines};
 use crate::theme::Theme;
+
+/// The stretches one layout pass has read, with their steps' orders, so a
+/// stretch is walked once per frame however many of its rows draw.
+#[derive(Debug, Default)]
+pub struct StretchCache(RefCell<Vec<(Stretch, Vec<u64>)>>);
+
+impl StretchCache {
+    pub fn clear(&self) {
+        self.0.borrow_mut().clear();
+    }
+}
+
+/// What a block's toggle key opens or closes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Toggle {
+    /// The row itself, or its run: the old rule.
+    Row,
+    /// A stretch, by its oldest step.
+    Stretch(Key),
+    /// A step's detail.
+    Step(Key),
+}
 
 /// Rows fetched per page, and the tail a chat opens with.
 pub const PAGE: u32 = 40;
@@ -50,6 +74,9 @@ pub struct Block {
     pub order: u64,
     pub row: Row,
     pub lines: Vec<Line<'static>>,
+    /// What clicking along each line does, one entry per line.
+    pub hits: Vec<LineHits>,
+    pub toggle: Toggle,
 }
 
 /// What a frame's layout produced.
@@ -57,6 +84,8 @@ pub struct Block {
 pub struct Laid {
     /// Exactly the feed's lines, top first; blank lines pad a short chat.
     pub lines: Vec<Line<'static>>,
+    /// What clicking along each of `lines` does.
+    pub hits: Vec<LineHits>,
     /// The drawn rows, top first, with how many of the first one's lines
     /// sit above the screen.
     pub blocks: Vec<Block>,
@@ -79,6 +108,11 @@ pub struct Frame<'a> {
     pub height: usize,
     pub theme: Theme,
     pub leader: char,
+    /// Draw the redesigned feed: turns, with stretches of steps folded.
+    pub redesigned: bool,
+    /// Stretches the reader opened, by their oldest step.
+    pub stretches: &'a HashSet<Key>,
+    pub cache: &'a StretchCache,
 }
 
 impl Frame<'_> {
@@ -159,6 +193,9 @@ impl Frame<'_> {
         order: u64,
         runs: &[RangeInclusive<u64>],
     ) -> Option<Block> {
+        if self.redesigned {
+            return self.feed_block(state, order, runs);
+        }
         let (shown, child_open) = self.shown(state, order, runs)?;
         let expanded = self.expanded.contains(&shown.id)
             || shown
@@ -197,12 +234,200 @@ impl Frame<'_> {
         if lines.is_empty() {
             return None;
         }
+        let hits = vec![Vec::new(); lines.len()];
         Some(Block {
             key: shown.id.clone(),
             order,
             row: shown,
             lines,
+            hits,
+            toggle: Toggle::Row,
         })
+    }
+
+    /// The stretch holding `order` and its steps' orders, read once a frame.
+    fn stretch(&self, state: &SessionState, order: u64) -> Option<(Stretch, Vec<u64>)> {
+        if let Some(found) = self
+            .cache
+            .0
+            .borrow()
+            .iter()
+            .find(|(stretch, _)| (stretch.oldest_order..=stretch.newest_order).contains(&order))
+        {
+            return Some(found.clone());
+        }
+        let stretch = stretch_at(state, order)?;
+        if !(stretch.oldest_order..=stretch.newest_order).contains(&order) {
+            return None;
+        }
+        let steps = ui_view::stretch_steps(state, &stretch);
+        self.cache
+            .0
+            .borrow_mut()
+            .push((stretch.clone(), steps.clone()));
+        Some((stretch, steps))
+    }
+
+    /// A row of the redesigned feed. Inside a stretch, what draws depends on
+    /// whether the stretch is open, under way or folded; outside one, text
+    /// and turn ends draw from [`feed`], and the rest keeps its own drawing.
+    fn feed_block(
+        &self,
+        state: &SessionState,
+        order: u64,
+        runs: &[RangeInclusive<u64>],
+    ) -> Option<Block> {
+        let everything = ChatOptions {
+            tools: ToolRows::ShowAll,
+        };
+        let transcript = state.transcript();
+        let held = transcript.at(order)?;
+        let (placement, row, toggle) = match self.stretch(state, order) {
+            Some((stretch, steps)) => {
+                let is_step = steps.binary_search(&order).is_ok();
+                let open = self.stretches.contains(&stretch.oldest);
+                if open {
+                    if !is_step {
+                        return None;
+                    }
+                    let (row, _) = self.shown(state, order, runs)?;
+                    let first = self.first_drawn(state, &steps, runs) == Some(order);
+                    let placement = Placement::Step {
+                        header: first.then(|| Header {
+                            stretch: stretch.clone(),
+                            open: true,
+                            earlier: 0,
+                        }),
+                        joined: order != stretch.newest_order,
+                        current: false,
+                    };
+                    let toggle = Toggle::Step(row.id.clone());
+                    (placement, row, toggle)
+                } else if !stretch.closed {
+                    // Under way: the newest few steps, the newest bright
+                    // while it runs.
+                    let shown_from = steps.len().saturating_sub(LIVE_STEPS);
+                    let at = steps.iter().position(|step| *step == order)?;
+                    if at < shown_from {
+                        return None;
+                    }
+                    let mut row =
+                        chat_rows_for(state, std::slice::from_ref(&held.item.key), &everything)
+                            .pop()?;
+                    // Live, each read is its own step: the motion is the point.
+                    row.run = None;
+                    let placement = Placement::Step {
+                        header: (at == shown_from && shown_from > 0).then(|| Header {
+                            stretch: stretch.clone(),
+                            open: false,
+                            earlier: shown_from,
+                        }),
+                        joined: order != stretch.newest_order,
+                        current: order == stretch.newest_order && stretch.running,
+                    };
+                    let toggle = Toggle::Step(row.id.clone());
+                    (placement, row, toggle)
+                } else {
+                    if order != stretch.newest_order {
+                        return None;
+                    }
+                    let row =
+                        chat_rows_for(state, std::slice::from_ref(&held.item.key), &everything)
+                            .pop()?;
+                    let unresolved = chat_rows_for(state, &stretch.unresolved, &everything);
+                    let toggle = Toggle::Stretch(stretch.oldest.clone());
+                    (
+                        Placement::Folded {
+                            stretch,
+                            unresolved,
+                        },
+                        row,
+                        toggle,
+                    )
+                }
+            }
+            None => {
+                let (row, _) = self.shown(state, order, runs)?;
+                if !matches!(
+                    row.kind,
+                    ui_view::RowKind::Prompt { .. }
+                        | ui_view::RowKind::Prose { .. }
+                        | ui_view::RowKind::Thinking { .. }
+                        | ui_view::RowKind::TurnEnd { .. }
+                        | ui_view::RowKind::Stopped
+                ) && !feed::is_step(&row)
+                {
+                    // Asks, errors, boundaries and the rest keep their own
+                    // drawing for now.
+                    return self.old_block(state, order, runs);
+                }
+                let toggle = Toggle::Step(row.id.clone());
+                (Placement::Plain, row, toggle)
+            }
+        };
+        let expanded = self.expanded.contains(&row.id)
+            || row
+                .run
+                .as_ref()
+                .is_some_and(|_| runs.iter().any(|span| span.contains(&order)));
+        let mut facts = RowFacts {
+            leader: self.leader,
+            ..RowFacts::default()
+        };
+        if expanded && matches!(row.kind, ui_view::RowKind::FileChange { .. }) {
+            facts.patch = ui_view::patch_head(state, &row.id, OPEN_LINES);
+        }
+        let drawn = feed::row_lines(&row, &placement, expanded, &facts, self.width, self.theme)?;
+        let mut lines = drawn.lines;
+        if self.focus == Some(&row.id) {
+            for line in &mut lines {
+                line.spans
+                    .insert(0, ratatui::text::Span::styled("▌", self.theme.focus_bar()));
+                if let Some(second) = line.spans.get_mut(1)
+                    && second.content.starts_with(' ')
+                {
+                    second.content = second.content[1..].to_owned().into();
+                }
+            }
+        }
+        Some(Block {
+            key: row.id.clone(),
+            order,
+            row,
+            lines,
+            hits: drawn.hits,
+            toggle,
+        })
+    }
+
+    /// The order of an open stretch's first step that draws: a collapsed
+    /// run's members above its summary do not.
+    fn first_drawn(
+        &self,
+        state: &SessionState,
+        steps: &[u64],
+        runs: &[RangeInclusive<u64>],
+    ) -> Option<u64> {
+        steps
+            .iter()
+            .copied()
+            .find(|step| self.shown(state, *step, runs).is_some())
+    }
+
+    /// A row the redesign leaves as it was.
+    fn old_block(
+        &self,
+        state: &SessionState,
+        order: u64,
+        runs: &[RangeInclusive<u64>],
+    ) -> Option<Block> {
+        // Their glyphs already sit on the feed's left edge and their words on
+        // its second column.
+        let old = Frame {
+            redesigned: false,
+            ..*self
+        };
+        old.block(state, order, runs)
     }
 
     /// Held rows that would draw below `top`: every held order above the
@@ -233,11 +458,13 @@ impl Frame<'_> {
     }
 
     pub fn layout(&self, state: &SessionState) -> Laid {
+        self.cache.clear();
         let runs = self.expanded_runs(state);
         let transcript = state.transcript();
         let (Some(oldest), Some(head)) = (transcript.oldest_held(), transcript.head()) else {
             return Laid {
                 lines: vec![Line::default(); self.height],
+                hits: vec![Vec::new(); self.height],
                 at_bottom: true,
                 page: transcript.has_older().then_some(PAGE),
                 ..Laid::default()
@@ -297,13 +524,23 @@ impl Frame<'_> {
             .flat_map(|block| block.lines.iter().cloned())
             .skip(top_offset)
             .collect();
+        let mut hits: Vec<LineHits> = blocks
+            .iter()
+            .flat_map(|block| block.hits.iter().cloned())
+            .skip(top_offset)
+            .collect();
         if lines.len() < self.height {
-            let mut padded = vec![Line::default(); self.height - lines.len()];
+            let pad = self.height - lines.len();
+            let mut padded = vec![Line::default(); pad];
             padded.append(&mut lines);
             lines = padded;
+            let mut padded = vec![Vec::new(); pad];
+            padded.append(&mut hits);
+            hits = padded;
         }
         Laid {
             lines,
+            hits,
             blocks,
             top_offset,
             at_bottom: true,
@@ -347,8 +584,15 @@ impl Frame<'_> {
             .skip(offset)
             .take(self.height)
             .collect();
+        let hits = blocks
+            .iter()
+            .flat_map(|block| block.hits.iter().cloned())
+            .skip(offset)
+            .take(self.height)
+            .collect();
         Some(Laid {
             lines,
+            hits,
             blocks,
             top_offset: offset,
             at_bottom: false,
@@ -359,6 +603,7 @@ impl Frame<'_> {
     /// The anchor `lines` above (negative) or below the top of `laid`;
     /// Bottom once it would pass the newest row.
     pub fn scrolled(&self, state: &SessionState, laid: &Laid, delta: isize) -> Anchor {
+        self.cache.clear();
         let runs = self.expanded_runs(state);
         let transcript = state.transcript();
         let Some(first) = laid.blocks.first() else {

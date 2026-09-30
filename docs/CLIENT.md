@@ -302,6 +302,7 @@ each renderer. A client may also read the state directly.
 | `away(fleet, local_host, host)`, `signed_out(fleet, local_host)` | Why a host is out of reach, as far as this machine can say. |
 | `review_doc(diff, patch, comments)` | A patch parsed into files, hunks and lines, with review comments placed. |
 | `patch_head(state, key, max)`, `run_subjects(state, order, n)` | The first lines of an edit's patch, and the subjects of a run's newest members. |
+| `stretch_at(state, order)`, `stretch_steps(state, stretch)` | The stretch of tool steps between two pieces of the agent's text that holds an item: its steps counted by what they did, whether a step still runs, whether text or the turn's end has closed it, and the failures its ended turn left unresolved; and its steps' orders. Thinking, retries, a subagent's own steps and items that draw nothing pass through a stretch. |
 
 **Rows are items.** `chat_rows` emits exactly one [`Row`](../crates/ui-view/src/rows.rs) per item, and the row id
 is always the item key. A `Row` carries its `kind` (a `RowKind`), its `run` (`RunInfo`, when it is in one), a

@@ -418,15 +418,7 @@ fn row(state: &SessionState, held: &Held, opts: &ChatOptions) -> Row {
         .open_asks()
         .iter()
         .any(|ask| ask.item_key() == item.key);
-    let parent = match &held.body {
-        ItemBody::ClaudePty(wire::claude_pty_item::Kind::Tool(tool))
-        | ItemBody::ClaudeSdk(wire::claude_sdk_item::Kind::Tool(tool))
-            if !tool.parent_key.is_empty() =>
-        {
-            Some(tool.parent_key.clone())
-        }
-        _ => None,
-    };
+    let parent = parent_of(held);
     let collapsed = collapsed || parent.is_some();
     Row {
         id: item.key.clone(),
@@ -438,6 +430,19 @@ fn row(state: &SessionState, held: &Held, opts: &ChatOptions) -> Row {
         decision,
         attention: asked || failed,
         parent,
+    }
+}
+
+/// The subagent call a step belongs to, when it is a subagent's own step.
+pub(crate) fn parent_of(held: &Held) -> Option<Key> {
+    match &held.body {
+        ItemBody::ClaudePty(wire::claude_pty_item::Kind::Tool(tool))
+        | ItemBody::ClaudeSdk(wire::claude_sdk_item::Kind::Tool(tool))
+            if !tool.parent_key.is_empty() =>
+        {
+            Some(tool.parent_key.clone())
+        }
+        _ => None,
     }
 }
 
@@ -456,7 +461,7 @@ fn run_expanded(state: &SessionState, order: u64, expanded: &HashSet<Key>) -> bo
 }
 
 /// What a run's summary names: the newest member's subject.
-fn subject_of(held: &Held) -> String {
+pub(crate) fn subject_of(held: &Held) -> String {
     match &held.body {
         ItemBody::ClaudePty(wire::claude_pty_item::Kind::Tool(tool))
         | ItemBody::ClaudeSdk(wire::claude_sdk_item::Kind::Tool(tool)) => claude_subject(tool),
@@ -503,7 +508,7 @@ fn duration(held: &Held, ended: Option<i64>) -> Option<i64> {
 }
 
 /// The row kind, the decision meta, and whether it failed.
-fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Decision>, bool) {
+pub(crate) fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Decision>, bool) {
     use wire::claude_pty_item::Kind as Pty;
     use wire::claude_sdk_item::Kind as Sdk;
     use wire::codex_item::Kind as Codex;
