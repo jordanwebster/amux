@@ -1,3 +1,7 @@
+2026-09-30 — **Home lines up on two columns.** "+ New Agent" moves left so its
+`+` shares the screen's left edge with `amux` and the headings' arrows, and
+its words share the column of the heading labels and the agents' marks.
+
 2026-09-30 — **Headings and New Agent highlight as controls.** A highlighted
 heading tinted its whole row, and because the highlight had been widened to
 the heading's section (so opening a section scrolls it into view), the new

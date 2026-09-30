@@ -1057,15 +1057,18 @@ impl Home {
                     } else {
                         (theme.faint(), theme.muted())
                     };
+                    // Laid out like a heading: the `+` on the screen's left
+                    // edge with the top line and the headings' arrows, the
+                    // words on the column the headings' labels use.
                     let mut line = Line::default();
-                    pad_to(&mut line, MARK_COL);
+                    pad_to(&mut line, HEAD_COL);
                     push(&mut line, "+", mark, width);
-                    pad_to(&mut line, NAME_COL);
+                    pad_to(&mut line, MARK_COL);
                     push(&mut line, "New Agent", words, width);
                     let to = text::line_width(&line);
                     laid.push(Laid {
                         line,
-                        spots: vec![(Some((MARK_COL, to)), Hit::Row(Target::New))],
+                        spots: vec![(Some((HEAD_COL, to)), Hit::Row(Target::New))],
                     });
                 }
                 Item::Heading(section, count) => {
