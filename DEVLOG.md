@@ -1,3 +1,9 @@
+2026-09-30 — **Model and mode words live in the TUI, not the shared views.**
+The helpers that read a model as "Opus" and a mode as "Accept edits" had been
+added to ui-view, but the views carry facts and each client words them (the
+phone already words modes in its own localized code), so they move to
+`tui::words` unchanged.
+
 2026-09-30 — **The Overview scrolls, folds and groups its changes.** The pane's
 body scrolls as one list under a fixed title: the wheel scrolls whatever is
 under the pointer without moving the keys, j/k keep the focused item in

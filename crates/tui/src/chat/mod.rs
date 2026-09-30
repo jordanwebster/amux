@@ -1551,9 +1551,9 @@ impl ChatView {
                 editor,
                 &placeholder(&state.composer(), &name, &host, self.away),
                 &EdgeWords {
-                    model: ui_view::model_words(state),
+                    model: crate::words::model_words(state),
                     effort: strip.effort.clone(),
-                    mode: ui_view::mode_words(state),
+                    mode: crate::words::mode_words(state),
                 },
                 !pane_keys,
                 width,
