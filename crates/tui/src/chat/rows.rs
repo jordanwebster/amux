@@ -460,7 +460,7 @@ fn body(
         let mut line = Line::from(Span::raw("  "));
         push(&mut line, "⌄ ", theme.muted(), width);
         push(&mut line, run_summary(run), theme.text(), width);
-        let hint = format!(" · C-{} o expand", facts.leader);
+        let hint = format!(" · ctrl+{} o expand", facts.leader);
         let room = width.saturating_sub(text::str_width(&hint));
         let mut subjects: Vec<String> = facts
             .run_subjects
@@ -1035,17 +1035,16 @@ pub(crate) fn tail(text: &str, max: usize) -> String {
     format!("…{kept}")
 }
 
+/// A session boundary, drawn like home's section headings: the words in
+/// the faint ink, then a hairline to the right margin.
 fn rule(words: &str, width: usize, theme: Theme) -> Line<'static> {
-    let label = format!(" {words} ");
-    let lead = 2;
-    let used = lead + text::str_width(&label);
     let mut line = Line::from(Span::raw("  "));
-    line.spans
-        .push(Span::styled("─".repeat(lead), theme.muted()));
-    push(&mut line, label, theme.muted(), width);
-    if used + 2 < width {
+    push(&mut line, format!("{words} "), theme.faint(), width);
+    let end = width.saturating_sub(2);
+    let used = text::line_width(&line);
+    if used < end {
         line.spans
-            .push(Span::styled("─".repeat(width - used - 2), theme.muted()));
+            .push(Span::styled("─".repeat(end - used), theme.hairline()));
     }
     line
 }

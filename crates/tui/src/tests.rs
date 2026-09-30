@@ -344,7 +344,7 @@ fn consecutive_tool_rows_share_the_rail_and_a_lone_one_has_none() {
         .expect(&screen);
     assert!(summary.starts_with("  ⌄ 3 reads"), "{screen}");
     assert!(
-        summary.contains("src/file3.rs, src/file4.rs · C-a o expand"),
+        summary.contains("src/file3.rs, src/file4.rs · ctrl+a o expand"),
         "the last two subjects, oldest first: {screen}"
     );
 

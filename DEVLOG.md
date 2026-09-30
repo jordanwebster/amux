@@ -1,3 +1,11 @@
+2026-09-30 — **Chat polish after the first look.** Session boundaries drew a
+rule past the right margin in the old muted ink; they now read like home's
+headings, faint words and a hairline that stops at the margin. The leader
+reads `ctrl+a` in hints, as every other key does, instead of `C-a`. The
+readable-frame check skips hairline rules, which separate and are never
+read, and the light palette's faint ink is darkened to clear the trim floor
+(dark grey on ANSI).
+
 2026-09-30 — **The chat reads as turns, with its work folded.** The chat drew
 every tool call, its output and its diff at the weight of the agent's
 answer, so a busy chat was a wall of steps. The redesigned chat (design

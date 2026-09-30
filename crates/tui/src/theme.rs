@@ -324,7 +324,7 @@ impl Theme {
                 background: Token::new((250, 250, 248), Color::White),
                 text: Token::new((42, 46, 56), Color::Black),
                 muted: Token::new((106, 112, 128), Color::Black),
-                faint: Token::new((150, 155, 166), Color::Gray),
+                faint: Token::new((134, 139, 150), Color::DarkGray),
                 emphasis: Token::new((21, 24, 31), Color::Black),
                 accent: Token::new((31, 111, 130), Color::Blue),
                 user_surface: Token::new((236, 241, 243), Color::Cyan),
@@ -1792,6 +1792,11 @@ mod tests {
                 let buffer = render_named(state, theme);
                 for cell in buffer.content() {
                     if cell.symbol().trim().is_empty() {
+                        continue;
+                    }
+                    // A hairline rule separates and is never read, so it sits
+                    // below the floor on purpose.
+                    if cell.symbol() == "─" && cell.fg == theme.color(theme.tokens.hairline) {
                         continue;
                     }
                     let ratio = contrast(painted(cell.fg), painted(cell.bg));

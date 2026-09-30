@@ -1296,7 +1296,7 @@ fn composer_hint_words(
 ) -> (String, String) {
     let working = state.phase() == PhaseView::Working;
     let mode = next_mode(state).is_some() && state.composer() == Composer::Send;
-    let review = format!("C-{leader} r review");
+    let review = format!("ctrl+{leader} r review");
     let left = match state.composer() {
         Composer::Send if working => {
             "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop".to_owned()
@@ -1363,11 +1363,11 @@ fn keys_line((left, right): &(String, String), width: usize, theme: Theme) -> Li
     line
 }
 
-/// "C-a r review" → ("C-a r", "review"); "enter send" → ("enter", "send").
+/// "ctrl+a r review" → ("ctrl+a r", "review"); "enter send" → ("enter", "send").
 fn split_key(pair: &str) -> (String, String) {
     let words: Vec<&str> = pair.split(' ').collect();
     // A leader chord names two keys before its action.
-    let keys = if words.first().is_some_and(|w| w.starts_with("C-")) && words.len() > 2 {
+    let keys = if words.first().is_some_and(|w| w.starts_with("ctrl+")) && words.len() > 2 {
         2
     } else {
         1
@@ -1586,7 +1586,7 @@ pub(crate) fn hint_line(
     width: usize,
     theme: Theme,
 ) -> Line<'static> {
-    let review = format!("C-{} r review", keys.leader);
+    let review = format!("ctrl+{} r review", keys.leader);
     let words = match composer {
         Composer::Send if keys.working => {
             "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop".to_owned()
