@@ -66,6 +66,29 @@ pub enum ProviderEvent {
     /// Terminal Claude's messaging socket and the token it takes, as its
     /// hooks report them.
     Messaging(claude::hooks::MessagingCredentials),
+    /// A write of the provider's own state into private/ failed. The state
+    /// is what the next incarnation resumes from, so an incarnation that
+    /// cannot record it ends rather than run on as if it had.
+    WriteFailed {
+        path: PathBuf,
+        error: io::Error,
+    },
+}
+
+/// Writes the provider's state to `path` in private/, and reports the
+/// failure to the host when the write fails: the host ends the incarnation
+/// the same way it does for a journal write that fails. Every write of
+/// state the next incarnation resumes from goes through here; a write that
+/// only helps a dump does not.
+async fn persist(events: &mpsc::Sender<ProviderEvent>, path: &Path, bytes: impl AsRef<[u8]>) {
+    if let Err(error) = std::fs::write(path, bytes) {
+        let _ = events
+            .send(ProviderEvent::WriteFailed {
+                path: path.to_path_buf(),
+                error,
+            })
+            .await;
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -271,7 +294,7 @@ impl Provider {
                         // session the next incarnation resumes.
                         Some(CODEX_THREAD) => {
                             if let Some(thread) = message["result"]["thread"]["id"].as_str() {
-                                let _ = std::fs::write(&session_path, thread);
+                                persist(&lines, &session_path, thread).await;
                             }
                         }
                         _ => {}
@@ -709,7 +732,9 @@ impl Provider {
                 for row in reading.new_rows() {
                     let length = row.len() + 1;
                     if row.is_empty() {
-                        reading.advance(length);
+                        if !reading.advance(&events, length).await {
+                            return;
+                        }
                         continue;
                     }
                     let fact = Fact {
@@ -721,7 +746,9 @@ impl Provider {
                     if events.send(ProviderEvent::Fact(fact)).await.is_err() {
                         return;
                     }
-                    reading.advance(length);
+                    if !reading.advance(&events, length).await {
+                        return;
+                    }
                 }
                 tokio::time::sleep(TRANSCRIPT_POLL).await;
             }
@@ -738,7 +765,7 @@ impl Provider {
             follower.task.abort();
             let _ = follower.task.await;
             for row in follower.cursor.new_rows() {
-                follower.cursor.advance(row.len() + 1);
+                follower.cursor.advance(&self.events, row.len() + 1).await;
                 if row.is_empty() {
                     continue;
                 }
@@ -879,11 +906,25 @@ impl Cursor {
     }
 
     /// Moves past one row and its newline; an empty row is skipped the
-    /// same way, and never sent.
-    fn advance(&self, length: usize) {
-        let mut offset = self.offset.lock().expect("cursor lock");
-        *offset += length;
-        let _ = std::fs::write(&self.file, format!("{offset}\n{}", self.path.display()));
+    /// same way, and never sent. The position is the state a resumed
+    /// session reads on from, so a position that cannot be kept ends the
+    /// incarnation; false says it could not be.
+    async fn advance(&self, events: &mpsc::Sender<ProviderEvent>, length: usize) -> bool {
+        let saved = {
+            let mut offset = self.offset.lock().expect("cursor lock");
+            *offset += length;
+            format!("{offset}\n{}", self.path.display())
+        };
+        if let Err(error) = std::fs::write(&self.file, saved) {
+            let _ = events
+                .send(ProviderEvent::WriteFailed {
+                    path: self.file.clone(),
+                    error,
+                })
+                .await;
+            return false;
+        }
+        true
     }
 }
 

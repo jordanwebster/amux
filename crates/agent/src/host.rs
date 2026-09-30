@@ -338,6 +338,12 @@ impl<I: Interpreter> Host<I> {
                     provider.set_messaging(messaging);
                 }
             }
+            ProviderEvent::WriteFailed { path, error } => {
+                return Err(AgentError::Private {
+                    path,
+                    source: error,
+                });
+            }
             ProviderEvent::Exited(code) => {
                 if let Mode::Exiting { cause, .. } = &self.mode {
                     self.done = Some(cause.clone());
@@ -587,16 +593,22 @@ impl<I: Interpreter> Host<I> {
 
     /// A write to the agent directory failed, which in practice is a full
     /// disk: nothing the provider does from here can be recorded, so the
-    /// incarnation ends now. The provider is stopped and the final
-    /// boundary written if the disk takes it; if it does not, the ring
-    /// holds nothing the journal lacks, so the next incarnation writes the
-    /// missing boundary when it starts. Any other error ends the agent.
+    /// incarnation ends now, whether the write was the journal's or the
+    /// provider's own state in private/ that the next incarnation resumes
+    /// from. The provider is stopped and the final boundary written if the
+    /// disk takes it; if it does not, the ring holds nothing the journal
+    /// lacks, so the next incarnation writes the missing boundary when it
+    /// starts. Any other error ends the agent.
     async fn write_failed(&mut self, error: AgentError) -> Result<(), AgentError> {
-        let AgentError::Journal(error) = error else {
-            return Err(error);
+        let why = match error {
+            AgentError::Journal(error) => error.to_string(),
+            AgentError::Private { path, source } => {
+                format!("{}: {source}", path.display())
+            }
+            other => return Err(other),
         };
-        eprintln!("amux agent: {error}; exiting");
-        let cause = ExitCause::WriteFailed(error.to_string());
+        eprintln!("amux agent: could not write to its directory: {why}; exiting");
+        let cause = ExitCause::WriteFailed(why);
         if matches!(self.mode, Mode::Exiting { .. }) || self.exit(cause.clone()).await.is_err() {
             if let Some(provider) = &mut self.provider {
                 provider.kill();

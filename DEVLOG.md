@@ -1,3 +1,16 @@
+2026-09-30 — **A provider state write that fails ends the incarnation too.**
+A journal write that failed already ended the incarnation with "could
+not write to its directory", but the provider's own state in private/
+was written with the result thrown away: the Codex thread id the next
+incarnation resumes, and the transcript position a resumed terminal
+Claude reads on from. On a full disk the agent would have run on and
+the next incarnation would have started a thread nobody could find or
+re-read rows it had already journaled. Those writes now report their
+failure to the host as a provider event, and the host ends the
+incarnation the same way it does for the journal, naming the file. Two
+tests force each failure with a read-only file and check the exit cause.
+Writes that only help a dump keep ignoring their result.
+
 2026-09-30 — **The fan-out ring is sized from the batch, not the batch from the ring.**
 When a caught-up subscriber lagged at a backlog's end (e2f6a8b2), the
 fix halved the ingest batch to fit two of them in the unchanged ring.

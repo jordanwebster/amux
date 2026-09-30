@@ -339,6 +339,63 @@ async fn a_journal_write_that_fails_ends_the_incarnation_and_the_next_writes_its
     assert_eq!(agent.exit().await, ExitCause::Killed);
 }
 
+// The transcript position is what a resumed session reads on from; an
+// incarnation that cannot keep it ends the same way as one whose journal
+// write failed. A read-only cursor file stands in for the full disk. Unix
+// only: terminal Claude, the provider whose transcript is followed, is not
+// hosted on Windows.
+#[cfg(unix)]
+#[test]
+fn a_transcript_position_that_cannot_be_kept_ends_the_incarnation() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    terminal_test(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            steps: vec![
+                text("recorded"),
+                Step::WaitFor {
+                    path: agent_release(),
+                },
+                text("after the cursor froze"),
+                Step::TurnEnd,
+            ],
+            ..Setup::sdk()
+        })
+        .await;
+        let mut daemon = agent.dial().await;
+        agent.ready().await;
+        assert_eq!(daemon.prompt(b"p1", "go").await, Verdict::Accepted);
+        agent
+            .wait("the turn is under way", |log| log.has_text("recorded"))
+            .await;
+        // The position is kept after every transcript row, once the row
+        // has been read; the row's text reaches the journal first.
+        let cursor = agent.dir.join(agent::PRIVATE).join("transcript-cursor");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !cursor.is_file() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the position is kept after a row"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        std::fs::set_permissions(&cursor, std::fs::Permissions::from_mode(0o400)).unwrap();
+
+        agent.release();
+        let cause = agent.exit().await;
+        std::fs::set_permissions(&cursor, std::fs::Permissions::from_mode(0o600)).unwrap();
+        match cause {
+            ExitCause::WriteFailed(why) => assert!(
+                why.contains("transcript-cursor"),
+                "the cause names the file that could not be written: {why}"
+            ),
+            other => panic!("the incarnation ends on the failed write: {other:?}"),
+        }
+        agent.assert_released();
+    });
+}
+
 // Unix only: the straggler is started by a POSIX shell, and Windows does not host terminal
 // Claude (ConPTY re-renders its output; see docs/ARCHITECTURE.md, "Windows, as a stated cost").
 #[cfg(unix)]
