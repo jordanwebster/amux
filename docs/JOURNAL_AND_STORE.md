@@ -157,10 +157,12 @@ order, and lets a subscriber that opens under the same lock read a cut that is
 wholly before or wholly after a batch. Batching bounds how long a backlog holds
 every other reader and writer off: at the measured cost of tens of
 microseconds a frame, 256 frames hold the store for several milliseconds.
-A batch is half the agent's fan-out ring: its records go out in one burst,
-and a short batch can follow a full one within a millisecond, so a
-subscriber that has read everything when a batch lands is closed with
-`Lagged` only if it reads none of it for a whole batch's commit.
+The agent's fan-out ring holds four batches: a batch's records go out in
+one burst while the lock is held, so a reader's slack is counted in
+batches, and a subscriber that has read everything when a batch lands is
+closed with `Lagged` only after four whole batches arrive without it
+reading any. The ring is sized from the batch; the batch is sized from the
+lock hold alone.
 
 A torn frame in the newest segment means a write is still under way, so that
 pass is not at the end of the journal and does not announce `CaughtUp`; the

@@ -1,3 +1,17 @@
+2026-09-30 — **The fan-out ring is sized from the batch, not the batch from the ring.**
+When a caught-up subscriber lagged at a backlog's end (e2f6a8b2), the
+fix halved the ingest batch to fit two of them in the unchanged ring.
+That got the batch's size from the wrong place: the batch bounds how
+long a backlog drain holds the store lock, which at the measured 23 µs a
+frame is about 6 ms for 256 frames, the most a subscribe, an input or a
+spawn waits behind a draining agent. It stays at 256 for that reason and
+no other. The ring is now its own constant, four batches (1,024
+events), so a reader whose task woke late is absorbed by design rather
+than by the accident of a short batch following a full one within the
+ring's slack. The backlog drain test with its paused reader passes as
+before; the parameters, journal and store pages give the two rationales
+separately.
+
 2026-09-30 — **Releases are signed from the release Mac's keychain.**
 The daemon has verified release manifests against a compiled-in Ed25519
 key since the supervisor landed, but no key existed, the Release
