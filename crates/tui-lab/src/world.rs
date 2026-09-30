@@ -607,6 +607,11 @@ impl World {
         let mut at = start;
         play_now(&mut inner, index, spec.transcript.clone(), &mut at);
         let sim = &mut inner.agents[index];
+        // A turn's end clears working-on; the scenario's own words win, so
+        // an idle agent can carry what it last said.
+        if spec.working_on.is_some() {
+            sim.working_on(spec.working_on.clone(), now - ago);
+        }
         if let Some(cause) = &spec.exited {
             sim.entry.lifecycle = Lifecycle::Exited as i32;
             sim.entry.exit_cause = Some(cause.clone());

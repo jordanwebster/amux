@@ -2258,10 +2258,12 @@ fn home_fleet() -> FleetState {
         &mut fleet,
         home_agent(b"w2", "beta", Phase::Working, None, now - 9_000),
     );
-    inventory(
-        &mut fleet,
-        home_agent(b"old", "archive", Phase::Idle, None, now - 2 * 86_400_000),
-    );
+    let mut archive = home_agent(b"old", "archive", Phase::Idle, None, now - 2 * 86_400_000);
+    if let wire::inventory_event::Of::Agent(agent) = &mut archive {
+        agent.lifecycle = wire::Lifecycle::Exited as i32;
+        agent.exit_cause = Some("stopped".into());
+    }
+    inventory(&mut fleet, archive);
     inventory(
         &mut fleet,
         wire::inventory_event::Of::CaughtUp(wire::CaughtUp { revision: 0 }),
@@ -2294,13 +2296,13 @@ fn row_of(screen: &str, words: &str) -> u16 {
 }
 
 #[test]
-fn home_leads_with_what_needs_you_and_folds_the_old() {
+fn home_leads_with_what_needs_you_and_folds_the_exited() {
     let fleet = home_fleet();
     let mut home = crate::home::Home::default();
     let screen = home_screen(&mut home, &fleet, theme());
     // The family whose child needs you is under the heading, its child
-    // named on its second line; the rest follow newest first; the old one
-    // is folded away.
+    // named on its second line; the running follow newest first; the
+    // exited are folded away under their own heading.
     let heading = row_of(&screen, "Needs you 1");
     let planner = row_of(&screen, "planner");
     assert!(heading < planner, "{screen}");
@@ -2309,7 +2311,11 @@ fn home_leads_with_what_needs_you_and_folds_the_old() {
         row_of(&screen, "alpha") < row_of(&screen, "beta"),
         "{screen}"
     );
-    assert!(screen.contains("Older · 1"), "{screen}");
+    assert!(
+        row_of(&screen, "Needs you 1") < row_of(&screen, "Running 2"),
+        "{screen}"
+    );
+    assert!(screen.contains("Exited 1"), "{screen}");
     assert!(!screen.contains("archive"), "{screen}");
     assert!(!screen.contains('┌'), "home has no frame: {screen}");
 }
@@ -2360,7 +2366,7 @@ fn hovering_highlights_a_row_and_its_close_mark_asks_first() {
     let screen = home_screen(&mut home, &fleet, theme());
     let line = screen.lines().nth(usize::from(beta)).unwrap();
     assert!(
-        line.contains('›') && line.trim_end().ends_with('×'),
+        line.contains('›') && line.trim_end().ends_with("[x]"),
         "{screen}"
     );
     // A key takes over from where the mouse left the highlight.
@@ -2467,7 +2473,7 @@ fn the_filter_lives_in_the_top_line_and_narrows_the_list() {
         screen.lines().next().unwrap().contains("/ arch"),
         "{screen}"
     );
-    // The filter looks through the older families too.
+    // The filter looks through folded sections too.
     assert!(screen.contains("archive"), "{screen}");
     assert!(!screen.contains("alpha"), "{screen}");
     home.key(&fleet, key(KeyCode::Enter), false);

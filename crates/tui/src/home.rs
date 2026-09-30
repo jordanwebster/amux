@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ui_state::{AgentKey, Attention, Connection, FleetState};
@@ -28,8 +28,6 @@ use crate::hosts;
 use crate::text::{self, pad_to, push};
 use crate::theme::Theme;
 
-/// Past this, a family that is idle or exited folds into "Older".
-const DAY_MS: i64 = 86_400_000;
 /// Blank columns at each side of the screen.
 const MARGIN: usize = 2;
 /// Where section headings start, and the `›` of a highlight without a tint.
@@ -46,13 +44,41 @@ const COMPOSER_SHARE: usize = 2;
 /// Exit causes that are the person's own act or a clean end, not a failure.
 const CLEAN_EXITS: [&str; 5] = ["stopped", "finished", "exited", "aborted", "killed"];
 const FINISHED: &str = "finished";
+/// The highlighted row's action: stop, or delete once exited. Brackets mark
+/// what can be clicked.
+const CLOSE: &str = "[x]";
 
 /// Something the list can highlight.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Target {
     New,
     Agent(AgentKey),
-    Older,
+    /// A section's heading, which folds and unfolds it.
+    Section(Section),
+}
+
+/// The list's sections, by what the agents in them are doing. A family
+/// sits in the section of its loudest member.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Section {
+    NeedsYou,
+    Running,
+    Exited,
+}
+
+impl Section {
+    fn words(self) -> &'static str {
+        match self {
+            Section::NeedsYou => "Needs you",
+            Section::Running => "Running",
+            Section::Exited => "Exited",
+        }
+    }
+
+    /// Exited is history, rarely opened, so it starts folded.
+    fn folded_by_default(self) -> bool {
+        self == Section::Exited
+    }
 }
 
 /// What a click at a place does.
@@ -141,7 +167,8 @@ enum Overlay {
 pub struct Home {
     selected: Option<Target>,
     expanded: HashSet<Vec<u8>>,
-    older_open: bool,
+    /// Sections the person folded or unfolded against their default.
+    toggled: HashSet<Section>,
     /// The filter's text while one is typed or kept.
     filter: Option<Editor>,
     /// The top line has the keys.
@@ -161,10 +188,12 @@ pub struct Home {
 /// One block of the list.
 enum Item {
     New,
-    Heading(&'static str, usize),
+    Heading(Section, usize),
+    /// A blank line, unless the list already ends in one.
     Gap,
+    /// A blank line, always.
+    Space,
     Agent(Box<Entry>),
-    Older(usize),
     Note(&'static str),
 }
 
@@ -371,7 +400,7 @@ impl Home {
         families
     }
 
-    fn items(&self, fleet: &FleetState, now_ms: i64) -> Vec<Item> {
+    fn items(&self, fleet: &FleetState) -> Vec<Item> {
         let needle = self.needle();
         let families: Vec<Family> = self
             .families(fleet)
@@ -396,46 +425,45 @@ impl Home {
             }));
             return items;
         }
-        let (needs, rest): (Vec<&Family>, Vec<&Family>) = families
-            .iter()
-            .partition(|family| family.attention == Attention::NeedsYou);
-        let (recent, older): (Vec<&Family>, Vec<&Family>) = rest.into_iter().partition(|family| {
-            !matches!(family.attention, Attention::Idle | Attention::Exited)
-                || now_ms - family.moment <= DAY_MS
-        });
-        if !needs.is_empty() {
+        let section_of = |family: &Family| match family.attention {
+            Attention::NeedsYou => Section::NeedsYou,
+            Attention::Exited => Section::Exited,
+            _ => Section::Running,
+        };
+        for section in [Section::NeedsYou, Section::Running, Section::Exited] {
+            let members: Vec<&Family> = families
+                .iter()
+                .filter(|family| section_of(family) == section)
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+            // Two blank lines between sections, one under a heading.
             items.push(Item::Gap);
-            items.push(Item::Heading("Needs you", needs.len()));
-            for family in &needs {
+            items.push(Item::Space);
+            items.push(Item::Heading(section, members.len()));
+            if self.folded(section) {
+                continue;
+            }
+            items.push(Item::Gap);
+            for family in members {
                 self.push_agent(fleet, &family.head, 0, family, &mut items);
-            }
-        }
-        if !recent.is_empty() {
-            items.push(Item::Gap);
-            // Named only when "Needs you" sits above it, to mark where that
-            // section ends; alone, the list needs no heading.
-            if !needs.is_empty() {
-                items.push(Item::Heading("Recent", recent.len()));
-            }
-            for family in &recent {
-                self.push_agent(fleet, &family.head, 0, family, &mut items);
-            }
-        }
-        if !older.is_empty() {
-            items.push(Item::Gap);
-            items.push(Item::Older(older.len()));
-            if self.older_shown() {
-                for family in &older {
-                    self.push_agent(fleet, &family.head, 0, family, &mut items);
-                }
             }
         }
         items
     }
 
-    /// A filter looks through the older families too.
-    fn older_shown(&self) -> bool {
-        self.older_open || self.needle().is_some()
+    /// Whether a section's agents are hidden. A filter looks through every
+    /// section, folded or not.
+    fn folded(&self, section: Section) -> bool {
+        self.needle().is_none() && section.folded_by_default() != self.toggled.contains(&section)
+    }
+
+    fn toggle_section(&mut self, section: Section) {
+        if !self.toggled.remove(&section) {
+            self.toggled.insert(section);
+        }
+        self.reveal = true;
     }
 
     fn push_agent(
@@ -498,7 +526,7 @@ impl Home {
             .filter_map(|item| match item {
                 Item::New => Some(Target::New),
                 Item::Agent(entry) => Some(Target::Agent(entry.key.clone())),
-                Item::Older(_) => Some(Target::Older),
+                Item::Heading(section, _) => Some(Target::Section(*section)),
                 _ => None,
             })
             .collect()
@@ -534,7 +562,7 @@ impl Home {
         match target {
             Target::New => self.draft.open = true,
             Target::Agent(agent) => return vec![FleetEffect::Open(agent)],
-            Target::Older => self.older_open = !self.older_open,
+            Target::Section(section) => self.toggle_section(section),
         }
         vec![]
     }
@@ -567,7 +595,7 @@ impl Home {
         if let Some(overlay) = self.overlay.take() {
             return self.overlay_key(overlay, key);
         }
-        let items = self.items(fleet, now_ms());
+        let items = self.items(fleet);
         let targets = Self::targets(&items);
         if self.filtering {
             self.filter_key(&targets, key);
@@ -835,7 +863,8 @@ impl Home {
             laid.push(Laid::plain(top));
             cursor = at.map(|col| (col, 0));
             laid.push(Laid::default());
-            let room = height - 3;
+            // The top line and a blank above, a blank and the hints below.
+            let room = height.saturating_sub(4);
             if matches!(self.overlay, Some(Overlay::Hosts)) {
                 laid.extend(
                     hosts::overlay_lines(fleet, place.local_host, width - MARGIN, theme)
@@ -926,14 +955,10 @@ impl Home {
             );
             return (line, cursor);
         }
+        // Home is the whole fleet, across hosts and directories, so the top
+        // line names no directory: where a new agent starts belongs to
+        // starting one.
         push(&mut line, "amux", theme.emphasis(), width);
-        // Where a new agent would start.
-        push(
-            &mut line,
-            format!("  {}", place.working_dir),
-            theme.muted(),
-            width,
-        );
         let need = fleet
             .roots()
             .filter(|agent| {
@@ -1008,12 +1033,14 @@ impl Home {
         theme: Theme,
         place: &Place<'_>,
     ) -> Vec<Laid> {
-        let items = self.items(fleet, now_ms);
+        let items = self.items(fleet);
         let targets = Self::targets(&items);
         let selected = self.settle(&targets);
         let roomy = height >= ROOMY;
         let mut laid: Vec<Laid> = Vec::new();
         let mut highlight = (0, 0);
+        // Whether the items being laid belong to the highlighted heading.
+        let mut section_open = false;
         for item in &items {
             let start = laid.len();
             match item {
@@ -1031,44 +1058,35 @@ impl Home {
                     );
                     laid.push(Laid::row(tint(line, chosen, width, theme), Target::New));
                 }
-                Item::Heading(words, count) => {
-                    // The label, its count, and a faint rule to the right
-                    // edge, so a section's end is visible at a glance.
+                Item::Heading(section, count) => {
+                    // A fold marker, the label, its count, and a faint rule
+                    // to the right edge, so a section's end is visible at a
+                    // glance. The label lines up with the rows' marks.
+                    let target = Target::Section(*section);
+                    let chosen = selected == target;
                     let mut line = Line::default();
                     pad_to(&mut line, HEAD_COL);
-                    let label = if *words == "Needs you" {
-                        theme.accent()
-                    } else {
-                        theme.muted()
+                    let marker = if self.folded(*section) { "▸" } else { "▾" };
+                    push(&mut line, marker, theme.faint(), width);
+                    pad_to(&mut line, MARK_COL);
+                    let label = match section {
+                        Section::NeedsYou => theme.accent().add_modifier(Modifier::BOLD),
+                        _ => theme.emphasis(),
                     };
-                    push(&mut line, *words, label, width);
-                    push(&mut line, format!(" {count} "), theme.muted(), width);
+                    push(&mut line, section.words(), label, width);
+                    push(&mut line, format!(" {count} "), theme.faint(), width);
                     let end = width.saturating_sub(MARGIN);
                     let rule = end.saturating_sub(text::line_width(&line));
                     push(&mut line, "─".repeat(rule), theme.hairline(), width);
-                    laid.push(Laid::plain(line));
+                    laid.push(Laid::row(tint(line, chosen, width, theme), target));
                 }
                 Item::Gap => blank(&mut laid),
+                Item::Space => laid.push(Laid::default()),
                 Item::Note(words) => {
                     let mut line = Line::default();
                     pad_to(&mut line, NAME_COL);
                     push(&mut line, *words, theme.muted(), width);
                     laid.push(Laid::plain(line));
-                }
-                Item::Older(count) => {
-                    let chosen = selected == Target::Older;
-                    let mut line = lead(chosen, theme);
-                    pad_to(&mut line, MARK_COL);
-                    push(
-                        &mut line,
-                        if self.older_shown() { "▾" } else { "▸" },
-                        theme.muted(),
-                        width,
-                    );
-                    pad_to(&mut line, NAME_COL);
-                    push(&mut line, "Older", name_style(chosen, true, theme), width);
-                    push(&mut line, format!(" · {count}"), theme.muted(), width);
-                    laid.push(Laid::row(tint(line, chosen, width, theme), Target::Older));
                 }
                 Item::Agent(entry) => {
                     let chosen = selected == Target::Agent(entry.key.clone());
@@ -1082,12 +1100,24 @@ impl Home {
             }
             let is_selected = match item {
                 Item::New => selected == Target::New,
-                Item::Older(_) => selected == Target::Older,
+                Item::Heading(section, _) => selected == Target::Section(*section),
                 Item::Agent(entry) => selected == Target::Agent(entry.key.clone()),
                 _ => false,
             };
             if is_selected {
                 highlight = (start, laid.len());
+            }
+            // A highlighted heading brings its section into view with it, so
+            // opening one shows what it holds.
+            if matches!(item, Item::Agent(_))
+                && matches!(selected, Target::Section(_))
+                && highlight.1 > 0
+                && section_open
+            {
+                highlight.1 = laid.len();
+            }
+            if let Item::Heading(section, _) = item {
+                section_open = selected == Target::Section(*section);
             }
         }
         while laid
@@ -1100,7 +1130,8 @@ impl Home {
             if highlight.0 < self.top {
                 self.top = highlight.0;
             } else if highlight.1 > self.top + room {
-                self.top = highlight.1 - room;
+                // Never scroll the highlight's own first line out of view.
+                self.top = (highlight.1 - room).min(highlight.0);
             }
             // The first rows sit under "+ New agent" and a heading: keep
             // those in view with them.
@@ -1268,10 +1299,10 @@ impl Home {
             None => {
                 let mut hints = match &self.selected {
                     Some(Target::New) => vec![("enter", "start", key(KeyCode::Enter))],
-                    Some(Target::Older) if self.older_open => {
-                        vec![("enter", "hide older", key(KeyCode::Enter))]
+                    Some(Target::Section(section)) if self.folded(*section) => {
+                        vec![("enter", "show", key(KeyCode::Enter))]
                     }
-                    Some(Target::Older) => vec![("enter", "show older", key(KeyCode::Enter))],
+                    Some(Target::Section(_)) => vec![("enter", "hide", key(KeyCode::Enter))],
                     _ => vec![("enter", "open", key(KeyCode::Enter))],
                 };
                 if attach && matches!(self.selected, Some(Target::Agent(_))) {
@@ -1371,11 +1402,6 @@ fn place_right(line: &mut Line<'static>, right: Line<'static>, width: usize) {
     line.spans.extend(right.spans);
 }
 
-fn now_ms() -> i64 {
-    use client::Clock as _;
-    client::SystemClock.now_ms()
-}
-
 /// A highlightable line's first cells: blank, or `›` at the heading column
 /// when the terminal gave no ground to tint.
 fn lead(chosen: bool, theme: Theme) -> Line<'static> {
@@ -1423,46 +1449,30 @@ fn tint(line: Line<'static>, chosen: bool, width: usize, theme: Theme) -> Line<'
     out
 }
 
-/// An agent's mark. The circles read as one scale, empty (idle) to half
-/// (working) to full (needs you); only needs-you is loud, and nothing
-/// moves, because motion on a list of many agents is noise.
-fn mark(entry: &Entry, unreached: bool, theme: Theme) -> (&'static str, Style) {
-    let agent = &entry.agent;
-    if unreached {
-        return ("–", theme.muted());
+/// An agent's mark: empty when nothing is happening, full while it works,
+/// and full in the accent when it needs you. Every other state is said in
+/// words on the second line, so there are only three marks to learn.
+fn mark(entry: &Entry, quiet: bool, theme: Theme) -> (&'static str, Style) {
+    if quiet {
+        return ("○", theme.faint());
     }
     if entry.loud.is_some() {
         return ("●", theme.accent());
     }
-    match ui_state::attention(agent) {
+    match ui_state::attention(&entry.agent) {
         Attention::NeedsYou => ("●", theme.accent()),
-        Attention::Working => ("◐", theme.text()),
-        Attention::Starting => ("◌", theme.muted()),
-        Attention::Idle => ("○", theme.muted()),
-        Attention::Exited => match agent.exit_cause.as_deref() {
-            Some(FINISHED) => ("✓", theme.muted()),
-            Some(cause) if !cause.is_empty() && !CLEAN_EXITS.contains(&cause) => {
-                ("✗", theme.error())
-            }
-            _ => ("·", theme.muted()),
-        },
+        Attention::Working => ("●", theme.text()),
+        Attention::Starting | Attention::Idle => ("○", theme.muted()),
+        Attention::Exited => ("○", theme.faint()),
     }
 }
 
-/// What an agent's second line says when it has reported nothing better.
-fn state_words(agent: &Agent) -> &'static str {
-    match ui_state::attention(agent) {
-        Attention::NeedsYou => "waiting for you",
-        Attention::Working => "working",
-        Attention::Starting => "starting",
-        Attention::Idle => "idle",
-        Attention::Exited => "exited",
-    }
-}
-
-/// An agent's lines: its mark, name, project and host, and its age or the
-/// highlighted row's `×`; then what it is doing, why it stopped, or its
-/// state in words. Every agent takes two lines, so rows keep one height.
+/// An agent's two lines. The first: its mark, its name, and faint where it
+/// is (project, and host when not this machine), with its age at the right
+/// or, on the highlighted row, `[x]`. The second: what it asks, what it is
+/// doing or last said, or why it ended; blank when it has said nothing,
+/// never its state again in words. Ink follows importance: the name and an
+/// ask read brightest, the second line grey, where and when faint.
 fn agent_lines(
     fleet: &FleetState,
     entry: &Entry,
@@ -1475,11 +1485,13 @@ fn agent_lines(
     let agent = &entry.agent;
     let target = Target::Agent(entry.key.clone());
     let host = fleet.host(&agent.host_id);
-    let exited = ui_state::attention(agent) == Attention::Exited;
+    let attention = ui_state::attention(agent);
+    let exited = attention == Attention::Exited;
     // A live agent on a host out of reach is only as it last said.
     let unreached = !exited
         && host
             .is_some_and(|host| host.presence() != Presence::Online || host.revoked == Some(true));
+    let quiet = exited || unreached;
     let indent = 2 * entry.depth;
     let end = width - MARGIN;
 
@@ -1489,9 +1501,9 @@ fn agent_lines(
     let (glyph, glyph_style) = mark(entry, unreached, theme);
     first.spans.push(Span::styled(glyph, glyph_style));
     pad_to(&mut first, NAME_COL + indent);
-    // The right edge: the age, or on the highlighted row its `×`.
+    // The right edge: the age, or on the highlighted row its `[x]`.
     let right = if chosen {
-        "×".to_owned()
+        CLOSE.to_owned()
     } else {
         text::age(now_ms, entry.moment)
     };
@@ -1513,16 +1525,15 @@ fn agent_lines(
     let room = right_at.saturating_sub(NAME_COL + indent + 2);
     let fold_width = fold.as_deref().map_or(0, text::str_width);
     let name = text::ellipsize(name_of(agent), room.saturating_sub(fold_width).max(1));
-    let dim = exited || unreached;
     first
         .spans
-        .push(Span::styled(name, name_style(chosen, dim, theme)));
+        .push(Span::styled(name, name_style(chosen, quiet, theme)));
     if let Some(fold) = fold {
         let from = text::line_width(&first);
         let style = if entry.loud.is_some() {
             theme.accent()
         } else {
-            theme.muted()
+            theme.faint()
         };
         first.spans.push(Span::styled(fold, style));
         spots.push((
@@ -1534,63 +1545,56 @@ fn agent_lines(
     if right_at > used + 1 {
         pad_to(&mut first, used);
         let meta = text::ellipsize(&meta, right_at - used - 1);
-        first.spans.push(Span::styled(meta, theme.muted()));
+        first.spans.push(Span::styled(meta, theme.faint()));
     }
     pad_to(&mut first, right_at);
     if chosen {
         first.spans.push(Span::styled(right, theme.text()));
-        spots.push((
-            Some((right_at.saturating_sub(1), end + 1)),
-            Hit::Close(entry.key.clone()),
-        ));
+        spots.push((Some((right_at, end)), Hit::Close(entry.key.clone())));
     } else {
-        first.spans.push(Span::styled(right, theme.muted()));
+        first.spans.push(Span::styled(right, theme.faint()));
     }
 
     let mut second = Line::default();
     pad_to(&mut second, NAME_COL + indent);
     let room = end.saturating_sub(NAME_COL + indent);
+    let said = agent
+        .working_on
+        .as_ref()
+        .map(|working| text::first_line(&working.text).to_owned())
+        .filter(|text| !text.is_empty());
     if let Some((name, waiting)) = &entry.loud {
         let name = text::ellipsize(name, room / 2);
-        push(&mut second, "↳ ", theme.muted(), end);
+        push(&mut second, "↳ ", theme.faint(), end);
         push(&mut second, name, theme.text(), end);
         push(
             &mut second,
             format!(" · {}", text::first_line(waiting)),
-            theme.muted(),
+            theme.text(),
             end,
         );
     } else {
-        let detail = if unreached {
+        let (detail, style) = if unreached {
             let host = host.map_or("its host", |host| host.name.as_str());
-            match agent.working_on.as_ref().filter(|w| !w.text.is_empty()) {
-                Some(working) => format!("{host} is away · {}", text::first_line(&working.text)),
-                None => format!("{host} is away"),
-            }
+            (format!("{host} is away"), theme.faint())
         } else if exited {
             match agent
                 .exit_cause
                 .as_deref()
                 .filter(|cause| !cause.is_empty())
             {
-                Some(FINISHED) => "finished".to_owned(),
-                Some("exited") | None => "exited".to_owned(),
-                Some(cause) => format!("exited · {cause}"),
+                Some(FINISHED) => ("finished".to_owned(), theme.faint()),
+                Some(cause) if CLEAN_EXITS.contains(&cause) => ("exited".to_owned(), theme.faint()),
+                None => ("exited".to_owned(), theme.faint()),
+                Some(cause) => (format!("exited · {cause}"), theme.error()),
             }
+        } else if attention == Attention::NeedsYou {
+            // What it asks is the most important line on home.
+            (said.unwrap_or_default(), theme.text())
         } else {
-            agent
-                .working_on
-                .as_ref()
-                .map(|working| text::first_line(&working.text).to_owned())
-                .filter(|text| !text.is_empty())
-                .unwrap_or_else(|| state_words(agent).to_owned())
+            (said.unwrap_or_default(), theme.muted())
         };
-        push(
-            &mut second,
-            text::ellipsize(&detail, room),
-            theme.muted(),
-            end,
-        );
+        push(&mut second, text::ellipsize(&detail, room), style, end);
     }
     vec![
         Laid {

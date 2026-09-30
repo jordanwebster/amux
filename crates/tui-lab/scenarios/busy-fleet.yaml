@@ -52,7 +52,7 @@ agents:
     name: e2e reconnect flake
     kind: claude_sdk
     ago: 1m
-    working_on: Fixing the flaky reconnect test
+    working_on: Wants to run cargo test -p ui-runtime --test reconnect
     transcript:
       - user: The reconnect e2e test flakes. Find out why.
       - read: crates/ui-runtime/tests/reconnect.rs
@@ -66,7 +66,7 @@ agents:
     kind: codex
     host: desk
     ago: 4m
-    working_on: Plan ready for review
+    working_on: Plan ready for review · 3 steps
     transcript:
       - user: Rework the pricing page for the new tiers.
       - ask:
@@ -85,6 +85,7 @@ agents:
     name: docs pass
     kind: claude_sdk
     ago: 2h
+    working_on: Rewrote the pairing section for readers
     transcript:
       - user: Tighten HOW_IT_WORKS.md.
       - say: Done — rewrote the pairing section for readers.
@@ -102,7 +103,9 @@ agents:
     name: sensor logger
     kind: codex
     host: pi
+    cwd: ~/garage
     ago: 3d
+    working_on: Running under systemd now
     transcript:
       - user: Log the garage sensor every minute.
       - say: Running under systemd now.
@@ -111,7 +114,9 @@ agents:
     name: marketing copy
     kind: codex
     host: desk
+    cwd: ~/source/amuxcloud
     ago: 11h
+    working_on: Wrote three taglines
     transcript:
       - user: Write three taglines.
       - say: "1. Every agent, every machine, one place."
@@ -133,6 +138,7 @@ timeline:
   - after: 6s
     agent: docs
     play:
+      - working_on: Wants to run just docs-check
       - ask:
           permission:
             tool: Bash

@@ -78,6 +78,8 @@ pub struct Tokens {
     pub background: Token,
     pub text: Token,
     pub muted: Token,
+    /// A third ink, below muted: metadata read only when looked for.
+    pub faint: Token,
     pub emphasis: Token,
     pub accent: Token,
     pub user_surface: Token,
@@ -289,6 +291,7 @@ impl Theme {
                 background: Token::new((15, 18, 22), Color::Black),
                 text: Token::new((223, 227, 232), Color::White),
                 muted: Token::new((138, 144, 160), Color::DarkGray),
+                faint: Token::new((96, 102, 116), Color::DarkGray),
                 emphasis: Token::new((242, 244, 247), Color::White),
                 accent: Token::new((95, 179, 198), Color::Cyan),
                 user_surface: Token::new((24, 32, 40), Color::Black),
@@ -321,6 +324,7 @@ impl Theme {
                 background: Token::new((250, 250, 248), Color::White),
                 text: Token::new((42, 46, 56), Color::Black),
                 muted: Token::new((106, 112, 128), Color::Black),
+                faint: Token::new((150, 155, 166), Color::Gray),
                 emphasis: Token::new((21, 24, 31), Color::Black),
                 accent: Token::new((31, 111, 130), Color::Blue),
                 user_surface: Token::new((236, 241, 243), Color::Cyan),
@@ -388,6 +392,7 @@ impl Theme {
             diff_context: Token::borrowed(fg),
             emphasis: computed(mix(fg, if dark { WHITE } else { BLACK }, 0.4)),
             muted: recede(0.42),
+            faint: recede(0.6),
             diff_meta: recede(0.52),
             // Enough to read as a block and no more. The person's own
             // message is the one thing on the screen they do not need to
@@ -445,6 +450,11 @@ impl Theme {
     /// De-emphasis: markers, rules, continuations, and hints.
     pub(crate) fn muted(self) -> Style {
         Style::default().fg(self.color(self.tokens.muted))
+    }
+
+    /// Metadata read only when looked for: ages, projects, hosts, counts.
+    pub(crate) fn faint(self) -> Style {
+        Style::default().fg(self.color(self.tokens.faint))
     }
 
     /// Markdown emphasis (bold) and headings.
@@ -697,6 +707,7 @@ pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, Theme
         panel: mapped_token(file, "base02")?,
         hairline: mapped_token(file, "base02")?,
         muted: mapped_token(file, "base03")?,
+        faint: mapped_token(file, "base03")?,
         diff_meta: mapped_token(file, "base04")?,
         text: mapped_token(file, "base05")?,
         diff_context: mapped_token(file, "base05")?,

@@ -1,3 +1,21 @@
+2026-09-30 — **Home by state, in three inks.** Home's sections are now
+Needs you, Running and Exited, drawn alike (a fold marker, the label, a
+faint count and a faint rule to the right edge) and each foldable from its
+heading; Exited starts folded. The age-based "Older" fold is gone: a day
+was an arbitrary line, and it was shaped unlike the other sections. Rows
+use three marks only (`○` idle, `●` working, an accent `●` for needs you)
+and say every other state in words. Ink follows importance: the name and
+a needs-you ask bright, what an agent is doing or last said grey, and
+age, project, host and counts in a new third ink, `faint`. The second line
+never repeats the state in words; it is blank when the agent has said
+nothing. The highlighted row's action is `[x]`: brackets mark what can be
+clicked. The project always shows, and the top line no longer names a
+directory, since home is the whole fleet. Two blank lines separate
+sections, one sits under each heading and one above the hint line;
+opening a section scrolls its rows into view. The lab keeps a scenario's
+working-on text past a turn's end, so idle agents can carry what they last
+said, a stand-in for a field the inventory lacks.
+
 2026-09-29 — **The redesigned home is the default, and frames match the
 person's terminal.** The lab opened on the old framed grid, which is not
 the design being judged, so variant 0 is now the redesigned home and F3's
