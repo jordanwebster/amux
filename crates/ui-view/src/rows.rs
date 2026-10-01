@@ -212,8 +212,13 @@ pub enum AskRow {
         /// Approved with edits accepted without asking from then on: the
         /// decision's scope names Claude's `acceptEdits` mode.
         edits_accepted: bool,
+        /// Approved into a new conversation holding only the plan: a
+        /// session boundary follows it before any prompt.
+        started_fresh: bool,
         /// Why it was sent back, when the person said.
         note: Option<String>,
+        /// Still being written: it grows as it streams.
+        writing: bool,
     },
     /// Questions asked as the work, then the answers sent.
     Questions {
@@ -587,7 +592,10 @@ pub(crate) fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Dec
                 text: text(),
                 steered: true,
             }),
-            Codex::Message(m) => plain(prose(held, m.complete, false)),
+            Codex::Message(m) => match crate::plan::codex_plan(&item.text) {
+                Some(plan) => plain(crate::plan::codex_plan_row(state, held, plan, m.complete)),
+                None => plain(prose(held, m.complete, false)),
+            },
             Codex::WorkingNote(m) => plain(prose(held, m.complete, true)),
             Codex::Reasoning(r) => {
                 let text = if item.text.is_empty() {
@@ -894,6 +902,15 @@ fn claude_tool(
             state: view,
             result: tool.outcome_text.clone(),
         }
+    } else if let Some(kind) = crate::plan::plan_file_row(
+        state,
+        held,
+        &tool.name,
+        &field(&input, "file_path"),
+        field(&input, "content"),
+        in_flight(view),
+    ) {
+        return (kind, None, false);
     } else {
         match tool.name.as_str() {
             "Read" => RowKind::Explore {
@@ -1010,16 +1027,26 @@ fn claude_tool(
                     (ToolStateView::Denied | ToolStateView::Failed, None) => PlanVerdict::SentBack,
                     _ => PlanVerdict::Open,
                 };
+                // Claude fills the plan in from its plan file; a call that
+                // carries none reads it from that file's Write.
+                let mut plan = field(&input, "plan");
+                if plan.is_empty() {
+                    plan = crate::plan::written_before(state, held.item.order);
+                }
                 return (
                     RowKind::Ask(AskRow::Plan {
-                        plan: field(&input, "plan"),
+                        plan,
                         verdict,
                         edits_accepted: verdict == PlanVerdict::Approved
                             && decision
                                 .as_ref()
                                 .and_then(|decision| decision.scope.as_deref())
                                 == Some("acceptEdits"),
+                        started_fresh: verdict == PlanVerdict::Approved
+                            && crate::plan::after(state, held.item.order)
+                                == crate::plan::After::Fresh,
                         note: decision.as_ref().and_then(|decision| decision.note.clone()),
+                        writing: false,
                     }),
                     None,
                     false,

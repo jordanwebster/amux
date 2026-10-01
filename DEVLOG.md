@@ -1,3 +1,22 @@
+2026-10-01 — **Plans read as plans, for every agent, and fold once decided.**
+A plan in the redesigned chat sits under a landmark like a session
+boundary: the faint word "Plan", its opening heading lifted out as the
+title, a hairline to the margin. It streams like a reply where the agent
+streams it (headless Claude's plan-file Write, Codex's plan), and Claude's
+plan-file Write and Edits no longer draw as steps. The decision box is the
+same for every agent: start building, accept edits without asking (Claude,
+when offered), start fresh with just the plan (with how much context is
+used), or keep planning with a note. Once decided the plan folds to its
+landmark, saying how, with the decision's step under it; a click reopens
+it. Codex gets the decision its own terminal offers, composed in ui-view of
+inputs that already exist (`plan_inputs`), with stand-ins until the wire
+carries plans: a `<proposed_plan>` message is a Codex plan, its fate is
+read from what follows, and a fake "plan" preset is Codex's Plan mode.
+Starting fresh clears Claude and seeds the new conversation with the plan.
+The lab gains a `plan:` entry that writes a plan each agent's way, an
+`implement:` script for Codex, revisions when a Claude plan is sent back,
+and the plan-mode scenario with one agent of each kind to plan with.
+
 2026-10-01 — **Plans are read in the feed and decided in the composer's box.**
 In the redesigned chat, a plan Claude proposes is drawn in the feed as its
 reply, with the same markdown as any other answer, and stays there as the

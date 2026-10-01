@@ -197,6 +197,8 @@ pub struct SnapshotFacts {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub mode: Option<String>,
+    /// Codex's sandbox, beside its approval policy in `mode`.
+    pub sandbox: Option<String>,
     pub context: Option<wire::ContextMeter>,
     pub usage: Option<wire::UsageLimits>,
     pub tasks: Option<wire::TaskList>,
@@ -261,24 +263,31 @@ pub fn encode_snapshot(kind: Kind, facts: &SnapshotFacts) -> Vec<u8> {
             commands: Vec::new(),
         }
         .encode_to_vec(),
-        Kind::Codex => CodexSnapshot {
-            asks: facts.codex_asks.clone(),
-            context: facts.context.clone(),
-            model: facts.model.clone(),
-            approval_policy: facts.mode.clone(),
-            sandbox: Some("workspace-write".into()),
-            active_turn: facts.running_turn.then(|| "turn".into()),
-            servers,
-            usage,
-            sign_in,
-            background_processes: background,
-            plan: tasks,
-            effort: facts.effort.clone(),
-            thread_id: Some("lab-thread".into()),
-            models: Vec::new(),
-            commands: Vec::new(),
+        Kind::Codex => {
+            CodexSnapshot {
+                asks: facts.codex_asks.clone(),
+                context: facts.context.clone(),
+                model: facts.model.clone(),
+                approval_policy: facts.mode.clone(),
+                sandbox: Some(facts.sandbox.clone().unwrap_or_else(
+                    || match facts.mode.as_deref() {
+                        Some("plan") => "read-only".into(),
+                        _ => "workspace-write".into(),
+                    },
+                )),
+                active_turn: facts.running_turn.then(|| "turn".into()),
+                servers,
+                usage,
+                sign_in,
+                background_processes: background,
+                plan: tasks,
+                effort: facts.effort.clone(),
+                thread_id: Some("lab-thread".into()),
+                models: Vec::new(),
+                commands: Vec::new(),
+            }
+            .encode_to_vec()
         }
-        .encode_to_vec(),
         Kind::Unspecified => Vec::new(),
     }
 }

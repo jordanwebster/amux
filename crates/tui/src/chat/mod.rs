@@ -72,6 +72,8 @@ pub enum ChatEffect {
         attachments: Vec<Attachment>,
     },
     Answer(wire::Input),
+    /// Inputs sent one after another, in order.
+    Inputs(Vec<wire::Input>),
     /// Stop: ends the turn; the agent stays live.
     Interrupt,
     /// Takes a queued prompt back; its words return to the composer.
@@ -235,6 +237,9 @@ pub struct ChatView {
     asking: Option<Key>,
     /// The last plan the feed opened at, so it opens there only once.
     plan_seen: Option<Key>,
+    /// Plan decisions this client made of other inputs, by card key: the
+    /// card is done with once they are sent, whatever the agent says.
+    plans_done: HashSet<String>,
     /// The jump-to-bottom control.
     jump_spot: Option<(u16, (u16, u16))>,
     /// The mode on the composer's edge.
@@ -298,6 +303,7 @@ impl ChatView {
             ask_spots: Vec::new(),
             asking: None,
             plan_seen: None,
+            plans_done: HashSet::new(),
             jump_spot: None,
             mode_spot: None,
             composer_spot: None,
@@ -337,7 +343,7 @@ impl ChatView {
     /// The card to draw, synced with this client's picks. With no ask
     /// open, the last one's picks and fields go.
     fn card(&mut self, state: &SessionState) -> Option<AskCard> {
-        let Some(card) = ask_card(state) else {
+        let Some(card) = self.live_card(state) else {
             self.ask = AskUi::default();
             return None;
         };
@@ -375,7 +381,7 @@ impl ChatView {
         key.code == KeyCode::Char('?')
             && !self.review_open
             && self.reader.is_none()
-            && ask_card(state).is_none()
+            && self.live_card(state).is_none()
             && self.tray.is_none()
             && self.editor.is_empty()
     }
@@ -422,8 +428,13 @@ impl ChatView {
         }
     }
 
+    /// The head ask, less a plan decision this client already made.
+    fn live_card(&self, state: &SessionState) -> Option<AskCard> {
+        ask_card(state).filter(|card| !self.plans_done.contains(&card.key))
+    }
+
     fn card_takes_keys(&self, state: &SessionState) -> Option<AskCard> {
-        let card = ask_card(state)?;
+        let card = self.live_card(state)?;
         (card.state != CardState::Dismissed).then_some(card)
     }
 
@@ -528,6 +539,11 @@ impl ChatView {
         match action {
             AskAction::None => vec![],
             AskAction::Attach => vec![ChatEffect::RawAttach],
+            AskAction::Compose { key, inputs } => {
+                self.plans_done.insert(key);
+                self.follow();
+                vec![ChatEffect::Inputs(inputs)]
+            }
             AskAction::Answer(input) => {
                 // The plan was read from its top; once it is answered, the
                 // feed follows the work it sets going.
@@ -1677,7 +1693,13 @@ impl ChatView {
             Some(card) if ask::boxed(card) => {
                 const MARGIN: usize = 2;
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
-                let drawn = self.ask.box_lines(card, inner, theme);
+                let context = state
+                    .agent_state()
+                    .context
+                    .window_tokens
+                    .filter(|w| *w > 0)
+                    .map(|window| state.agent_state().context.used_tokens * 100 / window);
+                let drawn = self.ask.box_lines(card, context, inner, theme);
                 let (lines, mode) = framed(
                     drawn.lines,
                     theme.accent(),

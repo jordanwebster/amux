@@ -170,13 +170,21 @@ pub fn row_lines(
                 plan,
                 verdict,
                 edits_accepted,
+                started_fresh,
                 note,
+                writing,
             }) => plan_lines(
                 &mut drawn,
-                plan,
-                *verdict,
-                *edits_accepted,
-                note.as_deref(),
+                &row.id,
+                &Plan {
+                    text: plan,
+                    verdict: *verdict,
+                    edits_accepted: *edits_accepted,
+                    started_fresh: *started_fresh,
+                    note: note.as_deref(),
+                    writing: *writing,
+                },
+                expanded,
                 width,
                 theme,
             ),
@@ -357,28 +365,103 @@ fn prose(drawn: &mut Drawn, words: &[Segment], streaming: bool, width: usize, th
     drawn.blank();
 }
 
-/// A plan the agent proposed: the agent's text like any other, then, once
-/// answered, a step saying what the person decided. While it waits, the
-/// composer's box asks, so the feed says nothing more about it.
-fn plan_lines(
-    drawn: &mut Drawn,
-    plan: &str,
+/// A plan, as the feed reads it.
+struct Plan<'a> {
+    text: &'a str,
     verdict: PlanVerdict,
     edits_accepted: bool,
-    note: Option<&str>,
+    started_fresh: bool,
+    note: Option<&'a str>,
+    writing: bool,
+}
+
+/// The plan's title and body: an opening heading of any level is lifted
+/// out as the title. None while the first line is still being written and
+/// may yet be a heading.
+fn plan_title(text: &str, writing: bool) -> Option<(Option<String>, &str)> {
+    let text = text.trim_start_matches(['\n', '\r', ' ']);
+    let (first, rest) = match text.split_once('\n') {
+        Some(split) => split,
+        None if writing && (text.is_empty() || text.starts_with('#')) => return None,
+        None => (text, ""),
+    };
+    let heading = first.trim_start();
+    if heading.starts_with('#') {
+        let title = heading.trim_start_matches('#').trim();
+        Some(((!title.is_empty()).then(|| title.to_owned()), rest))
+    } else {
+        Some((None, text))
+    }
+}
+
+/// A plan the agent proposed, set apart by a landmark line like a
+/// session's: "Plan", its title, a hairline to the margin. It reads as the
+/// agent's text while it waits on the person (the composer's box asks).
+/// Once decided it folds to that one line, saying how it was decided, and
+/// a step under it says what the person chose; opening it shows it whole.
+fn plan_lines(
+    drawn: &mut Drawn,
+    id: &Key,
+    plan: &Plan<'_>,
+    expanded: bool,
     width: usize,
     theme: Theme,
 ) {
-    prose(
-        drawn,
-        &[Segment::Text(plan.to_owned())],
-        false,
-        width,
-        theme,
-    );
-    let words = match verdict {
+    let Some((title, body)) = plan_title(plan.text, plan.writing) else {
+        return;
+    };
+    let fate = match plan.verdict {
+        PlanVerdict::Open => None,
+        PlanVerdict::Approved if plan.started_fresh => Some("started fresh"),
+        PlanVerdict::Approved => Some("approved"),
+        PlanVerdict::SentBack => Some("sent back"),
+        PlanVerdict::Dismissed => Some("dismissed"),
+    };
+    let folded = fate.is_some() && !expanded;
+
+    // The landmark: words at the feed's edge, then a hairline to the margin.
+    let end = width.saturating_sub(2);
+    let mut head = Line::default();
+    pad_to(&mut head, EDGE);
+    push(&mut head, "Plan", theme.faint(), end);
+    if let Some(title) = &title {
+        push(&mut head, " · ", theme.faint(), end);
+        let room = end
+            .saturating_sub(text::line_width(&head))
+            .saturating_sub(fate.map_or(0, |fate| text::str_width(fate) + 3) + 4);
+        push(&mut head, text::ellipsize(title, room), theme.bright(), end);
+    }
+    if folded && let Some(fate) = fate {
+        push(&mut head, format!(" · {fate}"), theme.faint(), end);
+    }
+    push(&mut head, " ", theme.faint(), end);
+    let used = text::line_width(&head);
+    if used < end {
+        head.spans
+            .push(Span::styled("─".repeat(end - used), theme.hairline()));
+    }
+    if fate.is_some() {
+        drawn.hit_line(head, FeedHit::Step(id.clone()));
+    } else {
+        drawn.line(head);
+    }
+    drawn.blank();
+    if !folded {
+        prose(
+            drawn,
+            &[Segment::Text(body.to_owned())],
+            plan.writing,
+            width,
+            theme,
+        );
+    }
+
+    let words = match plan.verdict {
         PlanVerdict::Open => return,
-        PlanVerdict::Approved if edits_accepted => "Plan approved · edits accepted without asking",
+        PlanVerdict::Approved if plan.started_fresh => "Plan approved · started fresh",
+        PlanVerdict::Approved if plan.edits_accepted => {
+            "Plan approved · edits accepted without asking"
+        }
         PlanVerdict::Approved => "Plan approved",
         PlanVerdict::SentBack => "Plan sent back",
         PlanVerdict::Dismissed => "Plan dismissed",
@@ -396,14 +479,17 @@ fn plan_lines(
     if !facts.is_empty() {
         push(&mut line, format!(" · {facts}"), theme.faint(), width);
     }
-    drawn.line(line);
-    if verdict == PlanVerdict::SentBack
-        && let Some(note) = note.filter(|note| !note.trim().is_empty())
+    drawn.hit_line(line, FeedHit::Step(id.clone()));
+    if plan.verdict == PlanVerdict::SentBack
+        && let Some(note) = plan.note.filter(|note| !note.trim().is_empty())
     {
-        drawn.line(railed(
-            format!("\u{201c}{}\u{201d}", first_line(note)),
-            theme.faint(),
-        ));
+        drawn.hit_line(
+            railed(
+                format!("\u{201c}{}\u{201d}", first_line(note)),
+                theme.faint(),
+            ),
+            FeedHit::Step(id.clone()),
+        );
     }
     drawn.blank();
 }

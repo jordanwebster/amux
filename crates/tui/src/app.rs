@@ -918,6 +918,19 @@ impl App {
                         InputError::Rejected(_) | InputError::Uncertain => None,
                     })
             }),
+            ChatEffect::Inputs(inputs) => self.spawn(async move {
+                for input in inputs {
+                    if let Err(error) = session.answer(input).await {
+                        return match error {
+                            InputError::Rejected(reason) => {
+                                Some(AppEvent::Notice(format!("not sent: {reason}"), Tone::Warn))
+                            }
+                            InputError::Uncertain => None,
+                        };
+                    }
+                }
+                None
+            }),
             ChatEffect::Interrupt => self.spawn(async move {
                 session
                     .interrupt()

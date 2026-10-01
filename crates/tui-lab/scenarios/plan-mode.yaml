@@ -1,0 +1,223 @@
+description: Three idle agents to plan with — headless Claude (its plan streams in), Claude in a terminal (its plan arrives whole) and Codex (its plan streams in). Press shift+tab into plan mode, send any prompt, and decide the plan each way.
+local_host: laptop
+cwd: ~/source/amux
+agents:
+  - id: relay
+    name: relay keepalive
+    kind: claude_sdk
+    ago: 3m
+    model: opus
+    effort: high
+    mode: default
+    context: { used: 124000, window: 200000 }
+    transcript:
+      - boundary: started
+      - user: Why do phone chats drop after a couple of quiet minutes?
+      - read: crates/relay/src/tunnel.rs
+      - grep: IDLE_TIMEOUT
+      - say: The relay closes a tunnel after 90 seconds without a frame, and nothing keeps a quiet chat's tunnel warm. A keepalive from the daemon would fix it without a client release.
+      - turn: { took: 2m }
+    reply:
+      - think: Working out where a keepalive belongs.
+      - read: crates/relay/src/tunnel.rs
+      - read: crates/relay_client/src/lib.rs
+      - grep: IDLE_TIMEOUT
+      - read: crates/node/src/relay.rs
+      - plan: |
+          # Keep relay tunnels warm from the daemon
+
+          The relay closes a tunnel after 90 seconds without a frame. A chat that waits
+          on an ask sends nothing, so the phone loses it exactly when it matters. The
+          daemon will send a small keepalive frame on every open tunnel while it is quiet.
+
+          ## Steps
+
+          1. Add a `Keepalive` frame kind to `wire`, ignored by every reader.
+             - Older relays drop unknown kinds already, so this is safe to ship first.
+          2. Give each tunnel in `relay_client` a quiet timer, reset on every frame sent.
+             - At 30 seconds of quiet it sends a keepalive.
+             - The timer stops with the tunnel; no task outlives it.
+          3. Count keepalives in the relay's metrics so we can see them in production.
+          4. Leave `IDLE_TIMEOUT` at 90 seconds: three missed keepalives still mean a dead peer.
+
+          ## What changes where
+
+          | Crate | Change | Size |
+          |---|---|--:|
+          | `wire` | The `Keepalive` frame kind | ~20 lines |
+          | `relay_client` | The per-tunnel quiet timer | ~90 lines |
+          | `relay` | A metric, and ignoring the frame | ~30 lines |
+          | `node` | Nothing: the client library does it | 0 |
+
+          The timer is one select arm beside the tunnel's writer:
+
+          ```rust
+          loop {
+              tokio::select! {
+                  frame = outgoing.recv() => {
+                      let Some(frame) = frame else { break };
+                      writer.send(frame).await?;
+                      quiet.reset(Instant::now() + KEEPALIVE_AFTER);
+                  }
+                  () = &mut quiet => {
+                      writer.send(Frame::keepalive()).await?;
+                      quiet.reset(Instant::now() + KEEPALIVE_AFTER);
+                  }
+              }
+          }
+          ```
+
+          ## Risks
+
+          - **Phones in the background**: the daemon sends, so the phone's radio only
+            wakes to receive, as it already does for any frame.
+          - A relay under load sees one extra frame per tunnel every 30 seconds; at our
+            peak of 4,000 tunnels that is 133 frames a second, well inside its budget.
+
+          ## Tests
+
+          - A tunnel idle for five minutes stays open, against a real relay in `testnet`.
+          - A tunnel whose peer vanishes still closes within `IDLE_TIMEOUT`.
+      - say: Starting with the frame kind in `wire`.
+      - edit:
+          path: crates/wire/proto/relay.proto
+          old: "  FRAME_KIND_DATA = 1;"
+          new: "  FRAME_KIND_DATA = 1;\n  FRAME_KIND_KEEPALIVE = 2;"
+      - edit:
+          path: crates/relay_client/src/tunnel.rs
+          old: "        writer.send(frame).await?;"
+          new: "        writer.send(frame).await?;\n        quiet.reset(Instant::now() + KEEPALIVE_AFTER);"
+      - say: The frame kind and the quiet timer are in. Next is the relay's metric and the idle test.
+      - turn: {}
+
+  - id: fleet
+    name: fleet sections
+    kind: claude
+    ago: 6m
+    model: sonnet
+    mode: default
+    context: { used: 61000, window: 200000 }
+    transcript:
+      - boundary: started
+      - user: How does home decide which section an agent goes in?
+      - read: crates/tui/src/home.rs
+      - say: Home sorts agents into Needs you, Running and Exited itself, placing a family by its loudest member. The phone has its own copy of the same rules.
+      - turn: { took: 1m }
+    reply:
+      - read: crates/tui/src/home.rs
+      - read: crates/ui-view/src/fleet.rs
+      - glob: apps/apple/**/FleetSections*.swift
+      - read: apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/FleetSections.swift
+      - plan: |
+          # Move home's sections into a shared fleet view
+
+          Home and the phone each sort agents into Needs you, Running and Exited, and
+          they already disagree: the phone puts a family under its parent's state, the
+          terminal under its loudest member's. One view in `ui-view` will decide it for
+          both, and each client keeps only how it draws the sections.
+
+          ## Steps
+
+          1. Add `fleet_sections(state) -> Vec<Section>` to `ui-view`'s fleet views.
+             - A section is its kind and its agents in order, families kept together.
+             - A family goes where its loudest member goes: needs you, then running,
+               then exited.
+          2. Order agents within a section by their last moment, newest first.
+          3. Replace home's own sorting in `crates/tui/src/home.rs` with the view.
+          4. Regenerate the Swift types and switch the phone's `FleetSections` over.
+          5. Delete both clients' old sorting code.
+
+          ## Decided along the way
+
+          | Question | Answer |
+          |---|---|
+          | Where does an exited child of a running parent go? | With the family, under Running |
+          | Does a muted agent still count as needing you? | No: muted reads as running |
+          | Are empty sections returned? | No; a client draws nothing for them |
+
+          ## Risks
+
+          - The phone's order changes for families, which people will notice. The new
+            order is the terminal's, which nobody has complained about.
+          - Home re-sorts on every inventory change; the view must stay cheap. It walks
+            the inventory once, so a fleet of 200 agents costs well under a millisecond.
+
+          ## Tests
+
+          - A fleet fixture with families in every state lands in the same sections on
+            both clients' golden screens.
+          - A family whose loudest member changes moves as one.
+      - say: Adding the view to `ui-view` first.
+      - write:
+          path: crates/ui-view/src/sections.rs
+          content: "//! Home's sections, for every client.\n"
+      - say: The view is in place; next I'll switch home over to it.
+      - turn: {}
+
+  - id: uploader
+    name: upload retries
+    kind: codex
+    ago: 9m
+    model: gpt-5-codex
+    effort: medium
+    mode: on-request
+    context: { used: 182000, window: 272000 }
+    transcript:
+      - boundary: started
+      - user: The blob uploader gives up after one failure on a flaky connection. Look into it.
+      - read: crates/blobs/src/upload.rs
+      - say: The uploader tries once and surfaces the error. On a flaky connection a single retry would usually succeed.
+      - turn: { took: 3m }
+    reply:
+      - read: crates/blobs/src/upload.rs
+      - read: crates/blobs/src/store.rs
+      - grep: put_blob
+      - read: crates/client/src/retry.rs
+      - plan: |
+          # Retry blob uploads with a budget
+
+          Uploads fail on the first dropped connection and the attachment is lost. The
+          client already has a retry helper for requests; uploads will use it with a
+          budget suited to large bodies, and resume from what the server already holds.
+
+          ## Steps
+
+          1. Wrap `put_blob` in `client::retry` with a budget of 4 attempts over 60 seconds.
+             - Only connection errors and 5xx retry; a 4xx is the request's fault.
+          2. Before each retry, ask the server how many bytes it holds for the blob's
+             digest, and resume from there.
+             - A server without resume support answers 0, and the upload starts over.
+          3. Show "retrying" on the attachment chip while a retry waits.
+          4. After the budget is spent, keep the error the person sees today.
+
+          ## Shape
+
+          ```rust
+          pub async fn upload(blob: &Blob, client: &Client) -> Result<BlobRef, UploadError> {
+              retry(UPLOAD_BUDGET, |attempt| async move {
+                  let held = if attempt > 0 { client.held_bytes(&blob.digest).await? } else { 0 };
+                  client.put_blob(&blob.digest, blob.bytes_from(held)).await
+              })
+              .await
+          }
+          ```
+
+          ## Risks
+
+          - A resumed upload must hash to the same digest; the server already checks
+            the whole blob's digest before it keeps it, so a bad resume fails loudly.
+          - Four attempts on a 50 MB video can take a minute; the chip says so.
+
+          ## Tests
+
+          - A fixture server that drops the connection halfway resumes and keeps the blob.
+          - A 403 fails at once, without retrying.
+      - turn: {}
+    implement:
+      - read: crates/client/src/retry.rs
+      - edit:
+          path: crates/blobs/src/upload.rs
+          old: "    client.put_blob(&blob.digest, blob.bytes()).await"
+          new: "    retry(UPLOAD_BUDGET, |attempt| put_from_held(client, blob, attempt)).await"
+      - say: Uploads now retry with a budget and resume from what the server holds. Next is the "retrying" chip.
+      - turn: {}

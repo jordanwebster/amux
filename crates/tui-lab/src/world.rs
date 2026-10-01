@@ -80,6 +80,7 @@ fn nominal_ms(entry: &Entry) -> i64 {
         Entry::Wait(d) => d.ms(),
         Entry::Turn(_) | Entry::Phase(_) | Entry::WorkingOn(_) | Entry::Tasks(_) => 0,
         Entry::Stream(_) | Entry::Said => 0,
+        Entry::Plan(_) => 4_000,
         Entry::Context(_) | Entry::Exit(_) => 0,
         _ => 1_500,
     }
@@ -804,6 +805,7 @@ impl World {
                 );
                 true
             }
+            Entry::Plan(text) => self.live_plan(id, epoch, text, rest).await,
             entry if tool_call(&entry).is_some() => {
                 let (tool, output) = tool_call(&entry).unwrap();
                 let running = tool.state == ToolState::Running as i32;
@@ -885,6 +887,110 @@ impl World {
                 }
             }
         }
+    }
+
+    /// A plan played live. Headless Claude streams its plan file's Write and
+    /// Codex its plan message, a few lines at a time; Claude in a terminal
+    /// writes the file whole. Claude then asks with ExitPlanMode, taking the
+    /// rest of the script as what follows approval.
+    async fn live_plan(
+        &self,
+        id: &[u8],
+        epoch: u64,
+        text: String,
+        rest: &mut VecDeque<Entry>,
+    ) -> bool {
+        let kind = {
+            let inner = self.inner.lock().unwrap();
+            match inner.index(id) {
+                Some(index) => inner.agents[index].kind,
+                None => return false,
+            }
+        };
+        let ask = Entry::Ask(AskSpec::Plan(crate::scenario::PlanSpec {
+            plan: text.clone(),
+            then: None,
+        }));
+        if kind == Kind::ClaudePty {
+            rest.push_front(ask);
+            rest.push_front(Entry::Write(crate::scenario::WriteSpec {
+                path: plan_path(&text),
+                content: text,
+            }));
+            return true;
+        }
+        let path = plan_path(&text);
+        let written = |sim: &mut Sim, key: &str, so_far: &str, done: bool| match kind {
+            Kind::Codex => {
+                let tagged = format!(
+                    "<proposed_plan>\n{so_far}{}",
+                    if done { "\n</proposed_plan>" } else { "" }
+                );
+                sim.commit(
+                    key,
+                    &Body::Message { complete: done },
+                    &tagged,
+                    now_ms(),
+                    &[],
+                );
+            }
+            _ => {
+                let state = if done {
+                    ToolState::Succeeded
+                } else {
+                    ToolState::Running
+                };
+                let mut call = tool(
+                    "Write",
+                    json!({ "file_path": path, "content": so_far }),
+                    state,
+                );
+                if done {
+                    call.ended_at_ms = Some(now_ms());
+                }
+                sim.commit(key, &Body::Tool(call), "", now_ms(), &[]);
+            }
+        };
+        let key = {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(index) = inner.index(id) else {
+                return false;
+            };
+            let sim = &mut inner.agents[index];
+            let key = sim.fresh_key();
+            written(sim, &key, "", false);
+            inner.touch(index);
+            key
+        };
+        let mut so_far = String::new();
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        for chunk in lines.chunks(2) {
+            tokio::time::sleep(Duration::from_millis(140)).await;
+            let mut inner = self.inner.lock().unwrap();
+            let Some(index) = inner.index(id) else {
+                return false;
+            };
+            let sim = &mut inner.agents[index];
+            if sim.epoch != epoch {
+                return false;
+            }
+            so_far.push_str(&chunk.concat());
+            written(sim, &key, &so_far, false);
+            inner.touch(index);
+        }
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(index) = inner.index(id) else {
+                return false;
+            };
+            let sim = &mut inner.agents[index];
+            written(sim, &key, &so_far, true);
+            inner.touch(index);
+        }
+        if kind != Kind::Codex {
+            rest.push_front(ask);
+        }
+        true
     }
 
     /// After a turn ends, the oldest queued prompt starts the next one.
@@ -1044,6 +1150,33 @@ impl World {
                 } else {
                     pending.then
                 }
+            } else if let Some(plan) = pending
+                .tool
+                .as_ref()
+                .filter(|tool| tool.name == "ExitPlanMode")
+                .and_then(|tool| serde_json::from_slice::<Value>(&tool.input_json).ok())
+                .and_then(|input| input.get("plan").and_then(Value::as_str).map(str::to_owned))
+            {
+                // Sent back, Claude reworks the plan and asks again.
+                let note = verdict.note();
+                let change = if note.trim().is_empty() {
+                    "Tightened the steps after review.".to_owned()
+                } else {
+                    note.trim().to_owned()
+                };
+                let base = plan
+                    .split("\n\n### Changed after review")
+                    .next()
+                    .unwrap_or(&plan)
+                    .to_owned();
+                let mut then = vec![
+                    Entry::Read("docs/JOURNAL_AND_STORE.md".into()),
+                    Entry::Plan(format!(
+                        "{base}\n\n### Changed after review\n\n- {change}\n"
+                    )),
+                ];
+                then.extend(pending.then);
+                then
             } else {
                 vec![
                     Entry::Say("Understood, I won't do that. What would you like instead?".into()),
@@ -1056,6 +1189,27 @@ impl World {
     }
 
     fn prompt(self: &Arc<Self>, id: &[u8], text: &str, input_id: &[u8]) -> SendInputResponse {
+        // A fresh conversation seeded with an approved plan: the lab shows
+        // only its boundary (a new thread for Codex, the clear for Claude),
+        // which settles the prompt, and does not play the new conversation.
+        if text.starts_with(ui_view::FRESH_PLAN_PREFIX) {
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(index) = inner.index(id) {
+                let sim = &mut inner.agents[index];
+                let boundary = wire::Boundary {
+                    kind: if sim.kind == Kind::Codex {
+                        wire::BoundaryKind::Started
+                    } else {
+                        wire::BoundaryKind::Cleared
+                    } as i32,
+                    ..wire::Boundary::default()
+                };
+                let key = sim.fresh_key();
+                sim.commit(&key, &Body::Boundary(boundary), "", now_ms(), input_id);
+                inner.touch(index);
+            }
+            return accepted(false);
+        }
         let queued = {
             let mut inner = self.inner.lock().unwrap();
             let Some(index) = inner.index(id) else {
@@ -1102,6 +1256,7 @@ impl World {
             Withdraw(Vec<u8>),
             SendNow(Vec<u8>),
             Mode(Option<String>),
+            Approval(wire::SetApproval),
             Model(Option<String>),
             Effort(Option<String>),
             Clear,
@@ -1139,7 +1294,7 @@ impl World {
                 Some(cx::Of::Interrupt(_)) => Act::Interrupt,
                 Some(cx::Of::Withdraw(w)) => Act::Withdraw(w.queued_input_id),
                 Some(cx::Of::SendNow(s)) => Act::SendNow(s.queued_input_id),
-                Some(cx::Of::Approval(a)) => Act::Mode(Some(a.approval_policy)),
+                Some(cx::Of::Approval(a)) => Act::Approval(a),
                 Some(cx::Of::Model(m)) => Act::Model(m.model),
                 Some(cx::Of::Effort(e)) => Act::Effort(e.effort),
                 None => Act::Other,
@@ -1214,6 +1369,16 @@ impl World {
                 }
                 accepted(false)
             }
+            Act::Approval(approval) => {
+                let mut inner = self.inner.lock().unwrap();
+                if let Some(index) = inner.index(id) {
+                    let sim = &mut inner.agents[index];
+                    sim.facts.mode = Some(approval.approval_policy);
+                    sim.facts.sandbox = Some(approval.sandbox);
+                    inner.touch(index);
+                }
+                accepted(false)
+            }
             Act::Model(model) => {
                 let mut inner = self.inner.lock().unwrap();
                 if let Some(index) = inner.index(id) {
@@ -1234,12 +1399,16 @@ impl World {
                 let mut inner = self.inner.lock().unwrap();
                 if let Some(index) = inner.index(id) {
                     let mut at = now_ms();
-                    play_now(
-                        &mut inner,
-                        index,
-                        vec![Entry::Boundary(BoundarySpec::Cleared)],
-                        &mut at,
-                    );
+                    // Clearing to start fresh from a plan: the seeded prompt
+                    // that follows draws the boundary.
+                    if !fresh_from_plan(&mut inner.agents[index], &mut at) {
+                        play_now(
+                            &mut inner,
+                            index,
+                            vec![Entry::Boundary(BoundarySpec::Cleared)],
+                            &mut at,
+                        );
+                    }
                     inner.touch(index);
                 }
                 accepted(false)
@@ -1437,19 +1606,24 @@ fn prompt_script(sim: &mut Sim, text: &str, input_id: &[u8]) -> Vec<Entry> {
     sim.turn_open = Some(now);
     let short: String = text.chars().take(60).collect();
     sim.working_on(Some(short), now);
-    let reply = sim.spec.reply.clone().unwrap_or_else(|| {
-        vec![
-            Entry::Think("Working out what was asked.".into()),
-            Entry::Read("src/lib.rs".into()),
-            Entry::Grep(text.split_whitespace().next().unwrap_or("todo").into()),
-            Entry::Say(format!(
-                "(lab reply) Here is where a real agent would answer: \"{text}\". \
+    let implement = (text.trim() == ui_view::IMPLEMENT_PLAN)
+        .then(|| sim.spec.implement.clone())
+        .flatten();
+    let reply = implement
+        .or_else(|| sim.spec.reply.clone())
+        .unwrap_or_else(|| {
+            vec![
+                Entry::Think("Working out what was asked.".into()),
+                Entry::Read("src/lib.rs".into()),
+                Entry::Grep(text.split_whitespace().next().unwrap_or("todo").into()),
+                Entry::Say(format!(
+                    "(lab reply) Here is where a real agent would answer: \"{text}\". \
                  Give this agent a `reply:` script in the scenario to make it say something \
                  specific."
-            )),
-            Entry::Turn(Default::default()),
-        ]
-    });
+                )),
+                Entry::Turn(Default::default()),
+            ]
+        });
     reply
         .into_iter()
         .map(|entry| match entry {
@@ -1636,6 +1810,56 @@ fn end_turn(
     sim.working_on(None, *at);
 }
 
+/// Where Claude keeps a plan: its plans directory, named for the plan.
+fn plan_path(plan: &str) -> String {
+    let title = plan
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("plan")
+        .trim_start_matches('#')
+        .trim();
+    let slug: Vec<String> = title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .take(4)
+        .map(str::to_lowercase)
+        .collect();
+    format!("~/.claude/plans/{}.md", slug.join("-"))
+}
+
+/// A Claude plan still waiting when the conversation is cleared was
+/// approved into the fresh one: its call closes approved, the turn ends and
+/// plan mode is left.
+fn fresh_from_plan(sim: &mut Sim, at: &mut i64) -> bool {
+    let Some(pos) = sim.asks.iter().position(|ask| {
+        ask.tool
+            .as_ref()
+            .is_some_and(|tool| tool.name == "ExitPlanMode")
+    }) else {
+        return false;
+    };
+    let pending = sim.asks.remove(pos);
+    sim.facts.claude_asks.retain(|ask| ask.key != pending.key);
+    if let Some(mut tool) = pending.tool {
+        tool.state = ToolState::Succeeded as i32;
+        tool.decision = Some(ToolDecision {
+            outcome: wire::DecisionOutcome::Allowed as i32,
+            scope: String::new(),
+            note: String::new(),
+            elsewhere: false,
+        });
+        tool.ended_at_ms = Some(*at);
+        sim.commit(&pending.item_key, &Body::Tool(tool), "", *at, &[]);
+    }
+    sim.jobs.clear();
+    sim.epoch += 1;
+    if sim.turn_open.is_some() {
+        end_turn(sim, TurnOutcomeSpec::Completed, None, None, at);
+    }
+    sim.facts.mode = Some("default".into());
+    true
+}
+
 /// Applies a script at once, advancing `at` by each entry's nominal time.
 /// An ask stops the script: what follows it waits for the answer.
 fn play_now(inner: &mut Inner, index: usize, entries: Vec<Entry>, at: &mut i64) {
@@ -1759,6 +1983,28 @@ fn play_now(inner: &mut Inner, index: usize, entries: Vec<Entry>, at: &mut i64) 
                     window_tokens: Some(c.window.unwrap_or(200_000)),
                     breakdown: Vec::new(),
                 })
+            }
+            // Codex has no plan approval: its plan is a message, and the
+            // decision is the client's to offer.
+            Entry::Ask(AskSpec::Plan(plan)) if sim.kind == Kind::Codex => {
+                entries.push_front(Entry::Plan(plan.plan));
+                continue;
+            }
+            Entry::Plan(text) if sim.kind == Kind::Codex => {
+                let key = sim.fresh_key();
+                let tagged = format!("<proposed_plan>\n{text}\n</proposed_plan>");
+                sim.commit(&key, &Body::Message { complete: true }, &tagged, *at, &[]);
+            }
+            Entry::Plan(text) => {
+                entries.push_front(Entry::Ask(AskSpec::Plan(crate::scenario::PlanSpec {
+                    plan: text.clone(),
+                    then: None,
+                })));
+                entries.push_front(Entry::Write(crate::scenario::WriteSpec {
+                    path: plan_path(&text),
+                    content: text,
+                }));
+                continue;
             }
             Entry::Ask(ask) => {
                 open_ask(sim, ask, entries.drain(..).collect(), *at);
@@ -2226,6 +2472,7 @@ impl Client for LabClient {
             transcript: Vec::new(),
             diff: None,
             reply: None,
+            implement: None,
         };
         let agent = self.0.add_agent(spec, now_ms());
         let world = self.0.clone();

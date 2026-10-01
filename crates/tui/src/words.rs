@@ -111,6 +111,7 @@ pub(crate) fn mode_name(value: &ModeValue) -> String {
             Some("read-only") => "Read only".to_owned(),
             Some("auto") => "Auto".to_owned(),
             Some("full-access") => "Full access".to_owned(),
+            Some("plan") => "Plan".to_owned(),
             _ => format!("{approval_policy} · {sandbox}"),
         },
     }

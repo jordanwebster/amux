@@ -72,6 +72,10 @@ agents:
       - ask:
           plan:
             plan: "1. Replace the table with two cards.\n2. Move the FAQ below.\n3. Add the free-tier note."
+      - turn: {}
+      # Codex's plan decision is the client's to offer, so nothing on the
+      # wire says it needs you; the lab says so for home.
+      - phase: needs_you
   - id: ios-goldens
     name: iOS goldens
     kind: claude

@@ -155,6 +155,8 @@ pub enum ChoiceOutcome {
     ApprovePlan {
         auto_accept_edits: bool,
     },
+    /// Approve the plan into a new conversation that holds only the plan.
+    StartFresh,
     SendBack,
     Submit,
     Decline,
@@ -183,13 +185,36 @@ pub enum Answer {
     Claude(ClaudeAnswer),
     CodexDecision(CodexDecision),
     Codex(CodexAnswer),
+    /// Not an answer the agent takes: a plan decision made of other inputs,
+    /// which [`crate::plan_inputs`] builds.
+    Plan(PlanStep),
+}
+
+/// A plan decision the client makes of inputs the agent already takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum PlanStep {
+    Implement,
+    StartFresh,
+    KeepPlanning,
+}
+
+/// A plan choice made of inputs; keeping on planning takes a note.
+pub(crate) fn plan_choice(outcome: ChoiceOutcome, step: PlanStep) -> Choice {
+    Choice {
+        outcome,
+        primary: false,
+        takes_note: step == PlanStep::KeepPlanning,
+        answer: Answer::Plan(step),
+    }
 }
 
 /// The head ask, or None when nothing is open or, before CaughtUp, when the
 /// entry does not say needs_you.
 pub fn ask_card(state: &SessionState) -> Option<AskCard> {
     let asks = state.open_asks();
-    let head = asks.first()?;
+    let Some(head) = asks.first() else {
+        return crate::plan::codex_plan_card(state);
+    };
     let (body, choices) = match head {
         OpenAsk::Claude(ask) => claude(ask),
         OpenAsk::Codex(ask) => codex(ask),
@@ -314,6 +339,7 @@ fn claude(ask: &wire::Ask) -> (AskBody, Vec<Choice>) {
                     approve(true),
                 ));
             }
+            choices.push(plan_choice(ChoiceOutcome::StartFresh, PlanStep::StartFresh));
             choices.push(choice(
                 ChoiceOutcome::SendBack,
                 claude_answer(claude_answer::Of::Plan(wire::PlanAnswer {

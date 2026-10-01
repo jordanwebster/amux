@@ -23,12 +23,27 @@ const CLAUDE_MODES: &[&str] = &[
 /// The Claude mode under which it never asks before acting.
 const CLAUDE_STOPS_ASKING: &str = "bypassPermissions";
 
-/// Codex's presets: name, approval policy, sandbox.
+/// Codex's presets: name, approval policy, sandbox. "plan" stands in for
+/// Codex's Plan collaboration mode, which amux cannot set yet: no real
+/// Codex takes "plan" as an approval policy, so only the lab offers it.
 const CODEX_PRESETS: &[(&str, &str, &str)] = &[
     ("read-only", "on-request", "read-only"),
     ("auto", "on-request", "workspace-write"),
+    ("plan", "plan", "read-only"),
     ("full-access", "never", "danger-full-access"),
 ];
+
+/// A Codex preset by name, as a mode a pick sends.
+pub(crate) fn codex_preset(name: &str) -> Option<ModeValue> {
+    CODEX_PRESETS
+        .iter()
+        .find(|(preset, _, _)| *preset == name)
+        .map(|(preset, approval, sandbox)| ModeValue::Codex {
+            preset: Some((*preset).to_owned()),
+            approval_policy: (*approval).to_owned(),
+            sandbox: (*sandbox).to_owned(),
+        })
+}
 
 /// Claude commands that open an interactive screen of Claude's own
 /// terminal, or change a setting this view offers directly: typed into a

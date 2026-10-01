@@ -4866,6 +4866,7 @@ dependencies = [
  "tui",
  "ui-runtime",
  "ui-state",
+ "ui-view",
  "wire",
 ]
 

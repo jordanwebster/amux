@@ -161,6 +161,9 @@ pub struct AgentSpec {
     /// a `say` is replaced with the prompt's text.
     #[serde(default)]
     pub reply: Option<Vec<Entry>>,
+    /// What a Codex agent does when told to implement its plan.
+    #[serde(default)]
+    pub implement: Option<Vec<Entry>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -283,6 +286,11 @@ pub enum Entry {
     Stream(String),
     /// The streamed reply is complete.
     Said,
+    /// A plan, written the way the agent writes one: Claude to its plan
+    /// file (streamed when headless, whole in a terminal) and then
+    /// ExitPlanMode's ask, Codex as a streamed `<proposed_plan>` message.
+    /// In a Claude script, what follows is what it does once approved.
+    Plan(String),
 }
 
 #[derive(Clone, Debug, Deserialize)]
