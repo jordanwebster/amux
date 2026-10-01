@@ -49,6 +49,8 @@
 //! | `OpenGate` | `Net::open_gate` |
 //! | `LanGate` | `Net::lan_gate` |
 //! | `LanFaults` | `Net::set_lan_faults` |
+//! | `RelayGate` | `Net::relay_gate` |
+//! | `RelayFaults` | `Net::set_relay_faults` |
 //! | `Inventory` | `Net::observe_inventory + observe_until(CaughtUp)` |
 //! | `Block` | `Net::assert_block_invariant` |
 //! | `Chat` | `Net::observe or Net::observe_id + observe_until(CaughtUp)` |

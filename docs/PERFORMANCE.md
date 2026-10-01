@@ -156,12 +156,15 @@ without a drift gate. The run fails if any verdict is `FAIL`.
 ## The phone
 
 `just ios perf` measures the iPhone app itself, on this Mac's pinned simulator, against a served network built for
-it: three machines on the phone's local network, forty agents dealt across them, and one conversation a thousand
-rows long that streams on cue (`crates/qualification/src/perf/phone.rs` generates the topology; `scripts/ios-perf.py`
-runs the suite). The app is the `Measured` build: compiled the way the shipped build is, with the driving door kept
-in, because an unoptimised Swift build measures the compiler rather than the app. Every packet between the phone
-and a machine crosses a gate the run can delay (the served net's `LanGate` and `LanFaults` verbs), so reaching the
-fleet is measured over a household network's latency as well as over none.
+it: three machines on the phone's local network, signed in to one account at a served relay, forty agents dealt
+across them, and one conversation a thousand rows long that streams on cue (`crates/qualification/src/perf/phone.rs`
+generates the topology; `scripts/ios-perf.py` runs the suite). The app is the `Measured` build: compiled the way
+the shipped build is, with the driving door kept in, because an unoptimised Swift build measures the compiler
+rather than the app. Every packet between the phone and a machine crosses a gate the run can delay (the served
+net's `LanGate` and `LanFaults` verbs), so reaching the fleet is measured over a household network's latency as
+well as over none; and once more with the phone away from home, signed in to the relay with every direct dial lost
+and a gate in front of the relay's QUIC carrier (`RelayGate` and `RelayFaults`), which is the path mobile data
+takes.
 
 Every number is taken by the app: the launch marks (`Signposts` in `AmuxCore`, emitted in every build) and the
 door's `measure` verb, which watches the display, the main thread and the footprint for a stretch while the run
@@ -176,6 +179,7 @@ the phone, rather than reporting a number about an idle screen.
 | `cold fleet render` | cold | From the fleet on screen having caught up with its store to the first presented frame carrying its rows: building the home from what the store held | 150 ms | | 15% |
 | `reconciliation at 0 ms` | reconciliation | From that point to the first presented frame after every trusted machine's agents were current with the machine, over loopback | 1,000 ms | | 15% |
 | `reconciliation at 100 ms` | reconciliation | The same, with every gate holding each packet 100 ms | 1,000 ms | | 15% |
+| `reconciliation through the relay at 100 ms` | reconciliation | The same, the phone away from home: signed in to the machines' account at the served relay, every direct dial lost, and the gate in front of the relay holding each packet 100 ms | 1,500 ms | | 15% |
 | `streaming hitch time` | streaming | Missed frame time per second while fifty rows a second arrive for twenty seconds into the conversation on screen, resting at its tail | 5 ms/s | | ceiling only |
 | `streaming main-thread CPU` | streaming | The main thread's share of one core over the same stream | 60 % | | 15% |
 | `streaming footprint` | streaming | The process's footprint at the end of the stream | 250 MB | | 10% |

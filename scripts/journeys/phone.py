@@ -84,12 +84,21 @@ def normalize(text: str) -> str:
 
 
 def launch_arguments(
-    ready: dict, scope: str, found: list[str], door_port: int, geometry: bool = True
+    ready: dict,
+    scope: str,
+    found: list[str],
+    door_port: int,
+    geometry: bool = True,
+    relay_quic: str | None = None,
 ) -> list[str]:
     """What a driven launch is told: its door, the net's discovery scope and
     the machines its browser may report, loopback direct links and, when the
-    net has one, the served relay. Element geometry is asked for unless the
-    caller measures the app and turns it on itself only to tap."""
+    net has one, the served relay by both its carriers. Element geometry is
+    asked for unless the caller measures the app and turns it on itself only
+    to tap. A `relay_quic` address stands in for the relay's own, a gate in
+    front of it, and leaves the plaintext TCP carrier out: a measurement
+    wants the carrier a phone away from home uses, and the fallback, dialled
+    a moment later on loopback, would win the race against a gated dial."""
     arguments = ["-amux-door-port", str(door_port)]
     if geometry:
         arguments.append("-amux-element-geometry")
@@ -98,12 +107,15 @@ def launch_arguments(
         "-amux-discover-only", ",".join(found),
         "-amux-lan-bind", "127.0.0.1:0",
     ]
-    if ready.get("relay_tcp") and ready.get("cloud_url"):
-        arguments += [
-            "-amux-scripted-cloud",
-            "-amux-relay", ready["cloud_url"],
-            "-amux-relay-tcp", ready["relay_tcp"],
-        ]
+    if ready.get("cloud_url") and (ready.get("relay_tcp") or ready.get("relay_quic")):
+        arguments += ["-amux-scripted-cloud", "-amux-relay", ready["cloud_url"]]
+        if ready.get("relay_tcp") and relay_quic is None:
+            arguments += ["-amux-relay-tcp", ready["relay_tcp"]]
+        if ready.get("relay_quic") and ready.get("relay_root"):
+            arguments += [
+                "-amux-relay-quic", relay_quic or ready["relay_quic"],
+                "-amux-relay-root", ready["relay_root"],
+            ]
     return arguments
 
 
@@ -259,7 +271,7 @@ class PhoneJourney:
         # The served machines say what they did with each link and stream, so
         # a reconciliation that took longer than its round trips can be read
         # from their side too; a caller's own filter wins.
-        self.env.setdefault("RUST_LOG", "info,node::link=debug,node::services::reachability=debug,node::routing=debug,node::sources=debug,node::dispatcher=debug")
+        self.env.setdefault("RUST_LOG", "info,node::link=debug,node::services::reachability=debug,node::routing=debug,node::sources=debug,node::dispatcher=debug,node::edge::peer=debug")
         self.process = subprocess.Popen(
             [str(TESTNET), "serve", str(topology), "--root-in", str(self.scratch)],
             cwd=ROOT,
@@ -359,16 +371,23 @@ class PhoneJourney:
         simctl("install", self.udid, str(self.build), timeout=300)
         self.relaunch(*extra, found=found, geometry=geometry)
 
-    def relaunch(self, *extra: str, found: list[str] | None = None, geometry: bool = True) -> None:
+    def relaunch(
+        self,
+        *extra: str,
+        found: list[str] | None = None,
+        geometry: bool = True,
+        relay_quic: str | None = None,
+    ) -> None:
         """The same installation launched again, as a person reopens it. Its
         browser reports the machines named in `found`, every one of the net's
         when nothing is said. Without `geometry` the app reports what is
-        drawn but not where, which a measurement wants: see `geometry()`."""
+        drawn but not where, which a measurement wants: see `geometry()`. A
+        `relay_quic` address is dialled in the relay's place, QUIC only."""
         scope = self.topology.get("scope", "")
         if found is None:
             found = [host["host_id"] for host in self.ready["hosts"]]
         self.port = free_port()
-        arguments = launch_arguments(self.ready, scope, found, self.port, geometry) + list(extra)
+        arguments = launch_arguments(self.ready, scope, found, self.port, geometry, relay_quic) + list(extra)
         # The phone's runtime logs under the same filter as the served hosts,
         # so one run's two logs can be read side by side.
         simctl(

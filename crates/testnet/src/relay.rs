@@ -84,6 +84,9 @@ pub struct Relay {
     tcp: SocketAddr,
     quic: SocketAddr,
     quic_client: quinn::ClientConfig,
+    /// The relay's self-signed certificate, DER, for a client outside the
+    /// net to trust its QUIC carrier by.
+    quic_root: Vec<u8>,
     quic_endpoint: quinn::Endpoint,
     cloud: Arc<Cloud>,
     tasks: Vec<JoinHandle<()>>,
@@ -93,7 +96,7 @@ impl Relay {
     /// Starts the relay and the cloud for `decl`'s accounts, their
     /// credentials timed by `clock`.
     pub async fn start(decl: &RelayDecl, clock: Arc<dyn Clock>) -> std::io::Result<Self> {
-        let (quic_server, quic_client) = quic_configs();
+        let (quic_server, quic_client, quic_root) = quic_configs();
         let quic_endpoint =
             quinn::Endpoint::server(quic_server, SocketAddr::from(([127, 0, 0, 1], 0)))?;
         let quic = quic_endpoint.local_addr()?;
@@ -136,6 +139,7 @@ impl Relay {
             tcp,
             quic,
             quic_client,
+            quic_root,
             quic_endpoint,
             cloud,
             tasks,
@@ -161,6 +165,18 @@ impl Relay {
     /// dials instead of where the account service names it.
     pub fn tcp(&self) -> SocketAddr {
         self.tcp
+    }
+
+    /// The relay's QUIC carrier, which a client outside the net dials
+    /// instead of where the account service names it, trusting
+    /// [`Relay::quic_root`].
+    pub fn quic(&self) -> SocketAddr {
+        self.quic
+    }
+
+    /// The relay's self-signed certificate, DER.
+    pub fn quic_root(&self) -> &[u8] {
+        &self.quic_root
     }
 
     /// The refresh token a person signing in as `account` hands the daemon.
@@ -428,9 +444,9 @@ fn status(code: u16, body: serde_json::Value) -> hyper::Response<Full<Bytes>> {
         .expect("a response")
 }
 
-/// A self-signed certificate for the relay's QUIC carrier and a client
-/// configuration that trusts only it.
-fn quic_configs() -> (quinn::ServerConfig, quinn::ClientConfig) {
+/// A self-signed certificate for the relay's QUIC carrier, a client
+/// configuration that trusts only it, and the certificate itself.
+fn quic_configs() -> (quinn::ServerConfig, quinn::ClientConfig, Vec<u8>) {
     let rcgen::CertifiedKey { cert, signing_key } =
         rcgen::generate_simple_self_signed(vec![RELAY_HOST.to_owned()])
             .expect("a relay certificate");
@@ -446,5 +462,5 @@ fn quic_configs() -> (quinn::ServerConfig, quinn::ClientConfig) {
     roots.add(der).expect("the relay certificate as a root");
     let client =
         relay_quic_client_config_with_roots(roots).expect("the relay's QUIC client configuration");
-    (server, client)
+    (server, client, cert.der().as_ref().to_vec())
 }

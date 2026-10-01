@@ -37,6 +37,14 @@ pub struct StartConfig {
     /// served test relay.
     #[serde(default)]
     pub relay_tcp: Option<SocketAddr>,
+    /// Dial the relay's QUIC carrier here, instead of where the account
+    /// service names it, trusting `relay_root`. Only a driving build reads
+    /// it, to reach a served test relay the way a phone reaches the cloud.
+    #[serde(default)]
+    pub relay_quic: Option<SocketAddr>,
+    /// The served relay's self-signed certificate, DER as hex.
+    #[serde(default)]
+    pub relay_root: Option<String>,
     /// How many rows a chat opens with.
     #[serde(default = "default_tail")]
     pub tail: u32,

@@ -26,11 +26,21 @@ public final class RuntimeCoordinator {
         /// A served test relay's plaintext carrier, as `ip:port`. Only a
         /// driving build's library reads it.
         public var relayTCP: String?
+        /// A served test relay's QUIC carrier, as `ip:port`, trusted by
+        /// `relayRoot`, its certificate as hex. Only a driving build's
+        /// library reads them.
+        public var relayQUIC: String?
+        public var relayRoot: String?
 
-        public init(discoveryScope: String = "", lanBind: String? = nil, relayTCP: String? = nil) {
+        public init(
+            discoveryScope: String = "", lanBind: String? = nil, relayTCP: String? = nil,
+            relayQUIC: String? = nil, relayRoot: String? = nil
+        ) {
             self.discoveryScope = discoveryScope
             self.lanBind = lanBind
             self.relayTCP = relayTCP
+            self.relayQUIC = relayQUIC
+            self.relayRoot = relayRoot
         }
     }
 
@@ -139,6 +149,7 @@ public final class RuntimeCoordinator {
             dataDir: directory.path, deviceName: deviceName,
             discoveryScope: options.discoveryScope, lan: true, lanBind: options.lanBind,
             logPath: directory.appendingPathComponent("runtime.log").path,
+            relayQuic: options.relayQUIC, relayRoot: options.relayRoot,
             relayTcp: options.relayTCP, tail: nil)
         let starter = starter
         launch += 1

@@ -14,6 +14,8 @@ use testnet::{AgentDecl, HostDecl, Topology};
 
 /// The machines the phone pairs with, every one with a LAN listener.
 pub const HOSTS: [&str; 3] = ["desk", "laptop", "studio"];
+/// The relay account every machine, and the phone away from home, signs in to.
+pub const ACCOUNT: &str = "ada";
 /// The agents the fleet holds, spread over the machines.
 pub const FLEET_AGENTS: usize = 40;
 /// The agent that streams on cue, on the first machine, into a
@@ -216,11 +218,14 @@ fn fleet_script(at: usize) -> Script {
 
 /// The served topology `just ios perf` drives.
 pub fn topology() -> Topology {
-    let mut topology = Topology::new();
+    // Every machine signs in to one account at the served relay, so the
+    // phone can reach them through it as it does away from home.
+    let mut topology = Topology::new().relay(&[ACCOUNT]);
     for host in HOSTS {
         topology = topology.host_decl(HostDecl {
             name: host.to_owned(),
             lan: true,
+            account: Some(ACCOUNT.to_owned()),
             ..HostDecl::default()
         });
     }

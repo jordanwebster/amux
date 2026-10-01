@@ -269,11 +269,24 @@ fn overrides(config: &StartConfig) -> EdgeOverrides {
     {
         overrides.lan_bind = bind;
     }
-    // And may dial a served test relay's plaintext carrier.
+    // And may dial a served test relay's carriers: TCP in plaintext, QUIC
+    // trusting the relay's own certificate.
     if cfg!(feature = "debug-tools") {
         overrides.cloud.relay_tcp = config.relay_tcp;
+        if let (Some(addr), Some(root)) = (config.relay_quic, &config.relay_root)
+            && let Some(der) = from_hex(root)
+        {
+            overrides.cloud.relay_quic = node::RelayQuic::trusting(addr, der).ok();
+        }
     }
     overrides
+}
+
+fn from_hex(hex: &str) -> Option<Vec<u8>> {
+    (0..hex.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
+        .collect()
 }
 
 // --- strings and JSON ------------------------------------------------------

@@ -47,12 +47,26 @@ class Launching(unittest.TestCase):
             ],
         )
 
-    def test_a_net_with_a_relay_hands_the_launch_its_cloud_and_carrier(self):
-        ready = {"cloud_url": "http://127.0.0.1:9", "relay_tcp": "127.0.0.1:8"}
+    def test_a_net_with_a_relay_hands_the_launch_its_cloud_and_carriers(self):
+        ready = {
+            "cloud_url": "http://127.0.0.1:9", "relay_tcp": "127.0.0.1:8",
+            "relay_quic": "127.0.0.1:7", "relay_root": "3082",
+        }
         arguments = phone.launch_arguments(ready, "", [], 1)
         self.assertIn("-amux-scripted-cloud", arguments)
         self.assertEqual(arguments[arguments.index("-amux-relay") + 1], "http://127.0.0.1:9")
         self.assertEqual(arguments[arguments.index("-amux-relay-tcp") + 1], "127.0.0.1:8")
+        self.assertEqual(arguments[arguments.index("-amux-relay-quic") + 1], "127.0.0.1:7")
+        self.assertEqual(arguments[arguments.index("-amux-relay-root") + 1], "3082")
+
+    def test_a_gated_relay_is_dialled_by_quic_alone(self):
+        ready = {
+            "cloud_url": "http://127.0.0.1:9", "relay_tcp": "127.0.0.1:8",
+            "relay_quic": "127.0.0.1:7", "relay_root": "3082",
+        }
+        arguments = phone.launch_arguments(ready, "", [], 1, relay_quic="127.0.0.1:6")
+        self.assertEqual(arguments[arguments.index("-amux-relay-quic") + 1], "127.0.0.1:6")
+        self.assertNotIn("-amux-relay-tcp", arguments)
 
 
 class ComparingScreens(unittest.TestCase):

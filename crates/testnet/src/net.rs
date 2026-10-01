@@ -227,6 +227,9 @@ pub struct Net {
     /// client dials instead of the host so its packets can be delayed or
     /// lost, the way a household network treats them.
     lan_gates: BTreeMap<String, UdpGate>,
+    /// A gate in front of the relay's QUIC carrier, for a client outside
+    /// the net, once one has asked for it.
+    relay_gate: Option<UdpGate>,
 }
 
 impl Net {
@@ -273,6 +276,7 @@ impl Net {
             relay: None,
             udp: BTreeMap::new(),
             lan_gates: BTreeMap::new(),
+            relay_gate: None,
         };
         if let Some(relay) = &topology.relay {
             net.relay = Some(Relay::start(relay, net.clock.clone()).await?);
@@ -1154,6 +1158,34 @@ impl Net {
         gate.set_faults(faults);
         Ok(self.ack(format!(
             "{host}'s LAN gate delays {} ms and loses {}%",
+            faults.delay.as_millis(),
+            faults.loss_percent
+        )))
+    }
+
+    /// A gate in front of the relay's QUIC carrier, which a client outside
+    /// the net dials in the relay's place so its packets can be delayed or
+    /// lost; the same gate on every ask.
+    pub async fn relay_gate(&mut self) -> Result<SocketAddr, NetError> {
+        if let Some(gate) = &self.relay_gate {
+            return Ok(gate.addr());
+        }
+        let gate = self.relay()?.gate().await?;
+        let addr = gate.addr();
+        self.relay_gate = Some(gate);
+        Ok(addr)
+    }
+
+    /// What the gate in front of the relay does to each datagram from now
+    /// on: delay, loss, or neither.
+    pub fn set_relay_faults(&self, faults: Faults) -> Result<Ack, NetError> {
+        let gate = self.relay_gate.as_ref().ok_or_else(|| NetError::Host {
+            host: "relay".to_owned(),
+            error: "has no gate; ask for one first".to_owned(),
+        })?;
+        gate.set_faults(faults);
+        Ok(self.ack(format!(
+            "the relay's gate delays {} ms and loses {}%",
             faults.delay.as_millis(),
             faults.loss_percent
         )))

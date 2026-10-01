@@ -109,6 +109,10 @@ struct Cached {
 
 pub struct ChannelPool {
     by_key: RwLock<HashMap<ChannelKey, Cached>>,
+    /// One opener per shared channel: callers who ask while it is being
+    /// opened wait for it rather than opening their own, which at a launch
+    /// every agent's source would otherwise do at once.
+    opening: std::sync::Mutex<HashMap<ChannelKey, Arc<tokio::sync::Mutex<()>>>>,
     lifetimes: RwLock<HashMap<ChannelKey, Vec<Weak<CancellationToken>>>>,
     links: Arc<LinkRegistry>,
     security: Option<ChannelSecurity>,
@@ -172,6 +176,7 @@ impl ChannelPool {
     pub(crate) fn new(links: Arc<LinkRegistry>) -> Self {
         Self {
             by_key: RwLock::new(HashMap::new()),
+            opening: std::sync::Mutex::new(HashMap::new()),
             lifetimes: RwLock::new(HashMap::new()),
             links,
             security: None,
@@ -188,6 +193,7 @@ impl ChannelPool {
     ) -> Self {
         Self {
             by_key: RwLock::new(HashMap::new()),
+            opening: std::sync::Mutex::new(HashMap::new()),
             lifetimes: RwLock::new(HashMap::new()),
             links,
             security: Some(ChannelSecurity {
@@ -228,6 +234,21 @@ impl ChannelPool {
     }
 
     pub(crate) async fn channel(&self, key: ChannelKey) -> Result<Channel, ChannelError> {
+        if !key.class.shared() {
+            return self.open_channel(key).await;
+        }
+        let opener = self
+            .opening
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(key)
+            .or_default()
+            .clone();
+        let _opening = opener.lock().await;
+        self.open_channel(key).await
+    }
+
+    async fn open_channel(&self, key: ChannelKey) -> Result<Channel, ChannelError> {
         let cached = if key.class.shared() {
             self.by_key
                 .read()

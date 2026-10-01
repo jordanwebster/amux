@@ -173,6 +173,19 @@ pub struct RelayQuic {
     pub client: quinn::ClientConfig,
 }
 
+impl RelayQuic {
+    /// A relay at `addr` whose certificate is `der`, and nothing else's.
+    pub fn trusting(addr: SocketAddr, der: Vec<u8>) -> Result<Self, String> {
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(rustls::pki_types::CertificateDer::from(der))
+            .map_err(|error| error.to_string())?;
+        let client = crate::transport::relay_quic_client_config_with_roots(roots)
+            .map_err(|error| error.to_string())?;
+        Ok(Self { addr, client })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EdgeError {
     #[error(transparent)]

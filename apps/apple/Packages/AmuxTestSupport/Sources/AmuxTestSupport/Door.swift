@@ -1140,6 +1140,13 @@ public enum Door {
     /// launch dials instead of where the test account service names it.
     public static let relayTCPArgument = "amux-relay-tcp"
 
+    /// A served test relay's QUIC carrier, as `ip:port`, and its certificate
+    /// as hex, which a driven launch dials and trusts instead of where the
+    /// test account service names it: the carrier a phone away from home
+    /// uses.
+    public static let relayQUICArgument = "amux-relay-quic"
+    public static let relayRootArgument = "amux-relay-root"
+
     /// What the ready file holds.
     public struct Ready: Codable, Sendable, Equatable {
         public let port: UInt16

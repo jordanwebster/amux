@@ -950,6 +950,12 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
     let Some(edge) = runtime.upgrade().and_then(|me| me.edge()) else {
         return false;
     };
+    // The sources open their channel while the inventory's opens, not
+    // after it: over a relay each takes two round trips.
+    let session = match runtime.upgrade() {
+        Some(me) => me.begin_following(host).await,
+        None => return false,
+    };
     let mut client = match edge.peer(host).await {
         Ok(client) => client,
         Err(error) => {
@@ -958,10 +964,6 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
         }
     };
     drop(edge);
-    let session = match runtime.upgrade() {
-        Some(me) => me.begin_following(host).await,
-        None => return false,
-    };
     let mut stream = match client.subscribe_inventory(Empty {}).await {
         Ok(response) => response.into_inner(),
         Err(error) => {
@@ -1131,6 +1133,7 @@ async fn source_once(
         )
     };
     let tail = matches!(request.from, Some(subscribe_request::From::Tail(_)));
+    tracing::debug!(%host, %agent_id, tail, "subscribing to the session");
     let mut client = match edge.session_peer(host).await {
         Ok(client) => client,
         Err(_) => return Ended::Lost { caught_up: false },

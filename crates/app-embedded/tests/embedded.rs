@@ -49,6 +49,8 @@ fn config(dir: &std::path::Path) -> StartConfig {
         lan: true,
         lan_bind: None,
         relay_tcp: None,
+        relay_quic: None,
+        relay_root: None,
         tail: 50,
     }
 }

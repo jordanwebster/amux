@@ -784,7 +784,9 @@ enum Launch {
         RuntimeCoordinator.Options(
             discoveryScope: DoorHost.said(Door.discoveryScopeArgument) ?? "",
             lanBind: DoorHost.said(Door.lanBindArgument),
-            relayTCP: DoorHost.said(Door.relayTCPArgument))
+            relayTCP: DoorHost.said(Door.relayTCPArgument),
+            relayQUIC: DoorHost.said(Door.relayQUICArgument),
+            relayRoot: DoorHost.said(Door.relayRootArgument))
     }
 
     static var discoverable: Set<HostId>? {

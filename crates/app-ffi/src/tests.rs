@@ -114,6 +114,8 @@ impl Phone {
             lan: true,
             lan_bind: None,
             relay_tcp: None,
+            relay_quic: None,
+            relay_root: None,
             tail: 50,
         };
         let (wake_sender, wakes) = mpsc::channel();

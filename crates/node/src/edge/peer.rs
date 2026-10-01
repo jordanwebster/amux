@@ -91,6 +91,7 @@ impl PeerService for PeerApi {
     ) -> Result<Response<Self::SubscribeStream>, Status> {
         caller(&request)?;
         let request = request.into_inner();
+        let asked = std::time::Instant::now();
         let runtime = self
             .runtime
             .upgrade()
@@ -108,6 +109,11 @@ impl PeerService for PeerApi {
         }
         .map_err(|error| status(error.to_wire()))?;
         drop(runtime);
+        tracing::debug!(
+            agent = %uuid::Uuid::from_slice(&request.agent_id).map(|id| id.to_string()).unwrap_or_default(),
+            opened_ms = asked.elapsed().as_millis(),
+            "opened a session subscription"
+        );
         let stream = futures_util::stream::unfold(subscription, |mut subscription| async move {
             let event = subscription.next().await?;
             Some((Ok(SessionEvent::clone(&event)), subscription))

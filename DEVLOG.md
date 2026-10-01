@@ -1,3 +1,31 @@
+2026-10-01 — **Reconciliation is measured through the relay, the way mobile data goes.**
+`just ios perf` reconciled only over direct links through the LAN gates;
+away from home a phone reaches its machines through the cloud relay,
+every stream handshaking end to end inside. The served relay now says
+where its QUIC carrier answers and what certificate it presents
+(`relay_quic`, `relay_root` in the ready block), a driven launch can be
+told to dial and trust it (`-amux-relay-quic`, `-amux-relay-root`), and
+the net puts a gate in front of it (`RelayGate`, `RelayFaults`). The
+suite signs the phone in to the machines' account, loses every direct
+dial, and launches five times with that gate holding each packet 100 ms:
+"reconciliation through the relay at 100 ms", budget 1,500. The journeys
+gain the same carrier: a phone against a served relay had always fallen
+back to the plaintext TCP carrier, since its QUIC dial went to the
+account service's port with the public roots.
+Three things the measurement found. The sources opened their channel
+only after the inventory's had fully opened; they open together now.
+Every agent's source opened its own session stream at a launch, since
+callers asking for a shared channel while it was being opened each
+opened their own; a shared channel is opened once and the rest wait for
+it. And forty opening answers left the hosts within eleven milliseconds
+but reached the phone in waves a round trip apart: through the relay
+they all ride one fresh QUIC connection, whose ten-packet initial
+congestion window held a third of them. Every QUIC endpoint of ours now
+starts with thirty-two packets, Chromium's figure. Through the relay:
+1,205 ms median, 1,224 worst, from 1,376 with the first two fixes and
+1,174 before them; direct and loopback unchanged. HTTP/2 window sizes
+were tried for the waves, moved nothing, and were reverted.
+
 2026-10-01 — **The shipping audit admits the notification centre.**
 `just ios scope-audit` refused every Release build since the chat
 rebuild made the app the notification centre's delegate, so a "needs

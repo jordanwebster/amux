@@ -798,6 +798,11 @@ fn every_door_verb_maps_to_one_capability_and_the_crate_docs_list_the_same_map()
             delay_ms: 100,
             loss_percent: 0,
         },
+        Control::RelayGate {},
+        Control::RelayFaults {
+            delay_ms: 100,
+            loss_percent: 0,
+        },
         Control::Inventory { host: "a".into() },
         Control::Block {
             host: "a".into(),

@@ -58,6 +58,8 @@ GROUPS = ("cold", "reconciliation", "streaming", "idle")
 HOSTS = ("desk", "laptop", "studio")
 FLEET_AGENTS = 40
 STREAM_AGENT = "stream"
+# The relay account every machine signs in to, and the phone away from home.
+ACCOUNT = "ada"
 STREAM_SECONDS = 20.0
 IDLE_SECONDS = 5.0
 LATENCIES_MS = (0, 100)
@@ -87,6 +89,10 @@ BUDGETS: dict[str, tuple[str, str, float, float | None, int | None]] = {
     "cold fleet render": ("ms", "cold", 150, None, 15),
     "reconciliation at 0 ms": ("ms", "reconciliation", 1000, None, 15),
     "reconciliation at 100 ms": ("ms", "reconciliation", 1000, None, 15),
+    # Away from home a phone reaches its machines through the relay, every
+    # stream handshaking end to end inside; a person on mobile data accepts
+    # about a second and a half to see a current fleet.
+    "reconciliation through the relay at 100 ms": ("ms", "reconciliation", 1500, None, 15),
     "streaming hitch time": ("ms/s", "streaming", 5, None, None),
     "streaming main-thread CPU": ("%", "streaming", 60, None, 15),
     "streaming footprint": ("MB", "streaming", 250, None, 10),
@@ -129,6 +135,7 @@ class Run:
         self.notes: list[str] = []
         self.agent_ids = {item["name"]: item["id"] for item in journey.ready["agents"]}
         self.gates: dict[str, str] = {}
+        self.relay_gate: str | None = None
         self.last_launch = time.monotonic()
 
     def takes(self, group: str) -> bool:
@@ -149,6 +156,35 @@ class Run:
         for host in HOSTS:
             self.journey.request({"LanFaults": {"host": host, "delay_ms": ms, "loss_percent": 0}})
         self.notes.append(f"latency {ms} ms each way on every gate")
+
+    def gate_the_relay(self) -> None:
+        """A gate in front of the served relay's QUIC carrier, dialled in the
+        relay's place, so the run can put latency between the phone and the
+        relay the way mobile data does."""
+        reply = self.journey.request({"RelayGate": {}})
+        assert isinstance(reply, dict)
+        self.relay_gate = reply["addr"]
+
+    def relay_latency(self, ms: int) -> None:
+        self.journey.request({"RelayFaults": {"delay_ms": ms, "loss_percent": 0}})
+        self.notes.append(f"latency {ms} ms each way on the relay's gate")
+
+    def leave_home(self) -> None:
+        """The phone away from home: signed in to the machines' account at
+        the relay, with every direct dial lost, as the machines' home
+        addresses are from mobile data."""
+        self.journey.app({
+            "kind": "connect", "relay": self.journey.ready["cloud_url"],
+            "token": f"refresh-{ACCOUNT}", "user": ACCOUNT,
+        })
+        for host in HOSTS:
+            self.journey.request({"LanFaults": {"host": host, "delay_ms": 0, "loss_percent": 100}})
+        self.notes.append(f"signed in as {ACCOUNT} at the relay; every direct dial lost")
+
+    def come_home(self) -> None:
+        for host in HOSTS:
+            self.journey.request({"LanFaults": {"host": host, "delay_ms": 0, "loss_percent": 0}})
+        self.relay_latency(0)
 
     def pair_through_the_gates(self) -> None:
         """Pairs with every machine by the link it prints, with the link's
@@ -194,13 +230,7 @@ class Run:
         record_cold = latency_ms == 0 and self.takes("cold")
         record_reconciliation = self.takes("reconciliation")
         for attempt in range(SAMPLES):
-            self.journey.quit()
-            self.space_launches()
-            self.journey.relaunch(geometry=False)
-            marks = self.await_reconciled(120)
-            for needed in ("firstCachedFrame", "storeReadBegan", "nodeStarted", "fleetOpenBegan", "storeReadEnded"):
-                if needed not in marks:
-                    raise RuntimeError(f"launch {attempt + 1} never marked {needed}; it marked {sorted(marks)}")
+            marks = self.marked_launch(attempt, f"at {latency_ms} ms")
             store_read = (marks["nodeStarted"] - marks["storeReadBegan"]) + (
                 marks["storeReadEnded"] - marks["fleetOpenBegan"]
             )
@@ -212,14 +242,37 @@ class Run:
                 self.samples[f"reconciliation at {latency_ms} ms"].append(
                     marks["reconciled"] - marks["storeReadEnded"]
                 )
-            self.notes.append(
-                f"launch {attempt + 1} at {latency_ms} ms: images {marks.get('imagesLoaded', 0):.0f}, "
-                f"entered {marks.get('appEntered', 0):.0f}, built {marks.get('compositionBuilt', 0):.0f}, "
-                f"shell {marks.get('shellPresented', 0):.0f}, node {marks['storeReadBegan']:.0f}"
-                f"-{marks['nodeStarted']:.0f}, fleet {marks['fleetOpenBegan']:.0f}-{marks['storeReadEnded']:.0f}, "
-                f"first frame {marks['firstCachedFrame']:.0f}, reconciled {marks['reconciled']:.0f} ms"
+
+    def relay_launches(self, latency_ms: int) -> None:
+        """Five launches of the phone away from home, the relay's gate
+        holding each packet `latency_ms`: the fleet is current only once
+        every machine has been reached through the relay."""
+        self.relay_latency(latency_ms)
+        for attempt in range(SAMPLES):
+            marks = self.marked_launch(attempt, f"through the relay at {latency_ms} ms", relay_quic=self.relay_gate)
+            self.samples[f"reconciliation through the relay at {latency_ms} ms"].append(
+                marks["reconciled"] - marks["storeReadEnded"]
             )
-            print(self.notes[-1], flush=True)
+
+    def marked_launch(self, attempt: int, named: str, relay_quic: str | None = None) -> dict[str, float]:
+        """One launch, terminated and spaced from the last, read back to its
+        reconciliation, with every mark a cold launch needs."""
+        self.journey.quit()
+        self.space_launches()
+        self.journey.relaunch(geometry=False, relay_quic=relay_quic)
+        marks = self.await_reconciled(120)
+        for needed in ("firstCachedFrame", "storeReadBegan", "nodeStarted", "fleetOpenBegan", "storeReadEnded"):
+            if needed not in marks:
+                raise RuntimeError(f"launch {attempt + 1} {named} never marked {needed}; it marked {sorted(marks)}")
+        self.notes.append(
+            f"launch {attempt + 1} {named}: images {marks.get('imagesLoaded', 0):.0f}, "
+            f"entered {marks.get('appEntered', 0):.0f}, built {marks.get('compositionBuilt', 0):.0f}, "
+            f"shell {marks.get('shellPresented', 0):.0f}, node {marks['storeReadBegan']:.0f}"
+            f"-{marks['nodeStarted']:.0f}, fleet {marks['fleetOpenBegan']:.0f}-{marks['storeReadEnded']:.0f}, "
+            f"first frame {marks['firstCachedFrame']:.0f}, reconciled {marks['reconciled']:.0f} ms"
+        )
+        print(self.notes[-1], flush=True)
+        return marks
 
     def space_launches(self) -> None:
         since = time.monotonic() - self.last_launch
@@ -314,6 +367,11 @@ class Run:
                     continue
                 self.cold_launches(latency)
             self.latency(0)
+        if self.takes("reconciliation"):
+            self.gate_the_relay()
+            self.leave_home()
+            self.relay_launches(LATENCIES_MS[-1])
+            self.come_home()
         if self.takes("idle") or self.takes("streaming"):
             self.journey.quit()
             self.space_launches()

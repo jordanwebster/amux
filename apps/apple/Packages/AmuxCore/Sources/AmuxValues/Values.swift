@@ -3793,6 +3793,12 @@ public struct StartConfig: Codable, Hashable, Sendable {
     public var lanBind: String?
     /// The runtime's own log, which a dump includes.
     public var logPath: String?
+    /// Dial the relay's QUIC carrier here, instead of where the account
+    /// service names it, trusting `relay_root`. Only a driving build reads
+    /// it, to reach a served test relay the way a phone reaches the cloud.
+    public var relayQuic: String?
+    /// The served relay's self-signed certificate, DER as hex.
+    public var relayRoot: String?
     /// Dial the relay's TCP carrier here in plaintext, instead of where the
     /// account service names it. Only a driving build reads it, to reach a
     /// served test relay.
@@ -3800,13 +3806,15 @@ public struct StartConfig: Codable, Hashable, Sendable {
     /// How many rows a chat opens with.
     public var tail: UInt32?
 
-    public init(dataDir: String, deviceName: String, discoveryScope: String?, lan: Bool?, lanBind: String?, logPath: String?, relayTcp: String?, tail: UInt32?) {
+    public init(dataDir: String, deviceName: String, discoveryScope: String?, lan: Bool?, lanBind: String?, logPath: String?, relayQuic: String?, relayRoot: String?, relayTcp: String?, tail: UInt32?) {
         self.dataDir = dataDir
         self.deviceName = deviceName
         self.discoveryScope = discoveryScope
         self.lan = lan
         self.lanBind = lanBind
         self.logPath = logPath
+        self.relayQuic = relayQuic
+        self.relayRoot = relayRoot
         self.relayTcp = relayTcp
         self.tail = tail
     }
@@ -3818,6 +3826,8 @@ public struct StartConfig: Codable, Hashable, Sendable {
         case lan
         case lanBind = "lan_bind"
         case logPath = "log_path"
+        case relayQuic = "relay_quic"
+        case relayRoot = "relay_root"
         case relayTcp = "relay_tcp"
         case tail
     }
