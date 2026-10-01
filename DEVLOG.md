@@ -1,3 +1,10 @@
+2026-10-01 — **Opener locks go with the link, route or host they belong to.**
+The single-flight lock a shared channel opens under was never pruned,
+and its key holds the link's id, fresh on every reconnect: a long-lived
+daemon would hold one lock per link it ever had. The three drop paths
+now share one helper that forgets the channel, its opener lock and its
+lifetimes together. Codex review finding; unit test.
+
 2026-10-01 — **A stopped session reads stale by number.**
 Two gaps in what counts as the current session, both from the early
 sources this branch opens with the inventory. A generation change

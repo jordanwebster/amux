@@ -321,27 +321,32 @@ impl ChannelPool {
     }
 
     pub(crate) fn drop_link(&self, link: LinkId) {
-        self.by_key
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .retain(|key, _| route_link(key.route) != Some(link));
-        self.cancel_where(|key| route_link(key.route) == Some(link));
+        self.forget_where(|key| route_link(key.route) == Some(link));
     }
 
     pub(crate) fn drop_host(&self, host: HostId) {
-        self.by_key
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .retain(|key, _| key.peer != host && route_link_peer(key.route) != host);
-        self.cancel_where(|key| key.peer == host || route_link_peer(key.route) == host);
+        self.forget_where(|key| key.peer == host || route_link_peer(key.route) == host);
     }
 
     pub(crate) fn drop_route(&self, peer: HostId, route: Route) {
+        self.forget_where(|key| key.peer == peer && key.route == route);
+    }
+
+    /// Forgets the channels whose key `gone` names and cancels what ran on
+    /// them. The opener locks go too: a key holds its link's id, fresh on
+    /// every reconnect, so a daemon that kept them would hold one per
+    /// link it ever had. A call still waiting on one holds its own clone
+    /// and finishes as before.
+    fn forget_where(&self, gone: impl Fn(&ChannelKey) -> bool) {
         self.by_key
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .retain(|key, _| key.peer != peer || key.route != route);
-        self.cancel_where(|key| key.peer == peer && key.route == route);
+            .retain(|key, _| !gone(key));
+        self.opening
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|key, _| !gone(key));
+        self.cancel_where(gone);
     }
 
     /// Opens a stream to `peer` on `route`, saying how it is secured. A
@@ -903,5 +908,61 @@ pub(crate) fn route_link_peer(route: Route) -> HostId {
     match route {
         Route::Direct(link) => link.peer(),
         Route::Via(relay) => relay,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::*;
+
+    fn opener_count(pool: &ChannelPool) -> usize {
+        pool.opening.lock().unwrap().len()
+    }
+
+    fn opened(pool: &ChannelPool, key: ChannelKey) {
+        pool.opening.lock().unwrap().entry(key).or_default();
+    }
+
+    #[test]
+    fn dropping_a_link_a_route_or_a_host_forgets_their_opener_locks() {
+        let pool = ChannelPool::new(Arc::new(LinkRegistry::default()));
+        let host = Uuid::new_v4();
+        let relay = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let link = LinkId::new(host);
+        let direct = ChannelKey {
+            peer: host,
+            route: Route::Direct(link),
+            class: ChannelClass::Session,
+        };
+        let via = ChannelKey {
+            peer: host,
+            route: Route::Via(relay),
+            class: ChannelClass::Calls,
+        };
+        let elsewhere = ChannelKey {
+            peer: other,
+            route: Route::Direct(LinkId::new(other)),
+            class: ChannelClass::Calls,
+        };
+        opened(&pool, direct);
+        opened(&pool, via);
+        opened(&pool, elsewhere);
+        assert_eq!(opener_count(&pool), 3);
+
+        pool.drop_link(link);
+        assert_eq!(opener_count(&pool), 2, "the link's lock went with the link");
+
+        pool.drop_route(host, Route::Via(relay));
+        assert_eq!(
+            opener_count(&pool),
+            1,
+            "the route's lock went with the route"
+        );
+
+        pool.drop_host(other);
+        assert_eq!(opener_count(&pool), 0, "the host's lock went with the host");
     }
 }
