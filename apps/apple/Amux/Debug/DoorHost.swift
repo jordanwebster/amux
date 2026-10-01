@@ -154,6 +154,11 @@ final class DoorHost {
             return .ack
         case .geometry(let on):
             elementGeometry = on
+            // The frames arrive with the next render; a tap asked for on the
+            // ack's heels would otherwise find none to hit.
+            for _ in 0..<3 where on && !declared.contains(where: { $0.frame != .zero }) {
+                await DoorFrames.next()
+            }
             return .ack
         case .screenshot:
             NotificationCenter.default.post(

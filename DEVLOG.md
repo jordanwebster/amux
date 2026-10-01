@@ -1,3 +1,11 @@
+2026-10-01 — **The `geometry` door verb answers once the frames are there.**
+`just ios perf`'s streaming and idle groups failed to tap the agents tab:
+the runner turns element geometry on only to tap, and the verb acked
+before SwiftUI had rendered the frames, so the tap found none to hit.
+The verb now waits up to three frames for a declared element to report
+one. Streaming after the reconciliation fix: hitch 1.7 ms/s, main thread
+50%, footprint 70 MB; idle 0 commits and 0 ticks.
+
 2026-10-01 — **How a budget is worked, written down.**
 docs/PERFORMANCE.md opens with the rules the phone's performance work
 ran by: the budget is the requirement and meeting it ends the work;
