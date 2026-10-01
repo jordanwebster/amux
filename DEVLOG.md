@@ -1,3 +1,11 @@
+2026-10-01 — **"Reply instead" is a footer; "Something else" opens on Tab.**
+Reply instead leaves the numbered list: it sits under the options after a
+blank line, unnumbered and faint until highlighted, reached by ↓ and never
+by a digit. Highlighting "Something else" no longer takes the keys: it reads
+"· tab to type", and Tab (or Enter while it is empty) opens its field, which
+then takes every key until Enter answers with the text or Esc clears and
+closes it, as a permission's note does. The hint line follows each state.
+
 2026-10-01 — **Answered questions show the question, not its tag.** The
 answered step and the Review tab list each question as it was asked (faint,
 wrapping with a hanging indent) with "→ answer" under it in normal ink, a

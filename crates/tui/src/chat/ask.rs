@@ -1933,13 +1933,18 @@ impl AskUi {
         questions.len() > 1 && self.step >= questions.len()
     }
 
-    /// The highlight is on the current question's "Something else", whose
-    /// line is then a field with the keys.
-    fn on_something_else(&self, questions: &[QuestionView]) -> bool {
+    /// The highlight is on the current question's "Something else".
+    fn on_other_row(&self, questions: &[QuestionView]) -> bool {
         !self.in_review(questions)
             && questions
                 .get(self.step)
                 .is_some_and(|question| QuestionRows::of(question).other == Some(self.selected))
+    }
+
+    /// "Something else" is open as a field and has the keys: opened by Tab,
+    /// or by Enter while empty, and closed by Esc, as a permission's note.
+    fn on_something_else(&self, questions: &[QuestionView]) -> bool {
+        self.noting && self.on_other_row(questions)
     }
 
     fn question_picks(&self) -> Vec<Pick> {
@@ -1973,6 +1978,7 @@ impl AskUi {
             (_, Some(first)) => *first as usize,
             _ => 0,
         };
+        self.noting = false;
         self.other = Editor::default();
         self.other.secret = questions[self.step].secret;
         if let Some(other) = &pick.other {
@@ -2046,6 +2052,11 @@ impl AskUi {
         }
         if rows.other == Some(at) {
             let typed = self.other.text().trim().to_owned();
+            if confirm && typed.is_empty() || !confirm {
+                // Enter on an empty field, or its digit, opens it to type.
+                self.noting = true;
+                return AskAction::None;
+            }
             if confirm && !typed.is_empty() {
                 self.picks[self.step] = QuestionPick {
                     selected: vec![],
@@ -2092,15 +2103,17 @@ impl AskUi {
         let last = rows.reply;
         if self.on_something_else(questions) {
             match key.code {
-                KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-                KeyCode::Down => self.selected = (self.selected + 1).min(last),
                 KeyCode::Esc => {
                     self.other = Editor::default();
-                    if self.picks[self.step].other.is_some() {
-                        self.picks[self.step].other = None;
-                    }
+                    self.noting = false;
+                    self.picks[self.step].other = None;
                 }
-                _ if enter => return self.question_row(card, questions, self.selected, true),
+                _ if enter => {
+                    if self.other.text().trim().is_empty() {
+                        return AskAction::None;
+                    }
+                    return self.question_row(card, questions, self.selected, true);
+                }
                 _ => {
                     self.other.key(key);
                 }
@@ -2112,12 +2125,15 @@ impl AskUi {
             KeyCode::Right if several => self.question_goto(questions, self.step + 1),
             KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => self.selected = (self.selected + 1).min(last),
+            // "Reply instead" is not numbered: digits reach the options
+            // and "Something else" only.
             KeyCode::Char(c @ '1'..='9') => {
                 let at = c as usize - '1' as usize;
-                if at <= last {
+                if at < last {
                     return self.question_row(card, questions, at, false);
                 }
             }
+            KeyCode::Tab if self.on_other_row(questions) => self.noting = true,
             KeyCode::Char(' ') if self.selected < rows.options => {
                 return self.question_row(card, questions, self.selected, false);
             }
@@ -2173,6 +2189,14 @@ impl AskUi {
         }
         if self.on_something_else(questions) {
             return Some("enter answer · esc clear · ctrl+x stop".into());
+        }
+        if self.on_other_row(questions) {
+            return Some(format!("tab type{tabs} · ctrl+x stop · ctrl+{leader} more"));
+        }
+        if self.selected == QuestionRows::of(&questions[self.step]).reply {
+            return Some(format!(
+                "enter reply{tabs} · ctrl+x stop · ctrl+{leader} more"
+            ));
         }
         // What Enter does next: send a lone question, or move on to the next
         // unanswered one, or to the review when none is left.
@@ -2422,27 +2446,40 @@ impl AskUi {
             let mut row = row_line(at, lit);
             let ink = if lit { theme.bright() } else { theme.text() };
             let typed = self.other.text();
-            if lit || !typed.is_empty() {
+            let open = lit && self.noting;
+            if open || !typed.is_empty() {
                 push(&mut row, "Something else: ", ink, width);
                 let col = text::line_width(&row);
                 let shown = text_tail(typed, width.saturating_sub(col + 1));
                 push(&mut row, shown.clone(), ink, width);
-                if lit {
+                if open {
                     out.cursor = Some((out.lines.len(), col + text::str_width(&shown)));
                 }
             } else {
                 push(&mut row, "Something else", ink, width);
+                if lit {
+                    push(&mut row, " · tab to type", theme.faint(), width);
+                }
             }
             out.spots
                 .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
             out.lines.push(row);
         }
+        // "Reply instead" is a footer, not an answer: apart, unnumbered,
+        // faint until highlighted.
+        out.lines.push(Line::default());
         let lit = self.selected == rows.reply;
-        let mut row = row_line(rows.reply, lit);
+        let mut row = Line::default();
+        push(
+            &mut row,
+            if lit { "› " } else { "  " },
+            theme.accent(),
+            width,
+        );
         push(
             &mut row,
             "Reply instead",
-            if lit { theme.bright() } else { theme.text() },
+            if lit { theme.bright() } else { theme.faint() },
             width,
         );
         out.spots
