@@ -2164,26 +2164,35 @@ impl AskUi {
         if self.replying {
             return Some("enter send reply · esc back to the questions · ctrl+x stop".into());
         }
+        let several = questions.len() > 1;
+        let tabs = if several { " · ←/→ questions" } else { "" };
         if self.in_review(questions) {
-            return Some("enter choose · ← questions · ctrl+x stop".into());
+            return Some(format!(
+                "enter send{tabs} · ctrl+x stop · ctrl+{leader} more"
+            ));
         }
         if self.on_something_else(questions) {
             return Some("enter answer · esc clear · ctrl+x stop".into());
         }
-        let several = questions.len() > 1;
-        let multi = questions[self.step].multi_select;
-        let mut words = Vec::new();
-        if multi {
-            words.push("space pick");
-            words.push(if several { "enter next" } else { "enter send" });
+        // What Enter does next: send a lone question, or move on to the next
+        // unanswered one, or to the review when none is left.
+        let others_open =
+            (0..questions.len()).any(|at| at != self.step && !self.picks[at].answered());
+        let enter = if !several {
+            "enter send"
+        } else if others_open {
+            "enter next"
         } else {
-            words.push("enter choose");
+            "enter review"
+        };
+        if questions[self.step].multi_select {
+            // Four at most: the stop stays, the leader goes.
+            Some(format!("space select · {enter}{tabs} · ctrl+x stop"))
+        } else {
+            Some(format!(
+                "enter choose{tabs} · ctrl+x stop · ctrl+{leader} more"
+            ))
         }
-        if several {
-            words.push("←/→ questions");
-        }
-        words.push("ctrl+x stop");
-        Some(format!("{} · ctrl+{leader} more", words.join(" · ")))
     }
 
     /// The boxed question ask's lines: the tabs (or the lone question's
@@ -2213,36 +2222,47 @@ impl AskUi {
                 .map(|(at, question)| question_name(question, at))
                 .chain(std::iter::once("Review".to_owned()))
                 .collect();
-            // Shortened alike when they do not all fit.
+            let current = self.step.min(count);
+            // Each tab is its name with a space either side, so the current
+            // one's chip fits around it; ‹ and › at the ends say ←/→ move.
+            // Always drawn, so the row never shifts as the current tab does.
             let marks: usize = self.picks.iter().filter(|pick| pick.answered()).count() * 2;
-            let room = width.saturating_sub(2 + marks + 3 * (names.len() - 1));
+            let room = width.saturating_sub(2 + 4 + marks + 3 * names.len());
             let natural: usize = names.iter().map(|name| text::str_width(name)).sum();
             let cap = if natural <= room {
                 usize::MAX
             } else {
                 (room / names.len()).max(4)
             };
+            let chip = theme
+                .row_surface()
+                .unwrap_or_else(|| theme.user_surface())
+                .patch(theme.bright());
+            push(&mut head, "‹ ", theme.faint(), width);
             for (at, name) in names.iter().enumerate() {
                 if at > 0 {
-                    push(&mut head, " · ", theme.faint(), width);
+                    push(&mut head, " ", theme.faint(), width);
                 }
                 let answered = self.picks.get(at).is_some_and(QuestionPick::answered);
-                let current = at == self.step.min(count);
-                let style = if current {
-                    theme.bright()
+                let style = if at == current {
+                    chip
                 } else if answered {
                     theme.faint()
                 } else {
                     theme.text()
                 };
                 let from = text::line_width(&head);
-                if answered {
-                    push(&mut head, "✓ ", style, width);
-                }
-                push(&mut head, text::ellipsize(name, cap), style, width);
+                let mark = if answered { "✓ " } else { "" };
+                push(
+                    &mut head,
+                    format!(" {mark}{} ", text::ellipsize(name, cap)),
+                    style,
+                    width,
+                );
                 out.spots
                     .push((0, (from, text::line_width(&head)), BoxSpot::Tab(at)));
             }
+            push(&mut head, " ›", theme.faint(), width);
         }
         out.lines.push(head);
         out.lines.push(Line::default());
@@ -2320,6 +2340,11 @@ impl AskUi {
             push(&mut line, part, theme.text(), width);
             out.lines.push(line);
         }
+        if question.multi_select {
+            let mut line = Line::default();
+            push(&mut line, "Select all that apply", theme.faint(), width);
+            out.lines.push(line);
+        }
         out.lines.push(Line::default());
 
         for (at, option) in question.options.iter().enumerate() {
@@ -2327,7 +2352,12 @@ impl AskUi {
             let mut row = row_line(at, lit);
             if question.multi_select {
                 let on = pick.selected.contains(&(at as u32));
-                push(&mut row, if on { "● " } else { "○ " }, theme.muted(), width);
+                push(
+                    &mut row,
+                    if on { "[✓] " } else { "[ ] " },
+                    theme.muted(),
+                    width,
+                );
             }
             let indent = text::line_width(&row);
             push(

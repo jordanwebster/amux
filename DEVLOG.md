@@ -1,3 +1,11 @@
+2026-10-01 — **Question tabs and checkboxes read as what they are.** The
+current question's tab is a chip on the highlight surface (" Keep open "),
+with faint ‹ and › at the row's ends for ←/→; answered tabs keep their ✓
+and stay faint. Several-pick options are `[ ]`/`[✓]` checkboxes under a
+faint "Select all that apply", so they no longer read as radio buttons. The
+hint line names what Enter does in each state (send, next, review) and
+Space's "select".
+
 2026-10-01 — **Questions take over the composer's box.** In the redesigned
 chat a multiple-choice ask is asked in the same box as permissions and
 plans, and the feed hides its waiting step meanwhile. Several questions get
