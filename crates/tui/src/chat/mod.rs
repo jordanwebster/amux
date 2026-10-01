@@ -838,7 +838,7 @@ impl ChatView {
         vec![]
     }
 
-    /// An entry's control by place: 0 is its first ("[Send now]",
+    /// An entry's control by place: 0 is its first ("[Send Now]",
     /// "[Resend]"), 1 its second ("[Withdraw]", "[Discard]").
     fn queue_act(
         &self,

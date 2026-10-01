@@ -356,7 +356,7 @@ impl QueueEntry {
             QueueEntry::Queued(row) => {
                 let mut out = Vec::new();
                 if row.can_send_now {
-                    out.push("[Send now]");
+                    out.push("[Send Now]");
                 }
                 if row.can_withdraw {
                     out.push("[Withdraw]");

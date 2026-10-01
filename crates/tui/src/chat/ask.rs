@@ -1363,9 +1363,9 @@ impl AskUi {
     }
 }
 
-/// Lines of a command or arguments shown before "… [Show all]".
+/// Lines of a command or arguments shown before "… [Show All]".
 const SUBJECT_LINES: usize = 6;
-/// Diff lines shown before "[Full diff]".
+/// Diff lines shown before "[Full Diff]".
 const DIFF_LINES: usize = 7;
 
 /// What a click in the boxed ask reaches.
@@ -1795,7 +1795,7 @@ impl AskUi {
                     width,
                 );
                 let from = text::line_width(&more);
-                push(&mut more, "[Show all]", theme.muted(), width);
+                push(&mut more, "[Show All]", theme.muted(), width);
                 out.spots
                     .push((out.lines.len(), (from, from + 10), BoxSpot::ShowAll));
                 out.lines.push(more);
@@ -1905,7 +1905,7 @@ impl AskUi {
                         width,
                     );
                     let from = text::line_width(&more);
-                    push(&mut more, "[Full diff]", theme.muted(), width);
+                    push(&mut more, "[Full Diff]", theme.muted(), width);
                     out.spots
                         .push((out.lines.len(), (from, from + 11), BoxSpot::FullDiff));
                     out.lines.push(more);
@@ -2741,9 +2741,9 @@ impl AskUi {
             (room / 2).saturating_sub(6).clamp(3, fits.max(3))
         };
         let control = if self.show_all {
-            "[Show less]"
+            "[Show Less]"
         } else {
-            "[Show all]"
+            "[Show All]"
         };
         let base = out.lines.len();
         if side {
@@ -2802,7 +2802,7 @@ const SIDE_BY_SIDE: usize = 82;
 const LEFT_MIN: usize = 22;
 const LEFT_MAX: usize = 34;
 
-/// "… 12 more lines [Show all]".
+/// "… 12 more lines [Show All]".
 fn push_more(line: &mut Line<'static>, hidden: usize, control: &str, theme: Theme, width: usize) {
     let s = if hidden == 1 { "" } else { "s" };
     push(

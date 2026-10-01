@@ -380,7 +380,7 @@ fn prompt_block(drawn: &mut Drawn, words: &[Segment], when: &str, width: usize, 
 /// A line of the queue block, and where its controls are, by columns.
 pub struct Queued {
     pub line: Line<'static>,
-    /// Its controls in order ("[Send now]" then "[Withdraw]", or
+    /// Its controls in order ("[Send Now]" then "[Withdraw]", or
     /// "[Resend]" then "[Discard]"), in place of its state at the right.
     pub controls: Vec<(usize, usize)>,
 }

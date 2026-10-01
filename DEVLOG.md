@@ -1,3 +1,7 @@
+2026-10-01 — **Buttons in Title Case.** The bracketed controls follow the
+case rule shared with the phone (Title Case for what you act on, sentence
+case for what you read): [Send Now], [Show All], [Show Less], [Full Diff].
+
 2026-10-01 — **A prompt shows where it will land, and says plainly when it
 cannot go.** The activity line ("Working · 33s") moved into the feed as the
 running turn's live end, where "Worked 6m" stands once it ends; the fixed
