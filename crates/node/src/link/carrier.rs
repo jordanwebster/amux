@@ -61,10 +61,16 @@ impl OpenError {
 
     /// The refusal an I/O error carries, if it was one.
     pub(crate) fn refusal(error: &io::Error) -> Option<pb::StreamRefusal> {
-        match error.get_ref()?.downcast_ref::<Self>() {
+        match Self::carried(error) {
             Some(Self::Refused(reason)) => Some(*reason),
             _ => None,
         }
+    }
+
+    /// What an I/O error from a stream that was not waited on says about
+    /// its open, if that is what it says.
+    pub(crate) fn carried(error: &io::Error) -> Option<&Self> {
+        error.get_ref()?.downcast_ref::<Self>()
     }
 }
 

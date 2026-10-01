@@ -1,3 +1,16 @@
+2026-10-01 — **A stream's handshake leaves with its preface on every route.**
+Through the relay each stream waited a full round trip to be accepted
+before the phone sent its handshake's first flight. No opener waits now:
+the ClientHello goes behind the preface, and a refusal, the same reset
+it always was, is read under the handshake and turned back into the
+channel error with its reason, so cloud pairing's "payment required"
+reads as it did. Pairing itself still waits, its handshake being
+pre-trust. The relay is untouched: it waits for the host to accept
+before it copies, so what it forwards and refuses is unchanged, and the
+opener's bytes sit in its stream for that moment. Reconciliation through
+the relay at 100 ms: 991 ms median, 1,012 worst, from 1,203; direct and
+loopback unchanged.
+
 2026-10-01 — **The relay launch arguments are catalogued; one chase log line goes.**
 `just ios lint` wanted the two new launch argument names in the
 non-copy catalogue beside the TCP one. The "subscribing to the session"

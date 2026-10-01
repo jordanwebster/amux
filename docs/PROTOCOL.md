@@ -261,17 +261,27 @@ This is the authority decision for calls on relay QUIC, relay TCP and SSH,
 and for any stream whose opener is not the host at the other end of the
 link. Relays only copy its ciphertext.
 
+No opener waits to be accepted before it sends. On every route the
+handshake's first flight leaves in the same flight as the preface, and a
+refusal comes back as the reset it always was, read under the handshake
+instead of before it: the channel fails with the refusal's reason, exactly
+as it did when the open was answered first. Only pairing, whose opener asks
+for the pinned handshake outright, waits for the answer. A relay still waits
+for the host to accept before it copies anything, so what it forwards and
+refuses is unchanged; the opener's first bytes sit in the relay's stream
+for that moment. Across a 100 ms path this takes one round trip off every
+stream through the relay.
+
 A stream from a paired host over a direct QUIC link of its own is `plain`:
 the link's mutual TLS already authenticated both ends, so the stream carries
-no handshake and its opener does not wait to be accepted; the first channel
-bytes leave in the same flight as the preface, and a refusal comes back out
-of the opener's first read as `UNAVAILABLE` ("stream refused"). The acceptor
-honours `plain` only on a direct QUIC link from a host in its trust store,
-and attributes the stream to that host. A relay forwards every stream with
-`plain` cleared, since it vouches for nobody. On a phone reaching a host
-across a 100 ms path this takes two round trips and a handshake's worth of
-CPU off every stream, which is what brings reconciliation at launch inside
-its budget.
+no handshake at all; the first channel bytes leave with the preface, and a
+refusal comes back out of the opener's first read as `UNAVAILABLE` ("stream
+refused"). The acceptor honours `plain` only on a direct QUIC link from a
+host in its trust store, and attributes the stream to that host. A relay
+forwards every stream with `plain` cleared, since it vouches for nobody. On
+a phone reaching a host across a 100 ms path this takes two round trips and
+a handshake's worth of CPU off every stream, which is what brings
+reconciliation at launch inside its budget.
 
 A server that does not hold the client's pin refuses its certificate with the
 TLS `certificate_revoked` alert. Only a host that pins the server presents a

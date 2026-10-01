@@ -347,10 +347,11 @@ impl ChannelPool {
     /// Opens a stream to `peer` on `route`, saying how it is secured. A
     /// stream to a paired host on a direct QUIC link of our own is plain:
     /// the link authenticated both ends when it came up, so the stream
-    /// carries no handshake and does not wait to be accepted; its first
-    /// bytes leave with the preface. Every other stream, and one whose
-    /// opener needs the pinned handshake, waits for acceptance so that a
-    /// refusal keeps its reason, then handshakes inside.
+    /// carries no handshake. Every other stream handshakes inside, and
+    /// does not wait to be accepted first either: the handshake's first
+    /// flight leaves with the preface, and a refusal comes back out of
+    /// the handshake with its reason. Only an opener that asks for the
+    /// pinned handshake outright, pairing, waits for the answer first.
     async fn open_stream(
         &self,
         peer: HostId,
@@ -386,10 +387,12 @@ impl ChannelPool {
         if plain {
             return Ok((stream, Handshake::None));
         }
-        stream
-            .accepted()
-            .await
-            .map_err(|error| map_open_error(error, route))?;
+        if wanted == Handshake::Pinned {
+            stream
+                .accepted()
+                .await
+                .map_err(|error| map_open_error(error, route))?;
+        }
         Ok((stream, Handshake::Pinned))
     }
 
@@ -430,7 +433,15 @@ impl ChannelPool {
                 )
                 .await
                 .map_err(|_| ChannelError::Handshake("TLS handshake timed out".to_string()))?
-                .map_err(|error| ChannelError::Tls(error.to_string()))?;
+                .map_err(|error| match OpenError::carried(&error) {
+                    // The stream was not waited on: the open's answer is
+                    // read here, under the handshake, and is the error.
+                    Some(OpenError::Refused(reason)) => ChannelError::Refused(*reason),
+                    Some(OpenError::LinkClosed) => ChannelError::LinkUnavailable {
+                        host_id: route_link_peer(key.route),
+                    },
+                    _ => ChannelError::Tls(error.to_string()),
+                })?;
                 Box::new(tls)
             }
         };
