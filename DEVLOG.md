@@ -1,3 +1,13 @@
+2026-10-01 — **A type size change measures the chat's rows again.**
+The list forgot its cached heights when the design or an accessibility
+setting it carries changed, but not when the type size did: the rows
+redrew at the new size inside frames cached for the old one. The size
+is carried in with the rest now, so the change compares unequal and
+every row is measured again. A third Codex pass raised it, holding
+also that the driving door's size never reached the hosted rows; the
+accessibility journey's goldens, which predate the list, pass against
+it, so that part was not so. List test.
+
 2026-10-01 — **A stopped browser's state is ignored like its sightings.**
 The browse token the sightings carry now guards what a browser says of
 its state too, so a cancelled browser's late report cannot lift or

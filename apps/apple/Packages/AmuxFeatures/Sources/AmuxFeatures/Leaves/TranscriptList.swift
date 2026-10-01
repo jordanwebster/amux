@@ -22,6 +22,7 @@ struct TranscriptList: View {
     @Environment(\.reportsIdentifiedElements) private var reportsElements
     @Environment(\.reportedIdentifierPrefix) private var reportedPrefix
     @Environment(\.reportsIdentifiedElementGeometry) private var reportsGeometry
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var reported = ReportedElements()
     let model: ChatModel
     /// What stands above the oldest row.
@@ -38,7 +39,7 @@ struct TranscriptList: View {
                     design: design, photographed: photographed, reducesMotion: reducesMotion,
                     reducesTransparency: reducesTransparency, hidesNeedsYouDot: hidesNeedsYouDot,
                     reportsElements: reportsElements, reportedPrefix: reportedPrefix,
-                    reportsGeometry: reportsGeometry),
+                    reportsGeometry: reportsGeometry, dynamicTypeSize: dynamicTypeSize),
                 revision: model.revision, toNewest: model.toNewest,
                 insets: proxy.safeAreaInsets, reported: reported)
             .ignoresSafeArea()
@@ -72,11 +73,17 @@ struct CellEnvironment: Equatable {
     var reportsElements: Bool
     var reportedPrefix: String?
     var reportsGeometry: Bool
+    /// Carried in like the rest so that a change of it, in Settings or by
+    /// the driving door, compares unequal and has every height measured
+    /// again: the rows would redraw at the new size regardless, inside
+    /// frames cached for the old one.
+    var dynamicTypeSize: DynamicTypeSize
 }
 
 private extension View {
     func cellEnvironment(_ environment: CellEnvironment) -> some View {
         self.environment(\.design, environment.design)
+            .dynamicTypeSize(environment.dynamicTypeSize)
             .environment(\.photographed, environment.photographed)
             .environment(\.reducesMotion, environment.reducesMotion)
             .environment(\.reducesTransparency, environment.reducesTransparency)

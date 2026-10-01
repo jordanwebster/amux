@@ -31,13 +31,38 @@ final class TranscriptListTests: XCTestCase {
 
         XCTAssertEqual(model.paging, .fetching, "the reader at the top was not given older history")
     }
+
+    func testATypeSizeChangeMeasuresTheRowsAgain() {
+        // A hosted row takes the type size the screen carries in; when it
+        // changes, in Settings or by the driving door, every cached height
+        // is stale and the rows are measured again at the new size.
+        let chat = StubChat(rows: (0..<10).map { row("m\($0)", UInt64($0)) }, hasOlder: false)
+        let model = ChatModel(source: chat)
+        let list = FeedCoordinator(
+            model: model, environment: environment(), reported: ReportedElements())
+        list.view.frame = CGRect(x: 0, y: 0, width: 390, height: 600)
+        let items = model.ids.map { ListItem.row($0) }
+        list.update(
+            items: items, notices: [], environment: environment(), revision: model.revision,
+            toNewest: model.toNewest, insets: EdgeInsets())
+        list.view.layoutIfNeeded()
+        let before = list.view.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))!.frame.height
+
+        list.update(
+            items: items, notices: [], environment: environment(typeSize: .accessibility3),
+            revision: model.revision, toNewest: model.toNewest, insets: EdgeInsets())
+        list.view.layoutIfNeeded()
+        let after = list.view.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))!.frame.height
+
+        XCTAssertGreaterThan(after, before, "the row kept its height at the old size")
+    }
 }
 
-private func environment() -> CellEnvironment {
+private func environment(typeSize: DynamicTypeSize = .large) -> CellEnvironment {
     CellEnvironment(
         design: .app, photographed: true, reducesMotion: true, reducesTransparency: true,
         hidesNeedsYouDot: false, reportsElements: false, reportedPrefix: nil,
-        reportsGeometry: false)
+        reportsGeometry: false, dynamicTypeSize: typeSize)
 }
 
 private func row(_ id: String, _ order: UInt64, collapsed: Bool = false) -> Row {
