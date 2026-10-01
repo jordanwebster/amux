@@ -5,6 +5,15 @@ landed after, repopulating what was seen from a cancelled browser and
 resolving it. Each report now carries the browse it was made under and
 only the current one's are taken. Second Codex pass; unit test.
 
+2026-10-01 — **The top of a chat past collapsed rows is pinned.**
+A second Codex pass held that a window beginning with twenty collapsed
+rows, which stand at no height, could never page older history, the
+list judging the top by row index and such cells never coming on
+screen. A list test laid out that window: the collection view displays
+a cell at no height like any other, the oldest rows come on screen
+first, and the page is asked for. The index rule stays; the test, the
+first on the list's coordinator, pins it.
+
 2026-10-01 — **The early sessions' generation edge is written down.**
 A session catch-up that lands before the inventory's can merge new-
 generation records onto old rows when the origin reused the cursor's
