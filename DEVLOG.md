@@ -1,3 +1,11 @@
+2026-10-01 — **The shipping audit admits the notification centre.**
+`just ios scope-audit` refused every Release build since the chat
+rebuild made the app the notification centre's delegate, so a "needs
+you" push can wake it and bring one chat current. The forbidden list
+named the framework, written when the app had no notifications; it now
+names only the permission prompt, which the app never shows on its own,
+so a build that grew one would still be caught.
+
 2026-10-01 — **Hitch time is held to its ceiling alone.**
 The phone's baseline recorded a streaming hitch of nothing, and the
 judge read drift as a share of the baseline, so the next run with a
