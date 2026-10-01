@@ -1,3 +1,14 @@
+2026-10-01 — **Four phone budgets tightened to what a person accepts.**
+A budget set at today's number is a drift check, which the baseline
+already is; these four were looser than the requirement. Reconciliation
+over loopback 1,000 → 250 ms: on the same network the fleet should be
+current within a few frames, and a second was the slow-network figure
+copied across. Cold store read 100 → 50 and fleet render 150 → 100: parts
+of the first frame, each now bounded by what a person would feel in the
+whole. Streaming footprint 250 → 120 MB: what keeps the app resident
+when put away, not what the system allows it in front. Measured 82, 27,
+82 and 70 against them.
+
 2026-10-01 — **The phone's baseline carries the relay.**
 `just ios perf -- --baseline` with every budget met, the relay sample
 included: reconciliation through the relay at 100 ms 1,203 ms median,

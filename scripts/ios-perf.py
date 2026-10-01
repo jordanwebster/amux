@@ -85,9 +85,15 @@ LAUNCH_SPACING_SECONDS = 10.0
 # apart, once measured.
 BUDGETS: dict[str, tuple[str, str, float, float | None, int | None]] = {
     "cold first frame": ("ms", "cold", 650, 700, 15),
-    "cold store read": ("ms", "cold", 100, None, 15),
-    "cold fleet render": ("ms", "cold", 150, None, 15),
-    "reconciliation at 0 ms": ("ms", "reconciliation", 1000, None, 15),
+    # The store read is forty rows from SQLite and the node's own start;
+    # the fleet render is SwiftUI building those rows once. Each is a
+    # part of the first frame, and a part's budget cannot be looser than
+    # what a person would feel in the whole.
+    "cold store read": ("ms", "cold", 50, None, 15),
+    "cold fleet render": ("ms", "cold", 100, None, 15),
+    # On the same network the fleet should be current within a few
+    # frames of the first one; a second is the slow-network figure.
+    "reconciliation at 0 ms": ("ms", "reconciliation", 250, None, 15),
     "reconciliation at 100 ms": ("ms", "reconciliation", 1000, None, 15),
     # Away from home a phone reaches its machines through the relay, every
     # stream handshaking end to end inside; a person on mobile data accepts
@@ -95,7 +101,9 @@ BUDGETS: dict[str, tuple[str, str, float, float | None, int | None]] = {
     "reconciliation through the relay at 100 ms": ("ms", "reconciliation", 1500, None, 15),
     "streaming hitch time": ("ms/s", "streaming", 5, None, None),
     "streaming main-thread CPU": ("%", "streaming", 60, None, 15),
-    "streaming footprint": ("MB", "streaming", 250, None, 10),
+    # What keeps the app resident when it is put away, rather than what
+    # the system would allow it in front.
+    "streaming footprint": ("MB", "streaming", 120, None, 10),
     "idle transcript commits": ("count", "idle", 0, 0, 0),
     "idle display ticks": ("count", "idle", 0, 0, 0),
 }
