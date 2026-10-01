@@ -33,24 +33,3 @@ you.help.caption |  |  | 18,599,354,31
  | desk is paired |  | 91,88,102,20
  | Its agents are on the Agents tab. |  | 91,118,220,18
  | Done |  | 91,146,73,44
- | Agents, switch account |  | 60,65,104,46
- | Nothing needs you · 0 running |  | 60,105,209,16
- | New Agent |  | 345,74,44,44
- | AGENTS |  | 20,137,42,14
- | desk-work, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,159,366,70
- | You |  | 18,70,46,32
- | ACCOUNTS |  | 20,120,56,14
- | Add Account |  | 18,142,366,46
- | Sign In |  | 18,206,366,44
- | Sign in to reach your agents from anywhere |  | 18,258,296,18
- | THIS PHONE |  | 20,294,70,14
- | Appearance |  | 32,332,90,20
- | Light |  | 200,319,56,46
- | Dark |  | 256,319,49,46
- | System |  | 305,319,63,46
- | Identity, <key> |  | 18,367,366,46
- | HELP |  | 20,430,28,14
- | Contact Support |  | 18,453,366,46
- | Report a Problem |  | 18,499,366,46
- | Export Diagnostics |  | 18,545,366,46
- | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,599,346,31

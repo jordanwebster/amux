@@ -11,6 +11,7 @@
 //! reached the drive and the machine up under a new boot id.
 
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -36,8 +37,6 @@ use wire::{
 
 use crate::binaries::Binaries;
 use crate::clock::DrivenClock;
-use std::net::SocketAddr;
-
 use crate::gate::{Faults, UdpGate};
 use crate::invariant::{self, BlockViolation};
 use crate::observe::{self, InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};

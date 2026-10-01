@@ -1226,14 +1226,14 @@
       {"literal": "\"stop.circle\"", "context": "items.append(MenuItem(title: String(localized: \"Stop Agent\"), systemImage: \"stop.circle\") {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"chat.more\"", "context": "name: String(localized: \"More\"), identifier: \"chat.more\", items: items,", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"ellipsis\"", "context": "GlassIcon(glyph: \"ellipsis\", size: 36)", "reason": "SF Symbol name, not interface copy.", "count": 1},
-      {"literal": "\"chat.paging\"", "context": "notice(String(localized: \"Loading older messages…\"), id: \"chat.paging\", value: \"fetching\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"fetching\"", "context": "notice(String(localized: \"Loading older messages…\"), id: \"chat.paging\", value: \"fetching\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.paging\"", "context": "id: \"chat.paging\", value: \"unreachable\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.paging\"", "context": "notice(reason, id: \"chat.paging\", value: \"failed\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.away\"", "context": "notice(awayNotice, id: \"chat.away\", value: subject.away.map { \"\\($0)\" } ?? \"plain\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"\\($0)\"", "context": "notice(awayNotice, id: \"chat.away\", value: subject.away.map { \"\\($0)\" } ?? \"plain\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.loading\"", "context": "notice(String(localized: \"Loading this chat from \\(subject.host)…\"), id: \"chat.loading\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"shown\"", "context": "private func notice(_ text: String, id: String, value: String = \"shown\") -> some View {", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.paging\"", "context": "notices.append(FeedNotice(id: \"chat.paging\", text: String(localized: \"Loading older messages…\"), value: \"fetching\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"fetching\"", "context": "notices.append(FeedNotice(id: \"chat.paging\", text: String(localized: \"Loading older messages…\"), value: \"fetching\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.paging\"", "context": "id: \"chat.paging\", text: String(localized: \"Can’t reach \\(subject.host) for older messages\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.paging\"", "context": "notices.append(FeedNotice(id: \"chat.paging\", text: reason, value: \"failed\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.away\"", "context": "notices.append(FeedNotice(id: \"chat.away\", text: awayNotice, value: subject.away.map { \"\\($0)\" } ?? \"plain\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"\\($0)\"", "context": "notices.append(FeedNotice(id: \"chat.away\", text: awayNotice, value: subject.away.map { \"\\($0)\" } ?? \"plain\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.loading\"", "context": "id: \"chat.loading\", text: String(localized: \"Loading this chat from \\(subject.host)…\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"shown\"", "context": "value: \"shown\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.notice\"", "context": ".identified(\"chat.notice\", label: notice)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"sign-in\"", "context": "FootCard(kind: \"sign-in\", title: ChatWords.signIn(signIn), detail: signIn.message)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"usage\"", "context": "kind: \"usage\", title: String(localized: \"Usage limit reached\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
@@ -1402,9 +1402,6 @@
       {"literal": "\"question\"", "context": "kind: \"question\", glyph: \"questionmark.circle\", accented: resolution == .open,", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"questionmark.circle\"", "context": "kind: \"question\", glyph: \"questionmark.circle\", accented: resolution == .open,", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"#\"", "context": "ChatWords.firstLine(plan).drop { $0 == \"#\" }.trimmingCharacters(in: .whitespaces)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
-    ],
-    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Leaves/ScrollAnchor.swift": [
-      {"literal": "\"chat.rows\"", "context": "static let rows = \"chat.rows\"", "reason": "Coordinate space name, not interface copy.", "count": 1}
     ]
   }
 }

@@ -18,9 +18,13 @@ import Foundation
 /// A case with no file behind it is a candidate, not a leaf: it is what the
 /// measurement is about to be taken for.
 public enum RegisteredLeaves: String, CaseIterable, Sendable {
-    /// Measured and answered: the SwiftUI list meets the streaming budget with
-    /// room to spare, so this stays a candidate rather than becoming a leaf.
-    /// `docs/IOS.md` has the numbers and what would reopen the question.
+    /// Built, and measured by the phone's performance suite: a SwiftUI
+    /// stack of the drawn rows placed every one of them again on every
+    /// arrival, about 60 ms a frame under a stream, and a lazy stack could
+    /// not hold the reader's place. The leaf is a collection view that lays
+    /// out the rows in view, keeps the place itself when rows land above
+    /// the reader, and hosts the same SwiftUI rows. `docs/IOS.md` has the
+    /// numbers.
     case transcriptList
     /// Answered without a leaf: the composer keeps a draft's attachments as
     /// chips beside the field rather than tokens inside its text, so the field
@@ -37,11 +41,4 @@ public enum RegisteredLeaves: String, CaseIterable, Sendable {
     /// reaches VoiceOver without the menu's name or identifier. The leaf owns
     /// that button so it carries both. `docs/IOS.md` has the detail.
     case menuButton
-    /// Built, and measured by an app-hosted layout test: SwiftUI's scroll
-    /// position lands a frame or more after it is asked to move, so a chat
-    /// that takes rows in above the reader showed them moved in between and
-    /// took in more off the moved layout. The leaf moves the scroll view
-    /// itself within the layout pass that moved the rows. `docs/IOS.md` has
-    /// the detail.
-    case scrollAnchor
 }

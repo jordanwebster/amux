@@ -1,3 +1,39 @@
+2026-10-01 — **The chat's rows are a UIKit leaf that owns their heights, and the stream is back under budget.**
+`just ios perf`'s streaming group had the main thread at 99.9% and the
+chat at eighteen frames a second (hitch 694 ms/s against 5): the feed
+was a SwiftUI `VStack` over a drawn run of 240 rows, and every arrival
+placed all 240 again, about 60 ms a frame, with the app's own code under
+2% of the samples. A lazy stack measured fine but could not hold the
+reader's place when rows landed above them. The feed is now the
+`transcriptList` leaf: a `UICollectionView` whose cells host the same
+SwiftUI rows under the app's environment, with the model's whole held
+sequence as its data and no drawn-run window (`drawn`, `drawnStart`,
+`growOlder`, `reachedBottom`, the scroll anchor leaf and the per-row
+geometry callbacks are gone; `ChatModel` watches its sequence by an
+edition counter so no cell observes the whole list, and assigns the
+frame, card and strip only when they differ). UIKit's self-sizing was
+measured out on the way: it re-measured and animated every visible cell
+whenever one moved, which at the window's cap is every arrival, about
+10 ms each, and three times drew a row in another row's frame after rows
+landed above. The leaf measures rows itself with one hidden hosting view
+(as if photographed, so markdown parsed on a task is measured at its
+final shape) and stacks them in its own layout; a height is forgotten
+only when the model says that row was read again. The reader's place is
+held in every layout pass from the drawn cells and carried across passes
+that measure or move the list; a follower's bottom is set before cells
+are placed, so the top rows are never displayed on the way down and
+never taken for the reader reaching them. Hosted cells report their
+identified elements to the leaf, which turns them into window frames
+for the door. Streaming now: hitch 1.7 ms/s, main thread 56.5%, sixty
+frames a second (the simulator's cap), 91 MB; `ChatFeedTests` holds rows
+still to the pixel under a landing page and under arrivals, shows a
+streamed chat exactly as the same rows opened, and grows a row in place.
+One component snapshot pair and one golden pair re-recorded for a
+sub-point placement. The door's accessibility walk now skips hidden
+views, as VoiceOver does: the leaf's hidden measurer was reporting the
+last row it measured, and the retained tabs behind the shown one had
+been reported all along; every golden's element list loses those.
+
 2026-09-30 — **A release is cut and then deployed, as two recipes.**
 `make_release.sh` predated `just` and bundled the whole release into one
 script: bump, tag, push, and now also waiting for the workflow and

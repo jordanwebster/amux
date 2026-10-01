@@ -46,29 +46,3 @@ tab.you | You | not selected | 253,777,99,57
  | Identity, amux-iphone-1 · <key> |  | 18,290,366,46
  | Paired Devices, 0 |  | 18,337,366,45
  | Revoking a device ends its access immediately. |  | 18,390,320,18
- | Agents, switch account |  | 60,65,104,46
- | bob · nothing needs you |  | 60,105,166,16
- | No agents yet |  | 18,161,162,32
- | Pair with a host and its agents appear here. |  | 18,201,291,18
- | Run amux pair on a host on this network, or scan the code from amux pair --qr with the camera. |  | 18,237,360,37
- | You |  | 18,70,46,32
- | ACCOUNTS |  | 20,120,56,14
- | ada, 1 host |  | 32,142,338,58
- | bob, bob@example.com |  | 32,201,338,59
- | Add Account |  | 18,260,366,46
- | BOB |  | 20,324,21,14
- | Relay, Included with this account |  | 18,346,366,46
- | Sign Out |  | 18,392,366,46
- | Remove from This Phone |  | 18,438,366,46
- | Delete Account |  | 18,485,366,46
- | THIS PHONE |  | 20,548,70,14
- | Appearance |  | 32,586,90,20
- | Light |  | 200,573,56,45
- | Dark |  | 256,573,49,45
- | System |  | 305,573,63,45
- | Identity, <key> |  | 18,621,366,46
- | HELP |  | 20,684,28,14
- | Contact Support |  | 18,707,366,46
- | Report a Problem |  | 18,753,366,45
- | Export Diagnostics |  | 18,799,366,46
- | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,853,346,31

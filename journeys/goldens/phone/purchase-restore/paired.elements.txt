@@ -36,28 +36,3 @@ you.help.caption |  |  | 18,794,354,31
  | desk is paired |  | 91,88,102,20
  | Its agents are on the Agents tab. |  | 91,118,220,18
  | Done |  | 91,146,73,44
- | Agents |  | 18,72,86,32
- | Nothing needs you · 0 running |  | 18,105,209,16
- | New Agent |  | 345,74,44,44
- | AGENTS |  | 20,137,42,14
- | desk-work, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,159,366,70
- | You |  | 18,70,46,32
- | ACCOUNTS |  | 20,120,56,14
- | ada, 1 host |  | 32,142,338,58
- | Add Account |  | 18,201,366,46
- | ADA |  | 20,265,21,14
- | Relay, Subscribed through the App Store |  | 18,287,366,46
- | Sign Out |  | 18,333,366,46
- | Remove from This Phone |  | 18,380,366,46
- | Delete Account |  | 18,426,366,46
- | THIS PHONE |  | 20,489,70,14
- | Appearance |  | 32,527,90,20
- | Light |  | 200,514,56,46
- | Dark |  | 256,514,49,46
- | System |  | 305,514,63,46
- | Identity, <key> |  | 18,562,366,46
- | HELP |  | 20,626,28,14
- | Contact Support |  | 18,648,366,46
- | Report a Problem |  | 18,694,366,46
- | Export Diagnostics |  | 18,740,366,46
- | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,794,346,31

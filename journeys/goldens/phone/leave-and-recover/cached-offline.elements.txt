@@ -59,37 +59,12 @@ you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
  | keeper, desk · away |  | 51,72,102,38
  | More |  | 344,69,44,44
- | Started |  | 18,136,366,16
- | Remember this recovery turn. |  | 139,166,245,40
- | The recovery state is safely stored. |  | 18,217,366,20
- | Worked <t> · $0.00 |  | 48,245,130,16
  | Clear |  | 342,738,44,43
  | Attach |  | 23,779,44,44
  | claude-fake-1 |  | 71,779,139,44
  | Dictate |  | 287,779,44,44
  | Send |  | 335,779,44,44 (disabled)
- | Hosts |  | 18,72,69,32
- | 1 offline |  | 18,105,65,16
- | OFFLINE |  | 20,137,49,14
- | desk, macOS, offline, its agents’ state is unknown |  | 18,159,366,64
- | Agents on an offline host report their state as unknown. |  | 18,231,293,37
- | THIS PHONE |  | 20,286,70,14
- | Identity, amux-iphone-1 · <key> |  | 18,308,366,46
- | Paired Devices, 1 |  | 18,354,366,46
- | Revoking a device ends its access immediately. |  | 18,408,320,18
- | You |  | 18,70,46,32
- | ACCOUNTS |  | 20,120,56,14
- | Add Account |  | 18,142,366,46
- | Sign In |  | 18,206,366,44
- | Sign in to reach your agents from anywhere |  | 18,258,296,18
- | THIS PHONE |  | 20,294,70,14
- | Appearance |  | 32,332,90,20
- | Light |  | 200,319,56,46
- | Dark |  | 256,319,49,46
- | System |  | 305,319,63,46
- | Identity, <key> |  | 18,367,366,46
- | HELP |  | 20,430,28,14
- | Contact Support |  | 18,453,366,46
- | Report a Problem |  | 18,499,366,46
- | Export Diagnostics |  | 18,545,366,46
- | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,599,346,31
+ | Started |  | 18,132,366,34
+ | Remember this recovery turn. |  | 18,166,366,40
+ | The recovery state is safely stored. |  | 18,217,366,20
+ | Worked <t> · $0.00 |  | 18,245,160,30

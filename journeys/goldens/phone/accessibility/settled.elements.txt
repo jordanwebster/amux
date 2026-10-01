@@ -46,36 +46,12 @@ you.help.caption |  |  | 18,1124,366,161
  | Back |  | 16,90,42,46
  | decision-sdk, /t/a/n/d/work · desk |  | 51,72,252,82
  | More |  | 344,91,44,44
- | Started |  | 18,180,366,40
- | Check the deployment once. |  | 67,234,317,106
- | Allowed, deploy --check, <t>, deploy check: ok |  | 18,352,366,82
- | The deploy check passed. |  | 18,448,366,90
- | Worked <t> · $0.00 |  | 48,546,335,40
  | Attach |  | 23,779,44,44
  | claude-fake-1 |  | 71,779,199,44
  | Dictate |  | 287,779,44,44
  | Send |  | 335,779,44,44 (disabled)
- | Hosts |  | 18,72,118,54
- | 1 reachable |  | 18,127,205,40
- | ON THIS NETWORK |  | 20,183,276,39
- | desk, macOS, reachable on this network |  | 18,230,366,108
- | THIS PHONE |  | 20,356,184,39
- | Identity, amux-iphone-1 · <key> |  | 18,403,366,69
- | Paired Devices, 1 |  | 18,473,366,69
- | Revoking a device ends its access immediately. |  | 18,550,347,78
- | You |  | 18,70,78,54
- | ACCOUNTS |  | 20,142,147,39
- | Add Account |  | 18,189,366,69
- | Sign In |  | 18,276,366,65
- | Sign in to reach your agents from anywhere |  | 18,349,329,78
- | THIS PHONE |  | 20,445,184,39
- | Appearance |  | 32,547,138,86
- | Light |  | 215,515,57,151
- | Dark |  | 272,494,39,191
- | System |  | 311,515,57,151
- | Identity, <key> |  | 18,688,366,69
- | HELP |  | 20,775,74,39
- | Contact Support |  | 18,822,366,69
- | Report a Problem |  | 18,892,366,112
- | Export Diagnostics |  | 18,1004,366,112
- | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,1124,358,161
+ | Started |  | 18,176,366,58
+ | Check the deployment once. |  | 18,234,366,106
+ | Allowed, deploy --check, <t>, deploy check: ok |  | 18,352,366,82
+ | The deploy check passed. |  | 18,448,366,90
+ | Worked <t> · $0.00 |  | 18,546,365,54

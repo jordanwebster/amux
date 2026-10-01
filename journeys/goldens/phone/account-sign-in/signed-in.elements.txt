@@ -45,17 +45,3 @@ sign-in.signed-in |  | ada@example.com | 92,801,219,17
  | Web subscriptions carry over |  | 20,271,252,20
  | Done |  | 26,747,350,44
  | Signed in as ada@example.com |  | 92,801,219,17
- | Agents |  | 18,72,86,32
- | Nothing paired yet |  | 18,105,130,16
- | No agents yet |  | 18,161,162,32
- | Pair with a host and its agents appear here. |  | 18,201,291,18
- | Run amux pair on a host on this network, or scan the code from amux pair --qr with the camera. |  | 18,237,360,37
- | Hosts |  | 18,72,69,32
- | 0 reachable |  | 18,105,79,16
- | No hosts yet |  | 18,137,93,20
- | Run amux on a computer on this network and it appears here. |  | 18,166,325,37
- | Run amux pair on a host on this network, or scan the code from amux pair --qr with the camera. |  | 18,213,360,37
- | THIS PHONE |  | 20,268,70,14
- | Identity, amux-iphone-1 · <key> |  | 18,290,366,46
- | Paired Devices, 0 |  | 18,337,366,45
- | Revoking a device ends its access immediately. |  | 18,390,320,18

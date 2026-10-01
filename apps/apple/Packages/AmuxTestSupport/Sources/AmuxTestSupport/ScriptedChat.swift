@@ -17,6 +17,10 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     public private(set) var sent: [Draft] = []
     /// The settings picks sent, in order.
     public private(set) var changed: [SettingChange] = []
+    /// The most rows the window holds while the reader follows: past it the
+    /// oldest go as new ones arrive, and the take names the oldest key
+    /// left, which is how the session says the window moved.
+    public var cap = Int.max
     /// What asking for older rows comes to.
     public var paged: PageOutcome = .arrived(0)
     /// How long asking for older rows takes to answer.
@@ -88,6 +92,10 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
             if following {
                 ordered.append(contentsOf: rows)
                 pending.keys.append(contentsOf: rows.map(\.id))
+                if ordered.count > cap {
+                    ordered.removeFirst(ordered.count - cap)
+                    if let oldest = ordered.first { pending.keys.append(oldest.id) }
+                }
             } else {
                 held.append(contentsOf: rows)
                 current.arrivalsHeld = true

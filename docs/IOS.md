@@ -527,77 +527,92 @@ package may contain UIKit. A leaf is one file under `Leaves/`, wrapped in one
 representable, named there and justified by a written measurement or
 argument; `feature-lint.sh` refuses UIKit anywhere else. A name with no file
 behind it is a candidate: the question was asked and answered without a
-leaf. There are five names and two leaves.
+leaf. There are four names and two leaves.
 
 | Name | Status | Why |
 | --- | --- | --- |
-| `transcriptList` | Candidate | SwiftUI meets the streaming budget with room to spare |
+| `transcriptList` | Leaf, `Leaves/TranscriptList.swift` | A SwiftUI stack placed every drawn row again on every arrival, about 60 ms a frame under the stream; a lazy one could not hold the reader's place. Its heights are its own: UIKit's self-sizing cost most of a frame per arrival too |
 | `tokenTextField` | Candidate | Attachments are chips beside the field, so the field is SwiftUI's own |
 | `diffSelection` | Candidate | Line frames and a point lookup select a range without a second layout system |
 | `menuButton` | Leaf, `Leaves/MenuButton.swift` | SwiftUI's `Menu` does not pass its name or identifier to the button VoiceOver reaches |
-| `scrollAnchor` | Leaf, `Leaves/ScrollAnchor.swift` | SwiftUI's scroll position moves a frame or more late, so rows taken in above a reader showed moved in between |
 
 A leaf costs a file outside the platform-neutral package, a representable to
 wrap it, a second layout system to keep in step with the design tokens, and a
 screen that cannot be captured the way every other screen is. Each section
 below says what would reopen its question.
 
-### The transcript is SwiftUI
+### The transcript is a UIKit leaf hosting SwiftUI rows
 
-The transcript is the one screen with a real chance of needing a UIKit view
-under it: it is the longest list, the only one that grows while somebody
-reads it, and the one people scroll for minutes. It is a SwiftUI `VStack`
-over the bounded run of rows `ChatModel` draws, and the measurements say
-that is enough.
+The transcript is the longest list, the only one that grows while somebody
+reads it, and the one people scroll for minutes. Its rows are SwiftUI: one
+`ChatRowView` per row, drawn from the row's value, observing its own
+`RowCell` so that a change to one row redraws one cell. What holds them is
+a `UICollectionView` (`Leaves/TranscriptList.swift`), each cell a
+`UIHostingConfiguration` around the same row view, with the app's own
+environment (design, photographed, reduce flags, the driving door's
+identification) carried into the cell because a hosted cell sits under the
+window's traits rather than the screen's environment. The list's data is
+every key `ChatModel` holds; nothing bounds what it draws, because it lays
+out only the cells in view.
 
-The run is bounded because an unbounded list was measured failing. Under the
-flood (twenty agents, each writing a message every 20 ms), a `LazyVStack`
-over every held row kept the newest row within three messages of the agent
-up to about a thousand rows, but at about 1,100 a jump to the top froze the
-app for over 90 s with the main thread placing the whole list, and past
-2,000 the list trailed the agent by up to 108 messages. With 240 rows drawn
-the same workload keeps the newest row within one to three messages, each
-jump to the top takes in one step of held rows, and New activity comes back
-to within three messages of the agent. The stack is not lazy: a lazy stack
-forgets the heights it measured when rows are inserted above, so its
-content height swung by thousands of points on each step and no correction
-could hold the reader's place; laid out whole, each row taken in or let go
-moves the others by exactly its height.
+The rows' heights are the leaf's own, not UIKit's self-sizing. Its layout
+stacks the rows by height, measures a row with one hidden hosting view
+when it first comes within a screen of view (as if photographed, so a row
+that parses its markdown on a background task is measured at its final
+shape), and forgets a height only when the model says that row was read
+again, the width changes or the environment does. UIKit's self-sizing was
+tried first and measured out: it measures from estimates on demand, keeps
+what it measured by index path, animates each result, and measures every
+cell on screen again whenever one moves, which under the stream at the
+window's cap (every arrival also drops the oldest row) cost most of a
+frame per arrival; and three times a row was drawn in another row's frame
+after rows landed above it. With heights known before a row is placed, an
+arrival is one insert and one re-stack.
 
-What was measured earlier, when the list was a `LazyVStack` over every row,
-by the app's own performance suite on the pinned Mac's simulator: a thousand
-rows on screen and fifty more arriving every second for twenty seconds, five
-samples each, gave a hitch time ratio of 0.0 ms/s (budget 5), main-thread
-CPU of 34.3% of one core (budget 60), a footprint of 62.1 MB at 2,000 rows
-(budget 250) and zero commits over 5 s of idle. None of those was close to
-its limit under a stream into a list that stayed put; the freeze came from a
-reader moving through a long one. The app imposes no frame cap of its own,
-so what the display offers is what it uses. The same workloads are measured
-today by `just ios perf` ([performance](PERFORMANCE.md), "The phone"), whose
-report carries the current numbers.
+It replaced two SwiftUI designs the phone's performance suite measured
+failing. A `LazyVStack` over every held row froze for over 90 s placing
+the whole list when a reader jumped to the top of about 1,100 rows, and
+forgot the heights it had measured when rows were inserted above, so no
+correction could hold the reader's place. A plain `VStack` over a bounded
+run of 240 rows kept the place, but placed all 240 rows again on every
+arrival: under `just ios perf`'s stream (fifty rows a second into the chat
+on screen) the main thread sat at 99.9%, about 60 ms of layout per frame,
+eighteen frames a second and a hitch time of 650-720 ms/s against a
+budget of 5, with the app's own code under 2% of the samples. The leaf
+lays out the visible cells, keeps the reader's place itself, and the
+suite's streaming numbers ([performance](PERFORMANCE.md), "The phone")
+are its measurement.
 
-### Holding the reader's place is a UIKit leaf
+What the leaf owns, and what stays in `ChatModel`:
 
-A change at the top of the drawn run (rows taken in, a page landing, the
-notice above the oldest row coming or going) moves every row below it. The
-list pins the row at the top of the reader's view and, whenever layout moves
-that row within the rows, scrolls by as much, so nothing on screen moves;
-changes below the pinned row move nothing on screen anyway. A reader
-following the newest row is kept at the bottom instead.
+- The reader's place. On every change to the sequence while the reader is
+  in history (a page landing, a notice above the oldest row coming or
+  going, the window dropping rows), and in every layout pass that measures
+  rows above the screen, the row crossing the top of the view is put back
+  at the same position on screen before anything is drawn, so nothing the
+  reader is looking at moves. A reader following the newest row is kept at
+  the bottom in every layout pass instead: rows arriving, rows measured,
+  the keyboard or a card changing the space. `ChatFeedTests` holds rows
+  still to the pixel under a landing page and under arrivals, holds the
+  bottom while following, and shows a streamed chat exactly as the same
+  rows open.
+- Where the reader is. A drag away from the bottom stops following at
+  once, so rows arriving meanwhile are held by the session and New
+  activity shows; a drag or deceleration coming to rest within 24 pt of
+  the bottom follows again. `ChatModel` is told each time that changes
+  and tells the session. A cell among the first twenty coming on screen
+  asks the model for the page before the oldest row.
+- Going to the newest row. `ChatModel.toNewest` is bumped when somebody
+  asks for it (a send, a resume, a reset, New activity), never on an
+  arrival; the leaf scrolls there, animated unless the screen is being
+  photographed or motion is reduced.
+- What the door reads. Each hosted cell reports the elements it declared
+  to the leaf, which moves their frames from the cell to the window and
+  publishes the union in row order as the same preference the door reads
+  from every screen. Only rows with a cell (on screen or prepared) report.
 
-SwiftUI's own tools were measured first, in an app-hosted test that reads
-where each row is drawn before and after a change: a size-change scroll
-anchor left the offset where it was, tracking rows as scroll targets fought
-the list's own scrolling, and `ScrollPosition.scrollTo(y:)` landed a frame or
-more after the rows moved, long enough for the list to read the moved layout
-as the reader reaching an end and take in a second step. The leaf finds the
-`UIScrollView` under the list and moves its offset inside the layout pass
-that moved the rows. `ChatFeedTests` holds rows still to half a point at
-both ends and under a landing page.
-
-What would reopen it: a SwiftUI scroll position that moves in the same pass,
-or a scroll view that keeps its visible content still when rows are inserted
-above it.
+What would reopen it: SwiftUI's `List` or lazy stacks keeping visible
+content still when rows are inserted above, at the streaming budget.
 
 ### The composer's field is SwiftUI
 

@@ -118,6 +118,10 @@ enum VisibleTree {
         into found: inout [VisibleElement], seen: inout Set<ObjectIdentifier>
     ) {
         guard seen.insert(ObjectIdentifier(node)).inserted else { return }
+        // A hidden view is not on show, and neither is anything it holds:
+        // a list measures its rows in a hidden hosting view that would
+        // otherwise report the last row it measured, at the list's origin.
+        if let view = node as? UIView, view.isHidden || view.alpha == 0 { return }
         if let element = describe(node, in: window) { found.append(element) }
         for child in children(of: node) {
             walk(child, in: window, into: &found, seen: &seen)
@@ -130,6 +134,7 @@ enum VisibleTree {
         into found: inout NSObject?, seen: inout Set<ObjectIdentifier>
     ) {
         guard found == nil, seen.insert(ObjectIdentifier(node)).inserted else { return }
+        if let view = node as? UIView, view.isHidden || view.alpha == 0 { return }
         if (node as? any UIAccessibilityIdentification)?.accessibilityIdentifier == identifier {
             found = node
             return

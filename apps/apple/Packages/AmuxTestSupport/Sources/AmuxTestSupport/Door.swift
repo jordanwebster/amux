@@ -1175,16 +1175,12 @@ public struct ConversationReading: Codable, Sendable, Equatable {
     /// The rows the chat holds, oldest first.
     public let rows: [Row]
     public let ask: AskCard?
-    /// For the chat on screen, the keys of the rows its list draws: a
-    /// contiguous run of `rows`. Absent for a chat no page shows.
-    public let drawn: [String]?
 
-    public init(agent: String, frame: ChatFrame?, rows: [Row], ask: AskCard?, drawn: [String]? = nil) {
+    public init(agent: String, frame: ChatFrame?, rows: [Row], ask: AskCard?) {
         self.agent = agent
         self.frame = frame
         self.rows = rows
         self.ask = ask
-        self.drawn = drawn
     }
 }
 

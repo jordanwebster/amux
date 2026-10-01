@@ -46,28 +46,3 @@ anywhere |  | 18,106,218,64
  | A subscription reaches your hosts from anywhere. Hosts on this network work without one. |  | 18,175,366,39
  | Subscribed in the App Store, Manage your subscription in the App Store., Your other devices follow within a few minutes. |  | 18,251,319,70
  | Done |  | 26,774,350,44
- | Agents |  | 18,72,86,32
- | Nothing paired yet |  | 18,105,130,16
- | No agents yet |  | 18,161,162,32
- | Pair with a host and its agents appear here. |  | 18,201,291,18
- | Run amux pair on a host on this network, or scan the code from amux pair --qr with the camera. |  | 18,237,360,37
- | You |  | 18,70,46,32
- | ACCOUNTS |  | 20,120,56,14
- | ada, ada@example.com |  | 32,142,338,58
- | Add Account |  | 18,201,366,46
- | ADA |  | 20,265,21,14
- | Relay, Subscribed through the App Store |  | 18,287,366,46
- | Sign Out |  | 18,333,366,46
- | Remove from This Phone |  | 18,380,366,46
- | Delete Account |  | 18,426,366,46
- | THIS PHONE |  | 20,489,70,14
- | Appearance |  | 32,527,90,20
- | Light |  | 200,514,56,46
- | Dark |  | 256,514,49,46
- | System |  | 305,514,63,46
- | Identity, <key> |  | 18,562,366,46
- | HELP |  | 20,626,28,14
- | Contact Support |  | 18,648,366,46
- | Report a Problem |  | 18,694,366,46
- | Export Diagnostics |  | 18,740,366,46
- | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,794,346,31
