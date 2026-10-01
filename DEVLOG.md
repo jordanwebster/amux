@@ -1,3 +1,18 @@
+2026-10-01 — **Every ask now uses the composer's box.** Forms from tool
+servers ask each field as a question tab (choices, Yes / No, checkboxes,
+typed values with numbers checked), mark required fields, review field →
+value and refuse to submit with a required field empty, saying which; a
+one-field form submits on its answer, and "Decline" is the footer. Sign-in
+links show the server's message and the link (clickable, middle-cut) with
+"Open the link", "I'm signed in" and a "Decline" footer. Codex access
+grants use the permission box ("Allow for this turn", "for this session",
+"No"). What this client cannot answer shows the reason, with "Open Claude's
+terminal" only where that terminal can be attached. Secret answers type as
+dots and read "answered (hidden)" in the review, the step and any reply.
+Each closes into a verb-first step ("Sent the form to linear", "Signed in
+to grafana", "Granted … · for this session"). The lab's new asks-more
+scenario has one agent for each.
+
 2026-10-01 — **Question options show their previews.** When a question's
 options carry previews (Claude's), the box shows the options in a column
 of labels beside the highlighted option's preview, split by a hairline, and

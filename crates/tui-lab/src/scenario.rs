@@ -407,6 +407,25 @@ pub enum AskSpec {
     Link(LinkSpec),
     /// Something the provider shows that no answer from here can reach.
     Unanswerable(UnanswerableSpec),
+    /// Codex asks for files or the network beyond its sandbox.
+    Access(AccessSpec),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccessSpec {
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub read: Vec<String>,
+    #[serde(default)]
+    pub write: Vec<String>,
+    #[serde(default)]
+    pub network: bool,
+    #[serde(default)]
+    pub hosts: Vec<String>,
+    #[serde(default)]
+    pub then: Option<Vec<Entry>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -447,6 +466,9 @@ pub struct QuestionItem {
     pub multi: bool,
     #[serde(default = "yes")]
     pub other: bool,
+    /// The typed answer is a secret (Codex): shown as dots, never echoed.
+    #[serde(default)]
+    pub secret: bool,
     #[serde(default)]
     pub options: Vec<OptionSpec>,
 }

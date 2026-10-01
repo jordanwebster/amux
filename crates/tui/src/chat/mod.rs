@@ -572,6 +572,7 @@ impl ChatView {
         match action {
             AskAction::None => vec![],
             AskAction::Attach => vec![ChatEffect::RawAttach],
+            AskAction::OpenUrl(url) => vec![ChatEffect::OpenUrl(url)],
             AskAction::Compose { key, inputs } => {
                 self.plans_done.insert(key);
                 // Decided, the plan folds, whatever the reader did with it
@@ -1762,7 +1763,7 @@ impl ChatView {
             Some(card) if ask::boxed(card) => {
                 const MARGIN: usize = 2;
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
-                self.ask.set_room(usize::from(area.height));
+                self.ask.set_room(usize::from(area.height), self.attach);
                 let drawn = self.ask.box_lines(card, inner, theme);
                 let (lines, mode) = framed(
                     drawn.lines,

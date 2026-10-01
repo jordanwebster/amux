@@ -1126,17 +1126,27 @@ impl World {
                     answers: match &verdict {
                         Verdict::Answered { picks, .. } => picks
                             .iter()
-                            .map(|picked| wire::AnsweredQuestion {
-                                picked: picked.clone(),
-                                other: None,
-                                hidden: false,
+                            .enumerate()
+                            .map(|(at, picked)| {
+                                let secret = pending.questions.get(at).is_some_and(|q| q.secret);
+                                wire::AnsweredQuestion {
+                                    picked: if secret { Vec::new() } else { picked.clone() },
+                                    other: None,
+                                    hidden: secret && !picked.is_empty(),
+                                }
                             })
                             .collect(),
                         _ => Vec::new(),
                     },
                     note: verdict.note(),
-                    fields: Vec::new(),
-                    grant: None,
+                    fields: match &verdict {
+                        Verdict::Sent { fields } => fields.clone(),
+                        _ => Vec::new(),
+                    },
+                    grant: match &verdict {
+                        Verdict::Granted(granted) => Some(granted.clone()),
+                        _ => None,
+                    },
                 });
                 sim.commit(&pending.item_key, &Body::Ask(ask), "", now, &[]);
             }
@@ -1475,6 +1485,12 @@ enum Verdict {
         picks: Vec<Vec<String>>,
         note: String,
     },
+    /// A form sent, with the names of its fields.
+    Sent {
+        fields: Vec<String>,
+    },
+    /// Access granted, for the turn or the session.
+    Granted(wire::GrantAnswer),
 }
 
 impl Verdict {
@@ -1492,7 +1508,7 @@ impl Verdict {
     fn note(&self) -> String {
         match self {
             Verdict::Denied { note } | Verdict::Answered { note, .. } => note.clone(),
-            Verdict::Allowed { .. } => String::new(),
+            Verdict::Allowed { .. } | Verdict::Sent { .. } | Verdict::Granted(_) => String::new(),
         }
     }
 }
@@ -1522,6 +1538,11 @@ fn picks(answer: &wire::QuestionAnswer, questions: &[QuestionItem]) -> Vec<Vec<S
 
 fn verdict_of(answer: &wire::AnswerInput, questions: &[QuestionItem]) -> Verdict {
     use wire::{claude_answer, codex_answer, permission_answer, plan_answer};
+    let sent = |content: &[u8]| Verdict::Sent {
+        fields: serde_json::from_slice::<serde_json::Map<String, Value>>(content)
+            .map(|fields| fields.keys().cloned().collect())
+            .unwrap_or_default(),
+    };
     let form = |action: wire::FormAction| match action {
         wire::FormAction::Accept => Verdict::Answered {
             picks: Vec::new(),
@@ -1542,7 +1563,18 @@ fn verdict_of(answer: &wire::AnswerInput, questions: &[QuestionItem]) -> Verdict
                 picks: picks(&q, questions),
                 note: q.note,
             },
+            Some(codex_answer::Of::Form(f)) if f.action() == wire::FormAction::Accept => {
+                sent(&f.content_json)
+            }
             Some(codex_answer::Of::Form(f)) => form(f.action()),
+            Some(codex_answer::Of::Grant(g))
+                if g.read.is_empty() && g.write.is_empty() && !g.network =>
+            {
+                Verdict::Denied {
+                    note: String::new(),
+                }
+            }
+            Some(codex_answer::Of::Grant(g)) => Verdict::Granted(g),
             Some(codex_answer::Of::Link(l)) => form(l.action()),
             _ => Verdict::Allowed {
                 scope: String::new(),
@@ -1577,6 +1609,9 @@ fn verdict_of(answer: &wire::AnswerInput, questions: &[QuestionItem]) -> Verdict
                 scope: String::new(),
             },
         },
+        Some(claude_answer::Of::Form(f)) if f.action() == wire::FormAction::Accept => {
+            sent(&f.content_json)
+        }
         Some(claude_answer::Of::Form(f)) => form(f.action()),
         Some(claude_answer::Of::Link(l)) => form(l.action()),
         None => Verdict::Allowed {
@@ -2020,7 +2055,7 @@ fn open_ask(sim: &mut Sim, ask: AskSpec, rest: Vec<Entry>, at: i64) {
                     })
                     .collect(),
                 allow_other: q.other,
-                secret: false,
+                secret: q.secret,
             })
             .collect(),
     };
@@ -2163,6 +2198,7 @@ fn open_ask(sim: &mut Sim, ask: AskSpec, rest: Vec<Entry>, at: i64) {
                     question: format!("{}\n\nGo ahead with this plan?", p.plan),
                     multi: false,
                     other: true,
+                    secret: false,
                     options: vec![
                         OptionSpec::Label("Go ahead".into()),
                         OptionSpec::Label("Revise it".into()),
@@ -2218,6 +2254,23 @@ fn open_ask(sim: &mut Sim, ask: AskSpec, rest: Vec<Entry>, at: i64) {
             claude_body = Some(wire::ask::Body::Link(link.clone()));
             codex_body = Some(wire::codex_ask::Body::McpLink(link));
             pending.then = then(l.then);
+        }
+        AskSpec::Access(a) => {
+            let grant = wire::AccessGrant {
+                reason: a.reason.clone(),
+                read: a.read.clone(),
+                write: a.write.clone(),
+                network: a.network,
+                network_hosts: a.hosts.clone(),
+            };
+            let item = AskItem {
+                ask: Some(wire::ask_item::Ask::Access(grant.clone())),
+                closed: None,
+            };
+            sim.commit(&item_key, &Body::Ask(item.clone()), "", at, &[]);
+            pending.ask_item = Some(item);
+            codex_body = Some(wire::codex_ask::Body::Access(grant));
+            pending.then = then(a.then);
         }
         AskSpec::Unanswerable(u) => {
             let item = AskItem {

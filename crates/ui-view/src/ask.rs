@@ -863,6 +863,8 @@ pub fn question_reply(card: &AskCard, picks: &[Pick], words: &str) -> Option<wir
     let mut message = format!("{}{REPLY_CONTEXT} Answers so far:", words.trim());
     for (question, pick) in questions.iter().zip(picks) {
         let answer = match pick {
+            // A secret is never repeated, not even to the agent that asked.
+            Pick::Other(_) if question.secret => "answered (hidden)".to_owned(),
             Pick::Options(selected) if selected.is_empty() => "not answered".to_owned(),
             Pick::Options(selected) => selected
                 .iter()

@@ -209,6 +209,82 @@ pub fn row_lines(
                 width,
                 theme,
             ),
+            RowKind::Ask(AskRow::Form {
+                server,
+                fields,
+                resolution,
+                ..
+            }) => {
+                let words = match resolution {
+                    Resolution::Open => format!("{server} needs details"),
+                    Resolution::Answered => format!("Sent the form to {server}"),
+                    Resolution::Declined => format!("Declined {server}'s form"),
+                    Resolution::Cancelled | Resolution::Dismissed => {
+                        format!("Dismissed {server}'s form")
+                    }
+                };
+                let mut lines = vec![words];
+                // The wire keeps which fields were sent, never their values.
+                if *resolution == Resolution::Answered && !fields.is_empty() {
+                    lines.push(fields.join(", "));
+                }
+                ask_step(&mut drawn, &lines, width, theme);
+            }
+            RowKind::Ask(AskRow::Link {
+                server, resolution, ..
+            }) => {
+                let words = match resolution {
+                    Resolution::Open => format!("{server} needs you to sign in"),
+                    Resolution::Answered => format!("Signed in to {server}"),
+                    Resolution::Declined => format!("Declined {server}'s sign-in"),
+                    Resolution::Cancelled | Resolution::Dismissed => {
+                        format!("Dismissed {server}'s sign-in")
+                    }
+                };
+                ask_step(&mut drawn, &[words], width, theme);
+            }
+            RowKind::Ask(AskRow::Grant {
+                read,
+                write,
+                network,
+                hosts,
+                granted,
+                resolution,
+                ..
+            }) => {
+                let asked = super::ask::access_words(read, write, *network, hosts);
+                let words = match (resolution, granted) {
+                    (Resolution::Open, _) => format!("Wants access to {asked}"),
+                    (Resolution::Answered, Some(granted)) => format!(
+                        "Granted {} · for this {}",
+                        super::ask::access_words(
+                            &granted.read,
+                            &granted.write,
+                            granted.network,
+                            hosts
+                        ),
+                        if granted.for_session {
+                            "session"
+                        } else {
+                            "turn"
+                        }
+                    ),
+                    (Resolution::Answered, None) => format!("Granted {asked}"),
+                    (Resolution::Declined, _) => format!("Refused {asked}"),
+                    (Resolution::Cancelled | Resolution::Dismissed, _) => {
+                        format!("Dismissed the ask for {asked}")
+                    }
+                };
+                ask_step(&mut drawn, &[words], width, theme);
+            }
+            RowKind::Ask(AskRow::Unanswerable { resolution, .. }) => {
+                let words = match resolution {
+                    Resolution::Open => "Can't answer this here",
+                    Resolution::Answered => "Answered in the agent's own terminal",
+                    _ => "Dismissed what this client couldn't show",
+                };
+                ask_step(&mut drawn, &[words.to_owned()], width, theme);
+            }
             RowKind::Thinking { .. } | RowKind::Hidden => return None,
             RowKind::TurnEnd {
                 duration_ms,
@@ -574,6 +650,28 @@ fn questions_step(
             theme,
         );
     }
+}
+
+/// A finished ask's step: its words in the step ink on the rail, then any
+/// further lines faint under them.
+fn ask_step(drawn: &mut Drawn, lines: &[String], width: usize, theme: Theme) {
+    let room = width.saturating_sub(WORDS + 2).max(1);
+    for (i, words) in lines.iter().enumerate() {
+        for part in text::wrap(words, room) {
+            let mut line = Line::default();
+            pad_to(&mut line, EDGE);
+            push(&mut line, "│", theme.hairline(), width);
+            pad_to(&mut line, WORDS);
+            push(
+                &mut line,
+                part,
+                if i == 0 { theme.muted() } else { theme.faint() },
+                width.saturating_sub(2),
+            );
+            drawn.line(line);
+        }
+    }
+    drawn.blank();
 }
 
 /// An answer in words: the picks, a typed answer in quotes, or "answered

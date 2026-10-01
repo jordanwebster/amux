@@ -41,6 +41,8 @@ pub enum AskAction {
     },
     /// Hand the terminal to the agent's own interface.
     Attach,
+    /// Open a link in the person's browser; the ask stays.
+    OpenUrl(String),
     /// A plan decision made of other inputs, sent in order; the card is
     /// done with once they go.
     Compose {
@@ -86,9 +88,13 @@ impl QuestionPick {
 #[derive(Clone, Debug, PartialEq)]
 enum FieldKind {
     Text,
-    Number { integer: bool },
+    Number {
+        integer: bool,
+    },
     Toggle,
     Choice(Vec<String>),
+    /// An array of enum values: several picks.
+    Many(Vec<String>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -99,6 +105,7 @@ struct Field {
     kind: FieldKind,
     /// Text, number and choice values; "true"/"false" for a toggle.
     value: String,
+    description: String,
 }
 
 /// This client's state for the head ask.
@@ -127,6 +134,11 @@ pub struct AskUi {
     replying: bool,
     /// The terminal's rows, so a question's preview leaves the feed room.
     room: usize,
+    /// The agent's own terminal can be attached, for what this client
+    /// cannot answer.
+    attach: bool,
+    /// The open field's text was refused (a form's number that is not one).
+    invalid: bool,
 }
 
 fn scope_words(scope: &Scope) -> String {
@@ -236,7 +248,23 @@ fn form_fields(schema_json: &str) -> Vec<Field> {
     properties
         .iter()
         .map(|(name, property)| {
-            let kind = if let Some(options) = property.get("enum").and_then(Value::as_array) {
+            let names = |options: &Vec<Value>| {
+                options
+                    .iter()
+                    .map(|option| match option {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let many = property
+                .get("items")
+                .and_then(|items| items.get("enum"))
+                .and_then(Value::as_array)
+                .filter(|_| property.get("type").and_then(Value::as_str) == Some("array"));
+            let kind = if let Some(options) = many {
+                FieldKind::Many(names(options))
+            } else if let Some(options) = property.get("enum").and_then(Value::as_array) {
                 FieldKind::Choice(
                     options
                         .iter()
@@ -272,6 +300,11 @@ fn form_fields(schema_json: &str) -> Vec<Field> {
                 name: name.clone(),
                 kind,
                 value,
+                description: property
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
             }
         })
         .collect()
@@ -285,6 +318,12 @@ impl Field {
             FieldKind::Number { integer: true } => self.value.parse::<i64>().ok().map(Value::from),
             FieldKind::Number { integer: false } => self.value.parse::<f64>().ok().map(Value::from),
             FieldKind::Text | FieldKind::Choice(_) => Some(Value::String(self.value.clone())),
+            FieldKind::Many(_) => Some(Value::Array(
+                self.value
+                    .split('\u{1f}')
+                    .map(|v| Value::String(v.to_owned()))
+                    .collect(),
+            )),
         }
     }
 
@@ -313,7 +352,13 @@ impl AskUi {
                 self.picks = vec![QuestionPick::default(); questions.len()];
                 self.other.secret = questions.first().is_some_and(|q| q.secret);
             }
-            AskBody::Form { schema_json, .. } => self.fields = form_fields(schema_json),
+            AskBody::Form { schema_json, .. } => {
+                self.fields = form_fields(schema_json);
+                // The schema's own order does not survive the wire (its keys
+                // arrive sorted), so what must be given comes first.
+                self.fields.sort_by_key(|field| !field.required);
+                self.picks = vec![QuestionPick::default(); self.fields.len()];
+            }
             _ => {}
         }
     }
@@ -570,7 +615,7 @@ impl AskUi {
                         let at = options.iter().position(|o| *o == field.value).unwrap_or(0);
                         field.value = options[(at + 1) % options.len()].clone();
                     }
-                    FieldKind::Text | FieldKind::Number { .. } => {
+                    FieldKind::Text | FieldKind::Number { .. } | FieldKind::Many(_) => {
                         self.other = Editor::default();
                         self.other.set(&field.value, vec![]);
                         self.stage = Stage::Field;
@@ -1347,6 +1392,10 @@ pub fn boxed(card: &AskCard) -> bool {
             | AskBody::Tool { .. }
             | AskBody::Plan { .. }
             | AskBody::Question(_)
+            | AskBody::Form { .. }
+            | AskBody::Link { .. }
+            | AskBody::Access { .. }
+            | AskBody::Unanswerable { .. }
     ) && !matches!(card.state, CardState::Dismissed)
 }
 
@@ -1399,6 +1448,8 @@ fn box_label(choice: &Choice) -> String {
             auto_accept_edits: true,
         } => "Yes, and accept edits without asking".to_owned(),
         ChoiceOutcome::SendBack => "No, keep planning".to_owned(),
+        ChoiceOutcome::GrantForTurn => "Allow for this turn".to_owned(),
+        ChoiceOutcome::GrantForSession => "Allow for this session".to_owned(),
         _ => {
             let words = choice_label(choice);
             let mut chars = words.chars();
@@ -1417,6 +1468,13 @@ fn short_subject(card: &AskCard) -> String {
         AskBody::Command { command, .. } => text::first_line(command).to_owned(),
         AskBody::Edit { path, .. } => path.clone(),
         AskBody::Tool { server, tool, .. } => format!("{server} {tool}").trim().to_owned(),
+        AskBody::Access {
+            read,
+            write,
+            network,
+            hosts,
+            ..
+        } => access_words(read, write, *network, hosts),
         _ => String::new(),
     };
     text::ellipsize(&subject, 48)
@@ -1429,6 +1487,7 @@ fn asking_verb(card: &AskCard) -> &'static str {
         AskBody::Edit { created: true, .. } => "Wants to create",
         AskBody::Edit { .. } => "Wants to edit",
         AskBody::Plan { .. } => "Plan ready",
+        AskBody::Access { .. } => "Wants access to",
         _ => "Wants to use",
     }
 }
@@ -1449,7 +1508,7 @@ impl AskUi {
     /// A paste into the boxed ask's note, when it has the keys.
     pub fn paste_box_note(&mut self, card: &AskCard, text: &str) {
         if self.in_box_note(card) {
-            if matches!(card.body, AskBody::Question(_)) {
+            if matches!(card.body, AskBody::Question(_) | AskBody::Form { .. }) {
                 self.other.insert_str(text);
             } else {
                 self.note.insert_str(text);
@@ -1478,6 +1537,7 @@ impl AskUi {
         matches!(card.state, CardState::Open | CardState::Rejected(_))
             && match &card.body {
                 AskBody::Question(questions) => !self.replying && self.on_something_else(questions),
+                AskBody::Form { .. } => self.on_something_else(&form_questions(&self.fields)),
                 _ => self.box_note(card),
             }
     }
@@ -1523,8 +1583,15 @@ impl AskUi {
             CardState::Open | CardState::Rejected(_) => {}
             _ => return self.key(card, key, false),
         }
-        if let AskBody::Question(questions) = &card.body {
-            return self.question_key_boxed(card, questions, key);
+        match &card.body {
+            AskBody::Question(questions) => return self.question_key_boxed(card, questions, key),
+            AskBody::Form { .. } => {
+                let questions = form_questions(&self.fields);
+                return self.question_key_boxed(card, &questions, key);
+            }
+            AskBody::Link { .. } => return self.link_key(card, key),
+            AskBody::Unanswerable { .. } => return self.unanswerable_key(key),
+            _ => {}
         }
         let count = box_choices(card).len();
         if self.box_note(card) {
@@ -1574,8 +1641,21 @@ impl AskUi {
         if !matches!(card.state, CardState::Open | CardState::Rejected(_)) {
             return AskAction::None;
         }
-        if let AskBody::Question(questions) = &card.body {
-            return self.question_click(card, questions, spot);
+        match &card.body {
+            AskBody::Question(questions) => return self.question_click(card, questions, spot),
+            AskBody::Form { .. } => {
+                let questions = form_questions(&self.fields);
+                return self.question_click(card, &questions, spot);
+            }
+            AskBody::Link { .. } => return self.link_click(card, spot),
+            AskBody::Unanswerable { .. } => {
+                return if self.attach && matches!(spot, BoxSpot::Choice(0)) {
+                    AskAction::Attach
+                } else {
+                    AskAction::None
+                };
+            }
+            _ => {}
         }
         match spot {
             BoxSpot::Tab(_) => AskAction::None,
@@ -1612,7 +1692,13 @@ impl AskUi {
                     .and_then(|i| card.choices.get(i))
                     .map(|choice| &choice.outcome);
                 let words = match chose {
-                    _ if matches!(card.body, AskBody::Question(_)) => "Sending…".to_owned(),
+                    _ if matches!(
+                        card.body,
+                        AskBody::Question(_) | AskBody::Form { .. } | AskBody::Link { .. }
+                    ) =>
+                    {
+                        "Sending…".to_owned()
+                    }
                     Some(ChoiceOutcome::Deny { .. } | ChoiceOutcome::DenyAndStop) => {
                         "Denying…".to_owned()
                     }
@@ -1635,8 +1721,25 @@ impl AskUi {
             }
             _ => {}
         }
-        if let AskBody::Question(questions) = &card.body {
-            return self.question_lines(questions, width, theme);
+        match &card.body {
+            AskBody::Question(questions) => {
+                return self.question_lines(card, questions, width, theme);
+            }
+            AskBody::Form { .. } => {
+                let questions = form_questions(&self.fields);
+                return self.question_lines(card, &questions, width, theme);
+            }
+            AskBody::Link {
+                server,
+                message,
+                url,
+            } => {
+                return self.link_lines(server, message, url, width, theme);
+            }
+            AskBody::Unanswerable { reason } => {
+                return self.unanswerable_lines(reason, width, theme);
+            }
+            _ => {}
         }
         let mut head = Line::from(Span::styled("● ", theme.accent()));
         push(&mut head, asking_verb(card), theme.text(), width);
@@ -1716,6 +1819,18 @@ impl AskUi {
                     capped(&mut out, arguments, self.show_all);
                 }
                 String::new()
+            }
+            AskBody::Access {
+                reason,
+                read,
+                write,
+                network,
+                hosts,
+            } => {
+                for part in text::wrap(&access_words(read, write, *network, hosts), width.max(1)) {
+                    out.lines.push(line(part, theme.code()));
+                }
+                reason.clone()
             }
             AskBody::Edit {
                 path,
@@ -1889,6 +2004,9 @@ impl QuestionRows {
 /// "The shell", "The fleet, The chat", "\"tmux style\"": an answer in words,
 /// empty when the question was skipped.
 fn pick_words(question: &QuestionView, pick: &QuestionPick) -> String {
+    if question.secret && pick.answered() {
+        return "answered (hidden)".to_owned();
+    }
     if let Some(other) = pick.other.as_ref().filter(|other| !other.is_empty()) {
         return other.clone();
     }
@@ -1990,13 +2108,26 @@ impl AskUi {
     fn question_answered(&mut self, card: &AskCard, questions: &[QuestionView]) -> AskAction {
         let count = questions.len();
         if count == 1 {
-            return self.send_boxed_questions(card);
+            return self.send_boxed(card, questions);
         }
         let next = (1..count)
             .map(|ahead| (self.step + ahead) % count)
             .find(|at| !self.picks[*at].answered());
         self.question_goto(questions, next.unwrap_or(count));
         AskAction::None
+    }
+
+    /// Sends the answers, or submits the form; a form with a required field
+    /// still empty goes to that field instead.
+    fn send_boxed(&mut self, card: &AskCard, questions: &[QuestionView]) -> AskAction {
+        if matches!(card.body, AskBody::Form { .. }) {
+            if let Some(missing) = self.missing_field() {
+                self.question_goto(questions, missing);
+                return AskAction::None;
+            }
+            return self.submit_form(card);
+        }
+        self.send_boxed_questions(card)
     }
 
     /// Sends the answers, a skipped question with none.
@@ -2056,6 +2187,10 @@ impl AskUi {
                 self.noting = true;
                 return AskAction::None;
             }
+            if !self.field_takes(&typed) {
+                self.invalid = true;
+                return AskAction::None;
+            }
             if confirm && !typed.is_empty() {
                 self.picks[self.step] = QuestionPick {
                     selected: vec![],
@@ -2066,6 +2201,9 @@ impl AskUi {
             return AskAction::None;
         }
         if at == rows.reply {
+            if matches!(card.body, AskBody::Form { .. }) {
+                return Self::choose(card, &ChoiceOutcome::Decline);
+            }
             self.replying = true;
         }
         AskAction::None
@@ -2093,7 +2231,7 @@ impl AskUi {
                 }
                 KeyCode::Left => self.question_goto(questions, count - 1),
                 _ if enter && self.selected < count => self.question_goto(questions, self.selected),
-                _ if enter => return self.send_boxed_questions(card),
+                _ if enter => return self.send_boxed(card, questions),
                 _ => {}
             }
             return AskAction::None;
@@ -2114,6 +2252,7 @@ impl AskUi {
                     return self.question_row(card, questions, self.selected, true);
                 }
                 _ => {
+                    self.invalid = false;
                     self.other.key(key);
                 }
             }
@@ -2168,7 +2307,7 @@ impl AskUi {
                     self.question_goto(questions, at);
                     AskAction::None
                 } else {
-                    self.send_boxed_questions(card)
+                    self.send_boxed(card, questions)
                 }
             }
             BoxSpot::Choice(at) => self.question_row(card, questions, at, false),
@@ -2182,8 +2321,23 @@ impl AskUi {
 
     /// The hint line's words while a boxed question has the keys.
     pub fn question_hint(&self, card: &AskCard, leader: char) -> Option<String> {
-        let AskBody::Question(questions) = &card.body else {
-            return None;
+        let form = form_questions(&self.fields);
+        let questions: &[QuestionView] = match &card.body {
+            AskBody::Question(questions) => questions,
+            AskBody::Form { .. } => &form,
+            AskBody::Link { .. }
+                if matches!(card.state, CardState::Open | CardState::Rejected(_)) =>
+            {
+                return Some(format!("enter choose · ctrl+x stop · ctrl+{leader} more"));
+            }
+            AskBody::Unanswerable { .. } => {
+                return Some(if self.attach {
+                    "enter open the terminal · ctrl+x stop".to_owned()
+                } else {
+                    "ctrl+x stop".to_owned()
+                });
+            }
+            _ => return None,
         };
         if !matches!(card.state, CardState::Open | CardState::Rejected(_)) {
             return None;
@@ -2194,6 +2348,12 @@ impl AskUi {
         let several = questions.len() > 1;
         let tabs = if several { " · ←/→ questions" } else { "" };
         if self.in_review(questions) {
+            if matches!(card.body, AskBody::Form { .. })
+                && let Some(at) = self.missing_field()
+            {
+                let name = question_name(&questions[at], at);
+                return Some(format!("enter go to {name}{tabs} · ctrl+x stop"));
+            }
             return Some(format!(
                 "enter send{tabs} · ctrl+x stop · ctrl+{leader} more"
             ));
@@ -2232,7 +2392,13 @@ impl AskUi {
 
     /// The boxed question ask's lines: the tabs (or the lone question's
     /// name), the question, its rows; or the review.
-    fn question_lines(&self, questions: &[QuestionView], width: usize, theme: Theme) -> BoxLines {
+    fn question_lines(
+        &self,
+        card: &AskCard,
+        questions: &[QuestionView],
+        width: usize,
+        theme: Theme,
+    ) -> BoxLines {
         let mut out = BoxLines {
             lines: Vec::new(),
             cursor: None,
@@ -2240,10 +2406,40 @@ impl AskUi {
         };
         let count = questions.len();
         let review = self.in_review(questions);
+        let form = match &card.body {
+            AskBody::Form {
+                server, message, ..
+            } => Some((server.as_str(), message.as_str())),
+            _ => None,
+        };
+
+        // A form says who asks and why first; its fields are the tabs.
+        if let Some((server, message)) = form {
+            let mut top = Line::from(Span::styled("● ", theme.accent()));
+            push(
+                &mut top,
+                format!("{server} needs details"),
+                theme.text(),
+                width,
+            );
+            out.lines.push(top);
+            for part in text::wrap(message, width.max(1)) {
+                let mut line = Line::default();
+                push(&mut line, part, theme.text(), width);
+                out.lines.push(line);
+            }
+            out.lines.push(Line::default());
+        }
 
         // The head: a tab per question, then Review; or one question's name.
-        let mut head = Line::from(Span::styled("● ", theme.accent()));
-        if count == 1 {
+        let head_row = out.lines.len();
+        let mut head = Line::from(Span::styled(
+            if form.is_some() { "" } else { "● " },
+            theme.accent(),
+        ));
+        if count == 1 && form.is_some() {
+            // One field: no tabs, its label says it all.
+        } else if count == 1 {
             push(
                 &mut head,
                 question_name(&questions[0], 0),
@@ -2295,12 +2491,14 @@ impl AskUi {
                     width,
                 );
                 out.spots
-                    .push((0, (from, text::line_width(&head)), BoxSpot::Tab(at)));
+                    .push((head_row, (from, text::line_width(&head)), BoxSpot::Tab(at)));
             }
             push(&mut head, " ›", theme.faint(), width);
         }
-        out.lines.push(head);
-        out.lines.push(Line::default());
+        if !(count == 1 && form.is_some()) {
+            out.lines.push(head);
+            out.lines.push(Line::default());
+        }
 
         if review {
             // Each question as asked, faint, then "→ answer" under it; the
@@ -2362,12 +2560,33 @@ impl AskUi {
                 theme.accent(),
                 width,
             );
+            // A form cannot go with a required field empty: Submit says
+            // which, and Enter goes there.
+            let missing = form.and(self.missing_field());
             push(
                 &mut send,
-                "Send answers",
-                if lit { theme.bright() } else { theme.text() },
+                if form.is_some() {
+                    "Submit"
+                } else {
+                    "Send answers"
+                },
+                if missing.is_some() {
+                    theme.faint()
+                } else if lit {
+                    theme.bright()
+                } else {
+                    theme.text()
+                },
                 width,
             );
+            if let Some(at) = missing {
+                push(
+                    &mut send,
+                    format!(" · {} is required", question_name(&questions[at], at)),
+                    theme.faint(),
+                    width,
+                );
+            }
             out.spots
                 .push((out.lines.len(), (0, width), BoxSpot::Choice(count)));
             out.lines.push(send);
@@ -2380,6 +2599,19 @@ impl AskUi {
             let mut line = Line::default();
             push(&mut line, part, theme.text(), width);
             out.lines.push(line);
+        }
+        // A form's field: required, and what it is for.
+        if let Some(field) = form.and(self.fields.get(self.step)) {
+            if field.required
+                && let Some(last) = out.lines.last_mut()
+            {
+                push(last, " · required", theme.faint(), width);
+            }
+            for part in text::wrap(&field.description, width.max(1)) {
+                let mut line = Line::default();
+                push(&mut line, part, theme.faint(), width);
+                out.lines.push(line);
+            }
         }
         if question.multi_select {
             let mut line = Line::default();
@@ -2403,7 +2635,12 @@ impl AskUi {
         } else {
             width
         };
-        let left = self.question_rows(question, &rows, left_width, !previews, theme);
+        let footer = if form.is_some() {
+            "Decline"
+        } else {
+            "Reply instead"
+        };
+        let left = self.question_rows(question, &rows, left_width, !previews, footer, theme);
         let preview = question
             .options
             .get(self.selected)
@@ -2545,8 +2782,9 @@ fn preview_lines(
 
 impl AskUi {
     /// How many rows the terminal has, so previews leave the feed room.
-    pub fn set_room(&mut self, rows: usize) {
+    pub fn set_room(&mut self, rows: usize, attach: bool) {
         self.room = rows;
+        self.attach = attach;
     }
 
     /// A question's rows at `width`: its options (with their descriptions
@@ -2558,6 +2796,7 @@ impl AskUi {
         rows: &QuestionRows,
         width: usize,
         descriptions: bool,
+        footer: &str,
         theme: Theme,
     ) -> BoxLines {
         let mut out = BoxLines {
@@ -2646,18 +2885,31 @@ impl AskUi {
             let lit = self.selected == at;
             let mut row = row_line(at, lit);
             let ink = if lit { theme.bright() } else { theme.text() };
-            let typed = self.other.text();
+            // With no options, typing is the answer, not something else.
+            let name = if question.options.is_empty() {
+                "Type an answer"
+            } else {
+                "Something else"
+            };
+            let typed = if question.secret {
+                "•".repeat(self.other.text().chars().count())
+            } else {
+                self.other.text().to_owned()
+            };
             let open = lit && self.noting;
             if open || !typed.is_empty() {
-                push(&mut row, "Something else: ", ink, width);
+                push(&mut row, format!("{name}: "), ink, width);
                 let col = text::line_width(&row);
-                let shown = text_tail(typed, width.saturating_sub(col + 1));
+                let shown = text_tail(&typed, width.saturating_sub(col + 1));
                 push(&mut row, shown.clone(), ink, width);
                 if open {
                     out.cursor = Some((out.lines.len(), col + text::str_width(&shown)));
                 }
+                if open && self.invalid {
+                    push(&mut row, " · a number", theme.faint(), width);
+                }
             } else {
-                push(&mut row, "Something else", ink, width);
+                push(&mut row, name, ink, width);
                 if lit {
                     push(&mut row, " · tab to type", theme.faint(), width);
                 }
@@ -2679,13 +2931,309 @@ impl AskUi {
         );
         push(
             &mut row,
-            "Reply instead",
+            footer.to_owned(),
             if lit { theme.bright() } else { theme.faint() },
             width,
         );
         out.spots
             .push((out.lines.len(), (0, width), BoxSpot::Choice(rows.reply)));
         out.lines.push(row);
+        out
+    }
+}
+
+/// A form's fields asked the way questions are: a choice is single choice,
+/// a yes-or-no is "Yes" / "No", several picks are checkboxes, and text or a
+/// number is typed.
+fn form_questions(fields: &[Field]) -> Vec<QuestionView> {
+    let option = |label: &str| ui_view::OptionView {
+        label: label.to_owned(),
+        description: String::new(),
+        preview: String::new(),
+        recommended: false,
+    };
+    fields
+        .iter()
+        .map(|field| {
+            let (options, multi_select): (Vec<&str>, bool) = match &field.kind {
+                FieldKind::Choice(options) => (options.iter().map(String::as_str).collect(), false),
+                FieldKind::Many(options) => (options.iter().map(String::as_str).collect(), true),
+                FieldKind::Toggle => (vec!["Yes", "No"], false),
+                FieldKind::Text | FieldKind::Number { .. } => (Vec::new(), false),
+            };
+            QuestionView {
+                header: field.title.clone(),
+                question: field.title.clone(),
+                multi_select,
+                allow_other: options.is_empty(),
+                options: options.into_iter().map(option).collect(),
+                secret: false,
+            }
+        })
+        .collect()
+}
+
+/// "write target/, read ~/.cargo · the network (api.github.com)": what an
+/// access grant asks for.
+pub(crate) fn access_words(
+    read: &[String],
+    write: &[String],
+    network: bool,
+    hosts: &[String],
+) -> String {
+    let mut parts = Vec::new();
+    if !write.is_empty() {
+        parts.push(format!("write {}", write.join(", ")));
+    }
+    if !read.is_empty() {
+        parts.push(format!("read {}", read.join(", ")));
+    }
+    if network {
+        parts.push(if hosts.is_empty() {
+            "the network".to_owned()
+        } else {
+            format!("the network ({})", hosts.join(", "))
+        });
+    }
+    if parts.is_empty() {
+        "more access".to_owned()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+/// `text` in at most `max` columns, cut in the middle so both ends show.
+fn middle_cut(text: &str, max: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max || max < 8 {
+        return text.to_owned();
+    }
+    let head = (max - 1) / 2;
+    let tail = max - 1 - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
+impl AskUi {
+    /// The first required field of a form still empty.
+    fn missing_field(&self) -> Option<usize> {
+        self.fields
+            .iter()
+            .zip(&self.picks)
+            .position(|(field, pick)| field.required && !pick.answered())
+    }
+
+    /// Whether the open field takes `typed`: a form's number must be one.
+    fn field_takes(&self, typed: &str) -> bool {
+        match self.fields.get(self.step).map(|field| &field.kind) {
+            Some(FieldKind::Number { integer: true }) => typed.parse::<i64>().is_ok(),
+            Some(FieldKind::Number { integer: false }) => typed.parse::<f64>().is_ok(),
+            _ => true,
+        }
+    }
+
+    /// The answer of the card's choice with `outcome`.
+    fn choose(card: &AskCard, outcome: &ChoiceOutcome) -> AskAction {
+        card.choices
+            .iter()
+            .find(|choice| &choice.outcome == outcome)
+            .and_then(|choice| answer_input(card, &choice.answer, ""))
+            .map_or(AskAction::None, |input| AskAction::Answer(Box::new(input)))
+    }
+
+    /// Submits the form with what was given for each field.
+    fn submit_form(&mut self, card: &AskCard) -> AskAction {
+        let mut content = Map::new();
+        for (field, pick) in self.fields.iter().zip(&self.picks) {
+            if !pick.answered() {
+                continue;
+            }
+            let typed = pick.other.clone().unwrap_or_default();
+            let at = |i: &u32| *i as usize;
+            let value = match &field.kind {
+                FieldKind::Choice(options) => pick
+                    .selected
+                    .first()
+                    .and_then(|i| options.get(at(i)))
+                    .map(|v| Value::String(v.clone())),
+                FieldKind::Many(options) => Some(Value::Array(
+                    pick.selected
+                        .iter()
+                        .filter_map(|i| options.get(at(i)))
+                        .map(|v| Value::String(v.clone()))
+                        .collect(),
+                )),
+                FieldKind::Toggle => Some(Value::Bool(pick.selected.first() == Some(&0))),
+                FieldKind::Number { integer: true } => typed.parse::<i64>().ok().map(Value::from),
+                FieldKind::Number { integer: false } => typed.parse::<f64>().ok().map(Value::from),
+                FieldKind::Text => Some(Value::String(typed)),
+            };
+            if let Some(value) = value {
+                content.insert(field.name.clone(), value);
+            }
+        }
+        let Some(choice) = card
+            .choices
+            .iter()
+            .find(|choice| choice.outcome == ChoiceOutcome::Submit)
+        else {
+            return AskAction::None;
+        };
+        let bytes = serde_json::to_vec(&Value::Object(content)).unwrap_or_default();
+        let answer = with_form_content(&choice.answer, bytes);
+        answer_input(card, &answer, "")
+            .map_or(AskAction::None, |input| AskAction::Answer(Box::new(input)))
+    }
+
+    /// A link's rows: open it, say it is done, and the Decline footer.
+    fn link_act(&mut self, card: &AskCard, at: usize) -> AskAction {
+        self.selected = at;
+        match at {
+            0 => match &card.body {
+                AskBody::Link { url, .. } => AskAction::OpenUrl(url.clone()),
+                _ => AskAction::None,
+            },
+            1 => Self::choose(card, &ChoiceOutcome::OpenLink),
+            _ => Self::choose(card, &ChoiceOutcome::Decline),
+        }
+    }
+
+    fn link_key(&mut self, card: &AskCard, key: KeyEvent) -> AskAction {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => self.selected = (self.selected + 1).min(2),
+            KeyCode::Char(c @ '1'..='2') => return self.link_act(card, c as usize - '1' as usize),
+            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                return self.link_act(card, self.selected);
+            }
+            _ => {}
+        }
+        AskAction::None
+    }
+
+    fn link_click(&mut self, card: &AskCard, spot: BoxSpot) -> AskAction {
+        match spot {
+            BoxSpot::Choice(at) => self.link_act(card, at),
+            BoxSpot::FullDiff => self.link_act(card, 0),
+            _ => AskAction::None,
+        }
+    }
+
+    /// A tool server's link: who wants it and why, the link itself (a
+    /// click opens it), then the ways on.
+    fn link_lines(
+        &self,
+        server: &str,
+        message: &str,
+        url: &str,
+        width: usize,
+        theme: Theme,
+    ) -> BoxLines {
+        let mut out = BoxLines {
+            lines: Vec::new(),
+            cursor: None,
+            spots: Vec::new(),
+        };
+        let mut head = Line::from(Span::styled("● ", theme.accent()));
+        push(
+            &mut head,
+            format!("{server} needs you to sign in"),
+            theme.text(),
+            width,
+        );
+        out.lines.push(head);
+        out.lines.push(Line::default());
+        for part in text::wrap(message, width.max(1)) {
+            let mut line = Line::default();
+            push(&mut line, part, theme.text(), width);
+            out.lines.push(line);
+        }
+        let mut link = Line::default();
+        let shown = middle_cut(url, width);
+        push(&mut link, shown.clone(), theme.code(), width);
+        out.spots.push((
+            out.lines.len(),
+            (0, text::str_width(&shown)),
+            BoxSpot::FullDiff,
+        ));
+        out.lines.push(link);
+        out.lines.push(Line::default());
+        for (at, words) in ["Open the link", "I'm signed in"].iter().enumerate() {
+            let lit = self.selected == at;
+            let mut row = Line::default();
+            push(
+                &mut row,
+                if lit { "› " } else { "  " },
+                theme.accent(),
+                width,
+            );
+            let ink = if lit { theme.bright() } else { theme.text() };
+            push(&mut row, format!("{}. {words}", at + 1), ink, width);
+            out.spots
+                .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
+            out.lines.push(row);
+        }
+        out.lines.push(Line::default());
+        let lit = self.selected == 2;
+        let mut row = Line::default();
+        push(
+            &mut row,
+            if lit { "› " } else { "  " },
+            theme.accent(),
+            width,
+        );
+        push(
+            &mut row,
+            "Decline",
+            if lit { theme.bright() } else { theme.faint() },
+            width,
+        );
+        out.spots
+            .push((out.lines.len(), (0, width), BoxSpot::Choice(2)));
+        out.lines.push(row);
+        out
+    }
+
+    /// What this client cannot answer: Enter opens the agent's own
+    /// terminal where that is possible; otherwise only Ctrl+X ends it.
+    fn unanswerable_key(&mut self, key: KeyEvent) -> AskAction {
+        if self.attach && key.code == KeyCode::Enter {
+            return AskAction::Attach;
+        }
+        AskAction::None
+    }
+
+    fn unanswerable_lines(&self, reason: &str, width: usize, theme: Theme) -> BoxLines {
+        let mut out = BoxLines {
+            lines: Vec::new(),
+            cursor: None,
+            spots: Vec::new(),
+        };
+        let mut head = Line::from(Span::styled("● ", theme.accent()));
+        push(&mut head, "Can't answer this here", theme.text(), width);
+        out.lines.push(head);
+        out.lines.push(Line::default());
+        let reason = if reason.is_empty() {
+            "The agent is showing something this build cannot read."
+        } else {
+            reason
+        };
+        for part in text::wrap(reason, width.max(1)) {
+            let mut line = Line::default();
+            push(&mut line, part, theme.muted(), width);
+            out.lines.push(line);
+        }
+        if self.attach {
+            out.lines.push(Line::default());
+            let mut row = Line::default();
+            push(&mut row, "› ", theme.accent(), width);
+            push(&mut row, "Open Claude's terminal", theme.bright(), width);
+            out.spots
+                .push((out.lines.len(), (0, width), BoxSpot::Choice(0)));
+            out.lines.push(row);
+        }
         out
     }
 }
