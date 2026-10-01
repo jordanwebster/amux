@@ -1,3 +1,9 @@
+2026-10-01 — **Answered questions show the question, not its tag.** The
+answered step and the Review tab list each question as it was asked (faint,
+wrapping with a hanging indent) with "→ answer" under it in normal ink, a
+"Something else" answer as typed and a skipped one "→ not answered" in
+faint. Headers like "On exit" stay on the tabs only.
+
 2026-10-01 — **Question tabs and checkboxes read as what they are.** The
 current question's tab is a chip on the highlight surface (" Keep open "),
 with faint ‹ and › at the row's ends for ←/→; answered tabs keep their ✓

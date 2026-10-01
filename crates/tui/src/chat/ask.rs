@@ -1891,7 +1891,7 @@ impl QuestionRows {
 /// empty when the question was skipped.
 fn pick_words(question: &QuestionView, pick: &QuestionPick) -> String {
     if let Some(other) = pick.other.as_ref().filter(|other| !other.is_empty()) {
-        return format!("\u{201c}{other}\u{201d}");
+        return other.clone();
     }
     pick.selected
         .iter()
@@ -2285,31 +2285,55 @@ impl AskUi {
         };
 
         if review {
+            // Each question as asked, faint, then "→ answer" under it; the
+            // highlighted one's lines brighten.
             for (at, question) in questions.iter().enumerate() {
                 let lit = self.selected == at;
-                let mut row = Line::default();
-                push(
-                    &mut row,
-                    if lit { "› " } else { "  " },
-                    theme.accent(),
-                    width,
-                );
-                let ink = if lit { theme.bright() } else { theme.text() };
-                push(
-                    &mut row,
-                    format!("{}: ", question_name(question, at)),
-                    ink,
-                    width,
-                );
-                let words = pick_words(question, &self.picks[at]);
-                if words.is_empty() {
-                    push(&mut row, "not answered", theme.faint(), width);
-                } else {
-                    push(&mut row, words, ink, width);
+                for (i, part) in text::wrap(&question.question, width.saturating_sub(2).max(1))
+                    .into_iter()
+                    .enumerate()
+                {
+                    let mut row = Line::default();
+                    push(
+                        &mut row,
+                        if lit && i == 0 { "› " } else { "  " },
+                        theme.accent(),
+                        width,
+                    );
+                    push(
+                        &mut row,
+                        part,
+                        if lit { theme.text() } else { theme.faint() },
+                        width,
+                    );
+                    out.spots
+                        .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
+                    out.lines.push(row);
                 }
-                out.spots
-                    .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
-                out.lines.push(row);
+                let words = pick_words(question, &self.picks[at]);
+                let (words, ink) = if words.is_empty() {
+                    ("not answered".to_owned(), theme.faint())
+                } else if lit {
+                    (words, theme.bright())
+                } else {
+                    (words, theme.text())
+                };
+                for (i, part) in text::wrap(&words, width.saturating_sub(6).max(1))
+                    .into_iter()
+                    .enumerate()
+                {
+                    let mut row = Line::default();
+                    push(
+                        &mut row,
+                        if i == 0 { "    → " } else { "      " },
+                        theme.faint(),
+                        width,
+                    );
+                    push(&mut row, part, ink, width);
+                    out.spots
+                        .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
+                    out.lines.push(row);
+                }
             }
             out.lines.push(Line::default());
             let lit = self.selected >= count;

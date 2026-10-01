@@ -540,19 +540,27 @@ fn questions_step(
     // A reply carries the answers so far to the agent in its own words, so
     // the step lists answers only when they were sent as answers.
     if matches!(resolution, Resolution::Answered) && reply.is_none() {
+        // Each question as asked, faint, then "→ answer" under it.
+        let room = width.saturating_sub(WORDS + 2).max(1);
         for (at, question) in questions.iter().enumerate() {
-            let name = if question.header.is_empty() {
-                format!("Question {}", at + 1)
-            } else {
-                question.header.clone()
-            };
+            for part in text::wrap(&question.question, room) {
+                drawn.line(railed(part, theme.faint()));
+            }
             let answer = answers.get(at).map(answer_words).unwrap_or_default();
-            let answer = if answer.is_empty() {
-                "not answered".to_owned()
+            let (answer, ink) = if answer.is_empty() {
+                ("not answered".to_owned(), theme.faint())
             } else {
-                answer
+                (answer, theme.text())
             };
-            drawn.line(railed(format!("{name}: {answer}"), theme.faint()));
+            for (i, part) in text::wrap(&answer, room.saturating_sub(4).max(1))
+                .into_iter()
+                .enumerate()
+            {
+                let lead = if i == 0 { "  → " } else { "    " };
+                let mut line = railed(lead.to_owned(), theme.faint());
+                push(&mut line, part, ink, width.saturating_sub(2));
+                drawn.line(line);
+            }
         }
     }
     drawn.blank();
@@ -581,7 +589,7 @@ fn answer_words(answer: &AnswerView) -> String {
         .cloned()
         .collect();
     if let Some(other) = answer.other.as_ref().filter(|other| !other.is_empty()) {
-        picks.push(format!("\u{201c}{other}\u{201d}"));
+        picks.push(other.clone());
     }
     picks.join(", ")
 }
