@@ -139,6 +139,9 @@ pub struct AskUi {
     attach: bool,
     /// The open field's text was refused (a form's number that is not one).
     invalid: bool,
+    /// Per question, what was typed in its field but not answered with:
+    /// kept when Tab moves on, so coming back shows it.
+    drafts: Vec<String>,
 }
 
 fn scope_words(scope: &Scope) -> String {
@@ -2093,6 +2096,11 @@ impl AskUi {
     fn question_goto(&mut self, questions: &[QuestionView], step: usize) {
         let count = questions.len();
         self.stage = Stage::Menu;
+        // What was typed stays with its question, unanswered, as a draft.
+        self.drafts.resize(count, String::new());
+        if self.step < count {
+            self.drafts[self.step] = self.other.text().to_owned();
+        }
         if step >= count && count > 1 {
             self.step = count;
             self.selected = count;
@@ -2101,9 +2109,11 @@ impl AskUi {
         self.step = step.min(count.saturating_sub(1));
         let pick = &self.picks[self.step];
         let rows = QuestionRows::of(&questions[self.step]);
+        let draft = self.drafts[self.step].clone();
         self.selected = match (&pick.other, pick.selected.first()) {
             (Some(other), _) if !other.is_empty() => rows.other.unwrap_or(0),
             (_, Some(first)) => *first as usize,
+            _ if !draft.is_empty() => rows.other.unwrap_or(0),
             _ => 0,
         };
         // A tab that is only a text field has it live from the start.
@@ -2112,8 +2122,9 @@ impl AskUi {
         self.invalid = false;
         self.other = Editor::default();
         self.other.secret = questions[self.step].secret;
-        if let Some(other) = &pick.other {
-            self.other.insert_str(other);
+        match &pick.other {
+            Some(other) if !other.is_empty() => self.other.insert_str(other),
+            _ => self.other.insert_str(&draft),
         }
     }
 
@@ -2275,6 +2286,9 @@ impl AskUi {
                     let empty = self.other.text().is_empty();
                     self.other = Editor::default();
                     self.picks[self.step].other = None;
+                    if let Some(draft) = self.drafts.get_mut(self.step) {
+                        draft.clear();
+                    }
                     self.invalid = false;
                     if !text_only {
                         self.noting = false;
@@ -2424,9 +2438,13 @@ impl AskUi {
             return Some(format!("{enter}{tab} · esc clear · ctrl+x stop"));
         }
         if self.on_other_row(questions) {
-            return Some(format!(
-                "enter to type{tabs} · ctrl+x stop · ctrl+{leader} more"
-            ));
+            // A draft kept from earlier answers on Enter.
+            let enter = if self.other.text().trim().is_empty() {
+                "enter to type"
+            } else {
+                "enter answer"
+            };
+            return Some(format!("{enter}{tabs} · ctrl+x stop · ctrl+{leader} more"));
         }
         if self.selected == QuestionRows::of(&questions[self.step]).reply {
             let enter = if form { "enter decline" } else { "enter reply" };

@@ -1,3 +1,9 @@
+2026-10-01 — **Tabbing out of a field keeps what was typed.** Text typed in
+a field (a form's value, a free-text question, "Something else") stays as
+that field's draft when Tab or Shift+Tab moves on: unanswered (no ✓, "not
+answered" in Review) but there when you come back, and Enter answers with
+it. Esc still clears it.
+
 2026-10-01 — **One key model for every ask box.** Tab and Shift+Tab change
 tabs from anywhere (a field's text included, skipping without answering),
 ←/→ change them except while typing, and Enter on an answer moves on. A
