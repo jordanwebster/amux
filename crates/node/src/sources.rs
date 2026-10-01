@@ -106,6 +106,11 @@ pub(crate) struct Sources {
     /// Hosts whose inventory has caught up on the current stream, by the
     /// session that stream is. A session ends with its stream.
     ready: HashMap<Vec<u8>, u64>,
+    /// Hosts whose inventory is subscribed but has not caught up, by the
+    /// session it will confirm: the sources opened with it are current
+    /// from the start, so one that is lost waits out its backoff like any
+    /// other rather than ending.
+    following: HashMap<Vec<u8>, u64>,
     next_session: u64,
     /// Open sources and the host session each belongs to.
     open: HashMap<AgentKey, (u64, JoinHandle<()>)>,
@@ -348,6 +353,7 @@ impl ProfileRuntime {
         let stopped: Vec<(AgentKey, JoinHandle<()>)> = {
             let mut sources = self.sources.lock().unwrap();
             sources.ready.remove(&host_bytes);
+            sources.following.remove(&host_bytes);
             let keys: Vec<AgentKey> = sources
                 .open
                 .keys()
@@ -396,9 +402,7 @@ impl ProfileRuntime {
     /// a source for every agent the store remembers of the host, so their
     /// subscriptions leave with the inventory's; the session is confirmed
     /// when the inventory catches up, and an agent it no longer lists is
-    /// dropped then, source and all. A source that ends before that, as
-    /// on a link that flaps, is not retried, since the session is not yet
-    /// current; the sweep after the catch-up opens it again.
+    /// dropped then, source and all.
     async fn begin_following(&self, host: HostId) -> u64 {
         let host_bytes = host.as_bytes().to_vec();
         let store = self.store.lock().await;
@@ -406,6 +410,7 @@ impl ProfileRuntime {
         let mut sources = self.sources.lock().unwrap();
         sources.next_session += 1;
         let session = sources.next_session;
+        sources.following.insert(host_bytes.clone(), session);
         if sources.policy == SourcePolicy::Listed {
             for row in rows.iter().filter(|row| row.agent.host == host_bytes) {
                 let key = &row.agent;
@@ -483,11 +488,11 @@ impl ProfileRuntime {
         for agent in &listed {
             self.put_replica_row(&mut store, agent)?;
         }
-        self.sources
-            .lock()
-            .unwrap()
-            .ready
-            .insert(host_bytes.clone(), session);
+        {
+            let mut sources = self.sources.lock().unwrap();
+            sources.following.remove(&host_bytes);
+            sources.ready.insert(host_bytes.clone(), session);
+        }
         self.host_current_changed(&host_bytes, true);
         // Deliveries to a parent on that host may have waited for it.
         self.deliveries_due.notify_one();
@@ -648,7 +653,9 @@ impl ProfileRuntime {
     }
 
     fn session_current(&self, key: &AgentKey, session: u64) -> bool {
-        self.sources.lock().unwrap().ready.get(&key.host) == Some(&session)
+        let sources = self.sources.lock().unwrap();
+        sources.ready.get(&key.host) == Some(&session)
+            || sources.following.get(&key.host) == Some(&session)
     }
 
     fn source_ended(&self, key: &AgentKey, session: u64, settled: bool) {

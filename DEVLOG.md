@@ -1,3 +1,12 @@
+2026-10-01 — **A source opened with the inventory is current from the start.**
+`just ios verify`'s replication spec that drops a stream after its
+Snapshot found the replica caught up where it expected it waiting out
+its backoff: a source opened with the inventory, lost before the
+inventory confirmed its session, ended instead of backing off, and the
+sweep after the catch-up opened a fresh one at once. The host's session
+now counts as current from the moment its inventory is subscribed, so
+such a source waits out its backoff like any other.
+
 2026-10-01 — **The cold first frame's budget is set from the profile.**
 632 ms median on the pinned Mac against 500: an Instruments profile of the
 launch puts the main thread's heavy leaves in the loader (270 ms, 85 of
