@@ -1475,7 +1475,7 @@ impl ChatView {
         } else {
             attachment::Of::File(blob)
         };
-        self.editor.insert_attachment(Attachment { of: Some(of) });
+        self.editor.attach(Attachment { of: Some(of) });
     }
 
     /// `<leader> r` with a review already in the draft: back to its page.
@@ -1522,7 +1522,7 @@ impl ChatView {
         match (held, page.comments().is_empty()) {
             (Some(index), false) => self.editor.replace_attachment(index, page.attachment()),
             (Some(index), true) => self.editor.remove_attachment(index),
-            (None, false) => self.editor.insert_attachment(page.attachment()),
+            (None, false) => self.editor.attach(page.attachment()),
             (None, true) => {}
         }
     }

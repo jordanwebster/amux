@@ -133,7 +133,7 @@ pub fn seed_draft(app: &mut App, world: &World) {
     if let Some((text, attachments)) = world.draft_once(&chat.view.agent_id) {
         chat.view.editor.insert_str(&text);
         for attachment in attachments {
-            chat.view.editor.insert_attachment(attachment);
+            chat.view.editor.attach(attachment);
         }
     }
 }

@@ -115,6 +115,21 @@ impl Editor {
         self.cursor += PLACEHOLDER.len_utf8();
     }
 
+    /// An attachment the person adds, at the cursor, followed by a real
+    /// space unless whitespace already follows, so the next chip or word
+    /// does not touch it.
+    pub fn attach(&mut self, attachment: Attachment) {
+        self.insert_attachment(attachment);
+        if !self.text[self.cursor..]
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+        {
+            self.text.insert(self.cursor, ' ');
+        }
+        self.cursor += 1;
+    }
+
     /// The index of the first attachment `matches` accepts.
     pub fn find_attachment(&self, matches: impl Fn(&Attachment) -> bool) -> Option<usize> {
         self.attachments.iter().position(matches)
@@ -149,7 +164,7 @@ impl Editor {
         let lines = text.lines().count();
         if lines >= PASTE_TOKEN_LINES || text.chars().count() >= PASTE_TOKEN_CHARS {
             self.pasted += 1;
-            self.insert_attachment(Attachment {
+            self.attach(Attachment {
                 of: Some(attachment::Of::Text(InlineText {
                     name: format!("pasted-{}", self.pasted),
                     text: text.to_owned(),

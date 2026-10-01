@@ -1,3 +1,9 @@
+2026-10-01 — **A chip is followed by a space.** Pasting or attaching puts a
+real space after the chip in the draft unless whitespace already follows,
+as a chat app does after a mention, so two chips or a chip and the next
+word never touch, in the draft or in the sent message. Yanking killed text
+back puts it as it was.
+
 2026-10-01 — **The composer says what stands in its way.** Its top edge
 carries one reason, most pressing first: a refused prompt, the host away,
 an exited agent ("Enter resumes"), or a usage limit reached ("5-hour limit
