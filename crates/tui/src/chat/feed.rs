@@ -380,7 +380,7 @@ fn plan_lines(
         PlanVerdict::Open => return,
         PlanVerdict::Approved if edits_accepted => "Plan approved · edits accepted without asking",
         PlanVerdict::Approved => "Plan approved",
-        PlanVerdict::SentBack => "Sent back",
+        PlanVerdict::SentBack => "Plan sent back",
         PlanVerdict::Dismissed => "Plan dismissed",
     };
     let railed = |words: String, style: Style| {
