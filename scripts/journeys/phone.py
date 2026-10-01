@@ -83,13 +83,17 @@ def normalize(text: str) -> str:
     return SCRATCH.sub(lambda match: match.group(1) + "x" * len(match.group(2)), text)
 
 
-def launch_arguments(ready: dict, scope: str, found: list[str], door_port: int) -> list[str]:
+def launch_arguments(
+    ready: dict, scope: str, found: list[str], door_port: int, geometry: bool = True
+) -> list[str]:
     """What a driven launch is told: its door, the net's discovery scope and
     the machines its browser may report, loopback direct links and, when the
-    net has one, the served relay."""
-    arguments = [
-        "-amux-door-port", str(door_port),
-        "-amux-element-geometry",
+    net has one, the served relay. Element geometry is asked for unless the
+    caller measures the app and turns it on itself only to tap."""
+    arguments = ["-amux-door-port", str(door_port)]
+    if geometry:
+        arguments.append("-amux-element-geometry")
+    arguments += [
         "-amux-discovery-scope", scope,
         "-amux-discover-only", ",".join(found),
         "-amux-lan-bind", "127.0.0.1:0",
@@ -107,8 +111,10 @@ def is_volatile(identifier: str, named: tuple[str, ...] = ()) -> bool:
     return identifier.endswith(VOLATILE) or identifier in named
 
 
-# The tabs' roots by the name the door gives the tab on screen. A tab not on
-# screen still reports its elements, where a page pushed over it draws.
+# The tabs' roots by the name the door gives the tab on screen. A tab
+# somebody has been to is kept and still reports its elements while another
+# tab, or a page pushed over it, is on screen; one never reached for is not
+# built and reports nothing.
 TAB_ROOTS = {"agents": "home.", "hosts": "hosts.", "you": "you."}
 
 
@@ -196,9 +202,10 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-def simctl(*arguments: str, timeout: float = 120) -> str:
+def simctl(*arguments: str, timeout: float = 120, env: dict[str, str] | None = None) -> str:
     return subprocess.run(
-        ["xcrun", "simctl", *arguments], check=True, text=True, capture_output=True, timeout=timeout
+        ["xcrun", "simctl", *arguments],
+        check=True, text=True, capture_output=True, timeout=timeout, env=env,
     ).stdout
 
 
@@ -249,6 +256,10 @@ class PhoneJourney:
         self.env = {k: v for k, v in os.environ.items() if k not in ("AMUX_LOG", "AMUX_CONFIG")}
         self.env.update({key: str(self.scratch) for key in ("TMPDIR", "TMP", "TEMP")})
         self.env["AMUX_TEST_DISCOVERY_MODE"] = "disabled"
+        # The served machines say what they did with each link and stream, so
+        # a reconciliation that took longer than its round trips can be read
+        # from their side too; a caller's own filter wins.
+        self.env.setdefault("RUST_LOG", "info,node::link=debug,node::services::reachability=debug,node::routing=debug,node::sources=debug")
         self.process = subprocess.Popen(
             [str(TESTNET), "serve", str(topology), "--root-in", str(self.scratch)],
             cwd=ROOT,
@@ -340,29 +351,39 @@ class PhoneJourney:
 
     # --- the phone --------------------------------------------------------
 
-    def launch(self, *extra: str, found: list[str] | None = None) -> None:
+    def launch(self, *extra: str, found: list[str] | None = None, geometry: bool = True) -> None:
         """The debug app, installed fresh so no earlier run's identity or
         trust is on the phone, launched against this net."""
         simctl("terminate", self.udid, BUNDLE_ID, timeout=60) if self._running() else None
         subprocess.run(["xcrun", "simctl", "uninstall", self.udid, BUNDLE_ID], capture_output=True, timeout=120)
         simctl("install", self.udid, str(self.build), timeout=300)
-        self.relaunch(*extra, found=found)
+        self.relaunch(*extra, found=found, geometry=geometry)
 
-    def relaunch(self, *extra: str, found: list[str] | None = None) -> None:
+    def relaunch(self, *extra: str, found: list[str] | None = None, geometry: bool = True) -> None:
         """The same installation launched again, as a person reopens it. Its
         browser reports the machines named in `found`, every one of the net's
-        when nothing is said."""
+        when nothing is said. Without `geometry` the app reports what is
+        drawn but not where, which a measurement wants: see `geometry()`."""
         scope = self.topology.get("scope", "")
         if found is None:
             found = [host["host_id"] for host in self.ready["hosts"]]
         self.port = free_port()
-        arguments = launch_arguments(self.ready, scope, found, self.port) + list(extra)
-        simctl("launch", "--terminate-running-process", self.udid, BUNDLE_ID, *arguments)
+        arguments = launch_arguments(self.ready, scope, found, self.port, geometry) + list(extra)
+        # The phone's runtime logs under the same filter as the served hosts,
+        # so one run's two logs can be read side by side.
+        simctl(
+            "launch", "--terminate-running-process", self.udid, BUNDLE_ID, *arguments,
+            env={**os.environ, "SIMCTL_CHILD_RUST_LOG": self.env["RUST_LOG"]},
+        )
         self.actions.append("launch the app")
+        # The door answering is the launch; what a capture needs settled it
+        # settles itself. Settling here drew the window to an image over and
+        # over on the main thread while the app was still building its first
+        # frame, which a cold-launch measurement then counted.
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             try:
-                self.app({"kind": "settle"})
+                self.app({"kind": "signposts"})
                 return
             except (OSError, DoorError):
                 time.sleep(0.5)
@@ -420,6 +441,13 @@ class PhoneJourney:
     def tap(self, identifier: str) -> None:
         self.app({"kind": "tap", "identifier": identifier})
         self.actions.append(f"tap {identifier}")
+
+    def geometry(self, on: bool) -> None:
+        """Whether every identified element reports its frame. A tap needs
+        the frames; producing them costs a real share of the main thread,
+        so a measurement launches without them and asks only to tap."""
+        self.app({"kind": "geometry", "on": on})
+        self.actions.append(f"element geometry {'on' if on else 'off'}")
 
     def choose(self, label: str) -> None:
         """The item a person reads as `label` in a menu the app presented,

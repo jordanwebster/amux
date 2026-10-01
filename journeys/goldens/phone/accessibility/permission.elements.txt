@@ -26,20 +26,6 @@ hosts.row.<desk> | desk, macOS, reachable on this network | on-this-network | 18
 hosts.fact.identity | <volatile>
 hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,473,366,69
 hosts.caption.devices |  |  | 18,550,347,78
-you |  | none | 0,62,402,778
-you.title |  | You | 18,62,78,62
-you.add | Add Account |  | 18,189,366,69
-you.signIn | Sign In |  | 18,276,366,65
-you.signIn.caption |  |  | 18,349,329,78
-you.appearance |  | system | 18,492,366,195
-you.appearance.light | Light | not chosen | 215,514,57,151
-you.appearance.dark | Dark | not chosen | 272,494,39,191
-you.appearance.system | System | chosen | 311,514,57,151
-you.identity | <volatile>
-you.support | Contact Support |  | 18,822,366,69
-you.report | Report a Problem |  | 18,892,366,112
-you.dump | Export Diagnostics |  | 18,1004,366,112
-you.help.caption |  |  | 18,1124,366,161
  | Back |  | 16,90,42,46
  | decision-sdk, /t/a/n/d/work · desk |  | 51,72,252,82
  | More |  | 344,91,44,44

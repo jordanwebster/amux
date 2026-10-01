@@ -29,12 +29,26 @@ public enum Signpost: String, Sendable, CaseIterable, Codable {
     /// is starting up and getting as far as building the scene that asks for
     /// the app's first view.
     case appEntered
+    /// The app's composition is built: its stores, router and services
+    /// exist and the runtime has been told to start. What the main thread
+    /// did between entering and here is the app's own setup.
+    case compositionBuilt
+    /// The first frame the display showed of the shell: the tabs and the
+    /// home, before the remembered fleet's rows were read. From
+    /// `compositionBuilt`, how long the shell's first build took.
+    case shellPresented
     /// The embedded node started opening the installation: every profile's
-    /// store, and the remembered fleet of the one on screen.
+    /// store, the listener, the identity.
     case storeReadBegan
+    /// The embedded node is up. The main thread hears of it a turn later,
+    /// however busy it is meanwhile, which is not the store's time.
+    case nodeStarted
+    /// The profile on screen started opening its fleet from the store.
+    case fleetOpenBegan
     /// The fleet on screen has caught up with its own store, before any
-    /// host has been reached. With `storeReadBegan`, the store's share of a
-    /// launch before its first frame; marked once, for the launch.
+    /// host has been reached. The store's share of a launch is the node's
+    /// start (`storeReadBegan` to `nodeStarted`) plus this open
+    /// (`fleetOpenBegan` to here); marked once, for the launch.
     case storeReadEnded
     /// The first frame the display has actually shown carrying the
     /// remembered fleet's rows.

@@ -113,6 +113,12 @@ public final class LocalDiscovery {
         self.handOver = handOver
     }
 
+    /// The queue the browser starts and reports on. Starting a browser on
+    /// the main thread was measured at about 75 ms of a cold launch's main
+    /// thread; here it costs the launch nothing, and what it reports is
+    /// read on the main actor.
+    nonisolated private static let browsing = DispatchQueue(label: "sh.amux.discovery", qos: .utility)
+
     /// Begins browsing. Doing this twice is doing it once.
     public func start() {
         guard browser == nil else { return }
@@ -121,20 +127,19 @@ public final class LocalDiscovery {
         let browser = NWBrowser(
             for: .bonjourWithTXTRecord(type: Self.service, domain: nil), using: parameters)
         browser.stateUpdateHandler = { state in
-            MainActor.assumeIsolated { self.browserSaid(state) }
+            Task { @MainActor in self.browserSaid(state) }
         }
         browser.browseResultsChangedHandler = { results, _ in
-            MainActor.assumeIsolated {
-                self.saw(results.map { result in
-                    Sighting(
-                        endpoint: result.endpoint,
-                        record: Self.record(of: result.metadata),
-                        routes: Self.routes(to: result.endpoint, on: result.interfaces))
-                })
+            let sightings = results.map { result in
+                Sighting(
+                    endpoint: result.endpoint,
+                    record: Self.record(of: result.metadata),
+                    routes: Self.routes(to: result.endpoint, on: result.interfaces))
             }
+            Task { @MainActor in self.saw(sightings) }
         }
         self.browser = browser
-        browser.start(queue: .main)
+        Self.browsing.async { browser.start(queue: Self.browsing) }
     }
 
     /// Stops browsing, forgetting what was seen without withdrawing it.

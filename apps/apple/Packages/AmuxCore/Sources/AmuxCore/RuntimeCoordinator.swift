@@ -143,15 +143,16 @@ public final class RuntimeCoordinator {
         let starter = starter
         launch += 1
         let expected = launch
-        Signposts.emit(.storeReadBegan)
         starting = Task.detached {
             let started: Result<Runtime, RuntimeFailure>
             do {
                 try FileManager.default.createDirectory(
                     at: directory, withIntermediateDirectories: true)
+                Signposts.emit(.storeReadBegan)
                 started = .success(try starter(config) { _ in
                     Task { @MainActor [weak self] in self?.profilesMoved() }
                 })
+                Signposts.emit(.nodeStarted)
             } catch let failure as RuntimeFailure {
                 started = .failure(failure)
             } catch {
@@ -217,6 +218,7 @@ public final class RuntimeCoordinator {
             close()
             opening += 1
             let expected = opening
+            if !markedStoreRead { Signposts.emit(.fleetOpenBegan) }
             do {
                 let opened = try runtime.open(id) { chat in
                     Task { @MainActor [weak self] in

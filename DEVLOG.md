@@ -1,3 +1,30 @@
+2026-10-01 — **A cold launch builds what it shows.**
+`just ios perf`'s cold group: first frame 896 ms against 500, with the
+store read reported at 265. Marks now cut the launch where it bends
+(`appEntered`, `compositionBuilt`, `shellPresented`, `nodeStarted`,
+`fleetOpenBegan`): 300 ms loading images, 100 ms of UIKit building the
+scene, the composition in 2, and the rest the main thread building the
+shell's first frame. The store read is now the store's own two spans,
+the node's start and the fleet's open (28 ms, from 265 that was mostly
+the main thread's wait), and a fleet-render budget of 150 ms covers
+building the home from the store's rows. The browser starts on its own
+queue (75 ms off the main thread at launch). The shell builds the tab
+on screen and keeps a tab from the first time it is reached for; the
+home's row groups build rows as they come near the screen: first frame
+632 ms, fleet render 83, from 896 and 217. What is left is SwiftUI's
+first build of a navigation stack, a tab bar and a home; the sampler
+attributes it to nothing removable and Instruments would not record a
+launch on this simulator from the command line, so the first-frame
+budget stays missed by 130 ms, written up in docs/PERFORMANCE.md.
+The runner now launches without element geometry and turns it on only
+to tap (the `geometry` door verb), probes a launch's door with
+`signposts` rather than `settle`, and hands the phone the served
+hosts' log filter; `ios rust` no longer calls a shipping library the
+package left in the development slice's place current (the package
+unit tests had been linking the shipping Rust after `ios package`).
+Goldens and journey goldens re-recorded: a tab never reached for
+reports no elements.
+
 2026-10-01 — **The packaged bridge's linkage smoke speaks the current bridge.**
 `just ios scope-audit` built the shipping framework and then failed to
 compile the smoke that links it: it still called the bridge the phone had

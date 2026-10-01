@@ -160,7 +160,8 @@ the phone, rather than reporting a number about an idle screen.
 | Metric | Group | What is measured | Budget | Worst | Tolerance |
 | --- | --- | --- | --- | --- | --- |
 | `cold first frame` | cold | Kernel process start to the first presented frame carrying the remembered fleet's rows, the app terminated between the five launches, the machines up | 500 ms | 600 ms | 15% |
-| `cold store read` | cold | Inside each of those launches, the embedded node starting to open the installation to the fleet on screen having caught up with its own store: the store's share of a launch, before any host is reached | 300 ms | | 15% |
+| `cold store read` | cold | Inside each of those launches, the store's own share: the embedded node's start (opening every profile's store, the listener, the identity) plus the profile on screen opening its fleet from the store and catching up with it, before any host is reached; the main thread's wait between the two is not counted | 100 ms | | 15% |
+| `cold fleet render` | cold | From the fleet on screen having caught up with its store to the first presented frame carrying its rows: building the home from what the store held | 150 ms | | 15% |
 | `reconciliation at 0 ms` | reconciliation | From that point to the first presented frame after every trusted machine's agents were current with the machine, over loopback | 1,000 ms | | 15% |
 | `reconciliation at 100 ms` | reconciliation | The same, with every gate holding each packet 100 ms | 1,000 ms | | 15% |
 | `streaming hitch time` | streaming | Missed frame time per second while fifty rows a second arrive for twenty seconds into the conversation on screen, resting at its tail | 5 ms/s | | 15% |
@@ -173,10 +174,20 @@ The cold-start budgets are a simulator's: an empty SwiftUI app linking the frame
 frame at about 414 ms on the pinned simulator, so the gate is the floor plus room for the app's own work, and the
 400 ms a phone is asked for stays on the physical-phone checklist in [the iPhone app](IOS.md). The simulator reports
 60 Hz and composites through the Mac's display, so hitch time is display-link missed-frame accounting, a proxy for a
-device's hitch metric. The store-read budget is the node's own start as first measured on the pinned Mac, about
-270 ms from the app asking for the installation to the fleet on screen having caught up with its store, with a
-little room; it is a number to bring down, not one to grow into, and the launch it sits inside is over its own
-budget as of the first runs (the report says by how much).
+device's hitch metric. The store read was first measured at about 270 ms on the pinned Mac, of which the node's own
+start was 25 ms and the fleet's open one; the rest was the main thread, busy building the shell, taking its time to
+hear that the node was up, which the two intervals now leave out. The fleet-render budget is what building the home
+from the store's rows should take.
+
+Where a cold launch goes, from the marks (`scripts/ios-perf.py` prints them per launch): about 300 ms before
+`main` is reached, loading the images; about 100 ms of UIKit building the scene before the app's composition is
+asked for, which an empty app pays too; the composition itself in 2 ms; then the main thread building the shell's
+first frame, which is where the app's own time is. The shell builds the tab somebody is looking at, and a tab is
+built when first reached for and kept from then; the home's rows are built as they come near the screen. Those two
+took the shell from about 430 ms to about 230 ms on the pinned Mac, of which the home with forty remembered rows is
+about 80. What is left is a navigation stack, a tab bar and a home being built by SwiftUI for the first time, with
+no one item a profile points at; the first-frame budget is missed by that much as of this writing, and the report
+says by how much.
 
 `--only cold|reconciliation|streaming|idle` takes one group, for working on it; `--baseline` needs a whole run.
 `--describe` says which enrolled machine this is and whether its baseline exists without building or launching

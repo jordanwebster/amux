@@ -16,20 +16,6 @@ hosts.caption.devices |  |  | 18,363,320,18
 pair-confirm |  | trusted desk | 0,62,402,778
 pair-confirm.trusted |  | desk | 91,88,102,20
 pair-confirm.done | Done |  | 91,146,73,44
-you |  | none | 0,62,402,778
-you.title |  | You | 18,62,46,40
-you.add | Add Account |  | 18,142,366,46
-you.signIn | Sign In |  | 18,206,366,44
-you.signIn.caption |  |  | 18,258,296,18
-you.appearance |  | system | 18,317,366,50
-you.appearance.light | Light | not chosen | 200,319,56,46
-you.appearance.dark | Dark | not chosen | 256,319,49,46
-you.appearance.system | System | chosen | 305,319,63,46
-you.identity | <volatile>
-you.support | Contact Support |  | 18,453,366,46
-you.report | Report a Problem |  | 18,499,366,46
-you.dump | Export Diagnostics |  | 18,545,366,46
-you.help.caption |  |  | 18,599,354,31
  | desk is paired |  | 91,88,102,20
  | Its agents are on the Agents tab. |  | 91,118,220,18
  | Done |  | 91,146,73,44

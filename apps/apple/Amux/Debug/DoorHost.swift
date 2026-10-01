@@ -38,6 +38,10 @@ final class DoorHost {
     private(set) var typeSize: DynamicTypeSize = .large
     private(set) var reduceMotion = false
     private(set) var reduceTransparency = false
+    /// Whether identified elements report their frames: as the launch asked,
+    /// until the `geometry` verb says otherwise.
+    private(set) var elementGeometry = ProcessInfo.processInfo.arguments.contains(
+        "-\(Door.elementGeometryArgument)")
     /// Every element the screens declared, with where it is drawn.
     @ObservationIgnored var declared: [IdentifiedElement] = []
     let store = ScriptedStoreFront()
@@ -147,6 +151,9 @@ final class DoorHost {
         case .assist(let motion, let transparency):
             reduceMotion = motion
             reduceTransparency = transparency
+            return .ack
+        case .geometry(let on):
+            elementGeometry = on
             return .ack
         case .screenshot:
             NotificationCenter.default.post(
@@ -786,8 +793,6 @@ enum Launch {
 struct DrivenRoot<Content: View>: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State private var host = DoorHost.shared
-    private let elementGeometry = ProcessInfo.processInfo.arguments.contains(
-        "-\(Door.elementGeometryArgument)")
     private let content: Content
 
     init(@ViewBuilder content: () -> Content) {
@@ -803,7 +808,7 @@ struct DrivenRoot<Content: View>: View {
             .dynamicTypeSize(host.typeSize)
             .transformEnvironment(\.reducesMotion) { $0 = $0 || host.reduceMotion }
             .transformEnvironment(\.reducesTransparency) { $0 = $0 || host.reduceTransparency }
-            .reportingIdentifiedElements(includeGeometry: !voiceOver && elementGeometry)
+            .reportingIdentifiedElements(includeGeometry: !voiceOver && host.elementGeometry)
             .onPreferenceChange(IdentifiedElements.self) { declared in
                 Task { @MainActor in DoorHost.shared.declared = declared }
             }

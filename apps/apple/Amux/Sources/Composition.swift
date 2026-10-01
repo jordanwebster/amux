@@ -129,6 +129,7 @@ final class Composition {
         runtime.start()
         discovery.start()
         settleOutstandingPurchases()
+        Signposts.emit(.compositionBuilt)
     }
 
     #if AMUX_DEBUG_TOOLS

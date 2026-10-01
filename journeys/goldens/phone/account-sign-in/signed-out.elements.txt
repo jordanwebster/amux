@@ -7,14 +7,6 @@ home.empty.explain |  |  | 18,201,291,18
 home.empty.howToPair |  |  | 18,237,360,37
 home.empty.signIn | Sign In |  | 18,292,366,44
 home.empty.signIn.caption |  |  | 18,344,296,18
-hosts |  | 0 reachable | 0,62,402,778
-hosts.title |  | Hosts | 18,72,69,32
-hosts.subtitle |  | 0 reachable | 18,105,79,16
-hosts.empty |  | No hosts yet | 18,137,360,113
-hosts.empty.howToPair |  |  | 18,213,360,37
-hosts.fact.identity | <volatile>
-hosts.fact.paired-devices | Paired Devices, 0 | 0 | 18,336,366,46
-hosts.caption.devices |  |  | 18,390,320,18
 you |  | none | 0,62,402,778
 you.title |  | You | 18,62,46,40
 you.add | Add Account |  | 18,142,366,46

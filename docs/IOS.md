@@ -41,6 +41,13 @@ already has, marked as not yet confirmed, rather than covering it.
 
 ## From the runtime to a screen
 
+The shell draws the tab somebody is looking at. A tab is built when it is
+first reached for and kept from then on, so coming back finds it as it was
+left; the home's rows, grouped in `RowGroup`, are built as they come near
+the screen. Both are what a cold launch's first frame is made of, and
+building all three tabs and every row for a launch that showed one tab and
+ten rows was most of its time.
+
 `Composition` builds one `RuntimeCoordinator` per process. The coordinator
 starts the installation under Application Support (`amux/installation`),
 reading the phone's own store before any network is dialled, so the first
@@ -250,8 +257,10 @@ state behind it; every picture it takes is of the app. `query` returns what
 is drawn, with accessibility identifiers, labels, values, frames and enabled
 states; `tap`, `type`, `paste` and `scroll` act the way a finger does;
 `pairByCode` and `pair` pair with a machine by the code or link it printed;
-`appearance`, `dynamicType` and `assist` change how the app draws; `settle`
-waits for the screen to stop moving; `capture` photographs it. `connect`
+`appearance`, `dynamicType` and `assist` change how the app draws; `geometry`
+says whether identified elements report their frames, which a tap needs and a
+measurement leaves off; `settle` waits for the screen to stop moving;
+`capture` photographs it. `connect`
 signs the app into a served relay, and `cloud` and `store` script what the
 account service and the App Store answer, for journeys about accounts and
 purchases.

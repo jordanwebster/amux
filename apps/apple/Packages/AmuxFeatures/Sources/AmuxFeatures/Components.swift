@@ -87,7 +87,7 @@ public struct RowGroup<Item: Identifiable, Content: View>: View {
 
     public var body: some View {
         Surface(prominence: prominence) {
-            VStack(spacing: 0) {
+            LazyVStack(spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     row(item)
                     if index < items.count - 1 {

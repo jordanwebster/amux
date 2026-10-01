@@ -118,6 +118,11 @@ public enum DoorRequest: Sendable, Equatable {
     /// it says — so a state that wants to be photographed with them on has to
     /// declare them, exactly as it declares a text size.
     case assist(motion: Bool, transparency: Bool)
+    /// Whether every identified element reports where it is drawn. A driver
+    /// needs the frames to tap; a measurement does not, and producing them
+    /// is a real share of a launch's main thread, so a benchmark launches
+    /// without them and turns them on only for as long as it taps.
+    case geometry(on: Bool)
     /// Every state this build draws, as screen-and-state pairs. What lets a
     /// sweep over the whole app — the accessibility audit is one — cover
     /// whatever has been built today without a second list of it to keep in
@@ -591,7 +596,7 @@ extension DoorRequest: Codable {
         case identifier, text, seconds, qr, agent, base, prose, from, to
         case attachment, name, mime, base64, host, pin
         case note, marks
-        case motion, transparency
+        case motion, transparency, on
         case permission, tier
         case bytes, label, action, direction
     }
@@ -654,6 +659,8 @@ extension DoorRequest: Codable {
             self = .assist(
                 motion: try fields.decode(Bool.self, forKey: .motion),
                 transparency: try fields.decode(Bool.self, forKey: .transparency))
+        case "geometry":
+            self = .geometry(on: try fields.decode(Bool.self, forKey: .on))
         case "perturb":
             self = .perturb(token: try fields.decodeIfPresent(String.self, forKey: .token))
         case "designVariant":
@@ -823,6 +830,9 @@ extension DoorRequest: Codable {
             try fields.encode("assist", forKey: .kind)
             try fields.encode(motion, forKey: .motion)
             try fields.encode(transparency, forKey: .transparency)
+        case .geometry(let on):
+            try fields.encode("geometry", forKey: .kind)
+            try fields.encode(on, forKey: .on)
         case .perturb(let token):
             try fields.encode("perturb", forKey: .kind)
             try fields.encodeIfPresent(token, forKey: .token)

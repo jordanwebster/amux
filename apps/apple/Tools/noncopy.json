@@ -246,6 +246,7 @@
       {"literal": "\"yyyy-MM-dd'T'HH:mm:ss'Z'\"", "context": "formatter.dateFormat = \"yyyy-MM-dd'T'HH:mm:ss'Z'\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Discovery.swift": [
+      {"literal": "\"sh.amux.discovery\"", "context": "nonisolated private static let browsing = DispatchQueue(label: \"sh.amux.discovery\", qos: .utility)", "reason": "Dispatch queue label, not interface copy.", "count": 1},
       {"literal": "\"_amux._udp\"", "context": "public nonisolated static let service = \"_amux._udp\"", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
       {"literal": "\"hid\"", "context": "guard let hid = record[\"hid\"], let host = HostId(hid),", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
       {"literal": "\"v\"", "context": "let claimed = record[\"v\"], let version = UInt32(claimed)", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
@@ -828,6 +829,8 @@
       {"literal": "\"dynamicType\"", "context": "try fields.encode(\"dynamicType\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"states\"", "context": "try fields.encode(\"states\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 2},
       {"literal": "\"assist\"", "context": "try fields.encode(\"assist\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"geometry\"", "context": "case \"geometry\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"geometry\"", "context": "try fields.encode(\"geometry\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"perturb\"", "context": "try fields.encode(\"perturb\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"settle\"", "context": "try fields.encode(\"settle\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"query\"", "context": "try fields.encode(\"query\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},

@@ -72,7 +72,8 @@ LAUNCH_SPACING_SECONDS = 10.0
 # of 0 is a metric with no slack at all; the count metrics are exact.
 BUDGETS: dict[str, tuple[str, str, float, float | None, int]] = {
     "cold first frame": ("ms", "cold", 500, 600, 15),
-    "cold store read": ("ms", "cold", 300, None, 15),
+    "cold store read": ("ms", "cold", 100, None, 15),
+    "cold fleet render": ("ms", "cold", 150, None, 15),
     "reconciliation at 0 ms": ("ms", "reconciliation", 1000, None, 15),
     "reconciliation at 100 ms": ("ms", "reconciliation", 1000, None, 15),
     "streaming hitch time": ("ms/s", "streaming", 5, None, 15),
@@ -184,23 +185,28 @@ class Run:
         for attempt in range(SAMPLES):
             self.journey.quit()
             self.space_launches()
-            self.journey.relaunch()
+            self.journey.relaunch(geometry=False)
             marks = self.await_reconciled(120)
-            for needed in ("firstCachedFrame", "storeReadBegan", "storeReadEnded"):
+            for needed in ("firstCachedFrame", "storeReadBegan", "nodeStarted", "fleetOpenBegan", "storeReadEnded"):
                 if needed not in marks:
                     raise RuntimeError(f"launch {attempt + 1} never marked {needed}; it marked {sorted(marks)}")
+            store_read = (marks["nodeStarted"] - marks["storeReadBegan"]) + (
+                marks["storeReadEnded"] - marks["fleetOpenBegan"]
+            )
             if record_cold:
                 self.samples["cold first frame"].append(marks["firstCachedFrame"])
-                self.samples["cold store read"].append(marks["storeReadEnded"] - marks["storeReadBegan"])
+                self.samples["cold store read"].append(store_read)
+                self.samples["cold fleet render"].append(marks["firstCachedFrame"] - marks["storeReadEnded"])
             if record_reconciliation:
                 self.samples[f"reconciliation at {latency_ms} ms"].append(
                     marks["reconciled"] - marks["storeReadEnded"]
                 )
             self.notes.append(
                 f"launch {attempt + 1} at {latency_ms} ms: images {marks.get('imagesLoaded', 0):.0f}, "
-                f"entered {marks.get('appEntered', 0):.0f}, store {marks['storeReadBegan']:.0f}"
-                f"-{marks['storeReadEnded']:.0f}, first frame {marks['firstCachedFrame']:.0f}, "
-                f"reconciled {marks['reconciled']:.0f} ms"
+                f"entered {marks.get('appEntered', 0):.0f}, built {marks.get('compositionBuilt', 0):.0f}, "
+                f"shell {marks.get('shellPresented', 0):.0f}, node {marks['storeReadBegan']:.0f}"
+                f"-{marks['nodeStarted']:.0f}, fleet {marks['fleetOpenBegan']:.0f}-{marks['storeReadEnded']:.0f}, "
+                f"first frame {marks['firstCachedFrame']:.0f}, reconciled {marks['reconciled']:.0f} ms"
             )
             print(self.notes[-1], flush=True)
 
@@ -217,10 +223,13 @@ class Run:
             self.journey.app({"kind": "assist", "motion": False, "transparency": True})
             self.notes.append("every surface drawn flat (reduce transparency)")
         agent = self.agent_ids[STREAM_AGENT]
+        # Frames only while tapping: the app is measured as it ships.
+        self.journey.geometry(True)
         self.journey.tap("tab.agents")
         self.journey.wait_for(f"home.row.{agent}")
         self.journey.tap(f"home.row.{agent}")
         self.journey.wait_for("chat.field")
+        self.journey.geometry(False)
         deadline = time.monotonic() + 120
         while self.newest_order() is None:
             if time.monotonic() > deadline:
@@ -297,7 +306,7 @@ class Run:
         if self.takes("idle") or self.takes("streaming"):
             self.journey.quit()
             self.space_launches()
-            self.journey.relaunch()
+            self.journey.relaunch(geometry=False)
             self.await_reconciled(120)
             self.open_the_conversation()
             if self.takes("idle"):

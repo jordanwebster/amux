@@ -5,14 +5,6 @@ home.subtitle |  | Nothing paired yet | 18,105,130,16
 home.empty.firstRun |  | No agents yet | 18,161,162,32
 home.empty.explain |  |  | 18,201,291,18
 home.empty.howToPair |  |  | 18,237,360,37
-hosts |  | 0 reachable | 0,62,402,778
-hosts.title |  | Hosts | 18,72,69,32
-hosts.subtitle |  | 0 reachable | 18,105,79,16
-hosts.empty |  | No hosts yet | 18,137,360,113
-hosts.empty.howToPair |  |  | 18,213,360,37
-hosts.fact.identity | <volatile>
-hosts.fact.paired-devices | Paired Devices, 0 | 0 | 18,336,366,46
-hosts.caption.devices |  |  | 18,390,320,18
 you |  | ada@example.com | 0,62,402,778
 you.title |  | You | 18,62,46,40
 account.ada@example.com | ada, ada@example.com | selected | 32,142,338,58

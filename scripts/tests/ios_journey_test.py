@@ -29,6 +29,11 @@ def element(identifier, x=0.0, y=0.0, width=10.0, height=10.0, label=None, value
 
 
 class Launching(unittest.TestCase):
+    def test_a_measured_launch_leaves_element_geometry_off(self):
+        arguments = phone.launch_arguments({"hosts": []}, "phone-reach", [DESK], 4711, geometry=False)
+        self.assertNotIn("-amux-element-geometry", arguments)
+        self.assertEqual(arguments[:2], ["-amux-door-port", "4711"])
+
     def test_a_launch_names_its_door_scope_found_machines_and_loopback_links(self):
         arguments = phone.launch_arguments({"hosts": []}, "phone-reach", [DESK], 4711)
         self.assertEqual(
