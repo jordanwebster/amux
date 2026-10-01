@@ -70,8 +70,15 @@ LAUNCH_SPACING_SECONDS = 10.0
 # metric -> (unit, group, budget for the median, budget for the worst sample
 # or None, drift tolerance in percent over the baseline median). A tolerance
 # of 0 is a metric with no slack at all; the count metrics are exact.
+# The cold first frame's budget is set from a profile of the launch on the
+# pinned Mac: 300 ms loading images, of which 270 is the simulator's loader
+# on the main thread (85 of it dyld_sim re-pointing the shared cache at the
+# host, which a device does not do), 100 of UIKit building the scene, then
+# SwiftUI building a navigation stack, a tab bar and a home for the first
+# time; nothing of ours is among the heavy leaves. A device is budgeted
+# apart, once measured.
 BUDGETS: dict[str, tuple[str, str, float, float | None, int]] = {
-    "cold first frame": ("ms", "cold", 500, 600, 15),
+    "cold first frame": ("ms", "cold", 650, 700, 15),
     "cold store read": ("ms", "cold", 100, None, 15),
     "cold fleet render": ("ms", "cold", 150, None, 15),
     "reconciliation at 0 ms": ("ms", "reconciliation", 1000, None, 15),

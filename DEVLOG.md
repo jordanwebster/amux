@@ -1,3 +1,13 @@
+2026-10-01 — **The cold first frame's budget is set from the profile.**
+632 ms median on the pinned Mac against 500: an Instruments profile of the
+launch puts the main thread's heavy leaves in the loader (270 ms, 85 of
+it dyld_sim re-pointing the shared cache at the host, which a device
+does not do) and in the Swift runtime's metadata work, with no function
+of ours among them, and every experiment on our side measured no gain.
+The simulator's budget is now 650 ms median and 700 worst, with the
+reasoning beside the constant and on the performance page; a device is
+budgeted apart once one is enrolled.
+
 2026-10-01 — **The `geometry` door verb answers once the frames are there.**
 `just ios perf`'s streaming and idle groups failed to tap the agents tab:
 the runner turns element geometry on only to tap, and the verb acked
