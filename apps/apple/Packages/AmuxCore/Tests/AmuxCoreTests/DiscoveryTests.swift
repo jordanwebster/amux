@@ -165,6 +165,12 @@ final class DiscoveryTests: XCTestCase {
 
         browser.discovery.saw([browser.sighting(routes: ["wifi"])])
         XCTAssertEqual(browser.lookups.map(\.route), ["wifi"])
+
+        // Nor does its state lift a refusal the current browser stands by.
+        let denied = NWError.dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied))
+        browser.discovery.browserSaid(.waiting(denied))
+        browser.discovery.browserSaid(.ready, browse: stale)
+        XCTAssertEqual(browser.discovery.permission, .denied)
     }
 
     @MainActor

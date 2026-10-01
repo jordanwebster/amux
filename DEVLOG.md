@@ -1,3 +1,9 @@
+2026-10-01 — **A stopped browser's state is ignored like its sightings.**
+The browse token the sightings carry now guards what a browser says of
+its state too, so a cancelled browser's late report cannot lift or
+set the local-network refusal the current one stands by. Third Codex
+pass; unit test.
+
 2026-10-01 — **A report from a browser that was stopped is ignored.**
 The browser reports off the main thread since the cold-launch work and
 its reports hop to the main actor; one in flight when browsing stops

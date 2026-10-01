@@ -134,7 +134,7 @@ public final class LocalDiscovery {
         let browser = NWBrowser(
             for: .bonjourWithTXTRecord(type: Self.service, domain: nil), using: parameters)
         browser.stateUpdateHandler = { state in
-            Task { @MainActor in self.browserSaid(state) }
+            Task { @MainActor in self.browserSaid(state, browse: browse) }
         }
         browser.browseResultsChangedHandler = { results, _ in
             let sightings = results.map { result in
@@ -173,6 +173,12 @@ public final class LocalDiscovery {
     /// a browser that is ready takes the refusal back: the waits and
     /// cancellations that follow a refusal say nothing new about it.
     func browserSaid(_ state: NWBrowser.State) {
+        browserSaid(state, browse: browse)
+    }
+
+    /// What a browser said of its state, taken only from the current one.
+    func browserSaid(_ state: NWBrowser.State, browse: Int) {
+        guard browse == self.browse else { return }
         let said = Self.permission(for: state)
         guard said != .unknown || permission != .denied else { return }
         permission = said
