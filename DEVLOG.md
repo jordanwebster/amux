@@ -1,3 +1,13 @@
+2026-10-01 — **The packaged bridge's linkage smoke speaks the current bridge.**
+`just ios scope-audit` built the shipping framework and then failed to
+compile the smoke that links it: it still called the bridge the phone had
+before the runtime rewrite (`amux_app_version`, `amux_app_start` with an
+account configuration and a plaintext relay to refuse). It now proves the
+same three things against the bridge as it is: the version carries no
+driving marker, an installation starts from the shipping library with
+nothing listening, and the entry only a driving build answers, offering
+a pairing code, is refused.
+
 2026-10-01 — **The chat's rows are a UIKit leaf that owns their heights, and the stream is back under budget.**
 `just ios perf`'s streaming group had the main thread at 99.9% and the
 chat at eighteen frames a second (hitch 694 ms/s against 5): the feed
