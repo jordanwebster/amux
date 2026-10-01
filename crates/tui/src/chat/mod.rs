@@ -2633,12 +2633,13 @@ fn pinned(
         }
     }
     let key = prompt?;
-    // A prompt whose own block starts on screen below the top is its own
-    // landmark: pinning it too would draw it twice.
+    // A prompt whose first line of words is still on screen is its own
+    // landmark: pinning it too would draw it over itself. Only the block's
+    // top padding line may have scrolled off.
     if let Some(first) = owners
         .iter()
         .position(|block| block.is_some_and(|block| laid.blocks[block].key == key))
-        && first > 0
+        && (first > 0 || laid.top_offset <= 1)
     {
         return None;
     }

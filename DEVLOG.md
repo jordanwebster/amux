@@ -1,3 +1,11 @@
+2026-10-01 — **Clicking the pinned prompt shows the whole prompt.** The pin
+stood aside only for a prompt whose block started below the feed's top
+line, so jumping to a prompt (which puts its block at that top line) left
+the pin drawn over the prompt's first line. A prompt whose first line of
+words is on screen is now its own landmark: the pin shows only once those
+words have scrolled off, so after a click the whole block sits at the top,
+pin gone, and it does not come back at that position.
+
 2026-10-01 — **Folding while following keeps following.** Opening or folding
 a stretch, step or plan holds the screen's top line only when the reader
 has scrolled up; at the newest row the feed keeps following, so no Jump to
