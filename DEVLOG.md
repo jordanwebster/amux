@@ -1,3 +1,7 @@
+2026-10-01 — **The phone's baseline is re-recorded after the handshake change.**
+Every budget met; reconciliation through the relay at 100 ms now
+baselines near 1,000 ms, the rest within noise.
+
 2026-10-01 — **A stream's handshake leaves with its preface on every route.**
 Through the relay each stream waited a full round trip to be accepted
 before the phone sent its handshake's first flight. No opener waits now:
