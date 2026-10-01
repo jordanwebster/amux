@@ -1,3 +1,10 @@
+2026-10-01 — **A sent message shows what was pasted.** Pasted text stays a
+chip in the draft, but once sent the message shows the text itself where
+the chip was, line for line and unrendered; past eight lines it is cut with
+"… N more lines [Show All]" and opens to end with "[Show Less]". The
+attachment view now carries pasted text's content. The lab can seed pasted
+text in a draft, and its composer-states scenario has a pasted panic log.
+
 2026-10-01 — **A chip is followed by a space.** Pasting or attaching puts a
 real space after the chip in the draft unless whitespace already follows,
 as a chat app does after a mention, so two chips or a chip and the next

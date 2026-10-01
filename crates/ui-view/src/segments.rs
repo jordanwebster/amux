@@ -19,9 +19,12 @@ pub enum Segment {
 pub enum AttachmentView {
     Image(BlobRef),
     File(BlobRef),
+    /// Pasted text: its name, its length in lines, and the text itself,
+    /// which a sent message shows in place of the chip.
     Text {
         name: String,
         lines: u32,
+        text: String,
     },
     Review {
         patch: Option<BlobRef>,
@@ -39,6 +42,7 @@ impl AttachmentView {
             Some(Of::Text(text)) => AttachmentView::Text {
                 name: text.name.clone(),
                 lines: text.text.lines().count() as u32,
+                text: text.text.clone(),
             },
             Some(Of::Review(review)) => AttachmentView::Review {
                 patch: review.diff.as_ref().and_then(|diff| diff.patch.clone()),

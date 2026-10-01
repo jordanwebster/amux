@@ -183,12 +183,15 @@ pub struct DraftSpec {
 }
 
 /// A pasted file: its name (an image by its extension) and its size in
-/// bytes.
+/// bytes; or, with `text`, pasted text under that name.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AttachSpec {
     pub name: String,
+    #[serde(default)]
     pub size: u64,
+    #[serde(default)]
+    pub text: Option<String>,
 }
 
 /// How the lab's link treats a prompt sent to an agent, to show the

@@ -1,4 +1,4 @@
-description: The composer when something stands in the way, and a draft with attachments. An agent that exited (type and Enter resumes it, or Enter alone); one at its usage limit (sending still works); Claude and Codex agents signed out of their accounts; and a draft holding a screenshot and a log.
+description: The composer when something stands in the way, and drafts with attachments. An agent that exited (type and Enter resumes it, or Enter alone); one at its usage limit (sending still works); Claude and Codex agents signed out of their accounts; a draft holding a screenshot and a log; and one holding a pasted panic log, which the sent message shows as text.
 local_host: laptop
 cwd: ~/source/amux
 open: chips
@@ -77,4 +77,44 @@ agents:
       - turn: { took: 1m }
     reply:
       - say: "Looking at it: {prompt}"
+      - turn: {}
+  - id: paste
+    name: relay panic
+    kind: claude_sdk
+    ago: 6m
+    model: opus
+    draft:
+      text: "The relay panicked overnight; here's the log: "
+      attach:
+        - name: pasted-1
+          text: |
+            2026-10-01T03:12:04Z INFO  relay: tunnel 7f3a opened from studio
+            2026-10-01T03:12:04Z INFO  relay: tunnel 7f3b opened from laptop
+            2026-10-01T03:14:31Z WARN  relay: tunnel 7f3a quiet for 60s
+            2026-10-01T03:15:01Z WARN  relay: tunnel 7f3a quiet for 90s, closing
+            2026-10-01T03:15:01Z INFO  relay: tunnel 7f3a closed (idle)
+            2026-10-01T03:15:02Z ERROR relay: frame for closed tunnel 7f3a
+            thread 'relay-io-3' panicked at crates/relay/src/tunnel.rs:212:9:
+            called `Option::unwrap()` on a `None` value
+            stack backtrace:
+               0: rust_begin_unwind
+               1: core::panicking::panic_fmt
+               2: core::panicking::panic
+               3: core::option::unwrap_failed
+               4: relay::tunnel::Tunnel::forward
+                         at ./crates/relay/src/tunnel.rs:212:9
+               5: relay::tunnel::run::{{closure}}
+                         at ./crates/relay/src/tunnel.rs:140:17
+               6: tokio::runtime::task::core::Core<T,S>::poll
+               7: tokio::runtime::task::harness::Harness<T,S>::poll
+            note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+            2026-10-01T03:15:02Z ERROR relay: worker relay-io-3 exited; restarting
+            2026-10-01T03:15:03Z INFO  relay: worker relay-io-3 started
+    transcript:
+      - boundary: started
+      - user: Watch the relay overnight and tell me if anything breaks.
+      - say: I'll check the logs in the morning.
+      - turn: { took: 30s }
+    reply:
+      - say: "The panic is a frame arriving for a tunnel the idle timer already closed."
       - turn: {}

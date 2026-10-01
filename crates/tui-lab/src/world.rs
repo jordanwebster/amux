@@ -468,6 +468,14 @@ impl World {
             .attach
             .iter()
             .map(|file| {
+                if let Some(text) = &file.text {
+                    return wire::Attachment {
+                        of: Some(wire::attachment::Of::Text(wire::InlineText {
+                            name: file.name.clone(),
+                            text: text.clone(),
+                        })),
+                    };
+                }
                 let image = ["png", "jpg", "jpeg", "gif", "webp"]
                     .iter()
                     .any(|ext| file.name.to_lowercase().ends_with(ext));

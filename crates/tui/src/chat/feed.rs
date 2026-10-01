@@ -14,7 +14,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_state::Key;
 use ui_view::{
-    AnswerView, AskRow, DecisionView, FileChangeView, PlanVerdict, QuestionView, Resolution, Row,
+    AnswerView, AskRow, AttachmentView, DecisionView, FileChangeView, PlanVerdict, QuestionView, Resolution, Row,
     RowKind, RunInfo, Segment, Stretch, StretchCounts, ToolStateView,
 };
 
@@ -161,7 +161,7 @@ pub fn row_lines(
         }
         Placement::Plain => match &row.kind {
             RowKind::Prompt { text, steered } => {
-                prompt(&mut drawn, row, text, *steered, width, theme)
+                prompt(&mut drawn, row, text, *steered, expanded, width, theme)
             }
             RowKind::Prose {
                 text, streaming, ..
@@ -344,6 +344,7 @@ fn prompt(
     row: &Row,
     words: &[Segment],
     steered: bool,
+    open: bool,
     width: usize,
     theme: Theme,
 ) {
@@ -352,17 +353,29 @@ fn prompt(
     } else {
         clock(row.at_ms)
     };
-    prompt_block(drawn, words, &when, width, theme);
+    prompt_block(drawn, words, &when, Some((&row.id, open)), width, theme);
 }
 
+/// Lines of pasted text a sent message shows before cutting it.
+const PASTE_LINES: usize = 8;
+
 /// Your message's block with `when` at the right of its first line.
-fn prompt_block(drawn: &mut Drawn, words: &[Segment], when: &str, width: usize, theme: Theme) {
+/// `toggle` is the row a long paste's [Show All] opens and whether it is
+/// open; without one (a message still on its way) a long paste stays cut.
+fn prompt_block(
+    drawn: &mut Drawn,
+    words: &[Segment],
+    when: &str,
+    toggle: Option<(&Key, bool)>,
+    width: usize,
+    theme: Theme,
+) {
     let surface = theme.user_surface();
     drawn.line(tinted(Line::default(), surface, width));
     let inner = width.saturating_sub(2 * EDGE);
     let inset = WORDS - EDGE;
     let room = inner.saturating_sub(2 * inset + text::str_width(when) + 2);
-    for (i, words) in segment_lines(words, room, theme.text(), theme)
+    for (i, (words, hit)) in message_lines(words, room, toggle, theme)
         .into_iter()
         .enumerate()
     {
@@ -371,10 +384,89 @@ fn prompt_block(drawn: &mut Drawn, words: &[Segment], when: &str, width: usize, 
         if i == 0 {
             push_right(&mut line, when, theme.faint(), inner - inset);
         }
-        drawn.line(tinted(line, surface, width));
+        let line = tinted(line, surface, width);
+        match hit {
+            Some(hit) => drawn.hit_line(line, hit),
+            None => drawn.line(line),
+        }
     }
     drawn.line(tinted(Line::default(), surface, width));
     drawn.blank();
+}
+
+/// A sent message's words: text and chips as written, but pasted text as
+/// the text itself, where its chip was, line for line in the message's
+/// ink (it is what was pasted, so nothing is rendered). A paste longer
+/// than PASTE_LINES is cut with "… N more lines [Show All]"; opened, it
+/// ends with "[Show Less]".
+fn message_lines(
+    words: &[Segment],
+    room: usize,
+    toggle: Option<(&Key, bool)>,
+    theme: Theme,
+) -> Vec<(Line<'static>, Option<FeedHit>)> {
+    let room = room.max(1);
+    let mut out: Vec<(Line<'static>, Option<FeedHit>)> = Vec::new();
+    let mut run: Vec<Segment> = Vec::new();
+    let flush = |run: &mut Vec<Segment>, out: &mut Vec<(Line<'static>, Option<FeedHit>)>| {
+        // The space a chip leaves after itself is not a line of its own.
+        let blank = run.iter().all(|segment| match segment {
+            Segment::Text(text) => text.trim().is_empty(),
+            Segment::Attachment(_) => false,
+        });
+        if !blank {
+            out.extend(
+                segment_lines(run, room, theme.text(), theme)
+                    .into_iter()
+                    .map(|line| (line, None)),
+            );
+        }
+        run.clear();
+    };
+    let open = toggle.is_some_and(|(_, open)| open);
+    let hit = || toggle.map(|(key, _)| FeedHit::Step(key.clone()));
+    for segment in words {
+        let Segment::Attachment(AttachmentView::Text { text: pasted, .. }) = segment else {
+            run.push(segment.clone());
+            continue;
+        };
+        flush(&mut run, &mut out);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for raw in pasted.trim_end_matches('\n').split('\n') {
+            if raw.trim().is_empty() {
+                lines.push(Line::default());
+                continue;
+            }
+            for piece in text::wrap(raw, room) {
+                lines.push(Line::from(Span::styled(piece, theme.text())));
+            }
+        }
+        let long = lines.len() > PASTE_LINES;
+        if long && !open {
+            let hidden = lines.len() - PASTE_LINES;
+            lines.truncate(PASTE_LINES);
+            out.extend(lines.into_iter().map(|line| (line, None)));
+            let s = if hidden == 1 { "" } else { "s" };
+            let mut more = Line::default();
+            push(&mut more, format!("… {hidden} more line{s} "), theme.faint(), room);
+            if toggle.is_some() {
+                push(&mut more, "[Show All]", theme.muted(), room);
+            }
+            out.push((more, hit()));
+        } else {
+            out.extend(lines.into_iter().map(|line| (line, None)));
+            if long {
+                let mut less = Line::default();
+                push(&mut less, "[Show Less]", theme.muted(), room);
+                out.push((less, hit()));
+            }
+        }
+    }
+    flush(&mut run, &mut out);
+    if out.is_empty() {
+        out.push((Line::default(), None));
+    }
+    out
 }
 
 /// A line of the queue block, and where its controls are, by columns.
@@ -459,7 +551,7 @@ fn one_line(words: &[Segment]) -> String {
 /// while the link is down.
 pub fn pending_prompt(words: &[Segment], when: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
     let mut drawn = Drawn::default();
-    prompt_block(&mut drawn, words, when, width, theme);
+    prompt_block(&mut drawn, words, when, None, width, theme);
     drawn.lines
 }
 
@@ -741,6 +833,7 @@ fn questions_step(
             drawn,
             row,
             &[Segment::Text(words.to_owned())],
+            false,
             false,
             width,
             theme,
