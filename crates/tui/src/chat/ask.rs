@@ -351,6 +351,9 @@ impl AskUi {
             AskBody::Question(questions) => {
                 self.picks = vec![QuestionPick::default(); questions.len()];
                 self.other.secret = questions.first().is_some_and(|q| q.secret);
+                self.noting = questions
+                    .first()
+                    .is_some_and(|q| q.options.is_empty() && q.allow_other);
             }
             AskBody::Form { schema_json, .. } => {
                 self.fields = form_fields(schema_json);
@@ -358,6 +361,9 @@ impl AskUi {
                 // arrive sorted), so what must be given comes first.
                 self.fields.sort_by_key(|field| !field.required);
                 self.picks = vec![QuestionPick::default(); self.fields.len()];
+                self.noting = form_questions(&self.fields)
+                    .first()
+                    .is_some_and(|q| q.options.is_empty() && q.allow_other);
             }
             _ => {}
         }
@@ -1625,6 +1631,8 @@ impl AskUi {
                 return self.box_send(card, self.selected);
             }
             KeyCode::Tab if self.on_noted_deny(card) => self.noting = true,
+            // Esc only points at the way out, the refusal; Enter takes it.
+            KeyCode::Esc => self.selected = count.saturating_sub(1),
             KeyCode::Char('f') => match card.body {
                 AskBody::Edit { .. } => return Self::full_diff(card),
                 // The plan is in the feed, whole.
@@ -1939,6 +1947,9 @@ impl AskUi {
                 }
             } else {
                 push(&mut row, said, ink, width);
+                if deny {
+                    push(&mut row, "  esc", theme.faint(), width);
+                }
                 if deny && choice.takes_note {
                     push(&mut row, " · tab to add a note", theme.faint(), width);
                 }
@@ -2095,7 +2106,10 @@ impl AskUi {
             (_, Some(first)) => *first as usize,
             _ => 0,
         };
-        self.noting = false;
+        // A tab that is only a text field has it live from the start.
+        let question = &questions[self.step];
+        self.noting = question.options.is_empty() && question.allow_other;
+        self.invalid = false;
         self.other = Editor::default();
         self.other.secret = questions[self.step].secret;
         if let Some(other) = &pick.other {
@@ -2223,6 +2237,19 @@ impl AskUi {
         let count = questions.len();
         let several = count > 1;
         let enter = key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT);
+        // Tab and Shift+Tab move between tabs from anywhere, a field's
+        // text included, skipping what is not answered.
+        match key.code {
+            KeyCode::Tab if several => {
+                self.question_goto(questions, (self.step + 1).min(count));
+                return AskAction::None;
+            }
+            KeyCode::BackTab if several => {
+                self.question_goto(questions, self.step.saturating_sub(1));
+                return AskAction::None;
+            }
+            _ => {}
+        }
         if self.in_review(questions) {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
@@ -2236,14 +2263,30 @@ impl AskUi {
             }
             return AskAction::None;
         }
-        let rows = QuestionRows::of(&questions[self.step]);
+        let question = &questions[self.step];
+        let rows = QuestionRows::of(question);
         let last = rows.reply;
+        // A tab that is only a text field has it live; ↓ steps out to the
+        // way out and ↑ back in.
+        let text_only = question.options.is_empty() && rows.other.is_some();
         if self.on_something_else(questions) {
             match key.code {
                 KeyCode::Esc => {
+                    let empty = self.other.text().is_empty();
                     self.other = Editor::default();
-                    self.noting = false;
                     self.picks[self.step].other = None;
+                    self.invalid = false;
+                    if !text_only {
+                        self.noting = false;
+                    } else if empty {
+                        // An empty live field: Esc points at the way out.
+                        self.noting = false;
+                        self.selected = last;
+                    }
+                }
+                KeyCode::Down if text_only => {
+                    self.noting = false;
+                    self.selected = last;
                 }
                 _ if enter => {
                     if self.other.text().trim().is_empty() {
@@ -2261,19 +2304,25 @@ impl AskUi {
         match key.code {
             KeyCode::Left if several => self.question_goto(questions, self.step.saturating_sub(1)),
             KeyCode::Right if several => self.question_goto(questions, self.step + 1),
-            KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.selected = self.selected.saturating_sub(1);
+                if text_only {
+                    self.noting = true;
+                }
+            }
             KeyCode::Down | KeyCode::Char('j') => self.selected = (self.selected + 1).min(last),
-            // "Reply instead" is not numbered: digits reach the options
-            // and "Something else" only.
+            // The way out is not numbered: digits reach the options and
+            // "Something else" only.
             KeyCode::Char(c @ '1'..='9') => {
                 let at = c as usize - '1' as usize;
                 if at < last {
                     return self.question_row(card, questions, at, false);
                 }
             }
-            KeyCode::Tab if self.on_other_row(questions) => self.noting = true,
+            // Esc only points at the way out; Enter takes it.
+            KeyCode::Esc => self.selected = last,
             KeyCode::Char('f')
-                if questions[self.step]
+                if question
                     .options
                     .iter()
                     .any(|option| !option.preview.is_empty()) =>
@@ -2328,7 +2377,12 @@ impl AskUi {
             AskBody::Link { .. }
                 if matches!(card.state, CardState::Open | CardState::Rejected(_)) =>
             {
-                return Some(format!("enter choose · ctrl+x stop · ctrl+{leader} more"));
+                let enter = if self.selected == 2 {
+                    "enter decline"
+                } else {
+                    "enter choose"
+                };
+                return Some(format!("{enter} · ctrl+x stop · ctrl+{leader} more"));
             }
             AskBody::Unanswerable { .. } => {
                 return Some(if self.attach {
@@ -2358,16 +2412,25 @@ impl AskUi {
                 "enter send{tabs} · ctrl+x stop · ctrl+{leader} more"
             ));
         }
+        let form = matches!(card.body, AskBody::Form { .. });
         if self.on_something_else(questions) {
-            return Some("enter answer · esc clear · ctrl+x stop".into());
+            // Typing: ←/→ are the text's, Tab still changes tabs.
+            let enter = match (several, form) {
+                (true, _) => "enter answer",
+                (false, true) => "enter submit",
+                (false, false) => "enter send",
+            };
+            let tab = if several { " · tab next" } else { "" };
+            return Some(format!("{enter}{tab} · esc clear · ctrl+x stop"));
         }
         if self.on_other_row(questions) {
-            return Some(format!("tab type{tabs} · ctrl+x stop · ctrl+{leader} more"));
+            return Some(format!(
+                "enter to type{tabs} · ctrl+x stop · ctrl+{leader} more"
+            ));
         }
         if self.selected == QuestionRows::of(&questions[self.step]).reply {
-            return Some(format!(
-                "enter reply{tabs} · ctrl+x stop · ctrl+{leader} more"
-            ));
+            let enter = if form { "enter decline" } else { "enter reply" };
+            return Some(format!("{enter}{tabs} · ctrl+x stop · ctrl+{leader} more"));
         }
         // What Enter does next: send a lone question, or move on to the next
         // unanswered one, or to the review when none is left.
@@ -2881,16 +2944,42 @@ impl AskUi {
                 out.lines.push(row);
             }
         }
-        if let Some(at) = rows.other {
+        if let Some(at) = rows.other.filter(|_| question.options.is_empty()) {
+            // A tab that is only a text field: the field itself, live.
+            let lit = self.selected == at;
+            let mut row = Line::default();
+            push(
+                &mut row,
+                if lit { "› " } else { "  " },
+                theme.accent(),
+                width,
+            );
+            let typed = if question.secret {
+                "•".repeat(self.other.text().chars().count())
+            } else {
+                self.other.text().to_owned()
+            };
+            let col = text::line_width(&row);
+            let shown = text_tail(&typed, width.saturating_sub(col + 1));
+            if shown.is_empty() && !(lit && self.noting) {
+                push(&mut row, "type an answer", theme.faint(), width);
+            } else {
+                push(&mut row, shown.clone(), theme.bright(), width);
+            }
+            if lit && self.noting {
+                out.cursor = Some((out.lines.len(), col + text::str_width(&shown)));
+                if self.invalid {
+                    push(&mut row, " · a number", theme.faint(), width);
+                }
+            }
+            out.spots
+                .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
+            out.lines.push(row);
+        } else if let Some(at) = rows.other {
             let lit = self.selected == at;
             let mut row = row_line(at, lit);
             let ink = if lit { theme.bright() } else { theme.text() };
-            // With no options, typing is the answer, not something else.
-            let name = if question.options.is_empty() {
-                "Type an answer"
-            } else {
-                "Something else"
-            };
+            let name = "Something else";
             let typed = if question.secret {
                 "•".repeat(self.other.text().chars().count())
             } else {
@@ -2911,7 +3000,7 @@ impl AskUi {
             } else {
                 push(&mut row, name, ink, width);
                 if lit {
-                    push(&mut row, " · tab to type", theme.faint(), width);
+                    push(&mut row, " · enter to type", theme.faint(), width);
                 }
             }
             out.spots
@@ -2935,6 +3024,7 @@ impl AskUi {
             if lit { theme.bright() } else { theme.faint() },
             width,
         );
+        push(&mut row, "  esc", theme.faint(), width);
         out.spots
             .push((out.lines.len(), (0, width), BoxSpot::Choice(rows.reply)));
         out.lines.push(row);
@@ -3105,6 +3195,7 @@ impl AskUi {
             KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => self.selected = (self.selected + 1).min(2),
             KeyCode::Char(c @ '1'..='2') => return self.link_act(card, c as usize - '1' as usize),
+            KeyCode::Esc => self.selected = 2,
             KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
                 return self.link_act(card, self.selected);
             }
@@ -3190,6 +3281,7 @@ impl AskUi {
             if lit { theme.bright() } else { theme.faint() },
             width,
         );
+        push(&mut row, "  esc", theme.faint(), width);
         out.spots
             .push((out.lines.len(), (0, width), BoxSpot::Choice(2)));
         out.lines.push(row);

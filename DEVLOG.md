@@ -1,3 +1,14 @@
+2026-10-01 — **One key model for every ask box.** Tab and Shift+Tab change
+tabs from anywhere (a field's text included, skipping without answering),
+←/→ change them except while typing, and Enter on an answer moves on. A
+free-form option opens on Enter ("Something else · enter to type"). A tab
+that is only a text field (form text and numbers, Codex's free-text and
+secret questions, a one-field form) is live from the start, with ↓ to the
+way out and ↑ back. Each box has one way out, marked with a faint `esc`:
+"Reply instead" for the agent's questions, "Decline" for a tool server's
+form or link, the "No" of a permission or grant. Esc points at it without
+acting (Enter takes it), clears an open field, and never interrupts.
+
 2026-10-01 — **Every ask now uses the composer's box.** Forms from tool
 servers ask each field as a question tab (choices, Yes / No, checkboxes,
 typed values with numbers checked), mark required fields, review field →
