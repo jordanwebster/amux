@@ -107,7 +107,7 @@ struct CloudLinkServerInner {
 struct RelayUser {
     routing: Arc<RoutingCore>,
     channels: Arc<ChannelPool>,
-    incoming_streams_tx: mpsc::Sender<(HostId, crate::link::ByteStream)>,
+    incoming_streams_tx: mpsc::Sender<crate::link::InboundStream>,
     drain: JoinHandle<()>,
 }
 

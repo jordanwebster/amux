@@ -1,3 +1,27 @@
+2026-10-01 — **Reconciliation over a slow network takes four round trips.**
+`just ios perf`'s reconciliation at 100 ms each way: 1,986 ms against
+1,000. The links' logs, with the served machines' side, read as nine
+round trips a host: QUIC with a Retry, Hello, a stream opened and waited
+on, a TLS handshake inside it, the inventory, then a stream, a wait and a
+handshake per agent before each session. A stream to a paired host over
+a direct QUIC link of our own is now plain (`StreamPreface.plain`): the
+link authenticated both ends, so the stream carries no handshake and the
+opener does not wait to be accepted; its first bytes leave with the
+preface, and a refusal is read, as `UNAVAILABLE`, instead of answered
+at the open. The acceptor honours it only on a direct link from a host in
+its trust store; a relay forwards every stream with it cleared and still
+waits for acceptance, so a refusal keeps its reason. One Session channel
+per host carries every agent's subscription, and the agents the store
+remembers of a host are subscribed in the same flight as its inventory,
+confirmed by the inventory's CaughtUp; a generation change stops them
+under the store lock so every chat sees its Reset. The test gate now
+passes datagrams in the order they came: held each on its own timer,
+two sent in the same millisecond swapped places, and a packet that
+overtook the handshake it followed was dropped and counted lost, which
+the new path statistics in the Hello logs showed as one extra round
+trip on one host of three. Reconciliation at 100 ms: 760 ms median,
+762 worst, from 1,986.
+
 2026-10-01 — **A cold launch builds what it shows.**
 `just ios perf`'s cold group: first frame 896 ms against 500, with the
 store read reported at 265. Marks now cut the launch where it bends

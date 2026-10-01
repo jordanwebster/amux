@@ -198,7 +198,7 @@ pub struct Edge {
     routing: Arc<RoutingCore>,
     channels: Arc<ChannelPool>,
     connections: Arc<ConnectionManager>,
-    incoming_streams_tx: mpsc::Sender<(HostId, crate::link::ByteStream)>,
+    incoming_streams_tx: mpsc::Sender<crate::link::InboundStream>,
     pair_mode: Arc<PairMode>,
     pending: admin::PendingPairs,
     reachability: ReachabilityLinkConnector,
@@ -549,15 +549,14 @@ impl Edge {
         self.connections.channel_to(host).await
     }
 
-    /// A PeerService client for one of a host's agents, on a channel of its
-    /// own so that agent's subscription neither waits behind nor holds up
-    /// the host's other calls.
+    /// A PeerService client for a host's sessions, on a channel of their
+    /// own so that their subscriptions neither wait behind nor hold up the
+    /// host's other calls.
     pub async fn session_peer(
         &self,
         host: HostId,
-        agent: crate::AgentId,
     ) -> Result<crate::PeerClient, crate::link::ChannelError> {
-        let channel = self.connections.session_channel_to(host, agent).await?;
+        let channel = self.connections.session_channel_to(host).await?;
         Ok(crate::link::peer_client(channel))
     }
 

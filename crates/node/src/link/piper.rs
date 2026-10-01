@@ -63,8 +63,20 @@ impl Piper {
             return refuse(&mut incoming, pb::StreamRefusal::PaymentRequired).await;
         }
 
+        // The opener's handshake rides inside the stream, whatever its
+        // preface claims: a relay vouches for nobody.
+        let preface = pb::StreamPreface {
+            dst: preface.dst,
+            plain: false,
+        };
         let outgoing = match outgoing.open_stream(preface).await {
-            Ok(stream) => stream,
+            Ok(mut stream) => match stream.accepted().await {
+                Ok(()) => stream,
+                Err(OpenError::Refused(reason)) => return refuse(&mut incoming, reason).await,
+                Err(OpenError::LinkClosed | OpenError::Io(_)) => {
+                    return refuse(&mut incoming, pb::StreamRefusal::NoRoute).await;
+                }
+            },
             Err(OpenError::Refused(reason)) => return refuse(&mut incoming, reason).await,
             Err(OpenError::LinkClosed | OpenError::Io(_)) => {
                 return refuse(&mut incoming, pb::StreamRefusal::NoRoute).await;
@@ -216,6 +228,7 @@ mod tests {
     ) {
         let preface = pb::StreamPreface {
             dst: destination.as_bytes().to_vec(),
+            plain: false,
         };
         let opening = tokio::spawn({
             let preface = preface.clone();

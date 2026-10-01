@@ -259,7 +259,7 @@ class PhoneJourney:
         # The served machines say what they did with each link and stream, so
         # a reconciliation that took longer than its round trips can be read
         # from their side too; a caller's own filter wins.
-        self.env.setdefault("RUST_LOG", "info,node::link=debug,node::services::reachability=debug,node::routing=debug,node::sources=debug")
+        self.env.setdefault("RUST_LOG", "info,node::link=debug,node::services::reachability=debug,node::routing=debug,node::sources=debug,node::dispatcher=debug")
         self.process = subprocess.Popen(
             [str(TESTNET), "serve", str(topology), "--root-in", str(self.scratch)],
             cwd=ROOT,

@@ -11,7 +11,11 @@
 //! absorb and a rewound origin never shows stale rows as current.
 //!
 //! Every replica agent of a ready host may have one source: one Subscribe
-//! to the origin. With no block it asks for a tail of K, with one for what
+//! to the origin. The agents the store remembers of a host get theirs as
+//! the host's inventory is subscribed, in the same flight, so a launch
+//! reconciles in one round trip to each host rather than two; the
+//! inventory's CaughtUp confirms them, and drops any for an agent the host
+//! no longer lists. With no block it asks for a tail of K, with one for what
 //! came after its cursor, capped at K; the origin answers a delta when it
 //! fits and a Reset and a fresh tail otherwise. The source holds a
 //! catch-up until the origin's CaughtUp and then absorbs it in one go, so
@@ -387,9 +391,44 @@ impl ProfileRuntime {
     /// The host's inventory reached CaughtUp: compare its generation, write
     /// what it lists and drop what it no longer does, all under one store
     /// lock, then mark the host ready under a new session.
+    /// Begins a host's inventory session: the number its sources are keyed
+    /// by until its stream ends. Under the `Listed` policy this also opens
+    /// a source for every agent the store remembers of the host, so their
+    /// subscriptions leave with the inventory's; the session is confirmed
+    /// when the inventory catches up, and an agent it no longer lists is
+    /// dropped then, source and all. A source that ends before that, as
+    /// on a link that flaps, is not retried, since the session is not yet
+    /// current; the sweep after the catch-up opens it again.
+    async fn begin_following(&self, host: HostId) -> u64 {
+        let host_bytes = host.as_bytes().to_vec();
+        let store = self.store.lock().await;
+        let rows = store.agents().unwrap_or_default();
+        let mut sources = self.sources.lock().unwrap();
+        sources.next_session += 1;
+        let session = sources.next_session;
+        if sources.policy == SourcePolicy::Listed {
+            for row in rows.iter().filter(|row| row.agent.host == host_bytes) {
+                let key = &row.agent;
+                if sources.open.contains_key(key) || sources.settled.contains(key) {
+                    continue;
+                }
+                self.open_source_in(&mut sources, key, host, session);
+                // An exited agent's source only settles it; the sweep
+                // would otherwise reopen it for that.
+                if row.lifecycle == wire::Lifecycle::Exited as i32 {
+                    sources.settling.insert(key.clone());
+                }
+            }
+        }
+        drop(sources);
+        drop(store);
+        session
+    }
+
     async fn inventory_caught_up(
         &self,
         host: HostId,
+        session: u64,
         generation: Option<u64>,
         listed: Vec<Agent>,
     ) -> Result<u64, StoreError> {
@@ -414,11 +453,28 @@ impl ProfileRuntime {
             if dropped > 0 {
                 tracing::info!(%host, generation, dropped, "the host's generation changed; its replicas were dropped");
             }
-            self.sources
-                .lock()
-                .unwrap()
-                .settled
-                .retain(|key| key.host != host_bytes);
+            // The sources opened with the inventory followed the old
+            // generation's cursors; they stop here, under the store lock
+            // no absorb happens without, and the sweep below opens fresh
+            // ones that tail the new generation, so every open chat sees
+            // its Reset.
+            let stopped = {
+                let mut sources = self.sources.lock().unwrap();
+                sources.settled.retain(|key| key.host != host_bytes);
+                sources.settling.retain(|key| key.host != host_bytes);
+                let keys: Vec<AgentKey> = sources
+                    .open
+                    .keys()
+                    .filter(|key| key.host == host_bytes)
+                    .cloned()
+                    .collect();
+                keys.into_iter()
+                    .filter_map(|key| sources.open.remove(&key).map(|(_, task)| task))
+                    .collect::<Vec<_>>()
+            };
+            for task in stopped {
+                task.abort();
+            }
             self.host_generation_changed(&host_bytes, generation);
         }
         for key in &unlisted {
@@ -427,11 +483,11 @@ impl ProfileRuntime {
         for agent in &listed {
             self.put_replica_row(&mut store, agent)?;
         }
-        let mut sources = self.sources.lock().unwrap();
-        sources.next_session += 1;
-        let session = sources.next_session;
-        sources.ready.insert(host_bytes.clone(), session);
-        drop(sources);
+        self.sources
+            .lock()
+            .unwrap()
+            .ready
+            .insert(host_bytes.clone(), session);
         self.host_current_changed(&host_bytes, true);
         // Deliveries to a parent on that host may have waited for it.
         self.deliveries_due.notify_one();
@@ -583,6 +639,10 @@ impl ProfileRuntime {
         let Ok(host) = Uuid::from_slice(&key.host) else {
             return;
         };
+        self.open_source_in(sources, key, host, session);
+    }
+
+    fn open_source_in(&self, sources: &mut Sources, key: &AgentKey, host: HostId, session: u64) {
         let task = tokio::spawn(run_source(self.me.clone(), key.clone(), host, session));
         sources.open.insert(key.clone(), (session, task));
     }
@@ -891,6 +951,10 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
         }
     };
     drop(edge);
+    let session = match runtime.upgrade() {
+        Some(me) => me.begin_following(host).await,
+        None => return false,
+    };
     let mut stream = match client.subscribe_inventory(Empty {}).await {
         Ok(response) => response.into_inner(),
         Err(error) => {
@@ -898,6 +962,7 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
             return false;
         }
     };
+    tracing::debug!(%host, "subscribed to the host's inventory");
     let host_bytes = host.as_bytes().to_vec();
     let mut generation = None;
     let mut listed = BTreeMap::new();
@@ -918,7 +983,10 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
             Some(inventory_event::Of::AgentRemoved(removed)) if removed.host_id == host_bytes => {
                 listed.remove(&removed.agent_id);
             }
-            Some(inventory_event::Of::CaughtUp(_)) => break,
+            Some(inventory_event::Of::CaughtUp(_)) => {
+                tracing::debug!(%host, agents = listed.len(), "the host's inventory caught up");
+                break;
+            }
             _ => {}
         }
     }
@@ -927,7 +995,7 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
             return false;
         };
         if let Err(error) = me
-            .inventory_caught_up(host, generation, listed.into_values().collect())
+            .inventory_caught_up(host, session, generation, listed.into_values().collect())
             .await
         {
             tracing::warn!(%host, %error, "reconciling the host's inventory failed");
@@ -1056,7 +1124,7 @@ async fn source_once(
         )
     };
     let tail = matches!(request.from, Some(subscribe_request::From::Tail(_)));
-    let mut client = match edge.session_peer(host, agent_id).await {
+    let mut client = match edge.session_peer(host).await {
         Ok(client) => client,
         Err(_) => return Ended::Lost { caught_up: false },
     };
@@ -1066,6 +1134,7 @@ async fn source_once(
         Err(status) if status.code() == tonic::Code::NotFound => return Ended::Stale,
         Err(_) => return Ended::Lost { caught_up: false },
     };
+    tracing::debug!(%host, %agent_id, "subscribed to the session");
     let mut catch_up = Some(CatchUp {
         reset: tail,
         events: Vec::new(),
@@ -1095,6 +1164,7 @@ async fn source_once(
                 continue;
             }
             Some(session_event::Of::CaughtUp(marker)) => {
+                tracing::debug!(%host, %agent_id, revision = marker.revision, "the session caught up");
                 let landed = match catch_up.take() {
                     Some(held) => me.land_catch_up(key, session, held, marker.revision).await,
                     None => {

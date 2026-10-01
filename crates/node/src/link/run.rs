@@ -236,7 +236,7 @@ pub struct LinkCtx {
     local_host: LiveLocalHost,
     routing: Arc<RoutingCore>,
     links: Arc<LinkRegistry>,
-    incoming_streams_tx: Option<mpsc::Sender<(HostId, super::ByteStream)>>,
+    incoming_streams_tx: Option<mpsc::Sender<super::InboundStream>>,
     piper: super::Piper,
     expected_peer: Option<HostId>,
     authenticated_peer: Option<HostId>,
@@ -312,7 +312,7 @@ impl LinkCtx {
 
     pub(crate) fn with_incoming_streams(
         mut self,
-        sender: mpsc::Sender<(HostId, super::ByteStream)>,
+        sender: mpsc::Sender<super::InboundStream>,
     ) -> Self {
         self.incoming_streams_tx = Some(sender);
         self
@@ -364,7 +364,9 @@ pub async fn run_link(
         crate::routing::ConnectRole::Connector => {
             let snapshot = ctx.links.neighbor_snapshot().await;
             write_message(&mut sink, &connector_hello(&ctx, &snapshot)).await?;
+            tracing::debug!(path = %carrier.path_stats(), "sent Hello");
             let first = read_first(&mut source, "HelloAck").await?;
+            tracing::debug!(path = %carrier.path_stats(), "received the first message after Hello");
             if let Some(wire::pb::message::Body::LinkClose(close)) = first.body.as_ref() {
                 let status = link_close_status(close).unwrap_or_else(|| {
                     tonic::Status::unavailable("link closed during authentication")
@@ -667,7 +669,11 @@ async fn run_established(
                     }
                     break;
                 };
-                spawn_inbound_dispatch(ctx.clone(), link, peer_host.id, preface, stream);
+                // Only a stream the adjacent peer opened on a direct link of
+                // its own can be plain; a relay forwards its openers' streams
+                // with their handshakes inside, whatever their prefaces say.
+                let plain = preface.plain && carrier.kind() == super::CarrierKind::Quic;
+                spawn_inbound_dispatch(ctx.clone(), link, peer_host.id, preface, stream, plain);
             }
             _ = maybe_policy_sleep(auth_expiry), if acceptor_auth.is_some() => {
                 audit::auth_jwt_failure("link authorization expired");
@@ -799,6 +805,7 @@ fn spawn_inbound_dispatch(
     peer: HostId,
     preface: wire::pb::StreamPreface,
     mut stream: super::ByteStream,
+    plain: bool,
 ) {
     tokio::spawn(async move {
         let destination = HostId::from_slice(&preface.dst).ok();
@@ -810,8 +817,13 @@ fn spawn_inbound_dispatch(
         // to that daemon over the relay still arrive at its inbound dispatcher.
         if destination == Some(ctx.local_host.id()) && ctx.link_role != LinkRole::CloudRelay {
             if let Some(sender) = &ctx.incoming_streams_tx {
-                if let Err(error) = sender.send((peer, stream)).await {
-                    let (_, mut stream) = error.0;
+                let inbound = super::InboundStream {
+                    adjacent_peer: peer,
+                    stream,
+                    plain,
+                };
+                if let Err(error) = sender.send(inbound).await {
+                    let mut stream = error.0.stream;
                     let _ = stream.reset(wire::pb::StreamRefusal::ShuttingDown).await;
                 }
             } else {
@@ -1594,6 +1606,7 @@ mod tests {
                 carrier
                     .open_stream(wire::pb::StreamPreface {
                         dst: destination.id.as_bytes().to_vec(),
+                        plain: false,
                     })
                     .await
             }

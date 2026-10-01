@@ -19,9 +19,9 @@ impl<T> BoxedGrpcInner for T where T: AsyncRead + AsyncWrite + Send + Unpin + 's
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum BoxedGrpcAuth {
-    TlsTrusted {
-        peer: HostId,
-    },
+    /// A paired host, authenticated by the TLS handshake inside the stream
+    /// or by the direct link that carries it.
+    Trusted { peer: HostId },
     PreTrustPairing {
         reachability: PreTrustPairingReachability,
     },
@@ -45,11 +45,11 @@ pub(crate) struct BoxedGrpcIo {
 }
 
 impl BoxedGrpcIo {
-    pub(crate) fn tls_trusted<T>(inner: T, peer: HostId) -> Self
+    pub(crate) fn trusted<T>(inner: T, peer: HostId) -> Self
     where
         T: BoxedGrpcInner,
     {
-        Self::new(inner, BoxedGrpcAuth::TlsTrusted { peer })
+        Self::new(inner, BoxedGrpcAuth::Trusted { peer })
     }
 
     pub(crate) fn pre_trust_pairing<T>(inner: T, reachability: PreTrustPairingReachability) -> Self
@@ -72,7 +72,7 @@ impl BoxedGrpcIo {
 
     pub(crate) fn track_trusted_peer(mut self, registry: &TrustedPeerConnections) -> Self {
         if self.trusted_connection.is_none()
-            && let BoxedGrpcAuth::TlsTrusted { peer } = self.connect_info.auth
+            && let BoxedGrpcAuth::Trusted { peer } = self.connect_info.auth
         {
             self.trusted_connection = Some(registry.register(peer));
         }
@@ -272,20 +272,20 @@ mod tests {
         let registry = TrustedPeerConnections::default();
         let peer = HostId::from_u128(2);
         let (active_io, _active_peer) = tokio::io::duplex(64);
-        let mut active = BoxedGrpcIo::tls_trusted(active_io, peer).track_trusted_peer(&registry);
+        let mut active = BoxedGrpcIo::trusted(active_io, peer).track_trusted_peer(&registry);
 
         assert_eq!(registry.close_host(peer).await, 1);
         let error = active.write_all(b"x").await.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::ConnectionAborted);
 
         let (late_io, _late_peer) = tokio::io::duplex(64);
-        let mut late = BoxedGrpcIo::tls_trusted(late_io, peer).track_trusted_peer(&registry);
+        let mut late = BoxedGrpcIo::trusted(late_io, peer).track_trusted_peer(&registry);
         let error = late.write_all(b"x").await.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::ConnectionAborted);
 
         registry.finish_host_replacement(peer);
         let (fresh_io, _fresh_peer) = tokio::io::duplex(64);
-        let mut fresh = BoxedGrpcIo::tls_trusted(fresh_io, peer).track_trusted_peer(&registry);
+        let mut fresh = BoxedGrpcIo::trusted(fresh_io, peer).track_trusted_peer(&registry);
         fresh.write_all(b"x").await.unwrap();
     }
 }

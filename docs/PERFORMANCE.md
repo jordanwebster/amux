@@ -189,6 +189,17 @@ about 80. What is left is a navigation stack, a tab bar and a home being built b
 no one item a profile points at; the first-frame budget is missed by that much as of this writing, and the report
 says by how much.
 
+Where reconciliation goes, over a gate that holds each packet 100 ms (a 200 ms round trip, printed by the links'
+own logs as `rtt`): two round trips for the QUIC handshake, since a listener answers an address it has not seen with
+a Retry; one for the link's Hello and HelloAck; then one to each host for its inventory, with the remembered
+sessions' subscriptions in the same flight. A stream to a paired host over a direct link of our own is plain, with
+no handshake inside and no wait to be accepted, so the inventory's first bytes leave with the stream's preface; one
+Session channel per host carries every agent's subscription. That is four round trips, about 760 ms on the pinned
+Mac from 1,986 when each stream waited to be accepted and then handshook inside, and each agent opened a stream of
+its own. The test gate itself passes datagrams in the order they came: held each on its own timer, two sent in the
+same millisecond could swap places, and a packet overtaking the handshake it followed was dropped and counted lost,
+costing a round trip a household network never does.
+
 `--only cold|reconciliation|streaming|idle` takes one group, for working on it; `--baseline` needs a whole run.
 `--describe` says which enrolled machine this is and whether its baseline exists without building or launching
 anything. Baselines live beside the desktop's:

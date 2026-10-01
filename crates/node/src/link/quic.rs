@@ -1,7 +1,7 @@
 use std::net::{SocketAddr, UdpSocket};
 use std::pin::Pin;
 use std::sync::Mutex;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, ready};
 use std::{future, io};
 
 use futures_util::future::BoxFuture;
@@ -87,9 +87,19 @@ impl QuicCarrier {
         if let Some(transport) = transport {
             config.transport_config(transport);
         }
+        let dialled = std::time::Instant::now();
         let connection = endpoint
             .connect_with(config, addr, DEVICE_SERVER_NAME)?
             .await?;
+        let stats = connection.stats();
+        tracing::debug!(
+            %addr,
+            elapsed_ms = dialled.elapsed().as_millis(),
+            rtt_ms = stats.path.rtt.as_millis(),
+            sent = stats.path.sent_packets,
+            lost = stats.path.lost_packets,
+            "QUIC connection established"
+        );
         let control = connection.open_bi().await?;
         Ok(Self::new(connection, CarrierKind::Quic, Some(control)))
     }
@@ -273,7 +283,7 @@ impl LinkCarrier for QuicCarrier {
         preface: pb::StreamPreface,
     ) -> BoxFuture<'_, Result<ByteStream, OpenError>> {
         Box::pin(async move {
-            let (mut send, mut recv) = self
+            let (mut send, recv) = self
                 .connection
                 .open_bi()
                 .await
@@ -291,27 +301,7 @@ impl LinkCarrier for QuicCarrier {
             write_proto(&mut send, &preface)
                 .await
                 .map_err(map_write_error)?;
-
-            let mut status = [0_u8; 1];
-            match recv.read_exact(&mut status).await {
-                Ok(()) if status[0] == STREAM_ACCEPTED => {
-                    Ok(Box::new(QuicByteStream::accepted(send, recv)) as ByteStream)
-                }
-                Ok(()) => Err(OpenError::Io(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid QUIC stream-open status {}", status[0]),
-                ))),
-                Err(quinn::ReadExactError::ReadError(quinn::ReadError::Reset(code))) => {
-                    Err(OpenError::Refused(refusal_from_varint(code)))
-                }
-                Err(quinn::ReadExactError::ReadError(quinn::ReadError::ConnectionLost(_))) => {
-                    Err(OpenError::LinkClosed)
-                }
-                Err(error) => Err(OpenError::Io(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    error,
-                ))),
-            }
+            Ok(Box::new(QuicByteStream::opened(send, recv)) as ByteStream)
         })
     }
 
@@ -325,6 +315,19 @@ impl LinkCarrier for QuicCarrier {
             quinn::VarInt::from_u32(reason as u32),
             reason.as_str_name().as_bytes(),
         );
+    }
+
+    fn path_stats(&self) -> String {
+        let stats = self.connection.stats();
+        format!(
+            "rtt={}ms min_rtt={}ms sent={} lost={} congestion_events={} cwnd={}",
+            stats.path.rtt.as_millis(),
+            stats.path.min_rtt.as_millis(),
+            stats.path.sent_packets,
+            stats.path.lost_packets,
+            stats.path.congestion_events,
+            stats.path.cwnd,
+        )
     }
 
     fn close_reason(&self) -> Option<pb::LinkCloseReason> {
@@ -522,13 +525,30 @@ fn map_write_error(error: quinn::WriteError) -> OpenError {
     }
 }
 
+/// What a read that found no acceptance byte says about the open.
+fn map_read_error(error: io::Error) -> OpenError {
+    match error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<quinn::ReadError>())
+    {
+        Some(quinn::ReadError::Reset(code)) => OpenError::Refused(refusal_from_varint(*code)),
+        Some(quinn::ReadError::ConnectionLost(_)) => OpenError::LinkClosed,
+        _ => OpenError::Io(error),
+    }
+}
+
 fn refusal_from_varint(code: quinn::VarInt) -> pb::StreamRefusal {
     pb::StreamRefusal::try_from(code.into_inner() as i32).unwrap_or(pb::StreamRefusal::Unspecified)
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Admission {
+    /// Opened to this end: the acceptance byte goes out ahead of its first
+    /// read or write.
     Pending,
+    /// Opened by this end: the far end's answer is read ahead of its first
+    /// read, while writes go out at once behind the preface.
+    Opened,
     Accepted,
     Closed,
 }
@@ -542,21 +562,56 @@ struct QuicByteStream {
 
 impl QuicByteStream {
     fn pending(send: quinn::SendStream, recv: quinn::RecvStream) -> Self {
+        Self::with_admission(send, recv, Admission::Pending)
+    }
+
+    fn opened(send: quinn::SendStream, recv: quinn::RecvStream) -> Self {
+        Self::with_admission(send, recv, Admission::Opened)
+    }
+
+    fn accepted(send: quinn::SendStream, recv: quinn::RecvStream) -> Self {
+        Self::with_admission(send, recv, Admission::Accepted)
+    }
+
+    fn with_admission(
+        send: quinn::SendStream,
+        recv: quinn::RecvStream,
+        admission: Admission,
+    ) -> Self {
         Self {
             send,
             recv,
-            admission: Admission::Pending,
+            admission,
             accept_offset: 0,
         }
     }
 
-    fn accepted(send: quinn::SendStream, recv: quinn::RecvStream) -> Self {
-        Self {
-            send,
-            recv,
-            admission: Admission::Accepted,
-            accept_offset: 0,
+    /// The far end's answer to a stream this end opened: nothing to read
+    /// until it has accepted, and its refusal is the reason it was reset
+    /// with.
+    fn poll_answer(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), OpenError>> {
+        if self.admission != Admission::Opened {
+            return Poll::Ready(Ok(()));
         }
+        let mut status = [0_u8; 1];
+        let mut buf = ReadBuf::new(&mut status);
+        let answer = match ready!(AsyncRead::poll_read(Pin::new(&mut self.recv), cx, &mut buf)) {
+            Ok(()) if buf.filled().is_empty() => Err(OpenError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "QUIC stream ended before it was accepted",
+            ))),
+            Ok(()) if status[0] == STREAM_ACCEPTED => Ok(()),
+            Ok(()) => Err(OpenError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid QUIC stream-open status {}", status[0]),
+            ))),
+            Err(error) => Err(map_read_error(error)),
+        };
+        self.admission = match answer {
+            Ok(()) => Admission::Accepted,
+            Err(_) => Admission::Closed,
+        };
+        Poll::Ready(answer)
     }
 
     fn poll_accept(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -591,6 +646,9 @@ impl AsyncRead for QuicByteStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        if let Err(error) = ready!(self.poll_answer(cx)) {
+            return Poll::Ready(Err(error.into_io()));
+        }
         match self.poll_accept(cx) {
             Poll::Ready(Ok(())) => AsyncRead::poll_read(Pin::new(&mut self.recv), cx, buf),
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
@@ -637,6 +695,10 @@ impl AsyncStream for QuicByteStream {
         reset_stream_pair(&mut self.send, &mut self.recv, code);
         self.admission = Admission::Closed;
         Box::pin(future::ready(Ok(())))
+    }
+
+    fn accepted(&mut self) -> BoxFuture<'_, Result<(), OpenError>> {
+        Box::pin(future::poll_fn(move |cx| self.poll_answer(cx)))
     }
 }
 
@@ -841,14 +903,20 @@ mod tests {
     }
 
     fn preface(byte: u8) -> pb::StreamPreface {
-        pb::StreamPreface { dst: vec![byte] }
+        pb::StreamPreface {
+            dst: vec![byte],
+            plain: false,
+        }
     }
 
     #[tokio::test]
     async fn refusal_code_survives_a_reset() {
         let pair = loopback_pair().await;
         let client = pair.client.clone();
-        let opening = tokio::spawn(async move { client.open_stream(preface(1)).await });
+        let opening = tokio::spawn(async move {
+            let mut stream = client.open_stream(preface(1)).await?;
+            stream.accepted().await
+        });
         let (_, mut inbound) = pair.server.accept_stream().await.unwrap();
         inbound
             .reset(pb::StreamRefusal::PaymentRequired)
@@ -859,6 +927,31 @@ mod tests {
             opening.await.unwrap(),
             Err(OpenError::Refused(pb::StreamRefusal::PaymentRequired))
         ));
+    }
+
+    /// An opener that does not wait sends behind its preface at once; a
+    /// refusal then comes out of its first read, with its reason.
+    #[tokio::test]
+    async fn an_unwaited_stream_sends_at_once_and_reads_its_refusal() {
+        let pair = loopback_pair().await;
+        let mut stream = pair.client.open_stream(preface(1)).await.unwrap();
+        stream.write_all(b"hello").await.unwrap();
+        let (got, mut inbound) = pair.server.accept_stream().await.unwrap();
+        assert_eq!(got, preface(1));
+        let mut greeting = [0_u8; 5];
+        inbound.read_exact(&mut greeting).await.unwrap();
+        assert_eq!(&greeting, b"hello");
+
+        inbound
+            .reset(pb::StreamRefusal::ShuttingDown)
+            .await
+            .unwrap();
+        let mut answer = [0_u8; 1];
+        let error = stream.read_exact(&mut answer).await.unwrap_err();
+        assert_eq!(
+            OpenError::refusal(&error),
+            Some(pb::StreamRefusal::ShuttingDown)
+        );
     }
 
     #[tokio::test]

@@ -10,7 +10,7 @@ mod tls;
 use std::time::Duration;
 
 pub(crate) use io::{
-    BoxedGrpcAuth, BoxedGrpcConnectInfo, BoxedGrpcIo, PreTrustPairingReachability,
+    BoxedGrpcAuth, BoxedGrpcConnectInfo, BoxedGrpcInner, BoxedGrpcIo, PreTrustPairingReachability,
     TrustedPeerConnections,
 };
 pub(crate) use memory::ShutdownIo;

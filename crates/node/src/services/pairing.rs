@@ -930,7 +930,7 @@ fn pairing_request_reachability<T>(
                 PreTrustPairingReachability::Cloud => Some(Reachability::Cloud),
                 PreTrustPairingReachability::NoReusableReachability => None,
             }),
-            BoxedGrpcAuth::TlsTrusted { .. } => None,
+            BoxedGrpcAuth::Trusted { .. } => None,
         })
         .ok_or_else(|| {
             Status::permission_denied("pairing RPC requires pre-trust pairing transport")
@@ -1433,7 +1433,7 @@ mod tests {
     ) {
         let (client_transport, server_transport) = in_process_transport_pair();
         let incoming = stream::once(async move {
-            Ok::<_, std::io::Error>(BoxedGrpcIo::tls_trusted(
+            Ok::<_, std::io::Error>(BoxedGrpcIo::trusted(
                 server_transport,
                 HostId::from_u128(0x7e57),
             ))

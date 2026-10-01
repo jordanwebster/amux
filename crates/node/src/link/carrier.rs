@@ -12,6 +12,15 @@ use wire::{self, pb};
 pub trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {
     /// Rejects an unopened stream, preserving the application refusal reason.
     fn reset(&mut self, code: pb::StreamRefusal) -> BoxFuture<'_, io::Result<()>>;
+
+    /// Waits for the far end to accept a stream this end opened. A stream
+    /// is handed back as soon as its preface is written, so that the bytes
+    /// behind it leave in the same flight; an opener that must know the
+    /// answer before it sends, or wants a refusal's reason rather than a
+    /// failed read, waits here.
+    fn accepted(&mut self) -> BoxFuture<'_, Result<(), OpenError>> {
+        Box::pin(std::future::ready(Ok(())))
+    }
 }
 
 pub type ByteStream = Box<dyn AsyncStream>;
@@ -37,6 +46,28 @@ pub enum OpenError {
     Io(#[source] io::Error),
 }
 
+impl OpenError {
+    /// A refusal read from a stream that was not waited on, as the I/O
+    /// error it surfaces as there.
+    pub(crate) fn into_io(self) -> io::Error {
+        match self {
+            Self::Refused(reason) => {
+                io::Error::new(io::ErrorKind::ConnectionRefused, Self::Refused(reason))
+            }
+            Self::LinkClosed => io::Error::new(io::ErrorKind::NotConnected, Self::LinkClosed),
+            Self::Io(error) => error,
+        }
+    }
+
+    /// The refusal an I/O error carries, if it was one.
+    pub(crate) fn refusal(error: &io::Error) -> Option<pb::StreamRefusal> {
+        match error.get_ref()?.downcast_ref::<Self>() {
+            Some(Self::Refused(reason)) => Some(*reason),
+            _ => None,
+        }
+    }
+}
+
 pub trait LinkCarrier: Send + Sync + 'static {
     fn kind(&self) -> CarrierKind;
     fn control(&self) -> (ControlSink, ControlSource);
@@ -51,6 +82,11 @@ pub trait LinkCarrier: Send + Sync + 'static {
     /// whose control stream ended before [`LinkCarrier::closed`] said so.
     fn close_reason(&self) -> Option<pb::LinkCloseReason> {
         None
+    }
+    /// What the carrier's path has seen so far, for the link's logs: round
+    /// trip, losses, packets. Empty where the carrier keeps no such count.
+    fn path_stats(&self) -> String {
+        String::new()
     }
 }
 

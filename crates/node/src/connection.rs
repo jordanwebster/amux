@@ -69,13 +69,8 @@ impl ConnectionManager {
         self.channel_to_class(peer, ChannelClass::Calls).await
     }
 
-    pub async fn session_channel_to(
-        &self,
-        peer: HostId,
-        agent: crate::AgentId,
-    ) -> Result<Channel, ChannelError> {
-        self.channel_to_class(peer, ChannelClass::Session { agent })
-            .await
+    pub async fn session_channel_to(&self, peer: HostId) -> Result<Channel, ChannelError> {
+        self.channel_to_class(peer, ChannelClass::Session).await
     }
 
     pub async fn bulk_channel_to(&self, peer: HostId) -> Result<Channel, ChannelError> {

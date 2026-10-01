@@ -64,7 +64,7 @@ struct PeerApi {
 fn caller<T>(request: &Request<T>) -> Result<HostId, Status> {
     match request.extensions().get::<BoxedGrpcConnectInfo>() {
         Some(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::TlsTrusted { peer },
+            auth: BoxedGrpcAuth::Trusted { peer },
         }) => Ok(*peer),
         _ => Err(Status::unauthenticated("the caller is not a trusted host")),
     }

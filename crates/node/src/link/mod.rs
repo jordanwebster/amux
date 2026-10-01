@@ -13,7 +13,7 @@ pub use channels::{
     BulkResponseHold, ChannelClass, ChannelError, ChannelPool, PeerChannel, PeerClient,
     TRUST_REVOKED,
 };
-pub(crate) use channels::{ChannelKey, peer_client, serve_inbound_streams};
+pub(crate) use channels::{ChannelKey, InboundStream, peer_client, serve_inbound_streams};
 pub use mux::{MuxCarrier, MuxRole};
 pub(crate) use piper::Piper;
 pub use quic::QuicCarrier;

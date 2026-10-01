@@ -4275,11 +4275,17 @@ impl ::prost::Name for NeighborDown {
 }
 /// Written by the opener as the first bytes of every non-control stream. The
 /// destination is routing information only; the pinned handshake inside the
-/// stream establishes the caller's authority.
+/// stream establishes the caller's authority, unless the stream is `plain`.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StreamPreface {
     #[prost(bytes = "vec", tag = "1")]
     pub dst: ::prost::alloc::vec::Vec<u8>,
+    /// The stream carries no handshake of its own: the opener is the host at
+    /// the near end of the link it arrived on, already authenticated by that
+    /// link, and the stream's bytes start at once. Honoured only on a direct
+    /// link to a paired host; a relay never forwards a plain stream as plain.
+    #[prost(bool, tag = "2")]
+    pub plain: bool,
 }
 impl ::prost::Name for StreamPreface {
     const NAME: &'static str = "StreamPreface";

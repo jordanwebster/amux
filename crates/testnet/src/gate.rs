@@ -3,13 +3,16 @@
 //! or lose some and delay the rest, as a poor one does.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 /// What the gate does to each datagram it lets through.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -69,14 +72,14 @@ impl UdpGate {
         let task = tokio::spawn({
             let shared = shared.clone();
             async move {
-                let mut senders: HashMap<SocketAddr, (Arc<UdpSocket>, Returning)> = HashMap::new();
+                let mut senders: HashMap<SocketAddr, Sender> = HashMap::new();
                 let mut buf = vec![0; 65_536];
                 loop {
                     let Ok((n, from)) = front.recv_from(&mut buf).await else {
                         return;
                     };
-                    let back = match senders.get(&from) {
-                        Some((back, _)) => back.clone(),
+                    let sender = match senders.get(&from) {
+                        Some(sender) => sender,
                         None => {
                             let Ok(back) = UdpSocket::bind("127.0.0.1:0").await else {
                                 continue;
@@ -89,41 +92,37 @@ impl UdpGate {
                                 let (back, front, shared) =
                                     (back.clone(), front.clone(), shared.clone());
                                 async move {
+                                    let replies = Held::start(move |datagram| {
+                                        let front = front.clone();
+                                        async move {
+                                            let _ = front.send_to(&datagram, from).await;
+                                        }
+                                    });
                                     let mut buf = vec![0; 65_536];
                                     while let Ok(n) = back.recv(&mut buf).await {
-                                        match shared.pass() {
-                                            Some(delay) if delay.is_zero() => {
-                                                let _ = front.send_to(&buf[..n], from).await;
-                                            }
-                                            Some(delay) => {
-                                                let (front, datagram) =
-                                                    (front.clone(), buf[..n].to_vec());
-                                                tokio::spawn(async move {
-                                                    tokio::time::sleep(delay).await;
-                                                    let _ = front.send_to(&datagram, from).await;
-                                                });
-                                            }
-                                            None => {}
+                                        if let Some(delay) = shared.pass() {
+                                            replies.hold(buf[..n].to_vec(), delay);
                                         }
                                     }
                                 }
                             });
-                            senders.insert(from, (back.clone(), Returning(returning)));
-                            back
+                            let onward = Held::start({
+                                let back = back.clone();
+                                move |datagram| {
+                                    let back = back.clone();
+                                    async move {
+                                        let _ = back.send(&datagram).await;
+                                    }
+                                }
+                            });
+                            senders.entry(from).or_insert(Sender {
+                                onward,
+                                _returning: Returning(returning),
+                            })
                         }
                     };
-                    match shared.pass() {
-                        Some(delay) if delay.is_zero() => {
-                            let _ = back.send(&buf[..n]).await;
-                        }
-                        Some(delay) => {
-                            let datagram = buf[..n].to_vec();
-                            tokio::spawn(async move {
-                                tokio::time::sleep(delay).await;
-                                let _ = back.send(&datagram).await;
-                            });
-                        }
-                        None => {}
+                    if let Some(delay) = shared.pass() {
+                        sender.onward.hold(buf[..n].to_vec(), delay);
                     }
                 }
             }
@@ -146,6 +145,50 @@ impl UdpGate {
 
     pub fn set_faults(&self, faults: Faults) {
         *self.shared.faults.lock().unwrap() = faults;
+    }
+}
+
+/// One sender through the gate: the queue carrying its datagrams on, and
+/// the task carrying its replies back.
+struct Sender {
+    onward: Held,
+    _returning: Returning,
+}
+
+/// Datagrams held for their delay and passed on in the order they came,
+/// as a slow wire passes them. Holding each on its own timer would let
+/// two sent in the same millisecond swap places, and a QUIC packet that
+/// overtakes the handshake it follows is dropped by the receiver and
+/// counted lost by the sender, which no household network does.
+struct Held {
+    queue: mpsc::UnboundedSender<(Instant, Vec<u8>)>,
+    task: JoinHandle<()>,
+}
+
+impl Held {
+    fn start<F, Fut>(deliver: F) -> Self
+    where
+        F: Fn(Vec<u8>) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send,
+    {
+        let (queue, mut held) = mpsc::unbounded_channel::<(Instant, Vec<u8>)>();
+        let task = tokio::spawn(async move {
+            while let Some((due, datagram)) = held.recv().await {
+                tokio::time::sleep_until(due).await;
+                deliver(datagram).await;
+            }
+        });
+        Self { queue, task }
+    }
+
+    fn hold(&self, datagram: Vec<u8>, delay: Duration) {
+        let _ = self.queue.send((Instant::now() + delay, datagram));
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 

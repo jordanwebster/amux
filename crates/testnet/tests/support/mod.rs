@@ -226,7 +226,7 @@ pub async fn open_session(
     agent: Uuid,
 ) -> Result<tonic::Streaming<wire::SessionEvent>, tonic::Status> {
     let mut client = from
-        .session_peer(host, agent)
+        .session_peer(host)
         .await
         .map_err(|error| tonic::Status::unavailable(error.to_string()))?;
     let mut events = client

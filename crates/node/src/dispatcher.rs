@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
 use crate::identity::{self, DeviceIdentity, IdentityError};
-use crate::link::{ByteStream, LinkCtx, QuicCarrier, accepted_quic_bidi_stream, run_link};
+use crate::link::{InboundStream, LinkCtx, QuicCarrier, accepted_quic_bidi_stream, run_link};
 use crate::pairing::PairMode;
 use crate::resource_limits::{
     Admission, EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
@@ -208,6 +208,7 @@ impl TunnelDispatcher {
                             continue;
                         }
                     }
+                    tracing::debug!(peer = %addr, "answering an unvalidated QUIC Initial with a Retry");
                     if let Err(error) = incoming.retry() {
                         tracing::debug!(peer = %addr, error = %error, "QUIC address was already validated");
                         error.into_incoming().ignore();
@@ -236,7 +237,17 @@ impl TunnelDispatcher {
                     )
                     .await
                     {
-                        Ok(Ok(connection)) => connection,
+                        Ok(Ok(connection)) => {
+                            let stats = connection.stats();
+                            tracing::debug!(
+                                peer = %addr,
+                                rtt_ms = stats.path.rtt.as_millis(),
+                                sent = stats.path.sent_packets,
+                                lost = stats.path.lost_packets,
+                                "QUIC connection accepted"
+                            );
+                            connection
+                        }
                         Ok(Err(error)) => {
                             audit::auth_mtls_handshake_failure(&error);
                             tracing::warn!(peer = %addr, error = %error, "QUIC handshake failed");
@@ -265,15 +276,37 @@ impl TunnelDispatcher {
 
     pub(crate) async fn dispatch_link_stream(
         &self,
-        adjacent_peer: HostId,
-        stream: ByteStream,
+        inbound: InboundStream,
     ) -> Result<(), DispatchError> {
+        let InboundStream {
+            adjacent_peer,
+            stream,
+            plain,
+        } = inbound;
         let directly_paired = self
             .trust_store
             .read()
             .map_err(|_| IdentityError::TrustStorePoisoned)?
             .entry(adjacent_peer)
             .is_some();
+        if plain {
+            // The link authenticated the peer; the stream is its own. A
+            // peer this host no longer trusts has its link closed, so a
+            // plain stream from one is a stream from a link on its way out.
+            if !directly_paired {
+                return Err(DispatchError::Link(format!(
+                    "a plain stream from {adjacent_peer}, which is not paired"
+                )));
+            }
+            return self
+                .trusted_tx
+                .send(
+                    BoxedGrpcIo::trusted(stream, adjacent_peer)
+                        .track_trusted_peer(&self.trusted_connections),
+                )
+                .await
+                .map_err(|_| DispatchError::ChannelClosed);
+        }
         let pairing_reachability = if directly_paired {
             PreTrustPairingReachability::NoReusableReachability
         } else {
@@ -369,7 +402,7 @@ impl TunnelDispatcher {
             DispatchTarget::Trusted(peer) => self
                 .trusted_tx
                 .send(
-                    BoxedGrpcIo::tls_trusted(tls_stream, peer)
+                    BoxedGrpcIo::trusted(tls_stream, peer)
                         .track_trusted_peer(&self.trusted_connections),
                 )
                 .await
@@ -652,7 +685,7 @@ mod tests {
         let trusted = trusted_rx.try_recv().unwrap();
         assert_eq!(
             trusted.connect_info().auth,
-            BoxedGrpcAuth::TlsTrusted {
+            BoxedGrpcAuth::Trusted {
                 peer: peer_identity.host_id
             }
         );
