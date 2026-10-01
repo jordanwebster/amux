@@ -53,10 +53,15 @@ public struct WorkingChanges: Equatable, Sendable {
 public final class RowCell: Identifiable {
     public let id: String
     public fileprivate(set) var row: Row?
+    /// The chat's revision when the row was last read: the list compares
+    /// it with the revision it last laid out to find the rows to measure
+    /// again, so a row read twice before the list looks is not missed.
+    @ObservationIgnored public fileprivate(set) var revision: Int
 
-    init(id: String, row: Row?) {
+    init(id: String, row: Row?, revision: Int) {
         self.id = id
         self.row = row
+        self.revision = revision
     }
 }
 
@@ -109,11 +114,10 @@ public final class ChatModel {
     @ObservationIgnored public private(set) var ids: [String] = []
     /// Bumped whenever `ids` changes: at either edge, or swapped whole.
     public private(set) var sequence = 0
-    /// Bumped whenever cells were read again, with `revised` naming them:
-    /// a cell redraws itself on its row, but the list decides its height
-    /// and measures those rows again.
+    /// Bumped whenever cells were read again, each stamped with it: a cell
+    /// redraws itself on its row, but the list decides its height and
+    /// measures the rows stamped since it last laid out.
     public private(set) var revision = 0
-    @ObservationIgnored public private(set) var revised: [String] = []
     /// Whether the chat holds no rows: what an empty chat's notices read,
     /// without watching the sequence.
     public private(set) var empty = true
@@ -205,9 +209,16 @@ public final class ChatModel {
     /// The cell for a key, its row read now if it never was.
     public func cell(for id: String) -> RowCell {
         if let cell = cells[id] { return cell }
-        let cell = RowCell(id: id, row: source.rows(for: [id], options: options).first)
+        let cell = RowCell(
+            id: id, row: source.rows(for: [id], options: options).first, revision: revision)
         cells[id] = cell
         return cell
+    }
+
+    /// The revision a drawn row was last read at; a row not drawn has none
+    /// to measure again.
+    public func revision(of id: String) -> Int {
+        cells[id]?.revision ?? 0
     }
 
     /// Whether a row draws: collapsed rows do not, except a subagent's steps
@@ -351,9 +362,13 @@ public final class ChatModel {
     private func refresh(_ keys: [String]) {
         guard !keys.isEmpty else { return }
         let rows = source.rows(for: keys, options: options)
-        for row in rows { cells[row.id]?.row = row }
-        revised = rows.map(\.id)
-        revision += 1
+        let next = revision + 1
+        for row in rows {
+            guard let cell = cells[row.id] else { continue }
+            cell.row = row
+            cell.revision = next
+        }
+        revision = next
     }
 
     /// Each view is assigned only when it differs: an assignment redraws

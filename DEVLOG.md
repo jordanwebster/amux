@@ -1,3 +1,12 @@
+2026-10-01 — **A row read twice before the list looks is measured again.**
+The chat model named the rows it read on each wake in a list the
+transcript list consumed with the revision; two wakes in one run-loop
+turn, which a stream's end produces, left the first wake's rows at
+stale heights. The model now stamps each cell with the revision it was
+read at, and the list measures again every row stamped since it last
+laid out: a comparison of state, nothing handed over or cleared. Codex
+review finding; unit test on the model.
+
 2026-10-01 — **Opener locks go with the link, route or host they belong to.**
 The single-flight lock a shared channel opens under was never pruned,
 and its key holds the link's id, fresh on every reconnect: a long-lived

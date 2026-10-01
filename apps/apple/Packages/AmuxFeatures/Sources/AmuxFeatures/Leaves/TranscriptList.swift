@@ -39,7 +39,7 @@ struct TranscriptList: View {
                     reducesTransparency: reducesTransparency, hidesNeedsYouDot: hidesNeedsYouDot,
                     reportsElements: reportsElements, reportedPrefix: reportedPrefix,
                     reportsGeometry: reportsGeometry),
-                revision: model.revision, revised: model.revised, toNewest: model.toNewest,
+                revision: model.revision, toNewest: model.toNewest,
                 insets: proxy.safeAreaInsets, reported: reported)
             .ignoresSafeArea()
         }
@@ -100,7 +100,6 @@ private struct ListView: UIViewRepresentable {
     let notices: [FeedNotice]
     let environment: CellEnvironment
     let revision: Int
-    let revised: [String]
     let toNewest: Int
     let insets: EdgeInsets
     let reported: ReportedElements
@@ -116,7 +115,7 @@ private struct ListView: UIViewRepresentable {
     func updateUIView(_ view: FeedView, context: Context) {
         context.coordinator.update(
             items: items, notices: notices, environment: environment, revision: revision,
-            revised: revised, toNewest: toNewest, insets: insets)
+            toNewest: toNewest, insets: insets)
     }
 }
 
@@ -438,7 +437,7 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
 
     func update(
         items: [ListItem], notices: [FeedNotice], environment: CellEnvironment, revision: Int,
-        revised: [String], toNewest: Int, insets: EdgeInsets
+        toNewest: Int, insets: EdgeInsets
     ) {
         if self.insets != insets {
             self.insets = insets
@@ -463,7 +462,11 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
         }
         self.notices = byId
         if let last = self.revision, last != revision {
-            for id in revised { layout.forget(.row(id)) }
+            // Every row read since the last layout, however many wakes
+            // that took: the model stamps each cell as it reads it.
+            for case .row(let id) in items where model.revision(of: id) > last {
+                layout.forget(.row(id))
+            }
             remeasure = true
         }
         self.revision = revision

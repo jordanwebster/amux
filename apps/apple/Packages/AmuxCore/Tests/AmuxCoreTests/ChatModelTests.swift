@@ -229,6 +229,28 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(model.ids, ["a", "b", "c", "d"])
     }
 
+    func testEveryCellReadSinceTheListLastLookedCarriesALaterRevision() {
+        let source = FakeChat(rows: [row("a", 1), row("b", 2), row("c", 3)], frame: frame())
+        let model = ChatModel(source: source)
+        for id in ["a", "b", "c"] { _ = model.cell(for: id) }
+        let laidOut = model.revision
+
+        // Two wakes land before the list looks again, each reading a
+        // different drawn cell.
+        source.ordered = [row("a", 1, "a, longer"), row("b", 2), row("c", 3)]
+        source.pending = ChatChanges(keys: ["a"], reloaded: false, session: false)
+        model.woke()
+        source.ordered = [row("a", 1, "a, longer"), row("b", 2), row("c", 3, "c, longer")]
+        source.pending = ChatChanges(keys: ["c"], reloaded: false, session: false)
+        model.woke()
+
+        XCTAssertGreaterThan(model.revision, laidOut)
+        XCTAssertGreaterThan(model.revision(of: "a"), laidOut, "the first wake's row is still to measure")
+        XCTAssertGreaterThan(model.revision(of: "c"), laidOut)
+        XCTAssertEqual(model.revision(of: "b"), laidOut, "an unread cell keeps its revision")
+        XCTAssertEqual(model.revision(of: "zz"), 0, "a row never drawn has nothing to measure")
+    }
+
     func testAResetSwapsTheWholeSequenceInAtOnceAndFollowsTheNewestRow() {
         let source = FakeChat(rows: [row("a", 1), row("b", 2)], frame: frame())
         let model = ChatModel(source: source)
