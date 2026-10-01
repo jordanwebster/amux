@@ -372,6 +372,98 @@ fn prompt(
     drawn.blank();
 }
 
+/// A queued prompt's block: where its controls are, by line and columns.
+pub struct Queued {
+    pub lines: Vec<Line<'static>>,
+    /// "[Send now]" and "[Withdraw]", on the block's first line of words.
+    pub send_now: Option<(usize, (usize, usize))>,
+    pub withdraw: Option<(usize, (usize, usize))>,
+}
+
+/// A prompt waiting behind the running turn, drawn as your message is but
+/// faint, "queued" where the time would be ("queued from relay" from
+/// another agent, "sending into this turn" once steered). Highlighted, or
+/// under the pointer, it reads in full ink and offers its controls there.
+pub fn queued_block(row: &ui_view::QueuedRow, lit: bool, width: usize, theme: Theme) -> Queued {
+    let surface = theme.user_surface();
+    let ink = if lit { theme.text() } else { theme.faint() };
+    let mut out = Queued {
+        lines: Vec::new(),
+        send_now: None,
+        withdraw: None,
+    };
+    out.lines.push(tinted(Line::default(), surface, width));
+    let label = if row.steered {
+        "sending into this turn".to_owned()
+    } else {
+        match &row.from_agent {
+            Some(agent) => format!("queued from {agent}"),
+            None => "queued".to_owned(),
+        }
+    };
+    let controls = lit && (row.can_send_now || row.can_withdraw);
+    let right = if controls {
+        let mut words = Vec::new();
+        if row.can_send_now {
+            words.push("[Send now]");
+        }
+        if row.can_withdraw {
+            words.push("[Withdraw]");
+        }
+        words.join(" ")
+    } else {
+        label
+    };
+    let inner = width.saturating_sub(2 * EDGE);
+    let inset = WORDS - EDGE;
+    let room = inner.saturating_sub(2 * inset + text::str_width(&right) + 2);
+    for (i, words) in segment_lines(&row.text, room, ink, theme)
+        .into_iter()
+        .enumerate()
+    {
+        let mut line = Line::from(Span::raw(" ".repeat(inset)));
+        line.spans.extend(words.spans.into_iter().map(|span| {
+            Span::styled(
+                span.content,
+                if lit {
+                    span.style
+                } else {
+                    span.style.patch(theme.faint())
+                },
+            )
+        }));
+        if i == 0 {
+            let at = out.lines.len();
+            let end = EDGE + inner - inset;
+            let start = end.saturating_sub(text::str_width(&right));
+            push_right(
+                &mut line,
+                &right,
+                if controls {
+                    theme.muted()
+                } else {
+                    theme.faint()
+                },
+                inner - inset,
+            );
+            if controls {
+                let mut col = start;
+                if row.can_send_now {
+                    out.send_now = Some((at, (col, col + 10)));
+                    col += 11;
+                }
+                if row.can_withdraw {
+                    out.withdraw = Some((at, (col, col + 10)));
+                }
+            }
+        }
+        out.lines.push(tinted(line, surface, width));
+    }
+    out.lines.push(tinted(Line::default(), surface, width));
+    out.lines.push(Line::default());
+    out
+}
+
 /// A turn's prompt pinned under the header while that turn owns the top of
 /// the feed: one tinted line of the prompt, cut with "…" (its padding
 /// lines are the in-feed block's, not the pin's).

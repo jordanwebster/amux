@@ -117,13 +117,15 @@ const GROUP_GAP: usize = 4;
 /// rather than dots, and at the right the usage limit, only near it and
 /// only while `typing`, since that is when it bears on a choice. None when
 /// there is nothing to say.
+/// The row and, when it shows queued prompts, their group's columns.
 pub fn edge_row(
     strip: &Strip,
     typing: bool,
+    queued: usize,
     now_ms: i64,
     width: usize,
     theme: Theme,
-) -> Option<Line<'static>> {
+) -> Option<(Line<'static>, Option<(usize, usize)>)> {
     const MARGIN: usize = 2;
     // The task's name is the one part that gives way: it shortens, then
     // drops, before anything else does.
@@ -151,6 +153,12 @@ pub fn edge_row(
     // The key that unfolds the row into the pane, named last.
     if !groups.is_empty() {
         groups.push(vec![("ctrl+t".to_owned(), theme.faint())]);
+    }
+    // Prompts queued below a feed scrolled up out of their sight; a click
+    // there goes back down to them.
+    let queued_words = (queued > 0).then(|| format!("{queued} queued"));
+    if let Some(words) = &queued_words {
+        groups.push(vec![(words.clone(), theme.faint())]);
     }
     let usage = strip
         .usage
@@ -201,6 +209,10 @@ pub fn edge_row(
             push(&mut line, words, style, room);
         }
     }
+    let queued_at = queued_words.map(|words| {
+        let to = text::line_width(&line);
+        (to.saturating_sub(text::str_width(&words)), to)
+    });
     if let Some(spans) = usage
         && text::line_width(&line) + GROUP_GAP + right_width <= end
     {
@@ -209,7 +221,7 @@ pub fn edge_row(
             line.spans.push(Span::styled(words, style));
         }
     }
-    Some(line)
+    Some((line, queued_at))
 }
 
 /// "5-hour limit 81% used · resets 22:56": one usage window in words.
@@ -300,8 +312,13 @@ pub enum TrayRow {
 impl TrayRow {
     pub fn hint(&self) -> &'static str {
         match self {
-            TrayRow::Queued(row) if row.can_send_now => "enter send now · w withdraw · esc back",
-            TrayRow::Queued(_) => "esc back",
+            TrayRow::Queued(row) if row.can_send_now && row.can_withdraw => {
+                "enter send now · backspace withdraw · ↑/↓ queued · esc back"
+            }
+            TrayRow::Queued(row) if row.can_withdraw => {
+                "backspace withdraw · ↑/↓ queued · esc back"
+            }
+            TrayRow::Queued(_) => "↑/↓ queued · esc back",
             TrayRow::Outbox(row) => match row.state {
                 OutboxState::NotConfirmed => "r resend · d discard · esc back",
                 OutboxState::Rejected(_) => "e edit · d discard · esc back",

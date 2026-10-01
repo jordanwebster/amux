@@ -577,10 +577,27 @@ impl World {
             .queue
             .iter()
             .enumerate()
-            .map(|(n, text)| QueuedInput {
-                input_id: format!("queued-{}-{n}", spec.id).into_bytes(),
-                text: text.clone(),
-                ..QueuedInput::default()
+            .map(|(n, queued)| {
+                let (text, from, steer) = match queued {
+                    crate::scenario::QueueSpec::Text(text) => (text.clone(), None, false),
+                    crate::scenario::QueueSpec::Full { text, from, steer } => {
+                        (text.clone(), from.clone(), *steer)
+                    }
+                };
+                QueuedInput {
+                    input_id: format!("queued-{}-{n}", spec.id).into_bytes(),
+                    text,
+                    steer,
+                    sender: from.map(|name| wire::Sender {
+                        value: Some(wire::sender::Value::Agent(wire::AgentSender {
+                            agent_id: name.as_bytes().to_vec(),
+                            host_id: Vec::new(),
+                            name,
+                            kind: "claude_sdk".into(),
+                        })),
+                    }),
+                    ..QueuedInput::default()
+                }
             })
             .collect();
         let mut sim = Sim {

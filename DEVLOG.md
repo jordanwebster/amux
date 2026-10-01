@@ -1,3 +1,15 @@
+2026-10-01 — **Queued prompts wait in the feed.** Prompts queued behind the
+running turn are drawn at the feed's end like your messages but faint, with
+"queued" (or "queued from relay", or "sending into this turn" once steered)
+where the time would be, and scroll with the feed. Scrolled out of sight,
+the row above the composer counts them ("4 queued", a click goes back
+down). ↑ in an empty composer highlights the newest; ↑/↓ move, Enter sends
+it into the turn now, Backspace withdraws it into the composer (after any
+draft), Esc or typing goes back. Under the pointer one offers "[Send now]
+[Withdraw]". The bottom tray keeps only the outbox. The lab can queue
+entries from another agent or already steered, and a queue scenario has an
+agent mid-turn with all of them.
+
 2026-10-01 — **Tabbing out of a field keeps what was typed.** Text typed in
 a field (a form's value, a free-text question, "Something else") stays as
 that field's draft when Tab or Shift+Tab moves on: unanswered (no ✓, "not

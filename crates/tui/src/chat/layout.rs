@@ -116,6 +116,9 @@ pub struct Frame<'a> {
     /// The step an ask in the composer's box points at: the box shows it,
     /// so the feed does not draw it twice.
     pub asking: Option<&'a Key>,
+    /// Lines that follow the newest row (queued prompts): part of what
+    /// scrolls, drawn by the caller.
+    pub trailing: usize,
 }
 
 impl Frame<'_> {
@@ -592,6 +595,12 @@ impl Frame<'_> {
                 .first()
                 .map_or(0, |b| b.lines.len().saturating_sub(1)),
         );
+        // The trailing lines come after the newest row.
+        let total = if reached_head {
+            total + self.trailing
+        } else {
+            total
+        };
         // What lies below fits exactly: that is the bottom too.
         if total < offset + self.height || (reached_head && total == offset + self.height) {
             return None;

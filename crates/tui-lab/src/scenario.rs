@@ -151,7 +151,7 @@ pub struct AgentSpec {
     pub failed_servers: Vec<ServerSpec>,
     /// Prompts waiting behind the running turn.
     #[serde(default)]
-    pub queue: Vec<String>,
+    pub queue: Vec<QueueSpec>,
     #[serde(default)]
     pub transcript: Vec<Entry>,
     /// The working tree's unified diff, for the review page.
@@ -164,6 +164,21 @@ pub struct AgentSpec {
     /// What a Codex agent does when told to implement its plan.
     #[serde(default)]
     pub implement: Option<Vec<Entry>>,
+}
+
+/// A queued prompt: its words, or its words with who queued it (another
+/// agent) and whether it is already being sent into the running turn.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum QueueSpec {
+    Text(String),
+    Full {
+        text: String,
+        #[serde(default)]
+        from: Option<String>,
+        #[serde(default)]
+        steer: bool,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]

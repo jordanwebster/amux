@@ -119,6 +119,30 @@ pub enum ChatEffect {
     Chord(char),
 }
 
+/// Takes a queued prompt back; its words return to the composer (after any
+/// draft there, on a new line).
+fn withdraw_effect(state: &SessionState, input_id: &[u8]) -> Option<ChatEffect> {
+    state
+        .queue()
+        .into_iter()
+        .find(|row| row.entry.input_id == input_id)
+        .map(|row| ChatEffect::Withdraw {
+            id: input_id.to_vec(),
+            text: row.entry.text.clone(),
+            attachments: row.entry.attachments.clone(),
+        })
+}
+
+/// A queued prompt in the feed: the rows it spans, its place among the
+/// queue's rows, and where its controls are.
+#[derive(Clone, Copy, Debug)]
+struct QueuedSpot {
+    rows: (u16, u16),
+    index: usize,
+    send_now: Option<(u16, (u16, u16))>,
+    withdraw: Option<(u16, (u16, u16))>,
+}
+
 /// Where the composer's words were drawn, for a click to place the cursor:
 /// the screen cell of the first wrapped line's first column, how many
 /// wrapped lines show, how many are scrolled off above, and the width the
@@ -247,6 +271,16 @@ pub struct ChatView {
     composer_spot: Option<ComposerSpot>,
     /// Tray rows by screen row.
     tray_spots: Vec<(u16, usize)>,
+    /// Queued prompts in the feed: their rows and their controls.
+    queued_spots: Vec<QueuedSpot>,
+    /// The queued prompt under the pointer.
+    queued_hover: Option<usize>,
+    /// How many lines the queued prompts take after the newest row.
+    queued_trailing: usize,
+    /// Whether the last frame showed any of the queued prompts.
+    queued_seen: bool,
+    /// "2 queued" on the row above the composer.
+    queued_row_spot: Option<(u16, (u16, u16))>,
     stretch_cache: StretchCache,
     /// Where the feed's first line was drawn, for clicks.
     feed_origin: (u16, u16),
@@ -308,6 +342,11 @@ impl ChatView {
             mode_spot: None,
             composer_spot: None,
             tray_spots: Vec::new(),
+            queued_spots: Vec::new(),
+            queued_hover: None,
+            queued_trailing: 0,
+            queued_seen: false,
+            queued_row_spot: None,
             stretch_cache: StretchCache::default(),
             feed_origin: (0, 0),
             epoch: 0,
@@ -332,6 +371,7 @@ impl ChatView {
             stretches: &self.stretches,
             cache: &self.stretch_cache,
             asking: self.asking.as_ref(),
+            trailing: self.queued_trailing,
         }
     }
 
@@ -633,7 +673,9 @@ impl ChatView {
                 .map(ChatEffect::Answer)
                 .into_iter()
                 .collect(),
-            KeyCode::Up if self.editor.on_first_line() && !Self::tray_rows(state).is_empty() => {
+            KeyCode::Up if self.editor.is_empty() && !Self::tray_rows(state).is_empty() => {
+                // The queued prompts are at the feed's end: go down to them.
+                self.follow();
                 self.tray = Some(Self::tray_rows(state).len() - 1);
                 vec![]
             }
@@ -664,27 +706,25 @@ impl ChatView {
             KeyCode::Down => self.tray = Some(selected + 1),
             _ => {
                 let effect = match (row, key.code) {
-                    (TrayRow::Queued(queued), KeyCode::Enter | KeyCode::Char('s'))
-                        if queued.can_send_now =>
-                    {
+                    (TrayRow::Queued(queued), KeyCode::Enter) if queued.can_send_now => {
                         Some(ChatEffect::SendNow {
                             id: queued.input_id.clone(),
                         })
                     }
-                    (
-                        TrayRow::Queued(queued),
-                        KeyCode::Char('w') | KeyCode::Delete | KeyCode::Backspace,
-                    ) if queued.can_withdraw => {
-                        let entry = state
-                            .queue()
-                            .into_iter()
-                            .find(|row| row.entry.input_id == queued.input_id)
-                            .map(|row| (row.entry.text.clone(), row.entry.attachments.clone()));
-                        entry.map(|(text, attachments)| ChatEffect::Withdraw {
-                            id: queued.input_id.clone(),
-                            text,
-                            attachments,
-                        })
+                    (TrayRow::Queued(queued), KeyCode::Delete | KeyCode::Backspace)
+                        if queued.can_withdraw =>
+                    {
+                        withdraw_effect(state, &queued.input_id)
+                    }
+                    // Typing on a queued prompt goes back to the composer.
+                    (TrayRow::Queued(_), KeyCode::Char(_))
+                        if !key
+                            .modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        self.tray = None;
+                        self.editor.key(key);
+                        None
                     }
                     (TrayRow::Outbox(out), KeyCode::Char('r'))
                         if out.state == OutboxState::NotConfirmed =>
@@ -931,6 +971,11 @@ impl ChatView {
         match event.kind {
             MouseEventKind::Moved => {
                 self.hover = control;
+                self.queued_hover = self
+                    .queued_spots
+                    .iter()
+                    .find(|spot| (spot.rows.0..=spot.rows.1).contains(&event.row))
+                    .map(|spot| spot.index);
                 self.pane_hover = self
                     .pane_spots
                     .iter()
@@ -1007,6 +1052,13 @@ impl ChatView {
                     self.focus_pane();
                     return vec![];
                 }
+                if self
+                    .queued_row_spot
+                    .is_some_and(|(row, cols)| on(row, cols))
+                {
+                    self.follow();
+                    return vec![];
+                }
                 if self.row_spot.is_some_and(|(row, cols)| on(row, cols)) {
                     self.open_pane();
                     return vec![];
@@ -1048,6 +1100,32 @@ impl ChatView {
                     self.tray = Some(*i);
                     return vec![];
                 }
+                // A queued prompt's controls act; a click elsewhere on it
+                // highlights it.
+                if let Some(spot) = self
+                    .queued_spots
+                    .iter()
+                    .find(|spot| (spot.rows.0..=spot.rows.1).contains(&y))
+                    .copied()
+                {
+                    let rows = ui_view::queue_rows(state);
+                    let Some(row) = rows.get(spot.index) else {
+                        return vec![];
+                    };
+                    if spot.send_now.is_some_and(|(row_y, cols)| on(row_y, cols)) {
+                        self.tray = None;
+                        return vec![ChatEffect::SendNow {
+                            id: row.input_id.clone(),
+                        }];
+                    }
+                    if spot.withdraw.is_some_and(|(row_y, cols)| on(row_y, cols)) {
+                        self.tray = None;
+                        return withdraw_effect(state, &row.input_id).into_iter().collect();
+                    }
+                    self.tray = Some(spot.index);
+                    return vec![];
+                }
+
                 if let Some(spot) = self.composer_spot
                     && self.tray.is_none()
                     && (spot.y..spot.y + spot.rows).contains(&y)
@@ -1647,12 +1725,26 @@ impl ChatView {
         // one. It is the pane folded: while the pane is open it takes the
         // row's place.
         let mut row_at = None;
-        if !side && let Some(line) = edge_row(&strip, !self.editor.is_empty(), now_ms, width, theme)
+        // Queued prompts draw at the feed's end while it follows the newest;
+        // scrolled up, the row says how many wait below.
+        let queued = ui_view::queue_rows(state);
+        let following = self.anchor == Anchor::Bottom;
+        let mut queued_at = None;
+        if !side
+            && let Some((line, queued_cols)) = edge_row(
+                &strip,
+                !self.editor.is_empty(),
+                if self.queued_seen { 0 } else { queued.len() },
+                now_ms,
+                width,
+                theme,
+            )
         {
             if !bottom.is_empty() {
                 bottom.push(Line::default());
             }
             row_at = Some((bottom.len(), text::line_width(&line)));
+            queued_at = queued_cols.map(|cols| (bottom.len(), cols));
             bottom.push(line);
         }
         bottom.extend(foot_cards(&strip, width, theme));
@@ -1666,6 +1758,10 @@ impl ChatView {
         }
         let mut tray_at = Vec::new();
         for (i, row) in tray.iter().enumerate() {
+            // Queued prompts are drawn in the feed; only the outbox stays.
+            if matches!(row, TrayRow::Queued(_)) {
+                continue;
+            }
             tray_at.push((bottom.len(), i));
             bottom.push(row.line(self.tray == Some(i), width, theme));
         }
@@ -1851,6 +1947,34 @@ impl ChatView {
 
         let height = usize::from(area.height);
         let feed_height = height.saturating_sub(top.len() + bottom.len());
+        // Following the newest, queued prompts close the feed: they wait
+        // after the running turn. Too many for the feed keep their newest.
+        let mut queued_lines: Vec<Line<'static>> = Vec::new();
+        let mut queued_marks: Vec<(usize, usize, feed::Queued)> = Vec::new();
+        if !state.transcript().is_empty() {
+            for (i, row) in queued.iter().enumerate() {
+                let lit = self.tray == Some(i) || self.queued_hover == Some(i);
+                let block = feed::queued_block(row, lit, width, theme);
+                let start = queued_lines.len();
+                queued_lines.extend(block.lines.iter().cloned());
+                queued_marks.push((start, i, block));
+            }
+        }
+        let cut = if following {
+            queued_lines
+                .len()
+                .saturating_sub(feed_height.saturating_sub(4))
+        } else {
+            0
+        };
+        self.queued_trailing = queued_lines.len() - cut;
+        // Following, the newest row sits above them; scrolled up, they are
+        // part of what scrolls and show only once the feed reaches them.
+        let feed_height = if following {
+            feed_height - self.queued_trailing
+        } else {
+            feed_height
+        };
         self.feed = (width, feed_height);
         self.feed_origin = (area.x, area.y + top.len() as u16);
         let feed_top = top.len();
@@ -1858,6 +1982,7 @@ impl ChatView {
         self.pin_spot = None;
         self.jump_spot = None;
         self.panel_spots.clear();
+        self.queued_spots.clear();
         if state.transcript().is_empty() {
             lines.extend(empty_feed(
                 state,
@@ -1893,6 +2018,48 @@ impl ChatView {
             }
             let mut feed: Vec<Line<'static>> = laid.lines.clone();
             text::drop_cut_padding(&mut feed);
+            // The queued prompts after the feed, and where their controls are.
+            // Scrolled up, only what fits under the last row shows.
+            let queued_room = if following {
+                usize::MAX
+            } else {
+                feed_height.saturating_sub(feed.len())
+            };
+            let queued_lines: Vec<Line<'static>> = queued_lines
+                .into_iter()
+                .skip(cut)
+                .take(queued_room)
+                .collect();
+            self.queued_seen = !queued_lines.is_empty();
+            let shown = queued_lines.len();
+            let base = feed.len();
+            for (start, index, block) in &queued_marks {
+                let y = |line: usize| {
+                    (base + start + line)
+                        .checked_sub(cut)
+                        .map(|row| area.y + (feed_top + row) as u16)
+                };
+                let last = block.lines.len().saturating_sub(1);
+                if start + last >= cut + shown {
+                    continue;
+                }
+                let (Some(from), Some(to)) = (y(0), y(last)) else {
+                    continue;
+                };
+                let control = |spot: Option<(usize, (usize, usize))>| {
+                    spot.and_then(|(line, (a, b))| {
+                        y(line).map(|row| (row, (area.x + a as u16, area.x + b as u16)))
+                    })
+                };
+                self.queued_spots.push(QueuedSpot {
+                    rows: (from, to),
+                    index: *index,
+                    send_now: control(block.send_now),
+                    withdraw: control(block.withdraw),
+                });
+            }
+            feed.extend(queued_lines);
+            feed.resize(feed_height.max(feed.len()), Line::default());
             if let Some((pinned, key)) = pinned(state, &laid, feed_height, width, theme) {
                 let rows = pinned.len();
                 // The blank line under the block is not the pin's to click.
@@ -1988,6 +2155,8 @@ impl ChatView {
             .into_iter()
             .map(|(row, i)| (bottom_y(row), i))
             .collect();
+        self.queued_row_spot = queued_at
+            .map(|(at, (from, to))| (bottom_y(at), (area.x + from as u16, area.x + to as u16)));
         self.row_spot = match row_at {
             Some((at, row_width)) if !self.pane_open => {
                 Some((bottom_y(at), (area.x + 2, area.x + row_width as u16)))
