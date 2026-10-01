@@ -443,6 +443,22 @@ def judge(samples: dict[str, list[float]], baseline: dict[str, float] | None) ->
     return {"passed": all(result["passed"] for result in results), "results": results}
 
 
+def summary_line(result: dict) -> str:
+    """One metric as the run prints it: the median and worst against the
+    budget, the baseline and drift where there is one, and the verdict."""
+    against = ""
+    if result["baseline"] is not None:
+        drift = (
+            f"{result['drift_percent']:+.1f}%" if result["drift_percent"] is not None else "ceiling only"
+        )
+        against = f", baseline {result['baseline']:.1f} ({drift})"
+    verdict = "" if result["passed"] else f" — FAILED: {result['note']}"
+    return (
+        f"{result['metric']}: median {result['median']:.1f} {result['unit']}, worst {result['worst']:.1f}, "
+        f"budget {result['budget']:g}{against}{verdict}"
+    )
+
+
 def report(verdict: dict, machine_name: str, model: str, minutes: float, notes: list[str]) -> str:
     lines = [
         "# The phone measured",
@@ -546,13 +562,7 @@ def main() -> int:
     text = report(verdict, name, model, minutes, run.notes)
     (OUTPUT / "report.md").write_text(text)
     for result in verdict["results"]:
-        print(
-            f"{result['metric']}: median {result['median']:.1f} {result['unit']}, worst {result['worst']:.1f}, "
-            f"budget {result['budget']:g}"
-            + (f", baseline {result['baseline']:.1f} ({result['drift_percent']:+.1f}%)" if result["baseline"] is not None else "")
-            + ("" if result["passed"] else f" — FAILED: {result['note']}"),
-            flush=True,
-        )
+        print(summary_line(result), flush=True)
     print(f"the run took {minutes:.1f} minutes; {OUTPUT / 'report.md'}", flush=True)
     if not verdict["passed"]:
         print("ios-perf: over budget", file=sys.stderr)

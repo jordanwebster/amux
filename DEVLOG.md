@@ -1,3 +1,9 @@
+2026-10-01 — **The run's summary prints a ceiling-only metric with a baseline.**
+`just ios perf -- --baseline` judged every metric and then failed
+printing the streaming hitch: it has a recorded baseline but no drift,
+and the summary formatted the drift anyway. The line is its own function
+now, tested, and says "ceiling only" where the report does.
+
 2026-10-01 — **Reconciliation is measured through the relay, the way mobile data goes.**
 `just ios perf` reconciled only over direct links through the LAN gates;
 away from home a phone reaches its machines through the cloud relay,
