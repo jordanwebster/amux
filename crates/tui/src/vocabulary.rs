@@ -827,6 +827,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Ask(AskRow::Plan {
                         plan: "Collapse the pairing failures into one error.".into(),
                         verdict: PlanVerdict::Approved,
+                        edits_accepted: false,
                         note: None,
                     })),
                     CLOSED,
@@ -835,6 +836,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Ask(AskRow::Plan {
                         plan: "Rename every wire code.".into(),
                         verdict: PlanVerdict::SentBack,
+                        edits_accepted: false,
                         note: Some("Don't touch the wire codes yet".into()),
                     })),
                     CLOSED,

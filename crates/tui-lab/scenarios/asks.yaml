@@ -151,11 +151,53 @@ agents:
             plan: |
               ## Compact old journal segments
 
-              1. Add a `compacted` marker record that names the last order it covers.
+              Segments older than a week are almost all superseded revisions: on this
+              machine 1.8 GB of journal holds 140 MB of live rows. Compaction rewrites
+              them in the background without changing what readers see.
+
+              ### Steps
+
+              1. Add a `Compacted` marker record that names the last order it covers.
+                 - Written last, so a crash mid-rewrite leaves the old segments in place.
+                 - Readers skip it; only recovery reads it.
               2. A background task rewrites segments older than 7 days into one segment per agent,
                  keeping only the newest revision of each item.
+                 - Runs at most once an hour, and never while a turn is streaming.
+                 - Throttled to 20 MB/s so the daemon stays responsive.
               3. Readers treat a compacted segment like any other; orders stay dense.
-              4. Test: a flood fixture compacts to the same rows the store serves.
+              4. Swap the segment list atomically, then delete the old files.
+
+              ### What changes where
+
+              | Crate | Change | Size |
+              |---|---|--:|
+              | `journal` | The marker record and the rewrite | ~400 lines |
+              | `node` | The hourly task and its throttle | ~120 lines |
+              | `store` | Nothing: it reads segments as before | 0 |
+
+              The rewrite keeps the newest revision per key:
+
+              ```rust
+              fn compact(segments: &[Segment]) -> Segment {
+                  let mut newest: BTreeMap<Key, Record> = BTreeMap::new();
+                  for record in segments.iter().flat_map(Segment::records) {
+                      newest.insert(record.key.clone(), record);
+                  }
+                  Segment::from_records(newest.into_values())
+              }
+              ```
+
+              ### Risks
+
+              - **Disk space during the rewrite**: the new segment exists beside the old
+                ones until the swap. Skip compaction when free space is under twice the input.
+              - A reader holding an old segment open on Windows blocks its deletion; retry
+                on the next pass rather than failing.
+
+              ### Tests
+
+              - A flood fixture compacts to the same rows the store serves.
+              - A crash injected before the swap leaves the journal readable.
   - id: form
     name: linear triage
     kind: claude_sdk

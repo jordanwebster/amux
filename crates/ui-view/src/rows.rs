@@ -209,6 +209,9 @@ pub enum AskRow {
     Plan {
         plan: String,
         verdict: PlanVerdict,
+        /// Approved with edits accepted without asking from then on: the
+        /// decision's scope names Claude's `acceptEdits` mode.
+        edits_accepted: bool,
         /// Why it was sent back, when the person said.
         note: Option<String>,
     },
@@ -1011,6 +1014,11 @@ fn claude_tool(
                     RowKind::Ask(AskRow::Plan {
                         plan: field(&input, "plan"),
                         verdict,
+                        edits_accepted: verdict == PlanVerdict::Approved
+                            && decision
+                                .as_ref()
+                                .and_then(|decision| decision.scope.as_deref())
+                                == Some("acceptEdits"),
                         note: decision.as_ref().and_then(|decision| decision.note.clone()),
                     }),
                     None,

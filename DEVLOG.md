@@ -1,3 +1,20 @@
+2026-10-01 — **Plans are read in the feed and decided in the composer's box.**
+In the redesigned chat, a plan Claude proposes is drawn in the feed as its
+reply, with the same markdown as any other answer, and stays there as the
+record of what was decided. When it arrives while the reader follows the
+newest row and it is taller than the feed, the feed opens at its first line
+(just under the pinned prompt) rather than its end; answering it follows the
+newest row again. The box holds only the decision, "Plan ready": "Yes, start
+building", "Yes, and accept edits without asking" (when offered) and "No,
+keep planning", where Tab adds a note as on a permission's "No". There is no
+"Stop the turn" choice; Ctrl+X is the one stop. Once answered, a faint step
+under the plan reads "Plan approved", "Plan approved · edits accepted without
+asking" or "Sent back" with the note in quotes. To tell the two approvals
+apart afterwards, both Claude interpreters record the `acceptEdits` mode an
+approval switched to as the decision's scope, and the plan row carries
+`edits_accepted`. The lab's plan is longer and richer, and approving it
+leaves plan mode as Claude does.
+
 2026-10-01 — **Frames draw whole, so the cursor no longer wanders.** Each
 redraw is wrapped in the terminal's synchronized-output markers with the
 cursor hidden until the frame's cells are written. Before, a terminal could

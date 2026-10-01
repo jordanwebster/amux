@@ -1155,6 +1155,7 @@ fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'st
             plan,
             verdict,
             note,
+            ..
         } => {
             let (glyph, verb) = match verdict {
                 PlanVerdict::Open => (("?", theme.accent()), "Plan proposed"),

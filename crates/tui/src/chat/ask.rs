@@ -1324,13 +1324,25 @@ pub struct BoxLines {
 }
 
 /// Whether the redesigned chat draws `card` in the composer's box: the
-/// permission kinds, from the moment they open until the agent confirms
-/// the answer. Other kinds keep their card.
+/// permission kinds and plans, from the moment they open until the agent
+/// confirms the answer. Other kinds keep their card.
 pub fn boxed(card: &AskCard) -> bool {
     matches!(
         card.body,
-        AskBody::Command { .. } | AskBody::Edit { .. } | AskBody::Tool { .. }
+        AskBody::Command { .. }
+            | AskBody::Edit { .. }
+            | AskBody::Tool { .. }
+            | AskBody::Plan { .. }
     ) && !matches!(card.state, CardState::Dismissed)
+}
+
+/// Whether a choice is the box's one way to refuse: a denial, or sending a
+/// plan back.
+fn refuses(outcome: &ChoiceOutcome) -> bool {
+    matches!(
+        outcome,
+        ChoiceOutcome::Deny { .. } | ChoiceOutcome::SendBack
+    )
 }
 
 /// The box's choices, as indices into the card's: the ways to allow in the
@@ -1341,7 +1353,7 @@ fn box_choices(card: &AskCard) -> Vec<usize> {
     let mut deny = None;
     for (i, choice) in card.choices.iter().enumerate() {
         match choice.outcome {
-            ChoiceOutcome::Deny { .. } => {
+            ChoiceOutcome::Deny { .. } | ChoiceOutcome::SendBack => {
                 deny.get_or_insert(i);
             }
             ChoiceOutcome::DenyAndStop => {}
@@ -1366,6 +1378,13 @@ fn box_label(choice: &Choice) -> String {
             "No, and stop".to_owned()
         }
         ChoiceOutcome::Deny { stops: false } => "No".to_owned(),
+        ChoiceOutcome::ApprovePlan {
+            auto_accept_edits: false,
+        } => "Yes, start building".to_owned(),
+        ChoiceOutcome::ApprovePlan {
+            auto_accept_edits: true,
+        } => "Yes, and accept edits without asking".to_owned(),
+        ChoiceOutcome::SendBack => "No, keep planning".to_owned(),
         _ => {
             let words = choice_label(choice);
             let mut chars = words.chars();
@@ -1395,6 +1414,7 @@ fn asking_verb(card: &AskCard) -> &'static str {
         AskBody::Command { .. } => "Wants to run",
         AskBody::Edit { created: true, .. } => "Wants to create",
         AskBody::Edit { .. } => "Wants to edit",
+        AskBody::Plan { .. } => "Plan ready",
         _ => "Wants to use",
     }
 }
@@ -1424,9 +1444,7 @@ impl AskUi {
             && list
                 .last()
                 .and_then(|i| card.choices.get(*i))
-                .is_some_and(|choice| {
-                    matches!(choice.outcome, ChoiceOutcome::Deny { .. }) && choice.takes_note
-                })
+                .is_some_and(|choice| refuses(&choice.outcome) && choice.takes_note)
     }
 
     /// Whether the deny note is open, with the keys.
@@ -1507,6 +1525,8 @@ impl AskUi {
             KeyCode::Tab if self.on_noted_deny(card) => self.noting = true,
             KeyCode::Char('f') => match card.body {
                 AskBody::Edit { .. } => return Self::full_diff(card),
+                // The plan is in the feed, whole.
+                AskBody::Plan { .. } => {}
                 _ => self.show_all = !self.show_all,
             },
             _ => {}
@@ -1556,6 +1576,8 @@ impl AskUi {
                     Some(ChoiceOutcome::Deny { .. } | ChoiceOutcome::DenyAndStop) => {
                         "Denying…".to_owned()
                     }
+                    Some(ChoiceOutcome::SendBack) => "Sending the plan back…".to_owned(),
+                    Some(ChoiceOutcome::ApprovePlan { .. }) => "Approving the plan…".to_owned(),
                     _ => format!("Allowing {}…", short_subject(card)),
                 };
                 out.lines.push(line(words, theme.faint()));
@@ -1745,7 +1767,7 @@ impl AskUi {
                 width,
             );
             push(&mut row, format!("{}. ", at + 1), ink, width);
-            let deny = matches!(choice.outcome, ChoiceOutcome::Deny { .. });
+            let deny = refuses(&choice.outcome);
             let said = box_label(choice);
             let typed = self.note.text();
             if deny && choice.takes_note && (self.noting || !typed.is_empty()) {

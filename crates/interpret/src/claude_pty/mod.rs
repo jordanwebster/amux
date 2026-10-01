@@ -1136,7 +1136,16 @@ fn terminal_answer(
                     } else {
                         PlanChoice::Approve
                     }),
-                    decision(DecisionOutcome::Allowed, String::new(), String::new()),
+                    // The mode it switched to, as the decision's scope.
+                    decision(
+                        DecisionOutcome::Allowed,
+                        if approve.auto_accept_edits {
+                            "acceptEdits".to_owned()
+                        } else {
+                            String::new()
+                        },
+                        String::new(),
+                    ),
                 )),
                 plan_answer::Of::SendBack(send_back) => Ok((
                     TerminalInput::Plan(PlanChoice::SendBack {

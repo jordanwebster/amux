@@ -14,8 +14,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_state::Key;
 use ui_view::{
-    DecisionView, FileChangeView, Row, RowKind, RunInfo, Segment, Stretch, StretchCounts,
-    ToolStateView,
+    AskRow, DecisionView, FileChangeView, PlanVerdict, Row, RowKind, RunInfo, Segment, Stretch,
+    StretchCounts, ToolStateView,
 };
 
 use super::rows::{
@@ -166,6 +166,20 @@ pub fn row_lines(
             RowKind::Prose {
                 text, streaming, ..
             } => prose(&mut drawn, text, *streaming, width, theme),
+            RowKind::Ask(AskRow::Plan {
+                plan,
+                verdict,
+                edits_accepted,
+                note,
+            }) => plan_lines(
+                &mut drawn,
+                plan,
+                *verdict,
+                *edits_accepted,
+                note.as_deref(),
+                width,
+                theme,
+            ),
             RowKind::Thinking { .. } | RowKind::Hidden => return None,
             RowKind::TurnEnd {
                 duration_ms,
@@ -339,6 +353,57 @@ fn prose(drawn: &mut Drawn, words: &[Segment], streaming: bool, width: usize, th
                 .map(|(from, to, url)| (Some((from, to)), FeedHit::Link(url)))
                 .collect(),
         );
+    }
+    drawn.blank();
+}
+
+/// A plan the agent proposed: the agent's text like any other, then, once
+/// answered, a step saying what the person decided. While it waits, the
+/// composer's box asks, so the feed says nothing more about it.
+fn plan_lines(
+    drawn: &mut Drawn,
+    plan: &str,
+    verdict: PlanVerdict,
+    edits_accepted: bool,
+    note: Option<&str>,
+    width: usize,
+    theme: Theme,
+) {
+    prose(
+        drawn,
+        &[Segment::Text(plan.to_owned())],
+        false,
+        width,
+        theme,
+    );
+    let words = match verdict {
+        PlanVerdict::Open => return,
+        PlanVerdict::Approved if edits_accepted => "Plan approved · edits accepted without asking",
+        PlanVerdict::Approved => "Plan approved",
+        PlanVerdict::SentBack => "Sent back",
+        PlanVerdict::Dismissed => "Plan dismissed",
+    };
+    let railed = |words: String, style: Style| {
+        let mut line = Line::default();
+        pad_to(&mut line, EDGE);
+        push(&mut line, "│", theme.hairline(), width);
+        pad_to(&mut line, WORDS);
+        push(&mut line, words, style, width.saturating_sub(2));
+        line
+    };
+    let (verb, facts) = words.split_once(" · ").unwrap_or((words, ""));
+    let mut line = railed(verb.to_owned(), theme.muted());
+    if !facts.is_empty() {
+        push(&mut line, format!(" · {facts}"), theme.faint(), width);
+    }
+    drawn.line(line);
+    if verdict == PlanVerdict::SentBack
+        && let Some(note) = note.filter(|note| !note.trim().is_empty())
+    {
+        drawn.line(railed(
+            format!("\u{201c}{}\u{201d}", first_line(note)),
+            theme.faint(),
+        ));
     }
     drawn.blank();
 }

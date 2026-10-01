@@ -812,7 +812,17 @@ fn sdk_answer(
                         "destination": "session",
                     }],
                 }),
-                decided(DecisionOutcome::Allowed, "", ""),
+                // The mode it switched to, as the decision's scope, so the
+                // transcript says edits were accepted without asking.
+                decided(
+                    DecisionOutcome::Allowed,
+                    if approve.auto_accept_edits {
+                        "acceptEdits"
+                    } else {
+                        ""
+                    },
+                    "",
+                ),
             )),
             plan_answer::Of::SendBack(send_back) => Some((
                 deny(&send_back.note, false),

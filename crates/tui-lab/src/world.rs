@@ -999,6 +999,15 @@ impl World {
                 } else {
                     String::new()
                 };
+                // An approved plan leaves plan mode, as Claude does: for
+                // accepting edits, or back to asking.
+                if allowed && tool.name == "ExitPlanMode" {
+                    sim.facts.mode = Some(if verdict.scope() == "acceptEdits" {
+                        "acceptEdits".into()
+                    } else {
+                        "default".into()
+                    });
+                }
                 sim.commit(&pending.item_key, &Body::Tool(tool), &output, now, &[]);
             }
             if let Some(mut ask) = pending.ask_item.clone() {
@@ -1398,6 +1407,9 @@ fn verdict_of(answer: &wire::AnswerInput, questions: &[QuestionItem]) -> Verdict
         },
         Some(claude_answer::Of::Plan(p)) => match p.of {
             Some(plan_answer::Of::SendBack(s)) => Verdict::Denied { note: s.note },
+            Some(plan_answer::Of::Approve(a)) if a.auto_accept_edits => Verdict::Allowed {
+                scope: "acceptEdits".to_owned(),
+            },
             _ => Verdict::Allowed {
                 scope: String::new(),
             },

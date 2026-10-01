@@ -383,6 +383,7 @@ impl Frame<'_> {
                         | ui_view::RowKind::Thinking { .. }
                         | ui_view::RowKind::TurnEnd { .. }
                         | ui_view::RowKind::Stopped
+                        | ui_view::RowKind::Ask(ui_view::AskRow::Plan { .. })
                 ) && !feed::is_step(&row)
                 {
                     // Asks, errors, boundaries and the rest keep their own

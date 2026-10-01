@@ -23,8 +23,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ui_state::{ActivityKind, Composer, Key, PhaseView, SessionState, Waiting};
 use ui_view::{
-    AskCard, Away, CardState, ChatOptions, FamilyHeader, OutboxState, RowKind, ToolRows, ask_card,
-    chat_rows_for, composer, outbox_rows, queue_rows, session_strip,
+    AskBody, AskCard, Away, CardState, ChatOptions, FamilyHeader, OutboxState, RowKind, ToolRows,
+    ask_card, chat_rows_for, composer, outbox_rows, queue_rows, session_strip,
 };
 use wire::{Attachment, attachment};
 
@@ -233,6 +233,8 @@ pub struct ChatView {
     ask_spots: Vec<(u16, (u16, u16), ask::BoxSpot)>,
     /// The step the boxed ask points at, which the feed leaves out.
     asking: Option<Key>,
+    /// The last plan the feed opened at, so it opens there only once.
+    plan_seen: Option<Key>,
     /// The jump-to-bottom control.
     jump_spot: Option<(u16, (u16, u16))>,
     /// The mode on the composer's edge.
@@ -295,6 +297,7 @@ impl ChatView {
             row_spot: None,
             ask_spots: Vec::new(),
             asking: None,
+            plan_seen: None,
             jump_spot: None,
             mode_spot: None,
             composer_spot: None,
@@ -525,7 +528,14 @@ impl ChatView {
         match action {
             AskAction::None => vec![],
             AskAction::Attach => vec![ChatEffect::RawAttach],
-            AskAction::Answer(input) => vec![ChatEffect::Answer(*input)],
+            AskAction::Answer(input) => {
+                // The plan was read from its top; once it is answered, the
+                // feed follows the work it sets going.
+                if matches!(card.body, AskBody::Plan { .. }) {
+                    self.follow();
+                }
+                vec![ChatEffect::Answer(*input)]
+            }
             AskAction::Interrupt => vec![ChatEffect::Interrupt],
             AskAction::Resend => state
                 .answering(&card.key)
@@ -1595,10 +1605,33 @@ impl ChatView {
 
         let mut cursor = None;
         let card = self.card(state);
+        // A plan stays in the feed, as the agent's text, while the box asks.
         self.asking = card
             .as_ref()
-            .filter(|card| ask::boxed(card))
+            .filter(|card| ask::boxed(card) && !matches!(card.body, AskBody::Plan { .. }))
             .map(|card| card.item_key.clone());
+        // A plan arriving while the reader follows opens at its first line,
+        // to be read from the top; one that fits leaves the feed following.
+        let plan_arrived = match card.as_ref() {
+            Some(card)
+                if matches!(card.body, AskBody::Plan { .. })
+                    && card.state == CardState::Open
+                    && self.plan_seen.as_ref() != Some(&card.item_key) =>
+            {
+                self.plan_seen = Some(card.item_key.clone());
+                if self.anchor == Anchor::Bottom {
+                    self.anchor = Anchor::Top {
+                        key: card.item_key.clone(),
+                        offset: 0,
+                    };
+                    self.revealed = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
         // Where the composer's box sits among the bottom lines, once drawn.
         let mut boxed_at: Option<(usize, Boxed)> = None;
         let mut composer_box = |bottom: &mut Vec<Line<'static>>,
@@ -1744,11 +1777,22 @@ impl ChatView {
             ));
             self.laid = Laid::default();
         } else {
-            let laid = self.frame(theme).layout(state);
+            let mut laid = self.frame(theme).layout(state);
             // A step revealed within the last screenful cannot reach the
             // top; the feed simply shows the newest row.
             if std::mem::take(&mut self.revealed) && laid.at_bottom {
                 self.anchor = Anchor::Bottom;
+            }
+            // The pinned prompt would cover the plan's first lines: the plan
+            // starts just below it instead.
+            if plan_arrived
+                && !laid.at_bottom
+                && let Some((pinned, _)) = pinned(state, &laid, feed_height, width, theme)
+            {
+                self.anchor = self
+                    .frame(theme)
+                    .scrolled(state, &laid, -(pinned.len() as isize));
+                laid = self.frame(theme).layout(state);
             }
             let mut feed: Vec<Line<'static>> = laid.lines.clone();
             text::drop_cut_padding(&mut feed);
