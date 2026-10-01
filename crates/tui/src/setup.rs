@@ -69,6 +69,70 @@ impl Agent {
     }
 }
 
+/// What a new agent starts with, per agent: model, effort and mode, from
+/// the installation's settings (shipped with real values), so the new agent
+/// always shows what it will run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentDefaults {
+    pub model: String,
+    pub effort: String,
+    /// Claude's permission mode, or Codex's preset ("auto").
+    pub mode: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Defaults {
+    pub claude: AgentDefaults,
+    pub codex: AgentDefaults,
+}
+
+impl Default for Defaults {
+    /// The shipped values, the same as the settings' own.
+    fn default() -> Self {
+        Defaults {
+            claude: AgentDefaults {
+                model: "opus".into(),
+                effort: "high".into(),
+                mode: "default".into(),
+            },
+            codex: AgentDefaults {
+                model: "gpt-5-codex".into(),
+                effort: "medium".into(),
+                mode: "auto".into(),
+            },
+        }
+    }
+}
+
+impl Defaults {
+    fn of(&self, agent: Agent) -> &AgentDefaults {
+        match agent {
+            Agent::Claude => &self.claude,
+            Agent::Codex => &self.codex,
+        }
+    }
+}
+
+/// A mode as the agent takes it, from its name in the settings: Claude's
+/// permission mode as it is, Codex's preset looked up (its first preset
+/// when the name is not one).
+fn mode_value(agent: Agent, name: &str) -> ModeValue {
+    match agent {
+        Agent::Claude => ModeValue::Claude(name.to_owned()),
+        Agent::Codex => {
+            let (preset, approval, sandbox) = CODEX_MODES
+                .iter()
+                .find(|(preset, _, _)| *preset == name)
+                .unwrap_or(&CODEX_MODES[0]);
+            ModeValue::Codex {
+                preset: Some((*preset).to_owned()),
+                approval_policy: (*approval).to_owned(),
+                sandbox: (*sandbox).to_owned(),
+            }
+        }
+    }
+}
+
 /// Models offered before an agent exists to list its own: Claude's
 /// aliases, and Codex's current models.
 const CLAUDE_MODELS: [&str; 3] = ["opus", "sonnet", "haiku"];
@@ -114,13 +178,20 @@ pub struct Setup {
     pub host: Vec<u8>,
     /// Start it in a new worktree of the folder's repository.
     pub worktree: bool,
+    /// What each agent starts with, for when the agent changes.
+    pub defaults: Defaults,
 }
 
 impl Setup {
     /// From home: the defaults. No memory per folder: that would start a
     /// notion of projects nobody has designed.
-    pub fn defaults(chat_in: ChatIn, working_dir: &str, local_host: &[u8]) -> Setup {
-        Setup {
+    pub fn defaults(
+        chat_in: ChatIn,
+        working_dir: &str,
+        local_host: &[u8],
+        defaults: &Defaults,
+    ) -> Setup {
+        let mut setup = Setup {
             name: None,
             agent: Agent::Claude,
             chat_in,
@@ -130,19 +201,30 @@ impl Setup {
             folder: working_dir.to_owned(),
             host: local_host.to_vec(),
             worktree: false,
-        }
+            defaults: defaults.clone(),
+        };
+        setup.start_from_defaults();
+        setup
+    }
+
+    /// The agent's model, effort and mode from the settings.
+    fn start_from_defaults(&mut self) {
+        let defaults = self.defaults.of(self.agent).clone();
+        self.model = Some(defaults.model);
+        self.effort = Some(defaults.effort);
+        self.mode = Some(mode_value(self.agent, &defaults.mode));
     }
 
     /// A running agent's settings, to start a sibling where the person
-    /// chats now. The agent's own terminal sets model, effort and mode, so
-    /// those are copied only for amux's chat.
+    /// chats now: whatever the chat did not report comes from the settings.
     pub fn sibling(mut self, kind: Kind, chat_in: ChatIn) -> Setup {
         self.agent = Agent::of(kind);
         self.chat_in = chat_in;
-        if chat_in == ChatIn::Terminal {
-            self.model = None;
-            self.effort = None;
-            self.mode = None;
+        let defaults = self.defaults.of(self.agent).clone();
+        self.model.get_or_insert(defaults.model);
+        self.effort.get_or_insert(defaults.effort);
+        if self.mode.is_none() {
+            self.mode = Some(mode_value(self.agent, &defaults.mode));
         }
         self
     }
@@ -160,17 +242,17 @@ impl Setup {
     /// on which machine. Without a name the first item invites one; "new
     /// worktree" shows only when it is on.
     pub fn edge(&self, fleet: &FleetState) -> Vec<Vec<(Item, String)>> {
-        let mut model = self
-            .model
-            .as_deref()
-            .map_or_else(|| "Default model".to_owned(), model_label);
+        // Always the values it will start with; the edge is a status line,
+        // so the mode reads lowercase, as on a chat's edge.
+        let mut model = self.model.as_deref().map(model_label).unwrap_or_default();
         if let Some(effort) = &self.effort {
             model.push_str(&format!(" ({effort})"));
         }
         let mode = self
             .mode
             .as_ref()
-            .map_or_else(|| "Default".to_owned(), crate::words::mode_name);
+            .map(|mode| crate::words::mode_name(mode).to_lowercase())
+            .unwrap_or_default();
         let mut place = vec![(Item::Folder, text::tilde(&self.folder))];
         if self.worktree {
             place.push((Item::Worktree, "new worktree".to_owned()));
@@ -201,7 +283,13 @@ impl Setup {
             Item::Kind => AGENTS
                 .iter()
                 .enumerate()
-                .map(|(at, agent)| choice(agent.name().to_owned(), at.to_string(), *agent == self.agent))
+                .map(|(at, agent)| {
+                    choice(
+                        agent.name().to_owned(),
+                        at.to_string(),
+                        *agent == self.agent,
+                    )
+                })
                 .collect(),
             Item::Model => {
                 let models: &[&str] = if self.claude() {
@@ -209,19 +297,24 @@ impl Setup {
                 } else {
                     &CODEX_MODELS
                 };
-                std::iter::once(choice(
-                    "Default model".into(),
-                    String::new(),
-                    self.model.is_none(),
-                ))
-                .chain(models.iter().map(|model| {
-                    choice(
-                        model_label(model),
-                        (*model).to_owned(),
-                        self.model.as_deref() == Some(*model),
-                    )
-                }))
-                .collect()
+                let mut values: Vec<&str> = models.to_vec();
+                // A model from the settings or a chat that the list lacks
+                // is still offered, as the current one.
+                if let Some(current) = self.model.as_deref()
+                    && !values.contains(&current)
+                {
+                    values.insert(0, current);
+                }
+                values
+                    .into_iter()
+                    .map(|model| {
+                        choice(
+                            model_label(model),
+                            model.to_owned(),
+                            self.model.as_deref() == Some(model),
+                        )
+                    })
+                    .collect()
             }
             Item::Effort => {
                 let efforts: &[&str] = if self.claude() {
@@ -229,19 +322,16 @@ impl Setup {
                 } else {
                     &CODEX_EFFORTS
                 };
-                std::iter::once(choice(
-                    "Default effort".into(),
-                    String::new(),
-                    self.effort.is_none(),
-                ))
-                .chain(efforts.iter().map(|effort| {
-                    choice(
-                        (*effort).to_owned(),
-                        (*effort).to_owned(),
-                        self.effort.as_deref() == Some(*effort),
-                    )
-                }))
-                .collect()
+                efforts
+                    .iter()
+                    .map(|effort| {
+                        choice(
+                            (*effort).to_owned(),
+                            (*effort).to_owned(),
+                            self.effort.as_deref() == Some(*effort),
+                        )
+                    })
+                    .collect()
             }
             Item::Mode => self
                 .modes()
@@ -262,7 +352,7 @@ impl Setup {
                     choice(text::tilde(&folder), folder, current)
                 })
                 .collect(),
-            Item::Host => hosts(fleet, &self.host),
+            Item::Host => hosts(fleet, &self.host, true),
             Item::Name | Item::Worktree => Vec::new(),
         }
     }
@@ -308,13 +398,11 @@ impl Setup {
                     && *agent != self.agent
                 {
                     self.agent = *agent;
-                    self.model = None;
-                    self.effort = None;
-                    self.mode = None;
+                    self.start_from_defaults();
                 }
             }
-            Item::Model => self.model = some(value),
-            Item::Effort => self.effort = some(value),
+            Item::Model => self.model = some(value).or(self.model.take()),
+            Item::Effort => self.effort = some(value).or(self.effort.take()),
             Item::Mode => {
                 self.mode = value
                     .parse::<usize>()
@@ -333,7 +421,12 @@ impl Setup {
 
     /// The create request, with the first prompt when there is one.
     pub fn request(&self, agent_id: Vec<u8>, prompt: Option<Input>) -> CreateAgentRequest {
-        let (approval_policy, sandbox_policy) = match &self.mode {
+        // Used in its own terminal, the agent's terminal sets these.
+        let own = self.chat_in == ChatIn::Terminal;
+        let mode = if own { None } else { self.mode.clone() };
+        let model = if own { None } else { self.model.clone() };
+        let effort = if own { None } else { self.effort.clone() };
+        let (approval_policy, sandbox_policy) = match &mode {
             Some(ModeValue::Codex {
                 approval_policy,
                 sandbox,
@@ -341,23 +434,23 @@ impl Setup {
             }) => (Some(approval_policy.clone()), Some(sandbox.clone())),
             _ => (None, None),
         };
-        let permission_mode = match &self.mode {
+        let permission_mode = match &mode {
             Some(ModeValue::Claude(mode)) => Some(mode.clone()),
             _ => None,
         };
         let config = if self.claude() {
             wire::create_agent_request::Config::Claude(ClaudeCreateConfig {
                 args: Vec::new(),
-                model: self.model.clone(),
+                model: model.clone(),
                 permission_mode,
-                effort: self.effort.clone(),
+                effort: effort.clone(),
             })
         } else {
             wire::create_agent_request::Config::Codex(CodexCreateConfig {
-                model: self.model.clone(),
+                model,
                 approval_policy,
                 sandbox_policy,
-                effort: self.effort.clone(),
+                effort,
                 resume_thread_id: None,
             })
         };
@@ -416,14 +509,17 @@ fn host_name(fleet: &FleetState, host: &[u8]) -> String {
         .unwrap_or_else(|| "this machine".into())
 }
 
-/// The hosts an agent can start on, the chosen one first; one away cannot
+/// The hosts an agent can start on, the chosen one first in a list (a
+/// form's chips keep their places as the choice moves); one away cannot
 /// take a new agent, so it is listed but not picked.
-fn hosts(fleet: &FleetState, chosen: &[u8]) -> Vec<Choice> {
+fn hosts(fleet: &FleetState, chosen: &[u8], chosen_first: bool) -> Vec<Choice> {
     let mut hosts: Vec<&wire::HostEntry> = fleet
         .hosts()
         .filter(|host| host.trust() == wire::Trust::Trusted || host.host_id == chosen)
         .collect();
-    hosts.sort_by_key(|host| host.host_id != chosen);
+    if chosen_first {
+        hosts.sort_by_key(|host| host.host_id != chosen);
+    }
     hosts
         .into_iter()
         .map(|host| {
@@ -658,7 +754,11 @@ impl Picker {
     fn body(
         &self,
         theme: Theme,
-    ) -> (Vec<Line<'static>>, Vec<Option<usize>>, Option<(usize, usize)>) {
+    ) -> (
+        Vec<Line<'static>>,
+        Vec<Option<usize>>,
+        Option<(usize, usize)>,
+    ) {
         let wide = usize::MAX / 4;
         let mut lines = Vec::new();
         let mut rows = Vec::new();
@@ -666,7 +766,11 @@ impl Picker {
         if self.filtering() {
             // A name's field is the prompt; a filter sits above choices whose
             // own pointer is the one that moves.
-            let mark = if self.shape == Shape::Text { "› " } else { "  " };
+            let mark = if self.shape == Shape::Text {
+                "› "
+            } else {
+                "  "
+            };
             let mut field = Line::from(Span::styled(mark, theme.muted()));
             let at = text::line_width(&field);
             if self.field.is_empty() {
@@ -705,7 +809,12 @@ impl Picker {
             };
             push(&mut row, choice.label.clone(), ink, wide);
             if !choice.detail.is_empty() {
-                push(&mut row, format!(" · {}", choice.detail), theme.faint(), wide);
+                push(
+                    &mut row,
+                    format!(" · {}", choice.detail),
+                    theme.faint(),
+                    wide,
+                );
             }
             if choice.current {
                 push(&mut row, " ✓", theme.faint(), wide);
@@ -738,7 +847,11 @@ impl Picker {
         &self,
         room: usize,
         theme: Theme,
-    ) -> (Vec<Line<'static>>, Vec<Option<usize>>, Option<(usize, usize)>) {
+    ) -> (
+        Vec<Line<'static>>,
+        Vec<Option<usize>>,
+        Option<(usize, usize)>,
+    ) {
         let (body, rows, cursor) = self.body(theme);
         let inner = body
             .iter()
@@ -753,7 +866,12 @@ impl Picker {
         push(&mut top, self.title.clone(), theme.muted(), inner + 4);
         push(&mut top, " ", edge, inner + 4);
         let used = text::line_width(&top);
-        push(&mut top, "─".repeat((inner + 3).saturating_sub(used)), edge, inner + 4);
+        push(
+            &mut top,
+            "─".repeat((inner + 3).saturating_sub(used)),
+            edge,
+            inner + 4,
+        );
         push(&mut top, "╮", edge, inner + 4);
         let mut lines = vec![top];
         for line in body {
@@ -881,7 +999,7 @@ pub fn draw_flyover(
     }
 }
 
-/// A field of the form for an agent used in its own terminal.
+/// A row of the form for an agent used in its own terminal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
     Name,
@@ -907,9 +1025,11 @@ pub enum FormHit {
     Host(String),
     Folder(String),
     Worktree,
+    Start,
+    Cancel,
 }
 
-/// What a key on the form did.
+/// What a key or click on the form did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormOutcome {
     None,
@@ -917,20 +1037,26 @@ pub enum FormOutcome {
     Close,
 }
 
-/// The form that starts an agent to be used in its own terminal: no
-/// prompt and no model, effort or mode, which that terminal sets itself.
-/// Every choice sits in the form, changed where it is.
+/// The form that starts an agent to be used in its own terminal, drawn as
+/// a modal over home: no prompt and no model, effort or mode, which that
+/// terminal sets itself. Every choice sits in the form, changed in place.
+/// Esc backs out one level: out of typing, then out of the form.
 #[derive(Debug)]
 pub struct Form {
     pub field: Field,
+    /// A text row (name, folder) has the keys for typing.
+    pub typing: bool,
     name: Editor,
     folder: Editor,
 }
 
 /// The form's label column.
 const LABEL: usize = 10;
+/// The widest the modal is drawn, inside its border.
+const MODAL_MOST: usize = 68;
 
 impl Form {
+    /// It opens typing into the name.
     pub fn new(setup: &Setup) -> Form {
         let mut name = Editor::default();
         name.set(setup.name.as_deref().unwrap_or(""), Vec::new());
@@ -938,6 +1064,7 @@ impl Form {
         folder.set(&text::tilde(&setup.folder), Vec::new());
         Form {
             field: Field::Name,
+            typing: true,
             name,
             folder,
         }
@@ -949,8 +1076,11 @@ impl Form {
         setup.pick(Item::Folder, self.folder.text());
     }
 
-    /// The folders matching what is typed, the typed one first when it is
-    /// one of them.
+    fn text_row(field: Field) -> bool {
+        matches!(field, Field::Name | Field::Folder)
+    }
+
+    /// The folders matching what is typed.
     fn folders(&self, setup: &Setup, fleet: &FleetState) -> Vec<String> {
         let typed = self.folder.text().trim().to_lowercase();
         recent_folders(fleet, &setup.host, &setup.folder)
@@ -966,57 +1096,82 @@ impl Form {
         self.field = FIELDS[next];
     }
 
+    /// The next choice on a choice row, or the worktree flipped.
+    fn change(&mut self, setup: &mut Setup, fleet: &FleetState, step: isize) {
+        match self.field {
+            Field::Kind => {
+                let at = AGENTS.iter().position(|a| *a == setup.agent).unwrap_or(0) as isize;
+                let next = (at + step).rem_euclid(AGENTS.len() as isize);
+                setup.pick(Item::Kind, &next.to_string());
+            }
+            Field::Host => {
+                let choices = hosts(fleet, &setup.host, false);
+                let at = choices.iter().position(|c| c.current).unwrap_or(0);
+                let next = Picker::step(&choices, at, step);
+                if let Some(choice) = choices.get(next) {
+                    setup.pick(Item::Host, &choice.value);
+                }
+            }
+            Field::Worktree => setup.pick(Item::Worktree, ""),
+            Field::Name | Field::Folder => {}
+        }
+    }
+
     pub fn key(&mut self, setup: &mut Setup, fleet: &FleetState, key: KeyEvent) -> FormOutcome {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let typing = matches!(self.field, Field::Name | Field::Folder);
+        if self.typing {
+            match key.code {
+                KeyCode::Esc => self.typing = false,
+                KeyCode::Enter => {
+                    self.typing = false;
+                    self.move_field(1);
+                }
+                KeyCode::Up | KeyCode::BackTab => {
+                    self.typing = false;
+                    self.move_field(-1);
+                }
+                KeyCode::Down => {
+                    self.typing = false;
+                    self.move_field(1);
+                }
+                // The folder's best match fills it; again, it moves on.
+                KeyCode::Tab => {
+                    let top = (self.field == Field::Folder)
+                        .then(|| self.folders(setup, fleet).into_iter().next())
+                        .flatten()
+                        .filter(|top| top != self.folder.text().trim());
+                    match top {
+                        Some(top) => self.folder.set(&top, Vec::new()),
+                        None => {
+                            self.typing = false;
+                            self.move_field(1);
+                        }
+                    }
+                }
+                _ if self.field == Field::Name => {
+                    self.name.key(key);
+                }
+                _ => {
+                    self.folder.key(key);
+                }
+            }
+            return FormOutcome::None;
+        }
         match key.code {
             KeyCode::Esc => return FormOutcome::Close,
+            KeyCode::Up | KeyCode::BackTab => self.move_field(-1),
+            KeyCode::Down | KeyCode::Tab => self.move_field(1),
+            KeyCode::Char('k') if !ctrl => self.move_field(-1),
+            KeyCode::Char('j') if !ctrl => self.move_field(1),
+            KeyCode::Left => self.change(setup, fleet, -1),
+            KeyCode::Right => self.change(setup, fleet, 1),
+            KeyCode::Char('h') if !ctrl => self.change(setup, fleet, -1),
+            KeyCode::Char('l') if !ctrl => self.change(setup, fleet, 1),
+            KeyCode::Char(' ') if self.field == Field::Worktree => setup.pick(Item::Worktree, ""),
+            KeyCode::Enter if Self::text_row(self.field) => self.typing = true,
             KeyCode::Enter => {
                 self.apply(setup);
                 return FormOutcome::Start;
-            }
-            KeyCode::Up | KeyCode::BackTab => self.move_field(-1),
-            KeyCode::Down => self.move_field(1),
-            KeyCode::Tab if self.field == Field::Folder => {
-                let folders = self.folders(setup, fleet);
-                match folders.first() {
-                    Some(top) if *top != self.folder.text().trim() => {
-                        self.folder.set(top, Vec::new())
-                    }
-                    _ => self.move_field(1),
-                }
-            }
-            KeyCode::Tab => self.move_field(1),
-            KeyCode::Char('k') if !typing && !ctrl => self.move_field(-1),
-            KeyCode::Char('j') if !typing && !ctrl => self.move_field(1),
-            KeyCode::Left | KeyCode::Right if !typing => {
-                let step = if key.code == KeyCode::Left { -1 } else { 1 };
-                match self.field {
-                    Field::Kind => {
-                        let at = AGENTS.iter().position(|a| *a == setup.agent).unwrap_or(0) as isize;
-                        let next = (at + step).rem_euclid(AGENTS.len() as isize);
-                        setup.pick(Item::Kind, &next.to_string());
-                    }
-                    Field::Host => {
-                        let choices = hosts(fleet, &setup.host);
-                        let at = choices.iter().position(|c| c.current).unwrap_or(0);
-                        let next = Picker::step(&choices, at, step);
-                        if let Some(choice) = choices.get(next) {
-                            setup.pick(Item::Host, &choice.value);
-                        }
-                    }
-                    Field::Worktree => setup.pick(Item::Worktree, ""),
-                    _ => {}
-                }
-            }
-            KeyCode::Char(' ') if self.field == Field::Worktree => {
-                setup.pick(Item::Worktree, "")
-            }
-            _ if self.field == Field::Name => {
-                self.name.key(key);
-            }
-            _ if self.field == Field::Folder => {
-                self.folder.key(key);
             }
             _ => {}
         }
@@ -1024,15 +1179,20 @@ impl Form {
     }
 
     /// A click on the form.
-    pub fn click(&mut self, setup: &mut Setup, hit: FormHit) {
+    pub fn click(&mut self, setup: &mut Setup, hit: FormHit) -> FormOutcome {
         match hit {
-            FormHit::Field(field) => self.field = field,
+            FormHit::Field(field) => {
+                self.field = field;
+                self.typing = Self::text_row(field);
+            }
             FormHit::Agent(at) => {
                 self.field = Field::Kind;
+                self.typing = false;
                 setup.pick(Item::Kind, &at.to_string());
             }
             FormHit::Host(value) => {
                 self.field = Field::Host;
+                self.typing = false;
                 setup.pick(Item::Host, &value);
             }
             FormHit::Folder(folder) => {
@@ -1041,33 +1201,62 @@ impl Form {
             }
             FormHit::Worktree => {
                 self.field = Field::Worktree;
+                self.typing = false;
                 setup.pick(Item::Worktree, "");
             }
+            FormHit::Start => {
+                self.apply(setup);
+                return FormOutcome::Start;
+            }
+            FormHit::Cancel => return FormOutcome::Close,
         }
+        FormOutcome::None
     }
 
-    /// Its lines from the left margin, each with its click targets as
-    /// (from, to, hit) columns, and the cursor's (column, line) when a text
-    /// field has the keys.
+    /// The keys for where the form is, as (key, action) pairs.
+    fn legend(&self) -> Vec<(&'static str, &'static str)> {
+        if self.typing {
+            let mut keys = vec![("enter", "next")];
+            if self.field == Field::Folder {
+                keys.push(("tab", "fill"));
+            }
+            keys.push(("esc", "done"));
+            return keys;
+        }
+        let mut keys = match self.field {
+            Field::Name | Field::Folder => vec![("enter", "edit")],
+            Field::Kind | Field::Host => vec![("enter", "start"), ("←→", "choose")],
+            Field::Worktree => vec![("enter", "start"), ("space", "toggle")],
+        };
+        keys.push(("↑↓", "move"));
+        keys.push(("esc", "cancel"));
+        keys
+    }
+
+    /// The modal, at most `room` columns wide: its lines, each line's click
+    /// targets as (line, from, to, hit) in the modal's own columns, and the
+    /// cursor's (column, line) while a text row is typed into.
     #[allow(clippy::type_complexity)]
-    pub fn lines(
+    pub fn modal(
         &self,
         setup: &Setup,
         fleet: &FleetState,
-        width: usize,
+        room: usize,
         theme: Theme,
     ) -> (
-        Vec<(Line<'static>, Vec<(usize, usize, FormHit)>)>,
+        Vec<Line<'static>>,
+        Vec<(usize, usize, usize, FormHit)>,
         Option<(usize, usize)>,
     ) {
-        let mut out = Vec::new();
+        let inner = room.saturating_sub(4).min(MODAL_MOST);
+        let wide = inner;
+        let edge = theme.hairline();
+        let mut rows: Vec<(Line<'static>, Vec<(usize, usize, FormHit)>, bool)> = Vec::new();
         let mut cursor = None;
+        rows.push((Line::default(), Vec::new(), false));
         for field in FIELDS {
-            let focused = self.field == field;
-            let mut line = Line::from(Span::styled(
-                if focused { "› " } else { "  " },
-                theme.accent(),
-            ));
+            let current = self.field == field;
+            let mut line = Line::from(Span::raw(" "));
             let label = match field {
                 Field::Name => "Name",
                 Field::Kind => "Agent",
@@ -1075,44 +1264,58 @@ impl Form {
                 Field::Host => "Host",
                 Field::Worktree => "Worktree",
             };
-            let label_ink = if focused { theme.bright() } else { theme.muted() };
-            push(&mut line, format!("{label:<LABEL$}"), label_ink, width);
-            let mut spots = vec![(0, text::line_width(&line), FormHit::Field(field))];
-            let mut choice = |line: &mut Line<'static>, words: String, on: bool, off: bool, hit: FormHit| {
-                let from = text::line_width(line);
-                let mark = if on { "● " } else { "○ " };
-                let ink = if off {
-                    theme.faint()
-                } else if on {
-                    theme.bright()
-                } else {
-                    theme.text()
-                };
-                if !off {
-                    push(line, mark, if on { theme.accent() } else { theme.muted() }, width);
-                }
-                push(line, words, ink, width);
-                spots.push((from, text::line_width(line), hit));
-                push(line, "   ", theme.muted(), width);
+            let label_ink = if current {
+                theme.bright()
+            } else {
+                theme.muted()
             };
-            match field {
-                Field::Name => {
-                    let at = text::line_width(&line);
-                    if self.name.is_empty() {
-                        push(&mut line, "named automatically", theme.faint(), width);
-                        if focused {
-                            cursor = Some((at, out.len()));
-                        }
+            push(&mut line, format!("{label:<LABEL$}"), label_ink, wide);
+            let mut spots = vec![(0, text::line_width(&line), FormHit::Field(field))];
+            // A choice as a chip: the chosen one on the highlight surface (a
+            // step further on the current row), the rest plain.
+            let mut chip =
+                |line: &mut Line<'static>, words: String, on: bool, off: bool, hit: FormHit| {
+                    let from = text::line_width(line);
+                    let style = if off {
+                        theme.faint()
+                    } else if on && current {
+                        theme.chip_raised()
+                    } else if on {
+                        theme.chip()
                     } else {
-                        push(&mut line, self.name.text(), theme.text(), width);
-                        if focused {
-                            cursor = Some((at + self.name.cursor_chars(), out.len()));
-                        }
+                        theme.text()
+                    };
+                    push(line, format!(" {words} "), style, wide);
+                    if !off {
+                        spots.push((from, text::line_width(line), hit));
+                    }
+                    push(line, " ", theme.text(), wide);
+                };
+            match field {
+                Field::Name | Field::Folder => {
+                    let editor = if field == Field::Name {
+                        &self.name
+                    } else {
+                        &self.folder
+                    };
+                    let at = text::line_width(&line);
+                    if editor.is_empty() {
+                        let hint = if field == Field::Name {
+                            "named automatically"
+                        } else {
+                            "a folder on that host"
+                        };
+                        push(&mut line, hint, theme.faint(), wide);
+                    } else {
+                        push(&mut line, editor.text(), theme.text(), wide);
+                    }
+                    if current && self.typing {
+                        cursor = Some((at + editor.cursor_chars(), rows.len()));
                     }
                 }
                 Field::Kind => {
                     for (at, agent) in AGENTS.iter().enumerate() {
-                        choice(
+                        chip(
                             &mut line,
                             agent.name().to_owned(),
                             *agent == setup.agent,
@@ -1121,21 +1324,14 @@ impl Form {
                         );
                     }
                 }
-                Field::Folder => {
-                    let at = text::line_width(&line);
-                    push(&mut line, self.folder.text(), theme.text(), width);
-                    if focused {
-                        cursor = Some((at + self.folder.cursor_chars(), out.len()));
-                    }
-                }
                 Field::Host => {
-                    for host in hosts(fleet, &setup.host) {
+                    for host in hosts(fleet, &setup.host, false) {
                         let words = if host.detail.is_empty() {
                             host.label.clone()
                         } else {
                             format!("{} · {}", host.label, host.detail)
                         };
-                        choice(
+                        chip(
                             &mut line,
                             words,
                             host.current,
@@ -1147,45 +1343,101 @@ impl Form {
                 Field::Worktree => {
                     let from = text::line_width(&line);
                     let mark = if setup.worktree { "[✓] " } else { "[ ] " };
-                    push(&mut line, mark, theme.text(), width);
-                    push(&mut line, "new worktree", theme.text(), width);
+                    push(&mut line, mark, theme.text(), wide);
+                    push(&mut line, "new worktree", theme.text(), wide);
                     spots.push((from, text::line_width(&line), FormHit::Worktree));
                 }
             }
-            out.push((line, spots));
-            // The focused folder: the folders it could be, under it.
-            if field == Field::Folder && focused {
+            rows.push((line, spots, current));
+            // Typing a folder: the folders it could be, under it.
+            if field == Field::Folder && current && self.typing {
                 let folders = self.folders(setup, fleet);
-                let mut more = Line::from(Span::raw(" ".repeat(2 + LABEL)));
+                let mut more = Line::from(Span::raw(" ".repeat(1 + LABEL)));
                 let mut spots = Vec::new();
                 for (i, folder) in folders.iter().take(4).enumerate() {
                     if i > 0 {
-                        push(&mut more, " · ", theme.faint(), width);
+                        push(&mut more, " · ", theme.faint(), wide);
                     }
                     let from = text::line_width(&more);
                     let ink = if i == 0 { theme.muted() } else { theme.faint() };
-                    push(&mut more, folder.clone(), ink, width);
-                    spots.push((from, text::line_width(&more), FormHit::Folder(folder.clone())));
+                    push(&mut more, folder.clone(), ink, wide);
+                    spots.push((
+                        from,
+                        text::line_width(&more),
+                        FormHit::Folder(folder.clone()),
+                    ));
                 }
                 if !folders.is_empty() {
-                    out.push((more, spots));
+                    rows.push((more, spots, false));
                 }
             }
         }
-        (out, cursor)
-    }
-
-    /// The keys for the focused field, as (key, action) pairs.
-    pub fn hints(&self) -> Vec<(&'static str, &'static str)> {
-        let mut hints = vec![("enter", "start")];
-        match self.field {
-            Field::Kind | Field::Host => hints.push(("←→", "choose")),
-            Field::Worktree => hints.push(("space", "toggle")),
-            Field::Folder => hints.push(("tab", "fill")),
-            Field::Name => {}
+        rows.push((Line::default(), Vec::new(), false));
+        let mut buttons = Line::from(Span::raw(" "));
+        let mut spots = Vec::new();
+        for (words, hit) in [("[Start]", FormHit::Start), ("[Cancel]", FormHit::Cancel)] {
+            let from = text::line_width(&buttons);
+            push(&mut buttons, words, theme.text(), wide);
+            spots.push((from, text::line_width(&buttons), hit));
+            push(&mut buttons, "  ", theme.text(), wide);
         }
-        hints.push(("↑↓", "field"));
-        hints.push(("esc", "back"));
-        hints
+        rows.push((buttons, spots, false));
+        let mut legend = Line::from(Span::raw(" "));
+        for (i, (keys, action)) in self.legend().into_iter().enumerate() {
+            if i > 0 {
+                push(&mut legend, "   ", theme.faint(), wide);
+            }
+            push(&mut legend, keys, theme.muted(), wide);
+            push(&mut legend, format!(" {action}"), theme.faint(), wide);
+        }
+        rows.push((legend, Vec::new(), false));
+
+        // In its hairline border, the title on the top edge; the current row
+        // on the flat highlight, edge to edge inside the border.
+        let mut lines = Vec::new();
+        let mut hits = Vec::new();
+        let mut top = Line::from(Span::styled("╭─ ", edge));
+        push(&mut top, "New Agent", theme.muted(), inner + 4);
+        push(&mut top, " ", edge, inner + 4);
+        let used = text::line_width(&top);
+        push(
+            &mut top,
+            "─".repeat((inner + 3).saturating_sub(used)),
+            edge,
+            inner + 4,
+        );
+        push(&mut top, "╮", edge, inner + 4);
+        lines.push(top);
+        let highlight = theme.row_surface();
+        for (at, (line, spots, current)) in rows.into_iter().enumerate() {
+            let mut body = Line::default();
+            for span in line.spans {
+                push(&mut body, &span.content, span.style, inner);
+            }
+            text::pad_to(&mut body, inner);
+            if current && let Some(surface) = highlight {
+                for span in &mut body.spans {
+                    if span.style.bg.is_none() {
+                        span.style = span.style.patch(surface);
+                    }
+                }
+            }
+            let mut row = Line::from(Span::styled("│ ", edge));
+            row.spans.extend(body.spans);
+            push(&mut row, " │", edge, inner + 4);
+            lines.push(row);
+            for (from, to, hit) in spots {
+                hits.push((1 + at, 2 + from, 2 + to.min(inner), hit));
+            }
+        }
+        let mut bottom = Line::from(Span::styled("╰", edge));
+        push(&mut bottom, "─".repeat(inner + 2), edge, inner + 4);
+        push(&mut bottom, "╯", edge, inner + 4);
+        lines.push(bottom);
+        (
+            lines,
+            hits,
+            cursor.map(|(col, line)| ((2 + col).min(inner + 1), 1 + line)),
+        )
     }
 }

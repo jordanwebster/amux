@@ -61,6 +61,8 @@ pub struct TuiConfig {
     /// Where the person chats with their agents: in amux, or in each
     /// agent's own terminal, attached on start.
     pub chat_in: crate::setup::ChatIn,
+    /// What each agent starts with: its model, effort and mode.
+    pub defaults: crate::setup::Defaults,
 }
 
 /// How this client lays its screens out, kept between runs: a person's
@@ -258,6 +260,7 @@ impl App {
         fleet_view.local_host = config.local_host.clone();
         fleet_view.working_dir = config.working_dir.to_string_lossy().into_owned();
         fleet_view.chat_in = config.chat_in;
+        fleet_view.defaults = config.defaults.clone();
         let layout = Layout::load(config.layout.as_deref());
         App {
             layout,
@@ -683,8 +686,12 @@ impl App {
                 }
             }
             KeyCode::Char('n') => {
-                let setup = sibling_setup(&state, self.fleet.state().agent(&chat.agent))
-                    .sibling(state.kind(), self.config.chat_in);
+                let setup = sibling_setup(
+                    &state,
+                    self.fleet.state().agent(&chat.agent),
+                    &self.config.defaults,
+                )
+                .sibling(state.kind(), self.config.chat_in);
                 drop(state);
                 self.close_chat();
                 self.fleet_view.home.new_agent(setup);
@@ -1134,7 +1141,12 @@ impl App {
         let theme = self.theme();
         if self.quit_armed.is_some() {
             let mut line = Line::from(Span::raw("  "));
-            push(&mut line, "press ctrl+c again to quit", theme.warning(), width);
+            push(
+                &mut line,
+                "press ctrl+c again to quit",
+                theme.warning(),
+                width,
+            );
             return Some(line);
         }
         let panel_chat = self
@@ -1223,7 +1235,11 @@ impl App {
 /// folder and host ([`crate::setup::Setup::sibling`] then sets the agent and
 /// where the person chats). Never a name, and never a new worktree: a chat
 /// already working in a worktree's folder starts its sibling there.
-fn sibling_setup(state: &ui_state::SessionState, agent: Option<&wire::Agent>) -> crate::setup::Setup {
+fn sibling_setup(
+    state: &ui_state::SessionState,
+    agent: Option<&wire::Agent>,
+    defaults: &crate::setup::Defaults,
+) -> crate::setup::Setup {
     let view = ui_view::settings(state);
     crate::setup::Setup {
         name: None,
@@ -1247,6 +1263,7 @@ fn sibling_setup(state: &ui_state::SessionState, agent: Option<&wire::Agent>) ->
         folder: agent.map(|agent| agent.cwd.clone()).unwrap_or_default(),
         host: agent.map(|agent| agent.host_id.clone()).unwrap_or_default(),
         worktree: false,
+        defaults: defaults.clone(),
     }
 }
 

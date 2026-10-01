@@ -1,3 +1,15 @@
+2026-10-01 — **A new agent shows what it will run, and its form is a
+modal.** The settings gain `new_agent.claude` and `new_agent.codex` (model,
+effort, mode), shipped as Opus, high, default and GPT-5 Codex, medium,
+auto; the new-agent edge shows those concrete values (`Claude · Opus (high)
+· default`) instead of "Default", changing the agent starts from that
+agent's, and flyovers no longer offer a "Default" entry. For agents used in
+their own terminals, the form became a centred "New Agent" modal over home:
+the current row on the flat highlight, choices as chips, `[Start]`
+`[Cancel]` and a legend inside it. It opens typing the name, and Esc backs
+out one level at a time: out of typing (j/k move again), then out of the
+modal.
+
 2026-10-01 — **Two agents, two ways to start them.** A person now chooses
 Claude or Codex, never "(terminal)" or "(headless)": where they chat decides
 what runs behind it, through a new `ui.chat_in` setting (`amux`, the

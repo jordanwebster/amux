@@ -14,8 +14,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_state::Key;
 use ui_view::{
-    AnswerView, AskRow, AttachmentView, DecisionView, FileChangeView, PlanVerdict, QuestionView, Resolution, Row,
-    RowKind, RunInfo, Segment, Stretch, StretchCounts, ToolStateView,
+    AnswerView, AskRow, AttachmentView, DecisionView, FileChangeView, PlanVerdict, QuestionView,
+    Resolution, Row, RowKind, RunInfo, Segment, Stretch, StretchCounts, ToolStateView,
 };
 
 use super::rows::{
@@ -448,7 +448,12 @@ fn message_lines(
             out.extend(lines.into_iter().map(|line| (line, None)));
             let s = if hidden == 1 { "" } else { "s" };
             let mut more = Line::default();
-            push(&mut more, format!("… {hidden} more line{s} "), theme.faint(), room);
+            push(
+                &mut more,
+                format!("… {hidden} more line{s} "),
+                theme.faint(),
+                room,
+            );
             if toggle.is_some() {
                 push(&mut more, "[Show All]", theme.muted(), room);
             }
@@ -549,7 +554,12 @@ fn one_line(words: &[Segment]) -> String {
 /// Your message on its way, drawn at once at the feed's end as it will
 /// stand once the agent has it; `when` is the time, or what it waits for
 /// while the link is down.
-pub fn pending_prompt(words: &[Segment], when: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
+pub fn pending_prompt(
+    words: &[Segment],
+    when: &str,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
     let mut drawn = Drawn::default();
     prompt_block(&mut drawn, words, when, None, width, theme);
     drawn.lines

@@ -31,7 +31,7 @@ pub enum FleetEffect {
     },
     /// Create an agent with its first prompt, and open its chat or stay.
     Start {
-        setup: crate::setup::Setup,
+        setup: Box<crate::setup::Setup>,
         text: String,
         attachments: Vec<Attachment>,
         open: bool,
@@ -93,6 +93,8 @@ pub struct FleetView {
     pub legacy: bool,
     /// Where the person chats, which decides how a new agent starts.
     pub chat_in: crate::setup::ChatIn,
+    /// What each agent starts with.
+    pub defaults: crate::setup::Defaults,
 }
 
 fn kind_word(kind: Kind) -> &'static str {
@@ -343,6 +345,7 @@ impl FleetView {
                 working_dir: &self.working_dir,
                 attach: self.attach,
                 chat_in: self.chat_in,
+                defaults: &self.defaults,
             };
             self.home
                 .draw(paint, area, fleet, footer, now_ms, theme, &place);

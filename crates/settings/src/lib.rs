@@ -355,6 +355,45 @@ impl Default for AgentSettings {
     }
 }
 
+/// What a new agent starts with when a person starts one: per agent, the
+/// model, reasoning effort and mode. Shipped with real values, so a new
+/// agent always shows what it will run; onboarding and settings change
+/// them, and starting one beside a running chat copies that chat's instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NewAgentSettings {
+    pub claude: NewAgentDefaults,
+    pub codex: NewAgentDefaults,
+}
+
+/// One agent's starting model, effort and mode, in the agent's own words:
+/// a Claude alias or a Codex model id, the effort as the agent names it,
+/// and the mode as Claude's permission mode or Codex's preset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewAgentDefaults {
+    pub model: String,
+    pub effort: String,
+    pub mode: String,
+}
+
+impl Default for NewAgentSettings {
+    fn default() -> Self {
+        Self {
+            claude: NewAgentDefaults {
+                model: "opus".into(),
+                effort: "high".into(),
+                mode: "default".into(),
+            },
+            codex: NewAgentDefaults {
+                model: "gpt-5-codex".into(),
+                effort: "medium".into(),
+                mode: "auto".into(),
+            },
+        }
+    }
+}
+
 /// Where the palette comes from: the terminal amux was started in, a
 /// shipped theme name, or a YAML theme file path.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -454,6 +493,7 @@ pub struct InstallationConfig {
     pub agent: AgentSettings,
     pub keybinds: Keybinds,
     pub ui: UiSettings,
+    pub new_agent: NewAgentSettings,
     /// Where channel manifests live: the supervisor reads
     /// `<releases_url>/<channel>.json`.
     pub releases_url: String,
@@ -477,6 +517,7 @@ impl Default for InstallationConfig {
             agent: AgentSettings::default(),
             keybinds: Keybinds::default(),
             ui: UiSettings::default(),
+            new_agent: NewAgentSettings::default(),
             releases_url: format!("{DEFAULT_CLOUD_URL}/releases"),
             path: None,
         }

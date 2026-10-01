@@ -46,6 +46,7 @@ pub async fn boot(
             Some("terminal") => tui::setup::ChatIn::Terminal,
             _ => tui::setup::ChatIn::Amux,
         },
+        defaults: tui::setup::Defaults::default(),
     };
     let mut app = App::new(client, fleet, config);
     // The fleet has already caught up, so no change will arrive to open the

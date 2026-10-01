@@ -482,7 +482,12 @@ impl World {
                 let blob = BlobRef {
                     hash: Sha256::digest(file.name.as_bytes()).to_vec(),
                     name: file.name.clone(),
-                    mime: if image { "image/png" } else { "application/octet-stream" }.into(),
+                    mime: if image {
+                        "image/png"
+                    } else {
+                        "application/octet-stream"
+                    }
+                    .into(),
                     size: file.size,
                 };
                 wire::Attachment {
@@ -2703,7 +2708,12 @@ impl Client for LabClient {
         if let Some(input) = request.initial_prompt
             && let Some(text) = prompt_text(&input)
         {
-            self.0.prompt(&request.agent_id, &text, &prompt_attachments(&input), &input.input_id);
+            self.0.prompt(
+                &request.agent_id,
+                &text,
+                &prompt_attachments(&input),
+                &input.input_id,
+            );
         }
         Ok(agent)
     }

@@ -17,9 +17,9 @@ use ui_state::{Activity, ActivityKind, Composer, Waiting};
 use ui_view::{
     AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CardState, Choice, ChoiceOutcome,
     ContextView, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, LineKind,
-    OptionView, PatchHead, PatchLine, PlanVerdict, QuestionView, QueuedRow,
-    Resolution, Row, RowKind, RunInfo, Scope, Segment, ServerView, SignInView, Strip, TasksView,
-    ToolStateView, UsageView,
+    OptionView, PatchHead, PatchLine, PlanVerdict, QuestionView, QueuedRow, Resolution, Row,
+    RowKind, RunInfo, Scope, Segment, ServerView, SignInView, Strip, TasksView, ToolStateView,
+    UsageView,
 };
 use wire::{BlobRef, BoundaryKind, EnvelopeKind, SendState, SignInState};
 

@@ -24,8 +24,8 @@ use wire::{Agent, Kind, Presence, Trust};
 use crate::chat::composer::editor_lines;
 use crate::editor::Editor;
 use crate::fleet::FleetEffect;
-use crate::setup::{ChatIn, Form, FormHit, FormOutcome, Item as Setting, Pick, Picker, Setup};
 use crate::hosts;
+use crate::setup::{ChatIn, Form, FormHit, FormOutcome, Item as Setting, Pick, Picker, Setup};
 use crate::text::{self, pad_to, push};
 use crate::theme::Theme;
 
@@ -93,8 +93,6 @@ enum Hit {
     Key(KeyEvent),
     /// One of the draft's settings on the composer's edge.
     Setting(Setting),
-    /// A place on the form for an agent used in its own terminal.
-    Form(FormHit),
 }
 
 /// A clickable span of one screen row.
@@ -151,6 +149,8 @@ pub struct Draft {
     form: Option<Form>,
     /// The flyover as last drawn, for clicks.
     flyover: crate::setup::Flyover,
+    /// The modal's click targets as last drawn: (row, columns, hit).
+    modal: Vec<(u16, (u16, u16), FormHit)>,
     /// Ctrl+S was pressed: the next letter names a setting.
     prefix: bool,
     /// The edge item under the pointer.
@@ -792,7 +792,12 @@ impl Home {
             return vec![];
         }
         // An agent used in its own terminal: the form has the keys.
-        if self.draft.setup.as_ref().is_some_and(|setup| setup.chat_in == ChatIn::Terminal) {
+        if self
+            .draft
+            .setup
+            .as_ref()
+            .is_some_and(|setup| setup.chat_in == ChatIn::Terminal)
+        {
             let (Some(setup), Some(form)) = (&mut self.draft.setup, &mut self.draft.form) else {
                 return vec![];
             };
@@ -805,7 +810,7 @@ impl Home {
                 FormOutcome::Start => {
                     self.draft.starting = true;
                     vec![FleetEffect::Start {
-                        setup: setup.clone(),
+                        setup: Box::new(setup.clone()),
                         text: String::new(),
                         attachments: Vec::new(),
                         open: true,
@@ -861,7 +866,7 @@ impl Home {
                 };
                 self.draft.starting = true;
                 return vec![FleetEffect::Start {
-                    setup,
+                    setup: Box::new(setup),
                     text: self.draft.editor.text().to_owned(),
                     attachments: self.draft.editor.attachments().to_vec(),
                     open: !ctrl,
@@ -921,6 +926,35 @@ impl Home {
                 .map(|spot| spot.hit.clone())
         };
         let listing = self.overlay.is_none() && !self.draft.open;
+        // The new agent's modal has the pointer: its places act, the rest
+        // of home under it does nothing.
+        if self.draft.open && self.draft.form.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = event.kind
+                && !self.draft.starting
+                && let Some(hit) = self
+                    .draft
+                    .modal
+                    .iter()
+                    .find(|(row, (from, to), _)| *row == y && (*from..*to).contains(&x))
+                    .map(|(_, _, hit)| hit.clone())
+                && let (Some(setup), Some(form)) = (&mut self.draft.setup, &mut self.draft.form)
+            {
+                match form.click(setup, hit) {
+                    FormOutcome::None => {}
+                    FormOutcome::Close => self.draft.open = false,
+                    FormOutcome::Start => {
+                        self.draft.starting = true;
+                        return vec![FleetEffect::Start {
+                            setup: Box::new(setup.clone()),
+                            text: String::new(),
+                            attachments: Vec::new(),
+                            open: true,
+                        }];
+                    }
+                }
+            }
+            return vec![];
+        }
         // A flyover is open: a click on a choice picks it, anywhere else
         // closes it.
         if self.draft.open
@@ -979,13 +1013,6 @@ impl Home {
                     self.open_setting(fleet, item);
                     vec![]
                 }
-                Some(Hit::Form(hit)) if !self.draft.starting => {
-                    if let (Some(setup), Some(form)) = (&mut self.draft.setup, &mut self.draft.form)
-                    {
-                        form.click(setup, hit);
-                    }
-                    vec![]
-                }
                 Some(Hit::Close(agent)) if listing => {
                     self.confirm_close(fleet, agent, false);
                     vec![]
@@ -1026,57 +1053,35 @@ impl Home {
         let mut cursor;
         // Where the new agent's composer box starts, for its flyover.
         let mut box_top = None;
-        if self.draft.open {
-            if self.draft.setup.is_none() {
-                self.draft.setup = Some(Setup::defaults(
-                    place.chat_in,
-                    place.working_dir,
-                    place.local_host,
-                ));
-            }
-            laid.push(Laid::plain(self.draft_top(width, theme)));
-            let terminal = self
+        if self.draft.open && self.draft.setup.is_none() {
+            self.draft.setup = Some(Setup::defaults(
+                place.chat_in,
+                place.working_dir,
+                place.local_host,
+                place.defaults,
+            ));
+        }
+        // An agent used in its own terminal starts from a modal over home;
+        // one chatted with in amux, from its own composer.
+        let modal = self.draft.open
+            && self
                 .draft
                 .setup
                 .as_ref()
                 .is_some_and(|setup| setup.chat_in == ChatIn::Terminal);
-            if terminal {
-                // An agent used in its own terminal: the form, under a blank.
-                if self.draft.form.is_none() {
-                    self.draft.form = self.draft.setup.as_ref().map(Form::new);
-                }
-                laid.push(Laid::default());
-                cursor = None;
-                if let (Some(setup), Some(form)) = (&self.draft.setup, &self.draft.form) {
-                    let (lines, at) = form.lines(setup, fleet, width - MARGIN, theme);
-                    let first = laid.len();
-                    for (line, spots) in lines {
-                        let mut indented = Line::from(Span::raw(" ".repeat(MARGIN)));
-                        indented.spans.extend(line.spans);
-                        laid.push(Laid {
-                            line: indented,
-                            spots: spots
-                                .into_iter()
-                                .map(|(from, to, hit)| {
-                                    (Some((MARGIN + from, MARGIN + to)), Hit::Form(hit))
-                                })
-                                .collect(),
-                        });
-                    }
-                    cursor = at
-                        .filter(|_| !self.draft.starting)
-                        .map(|(col, row)| (MARGIN + col, first + row));
-                }
-            } else {
-                let (composer, at) = self.composer(fleet, place, width, height, theme);
-                let body = height.saturating_sub(3 + composer.len());
-                laid.resize_with(2 + body, Laid::default);
-                box_top = Some(laid.len());
-                cursor = at
-                    .filter(|_| self.draft.picker.is_none())
-                    .map(|(col, row)| (col, laid.len() + row));
-                laid.extend(composer);
-            }
+        if modal && self.draft.form.is_none() {
+            self.draft.form = self.draft.setup.as_ref().map(Form::new);
+        }
+        if self.draft.open && !modal {
+            laid.push(Laid::plain(self.draft_top(width, theme)));
+            let (composer, at) = self.composer(fleet, place, width, height, theme);
+            let body = height.saturating_sub(3 + composer.len());
+            laid.resize_with(2 + body, Laid::default);
+            box_top = Some(laid.len());
+            cursor = at
+                .filter(|_| self.draft.picker.is_none())
+                .map(|(col, row)| (col, laid.len() + row));
+            laid.extend(composer);
         } else {
             let (top, at) = self.top_line(fleet, width, theme, place);
             laid.push(Laid::plain(top));
@@ -1146,9 +1151,37 @@ impl Home {
                 .find(|spot| matches!(&spot.hit, Hit::Setting(at) if *at == item))
                 .map_or(area.x + MARGIN as u16, |spot| spot.x.0);
             let above = area.y + top as u16;
-            self.draft.flyover = crate::setup::draw_flyover(paint, picker, anchor, above, area, theme);
+            self.draft.flyover =
+                crate::setup::draw_flyover(paint, picker, anchor, above, area, theme);
             if let Some(at) = self.draft.flyover.cursor {
                 paint.set_cursor_position(at);
+            }
+        }
+        // The new agent's modal, centred over home.
+        self.draft.modal.clear();
+        if modal && let (Some(setup), Some(form)) = (&self.draft.setup, &self.draft.form) {
+            let (lines, hits, at) = form.modal(setup, fleet, width, theme);
+            let w = lines.iter().map(text::line_width).max().unwrap_or(0) as u16;
+            let h = (lines.len() as u16).min(area.height);
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            // A little above the middle, where the eye already is.
+            let y = area.y + area.height.saturating_sub(h) / 3;
+            let rect = Rect {
+                x,
+                y,
+                width: w.min(area.width),
+                height: h,
+            };
+            paint.render_widget(ratatui::widgets::Clear, rect);
+            paint.render_widget(Paragraph::new(lines), rect);
+            self.draft.modal = hits
+                .into_iter()
+                .map(|(line, from, to, hit)| {
+                    (y + line as u16, (x + from as u16, x + to as u16), hit)
+                })
+                .collect();
+            if let Some((col, line)) = at.filter(|_| !self.draft.starting) {
+                paint.set_cursor_position(Position::new(x + col as u16, y + line as u16));
             }
         }
     }
@@ -1460,11 +1493,14 @@ impl Home {
         // What the agent will be, on the bottom edge: what runs it, where it
         // works, and on which machine. Each item is a click target, lit
         // as a chip under the pointer.
-        let setup = self
-            .draft
-            .setup
-            .clone()
-            .unwrap_or_else(|| Setup::defaults(place.chat_in, place.working_dir, place.local_host));
+        let setup = self.draft.setup.clone().unwrap_or_else(|| {
+            Setup::defaults(
+                place.chat_in,
+                place.working_dir,
+                place.local_host,
+                place.defaults,
+            )
+        });
         let mut groups = setup.edge(fleet);
         let room = (width - 2 * MARGIN - 2).saturating_sub(6);
         let measure = |groups: &Vec<Vec<(Setting, String)>>| {
@@ -1477,14 +1513,15 @@ impl Home {
                 .sum::<usize>()
                 + 3 * groups.len().saturating_sub(1)
         };
-        // Too long for the edge: settings left at their defaults drop
-        // (ctrl+s still reaches them), then the folder shortens in the
-        // middle.
-        if measure(&groups) > room {
-            for group in &mut groups {
-                group.retain(|(_, words)| !words.starts_with("Default"));
+        // Too long for the edge: the mode drops, then the model (ctrl+s
+        // still reaches them), then the folder shortens in the middle.
+        for dropped in [Setting::Mode, Setting::Model] {
+            if measure(&groups) > room {
+                for group in &mut groups {
+                    group.retain(|(item, _)| *item != dropped);
+                }
+                groups.retain(|group| !group.is_empty());
             }
-            groups.retain(|group| !group.is_empty());
         }
         let over = measure(&groups).saturating_sub(room);
         if over > 0 {
@@ -1597,25 +1634,10 @@ impl Home {
                 push(&mut line, "starting the agent…", theme.muted(), width);
                 return (Laid::plain(line), None);
             }
-            None if self.draft.open && self.draft.form.is_some() => self
-                .draft
-                .form
-                .as_ref()
-                .map(|form| form.hints())
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(keys, action)| {
-                    let code = match keys {
-                        "enter" => KeyCode::Enter,
-                        "esc" => KeyCode::Esc,
-                        "space" => KeyCode::Char(' '),
-                        "tab" => KeyCode::Tab,
-                        "←→" => KeyCode::Right,
-                        _ => KeyCode::Down,
-                    };
-                    (keys, action, key(code))
-                })
-                .collect(),
+            // The modal carries its own keys.
+            None if self.draft.open && self.draft.form.is_some() => {
+                return (Laid::plain(line), None);
+            }
             None if self.draft.open => match (&self.draft.picker, self.draft.prefix) {
                 (Some(picker), _) => picker
                     .hints()
@@ -1720,6 +1742,8 @@ pub struct Place<'a> {
     pub attach: bool,
     /// Where the person chats, which decides how a new agent starts.
     pub chat_in: ChatIn,
+    /// What each agent starts with.
+    pub defaults: &'a crate::setup::Defaults,
 }
 
 /// `key word` pairs, three blanks apart, as many as fit; each is a click

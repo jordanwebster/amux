@@ -1925,7 +1925,12 @@ impl ChatView {
                 InputState::Uncertain => !state.caught_up(),
                 _ => false,
             };
-            if !shows || state.queue().iter().any(|row| row.entry.input_id == sent.id) {
+            if !shows
+                || state
+                    .queue()
+                    .iter()
+                    .any(|row| row.entry.input_id == sent.id)
+            {
                 continue;
             }
             let when = if state.caught_up() {
@@ -2422,16 +2427,14 @@ impl ChatView {
         self.tray_spots.clear();
         self.queued_spots = queued_at
             .into_iter()
-            .map(|(at, index, drawn)| {
-                QueuedSpot {
-                    row: bottom_y(at),
-                    index,
-                    controls: drawn
-                        .controls
-                        .iter()
-                        .map(|(from, to)| (area.x + *from as u16, area.x + *to as u16))
-                        .collect(),
-                }
+            .map(|(at, index, drawn)| QueuedSpot {
+                row: bottom_y(at),
+                index,
+                controls: drawn
+                    .controls
+                    .iter()
+                    .map(|(from, to)| (area.x + *from as u16, area.x + *to as u16))
+                    .collect(),
             })
             .collect();
         self.row_spot = match row_at {
@@ -2862,8 +2865,12 @@ fn problem_words(
 fn changeable(state: &SessionState) -> (bool, bool) {
     let view = ui_view::settings(state);
     (
-        view.model_refusal.is_none() && !view.models.is_empty() && state.kind() != wire::Kind::ClaudePty,
-        view.effort_refusal.is_none() && !view.efforts.is_empty() && state.kind() != wire::Kind::ClaudePty,
+        view.model_refusal.is_none()
+            && !view.models.is_empty()
+            && state.kind() != wire::Kind::ClaudePty,
+        view.effort_refusal.is_none()
+            && !view.efforts.is_empty()
+            && state.kind() != wire::Kind::ClaudePty,
     )
 }
 
@@ -2908,7 +2915,10 @@ fn sign_in_lines(
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let (who, steps): (&str, Vec<(&str, bool)>) = match kind {
-        wire::Kind::Codex => ("Codex", vec![("Run ", false), ("codex login", true), (" on ", false)]),
+        wire::Kind::Codex => (
+            "Codex",
+            vec![("Run ", false), ("codex login", true), (" on ", false)],
+        ),
         _ => (
             "Claude",
             vec![
@@ -2922,7 +2932,12 @@ fn sign_in_lines(
     };
     let mut lines = Vec::new();
     let mut head = Line::from(Span::styled("● ", theme.accent()));
-    push(&mut head, format!("{who} needs you to sign in"), theme.text(), width);
+    push(
+        &mut head,
+        format!("{who} needs you to sign in"),
+        theme.text(),
+        width,
+    );
     lines.push(head);
     lines.push(Line::default());
     let what = match sign_in.state {
@@ -2933,7 +2948,12 @@ fn sign_in_lines(
     let mut status = Line::default();
     push(&mut status, what, theme.muted(), width);
     if !sign_in.account.is_empty() {
-        push(&mut status, format!(" · {}", sign_in.account), theme.muted(), width);
+        push(
+            &mut status,
+            format!(" · {}", sign_in.account),
+            theme.muted(),
+            width,
+        );
     }
     lines.push(status);
     for part in text::wrap(&sign_in.message, width.max(1)) {
@@ -3577,7 +3597,9 @@ fn state_words(
             theme.muted(),
         ),
         (Composer::Disabled(Waiting::Detached), _) => (away_words(), theme.warning()),
-        (Composer::Disabled(Waiting::Reconnecting), _) => ("reconnecting".to_owned(), theme.warning()),
+        (Composer::Disabled(Waiting::Reconnecting), _) => {
+            ("reconnecting".to_owned(), theme.warning())
+        }
         (Composer::Disabled(Waiting::CatchingUp), _) => ("catching up".to_owned(), theme.muted()),
         (_, _) if state.reset_pending() => ("refreshing".to_owned(), theme.muted()),
         (_, PhaseView::NeedsYou) => ("needs you".to_owned(), theme.accent()),
@@ -3772,4 +3794,3 @@ fn empty_feed(
     }
     lines
 }
-

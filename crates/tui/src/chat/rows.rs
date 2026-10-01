@@ -348,8 +348,10 @@ pub fn segment_lines(
                     last.spans.push(Span::styled(" ", style));
                 }
                 if let Some(last) = lines.last_mut() {
-                    last.spans
-                        .push(Span::styled(text::ellipsize(&chip, width), theme.chip_raised()));
+                    last.spans.push(Span::styled(
+                        text::ellipsize(&chip, width),
+                        theme.chip_raised(),
+                    ));
                 }
             }
         }

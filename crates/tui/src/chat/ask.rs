@@ -460,7 +460,6 @@ impl AskUi {
         self.stage = Stage::Other;
     }
 
-
     /// One key on the card. Ctrl+X is the chat's and never reaches here.
     pub fn key(&mut self, card: &AskCard, key: KeyEvent, attach: bool) -> AskAction {
         match card.state {
@@ -1517,7 +1516,6 @@ impl AskUi {
                 _ => self.box_note(card),
             }
     }
-
 
     /// Sends the box's choice at `at`, the deny with its note.
     fn box_send(&mut self, card: &AskCard, at: usize) -> AskAction {

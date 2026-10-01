@@ -75,6 +75,17 @@ async fn open(
             settings::ChatInSetting::Amux => tui::setup::ChatIn::Amux,
             settings::ChatInSetting::Terminal => tui::setup::ChatIn::Terminal,
         },
+        defaults: {
+            let of = |agent: &settings::NewAgentDefaults| tui::setup::AgentDefaults {
+                model: agent.model.clone(),
+                effort: agent.effort.clone(),
+                mode: agent.mode.clone(),
+            };
+            tui::setup::Defaults {
+                claude: of(&config.new_agent.claude),
+                codex: of(&config.new_agent.codex),
+            }
+        },
     };
     tui::run(Arc::new(client), tui_config, Some(attach_fn(attacher))).await
 }

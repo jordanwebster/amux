@@ -144,7 +144,11 @@ pub fn parse_keys(text: &str) -> Result<Vec<Step>> {
             steps.push(Step::Wait(Duration::from_millis(ms.parse()?)));
             continue;
         }
-        steps.extend(parse_events(&shell_words::quote(&word))?.into_iter().map(Step::Input));
+        steps.extend(
+            parse_events(&shell_words::quote(&word))?
+                .into_iter()
+                .map(Step::Input),
+        );
     }
     Ok(steps)
 }

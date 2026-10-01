@@ -1357,6 +1357,7 @@ fn raw_attach_is_only_for_terminals_on_this_machine() {
         local_host: b"a".to_vec(),
         layout: None,
         chat_in: crate::setup::ChatIn::Amux,
+        defaults: crate::setup::Defaults::default(),
     };
     let agent = |host: &[u8], kind: Kind| wire::Agent {
         host_id: host.to_vec(),
@@ -2322,12 +2323,14 @@ fn home_fleet() -> FleetState {
     fleet
 }
 
-const HOME_PLACE: crate::home::Place<'static> = crate::home::Place {
-    local_host: b"a",
-    working_dir: "~/work/amux",
-    attach: false,
-    chat_in: crate::setup::ChatIn::Amux,
-};
+static HOME_PLACE: std::sync::LazyLock<crate::home::Place<'static>> =
+    std::sync::LazyLock::new(|| crate::home::Place {
+        local_host: b"a",
+        working_dir: "~/work/amux",
+        attach: false,
+        chat_in: crate::setup::ChatIn::Amux,
+        defaults: Box::leak(Box::new(crate::setup::Defaults::default())),
+    });
 
 fn home_screen(home: &mut crate::home::Home, fleet: &FleetState, theme: Theme) -> String {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();

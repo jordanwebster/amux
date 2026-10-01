@@ -331,7 +331,10 @@ pub enum QueueEntry {
     /// that catching up found neither queued nor in the transcript: it may
     /// not have arrived, and only the person can say whether to send it
     /// again.
-    Unconfirmed { input_id: Vec<u8>, text: Vec<Segment> },
+    Unconfirmed {
+        input_id: Vec<u8>,
+        text: Vec<Segment>,
+    },
 }
 
 impl QueueEntry {

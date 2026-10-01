@@ -877,7 +877,13 @@ fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>, faces: &Faces
     lift(&mut tokens.focus, "focus", &surfaces, READABLE_LABEL, true);
     lift(&mut tokens.code, "code", &surfaces, READABLE_LABEL, true);
     lift(&mut tokens.ok, "ok", &surfaces, READABLE_LABEL, true);
-    lift(&mut tokens.warning, "warning", &surfaces, READABLE_LABEL, true);
+    lift(
+        &mut tokens.warning,
+        "warning",
+        &surfaces,
+        READABLE_LABEL,
+        true,
+    );
     lift(&mut tokens.error, "error", &surfaces, READABLE_LABEL, true);
     lift(
         &mut tokens.diff_added_fg,
