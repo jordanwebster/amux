@@ -20,7 +20,8 @@ mod stretch;
 
 pub use ask::{
     Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, OptionView, Pick, PlanStep,
-    QuestionView, Scope, answer_input, ask_card, question_answer, with_form_content,
+    QuestionView, REPLY_CONTEXT, Scope, answer_input, ask_card, question_answer, question_reply,
+    reply_words, with_form_content,
 };
 pub use composer::{
     CONTEXT_STRIP_PERCENT, ComposerView, ContextView, JobView, OutboxRow, OutboxState, QueuedRow,

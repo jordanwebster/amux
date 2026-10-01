@@ -1,3 +1,21 @@
+2026-10-01 — **Questions take over the composer's box.** In the redesigned
+chat a multiple-choice ask is asked in the same box as permissions and
+plans, and the feed hides its waiting step meanwhile. Several questions get
+a row of tabs (answered ones ✓ and faint, ←/→ move freely so any can be
+skipped, Review last); a lone question has none and sends on a pick. Options
+read "label · recommended · description", several picks toggle ○/● with
+Space or the digit, "Something else" is a field as soon as it is
+highlighted, and every question ends with "Reply instead", which hands the
+keys to the composer (marked "replying about the questions" on its edge;
+Esc goes back) and sends your words as the ask's refusal, with what was
+answered so far. No "Stop the turn": Ctrl+X is the one stop. Answered, the
+step reads "Answered 3 questions" (or "2 of 3", or "Skipped") with a faint
+line per answer; a reply shows as your message under "Replied instead of
+answering". The wire cannot decline a question, so the reply stands in as a
+permission refusal for Claude and as a note on the answers for Codex (whose
+user-input request has no decline). The lab's asks scenario gains a richer
+three-question ask, a single-question agent and a Codex question agent.
+
 2026-10-01 — **Clicking the pinned prompt shows the whole prompt.** The pin
 stood aside only for a prompt whose block started below the feed's top
 line, so jumping to a prompt (which puts its block at that top line) left

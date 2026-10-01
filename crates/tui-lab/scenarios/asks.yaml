@@ -121,22 +121,77 @@ agents:
     transcript:
       - user: Redesign what happens when you leave an attached terminal.
       - read: docs/TERMINAL.md
+      - read: crates/tui/src/attach.rs
       - ask:
           question:
             questions:
               - header: On exit
-                question: When the agent exits while attached, where should you land?
+                question: When the agent exits while you are attached to its terminal, where should you land?
+                other: false
                 options:
-                  - { label: The shell, description: "Like tmux: the session ended, so does the view.", recommended: true }
-                  - { label: The fleet, description: Back to the list of agents. }
-                  - { label: The chat, description: The agent's own chat, showing how it ended. }
+                  - { label: The shell, description: "Like tmux: the session ended, so does the view, and your shell prompt is back.", recommended: true }
+                  - { label: The fleet, description: "Back to the list of agents, with the one that exited at the top." }
+                  - { label: The chat, description: "The agent's own chat, scrolled to how it ended." }
+              - header: Keep open
+                question: Which panes should stay open when you return to the fleet?
+                multi: true
+                other: false
+                options:
+                  - { label: Overview, description: "Tasks, background jobs and changed files." }
+                  - { label: Diff, description: "The working tree's changes." }
+                  - { label: Usage, description: "How close the account is to its limits." }
               - header: Chord
-                question: Which chord should return to the fleet?
-                multi: false
+                question: Which chord should take you back to the fleet from an attached terminal?
                 options:
-                  - "<leader> s"
-                  - "<leader> f"
-                  - "Ctrl+]"
+                  - { label: "<leader> s", description: "The leader's existing \"switch\" key." }
+                  - { label: "<leader> f", description: '"f" for fleet.' }
+                  - { label: "Ctrl+]", description: "The telnet escape; works without the leader." }
+            then:
+              - say: Thanks. I'll draft the attach changes around those answers.
+              - turn: {}
+  - id: one-question
+    name: release notes
+    kind: claude_sdk
+    ago: 6m
+    transcript:
+      - user: Write the release notes for 0.7.2.
+      - read: CHANGELOG.md
+      - ask:
+          question:
+            questions:
+              - header: Audience
+                question: Who are these release notes for?
+                options:
+                  - { label: People using amux, description: "What changed for them, in their words.", recommended: true }
+                  - { label: Contributors, description: "Internals: crates, protocol and test changes." }
+            then:
+              - say: Writing them for people using amux.
+              - turn: {}
+  - id: codex-question
+    name: retry budget
+    kind: codex
+    ago: 7m
+    transcript:
+      - user: Add retries to the blob uploader.
+      - read: crates/blobs/src/upload.rs
+      - ask:
+          question:
+            questions:
+              - header: Attempts
+                question: How many times should an upload try before giving up?
+                other: false
+                options:
+                  - { label: "3", description: "About 15 seconds in all." }
+                  - { label: "4", description: "About a minute; resumes from what the server holds.", recommended: true }
+                  - { label: "6", description: "Several minutes on a bad connection." }
+              - header: Large files
+                question: Should uploads over 50 MB retry at all?
+                options:
+                  - { label: "Yes", description: "The same budget as any upload." }
+                  - { label: "No", description: "Fail fast and let the person retry." }
+            then:
+              - say: Going with that budget.
+              - turn: {}
   - id: plan
     name: journal compaction
     kind: claude

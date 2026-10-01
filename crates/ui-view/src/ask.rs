@@ -847,6 +847,53 @@ pub fn question_answer(card: &AskCard, picks: &[Pick], note: &str) -> Answer {
     }
 }
 
+/// Where the person's own words end in a reply sent instead of answering
+/// questions; what follows tells the agent what it had asked and what was
+/// answered so far.
+pub const REPLY_CONTEXT: &str = "\n\n— Sent instead of answering your questions.";
+
+/// A reply sent instead of answering a question ask: the person's words,
+/// then each question with its answer so far. Claude can only take it as
+/// the ask's refusal and Codex as a note with the answers, until either
+/// can decline a question with a message: stand-ins the lab understands.
+pub fn question_reply(card: &AskCard, picks: &[Pick], words: &str) -> Option<wire::Input> {
+    let AskBody::Question(questions) = &card.body else {
+        return None;
+    };
+    let mut message = format!("{}{REPLY_CONTEXT} Answers so far:", words.trim());
+    for (question, pick) in questions.iter().zip(picks) {
+        let answer = match pick {
+            Pick::Options(selected) if selected.is_empty() => "not answered".to_owned(),
+            Pick::Options(selected) => selected
+                .iter()
+                .filter_map(|i| question.options.get(*i as usize))
+                .map(|option| option.label.clone())
+                .collect::<Vec<_>>()
+                .join(", "),
+            Pick::Other(text) => format!("\"{text}\""),
+        };
+        message.push_str(&format!("\n- {}: {answer}", question.question));
+    }
+    let answer = match card.kind {
+        wire::Kind::Codex => question_answer(card, picks, &message),
+        _ => Answer::Claude(ClaudeAnswer {
+            of: Some(claude_answer::Of::Permission(wire::PermissionAnswer {
+                of: Some(wire::permission_answer::Of::Deny(wire::PermissionDeny {
+                    note: message.clone(),
+                    stop: false,
+                })),
+            })),
+        }),
+    };
+    answer_input(card, &answer, &message)
+}
+
+/// The person's own words in a reply sent instead of answering questions,
+/// or None when `note` is not such a reply.
+pub fn reply_words(note: &str) -> Option<&str> {
+    note.split_once(REPLY_CONTEXT).map(|(words, _)| words)
+}
+
 /// A form's Submit carrying the person's field values, as the JSON object
 /// the tool server's schema describes. Any other answer comes back as it
 /// was.

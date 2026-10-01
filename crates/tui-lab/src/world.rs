@@ -1141,7 +1141,26 @@ impl World {
                 sim.commit(&pending.item_key, &Body::Ask(ask), "", now, &[]);
             }
             inner.touch(index);
-            if allowed {
+            // A reply sent instead of answering questions (Claude takes it as
+            // the question's refusal, Codex as a note on the answers): the
+            // agent goes on from the person's words.
+            let note = verdict.note();
+            if let Some(words) = ui_view::reply_words(&note) {
+                let first: String = words
+                    .split_whitespace()
+                    .take(12)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let mut then = vec![Entry::Say(format!(
+                    "Thanks, going with that rather than the options: \"{first}\"."
+                ))];
+                if pending.then.is_empty() {
+                    then.push(Entry::Turn(Default::default()));
+                } else {
+                    then.extend(pending.then);
+                }
+                then
+            } else if allowed {
                 if pending.then.is_empty() {
                     vec![
                         Entry::Say("Thanks — carrying on from there.".into()),

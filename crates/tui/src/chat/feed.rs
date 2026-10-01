@@ -14,8 +14,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_state::Key;
 use ui_view::{
-    AskRow, DecisionView, FileChangeView, PlanVerdict, Row, RowKind, RunInfo, Segment, Stretch,
-    StretchCounts, ToolStateView,
+    AnswerView, AskRow, DecisionView, FileChangeView, PlanVerdict, QuestionView, Resolution, Row,
+    RowKind, RunInfo, Segment, Stretch, StretchCounts, ToolStateView,
 };
 
 use super::rows::{
@@ -183,6 +183,29 @@ pub fn row_lines(
                     writing: *writing,
                 },
                 expanded,
+                width,
+                theme,
+            ),
+            RowKind::Ask(
+                AskRow::Question {
+                    questions,
+                    answers,
+                    note,
+                    resolution,
+                }
+                | AskRow::Questions {
+                    questions,
+                    answers,
+                    note,
+                    resolution,
+                },
+            ) => questions_step(
+                &mut drawn,
+                row,
+                questions,
+                answers,
+                note.as_deref(),
+                *resolution,
                 width,
                 theme,
             ),
@@ -468,6 +491,99 @@ fn plan_lines(
             theme,
         );
     }
+}
+
+/// Questions the agent asked, once the box is done with them: a step that
+/// says what happened ("Answered 2 questions"), a faint line per question
+/// with its answer, and a reply sent instead as the person's own message.
+#[allow(clippy::too_many_arguments)]
+fn questions_step(
+    drawn: &mut Drawn,
+    row: &Row,
+    questions: &[QuestionView],
+    answers: &[AnswerView],
+    note: Option<&str>,
+    resolution: Resolution,
+    width: usize,
+    theme: Theme,
+) {
+    let reply = note.and_then(ui_view::reply_words);
+    let count = if questions.len() == 1 {
+        "a question".to_owned()
+    } else {
+        format!("{} questions", questions.len())
+    };
+    let answered = answers
+        .iter()
+        .filter(|answer| !answer_words(answer).is_empty())
+        .count();
+    let words = match (resolution, reply) {
+        (_, Some(_)) => format!("Replied instead of answering {count}"),
+        (Resolution::Open, _) => format!("Asking {count}"),
+        (Resolution::Answered, _) if answered == 0 => format!("Skipped {count}"),
+        (Resolution::Answered, _) if answered < questions.len() => {
+            format!("Answered {answered} of {} questions", questions.len())
+        }
+        (Resolution::Answered, _) => format!("Answered {count}"),
+        (Resolution::Declined, _) => format!("Declined {count}"),
+        (Resolution::Cancelled | Resolution::Dismissed, _) => format!("Dismissed {count}"),
+    };
+    let railed = |words: String, style: Style| {
+        let mut line = Line::default();
+        pad_to(&mut line, EDGE);
+        push(&mut line, "│", theme.hairline(), width);
+        pad_to(&mut line, WORDS);
+        push(&mut line, words, style, width.saturating_sub(2));
+        line
+    };
+    drawn.line(railed(words, theme.muted()));
+    // A reply carries the answers so far to the agent in its own words, so
+    // the step lists answers only when they were sent as answers.
+    if matches!(resolution, Resolution::Answered) && reply.is_none() {
+        for (at, question) in questions.iter().enumerate() {
+            let name = if question.header.is_empty() {
+                format!("Question {}", at + 1)
+            } else {
+                question.header.clone()
+            };
+            let answer = answers.get(at).map(answer_words).unwrap_or_default();
+            let answer = if answer.is_empty() {
+                "not answered".to_owned()
+            } else {
+                answer
+            };
+            drawn.line(railed(format!("{name}: {answer}"), theme.faint()));
+        }
+    }
+    drawn.blank();
+    if let Some(words) = reply {
+        prompt(
+            drawn,
+            row,
+            &[Segment::Text(words.to_owned())],
+            false,
+            width,
+            theme,
+        );
+    }
+}
+
+/// An answer in words: the picks, a typed answer in quotes, or "answered
+/// (hidden)" for a secret; empty when the question was skipped.
+fn answer_words(answer: &AnswerView) -> String {
+    if answer.hidden {
+        return "answered (hidden)".into();
+    }
+    let mut picks: Vec<String> = answer
+        .picked
+        .iter()
+        .filter(|pick| !pick.is_empty())
+        .cloned()
+        .collect();
+    if let Some(other) = answer.other.as_ref().filter(|other| !other.is_empty()) {
+        picks.push(format!("\u{201c}{other}\u{201d}"));
+    }
+    picks.join(", ")
 }
 
 /// A folded stretch: its counts, then any failure it left unresolved.

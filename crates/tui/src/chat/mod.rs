@@ -366,6 +366,9 @@ impl ChatView {
             return false;
         }
         if let Some(card) = self.card_takes_keys(state) {
+            if self.redesigned() && ask::boxed(&card) && self.ask.replying() {
+                return !self.editor.is_empty();
+            }
             if self.redesigned() && ask::boxed(&card) {
                 return self.ask.box_note_text(&card);
             }
@@ -393,6 +396,9 @@ impl ChatView {
             return self.review.as_mut().is_some_and(ReviewPage::kill_field);
         }
         if let Some(card) = self.card_takes_keys(state) {
+            if self.redesigned() && ask::boxed(&card) && self.ask.replying() {
+                return self.editor.kill_all();
+            }
             if self.redesigned() && ask::boxed(&card) {
                 return self.ask.in_box_note(&card) && self.ask.kill_box_note();
             }
@@ -415,7 +421,9 @@ impl ChatView {
         }
         if let Some(card) = self.card_takes_keys(state) {
             self.ask.sync(&card);
-            if self.redesigned() && ask::boxed(&card) {
+            if self.redesigned() && ask::boxed(&card) && self.ask.replying() {
+                self.editor.paste(text);
+            } else if self.redesigned() && ask::boxed(&card) {
                 self.ask.paste_box_note(&card, text);
             } else {
                 self.ask.paste(&card, text);
@@ -513,6 +521,31 @@ impl ChatView {
             // The permission kinds take over the composer's box, and Esc
             // there never leaves the ask.
             if self.redesigned() && ask::boxed(&card) {
+                // Replying instead of answering: the composer has the keys,
+                // Enter sends the reply and Esc goes back to the questions.
+                if self.ask.replying()
+                    && matches!(card.state, CardState::Open | CardState::Rejected(_))
+                {
+                    match key.code {
+                        KeyCode::Esc => {
+                            self.ask.stop_replying();
+                            return vec![];
+                        }
+                        KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            let words = self.editor.text().trim().to_owned();
+                            if words.is_empty() {
+                                return vec![];
+                            }
+                            let Some(input) = self.ask.reply_input(&card, &words) else {
+                                return vec![];
+                            };
+                            self.editor = Editor::default();
+                            self.follow();
+                            return vec![ChatEffect::Answer(input)];
+                        }
+                        _ => return self.composer_key(state, key),
+                    }
+                }
                 let action = self.ask.box_key(&card, key);
                 return self.ask_effects(state, &card, action);
             }
@@ -1707,6 +1740,25 @@ impl ChatView {
         let mut ask_box: Option<(usize, Vec<ask::Spot>)> = None;
         let mut ask_mode: Option<(usize, (usize, usize))> = None;
         match &card {
+            // Replying instead of answering a question: the composer, marked
+            // on its top edge, holds what will go as the reply.
+            Some(card)
+                if ask::boxed(card)
+                    && self.ask.replying()
+                    && matches!(card.state, CardState::Open | CardState::Rejected(_)) =>
+            {
+                let at = bottom.len();
+                composer_box(&mut bottom, &mut cursor, &self.editor, true);
+                if let Some(top) = bottom.get_mut(at) {
+                    *top = marked_edge("replying about the questions", width, theme);
+                }
+                boxed = true;
+                if footer.is_none()
+                    && let Some(words) = self.ask.question_hint(card, self.leader)
+                {
+                    hint = Err(words);
+                }
+            }
             Some(card) if ask::boxed(card) => {
                 const MARGIN: usize = 2;
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
@@ -1732,7 +1784,11 @@ impl ChatView {
                 ask_box = Some((at, drawn.spots));
                 bottom.extend(lines);
                 boxed = true;
-                if footer.is_none() {
+                if footer.is_none()
+                    && let Some(words) = self.ask.question_hint(card, self.leader)
+                {
+                    hint = Err(words);
+                } else if footer.is_none() {
                     hint = Err(if self.ask.in_box_note(card) {
                         "enter send · esc clear · ctrl+x stop".to_owned()
                     } else if !matches!(card.state, CardState::Open | CardState::Rejected(_)) {
@@ -2416,6 +2472,22 @@ fn boxed_composer(
         skip,
         wrap: inner,
     }
+}
+
+/// The composer box's top edge with `words` on it, faint, after a short
+/// run of the edge: what the box is for while it holds a reply.
+fn marked_edge(words: &str, width: usize, theme: Theme) -> Line<'static> {
+    const MARGIN: usize = 2;
+    let edge = theme.muted();
+    let span = width.saturating_sub(2 * MARGIN + 2);
+    let mut top = Line::from(Span::raw(" ".repeat(MARGIN)));
+    push(&mut top, "╭─ ", edge, width);
+    push(&mut top, words, theme.faint(), width);
+    push(&mut top, " ", edge, width);
+    let used = text::line_width(&top) - MARGIN - 1;
+    push(&mut top, "─".repeat(span.saturating_sub(used)), edge, width);
+    push(&mut top, "╮", edge, width);
+    top
 }
 
 /// `body` in the composer's box at the margin, its edge in `edge`, with
