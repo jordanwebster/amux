@@ -1,3 +1,14 @@
+2026-10-01 — **The bottom of a chat with queued prompts no longer jitters.**
+Whether the row above the composer says "N queued" was decided from the
+previous frame, and saying it changed the bottom's height, which moved the
+queue in or out of view and flipped it again: the bottom flickered while
+scrolling. It is now decided within the frame, from this frame's layout,
+with the row in place either way (it stays as a blank line when it has
+nothing to say), so its answer cannot change its own height. Scrolling down
+while following does nothing at all, and scrolling up from the bottom
+measures the window the queue was drawn in. Highlighting a queued prompt
+that a short terminal had cut off brings it into view.
+
 2026-10-01 — **Queued prompts wait in the feed.** Prompts queued behind the
 running turn are drawn at the feed's end like your messages but faint, with
 "queued" (or "queued from relay", or "sending into this turn" once steered)

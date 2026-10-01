@@ -277,8 +277,6 @@ pub struct ChatView {
     queued_hover: Option<usize>,
     /// How many lines the queued prompts take after the newest row.
     queued_trailing: usize,
-    /// Whether the last frame showed any of the queued prompts.
-    queued_seen: bool,
     /// "2 queued" on the row above the composer.
     queued_row_spot: Option<(u16, (u16, u16))>,
     stretch_cache: StretchCache,
@@ -345,7 +343,6 @@ impl ChatView {
             queued_spots: Vec::new(),
             queued_hover: None,
             queued_trailing: 0,
-            queued_seen: false,
             queued_row_spot: None,
             stretch_cache: StretchCache::default(),
             feed_origin: (0, 0),
@@ -944,7 +941,17 @@ impl ChatView {
     }
 
     fn scroll(&mut self, state: &SessionState, delta: isize, theme: Theme) {
-        self.anchor = self.frame(theme).scrolled(state, &self.laid, delta);
+        // Following the newest, there is nothing further down.
+        if self.anchor == Anchor::Bottom && delta >= 0 {
+            return;
+        }
+        // Following, the queue's lines sat under a shortened feed; scrolled,
+        // they are part of the full window.
+        let mut frame = self.frame(theme);
+        if self.anchor == Anchor::Bottom {
+            frame.height += self.queued_trailing;
+        }
+        self.anchor = frame.scrolled(state, &self.laid, delta);
     }
 
     pub fn mouse(
@@ -1730,11 +1737,17 @@ impl ChatView {
         let queued = ui_view::queue_rows(state);
         let following = self.anchor == Anchor::Bottom;
         let mut queued_at = None;
+        // Scrolled up with prompts queued, the row is drawn with "N queued";
+        // once this frame's layout shows any of them it says nothing of
+        // them, in the same place, so the row's height never depends on
+        // what it decides.
+        let queued_row = !side && !following && !queued.is_empty();
+        let mut row_slot = None;
         if !side
             && let Some((line, queued_cols)) = edge_row(
                 &strip,
                 !self.editor.is_empty(),
-                if self.queued_seen { 0 } else { queued.len() },
+                if queued_row { queued.len() } else { 0 },
                 now_ms,
                 width,
                 theme,
@@ -1745,6 +1758,7 @@ impl ChatView {
             }
             row_at = Some((bottom.len(), text::line_width(&line)));
             queued_at = queued_cols.map(|cols| (bottom.len(), cols));
+            row_slot = Some(bottom.len());
             bottom.push(line);
         }
         bottom.extend(foot_cards(&strip, width, theme));
@@ -1960,14 +1974,26 @@ impl ChatView {
                 queued_marks.push((start, i, block));
             }
         }
-        let cut = if following {
-            queued_lines
+        // Following, the queue's newest lines show, leaving the feed four;
+        // a highlighted prompt above them brings the window up to it.
+        let (q_from, q_to) = if following {
+            let cut = queued_lines
                 .len()
-                .saturating_sub(feed_height.saturating_sub(4))
+                .saturating_sub(feed_height.saturating_sub(4));
+            match self
+                .tray
+                .and_then(|i| queued_marks.iter().find(|(_, at, _)| *at == i))
+            {
+                Some((start, _, _)) if *start < cut => {
+                    let room = feed_height.saturating_sub(1).max(1);
+                    (*start, (*start + room).min(queued_lines.len()))
+                }
+                _ => (cut, queued_lines.len()),
+            }
         } else {
-            0
+            (0, queued_lines.len())
         };
-        self.queued_trailing = queued_lines.len() - cut;
+        self.queued_trailing = q_to - q_from;
         // Following, the newest row sits above them; scrolled up, they are
         // part of what scrolls and show only once the feed reaches them.
         let feed_height = if following {
@@ -1975,6 +2001,26 @@ impl ChatView {
         } else {
             feed_height
         };
+        // Scrolled up, the row's "N queued" holds only while this frame's
+        // window shows none of them.
+        if queued_row && !state.transcript().is_empty() {
+            self.feed = (width, feed_height);
+            let probe = self.frame(theme).layout(state);
+            let in_view = probe.at_bottom || probe.lines.len() < feed_height;
+            if in_view && let Some(slot) = row_slot {
+                queued_at = None;
+                match edge_row(&strip, !self.editor.is_empty(), 0, now_ms, width, theme) {
+                    Some((line, _)) => {
+                        row_at = Some((slot, text::line_width(&line)));
+                        bottom[slot] = line;
+                    }
+                    None => {
+                        row_at = None;
+                        bottom[slot] = Line::default();
+                    }
+                }
+            }
+        }
         self.feed = (width, feed_height);
         self.feed_origin = (area.x, area.y + top.len() as u16);
         let feed_top = top.len();
@@ -2027,20 +2073,20 @@ impl ChatView {
             };
             let queued_lines: Vec<Line<'static>> = queued_lines
                 .into_iter()
-                .skip(cut)
+                .take(q_to)
+                .skip(q_from)
                 .take(queued_room)
                 .collect();
-            self.queued_seen = !queued_lines.is_empty();
             let shown = queued_lines.len();
             let base = feed.len();
             for (start, index, block) in &queued_marks {
                 let y = |line: usize| {
                     (base + start + line)
-                        .checked_sub(cut)
+                        .checked_sub(q_from)
                         .map(|row| area.y + (feed_top + row) as u16)
                 };
                 let last = block.lines.len().saturating_sub(1);
-                if start + last >= cut + shown {
+                if *start < q_from || start + last >= q_from + shown {
                     continue;
                 }
                 let (Some(from), Some(to)) = (y(0), y(last)) else {
