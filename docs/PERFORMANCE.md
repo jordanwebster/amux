@@ -12,6 +12,18 @@ The desktop harness is the `qualification` crate (`crates/qualification/src/perf
 its own, `just ios perf`, which drives the optimised app on the enrolled Mac's simulator (see
 [The phone](#the-phone)).
 
+## Working a budget
+
+A budget is the requirement, and meeting it ends the work: a number that passes is not improved further, and a
+number that misses is not argued down. Every change starts from a measurement that names the cause, from the
+suite's own marks, the links' logs or a profile, never from a guess at where the time goes; a change made without
+one is reverted if the number does not move. The first question of each fix is what work to remove, not what
+machinery to add: a round trip, a handshake, a view built before anyone looks at it. A fix states its design in a
+sentence, lands with a test or with the suite's number before and after, and is measured as what somebody holding
+the phone sees, a frame or a reconciled fleet, not as a function's cost. When a profile points at nothing of ours
+to remove, and the next change would only add machinery to work around the platform, the work stops there and the
+budget is set again from the profile, with the reasoning recorded beside its number.
+
 ## Running it
 
 ```sh

@@ -1,3 +1,12 @@
+2026-10-01 — **How a budget is worked, written down.**
+docs/PERFORMANCE.md opens with the rules the phone's performance work
+ran by: the budget is the requirement and meeting it ends the work;
+every change starts from a measurement that names the cause; remove
+work before adding machinery; a sentence of design, a test or the
+suite's number per fix; measure what somebody holding the phone sees;
+and when the profile points at nothing of ours, stop and set the budget
+again from the profile.
+
 2026-10-01 — **Reconciliation over a slow network takes four round trips.**
 `just ios perf`'s reconciliation at 100 ms each way: 1,986 ms against
 1,000. The links' logs, with the served machines' side, read as nine
