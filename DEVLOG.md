@@ -1,3 +1,12 @@
+2026-10-01 — **Hitch time is held to its ceiling alone.**
+The phone's baseline recorded a streaming hitch of nothing, and the
+judge read drift as a share of the baseline, so the next run with a
+millisecond of hitch would have failed on infinite drift; between runs
+of the same build the metric rests at nothing or shows a millisecond or
+two, which is noise against its 5 ms/s budget. It is now judged on its
+ceiling only, the way the desktop's noisy timings are, and the report
+says so in the drift column.
+
 2026-10-01 — **The phone's baseline on the pinned Mac is recorded.**
 `just ios perf -- --baseline` with every budget met: cold first frame
 638 ms median and 649 worst, store read 30, fleet render 84,

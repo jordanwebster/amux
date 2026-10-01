@@ -54,7 +54,8 @@ class ThePageStatesTheRunner(unittest.TestCase):
             name = metric.strip("`")
             budget_number = number(budget)
             unit = budget.replace(f"{budget_number:,.0f}", "").replace(str(int(budget_number)), "").strip()
-            stated[name] = (unit, group, budget_number, number(worst), int(number(tolerance) or 0))
+            drift = None if "ceiling" in tolerance else int(number(tolerance) or 0)
+            stated[name] = (unit, group, budget_number, number(worst), drift)
         self.assertEqual(stated, perf.BUDGETS)
 
     def test_the_machine_table_matches_the_runners_machines(self):
@@ -87,6 +88,13 @@ class TheJudge(unittest.TestCase):
         verdict = perf.judge(self.samples(**{"cold first frame": [400, 610, 520, 530, 800]}), None)
         self.assertFalse(verdict["passed"])
         self.assertIn("worst", verdict["results"][0]["note"])
+
+    def test_a_ceiling_only_metric_ignores_a_baseline_it_rests_well_above(self):
+        baseline = {"streaming hitch time": 0.0}
+        verdict = perf.judge(self.samples(**{"streaming hitch time": [1.7, 1.7, 1.7, 1.7, 1.7]}), baseline)
+        self.assertTrue(verdict["passed"])
+        self.assertIsNone(verdict["results"][0]["drift_percent"])
+        self.assertIn("ceiling only", perf.report(verdict, "pinned-mac", "Mac14,6", 1.0, []))
 
     def test_drift_past_the_tolerance_fails_inside_the_budget(self):
         baseline = {"cold first frame": 300.0}

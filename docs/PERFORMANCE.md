@@ -176,7 +176,7 @@ the phone, rather than reporting a number about an idle screen.
 | `cold fleet render` | cold | From the fleet on screen having caught up with its store to the first presented frame carrying its rows: building the home from what the store held | 150 ms | | 15% |
 | `reconciliation at 0 ms` | reconciliation | From that point to the first presented frame after every trusted machine's agents were current with the machine, over loopback | 1,000 ms | | 15% |
 | `reconciliation at 100 ms` | reconciliation | The same, with every gate holding each packet 100 ms | 1,000 ms | | 15% |
-| `streaming hitch time` | streaming | Missed frame time per second while fifty rows a second arrive for twenty seconds into the conversation on screen, resting at its tail | 5 ms/s | | 15% |
+| `streaming hitch time` | streaming | Missed frame time per second while fifty rows a second arrive for twenty seconds into the conversation on screen, resting at its tail | 5 ms/s | | ceiling only |
 | `streaming main-thread CPU` | streaming | The main thread's share of one core over the same stream | 60 % | | 15% |
 | `streaming footprint` | streaming | The process's footprint at the end of the stream | 250 MB | | 10% |
 | `idle transcript commits` | idle | Rows the chat on screen took over five seconds with nothing arriving, after a two-second settle | 0 count | 0 | 0% |

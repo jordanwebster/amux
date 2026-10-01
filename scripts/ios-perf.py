@@ -68,8 +68,12 @@ LATENCIES_MS = (0, 100)
 LAUNCH_SPACING_SECONDS = 10.0
 
 # metric -> (unit, group, budget for the median, budget for the worst sample
-# or None, drift tolerance in percent over the baseline median). A tolerance
-# of 0 is a metric with no slack at all; the count metrics are exact.
+# or None, drift tolerance in percent over the baseline median, or None for
+# a metric held to its ceiling alone). A tolerance of 0 is a metric with no
+# slack at all; the count metrics are exact. Hitch time rests at nothing
+# between runs of the same build and shows a millisecond or two on others,
+# so a share of its baseline would fail runs for noise: its budget is what
+# it must meet.
 # The cold first frame's budget is set from a profile of the launch on the
 # pinned Mac: 300 ms loading images, of which 270 is the simulator's loader
 # on the main thread (85 of it dyld_sim re-pointing the shared cache at the
@@ -77,13 +81,13 @@ LAUNCH_SPACING_SECONDS = 10.0
 # SwiftUI building a navigation stack, a tab bar and a home for the first
 # time; nothing of ours is among the heavy leaves. A device is budgeted
 # apart, once measured.
-BUDGETS: dict[str, tuple[str, str, float, float | None, int]] = {
+BUDGETS: dict[str, tuple[str, str, float, float | None, int | None]] = {
     "cold first frame": ("ms", "cold", 650, 700, 15),
     "cold store read": ("ms", "cold", 100, None, 15),
     "cold fleet render": ("ms", "cold", 150, None, 15),
     "reconciliation at 0 ms": ("ms", "reconciliation", 1000, None, 15),
     "reconciliation at 100 ms": ("ms", "reconciliation", 1000, None, 15),
-    "streaming hitch time": ("ms/s", "streaming", 5, None, 15),
+    "streaming hitch time": ("ms/s", "streaming", 5, None, None),
     "streaming main-thread CPU": ("%", "streaming", 60, None, 15),
     "streaming footprint": ("MB", "streaming", 250, None, 10),
     "idle transcript commits": ("count", "idle", 0, 0, 0),
@@ -354,7 +358,7 @@ def judge(samples: dict[str, list[float]], baseline: dict[str, float] | None) ->
             notes.append(f"worst {worst:.1f} {unit} over the worst-sample budget of {worst_budget:g}")
         recorded = baseline.get(name) if baseline else None
         drift = None
-        if recorded is not None:
+        if recorded is not None and tolerance is not None:
             allowed = recorded * (1 + tolerance / 100)
             drift = (med - recorded) / recorded * 100 if recorded else (0.0 if med == recorded else float("inf"))
             if med > allowed and med > recorded:
@@ -400,7 +404,12 @@ def report(verdict: dict, machine_name: str, model: str, minutes: float, notes: 
         if result["worst_budget"] is not None:
             budget += f" (worst {result['worst_budget']:g})"
         baseline = f"{result['baseline']:.1f}" if result["baseline"] is not None else "none"
-        drift = f"{result['drift_percent']:+.1f}%" if result["drift_percent"] is not None else "unavailable"
+        if result["tolerance_percent"] is None:
+            drift = "ceiling only"
+        elif result["drift_percent"] is not None:
+            drift = f"{result['drift_percent']:+.1f}%"
+        else:
+            drift = "unavailable"
         lines.append(
             f"| {result['metric']} | {result['median']:.1f} {unit} | {result['worst']:.1f} {unit} | {budget} | "
             f"{baseline} | {drift} | {'PASS' if result['passed'] else 'FAIL: ' + result['note']} |"
