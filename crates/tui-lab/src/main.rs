@@ -327,8 +327,8 @@ mod tests {
         use crossterm::event::{Event, KeyCode, KeyModifiers};
         let codes: Vec<_> = keys
             .iter()
-            .map(|event| match event {
-                Event::Key(k) => (k.code, k.modifiers),
+            .map(|step| match step {
+                render::Step::Input(Event::Key(k)) => (k.code, k.modifiers),
                 other => panic!("not a key: {other:?}"),
             })
             .collect();

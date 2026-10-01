@@ -116,6 +116,10 @@ pub struct Frame<'a> {
     /// The step an ask in the composer's box points at: the box shows it,
     /// so the feed does not draw it twice.
     pub asking: Option<&'a Key>,
+    /// Lines after the newest row, drawn by the caller and scrolled with
+    /// the rest: the running turn's live end (your prompt on its way, the
+    /// activity line).
+    pub tail: &'a [Line<'static>],
 }
 
 impl Frame<'_> {
@@ -520,7 +524,7 @@ impl Frame<'_> {
     /// Fills the feed upward from `from`, newest at the bottom.
     fn upward(&self, state: &SessionState, from: u64, runs: &[RangeInclusive<u64>]) -> Laid {
         let mut blocks = Vec::new();
-        let mut total = 0usize;
+        let mut total = self.tail.len();
         let mut order = Some(from);
         while let Some(at) = order {
             if total >= self.height {
@@ -537,11 +541,13 @@ impl Frame<'_> {
         let mut lines: Vec<Line<'static>> = blocks
             .iter()
             .flat_map(|block| block.lines.iter().cloned())
+            .chain(self.tail.iter().cloned())
             .skip(top_offset)
             .collect();
         let mut hits: Vec<LineHits> = blocks
             .iter()
             .flat_map(|block| block.hits.iter().cloned())
+            .chain(self.tail.iter().map(|_| Vec::new()))
             .skip(top_offset)
             .collect();
         if lines.len() < self.height {
@@ -592,6 +598,9 @@ impl Frame<'_> {
                 .first()
                 .map_or(0, |b| b.lines.len().saturating_sub(1)),
         );
+        // The live end follows the newest row.
+        let tail = if reached_head { self.tail } else { &[] };
+        let total = total + tail.len();
         // What lies below fits exactly: that is the bottom too.
         if total < offset + self.height || (reached_head && total == offset + self.height) {
             return None;
@@ -599,12 +608,14 @@ impl Frame<'_> {
         let lines = blocks
             .iter()
             .flat_map(|block| block.lines.iter().cloned())
+            .chain(tail.iter().cloned())
             .skip(offset)
             .take(self.height)
             .collect();
         let hits = blocks
             .iter()
             .flat_map(|block| block.hits.iter().cloned())
+            .chain(tail.iter().map(|_| Vec::new()))
             .skip(offset)
             .take(self.height)
             .collect();

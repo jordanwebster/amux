@@ -164,6 +164,28 @@ pub struct AgentSpec {
     /// What a Codex agent does when told to implement its plan.
     #[serde(default)]
     pub implement: Option<Vec<Entry>>,
+    /// How the lab's link treats a prompt sent to this agent.
+    #[serde(default)]
+    pub send: SendSpec,
+}
+
+/// How the lab's link treats a prompt sent to an agent, to show the
+/// composer's sending states.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SendSpec {
+    /// Held this long before the agent answers, so the prompt shows on
+    /// its way.
+    #[serde(default)]
+    pub delay: Option<Dur>,
+    /// Refused with this reason (the wire's: draining, exiting,
+    /// unsupported, or any words).
+    #[serde(default)]
+    pub reject: Option<String>,
+    /// The link drops as the prompt goes: the agent's host is away this
+    /// long, and the prompt never arrives.
+    #[serde(default)]
+    pub lose: Option<Dur>,
 }
 
 /// A queued prompt: its words, or its words with who queued it (another

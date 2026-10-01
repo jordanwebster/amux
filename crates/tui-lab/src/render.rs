@@ -23,8 +23,8 @@ pub struct Request<'a> {
     pub scenario: &'a Scenario,
     pub step: usize,
     pub sizes: Vec<(u16, u16)>,
-    /// Keys and mouse events delivered before drawing.
-    pub keys: Vec<Event>,
+    /// Keys and mouse events delivered before drawing, and pauses.
+    pub keys: Vec<Step>,
     pub out: &'a Path,
     pub theme: Theme,
     pub variant: u8,
@@ -66,8 +66,18 @@ pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
     let (width, height) = request.sizes.first().copied().unwrap_or((120, 40));
     let mut terminal = Terminal::new(TestBackend::new(width, height))?;
     draw_settle(app, &mut terminal, &place).await?;
-    for event in &request.keys {
-        let _ = app.input(event.clone());
+    for step in &request.keys {
+        match step {
+            Step::Input(event) => {
+                let _ = app.input(event.clone());
+            }
+            Step::Wait(pause) => {
+                let until = tokio::time::Instant::now() + *pause;
+                while tokio::time::Instant::now() < until {
+                    settle(app, QUIET).await;
+                }
+            }
+        }
         draw_settle(app, &mut terminal, &place).await?;
     }
     let mut written = Vec::new();
@@ -108,15 +118,35 @@ pub fn parse_size(text: &str) -> Result<(u16, u16)> {
     Ok((w.parse()?, h.parse()?))
 }
 
+/// One step of a render's input: an event, or time passing (`wait:MS`), so
+/// a frame can show what the world does a while later.
+#[derive(Clone, Debug)]
+pub enum Step {
+    Input(Event),
+    Wait(Duration),
+}
+
 /// Keys written like a shell line: named keys (`enter`, `esc`, `tab`,
 /// `backtab`, `up`, `down`, `left`, `right`, `pgup`, `pgdn`, `home`, `end`,
 /// `bs`, `del`, `space`, `f1`..`f12`), `C-x` for Ctrl+x and `C-enter`,
 /// `hover:X,Y` and `click:X,Y` for the mouse at a cell (zero-based),
 /// `wheelup` and `wheeldown` for one wheel event (`wheeldown:X,Y` over a
-/// cell), and anything else typed
+/// cell), `wait:MS` to let time pass, and anything else typed
 /// as text (quote it to keep spaces:
 /// `'fix the bug' enter`).
-pub fn parse_keys(text: &str) -> Result<Vec<Event>> {
+pub fn parse_keys(text: &str) -> Result<Vec<Step>> {
+    let mut steps = Vec::new();
+    for word in shell_words::split(text)? {
+        if let Some(ms) = word.strip_prefix("wait:") {
+            steps.push(Step::Wait(Duration::from_millis(ms.parse()?)));
+            continue;
+        }
+        steps.extend(parse_events(&shell_words::quote(&word))?.into_iter().map(Step::Input));
+    }
+    Ok(steps)
+}
+
+fn parse_events(text: &str) -> Result<Vec<Event>> {
     let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
     let mut out = Vec::new();
     for word in shell_words::split(text)? {

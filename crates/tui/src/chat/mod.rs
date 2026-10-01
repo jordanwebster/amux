@@ -14,23 +14,25 @@ pub mod pane;
 pub mod review;
 pub mod rows;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ui_state::{ActivityKind, Composer, Key, PhaseView, SessionState, Waiting};
+use ui_state::{
+    ActivityKind, Composer, InputState, InputWhat, Key, PhaseView, SessionState, Waiting,
+};
 use ui_view::{
-    AskBody, AskCard, Away, CardState, ChatOptions, FamilyHeader, OutboxState, RowKind, ToolRows,
-    ask_card, chat_rows_for, composer, outbox_rows, queue_rows, session_strip,
+    AskBody, AskCard, Away, CardState, ChatOptions, FamilyHeader, RowKind, ToolRows, ask_card,
+    chat_rows_for, composer, queue_rows, session_strip,
 };
 use wire::{Attachment, attachment};
 
 use self::ask::{AskAction, AskUi};
 use self::composer::{
-    COMPOSER_LINES, TrayRow, activity_line, edge_row, editor_lines, foot_cards, placeholder,
+    COMPOSER_LINES, QueueEntry, activity_line, edge_row, editor_lines, foot_cards, placeholder,
     strip_line,
 };
 use self::feed::FeedHit;
@@ -133,14 +135,23 @@ fn withdraw_effect(state: &SessionState, input_id: &[u8]) -> Option<ChatEffect> 
         })
 }
 
-/// A queued prompt above the composer: its screen row, its place among the
-/// queue's rows, and where its controls are.
-#[derive(Clone, Copy, Debug)]
+/// A line of the queue block above the composer: its screen row, its place
+/// among the block's entries, and where its controls are, in order (the
+/// first is what Enter does, the second what Backspace does).
+#[derive(Clone, Debug)]
 struct QueuedSpot {
     row: u16,
     index: usize,
-    send_now: Option<(u16, u16)>,
-    withdraw: Option<(u16, u16)>,
+    controls: Vec<(u16, u16)>,
+}
+
+/// When this client's prompt was first drawn on its way, and where: in the
+/// feed (the agent was idle) or in the queue block (it was busy). A prompt
+/// that loses its connection stays where it was until catching up.
+#[derive(Clone, Copy, Debug)]
+struct Sending {
+    at_ms: i64,
+    in_feed: bool,
 }
 
 /// Where the composer's words were drawn, for a click to place the cursor:
@@ -187,7 +198,7 @@ pub struct ChatView {
     pub focus: Option<Key>,
     pub editor: Editor,
     pub ask: AskUi,
-    /// The selected tray row while the tray has the keys.
+    /// The selected entry of the queue block while it has the keys.
     pub tray: Option<usize>,
     pub reader: Option<Reader>,
     /// The review page, kept behind its draft token while the chat shows.
@@ -269,7 +280,7 @@ pub struct ChatView {
     /// The mode on the composer's edge.
     mode_spot: Option<(u16, (u16, u16))>,
     composer_spot: Option<ComposerSpot>,
-    /// Tray rows by screen row.
+    /// The old design's tray rows by screen row.
     tray_spots: Vec<(u16, usize)>,
     /// Queued prompts above the composer: their rows and their controls.
     queued_spots: Vec<QueuedSpot>,
@@ -277,6 +288,15 @@ pub struct ChatView {
     queued_hover: Option<usize>,
     /// The first queued prompt shown, when more wait than show.
     queued_from: usize,
+    /// This client's prompts on their way, as first drawn.
+    sending: HashMap<Vec<u8>, Sending>,
+    /// Rejected prompts whose words have gone back to the composer.
+    rejected_seen: HashSet<Vec<u8>>,
+    /// Why the last prompt was not sent, on the composer's edge until the
+    /// draft changes or is sent.
+    not_sent: Option<String>,
+    /// The running turn's live end after the newest row, for the layout.
+    feed_tail: Vec<Line<'static>>,
     stretch_cache: StretchCache,
     /// Where the feed's first line was drawn, for clicks.
     feed_origin: (u16, u16),
@@ -341,6 +361,10 @@ impl ChatView {
             queued_spots: Vec::new(),
             queued_hover: None,
             queued_from: 0,
+            sending: HashMap::new(),
+            rejected_seen: HashSet::new(),
+            not_sent: None,
+            feed_tail: Vec::new(),
             stretch_cache: StretchCache::default(),
             feed_origin: (0, 0),
             epoch: 0,
@@ -365,6 +389,7 @@ impl ChatView {
             stretches: &self.stretches,
             cache: &self.stretch_cache,
             asking: self.asking.as_ref(),
+            tail: &self.feed_tail,
         }
     }
 
@@ -384,10 +409,96 @@ impl ChatView {
         Some(card)
     }
 
-    fn tray_rows(state: &SessionState) -> Vec<TrayRow> {
-        let mut rows: Vec<TrayRow> = queue_rows(state).into_iter().map(TrayRow::Queued).collect();
-        rows.extend(outbox_rows(state).into_iter().map(TrayRow::Outbox));
-        rows
+    /// The queue block's entries, in the order they will run: the agent's
+    /// queue, then this client's prompts on their way to it, then those
+    /// that may not have arrived. `host` names what a prompt waits for
+    /// while the link is down.
+    fn queue_entries(&self, state: &SessionState, host: &str) -> Vec<QueueEntry> {
+        let mut entries: Vec<QueueEntry> = queue_rows(state)
+            .into_iter()
+            .map(QueueEntry::Queued)
+            .collect();
+        let listed: Vec<Vec<u8>> = state
+            .queue()
+            .iter()
+            .map(|row| row.entry.input_id.clone())
+            .collect();
+        let caught_up = state.caught_up();
+        let mut unconfirmed = Vec::new();
+        for sent in state.inputs().iter() {
+            let InputWhat::Prompt { text, attachments } = &sent.what else {
+                continue;
+            };
+            if listed.contains(&sent.id) {
+                continue;
+            }
+            let words = || ui_view::composer_tokens(text, attachments);
+            let in_feed = self.in_feed(state, &sent.id);
+            let waiting = (!caught_up).then(|| host.to_owned());
+            match &sent.state {
+                // Accepted into the queue before a snapshot lists it.
+                InputState::Queued => entries.push(QueueEntry::Sending {
+                    input_id: sent.id.clone(),
+                    text: words(),
+                    waiting,
+                }),
+                InputState::Sent if !in_feed => entries.push(QueueEntry::Sending {
+                    input_id: sent.id.clone(),
+                    text: words(),
+                    waiting,
+                }),
+                InputState::Uncertain if !caught_up && !in_feed => {
+                    entries.push(QueueEntry::Sending {
+                        input_id: sent.id.clone(),
+                        text: words(),
+                        waiting,
+                    });
+                }
+                InputState::Uncertain if caught_up => unconfirmed.push(QueueEntry::Unconfirmed {
+                    input_id: sent.id.clone(),
+                    text: words(),
+                }),
+                _ => {}
+            }
+        }
+        entries.extend(unconfirmed);
+        entries
+    }
+
+    /// Whether this client's prompt draws in the feed rather than the queue
+    /// block: where it was first drawn, or, not drawn yet, where it would
+    /// be now.
+    fn in_feed(&self, state: &SessionState, id: &[u8]) -> bool {
+        self.sending
+            .get(id)
+            .map_or_else(|| sends_to_feed(state), |sending| sending.in_feed)
+    }
+
+    /// Notes this client's prompts as the frame first sees them: where a
+    /// prompt on its way draws, and, for one the agent refused, its words
+    /// back in the composer (after any draft) and why on the box's edge.
+    fn note_sent(&mut self, state: &SessionState, now_ms: i64) {
+        let to_feed = sends_to_feed(state);
+        for sent in state.inputs().iter() {
+            let InputWhat::Prompt { text, attachments } = &sent.what else {
+                continue;
+            };
+            match &sent.state {
+                InputState::Rejected(reason) => {
+                    if self.rejected_seen.insert(sent.id.clone()) {
+                        self.editor.restore(text, attachments.clone());
+                        self.not_sent = Some(not_sent_words(reason));
+                    }
+                }
+                InputState::Sent | InputState::Queued | InputState::Uncertain => {
+                    self.sending.entry(sent.id.clone()).or_insert(Sending {
+                        at_ms: now_ms,
+                        in_feed: to_feed && sent.state != InputState::Queued,
+                    });
+                }
+                InputState::Settled => {}
+            }
+        }
     }
 
     /// Whether a text field has the keys and holds something, for Ctrl+C.
@@ -666,13 +777,15 @@ impl ChatView {
                 .map(ChatEffect::Answer)
                 .into_iter()
                 .collect(),
-            KeyCode::Up if self.editor.is_empty() && !Self::tray_rows(state).is_empty() => {
-                self.tray = Some(Self::tray_rows(state).len() - 1);
+            KeyCode::Up if self.editor.is_empty() && !self.queue_entries(state, "").is_empty() => {
+                self.tray = Some(self.queue_entries(state, "").len() - 1);
                 vec![]
             }
             _ => {
                 if self.editor.key(key) == Edit::Changed {
                     self.focus = None;
+                    // Editing answers why the last one was not sent.
+                    self.not_sent = None;
                 }
                 vec![]
             }
@@ -685,78 +798,69 @@ impl ChatView {
         selected: usize,
         key: KeyEvent,
     ) -> Vec<ChatEffect> {
-        let rows = Self::tray_rows(state);
-        let Some(row) = rows.get(selected.min(rows.len().saturating_sub(1))) else {
+        let entries = self.queue_entries(state, "");
+        let Some(entry) = entries.get(selected.min(entries.len().saturating_sub(1))) else {
             self.tray = None;
             return vec![];
         };
         match key.code {
             KeyCode::Esc => self.tray = None,
             KeyCode::Up => self.tray = Some(selected.saturating_sub(1)),
-            KeyCode::Down if selected + 1 >= rows.len() => self.tray = None,
+            KeyCode::Down if selected + 1 >= entries.len() => self.tray = None,
             KeyCode::Down => self.tray = Some(selected + 1),
             _ => {
-                let effect = match (row, key.code) {
-                    (TrayRow::Queued(queued), KeyCode::Enter) if queued.can_send_now => {
-                        Some(ChatEffect::SendNow {
-                            id: queued.input_id.clone(),
-                        })
-                    }
-                    (TrayRow::Queued(queued), KeyCode::Delete | KeyCode::Backspace)
-                        if queued.can_withdraw =>
-                    {
-                        withdraw_effect(state, &queued.input_id)
-                    }
-                    // Typing on a queued prompt goes back to the composer.
-                    (TrayRow::Queued(_), KeyCode::Char(_))
+                let effect = match (entry, key.code) {
+                    // Typing on an entry goes back to the composer.
+                    (_, KeyCode::Char(_))
                         if !key
                             .modifiers
                             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                     {
                         self.tray = None;
-                        self.editor.key(key);
+                        if self.editor.key(key) == Edit::Changed {
+                            self.not_sent = None;
+                        }
                         None
                     }
-                    (TrayRow::Outbox(out), KeyCode::Char('r'))
-                        if out.state == OutboxState::NotConfirmed =>
-                    {
-                        Some(ChatEffect::Resend {
-                            id: out.input_id.clone(),
-                        })
-                    }
-                    (TrayRow::Outbox(out), KeyCode::Char('d'))
-                        if out.state != OutboxState::Sending =>
-                    {
-                        Some(ChatEffect::Discard {
-                            id: out.input_id.clone(),
-                        })
-                    }
-                    (TrayRow::Outbox(out), KeyCode::Char('e'))
-                        if matches!(out.state, OutboxState::Rejected(_)) =>
-                    {
-                        if let Some(sent) = state.inputs().get(&out.input_id)
-                            && let ui_state::InputWhat::Prompt { text, attachments } = &sent.what
-                        {
-                            self.editor.restore(text, attachments.clone());
-                        }
-                        Some(ChatEffect::Discard {
-                            id: out.input_id.clone(),
-                        })
-                    }
+                    (_, KeyCode::Enter) => self.queue_act(state, entry, 0),
+                    (_, KeyCode::Delete | KeyCode::Backspace) => self.queue_act(state, entry, 1),
                     _ => None,
                 };
                 if let Some(effect) = effect {
-                    // Acting on a queued prompt hands the keys back to the
-                    // composer: a withdrawn one's words are there to edit,
-                    // and a second Enter must not send the next one too.
-                    if rows.len() <= 1 || matches!(row, TrayRow::Queued(_)) {
-                        self.tray = None;
-                    }
+                    // Acting on an entry hands the keys back to the
+                    // composer: a withdrawn prompt's words are there to
+                    // edit, and a second Enter must not act on the next.
+                    self.tray = None;
                     return vec![effect];
                 }
             }
         }
         vec![]
+    }
+
+    /// An entry's control by place: 0 is its first ("[Send now]",
+    /// "[Resend]"), 1 its second ("[Withdraw]", "[Discard]").
+    fn queue_act(
+        &self,
+        state: &SessionState,
+        entry: &QueueEntry,
+        control: usize,
+    ) -> Option<ChatEffect> {
+        match (entry, control) {
+            (QueueEntry::Queued(queued), 0) if queued.can_send_now => Some(ChatEffect::SendNow {
+                id: queued.input_id.clone(),
+            }),
+            (QueueEntry::Queued(queued), 1) if queued.can_withdraw => {
+                withdraw_effect(state, &queued.input_id)
+            }
+            (QueueEntry::Unconfirmed { input_id, .. }, 0) => Some(ChatEffect::Resend {
+                id: input_id.clone(),
+            }),
+            (QueueEntry::Unconfirmed { input_id, .. }, 1) => Some(ChatEffect::Discard {
+                id: input_id.clone(),
+            }),
+            _ => None,
+        }
     }
 
     /// Enter in the composer: send when caught up and live, resume an
@@ -768,11 +872,13 @@ impl ChatView {
         match state.composer() {
             Composer::Send if state.can_send() => {
                 let (text, attachments) = self.editor.take();
+                self.not_sent = None;
                 self.follow();
                 vec![ChatEffect::Prompt { text, attachments }]
             }
             Composer::Resume => {
                 let (text, attachments) = self.editor.take();
+                self.not_sent = None;
                 self.follow();
                 vec![ChatEffect::Resume { text, attachments }]
             }
@@ -1093,25 +1199,16 @@ impl ChatView {
                 }
                 // A queued prompt's controls act; a click elsewhere on it
                 // highlights it.
-                if let Some(spot) = self
-                    .queued_spots
-                    .iter()
-                    .find(|spot| spot.row == y)
-                    .copied()
-                {
-                    let rows = ui_view::queue_rows(state);
-                    let Some(row) = rows.get(spot.index) else {
+                if let Some(spot) = self.queued_spots.iter().find(|spot| spot.row == y).cloned() {
+                    let entries = self.queue_entries(state, "");
+                    let Some(entry) = entries.get(spot.index) else {
                         return vec![];
                     };
-                    if spot.send_now.is_some_and(|cols| on(spot.row, cols)) {
+                    if let Some(control) = spot.controls.iter().position(|cols| on(spot.row, *cols))
+                        && let Some(effect) = self.queue_act(state, entry, control)
+                    {
                         self.tray = None;
-                        return vec![ChatEffect::SendNow {
-                            id: row.input_id.clone(),
-                        }];
-                    }
-                    if spot.withdraw.is_some_and(|cols| on(spot.row, cols)) {
-                        self.tray = None;
-                        return withdraw_effect(state, &row.input_id).into_iter().collect();
+                        return vec![effect];
                     }
                     self.tray = Some(spot.index);
                     return vec![];
@@ -1495,7 +1592,7 @@ impl ChatView {
             bottom.push(line);
         }
         bottom.extend(foot_cards(&strip, width, theme));
-        let tray = Self::tray_rows(state);
+        let tray = self.queue_entries(state, "");
         if let Some(selected) = self.tray {
             if tray.is_empty() {
                 self.tray = None;
@@ -1708,9 +1805,43 @@ impl ChatView {
 
         let mut bottom: Vec<Line<'static>> = Vec::new();
         let view = composer(state, now_ms);
-        if let Some(activity) = &view.activity {
-            bottom.push(quiet_activity(activity, width, theme));
+        self.note_sent(state, now_ms);
+        // The running turn's live end, after its newest row and scrolled
+        // with it: a prompt on its way while the agent was idle, then what
+        // the agent is doing, where "Worked 6m" stands once the turn ends.
+        let mut tail: Vec<Line<'static>> = Vec::new();
+        for sent in state.inputs().iter() {
+            let InputWhat::Prompt { text, attachments } = &sent.what else {
+                continue;
+            };
+            let Some(seen) = self.sending.get(&sent.id).filter(|seen| seen.in_feed) else {
+                continue;
+            };
+            let shows = match sent.state {
+                InputState::Sent => true,
+                InputState::Uncertain => !state.caught_up(),
+                _ => false,
+            };
+            if !shows || state.queue().iter().any(|row| row.entry.input_id == sent.id) {
+                continue;
+            }
+            let when = if state.caught_up() {
+                feed::clock(seen.at_ms)
+            } else {
+                format!("waiting for {host}…")
+            };
+            tail.extend(feed::pending_prompt(
+                &ui_view::composer_tokens(text, attachments),
+                &when,
+                width,
+                theme,
+            ));
         }
+        if let Some(activity) = &view.activity {
+            tail.push(quiet_activity(activity, width, theme));
+            tail.push(Line::default());
+        }
+        self.feed_tail = tail;
         let mut row_at = None;
         // Prompts queued behind the running turn wait just above the
         // composer, one line each in the order they will run. At most
@@ -1718,22 +1849,26 @@ impl ChatView {
         // brings earlier ones in; one line says how many more wait, on the
         // side they are on, so the block's height never changes as it moves.
         const QUEUED_SHOWN: usize = 3;
-        let queued = ui_view::queue_rows(state);
+        let entries = self.queue_entries(state, &host);
+        if let Some(selected) = self.tray {
+            if entries.is_empty() {
+                self.tray = None;
+            } else if selected >= entries.len() {
+                self.tray = Some(entries.len() - 1);
+            }
+        }
         let mut queued_at: Vec<(usize, usize, feed::Queued)> = Vec::new();
-        if !queued.is_empty() {
-            let latest = queued.len().saturating_sub(QUEUED_SHOWN);
+        if !entries.is_empty() {
+            let latest = entries.len().saturating_sub(QUEUED_SHOWN);
             let mut from = self.queued_from.min(latest);
-            match self.tray.filter(|i| *i < queued.len()) {
+            match self.tray {
                 Some(i) if i < from => from = i,
                 Some(i) if i >= from + QUEUED_SHOWN => from = i + 1 - QUEUED_SHOWN,
                 Some(_) => {}
                 None => from = latest,
             }
             self.queued_from = from;
-            if !bottom.is_empty() {
-                bottom.push(Line::default());
-            }
-            let more = queued.len().saturating_sub(QUEUED_SHOWN);
+            let more = entries.len().saturating_sub(QUEUED_SHOWN);
             let more_line = || {
                 Line::from(Span::styled(
                     format!("{}+{more} more queued", " ".repeat(feed::WORDS)),
@@ -1746,9 +1881,9 @@ impl ChatView {
             if more_above {
                 bottom.push(more_line());
             }
-            for (i, row) in queued.iter().enumerate().skip(from).take(QUEUED_SHOWN) {
+            for (i, entry) in entries.iter().enumerate().skip(from).take(QUEUED_SHOWN) {
                 let lit = self.tray == Some(i) || self.queued_hover == Some(i);
-                let drawn = feed::queued_line(row, lit, width, theme);
+                let drawn = feed::queued_line(entry, lit, width, theme);
                 bottom.push(drawn.line.clone());
                 queued_at.push((bottom.len() - 1, i, drawn));
             }
@@ -1757,9 +1892,8 @@ impl ChatView {
             }
         }
         // The row rests on the composer's box; a blank line sets it apart
-        // from whatever is above, as the feed's last row already ends in
-        // one. It is the pane folded: while the pane is open it takes the
-        // row's place.
+        // from whatever is above. It is the pane folded: while the pane is
+        // open it takes the row's place.
         if !side && let Some(line) = edge_row(&strip, !self.editor.is_empty(), now_ms, width, theme)
         {
             if !bottom.is_empty() {
@@ -1769,23 +1903,6 @@ impl ChatView {
             bottom.push(line);
         }
         bottom.extend(foot_cards(&strip, width, theme));
-        let tray = Self::tray_rows(state);
-        if let Some(selected) = self.tray {
-            if tray.is_empty() {
-                self.tray = None;
-            } else if selected >= tray.len() {
-                self.tray = Some(tray.len() - 1);
-            }
-        }
-        let mut tray_at = Vec::new();
-        for (i, row) in tray.iter().enumerate() {
-            // Queued prompts are drawn above; only the outbox stays.
-            if matches!(row, TrayRow::Queued(_)) {
-                continue;
-            }
-            tray_at.push((bottom.len(), i));
-            bottom.push(row.line(self.tray == Some(i), width, theme));
-        }
 
         let mut cursor = None;
         let card = self.card(state);
@@ -1822,9 +1939,15 @@ impl ChatView {
                                 cursor: &mut Option<(usize, usize)>,
                                 editor: &Editor,
                                 takes_keys: bool| {
+            // Kept from sending, the box's edge says why; the empty
+            // field still invites the draft.
+            let invite = match state.composer() {
+                Composer::Disabled(_) => format!("Message {name}"),
+                composer => placeholder(&composer, &name, &host, self.away),
+            };
             let boxed = boxed_composer(
                 editor,
-                &placeholder(&state.composer(), &name, &host, self.away),
+                &invite,
                 &EdgeWords {
                     model: crate::words::model_words(state),
                     effort: strip.effort.clone(),
@@ -1853,6 +1976,8 @@ impl ChatView {
             None => Ok(Line::default()),
         };
         let mut boxed = false;
+        // Where the plain composer's box starts, to mark its top edge.
+        let mut plain_box: Option<usize> = None;
         // A permission ask takes over the composer's box: its edge in the
         // accent, the draft kept behind it.
         let mut ask_box: Option<(usize, Vec<ask::Spot>)> = None;
@@ -1939,20 +2064,36 @@ impl ChatView {
                     theme,
                 ));
                 if footer.is_none() && card.state == CardState::Dismissed {
+                    plain_box = Some(bottom.len());
                     composer_box(&mut bottom, &mut cursor, &self.editor, true);
                     boxed = true;
                     hint = Err(legend());
                 }
             }
             None => {
+                plain_box = Some(bottom.len());
                 composer_box(&mut bottom, &mut cursor, &self.editor, self.tray.is_none());
                 boxed = true;
                 if footer.is_none() {
-                    hint = Err(match self.tray.and_then(|i| tray.get(i)) {
-                        Some(row) => row.hint().to_owned(),
+                    hint = Err(match self.tray.and_then(|i| entries.get(i)) {
+                        Some(entry) => entry.hint().to_owned(),
                         None => legend(),
                     });
                 }
+            }
+        }
+        // The plain composer's top edge says why a prompt cannot go: the
+        // last one refused, in the error ink, or the link to the host down.
+        if let Some(at) = plain_box {
+            let words = match &self.not_sent {
+                Some(reason) => Some((reason.clone(), theme.error())),
+                None => waiting_words(&state.composer(), &host, self.away)
+                    .map(|words| (words, theme.faint())),
+            };
+            if let Some((words, ink)) = words
+                && let Some(top) = bottom.get_mut(at)
+            {
+                *top = marked_edge_in(&words, ink, width, theme);
             }
         }
         // A blank line lets the composer's box breathe above the keys.
@@ -2101,19 +2242,18 @@ impl ChatView {
                 )
             })
             .collect();
-        self.tray_spots = tray_at
-            .into_iter()
-            .map(|(row, i)| (bottom_y(row), i))
-            .collect();
+        self.tray_spots.clear();
         self.queued_spots = queued_at
             .into_iter()
             .map(|(at, index, drawn)| {
-                let cols = |(from, to): (usize, usize)| (area.x + from as u16, area.x + to as u16);
                 QueuedSpot {
                     row: bottom_y(at),
                     index,
-                    send_now: drawn.send_now.map(cols),
-                    withdraw: drawn.withdraw.map(cols),
+                    controls: drawn
+                        .controls
+                        .iter()
+                        .map(|(from, to)| (area.x + *from as u16, area.x + *to as u16))
+                        .collect(),
                 }
             })
             .collect();
@@ -2528,6 +2668,40 @@ fn problem_words(
 
 /// While the agent works, one quiet line that it is, and for how long.
 /// What it is doing shows as live steps in the feed.
+/// Whether a prompt sent now draws in the feed, as the turn it starts: the
+/// agent is idle with nothing queued. Otherwise it waits in the queue
+/// block.
+fn sends_to_feed(state: &SessionState) -> bool {
+    state.phase() == PhaseView::Idle && state.queue().is_empty()
+}
+
+/// Why the composer cannot send while the link to the agent's host is
+/// down, for the box's edge; None when it can.
+fn waiting_words(composer: &Composer, host: &str, away: Away) -> Option<String> {
+    Some(match composer {
+        Composer::Disabled(Waiting::Detached) => match away {
+            Away::Plain => format!("{host} is away"),
+            Away::Revoked => format!("{host} no longer trusts this machine"),
+            Away::SignedOut => format!("{host} is away · this machine is signed out"),
+        },
+        Composer::Disabled(Waiting::Reconnecting) => format!("reconnecting to {host}"),
+        Composer::Disabled(Waiting::CatchingUp) => "catching up".to_owned(),
+        Composer::Send | Composer::Resume => return None,
+    })
+}
+
+/// Why the agent refused a prompt, in words, from the wire's reasons.
+fn not_sent_words(reason: &str) -> String {
+    let why = match reason {
+        "exited" => "it had exited".to_owned(),
+        "exiting" => "it was exiting".to_owned(),
+        "draining" => "it is shutting down".to_owned(),
+        "unsupported" => "this agent can't take it".to_owned(),
+        other => other.replace('_', " "),
+    };
+    format!("not sent: {why}")
+}
+
 fn quiet_activity(activity: &ui_state::Activity, width: usize, theme: Theme) -> Line<'static> {
     let elapsed = text::duration(activity.elapsed_ms - activity.elapsed_ms % 1_000);
     let words = match &activity.kind {
@@ -2608,12 +2782,22 @@ fn boxed_composer(
 /// The composer box's top edge with `words` on it, faint, after a short
 /// run of the edge: what the box is for while it holds a reply.
 fn marked_edge(words: &str, width: usize, theme: Theme) -> Line<'static> {
+    marked_edge_in(words, theme.faint(), width, theme)
+}
+
+/// The composer box's top edge with `words` on it in `ink`.
+fn marked_edge_in(
+    words: &str,
+    ink: ratatui::style::Style,
+    width: usize,
+    theme: Theme,
+) -> Line<'static> {
     const MARGIN: usize = 2;
     let edge = theme.muted();
     let span = width.saturating_sub(2 * MARGIN + 2);
     let mut top = Line::from(Span::raw(" ".repeat(MARGIN)));
     push(&mut top, "╭─ ", edge, width);
-    push(&mut top, words, theme.faint(), width);
+    push(&mut top, words, ink, width);
     push(&mut top, " ", edge, width);
     let used = text::line_width(&top) - MARGIN - 1;
     push(&mut top, "─".repeat(span.saturating_sub(used)), edge, width);

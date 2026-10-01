@@ -347,16 +347,21 @@ fn prompt(
     width: usize,
     theme: Theme,
 ) {
-    let surface = theme.user_surface();
-    drawn.line(tinted(Line::default(), surface, width));
     let when = if steered {
         format!("steered · {}", clock(row.at_ms))
     } else {
         clock(row.at_ms)
     };
+    prompt_block(drawn, words, &when, width, theme);
+}
+
+/// Your message's block with `when` at the right of its first line.
+fn prompt_block(drawn: &mut Drawn, words: &[Segment], when: &str, width: usize, theme: Theme) {
+    let surface = theme.user_surface();
+    drawn.line(tinted(Line::default(), surface, width));
     let inner = width.saturating_sub(2 * EDGE);
     let inset = WORDS - EDGE;
-    let room = inner.saturating_sub(2 * inset + text::str_width(&when) + 2);
+    let room = inner.saturating_sub(2 * inset + text::str_width(when) + 2);
     for (i, words) in segment_lines(words, room, theme.text(), theme)
         .into_iter()
         .enumerate()
@@ -364,7 +369,7 @@ fn prompt(
         let mut line = Line::from(Span::raw(" ".repeat(inset)));
         line.spans.extend(words.spans);
         if i == 0 {
-            push_right(&mut line, &when, theme.faint(), inner - inset);
+            push_right(&mut line, when, theme.faint(), inner - inset);
         }
         drawn.line(tinted(line, surface, width));
     }
@@ -372,66 +377,49 @@ fn prompt(
     drawn.blank();
 }
 
-/// A queued prompt's line, and where its controls are, by columns.
+/// A line of the queue block, and where its controls are, by columns.
 pub struct Queued {
     pub line: Line<'static>,
-    /// "[Send now]" and "[Withdraw]", in place of the state at the right.
-    pub send_now: Option<(usize, usize)>,
-    pub withdraw: Option<(usize, usize)>,
+    /// Its controls in order ("[Send now]" then "[Withdraw]", or
+    /// "[Resend]" then "[Discard]"), in place of its state at the right.
+    pub controls: Vec<(usize, usize)>,
 }
 
-/// A prompt waiting behind the running turn, one line like the pinned
-/// prompt: faint on your message's surface, cut with "…", "queued" at the
-/// right where the time would be ("queued from relay" from another agent,
-/// "sending into this turn" once steered). Highlighted, or under the
-/// pointer, it reads in full ink and offers its controls there.
-pub fn queued_line(row: &ui_view::QueuedRow, lit: bool, width: usize, theme: Theme) -> Queued {
+/// A prompt waiting above the composer, one line like the pinned prompt:
+/// faint on your message's surface, cut with "…", how it waits at the
+/// right where the time would be ("queued", "queued from relay", "sending
+/// into this turn", "waiting for laptop…", "may not have arrived").
+/// Highlighted, or under the pointer, it reads in full ink and offers its
+/// controls there.
+pub fn queued_line(
+    entry: &super::composer::QueueEntry,
+    lit: bool,
+    width: usize,
+    theme: Theme,
+) -> Queued {
     let surface = theme.user_surface();
     let ink = if lit { theme.text() } else { theme.faint() };
-    let label = if row.steered {
-        "sending into this turn".to_owned()
+    let controls = entry.controls();
+    let shows_controls = lit && !controls.is_empty();
+    let right = if shows_controls {
+        controls.join(" ")
     } else {
-        match &row.from_agent {
-            Some(agent) => format!("queued from {agent}"),
-            None => "queued".to_owned(),
-        }
-    };
-    let controls = lit && (row.can_send_now || row.can_withdraw);
-    let right = if controls {
-        let mut words = Vec::new();
-        if row.can_send_now {
-            words.push("[Send now]");
-        }
-        if row.can_withdraw {
-            words.push("[Withdraw]");
-        }
-        words.join(" ")
-    } else {
-        label
+        entry.state_words()
     };
     let inner = width.saturating_sub(2 * EDGE);
     let inset = WORDS - EDGE;
     let room = inner.saturating_sub(2 * inset + text::str_width(&right) + 2);
-    let source: String = row
-        .text
-        .iter()
-        .map(|segment| match segment {
-            Segment::Text(text) => text.clone(),
-            Segment::Attachment(view) => chip(view),
-        })
-        .collect();
-    let joined = source.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut line = Line::from(Span::raw(" ".repeat(inset)));
     push(
         &mut line,
-        text::ellipsize(&joined, room.max(1)),
+        text::ellipsize(&one_line(entry.text()), room.max(1)),
         ink,
         inset + room,
     );
     push_right(
         &mut line,
         &right,
-        if controls {
+        if shows_controls {
             theme.muted()
         } else {
             theme.faint()
@@ -440,21 +428,39 @@ pub fn queued_line(row: &ui_view::QueuedRow, lit: bool, width: usize, theme: The
     );
     let mut out = Queued {
         line: tinted(line, surface, width),
-        send_now: None,
-        withdraw: None,
+        controls: Vec::new(),
     };
-    if controls {
+    if shows_controls {
         let end = EDGE + inner - inset;
         let mut col = end.saturating_sub(text::str_width(&right));
-        if row.can_send_now {
-            out.send_now = Some((col, col + 10));
-            col += 11;
-        }
-        if row.can_withdraw {
-            out.withdraw = Some((col, col + 10));
+        for control in controls {
+            let to = col + text::str_width(control);
+            out.controls.push((col, to));
+            col = to + 1;
         }
     }
     out
+}
+
+/// A message's words on one line, its attachments as chips.
+fn one_line(words: &[Segment]) -> String {
+    let source: String = words
+        .iter()
+        .map(|segment| match segment {
+            Segment::Text(text) => text.clone(),
+            Segment::Attachment(view) => chip(view),
+        })
+        .collect();
+    source.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Your message on its way, drawn at once at the feed's end as it will
+/// stand once the agent has it; `when` is the time, or what it waits for
+/// while the link is down.
+pub fn pending_prompt(words: &[Segment], when: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let mut drawn = Drawn::default();
+    prompt_block(&mut drawn, words, when, width, theme);
+    drawn.lines
 }
 
 /// A turn's prompt pinned under the header while that turn owns the top of
@@ -1249,7 +1255,7 @@ fn worked(ms: i64) -> String {
 }
 
 /// "14:07": the local time a row was written.
-fn clock(at_ms: i64) -> String {
+pub fn clock(at_ms: i64) -> String {
     use chrono::TimeZone;
     chrono::Local
         .timestamp_millis_opt(at_ms)

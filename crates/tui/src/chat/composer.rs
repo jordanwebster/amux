@@ -3,7 +3,7 @@
 
 use ratatui::text::{Line, Span};
 use ui_state::{Activity, ActivityKind, Composer, Waiting};
-use ui_view::{Away, OutboxRow, OutboxState, QueuedRow, Segment, Strip, composer_tokens};
+use ui_view::{Away, QueuedRow, Segment, Strip, composer_tokens};
 use wire::SignInState;
 
 use super::rows::chip;
@@ -290,69 +290,98 @@ fn first_text(segments: &[Segment]) -> String {
     text::first_line(&out).to_owned()
 }
 
-/// One entry of the tray under the feed.
+/// One entry of the queue block above the composer.
 #[derive(Clone, Debug, PartialEq)]
-pub enum TrayRow {
+pub enum QueueEntry {
+    /// A prompt in the agent's queue.
     Queued(QueuedRow),
-    Outbox(OutboxRow),
+    /// This client's prompt on its way into the queue, drawn at once.
+    /// `waiting` names the host while the link to it is down.
+    Sending {
+        input_id: Vec<u8>,
+        text: Vec<Segment>,
+        waiting: Option<String>,
+    },
+    /// This client's prompt whose connection dropped before a reply and
+    /// that catching up found neither queued nor in the transcript: it may
+    /// not have arrived, and only the person can say whether to send it
+    /// again.
+    Unconfirmed { input_id: Vec<u8>, text: Vec<Segment> },
 }
 
-impl TrayRow {
+impl QueueEntry {
     pub fn hint(&self) -> &'static str {
         match self {
-            TrayRow::Queued(row) if row.can_send_now && row.can_withdraw => {
+            QueueEntry::Queued(row) if row.can_send_now && row.can_withdraw => {
                 "enter send now · backspace withdraw · ↑/↓ queued · esc back"
             }
-            TrayRow::Queued(row) if row.can_withdraw => {
+            QueueEntry::Queued(row) if row.can_withdraw => {
                 "backspace withdraw · ↑/↓ queued · esc back"
             }
-            TrayRow::Queued(_) => "↑/↓ queued · esc back",
-            TrayRow::Outbox(row) => match row.state {
-                OutboxState::NotConfirmed => "r resend · d discard · esc back",
-                OutboxState::Rejected(_) => "e edit · d discard · esc back",
-                OutboxState::Sending => "esc back",
-            },
+            QueueEntry::Unconfirmed { .. } => {
+                "enter resend · backspace discard · ↑/↓ queued · esc back"
+            }
+            QueueEntry::Queued(_) | QueueEntry::Sending { .. } => "↑/↓ queued · esc back",
         }
     }
 
+    pub fn text(&self) -> &[Segment] {
+        match self {
+            QueueEntry::Queued(row) => &row.text,
+            QueueEntry::Sending { text, .. } | QueueEntry::Unconfirmed { text, .. } => text,
+        }
+    }
+
+    /// What it says at its right: how it waits.
+    pub fn state_words(&self) -> String {
+        match self {
+            QueueEntry::Queued(row) if row.steered => "sending into this turn".to_owned(),
+            QueueEntry::Queued(row) => match &row.from_agent {
+                Some(agent) => format!("queued from {agent}"),
+                None => "queued".to_owned(),
+            },
+            QueueEntry::Sending {
+                waiting: Some(host),
+                ..
+            } => format!("waiting for {host}…"),
+            QueueEntry::Sending { .. } => "queued".to_owned(),
+            QueueEntry::Unconfirmed { .. } => "may not have arrived".to_owned(),
+        }
+    }
+
+    /// Its controls, in order: what Enter does first, what Backspace does
+    /// second.
+    pub fn controls(&self) -> Vec<&'static str> {
+        match self {
+            QueueEntry::Queued(row) => {
+                let mut out = Vec::new();
+                if row.can_send_now {
+                    out.push("[Send now]");
+                }
+                if row.can_withdraw {
+                    out.push("[Withdraw]");
+                }
+                out
+            }
+            QueueEntry::Sending { .. } => Vec::new(),
+            QueueEntry::Unconfirmed { .. } => vec!["[Resend]", "[Discard]"],
+        }
+    }
+
+    /// The old design's one line for it.
     pub fn line(&self, selected: bool, width: usize, theme: Theme) -> Line<'static> {
         let mut line = Line::from(Span::styled(
             if selected { "› " } else { "  " },
             theme.accent(),
         ));
-        match self {
-            TrayRow::Queued(row) => {
-                let label = if row.steered {
-                    "steered".to_owned()
-                } else {
-                    match &row.from_agent {
-                        Some(agent) => format!("queued from {agent}"),
-                        None => "queued".to_owned(),
-                    }
-                };
-                push(&mut line, "⋯ ", theme.muted(), width);
-                push(&mut line, format!("{label}  "), theme.muted(), width);
-                push(&mut line, first_text(&row.text), theme.text(), width);
-                if selected && row.can_send_now {
-                    push_right(&mut line, "send now · withdraw", theme.muted(), width);
-                }
-            }
-            TrayRow::Outbox(row) => {
-                let (glyph, label, style) = match &row.state {
-                    OutboxState::Sending => ("◌ ", "sending".to_owned(), theme.muted()),
-                    OutboxState::NotConfirmed => ("! ", "not confirmed".to_owned(), theme.warn()),
-                    OutboxState::Rejected(reason) => {
-                        ("✗ ", format!("not sent: {reason}"), theme.error())
-                    }
-                };
-                push(&mut line, glyph, style, width);
-                push(&mut line, format!("{label}  "), style, width);
-                push(&mut line, first_text(&row.text), theme.text(), width);
-                if row.state == OutboxState::NotConfirmed {
-                    push_right(&mut line, "resend · discard", theme.muted(), width);
-                }
-            }
-        }
+        push(&mut line, "⋯ ", theme.muted(), width);
+        push(
+            &mut line,
+            format!("{}  ", self.state_words()),
+            theme.muted(),
+            width,
+        );
+        push(&mut line, first_text(self.text()), theme.text(), width);
         line
     }
 }

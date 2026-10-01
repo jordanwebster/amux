@@ -17,7 +17,7 @@ use ui_state::{Activity, ActivityKind, Composer, Waiting};
 use ui_view::{
     AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CardState, Choice, ChoiceOutcome,
     ContextView, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, LineKind,
-    OptionView, OutboxRow, OutboxState, PatchHead, PatchLine, PlanVerdict, QuestionView, QueuedRow,
+    OptionView, PatchHead, PatchLine, PlanVerdict, QuestionView, QueuedRow,
     Resolution, Row, RowKind, RunInfo, Scope, Segment, ServerView, SignInView, Strip, TasksView,
     ToolStateView, UsageView,
 };
@@ -25,7 +25,7 @@ use wire::{BlobRef, BoundaryKind, EnvelopeKind, SendState, SignInState};
 
 use crate::chat::ask::AskUi;
 use crate::chat::composer::{
-    TrayRow, activity_line, editor_lines, foot_cards, placeholder, strip_line,
+    QueueEntry, activity_line, editor_lines, foot_cards, placeholder, strip_line,
 };
 use crate::chat::review::ReviewPage;
 use crate::chat::rows::{RowFacts, RowState, on_rail, row_lines};
@@ -1552,7 +1552,7 @@ fn strips() -> Vec<(&'static str, &'static str, Strip)> {
 
 fn tray(width: usize, theme: Theme) -> Vec<Line<'static>> {
     let rows = [
-        TrayRow::Queued(QueuedRow {
+        QueueEntry::Queued(QueuedRow {
             input_id: vec![1],
             text: text("Then run the relay tests."),
             from_agent: None,
@@ -1561,16 +1561,15 @@ fn tray(width: usize, theme: Theme) -> Vec<Line<'static>> {
             can_withdraw: true,
             can_send_now: true,
         }),
-        TrayRow::Outbox(OutboxRow {
+        QueueEntry::Sending {
             input_id: vec![2],
             text: text("Check the deployment once."),
-            state: OutboxState::NotConfirmed,
-        }),
-        TrayRow::Outbox(OutboxRow {
+            waiting: Some("laptop".into()),
+        },
+        QueueEntry::Unconfirmed {
             input_id: vec![3],
             text: text("Stop the server."),
-            state: OutboxState::Rejected("exited".into()),
-        }),
+        },
     ];
     let selected = 1;
     let mut lines: Vec<Line<'static>> = rows

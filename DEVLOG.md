@@ -1,3 +1,18 @@
+2026-10-01 — **A prompt shows where it will land, and says plainly when it
+cannot go.** The activity line ("Working · 33s") moved into the feed as the
+running turn's live end, where "Worked 6m" stands once it ends; the fixed
+area under the feed holds only the queue block, the row and the composer.
+Sending is optimistic: to an idle agent the prompt shows at once in the feed
+as your message, to a busy one at once in the queue block. With the host
+known away or the link reconnecting, Enter keeps the draft and the
+composer's top edge says why. A refused prompt's words come back into the
+composer with "not sent: <why>" on its edge in the error ink, until the
+next edit or send. A prompt whose connection dropped stays where it was,
+"waiting for <host>…", and once caught up and still unaccounted for it sits
+in the queue block as "may not have arrived" with [Resend] [Discard]. The
+old tray under the feed is gone. The lab gains a sending scenario (delayed,
+refused and lost prompts, and an away host) and a `wait:MS` render step.
+
 2026-10-01 — **Queued prompts wait above the composer, not in the feed.** At
 the feed's end they landed above the running turn's activity line, and
 counting them on the row while scrolled made the bottom flicker. They now

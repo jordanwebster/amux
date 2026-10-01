@@ -439,6 +439,33 @@ impl World {
         }
     }
 
+    /// How the link treats a prompt sent to the agent.
+    fn send_spec(&self, id: &[u8]) -> crate::scenario::SendSpec {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .index(id)
+            .map(|index| inner.agents[index].spec.send.clone())
+            .unwrap_or_default()
+    }
+
+    /// The agent's host goes away for `down`, then comes back: what a
+    /// dropped connection looks like from the chat.
+    fn drop_link(self: &Arc<Self>, id: &[u8], down: crate::scenario::Dur) {
+        let host = {
+            let inner = self.inner.lock().unwrap();
+            let Some(index) = inner.index(id) else {
+                return;
+            };
+            inner.agents[index].entry.host_id.clone()
+        };
+        self.set_presence(&host, Presence::Away);
+        let world = Arc::clone(self);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(down.ms().max(0) as u64)).await;
+            world.set_presence(&host, Presence::Online);
+        });
+    }
+
     fn set_presence(&self, host_id: &[u8], to: Presence) {
         let mut inner = self.inner.lock().unwrap();
         let Some(host) = inner.hosts.iter_mut().find(|h| h.host_id == host_id) else {
@@ -2448,6 +2475,19 @@ impl Client for LabClient {
         let Some(input) = request.input else {
             return Err(refused(ErrorCode::InvalidArgument, "no input"));
         };
+        if prompt_text(&input).is_some() {
+            let send = self.0.send_spec(&request.agent_id);
+            if let Some(delay) = send.delay {
+                tokio::time::sleep(Duration::from_millis(delay.ms().max(0) as u64)).await;
+            }
+            if let Some(reason) = send.reject {
+                return Ok(rejected(&reason));
+            }
+            if let Some(down) = send.lose {
+                self.0.drop_link(&request.agent_id, down);
+                return Err(refused(ErrorCode::Aborted, "the link dropped"));
+            }
+        }
         Ok(self.0.input(&request.agent_id, input))
     }
 
@@ -2504,6 +2544,7 @@ impl Client for LabClient {
             diff: None,
             reply: None,
             implement: None,
+            send: Default::default(),
         };
         let agent = self.0.add_agent(spec, now_ms());
         let world = self.0.clone();
