@@ -4,14 +4,15 @@
   "configuration": "Measured",
   "simulator": "amux-iphone-1",
   "medians": {
-    "cold first frame": 638.3298635482788,
-    "cold store read": 29.67393398284912,
-    "cold fleet render": 84.03897285461426,
-    "reconciliation at 0 ms": 84.04099941253662,
-    "reconciliation at 100 ms": 767.0010328292847,
-    "streaming hitch time": 3.724172395020242e-06,
-    "streaming main-thread CPU": 49.974883090852,
-    "streaming footprint": 69.29918670654297,
+    "cold first frame": 639.01686668396,
+    "cold store read": 26.564955711364746,
+    "cold fleet render": 82.11493492126465,
+    "reconciliation at 0 ms": 82.11696147918701,
+    "reconciliation at 100 ms": 773.7560272216797,
+    "reconciliation through the relay at 100 ms": 1203.0330896377563,
+    "streaming hitch time": 1.6662730282422649,
+    "streaming main-thread CPU": 49.205714292304854,
+    "streaming footprint": 69.48668670654297,
     "idle transcript commits": 0,
     "idle display ticks": 0
   }

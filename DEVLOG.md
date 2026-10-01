@@ -1,3 +1,8 @@
+2026-10-01 — **The phone's baseline carries the relay.**
+`just ios perf -- --baseline` with every budget met, the relay sample
+included: reconciliation through the relay at 100 ms 1,203 ms median,
+the rest within noise of the earlier baseline.
+
 2026-10-01 — **The run's summary prints a ceiling-only metric with a baseline.**
 `just ios perf -- --baseline` judged every metric and then failed
 printing the streaming hitch: it has a recorded baseline but no drift,
