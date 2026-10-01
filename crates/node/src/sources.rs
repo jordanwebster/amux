@@ -1133,7 +1133,6 @@ async fn source_once(
         )
     };
     let tail = matches!(request.from, Some(subscribe_request::From::Tail(_)));
-    tracing::debug!(%host, %agent_id, tail, "subscribing to the session");
     let mut client = match edge.session_peer(host).await {
         Ok(client) => client,
         Err(_) => return Ended::Lost { caught_up: false },

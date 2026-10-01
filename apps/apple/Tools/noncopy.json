@@ -910,6 +910,8 @@
       {"literal": "\"amux-discovery-scope\"", "context": "public static let discoveryScopeArgument = \"amux-discovery-scope\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
       {"literal": "\"amux-lan-bind\"", "context": "public static let lanBindArgument = \"amux-lan-bind\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
       {"literal": "\"amux-relay-tcp\"", "context": "public static let relayTCPArgument = \"amux-relay-tcp\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
+      {"literal": "\"amux-relay-quic\"", "context": "public static let relayQUICArgument = \"amux-relay-quic\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
+      {"literal": "\"amux-relay-root\"", "context": "public static let relayRootArgument = \"amux-relay-root\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
       {"literal": "\"holdBackground\"", "context": "case \"holdBackground\": self = .holdBackground", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"push\"", "context": "case \"push\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"holdBackground\"", "context": "try fields.encode(\"holdBackground\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},

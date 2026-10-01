@@ -1,3 +1,9 @@
+2026-10-01 — **The relay launch arguments are catalogued; one chase log line goes.**
+`just ios lint` wanted the two new launch argument names in the
+non-copy catalogue beside the TCP one. The "subscribing to the session"
+line, added to see when each source asked, says nothing the
+"subscribed" line a round trip later does not; it is gone.
+
 2026-10-01 — **Four phone budgets tightened to what a person accepts.**
 A budget set at today's number is a drift check, which the baseline
 already is; these four were looser than the requirement. Reconciliation
