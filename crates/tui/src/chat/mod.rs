@@ -1065,10 +1065,12 @@ impl ChatView {
     }
 
     fn feed_hit(&mut self, state: &SessionState, hit: FeedHit) -> Vec<ChatEffect> {
-        // Opening or folding something keeps what is on screen where it is:
-        // the feed holds its top line, so an opened fold grows downward
-        // from the line that was clicked.
+        // Scrolled up, opening or folding something keeps what is on screen
+        // where it is: the feed holds its top line, so an opened fold grows
+        // downward from the line that was clicked. Following the newest row,
+        // it keeps following.
         if matches!(hit, FeedHit::Stretch(_) | FeedHit::Step(_))
+            && self.anchor != Anchor::Bottom
             && let Some(top) = self.laid.blocks.first()
         {
             self.anchor = Anchor::Top {

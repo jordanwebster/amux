@@ -1,3 +1,9 @@
+2026-10-01 — **Folding while following keeps following.** Opening or folding
+a stretch, step or plan holds the screen's top line only when the reader
+has scrolled up; at the newest row the feed keeps following, so no Jump to
+Bottom appears just for toggling a fold while the agent streams. (Digits in
+an ask's note field were already typed as text, never taken as choices.)
+
 2026-10-01 — **Folded plans say how they were decided; folds open in place.**
 A plan's landmark folds like a stretch, with ▸/▾ in the same gutter column,
 and says its outcome itself ("· approved", "· approved · accepting edits",
