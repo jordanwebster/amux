@@ -25,10 +25,6 @@ use crate::settings::{SettingChange, codex_preset, setting_input};
 /// The words Codex sends as the next turn when its plan is approved.
 pub const IMPLEMENT_PLAN: &str = "Implement the plan.";
 
-/// What a fresh conversation is seeded with, before the plan itself.
-pub const FRESH_PLAN_PREFIX: &str =
-    "A plan was written and approved in an earlier conversation. Implement it:";
-
 const OPEN_TAG: &str = "<proposed_plan>";
 const CLOSE_TAG: &str = "</proposed_plan>";
 
@@ -58,7 +54,6 @@ pub(crate) fn codex_plan(text: &str) -> Option<String> {
 pub(crate) enum After {
     Nothing,
     Prompt(String),
-    Fresh,
 }
 
 pub(crate) fn after(state: &SessionState, order: u64) -> After {
@@ -71,8 +66,10 @@ pub(crate) fn after(state: &SessionState, order: u64) -> After {
     }
     for held in transcript.range(order + 1..=head) {
         match &held.class {
-            ItemClass::Turn | ItemClass::Thinking { .. } | ItemClass::Other => continue,
-            ItemClass::Boundary => return After::Fresh,
+            ItemClass::Turn
+            | ItemClass::Thinking { .. }
+            | ItemClass::Other
+            | ItemClass::Boundary => continue,
             ItemClass::Prompt | ItemClass::Steer => return After::Prompt(held.item.text.clone()),
             _ => return After::Nothing,
         }
@@ -165,7 +162,6 @@ pub(crate) fn plan_file_row(
         plan: content,
         verdict: PlanVerdict::Open,
         edits_accepted: false,
-        started_fresh: false,
         note: None,
         writing,
     }))
@@ -178,17 +174,15 @@ pub(crate) fn codex_plan_row(
     plan: String,
     complete: bool,
 ) -> RowKind {
-    let (verdict, fresh) = match after(state, held.item.order) {
-        After::Nothing => (PlanVerdict::Open, false),
-        After::Fresh => (PlanVerdict::Approved, true),
-        After::Prompt(text) if text.trim() == IMPLEMENT_PLAN => (PlanVerdict::Approved, false),
-        After::Prompt(_) => (PlanVerdict::SentBack, false),
+    let verdict = match after(state, held.item.order) {
+        After::Nothing => PlanVerdict::Open,
+        After::Prompt(text) if text.trim() == IMPLEMENT_PLAN => PlanVerdict::Approved,
+        After::Prompt(_) => PlanVerdict::SentBack,
     };
     RowKind::Ask(AskRow::Plan {
         plan,
         verdict,
         edits_accepted: false,
-        started_fresh: fresh,
         note: None,
         writing: !complete,
     })
@@ -228,7 +222,6 @@ pub(crate) fn codex_plan_card(state: &SessionState) -> Option<AskCard> {
                                 PlanStep::Implement,
                             )
                         },
-                        plan_choice(ChoiceOutcome::StartFresh, PlanStep::StartFresh),
                         plan_choice(ChoiceOutcome::SendBack, PlanStep::KeepPlanning),
                     ],
                     question_note: true,
@@ -247,13 +240,11 @@ pub(crate) fn codex_plan_card(state: &SessionState) -> Option<AskCard> {
 /// The inputs a plan decision is made of, where the agent takes no answer
 /// for it: approving a Codex plan leaves Plan mode and asks it to implement
 /// the plan; keeping on planning sends the note, if any, as the next
-/// message; starting fresh leaves Plan mode and begins a new conversation
-/// seeded with the plan (Claude's is cleared first). Each input's id is the
-/// sender's to fill.
+/// message. Each input's id is the sender's to fill.
 pub fn plan_inputs(card: &AskCard, step: PlanStep, note: &str) -> Vec<wire::Input> {
-    let AskBody::Plan { plan } = &card.body else {
+    if !matches!(card.body, AskBody::Plan { .. }) {
         return Vec::new();
-    };
+    }
     let prompt = |text: String| prompt_input(card.kind, text);
     let leave_plan = || {
         (card.kind == Kind::Codex)
@@ -272,11 +263,6 @@ pub fn plan_inputs(card: &AskCard, step: PlanStep, note: &str) -> Vec<wire::Inpu
             if !note.is_empty() {
                 inputs.extend(prompt(note.to_owned()));
             }
-        }
-        PlanStep::StartFresh => {
-            inputs.extend(leave_plan());
-            inputs.extend(clear_input(card.kind));
-            inputs.extend(prompt(format!("{FRESH_PLAN_PREFIX}\n\n{plan}")));
         }
     }
     inputs
@@ -299,25 +285,6 @@ fn prompt_input(kind: Kind, text: String) -> Option<wire::Input> {
             of: Some(codex_input::Of::Prompt(prompt)),
         }),
         Kind::Unspecified => return None,
-    };
-    Some(wire::Input {
-        input_id: Vec::new(),
-        of: Some(of),
-    })
-}
-
-/// A new conversation for Claude; Codex has no such input yet (a new
-/// thread), so its fresh start is only the seeded message.
-fn clear_input(kind: Kind) -> Option<wire::Input> {
-    use wire::{claude_pty_input, claude_sdk_input, input};
-    let of = match kind {
-        Kind::ClaudePty => input::Of::ClaudePty(wire::ClaudePtyInput {
-            of: Some(claude_pty_input::Of::Clear(wire::Clear {})),
-        }),
-        Kind::ClaudeSdk => input::Of::ClaudeSdk(wire::ClaudeSdkInput {
-            of: Some(claude_sdk_input::Of::Clear(wire::Clear {})),
-        }),
-        _ => return None,
     };
     Some(wire::Input {
         input_id: Vec::new(),

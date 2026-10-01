@@ -155,8 +155,6 @@ pub enum ChoiceOutcome {
     ApprovePlan {
         auto_accept_edits: bool,
     },
-    /// Approve the plan into a new conversation that holds only the plan.
-    StartFresh,
     SendBack,
     Submit,
     Decline,
@@ -194,7 +192,6 @@ pub enum Answer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum PlanStep {
     Implement,
-    StartFresh,
     KeepPlanning,
 }
 
@@ -339,7 +336,6 @@ fn claude(ask: &wire::Ask) -> (AskBody, Vec<Choice>) {
                     approve(true),
                 ));
             }
-            choices.push(plan_choice(ChoiceOutcome::StartFresh, PlanStep::StartFresh));
             choices.push(choice(
                 ChoiceOutcome::SendBack,
                 claude_answer(claude_answer::Of::Plan(wire::PlanAnswer {

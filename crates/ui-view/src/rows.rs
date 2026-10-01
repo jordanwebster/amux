@@ -212,9 +212,6 @@ pub enum AskRow {
         /// Approved with edits accepted without asking from then on: the
         /// decision's scope names Claude's `acceptEdits` mode.
         edits_accepted: bool,
-        /// Approved into a new conversation holding only the plan: a
-        /// session boundary follows it before any prompt.
-        started_fresh: bool,
         /// Why it was sent back, when the person said.
         note: Option<String>,
         /// Still being written: it grows as it streams.
@@ -1042,9 +1039,6 @@ fn claude_tool(
                                 .as_ref()
                                 .and_then(|decision| decision.scope.as_deref())
                                 == Some("acceptEdits"),
-                        started_fresh: verdict == PlanVerdict::Approved
-                            && crate::plan::after(state, held.item.order)
-                                == crate::plan::After::Fresh,
                         note: decision.as_ref().and_then(|decision| decision.note.clone()),
                         writing: false,
                     }),

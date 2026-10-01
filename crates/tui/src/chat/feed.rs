@@ -170,7 +170,6 @@ pub fn row_lines(
                 plan,
                 verdict,
                 edits_accepted,
-                started_fresh,
                 note,
                 writing,
             }) => plan_lines(
@@ -180,7 +179,6 @@ pub fn row_lines(
                     text: plan,
                     verdict: *verdict,
                     edits_accepted: *edits_accepted,
-                    started_fresh: *started_fresh,
                     note: note.as_deref(),
                     writing: *writing,
                 },
@@ -276,7 +274,8 @@ fn prompt(
 }
 
 /// A turn's prompt pinned under the header while that turn owns the top of
-/// the feed: the same block as the prompt, cut to its first line with "…".
+/// the feed: one tinted line of the prompt, cut with "…" (its padding
+/// lines are the in-feed block's, not the pin's).
 /// Faint while the next turn's prompt is about to take the pin.
 pub fn pinned_prompt(row: &Row, faint: bool, width: usize, theme: Theme) -> Vec<Line<'static>> {
     let RowKind::Prompt { text: words, .. } = &row.kind else {
@@ -304,11 +303,9 @@ pub fn pinned_prompt(row: &Row, faint: bool, width: usize, theme: Theme) -> Vec<
         inset + room,
     );
     push_right(&mut line, &when, theme.faint(), inner - inset);
-    vec![
-        tinted(Line::default(), surface, width),
-        tinted(line, surface, width),
-        tinted(Line::default(), surface, width),
-    ]
+    // One line: the in-feed prompt keeps its padding, the pin gives the
+    // feed every line it can.
+    vec![tinted(line, surface, width)]
 }
 
 /// One line of a tinted block: its words on the surface, which runs from
@@ -370,7 +367,6 @@ struct Plan<'a> {
     text: &'a str,
     verdict: PlanVerdict,
     edits_accepted: bool,
-    started_fresh: bool,
     note: Option<&'a str>,
     writing: bool,
 }
@@ -394,45 +390,52 @@ fn plan_title(text: &str, writing: bool) -> Option<(Option<String>, &str)> {
     }
 }
 
-/// A plan the agent proposed, set apart by a landmark line like a
-/// session's: "Plan", its title, a hairline to the margin. It reads as the
-/// agent's text while it waits on the person (the composer's box asks).
-/// Once decided it folds to that one line, saying how it was decided, and
-/// a step under it says what the person chose; opening it shows it whole.
+/// A plan the agent proposed, set apart by a landmark that folds like a
+/// stretch: the marker in the gutter, "Plan", its title, how it was decided,
+/// and a hairline to the margin. Waiting on the person it is open (the
+/// composer's box asks); decided it folds to that line, with what the
+/// person said when they sent it back. `toggled` is the reader's click,
+/// which folds an open plan or opens a folded one.
 fn plan_lines(
     drawn: &mut Drawn,
     id: &Key,
     plan: &Plan<'_>,
-    expanded: bool,
+    toggled: bool,
     width: usize,
     theme: Theme,
 ) {
     let Some((title, body)) = plan_title(plan.text, plan.writing) else {
         return;
     };
-    let fate = match plan.verdict {
+    let outcome = match plan.verdict {
         PlanVerdict::Open => None,
-        PlanVerdict::Approved if plan.started_fresh => Some("started fresh"),
+        PlanVerdict::Approved if plan.edits_accepted => Some("approved · accepting edits"),
         PlanVerdict::Approved => Some("approved"),
         PlanVerdict::SentBack => Some("sent back"),
         PlanVerdict::Dismissed => Some("dismissed"),
     };
-    let folded = fate.is_some() && !expanded;
+    let folded = outcome.is_some() != toggled;
 
-    // The landmark: words at the feed's edge, then a hairline to the margin.
     let end = width.saturating_sub(2);
     let mut head = Line::default();
     pad_to(&mut head, EDGE);
+    push(
+        &mut head,
+        if folded { "▸" } else { "▾" },
+        theme.faint(),
+        end,
+    );
+    pad_to(&mut head, WORDS);
     push(&mut head, "Plan", theme.faint(), end);
     if let Some(title) = &title {
         push(&mut head, " · ", theme.faint(), end);
         let room = end
             .saturating_sub(text::line_width(&head))
-            .saturating_sub(fate.map_or(0, |fate| text::str_width(fate) + 3) + 4);
+            .saturating_sub(outcome.map_or(0, |words| text::str_width(words) + 3) + 4);
         push(&mut head, text::ellipsize(title, room), theme.bright(), end);
     }
-    if folded && let Some(fate) = fate {
-        push(&mut head, format!(" · {fate}"), theme.faint(), end);
+    if let Some(words) = outcome {
+        push(&mut head, format!(" · {words}"), theme.faint(), end);
     }
     push(&mut head, " ", theme.faint(), end);
     let used = text::line_width(&head);
@@ -440,10 +443,20 @@ fn plan_lines(
         head.spans
             .push(Span::styled("─".repeat(end - used), theme.hairline()));
     }
-    if fate.is_some() {
-        drawn.hit_line(head, FeedHit::Step(id.clone()));
-    } else {
-        drawn.line(head);
+    drawn.hit_line(head, FeedHit::Step(id.clone()));
+    // What the person said when sending it back, under the landmark.
+    if plan.verdict == PlanVerdict::SentBack
+        && let Some(note) = plan.note.filter(|note| !note.trim().is_empty())
+    {
+        let mut said = Line::default();
+        pad_to(&mut said, WORDS);
+        push(
+            &mut said,
+            format!("\u{201c}{}\u{201d}", first_line(note)),
+            theme.faint(),
+            end,
+        );
+        drawn.hit_line(said, FeedHit::Step(id.clone()));
     }
     drawn.blank();
     if !folded {
@@ -455,43 +468,6 @@ fn plan_lines(
             theme,
         );
     }
-
-    let words = match plan.verdict {
-        PlanVerdict::Open => return,
-        PlanVerdict::Approved if plan.started_fresh => "Plan approved · started fresh",
-        PlanVerdict::Approved if plan.edits_accepted => {
-            "Plan approved · edits accepted without asking"
-        }
-        PlanVerdict::Approved => "Plan approved",
-        PlanVerdict::SentBack => "Plan sent back",
-        PlanVerdict::Dismissed => "Plan dismissed",
-    };
-    let railed = |words: String, style: Style| {
-        let mut line = Line::default();
-        pad_to(&mut line, EDGE);
-        push(&mut line, "│", theme.hairline(), width);
-        pad_to(&mut line, WORDS);
-        push(&mut line, words, style, width.saturating_sub(2));
-        line
-    };
-    let (verb, facts) = words.split_once(" · ").unwrap_or((words, ""));
-    let mut line = railed(verb.to_owned(), theme.muted());
-    if !facts.is_empty() {
-        push(&mut line, format!(" · {facts}"), theme.faint(), width);
-    }
-    drawn.hit_line(line, FeedHit::Step(id.clone()));
-    if plan.verdict == PlanVerdict::SentBack
-        && let Some(note) = plan.note.filter(|note| !note.trim().is_empty())
-    {
-        drawn.hit_line(
-            railed(
-                format!("\u{201c}{}\u{201d}", first_line(note)),
-                theme.faint(),
-            ),
-            FeedHit::Step(id.clone()),
-        );
-    }
-    drawn.blank();
 }
 
 /// A folded stretch: its counts, then any failure it left unresolved.

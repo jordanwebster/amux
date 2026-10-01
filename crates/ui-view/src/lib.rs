@@ -31,7 +31,7 @@ pub use fleet::{
     Away, FamilyHeader, FleetCard, FleetRow, away, family_header, fleet_card, fleet_list,
     signed_out,
 };
-pub use plan::{FRESH_PLAN_PREFIX, IMPLEMENT_PLAN, composed, plan_inputs};
+pub use plan::{IMPLEMENT_PLAN, composed, plan_inputs};
 pub use review::{DiffLine, FileStatus, Hunk, LineKind, ReviewDoc, ReviewFile, review_doc};
 pub use rows::{
     AnswerView, AskRow, ChatOptions, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow,

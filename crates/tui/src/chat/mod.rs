@@ -541,6 +541,9 @@ impl ChatView {
             AskAction::Attach => vec![ChatEffect::RawAttach],
             AskAction::Compose { key, inputs } => {
                 self.plans_done.insert(key);
+                // Decided, the plan folds, whatever the reader did with it
+                // while it waited.
+                self.expanded.remove(&card.item_key);
                 self.follow();
                 vec![ChatEffect::Inputs(inputs)]
             }
@@ -549,6 +552,7 @@ impl ChatView {
                 // feed follows the work it sets going.
                 if matches!(card.body, AskBody::Plan { .. }) {
                     self.follow();
+                    self.expanded.remove(&card.item_key);
                 }
                 vec![ChatEffect::Answer(*input)]
             }
@@ -1061,6 +1065,17 @@ impl ChatView {
     }
 
     fn feed_hit(&mut self, state: &SessionState, hit: FeedHit) -> Vec<ChatEffect> {
+        // Opening or folding something keeps what is on screen where it is:
+        // the feed holds its top line, so an opened fold grows downward
+        // from the line that was clicked.
+        if matches!(hit, FeedHit::Stretch(_) | FeedHit::Step(_))
+            && let Some(top) = self.laid.blocks.first()
+        {
+            self.anchor = Anchor::Top {
+                key: top.key.clone(),
+                offset: self.laid.top_offset,
+            };
+        }
         match hit {
             FeedHit::Link(url) => return vec![ChatEffect::OpenUrl(url)],
             FeedHit::Stretch(oldest) => {
@@ -1693,13 +1708,7 @@ impl ChatView {
             Some(card) if ask::boxed(card) => {
                 const MARGIN: usize = 2;
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
-                let context = state
-                    .agent_state()
-                    .context
-                    .window_tokens
-                    .filter(|w| *w > 0)
-                    .map(|window| state.agent_state().context.used_tokens * 100 / window);
-                let drawn = self.ask.box_lines(card, context, inner, theme);
+                let drawn = self.ask.box_lines(card, inner, theme);
                 let (lines, mode) = framed(
                     drawn.lines,
                     theme.accent(),
@@ -1803,6 +1812,12 @@ impl ChatView {
             // A step revealed within the last screenful cannot reach the
             // top; the feed simply shows the newest row.
             if std::mem::take(&mut self.revealed) && laid.at_bottom {
+                self.anchor = Anchor::Bottom;
+            }
+            // Held at a line from which the rest no longer fills the feed
+            // (a fold just closed, say), the feed shows the newest row: it
+            // follows again.
+            if laid.at_bottom {
                 self.anchor = Anchor::Bottom;
             }
             // The pinned prompt would cover the plan's first lines: the plan
@@ -2591,8 +2606,8 @@ fn pinned(
     width: usize,
     theme: Theme,
 ) -> Option<(Vec<Line<'static>>, Key)> {
-    // The block's three lines and the blank line a message keeps under it.
-    const ROWS: usize = 4;
+    // The pin's one line and the blank line under it.
+    const ROWS: usize = 2;
     // The next prompt within this many lines of the pin fades it.
     const FADE: usize = 3;
     if height < ROWS + 6 {

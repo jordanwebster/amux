@@ -1,3 +1,16 @@
+2026-10-01 — **Folded plans say how they were decided; folds open in place.**
+A plan's landmark folds like a stretch, with ▸/▾ in the same gutter column,
+and says its outcome itself ("· approved", "· approved · accepting edits",
+"· sent back"), so the decision step under a folded plan is gone; a
+sent-back note stays, in quotes under the line. The waiting plan can be
+folded too, and deciding folds it whatever the reader did. Opening or
+folding anything in the feed holds the screen's top line, so what opens
+grows downward from the line that was clicked, and a feed held at a line
+from which the rest no longer fills it follows the newest row again. The
+pinned prompt is one tinted line, which gives short terminals four more
+lines. "Start fresh with just the plan" is gone for every agent, with its
+stand-ins and lab paths.
+
 2026-10-01 — **Plans read as plans, for every agent, and fold once decided.**
 A plan in the redesigned chat sits under a landmark like a session
 boundary: the faint word "Plan", its opening heading lifted out as the

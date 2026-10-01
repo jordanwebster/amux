@@ -576,12 +576,14 @@ impl Frame<'_> {
         let head = transcript.head()?;
         let mut blocks = Vec::new();
         let mut total = 0usize;
+        let mut reached_head = true;
         for held in transcript.range(from..=head) {
             if let Some(block) = self.block(state, held.item.order, runs) {
                 total += block.lines.len();
                 blocks.push(block);
             }
             if total >= offset + self.height {
+                reached_head = held.item.order == head;
                 break;
             }
         }
@@ -590,7 +592,8 @@ impl Frame<'_> {
                 .first()
                 .map_or(0, |b| b.lines.len().saturating_sub(1)),
         );
-        if total < offset + self.height {
+        // What lies below fits exactly: that is the bottom too.
+        if total < offset + self.height || (reached_head && total == offset + self.height) {
             return None;
         }
         let lines = blocks

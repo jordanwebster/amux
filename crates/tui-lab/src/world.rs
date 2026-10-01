@@ -1189,27 +1189,6 @@ impl World {
     }
 
     fn prompt(self: &Arc<Self>, id: &[u8], text: &str, input_id: &[u8]) -> SendInputResponse {
-        // A fresh conversation seeded with an approved plan: the lab shows
-        // only its boundary (a new thread for Codex, the clear for Claude),
-        // which settles the prompt, and does not play the new conversation.
-        if text.starts_with(ui_view::FRESH_PLAN_PREFIX) {
-            let mut inner = self.inner.lock().unwrap();
-            if let Some(index) = inner.index(id) {
-                let sim = &mut inner.agents[index];
-                let boundary = wire::Boundary {
-                    kind: if sim.kind == Kind::Codex {
-                        wire::BoundaryKind::Started
-                    } else {
-                        wire::BoundaryKind::Cleared
-                    } as i32,
-                    ..wire::Boundary::default()
-                };
-                let key = sim.fresh_key();
-                sim.commit(&key, &Body::Boundary(boundary), "", now_ms(), input_id);
-                inner.touch(index);
-            }
-            return accepted(false);
-        }
         let queued = {
             let mut inner = self.inner.lock().unwrap();
             let Some(index) = inner.index(id) else {
@@ -1399,16 +1378,12 @@ impl World {
                 let mut inner = self.inner.lock().unwrap();
                 if let Some(index) = inner.index(id) {
                     let mut at = now_ms();
-                    // Clearing to start fresh from a plan: the seeded prompt
-                    // that follows draws the boundary.
-                    if !fresh_from_plan(&mut inner.agents[index], &mut at) {
-                        play_now(
-                            &mut inner,
-                            index,
-                            vec![Entry::Boundary(BoundarySpec::Cleared)],
-                            &mut at,
-                        );
-                    }
+                    play_now(
+                        &mut inner,
+                        index,
+                        vec![Entry::Boundary(BoundarySpec::Cleared)],
+                        &mut at,
+                    );
                     inner.touch(index);
                 }
                 accepted(false)
@@ -1825,39 +1800,6 @@ fn plan_path(plan: &str) -> String {
         .map(str::to_lowercase)
         .collect();
     format!("~/.claude/plans/{}.md", slug.join("-"))
-}
-
-/// A Claude plan still waiting when the conversation is cleared was
-/// approved into the fresh one: its call closes approved, the turn ends and
-/// plan mode is left.
-fn fresh_from_plan(sim: &mut Sim, at: &mut i64) -> bool {
-    let Some(pos) = sim.asks.iter().position(|ask| {
-        ask.tool
-            .as_ref()
-            .is_some_and(|tool| tool.name == "ExitPlanMode")
-    }) else {
-        return false;
-    };
-    let pending = sim.asks.remove(pos);
-    sim.facts.claude_asks.retain(|ask| ask.key != pending.key);
-    if let Some(mut tool) = pending.tool {
-        tool.state = ToolState::Succeeded as i32;
-        tool.decision = Some(ToolDecision {
-            outcome: wire::DecisionOutcome::Allowed as i32,
-            scope: String::new(),
-            note: String::new(),
-            elsewhere: false,
-        });
-        tool.ended_at_ms = Some(*at);
-        sim.commit(&pending.item_key, &Body::Tool(tool), "", *at, &[]);
-    }
-    sim.jobs.clear();
-    sim.epoch += 1;
-    if sim.turn_open.is_some() {
-        end_turn(sim, TurnOutcomeSpec::Completed, None, None, at);
-    }
-    sim.facts.mode = Some("default".into());
-    true
 }
 
 /// Applies a script at once, advancing `at` by each entry's nominal time.

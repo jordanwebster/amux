@@ -185,7 +185,6 @@ pub fn choice_label(choice: &Choice) -> String {
             auto_accept_edits: false,
         } => "Approve".to_owned(),
         ChoiceOutcome::SendBack => "Send back".to_owned(),
-        ChoiceOutcome::StartFresh => "Start fresh with just the plan".to_owned(),
         ChoiceOutcome::Submit => "Submit".to_owned(),
         ChoiceOutcome::Decline => "Decline".to_owned(),
         ChoiceOutcome::OpenLink => "I opened it".to_owned(),
@@ -1392,7 +1391,6 @@ fn box_label(choice: &Choice) -> String {
             auto_accept_edits: true,
         } => "Yes, and accept edits without asking".to_owned(),
         ChoiceOutcome::SendBack => "No, keep planning".to_owned(),
-        ChoiceOutcome::StartFresh => "Yes, start fresh with just the plan".to_owned(),
         _ => {
             let words = choice_label(choice);
             let mut chars = words.chars();
@@ -1569,15 +1567,7 @@ impl AskUi {
 
     /// The boxed ask's lines, `width` columns wide: what it wants, the
     /// subject verbatim, the agent's reason, then the choices.
-    /// `context` is how much of the agent's context is used, in percent,
-    /// which a fresh start with just the plan leaves behind.
-    pub fn box_lines(
-        &self,
-        card: &AskCard,
-        context: Option<u64>,
-        width: usize,
-        theme: Theme,
-    ) -> BoxLines {
+    pub fn box_lines(&self, card: &AskCard, width: usize, theme: Theme) -> BoxLines {
         let mut out = BoxLines {
             lines: Vec::new(),
             cursor: None,
@@ -1600,9 +1590,7 @@ impl AskUi {
                         "Denying…".to_owned()
                     }
                     Some(ChoiceOutcome::SendBack) => "Sending the plan back…".to_owned(),
-                    Some(ChoiceOutcome::ApprovePlan { .. } | ChoiceOutcome::StartFresh) => {
-                        "Approving the plan…".to_owned()
-                    }
+                    Some(ChoiceOutcome::ApprovePlan { .. }) => "Approving the plan…".to_owned(),
                     _ => format!("Allowing {}…", short_subject(card)),
                 };
                 out.lines.push(line(words, theme.faint()));
@@ -1808,16 +1796,6 @@ impl AskUi {
                 push(&mut row, said, ink, width);
                 if deny && choice.takes_note {
                     push(&mut row, " · tab to add a note", theme.faint(), width);
-                }
-                if choice.outcome == ChoiceOutcome::StartFresh
-                    && let Some(percent) = context
-                {
-                    push(
-                        &mut row,
-                        format!(" · {percent}% of context used"),
-                        theme.faint(),
-                        width,
-                    );
                 }
             }
             out.spots
