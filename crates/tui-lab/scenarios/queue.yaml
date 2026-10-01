@@ -1,4 +1,4 @@
-description: An agent part way through a long turn with prompts queued behind it — two of yours, one queued by another agent, and one already being sent into the turn. Type and send while it works to queue more; ctrl+x ends the turn and the queue drains.
+description: An agent part way through a long turn, with tasks and background jobs on the row above the composer and prompts queued behind it — two of yours, one queued by another agent, and one already being sent into the turn. Type and send while it works to queue more; ctrl+x ends the turn and the queue drains.
 local_host: laptop
 cwd: ~/source/amux
 open: flood
@@ -11,6 +11,11 @@ agents:
     effort: high
     mode: acceptEdits
     context: { used: 96000, window: 200000 }
+    background: 2
+    tasks:
+      - { subject: Cap the blob cache at 64 MiB, status: done }
+      - { subject: Measure memory under a screenshot flood, status: active }
+      - { subject: Write the numbers into notes/flood.md, status: pending }
     queue:
       - Also record the peak for the 300-screenshot run.
       - text: The relay keepalive is merged; rebase onto main before the next run.
@@ -46,6 +51,8 @@ agents:
           path: crates/ui-runtime/src/blob_cache.rs
           content: "//! Attachment bytes, least recently used out past a cap.\n"
       - say: The cap is in. Now the flood, before and after, against the same build flags.
+      - bash: { command: "scripts/phone-mem --watch --interval 5s", running: true, background: true }
+      - bash: { command: "cargo build --release -p amux", running: true, background: true }
       - bash:
           command: scripts/flood --screenshots 600 --report /tmp/flood-blob-cap.json
           running: true

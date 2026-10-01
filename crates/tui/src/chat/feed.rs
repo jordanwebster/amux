@@ -30,7 +30,7 @@ pub const LIVE_STEPS: usize = 3;
 /// The left edge: markers, and the rail joining a stretch's steps.
 const EDGE: usize = 2;
 /// Where words start.
-const WORDS: usize = 4;
+pub(crate) const WORDS: usize = 4;
 /// The longest line of the agent's text, in columns, on a wide terminal.
 const READING: usize = 100;
 /// Where a step's detail starts, under its words.
@@ -372,27 +372,22 @@ fn prompt(
     drawn.blank();
 }
 
-/// A queued prompt's block: where its controls are, by line and columns.
+/// A queued prompt's line, and where its controls are, by columns.
 pub struct Queued {
-    pub lines: Vec<Line<'static>>,
-    /// "[Send now]" and "[Withdraw]", on the block's first line of words.
-    pub send_now: Option<(usize, (usize, usize))>,
-    pub withdraw: Option<(usize, (usize, usize))>,
+    pub line: Line<'static>,
+    /// "[Send now]" and "[Withdraw]", in place of the state at the right.
+    pub send_now: Option<(usize, usize)>,
+    pub withdraw: Option<(usize, usize)>,
 }
 
-/// A prompt waiting behind the running turn, drawn as your message is but
-/// faint, "queued" where the time would be ("queued from relay" from
-/// another agent, "sending into this turn" once steered). Highlighted, or
-/// under the pointer, it reads in full ink and offers its controls there.
-pub fn queued_block(row: &ui_view::QueuedRow, lit: bool, width: usize, theme: Theme) -> Queued {
+/// A prompt waiting behind the running turn, one line like the pinned
+/// prompt: faint on your message's surface, cut with "…", "queued" at the
+/// right where the time would be ("queued from relay" from another agent,
+/// "sending into this turn" once steered). Highlighted, or under the
+/// pointer, it reads in full ink and offers its controls there.
+pub fn queued_line(row: &ui_view::QueuedRow, lit: bool, width: usize, theme: Theme) -> Queued {
     let surface = theme.user_surface();
     let ink = if lit { theme.text() } else { theme.faint() };
-    let mut out = Queued {
-        lines: Vec::new(),
-        send_now: None,
-        withdraw: None,
-    };
-    out.lines.push(tinted(Line::default(), surface, width));
     let label = if row.steered {
         "sending into this turn".to_owned()
     } else {
@@ -417,50 +412,48 @@ pub fn queued_block(row: &ui_view::QueuedRow, lit: bool, width: usize, theme: Th
     let inner = width.saturating_sub(2 * EDGE);
     let inset = WORDS - EDGE;
     let room = inner.saturating_sub(2 * inset + text::str_width(&right) + 2);
-    for (i, words) in segment_lines(&row.text, room, ink, theme)
-        .into_iter()
-        .enumerate()
-    {
-        let mut line = Line::from(Span::raw(" ".repeat(inset)));
-        line.spans.extend(words.spans.into_iter().map(|span| {
-            Span::styled(
-                span.content,
-                if lit {
-                    span.style
-                } else {
-                    span.style.patch(theme.faint())
-                },
-            )
-        }));
-        if i == 0 {
-            let at = out.lines.len();
-            let end = EDGE + inner - inset;
-            let start = end.saturating_sub(text::str_width(&right));
-            push_right(
-                &mut line,
-                &right,
-                if controls {
-                    theme.muted()
-                } else {
-                    theme.faint()
-                },
-                inner - inset,
-            );
-            if controls {
-                let mut col = start;
-                if row.can_send_now {
-                    out.send_now = Some((at, (col, col + 10)));
-                    col += 11;
-                }
-                if row.can_withdraw {
-                    out.withdraw = Some((at, (col, col + 10)));
-                }
-            }
+    let source: String = row
+        .text
+        .iter()
+        .map(|segment| match segment {
+            Segment::Text(text) => text.clone(),
+            Segment::Attachment(view) => chip(view),
+        })
+        .collect();
+    let joined = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut line = Line::from(Span::raw(" ".repeat(inset)));
+    push(
+        &mut line,
+        text::ellipsize(&joined, room.max(1)),
+        ink,
+        inset + room,
+    );
+    push_right(
+        &mut line,
+        &right,
+        if controls {
+            theme.muted()
+        } else {
+            theme.faint()
+        },
+        inner - inset,
+    );
+    let mut out = Queued {
+        line: tinted(line, surface, width),
+        send_now: None,
+        withdraw: None,
+    };
+    if controls {
+        let end = EDGE + inner - inset;
+        let mut col = end.saturating_sub(text::str_width(&right));
+        if row.can_send_now {
+            out.send_now = Some((col, col + 10));
+            col += 11;
         }
-        out.lines.push(tinted(line, surface, width));
+        if row.can_withdraw {
+            out.withdraw = Some((col, col + 10));
+        }
     }
-    out.lines.push(tinted(Line::default(), surface, width));
-    out.lines.push(Line::default());
     out
 }
 

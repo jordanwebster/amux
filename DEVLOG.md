@@ -1,3 +1,16 @@
+2026-10-01 — **Queued prompts wait above the composer, not in the feed.** At
+the feed's end they landed above the running turn's activity line, and
+counting them on the row while scrolled made the bottom flicker. They now
+sit in the fixed area between the activity line and the row, one faint
+line each like the pinned prompt, in the order they will run, with
+"queued", "queued from relay" or "sending into this turn" at the right. At
+most three show (the newest, unless walking up brings earlier ones in),
+with "+N more queued" on the side the hidden ones are on. They are always
+in view, so the row no longer counts them and nothing about the feed's
+height depends on them; scrolling leaves the bottom still. Sending one now
+or withdrawing it hands the keys back to the composer. The lab's queue
+scenario also has tasks and background jobs on the row.
+
 2026-10-01 — **The bottom of a chat with queued prompts no longer jitters.**
 Whether the row above the composer says "N queued" was decided from the
 previous frame, and saying it changed the bottom's height, which moved the

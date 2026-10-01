@@ -133,14 +133,14 @@ fn withdraw_effect(state: &SessionState, input_id: &[u8]) -> Option<ChatEffect> 
         })
 }
 
-/// A queued prompt in the feed: the rows it spans, its place among the
+/// A queued prompt above the composer: its screen row, its place among the
 /// queue's rows, and where its controls are.
 #[derive(Clone, Copy, Debug)]
 struct QueuedSpot {
-    rows: (u16, u16),
+    row: u16,
     index: usize,
-    send_now: Option<(u16, (u16, u16))>,
-    withdraw: Option<(u16, (u16, u16))>,
+    send_now: Option<(u16, u16)>,
+    withdraw: Option<(u16, u16)>,
 }
 
 /// Where the composer's words were drawn, for a click to place the cursor:
@@ -271,14 +271,12 @@ pub struct ChatView {
     composer_spot: Option<ComposerSpot>,
     /// Tray rows by screen row.
     tray_spots: Vec<(u16, usize)>,
-    /// Queued prompts in the feed: their rows and their controls.
+    /// Queued prompts above the composer: their rows and their controls.
     queued_spots: Vec<QueuedSpot>,
     /// The queued prompt under the pointer.
     queued_hover: Option<usize>,
-    /// How many lines the queued prompts take after the newest row.
-    queued_trailing: usize,
-    /// "2 queued" on the row above the composer.
-    queued_row_spot: Option<(u16, (u16, u16))>,
+    /// The first queued prompt shown, when more wait than show.
+    queued_from: usize,
     stretch_cache: StretchCache,
     /// Where the feed's first line was drawn, for clicks.
     feed_origin: (u16, u16),
@@ -342,8 +340,7 @@ impl ChatView {
             tray_spots: Vec::new(),
             queued_spots: Vec::new(),
             queued_hover: None,
-            queued_trailing: 0,
-            queued_row_spot: None,
+            queued_from: 0,
             stretch_cache: StretchCache::default(),
             feed_origin: (0, 0),
             epoch: 0,
@@ -368,7 +365,6 @@ impl ChatView {
             stretches: &self.stretches,
             cache: &self.stretch_cache,
             asking: self.asking.as_ref(),
-            trailing: self.queued_trailing,
         }
     }
 
@@ -671,8 +667,6 @@ impl ChatView {
                 .into_iter()
                 .collect(),
             KeyCode::Up if self.editor.is_empty() && !Self::tray_rows(state).is_empty() => {
-                // The queued prompts are at the feed's end: go down to them.
-                self.follow();
                 self.tray = Some(Self::tray_rows(state).len() - 1);
                 vec![]
             }
@@ -752,7 +746,10 @@ impl ChatView {
                     _ => None,
                 };
                 if let Some(effect) = effect {
-                    if rows.len() <= 1 {
+                    // Acting on a queued prompt hands the keys back to the
+                    // composer: a withdrawn one's words are there to edit,
+                    // and a second Enter must not send the next one too.
+                    if rows.len() <= 1 || matches!(row, TrayRow::Queued(_)) {
                         self.tray = None;
                     }
                     return vec![effect];
@@ -945,13 +942,7 @@ impl ChatView {
         if self.anchor == Anchor::Bottom && delta >= 0 {
             return;
         }
-        // Following, the queue's lines sat under a shortened feed; scrolled,
-        // they are part of the full window.
-        let mut frame = self.frame(theme);
-        if self.anchor == Anchor::Bottom {
-            frame.height += self.queued_trailing;
-        }
-        self.anchor = frame.scrolled(state, &self.laid, delta);
+        self.anchor = self.frame(theme).scrolled(state, &self.laid, delta);
     }
 
     pub fn mouse(
@@ -981,7 +972,7 @@ impl ChatView {
                 self.queued_hover = self
                     .queued_spots
                     .iter()
-                    .find(|spot| (spot.rows.0..=spot.rows.1).contains(&event.row))
+                    .find(|spot| spot.row == event.row)
                     .map(|spot| spot.index);
                 self.pane_hover = self
                     .pane_spots
@@ -1059,13 +1050,6 @@ impl ChatView {
                     self.focus_pane();
                     return vec![];
                 }
-                if self
-                    .queued_row_spot
-                    .is_some_and(|(row, cols)| on(row, cols))
-                {
-                    self.follow();
-                    return vec![];
-                }
                 if self.row_spot.is_some_and(|(row, cols)| on(row, cols)) {
                     self.open_pane();
                     return vec![];
@@ -1112,20 +1096,20 @@ impl ChatView {
                 if let Some(spot) = self
                     .queued_spots
                     .iter()
-                    .find(|spot| (spot.rows.0..=spot.rows.1).contains(&y))
+                    .find(|spot| spot.row == y)
                     .copied()
                 {
                     let rows = ui_view::queue_rows(state);
                     let Some(row) = rows.get(spot.index) else {
                         return vec![];
                     };
-                    if spot.send_now.is_some_and(|(row_y, cols)| on(row_y, cols)) {
+                    if spot.send_now.is_some_and(|cols| on(spot.row, cols)) {
                         self.tray = None;
                         return vec![ChatEffect::SendNow {
                             id: row.input_id.clone(),
                         }];
                     }
-                    if spot.withdraw.is_some_and(|(row_y, cols)| on(row_y, cols)) {
+                    if spot.withdraw.is_some_and(|cols| on(spot.row, cols)) {
                         self.tray = None;
                         return withdraw_effect(state, &row.input_id).into_iter().collect();
                     }
@@ -1727,38 +1711,61 @@ impl ChatView {
         if let Some(activity) = &view.activity {
             bottom.push(quiet_activity(activity, width, theme));
         }
+        let mut row_at = None;
+        // Prompts queued behind the running turn wait just above the
+        // composer, one line each in the order they will run. At most
+        // QUEUED_SHOWN show, the newest unless walking up through them
+        // brings earlier ones in; one line says how many more wait, on the
+        // side they are on, so the block's height never changes as it moves.
+        const QUEUED_SHOWN: usize = 3;
+        let queued = ui_view::queue_rows(state);
+        let mut queued_at: Vec<(usize, usize, feed::Queued)> = Vec::new();
+        if !queued.is_empty() {
+            let latest = queued.len().saturating_sub(QUEUED_SHOWN);
+            let mut from = self.queued_from.min(latest);
+            match self.tray.filter(|i| *i < queued.len()) {
+                Some(i) if i < from => from = i,
+                Some(i) if i >= from + QUEUED_SHOWN => from = i + 1 - QUEUED_SHOWN,
+                Some(_) => {}
+                None => from = latest,
+            }
+            self.queued_from = from;
+            if !bottom.is_empty() {
+                bottom.push(Line::default());
+            }
+            let more = queued.len().saturating_sub(QUEUED_SHOWN);
+            let more_line = || {
+                Line::from(Span::styled(
+                    format!("{}+{more} more queued", " ".repeat(feed::WORDS)),
+                    theme.faint(),
+                ))
+            };
+            // Earlier ones hidden: the line goes above; only later ones
+            // hidden, it goes below.
+            let more_above = more > 0 && from > 0;
+            if more_above {
+                bottom.push(more_line());
+            }
+            for (i, row) in queued.iter().enumerate().skip(from).take(QUEUED_SHOWN) {
+                let lit = self.tray == Some(i) || self.queued_hover == Some(i);
+                let drawn = feed::queued_line(row, lit, width, theme);
+                bottom.push(drawn.line.clone());
+                queued_at.push((bottom.len() - 1, i, drawn));
+            }
+            if more > 0 && !more_above {
+                bottom.push(more_line());
+            }
+        }
         // The row rests on the composer's box; a blank line sets it apart
         // from whatever is above, as the feed's last row already ends in
         // one. It is the pane folded: while the pane is open it takes the
         // row's place.
-        let mut row_at = None;
-        // Queued prompts draw at the feed's end while it follows the newest;
-        // scrolled up, the row says how many wait below.
-        let queued = ui_view::queue_rows(state);
-        let following = self.anchor == Anchor::Bottom;
-        let mut queued_at = None;
-        // Scrolled up with prompts queued, the row is drawn with "N queued";
-        // once this frame's layout shows any of them it says nothing of
-        // them, in the same place, so the row's height never depends on
-        // what it decides.
-        let queued_row = !side && !following && !queued.is_empty();
-        let mut row_slot = None;
-        if !side
-            && let Some((line, queued_cols)) = edge_row(
-                &strip,
-                !self.editor.is_empty(),
-                if queued_row { queued.len() } else { 0 },
-                now_ms,
-                width,
-                theme,
-            )
+        if !side && let Some(line) = edge_row(&strip, !self.editor.is_empty(), now_ms, width, theme)
         {
             if !bottom.is_empty() {
                 bottom.push(Line::default());
             }
             row_at = Some((bottom.len(), text::line_width(&line)));
-            queued_at = queued_cols.map(|cols| (bottom.len(), cols));
-            row_slot = Some(bottom.len());
             bottom.push(line);
         }
         bottom.extend(foot_cards(&strip, width, theme));
@@ -1772,7 +1779,7 @@ impl ChatView {
         }
         let mut tray_at = Vec::new();
         for (i, row) in tray.iter().enumerate() {
-            // Queued prompts are drawn in the feed; only the outbox stays.
+            // Queued prompts are drawn above; only the outbox stays.
             if matches!(row, TrayRow::Queued(_)) {
                 continue;
             }
@@ -1961,66 +1968,6 @@ impl ChatView {
 
         let height = usize::from(area.height);
         let feed_height = height.saturating_sub(top.len() + bottom.len());
-        // Following the newest, queued prompts close the feed: they wait
-        // after the running turn. Too many for the feed keep their newest.
-        let mut queued_lines: Vec<Line<'static>> = Vec::new();
-        let mut queued_marks: Vec<(usize, usize, feed::Queued)> = Vec::new();
-        if !state.transcript().is_empty() {
-            for (i, row) in queued.iter().enumerate() {
-                let lit = self.tray == Some(i) || self.queued_hover == Some(i);
-                let block = feed::queued_block(row, lit, width, theme);
-                let start = queued_lines.len();
-                queued_lines.extend(block.lines.iter().cloned());
-                queued_marks.push((start, i, block));
-            }
-        }
-        // Following, the queue's newest lines show, leaving the feed four;
-        // a highlighted prompt above them brings the window up to it.
-        let (q_from, q_to) = if following {
-            let cut = queued_lines
-                .len()
-                .saturating_sub(feed_height.saturating_sub(4));
-            match self
-                .tray
-                .and_then(|i| queued_marks.iter().find(|(_, at, _)| *at == i))
-            {
-                Some((start, _, _)) if *start < cut => {
-                    let room = feed_height.saturating_sub(1).max(1);
-                    (*start, (*start + room).min(queued_lines.len()))
-                }
-                _ => (cut, queued_lines.len()),
-            }
-        } else {
-            (0, queued_lines.len())
-        };
-        self.queued_trailing = q_to - q_from;
-        // Following, the newest row sits above them; scrolled up, they are
-        // part of what scrolls and show only once the feed reaches them.
-        let feed_height = if following {
-            feed_height - self.queued_trailing
-        } else {
-            feed_height
-        };
-        // Scrolled up, the row's "N queued" holds only while this frame's
-        // window shows none of them.
-        if queued_row && !state.transcript().is_empty() {
-            self.feed = (width, feed_height);
-            let probe = self.frame(theme).layout(state);
-            let in_view = probe.at_bottom || probe.lines.len() < feed_height;
-            if in_view && let Some(slot) = row_slot {
-                queued_at = None;
-                match edge_row(&strip, !self.editor.is_empty(), 0, now_ms, width, theme) {
-                    Some((line, _)) => {
-                        row_at = Some((slot, text::line_width(&line)));
-                        bottom[slot] = line;
-                    }
-                    None => {
-                        row_at = None;
-                        bottom[slot] = Line::default();
-                    }
-                }
-            }
-        }
         self.feed = (width, feed_height);
         self.feed_origin = (area.x, area.y + top.len() as u16);
         let feed_top = top.len();
@@ -2028,7 +1975,6 @@ impl ChatView {
         self.pin_spot = None;
         self.jump_spot = None;
         self.panel_spots.clear();
-        self.queued_spots.clear();
         if state.transcript().is_empty() {
             lines.extend(empty_feed(
                 state,
@@ -2064,48 +2010,6 @@ impl ChatView {
             }
             let mut feed: Vec<Line<'static>> = laid.lines.clone();
             text::drop_cut_padding(&mut feed);
-            // The queued prompts after the feed, and where their controls are.
-            // Scrolled up, only what fits under the last row shows.
-            let queued_room = if following {
-                usize::MAX
-            } else {
-                feed_height.saturating_sub(feed.len())
-            };
-            let queued_lines: Vec<Line<'static>> = queued_lines
-                .into_iter()
-                .take(q_to)
-                .skip(q_from)
-                .take(queued_room)
-                .collect();
-            let shown = queued_lines.len();
-            let base = feed.len();
-            for (start, index, block) in &queued_marks {
-                let y = |line: usize| {
-                    (base + start + line)
-                        .checked_sub(q_from)
-                        .map(|row| area.y + (feed_top + row) as u16)
-                };
-                let last = block.lines.len().saturating_sub(1);
-                if *start < q_from || start + last >= q_from + shown {
-                    continue;
-                }
-                let (Some(from), Some(to)) = (y(0), y(last)) else {
-                    continue;
-                };
-                let control = |spot: Option<(usize, (usize, usize))>| {
-                    spot.and_then(|(line, (a, b))| {
-                        y(line).map(|row| (row, (area.x + a as u16, area.x + b as u16)))
-                    })
-                };
-                self.queued_spots.push(QueuedSpot {
-                    rows: (from, to),
-                    index: *index,
-                    send_now: control(block.send_now),
-                    withdraw: control(block.withdraw),
-                });
-            }
-            feed.extend(queued_lines);
-            feed.resize(feed_height.max(feed.len()), Line::default());
             if let Some((pinned, key)) = pinned(state, &laid, feed_height, width, theme) {
                 let rows = pinned.len();
                 // The blank line under the block is not the pin's to click.
@@ -2201,8 +2105,18 @@ impl ChatView {
             .into_iter()
             .map(|(row, i)| (bottom_y(row), i))
             .collect();
-        self.queued_row_spot = queued_at
-            .map(|(at, (from, to))| (bottom_y(at), (area.x + from as u16, area.x + to as u16)));
+        self.queued_spots = queued_at
+            .into_iter()
+            .map(|(at, index, drawn)| {
+                let cols = |(from, to): (usize, usize)| (area.x + from as u16, area.x + to as u16);
+                QueuedSpot {
+                    row: bottom_y(at),
+                    index,
+                    send_now: drawn.send_now.map(cols),
+                    withdraw: drawn.withdraw.map(cols),
+                }
+            })
+            .collect();
         self.row_spot = match row_at {
             Some((at, row_width)) if !self.pane_open => {
                 Some((bottom_y(at), (area.x + 2, area.x + row_width as u16)))

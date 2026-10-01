@@ -2811,7 +2811,7 @@ fn push_more(line: &mut Line<'static>, hidden: usize, control: &str, theme: Them
         theme.faint(),
         width,
     );
-    push(line, control.to_owned(), theme.muted(), width);
+    push(line, control, theme.muted(), width);
 }
 
 /// Whether a preview is drawn rather than written: a line with box-drawing
@@ -3038,7 +3038,7 @@ impl AskUi {
         );
         push(
             &mut row,
-            footer.to_owned(),
+            footer,
             if lit { theme.bright() } else { theme.faint() },
             width,
         );
