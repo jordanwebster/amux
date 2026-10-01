@@ -154,6 +154,20 @@ final class DiscoveryTests: XCTestCase {
     }
 
     @MainActor
+    func testAReportFromABrowserThatWasStoppedIsIgnored() {
+        // The browser reports off the main thread and its reports hop to
+        // the main actor; one in flight when browsing stops lands after.
+        let browser = Browser()
+        let stale = browser.discovery.browse - 1
+        browser.discovery.saw([browser.sighting(routes: ["wifi"])], browse: stale)
+        XCTAssertTrue(browser.lookups.isEmpty, "a stopped browser's sighting was looked up")
+        XCTAssertTrue(browser.handedOver.isEmpty)
+
+        browser.discovery.saw([browser.sighting(routes: ["wifi"])])
+        XCTAssertEqual(browser.lookups.map(\.route), ["wifi"])
+    }
+
+    @MainActor
     func testAnAnswerForALookupThatWasReplacedIsIgnored() {
         let browser = Browser()
         browser.discovery.saw([browser.sighting(routes: ["wifi"])])

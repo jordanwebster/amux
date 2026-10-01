@@ -1,3 +1,10 @@
+2026-10-01 — **A report from a browser that was stopped is ignored.**
+The browser reports off the main thread since the cold-launch work and
+its reports hop to the main actor; one in flight when browsing stops
+landed after, repopulating what was seen from a cancelled browser and
+resolving it. Each report now carries the browse it was made under and
+only the current one's are taken. Second Codex pass; unit test.
+
 2026-10-01 — **The early sessions' generation edge is written down.**
 A session catch-up that lands before the inventory's can merge new-
 generation records onto old rows when the origin reused the cursor's
