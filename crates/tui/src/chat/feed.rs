@@ -1309,22 +1309,37 @@ fn step_detail(row: &Row, facts: &RowFacts, width: usize, theme: Theme) -> Vec<L
         RowKind::Command {
             output_head,
             more_lines,
+            output_tail,
             state,
             ..
         } => {
+            // How it ended: the output's last lines, the rest counted above
+            // them. Long output is not for reading here.
             let style = if *state == ToolStateView::Failed {
                 theme.error()
             } else {
                 theme.muted()
             };
-            let mut text = output_head.join("\n");
-            if *more_lines > 0 {
-                text.push_str(&format!("\n··· {more_lines} more lines"));
+            let earlier = (output_head.len() + more_lines).saturating_sub(output_tail.len());
+            let mut lines = Vec::new();
+            if earlier > 0 {
+                let s = if earlier == 1 { "" } else { "s" };
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(
+                        format!("… {} earlier line{s}", text::thousands(earlier)),
+                        theme.faint(),
+                    ),
+                ]));
             }
-            if text.is_empty() {
-                return Vec::new();
-            }
-            detail(&text, width, style, DETAIL_LINES, theme)
+            lines.extend(detail(
+                &output_tail.join("\n"),
+                width,
+                style,
+                usize::MAX,
+                theme,
+            ));
+            lines
         }
         RowKind::FileChange { .. } => facts
             .patch

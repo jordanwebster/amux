@@ -31,7 +31,7 @@ pub enum FleetEffect {
     },
     /// Create an agent with its first prompt, and open its chat or stay.
     Start {
-        kind: Kind,
+        setup: crate::setup::Setup,
         text: String,
         attachments: Vec<Attachment>,
         open: bool,

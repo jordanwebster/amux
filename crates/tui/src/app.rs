@@ -639,9 +639,9 @@ impl App {
             KeyCode::Char('d') => return Flow::Quit,
             KeyCode::Char('k') => chat.view.move_focus(&state, true, theme),
             KeyCode::Char('j') => chat.view.move_focus(&state, false, theme),
+            KeyCode::Char('o') if ctrl_held(&key) => chat.view.pane_toggle_key(),
             KeyCode::Char('o') => chat.view.toggle_expanded(&state),
             KeyCode::Char(PANE_CHORD) => chat.view.pane_toggle_key(),
-            KeyCode::Char('t') if ctrl_held(&key) => chat.view.pane_toggle_key(),
             KeyCode::Char('y') => {
                 if let Some(text) = chat.view.copy_text() {
                     drop(state);
@@ -653,6 +653,12 @@ impl App {
                 }
             }
             KeyCode::Char('n') => {
+                let setup = sibling_setup(&state, self.fleet.state().agent(&chat.agent));
+                drop(state);
+                self.close_chat();
+                self.fleet_view.home.new_agent(setup);
+            }
+            KeyCode::Char('f') => {
                 drop(state);
                 self.next_in_family();
             }
@@ -783,20 +789,22 @@ impl App {
                 });
             }
             FleetEffect::Start {
-                kind,
+                setup,
                 text,
                 attachments,
                 open,
             } => {
-                let cwd = self.config.working_dir.to_string_lossy().into_owned();
+                if let Some(branch) = crate::setup::worktree_stand_in(&setup, &text) {
+                    self.notice(
+                        format!(
+                            "started in the folder itself: amux cannot make a worktree yet (it would be on {branch})"
+                        ),
+                        Tone::Warn,
+                    );
+                }
                 self.spawn(async move {
-                    let request = CreateAgentRequest {
-                        agent_id: inputs::input_id(),
-                        cwd,
-                        kind: kind as i32,
-                        initial_prompt: inputs::prompt(kind, &text, attachments),
-                        ..CreateAgentRequest::default()
-                    };
+                    let prompt = inputs::prompt(setup.kind, &text, attachments);
+                    let request = setup.request(inputs::input_id(), prompt);
                     Some(match client.create_agent(request).await {
                         Ok(agent) => AppEvent::Started { agent, open },
                         Err(error) => AppEvent::StartFailed(error.to_string()),
@@ -1200,9 +1208,37 @@ impl App {
     }
 }
 
-/// The chord the leader's panel names for the in-flight pane: Ctrl+T, which
+/// A new agent's settings copied from a chat: its kind, model, effort,
+/// mode, folder and host. Never a new worktree: a chat already working in
+/// a worktree's folder starts its sibling there.
+fn sibling_setup(state: &ui_state::SessionState, agent: Option<&wire::Agent>) -> crate::setup::Setup {
+    let view = ui_view::settings(state);
+    crate::setup::Setup {
+        kind: state.kind(),
+        model: view
+            .models
+            .iter()
+            .find(|model| model.current)
+            .map(|model| model.value.clone()),
+        effort: view
+            .efforts
+            .iter()
+            .find(|effort| effort.current)
+            .map(|effort| effort.value.clone()),
+        mode: view
+            .modes
+            .iter()
+            .find(|mode| mode.current)
+            .map(|mode| mode.value.clone()),
+        folder: agent.map(|agent| agent.cwd.clone()).unwrap_or_default(),
+        host: agent.map(|agent| agent.host_id.clone()).unwrap_or_default(),
+        worktree: false,
+    }
+}
+
+/// The chord the leader's panel names for the overview pane: Ctrl+O, which
 /// also works on its own.
-const PANE_CHORD: char = '\u{14}';
+const PANE_CHORD: char = '\u{f}';
 
 impl App {
     /// Takes in a layout change the open chat made, and keeps it.
@@ -1227,12 +1263,13 @@ fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
     let mut entries = vec![
         entry("s", "home", 's'),
         entry("r", "review the working tree", 'r'),
-        entry("n", "next agent in this family", 'n'),
+        entry("n", "new agent like this one", 'n'),
+        entry("f", "next agent in this family", 'f'),
         entry("k", "focus an older row", 'k'),
         entry("j", "focus a newer row", 'j'),
         entry("o", "open the focused row", 'o'),
         entry("y", "copy the focused row", 'y'),
-        entry("ctrl+t", "overview", PANE_CHORD),
+        entry("ctrl+o", "overview", PANE_CHORD),
     ];
     if attach {
         entries.push(entry("t", "the agent's own terminal", 't'));
@@ -1278,12 +1315,16 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
         ),
         ("ctrl+x", "stop the turn; the agent stays".into()),
         (
-            "ctrl+t",
+            "ctrl+o",
             "the overview: tasks, background jobs, changes; again to switch or close".into(),
         ),
         (
             "shift+tab",
             "the agent's next mode, where it has one to move to".into(),
+        ),
+        (
+            "ctrl+s then m / e",
+            "the agent's model or effort, where it can change from here".into(),
         ),
         (
             "pgup / pgdn, wheel",

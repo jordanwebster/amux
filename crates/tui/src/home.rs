@@ -23,7 +23,8 @@ use wire::{Agent, Kind, Presence, Trust};
 
 use crate::chat::composer::editor_lines;
 use crate::editor::Editor;
-use crate::fleet::{FleetEffect, KINDS};
+use crate::fleet::FleetEffect;
+use crate::setup::{Item as Setting, Pick, Picker, Setup};
 use crate::hosts;
 use crate::text::{self, pad_to, push};
 use crate::theme::Theme;
@@ -90,8 +91,8 @@ enum Hit {
     Fold(AgentKey),
     /// A hint: the key it names.
     Key(KeyEvent),
-    /// The draft's provider: the next one.
-    Provider,
+    /// One of the draft's settings on the composer's edge.
+    Setting(Setting),
 }
 
 /// A clickable span of one screen row.
@@ -138,8 +139,15 @@ struct Moment {
 #[derive(Debug, Default)]
 pub struct Draft {
     pub editor: Editor,
-    /// Index into `KINDS`.
-    kind: usize,
+    /// What will run it and where; filled from the defaults when it first
+    /// shows.
+    pub setup: Option<Setup>,
+    /// A setting being chosen, above the composer.
+    picker: Option<Picker>,
+    /// Ctrl+S was pressed: the next letter names a setting.
+    prefix: bool,
+    /// The edge item under the pointer.
+    hover: Option<Setting>,
     /// On screen. Leaving keeps the text for the next time.
     open: bool,
     /// The create call is in flight.
@@ -261,12 +269,21 @@ impl Home {
     /// The create call came back: the draft is spent.
     pub fn started(&mut self) {
         self.draft = Draft {
-            kind: self.draft.kind,
+            setup: self.draft.setup.take(),
             ..Draft::default()
         };
     }
 
     /// The create call failed: the draft is the person's again.
+    /// Opens the new agent's screen with `setup`: a chat's own settings,
+    /// copied to start a sibling.
+    pub fn new_agent(&mut self, setup: Setup) {
+        self.draft.setup = Some(setup);
+        self.draft.picker = None;
+        self.draft.prefix = false;
+        self.draft.open = true;
+    }
+
     pub fn start_failed(&mut self) {
         self.draft.starting = false;
     }
@@ -588,7 +605,7 @@ impl Home {
     pub fn key(&mut self, fleet: &FleetState, key: KeyEvent, attach: bool) -> Vec<FleetEffect> {
         self.observe(fleet);
         if self.draft.open {
-            return self.draft_key(key);
+            return self.draft_key(fleet, key);
         }
         if let Some(overlay) = self.overlay.take() {
             return self.overlay_key(overlay, key);
@@ -744,20 +761,62 @@ impl Home {
         }
     }
 
-    fn draft_key(&mut self, key: KeyEvent) -> Vec<FleetEffect> {
+    fn draft_key(&mut self, fleet: &FleetState, key: KeyEvent) -> Vec<FleetEffect> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if self.draft.starting {
+            if key.code == KeyCode::Esc {
+                self.draft.open = false;
+            }
+            return vec![];
+        }
+        if let Some(picker) = &mut self.draft.picker {
+            match picker.key(key) {
+                Pick::None => {}
+                Pick::Close => self.draft.picker = None,
+                Pick::Value(value) => {
+                    let item = picker.item;
+                    if let Some(setup) = &mut self.draft.setup {
+                        setup.pick(item, &value);
+                    }
+                    self.draft.picker = None;
+                }
+            }
+            return vec![];
+        }
+        // Ctrl+S, then a letter: the setting it names.
+        if std::mem::take(&mut self.draft.prefix) {
+            let item = match key.code {
+                KeyCode::Char('m') => Some(Setting::Model),
+                KeyCode::Char('e') => Some(Setting::Effort),
+                KeyCode::Char('d') => Some(Setting::Folder),
+                KeyCode::Char('h') => Some(Setting::Host),
+                KeyCode::Char('w') => Some(Setting::Worktree),
+                KeyCode::Char('k') => Some(Setting::Kind),
+                _ => None,
+            };
+            if let Some(item) = item {
+                self.open_setting(fleet, item);
+            }
+            return vec![];
+        }
         match key.code {
             KeyCode::Esc => self.draft.open = false,
-            _ if self.draft.starting => {}
-            KeyCode::Tab => self.draft.kind = (self.draft.kind + 1) % KINDS.len(),
-            KeyCode::BackTab => self.draft.kind = (self.draft.kind + KINDS.len() - 1) % KINDS.len(),
+            KeyCode::Char('s') if ctrl => self.draft.prefix = true,
+            KeyCode::BackTab => {
+                if let Some(setup) = &mut self.draft.setup {
+                    setup.next_mode();
+                }
+            }
             KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
                 if self.draft.editor.text().trim().is_empty() {
                     return vec![];
                 }
+                let Some(setup) = self.draft.setup.clone() else {
+                    return vec![];
+                };
                 self.draft.starting = true;
                 return vec![FleetEffect::Start {
-                    kind: KINDS[self.draft.kind].0,
+                    setup,
                     text: self.draft.editor.text().to_owned(),
                     attachments: self.draft.editor.attachments().to_vec(),
                     open: !ctrl,
@@ -768,6 +827,29 @@ impl Home {
             }
         }
         vec![]
+    }
+
+    /// A setting from the edge or Ctrl+S: its picker, or for the worktree,
+    /// on or off at once.
+    fn open_setting(&mut self, fleet: &FleetState, item: Setting) {
+        let Some(setup) = &mut self.draft.setup else {
+            return;
+        };
+        if item == Setting::Worktree {
+            setup.pick(Setting::Worktree, "");
+            return;
+        }
+        let title = match item {
+            Setting::Kind => "Agent",
+            Setting::Model => "Model",
+            Setting::Effort => "Effort",
+            Setting::Mode => "Mode",
+            Setting::Folder => "Folder",
+            Setting::Host => "Host",
+            Setting::Worktree => "Worktree",
+        };
+        let choices = setup.choices(item, fleet);
+        self.draft.picker = Some(Picker::new(item, title, choices));
     }
 
     pub fn mouse(
@@ -789,6 +871,13 @@ impl Home {
         };
         let listing = self.overlay.is_none() && !self.draft.open;
         match event.kind {
+            MouseEventKind::Moved if self.draft.open => {
+                self.draft.hover = match hit(false) {
+                    Some(Hit::Setting(item)) => Some(item),
+                    _ => None,
+                };
+                vec![]
+            }
             MouseEventKind::Moved => {
                 if listing && let Some(Hit::Row(target)) = hit(true) {
                     self.selected = Some(target);
@@ -810,8 +899,9 @@ impl Home {
             }
             MouseEventKind::Down(MouseButton::Left) => match hit(false) {
                 Some(Hit::Key(key)) => self.key(fleet, key, attach),
-                Some(Hit::Provider) if !self.draft.starting => {
-                    self.draft.kind = (self.draft.kind + 1) % KINDS.len();
+                Some(Hit::Setting(item)) if !self.draft.starting => {
+                    self.draft.prefix = false;
+                    self.open_setting(fleet, item);
                     vec![]
                 }
                 Some(Hit::Close(agent)) if listing => {
@@ -853,11 +943,29 @@ impl Home {
         let mut laid: Vec<Laid> = vec![Laid::default()];
         let mut cursor;
         if self.draft.open {
+            if self.draft.setup.is_none() {
+                self.draft.setup = Some(Setup::defaults(place.working_dir, place.local_host));
+            }
             laid.push(Laid::plain(self.draft_top(width, theme)));
             let (composer, at) = self.composer(fleet, place, width, height, theme);
-            let body = height.saturating_sub(3 + composer.len());
+            // A setting being chosen sits above the box, like an ask's
+            // choices, with a blank between.
+            let (picker, picker_at) = match &self.draft.picker {
+                Some(picker) => {
+                    let (mut lines, at) = picker.lines(width, theme);
+                    lines.push(Line::default());
+                    (lines, at)
+                }
+                None => (Vec::new(), None),
+            };
+            let body = height.saturating_sub(3 + composer.len() + picker.len());
             laid.resize_with(2 + body, Laid::default);
+            let picker_top = laid.len();
+            laid.extend(picker.into_iter().map(Laid::plain));
             cursor = at.map(|(col, row)| (col, laid.len() + row));
+            if let Some(col) = picker_at {
+                cursor = Some((col, picker_top));
+            }
             laid.extend(composer);
         } else {
             let (top, at) = self.top_line(fleet, width, theme, place);
@@ -1221,32 +1329,77 @@ impl Home {
             push(&mut boxed, "│", edge, width);
             out.push(Laid::plain(boxed));
         }
-        // What the agent will be, on the bottom edge: provider, where it
-        // works, and on which machine.
-        let host = fleet
-            .host(place.local_host)
-            .map(|host| host.name.clone())
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "this machine".into());
-        let provider = KINDS[self.draft.kind].1;
-        let rest = [place.working_dir, "no worktree", host.as_str()].join(" · ");
-        let label = text::str_width(provider) + 3 + text::str_width(&rest);
-        let rule = (width - 2 * MARGIN - 2).saturating_sub(label + 4);
+        // What the agent will be, on the bottom edge: what runs it, where it
+        // works, and on which machine. Each item is a click target, lit
+        // as a chip under the pointer.
+        let setup = self
+            .draft
+            .setup
+            .clone()
+            .unwrap_or_else(|| Setup::defaults(place.working_dir, place.local_host));
+        let mut groups = setup.edge(fleet);
+        let room = (width - 2 * MARGIN - 2).saturating_sub(6);
+        let measure = |groups: &Vec<Vec<(Setting, String)>>| {
+            groups
+                .iter()
+                .map(|group| {
+                    group.iter().map(|(_, w)| text::str_width(w)).sum::<usize>()
+                        + 3 * group.len().saturating_sub(1)
+                })
+                .sum::<usize>()
+                + 3 * groups.len().saturating_sub(1)
+        };
+        // Too long for the edge: settings left at their defaults drop
+        // (ctrl+s still reaches them), then the folder shortens in the
+        // middle.
+        if measure(&groups) > room {
+            for group in &mut groups {
+                group.retain(|(_, words)| !words.starts_with("Default"));
+            }
+            groups.retain(|group| !group.is_empty());
+        }
+        let over = measure(&groups).saturating_sub(room);
+        if over > 0 {
+            for group in &mut groups {
+                for (item, words) in group.iter_mut() {
+                    if *item == Setting::Folder {
+                        let keep = text::str_width(words).saturating_sub(over).max(12);
+                        *words = text::ellipsize_middle(words, keep);
+                    }
+                }
+            }
+        }
+        let label = measure(&groups);
+        let rule = (width - 2 * MARGIN - 2).saturating_sub(label + 3);
         let mut bottom = Line::from(Span::raw(" ".repeat(MARGIN)));
         push(&mut bottom, "╰", edge, width);
         push(&mut bottom, "─".repeat(rule.max(1)), edge, width);
         push(&mut bottom, " ", edge, width);
-        let from = text::line_width(&bottom);
-        push(&mut bottom, provider, theme.text(), width);
-        let to = text::line_width(&bottom);
-        push(&mut bottom, " · ", edge, width);
-        push(&mut bottom, rest, edge, width);
+        let mut spots = Vec::new();
+        for (g, group) in groups.into_iter().enumerate() {
+            if g > 0 {
+                push(&mut bottom, " │ ", edge, width);
+            }
+            for (i, (item, words)) in group.into_iter().enumerate() {
+                if i > 0 {
+                    push(&mut bottom, " · ", edge, width);
+                }
+                let from = text::line_width(&bottom);
+                let ink = if self.draft.hover == Some(item) {
+                    theme.chip()
+                } else {
+                    theme.text()
+                };
+                push(&mut bottom, words, ink, width);
+                spots.push((Some((from, text::line_width(&bottom))), Hit::Setting(item)));
+            }
+        }
         push(&mut bottom, " ─", edge, width);
         pad_to(&mut bottom, width - MARGIN - 1);
         push(&mut bottom, "╯", edge, width);
         out.push(Laid {
             line: bottom,
-            spots: vec![(Some((from, to)), Hit::Provider)],
+            spots,
         });
         let cursor = (!self.draft.starting).then_some((MARGIN + 2 + col, 1 + row - skip));
         (out, cursor)
@@ -1316,16 +1469,32 @@ impl Home {
                 push(&mut line, "starting the agent…", theme.muted(), width);
                 return (Laid::plain(line), None);
             }
-            None if self.draft.open => vec![
-                ("enter", "start", key(KeyCode::Enter)),
-                (
-                    "ctrl+enter",
-                    "start, stay home",
-                    Hit::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)),
-                ),
-                ("tab", "provider", key(KeyCode::Tab)),
-                ("esc", "back", key(KeyCode::Esc)),
-            ],
+            None if self.draft.open => match (&self.draft.picker, self.draft.prefix) {
+                (Some(_), _) => vec![
+                    ("↑↓", "move", key(KeyCode::Down)),
+                    ("enter", "pick", key(KeyCode::Enter)),
+                    ("esc", "back", key(KeyCode::Esc)),
+                ],
+                (None, true) => vec![
+                    ("m", "model", key(KeyCode::Char('m'))),
+                    ("e", "effort", key(KeyCode::Char('e'))),
+                    ("d", "folder", key(KeyCode::Char('d'))),
+                    ("h", "host", key(KeyCode::Char('h'))),
+                    ("w", "worktree", key(KeyCode::Char('w'))),
+                    ("k", "kind", key(KeyCode::Char('k'))),
+                    ("esc", "back", key(KeyCode::Esc)),
+                ],
+                (None, false) => vec![
+                    ("enter", "start", key(KeyCode::Enter)),
+                    (
+                        "ctrl+s",
+                        "settings",
+                        Hit::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+                    ),
+                    ("shift+tab", "mode", key(KeyCode::BackTab)),
+                    ("esc", "back", key(KeyCode::Esc)),
+                ],
+            },
             None if self.filtering => vec![
                 ("enter", "keep", key(KeyCode::Enter)),
                 ("esc", "clear", key(KeyCode::Esc)),
@@ -1373,6 +1542,10 @@ pub fn help_rows() -> Vec<(&'static str, String)> {
         ("enter, click", "open the chat".into()),
         ("/", "filter by name, project or host; esc clears".into()),
         ("n", "new agent: its first prompt, then enter".into()),
+        (
+            "ctrl+s then a letter",
+            "a new agent's model, effort, folder, host, worktree, kind".into(),
+        ),
         ("→ / ←, space", "show or hide a family's agents".into()),
         ("r / s / d, ×", "rename · stop · delete".into()),
         ("h", "hosts: trusted and found nearby".into()),

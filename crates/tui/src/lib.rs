@@ -17,6 +17,7 @@ pub mod home;
 mod hosts;
 pub(crate) mod markdown;
 pub mod run;
+pub mod setup;
 pub mod terminal;
 pub(crate) mod text;
 pub mod theme;

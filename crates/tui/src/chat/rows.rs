@@ -668,6 +668,7 @@ fn body(
             output_head,
             more_lines,
             duration_ms,
+            ..
         } => {
             let verb = call_verb(*tool_state, row, ["Wants to run", "Running", "Ran"]);
             let mut meta = Vec::new();

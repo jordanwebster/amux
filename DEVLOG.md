@@ -1,3 +1,15 @@
+2026-10-01 — **A new agent's settings live on the composer's edge.** The new
+agent's box shows what will run it and where: kind, model (effort) and
+mode, folder and worktree, host. Each item lights as a chip under the
+pointer and opens its picker on a click; `ctrl+s` then a letter does the
+same from the keyboard, its legend shown at once; the worktree is a toggle.
+`ctrl+a n` in a chat starts a sibling with that chat's settings (next in
+family moved to `ctrl+a f`), and `ctrl+s` in a chat changes its model or
+effort where the agent allows. The Overview moved to `ctrl+o`. The reader is
+gone: an opened command shows its last lines with a count of the earlier
+ones, an opened edit its whole patch, and a permission ask's [Full Diff]
+opens the diff inside its box, scrolling there.
+
 2026-10-01 — **A sent message shows what was pasted.** Pasted text stays a
 chip in the draft, but once sent the message shows the text itself where
 the chip was, line for line and unrendered; past eight lines it is cut with

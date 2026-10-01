@@ -2600,9 +2600,9 @@ impl Client for LabClient {
             exited: None,
             working_on: None,
             ago: Some(crate::scenario::Dur(0)),
-            model: None,
-            effort: None,
-            mode: None,
+            model: create_config(&request).0,
+            effort: create_config(&request).1,
+            mode: create_config(&request).2,
             context: None,
             usage: None,
             tasks: Vec::new(),
@@ -2794,6 +2794,25 @@ impl Client for LabClient {
             ErrorCode::Unimplemented,
             "the lab has nothing to dump",
         ))
+    }
+}
+
+/// The model, effort and mode a create request asks for, so the new
+/// agent reports them.
+fn create_config(request: &CreateAgentRequest) -> (Option<String>, Option<String>, Option<String>) {
+    use wire::create_agent_request::Config;
+    match &request.config {
+        Some(Config::Claude(config)) => (
+            config.model.clone(),
+            config.effort.clone(),
+            config.permission_mode.clone(),
+        ),
+        Some(Config::Codex(config)) => (
+            config.model.clone(),
+            config.effort.clone(),
+            config.approval_policy.clone(),
+        ),
+        None => (None, None, None),
     }
 }
 

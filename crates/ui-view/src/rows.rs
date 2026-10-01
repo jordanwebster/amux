@@ -18,6 +18,8 @@ use crate::segments::{Segment, segments};
 
 /// How many lines of a command's output a row carries.
 pub const OUTPUT_HEAD_LINES: usize = 3;
+/// The output's last lines a command row carries.
+pub const OUTPUT_TAIL_LINES: usize = 12;
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Row {
@@ -111,6 +113,10 @@ pub enum RowKind {
         exit_code: Option<i32>,
         output_head: Vec<String>,
         more_lines: usize,
+        /// The output's last lines, for a step opened to show how it
+        /// ended; the lines before them number `more_lines` plus the head,
+        /// less these.
+        output_tail: Vec<String>,
         duration_ms: Option<i64>,
     },
     Explore {
@@ -865,6 +871,14 @@ fn output_head(text: &str) -> (Vec<String>, usize) {
     (head, all.len().saturating_sub(OUTPUT_HEAD_LINES))
 }
 
+fn output_tail(text: &str) -> Vec<String> {
+    let all: Vec<&str> = text.lines().collect();
+    all[all.len().saturating_sub(OUTPUT_TAIL_LINES)..]
+        .iter()
+        .map(|line| (*line).to_owned())
+        .collect()
+}
+
 fn image_of(attachments: &[Attachment]) -> Option<BlobRef> {
     attachments
         .iter()
@@ -948,6 +962,7 @@ fn claude_tool(
                     exit_code: tool.exit_code,
                     output_head,
                     more_lines,
+                    output_tail: output_tail(&tool.outcome_text),
                     duration_ms,
                 }
             }
@@ -1180,6 +1195,7 @@ fn codex_work(held: &Held, work: &wire::Work) -> (RowKind, Option<Decision>, boo
                 exit_code: command.exit_code,
                 output_head,
                 more_lines,
+                output_tail: output_tail(&held.item.text),
                 duration_ms: duration(held, work.ended_at_ms),
             }
         }

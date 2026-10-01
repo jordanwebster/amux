@@ -181,14 +181,6 @@ enum HeaderControl {
 /// Where each header control was drawn: its columns, and what it does.
 type HeaderSpots = Vec<((usize, usize), HeaderControl)>;
 
-/// A full-screen reader over a diff, a plan or arguments.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Reader {
-    pub title: String,
-    pub text: String,
-    pub scroll: usize,
-}
-
 /// The client's state for one open chat.
 #[derive(Debug)]
 pub struct ChatView {
@@ -200,7 +192,6 @@ pub struct ChatView {
     pub ask: AskUi,
     /// The selected entry of the queue block while it has the keys.
     pub tray: Option<usize>,
-    pub reader: Option<Reader>,
     /// The review page, kept behind its draft token while the chat shows.
     pub review: Option<ReviewPage>,
     pub review_open: bool,
@@ -297,6 +288,10 @@ pub struct ChatView {
     not_sent: Option<String>,
     /// The running turn's live end after the newest row, for the layout.
     feed_tail: Vec<Line<'static>>,
+    /// Ctrl+S was pressed: the next letter names a setting to change.
+    setting_prefix: bool,
+    /// A setting being chosen, above the composer.
+    picker: Option<crate::setup::Picker>,
     stretch_cache: StretchCache,
     /// Where the feed's first line was drawn, for clicks.
     feed_origin: (u16, u16),
@@ -320,7 +315,6 @@ impl ChatView {
             editor: Editor::default(),
             ask: AskUi::default(),
             tray: None,
-            reader: None,
             review: None,
             review_open: false,
             attach,
@@ -365,6 +359,8 @@ impl ChatView {
             rejected_seen: HashSet::new(),
             not_sent: None,
             feed_tail: Vec::new(),
+            setting_prefix: false,
+            picker: None,
             stretch_cache: StretchCache::default(),
             feed_origin: (0, 0),
             epoch: 0,
@@ -527,7 +523,6 @@ impl ChatView {
     pub fn opens_help(&self, state: &SessionState, key: KeyEvent) -> bool {
         key.code == KeyCode::Char('?')
             && !self.review_open
-            && self.reader.is_none()
             && self.live_card(state).is_none()
             && self.tray.is_none()
             && self.editor.is_empty()
@@ -558,9 +553,6 @@ impl ChatView {
             if let Some(page) = &mut self.review {
                 page.paste(text);
             }
-            return;
-        }
-        if self.reader.is_some() {
             return;
         }
         if let Some(card) = self.card_takes_keys(state) {
@@ -603,22 +595,14 @@ impl ChatView {
             }
             return vec![];
         }
-        if let Some(reader) = &mut self.reader {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => self.reader = None,
-                KeyCode::Up | KeyCode::Char('k') => reader.scroll = reader.scroll.saturating_sub(1),
-                KeyCode::Down | KeyCode::Char('j') => reader.scroll += 1,
-                KeyCode::PageUp => reader.scroll = reader.scroll.saturating_sub(self.feed.1.max(1)),
-                KeyCode::PageDown | KeyCode::Char(' ') => reader.scroll += self.feed.1.max(1),
-                KeyCode::Home | KeyCode::Char('g') => reader.scroll = 0,
-                KeyCode::End | KeyCode::Char('G') => reader.scroll = usize::MAX / 2,
-                _ => {}
-            }
-            return vec![];
-        }
-        if self.redesigned() && key.code == KeyCode::Char('t') && ctrl {
+        if self.redesigned() && key.code == KeyCode::Char('o') && ctrl {
             self.pane_toggle_key();
             return vec![];
+        }
+        if self.redesigned()
+            && let Some(effects) = self.setting_key(state, key)
+        {
+            return effects;
         }
         match key.code {
             KeyCode::Char('x') if ctrl => {
@@ -629,15 +613,17 @@ impl ChatView {
                 };
             }
             KeyCode::PageUp => {
-                self.scroll(
-                    state,
-                    -(self.feed.1.saturating_sub(2).max(1) as isize),
-                    theme,
-                );
+                let page = self.feed.1.saturating_sub(2).max(1) as isize;
+                if !self.scroll_box_diff(state, -page) {
+                    self.scroll(state, -page, theme);
+                }
                 return vec![];
             }
             KeyCode::PageDown => {
-                self.scroll(state, self.feed.1.saturating_sub(2).max(1) as isize, theme);
+                let page = self.feed.1.saturating_sub(2).max(1) as isize;
+                if !self.scroll_box_diff(state, page) {
+                    self.scroll(state, page, theme);
+                }
                 return vec![];
             }
             KeyCode::End if ctrl => {
@@ -755,14 +741,6 @@ impl ChatView {
                     }]
                 })
                 .unwrap_or_default(),
-            AskAction::Read { title, text } => {
-                self.reader = Some(Reader {
-                    title,
-                    text,
-                    scroll: 0,
-                });
-                vec![]
-            }
         }
     }
 
@@ -891,12 +869,100 @@ impl ChatView {
         }
     }
 
-    /// Esc, view-only: close the reader, clear focus, then follow the
-    /// newest row. It never answers and never interrupts.
-    fn escape(&mut self) {
-        if self.reader.take().is_some() {
-            return;
+    /// Ctrl+S and what follows it: a running chat's model and effort,
+    /// where the agent lets a client change them. None when the key is
+    /// not this.
+    fn setting_key(&mut self, state: &SessionState, key: KeyEvent) -> Option<Vec<ChatEffect>> {
+        use crate::setup::{Item, Pick, Picker};
+        if let Some(picker) = &mut self.picker {
+            let item = picker.item;
+            return Some(match picker.key(key) {
+                Pick::None => vec![],
+                Pick::Close => {
+                    self.picker = None;
+                    vec![]
+                }
+                Pick::Value(value) => {
+                    self.picker = None;
+                    let change = match item {
+                        Item::Effort => ui_view::SettingChange::Effort(value),
+                        _ => ui_view::SettingChange::Model(value),
+                    };
+                    ui_view::setting_input(state.kind(), &change)
+                        .map(ChatEffect::Answer)
+                        .into_iter()
+                        .collect()
+                }
+            });
         }
+        if std::mem::take(&mut self.setting_prefix) {
+            let (model, effort) = changeable(state);
+            let view = ui_view::settings(state);
+            match key.code {
+                KeyCode::Char('m') if model => {
+                    let choices = view
+                        .models
+                        .iter()
+                        .map(|model| crate::setup::Choice {
+                            label: if model.display_name.is_empty() {
+                                crate::words::model_name(&model.value)
+                            } else {
+                                model.display_name.clone()
+                            },
+                            detail: String::new(),
+                            value: model.value.clone(),
+                            current: model.current,
+                        })
+                        .collect();
+                    self.picker = Some(Picker::new(Item::Model, "Model", choices));
+                }
+                KeyCode::Char('e') if effort => {
+                    let choices = view
+                        .efforts
+                        .iter()
+                        .map(|effort| crate::setup::Choice {
+                            label: effort.value.clone(),
+                            detail: if effort.default {
+                                "default".into()
+                            } else {
+                                String::new()
+                            },
+                            value: effort.value.clone(),
+                            current: effort.current,
+                        })
+                        .collect();
+                    self.picker = Some(Picker::new(Item::Effort, "Effort", choices));
+                }
+                _ => {}
+            }
+            return Some(vec![]);
+        }
+        if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.setting_prefix = true;
+            return Some(vec![]);
+        }
+        None
+    }
+
+    /// Scrolls an opened diff in the ask's box; false when there is none.
+    fn scroll_box_diff(&mut self, state: &SessionState, lines: isize) -> bool {
+        match self.card_takes_keys(state) {
+            Some(card) if self.redesigned() && ask::boxed(&card) => {
+                self.ask.sync(&card);
+                self.ask.scroll_diff(&card, lines)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the pointer is under the feed: on the composer or its box.
+    fn below_feed(&self, event: MouseEvent) -> bool {
+        event.row >= self.feed_origin.1 + self.feed.1 as u16
+    }
+
+    /// Esc, view-only: clear focus, then follow the newest row. It never
+    /// answers and never interrupts.
+    fn escape(&mut self) {
         if self.focus.take().is_some() {
             return;
         }
@@ -907,7 +973,7 @@ impl ChatView {
         self.anchor = Anchor::Bottom;
     }
 
-    /// Ctrl+T: closed, the pane opens with the keys; open with the
+    /// Ctrl+O: closed, the pane opens with the keys; open with the
     /// composer holding the keys, the pane takes them; holding them, it
     /// closes.
     pub fn pane_toggle_key(&mut self) {
@@ -1108,9 +1174,17 @@ impl ChatView {
                 self.pane_scroll += crate::wheel::lines(Direction::Down);
                 self.pane_hover = None;
             }
+            // Under the feed, an opened diff in the ask's box takes the
+            // wheel.
+            MouseEventKind::ScrollUp
+                if self.below_feed(event)
+                    && self.scroll_box_diff(state, -wheel_lines(Direction::Up)) => {}
+            MouseEventKind::ScrollDown
+                if self.below_feed(event)
+                    && self.scroll_box_diff(state, wheel_lines(Direction::Down)) => {}
             MouseEventKind::ScrollUp => self.scroll(state, -wheel_lines(Direction::Up), theme),
             MouseEventKind::ScrollDown => self.scroll(state, wheel_lines(Direction::Down), theme),
-            MouseEventKind::Down(MouseButton::Left) if self.reader.is_none() => {
+            MouseEventKind::Down(MouseButton::Left) => {
                 match control {
                     Some(HeaderControl::Diff) => return vec![ChatEffect::Review],
                     Some(HeaderControl::Home) => return vec![ChatEffect::Home],
@@ -1560,10 +1634,6 @@ impl ChatView {
             page.draw(paint, area, footer, theme);
             return None;
         }
-        if let Some(reader) = &mut self.reader {
-            draw_reader(paint, area, reader, theme);
-            return None;
-        }
         if self.redesigned() {
             return self.draw_turns(paint, area, state, family, footer, now_ms, theme);
         }
@@ -1916,6 +1986,18 @@ impl ChatView {
             bottom.push(line);
         }
 
+        // A setting being chosen sits above the composer, like an ask's
+        // choices.
+        let mut picker_at = None;
+        if let Some(picker) = &self.picker {
+            let (lines, at) = picker.lines(width, theme);
+            if !bottom.is_empty() {
+                bottom.push(Line::default());
+            }
+            picker_at = at.map(|col| (bottom.len(), col));
+            bottom.extend(lines);
+            bottom.push(Line::default());
+        }
         let mut cursor = None;
         let card = self.card(state);
         // A plan stays in the feed, as the agent's text, while the box asks.
@@ -1978,7 +2060,7 @@ impl ChatView {
         };
         let legend = || {
             if pane_keys {
-                "j/k move · enter open · esc back · ctrl+t close".to_owned()
+                "j/k move · enter open · esc back · ctrl+o close".to_owned()
             } else {
                 turn_hint_words(state, &self.editor, self.away, self.leader)
             }
@@ -2112,7 +2194,12 @@ impl ChatView {
             }
             None => {
                 plain_box = Some(bottom.len());
-                composer_box(&mut bottom, &mut cursor, &self.editor, self.tray.is_none());
+                composer_box(
+                    &mut bottom,
+                    &mut cursor,
+                    &self.editor,
+                    self.tray.is_none() && self.picker.is_none(),
+                );
                 boxed = true;
                 if footer.is_none() {
                     hint = Err(match self.tray.and_then(|i| entries.get(i)) {
@@ -2120,6 +2207,30 @@ impl ChatView {
                         None => legend(),
                     });
                 }
+            }
+        }
+        // Ctrl+S: its legend, at once; a picker: its keys.
+        if footer.is_none() {
+            if let Some(picker) = &self.picker {
+                hint = Err(picker.hint().to_owned());
+                cursor = picker_at;
+            } else if self.setting_prefix {
+                let (model, effort) = changeable(state);
+                let mut pairs = Vec::new();
+                if model {
+                    pairs.push("m model");
+                }
+                if effort {
+                    pairs.push("e effort");
+                }
+                hint = Err(if pairs.is_empty() {
+                    ui_view::settings(state)
+                        .change_by_typing
+                        .unwrap_or_else(|| "Nothing here can change from amux".to_owned())
+                } else {
+                    pairs.push("esc back");
+                    pairs.join(" · ")
+                });
             }
         }
         // The plain composer's top edge says what stands in the way of
@@ -2718,6 +2829,16 @@ fn problem_words(
 
 /// While the agent works, one quiet line that it is, and for how long.
 /// What it is doing shows as live steps in the feed.
+/// Whether a running chat's model and effort can change from here: the
+/// agent offers them and takes the input.
+fn changeable(state: &SessionState) -> (bool, bool) {
+    let view = ui_view::settings(state);
+    (
+        view.model_refusal.is_none() && !view.models.is_empty() && state.kind() != wire::Kind::ClaudePty,
+        view.effort_refusal.is_none() && !view.efforts.is_empty() && state.kind() != wire::Kind::ClaudePty,
+    )
+}
+
 /// "exited", or "exited · crashed": how an exited agent's feed ends.
 fn exit_words(cause: Option<&str>) -> String {
     match cause {
@@ -3617,48 +3738,3 @@ fn empty_feed(
     lines
 }
 
-fn draw_reader(paint: &mut Paint<'_>, area: Rect, reader: &mut Reader, theme: Theme) {
-    let width = usize::from(area.width);
-    let height = usize::from(area.height).saturating_sub(3);
-    let body: Vec<String> = text::wrap(&reader.text, width.saturating_sub(4));
-    let max = body.len().saturating_sub(height);
-    reader.scroll = reader.scroll.min(max);
-    let mut lines = Vec::new();
-    let mut head = Line::from(Span::raw("  "));
-    push(&mut head, reader.title.clone(), theme.emphasis(), width);
-    let shown = format!(
-        "lines {}-{}/{}",
-        (reader.scroll + 1).min(body.len()),
-        (reader.scroll + height).min(body.len()),
-        body.len()
-    );
-    push_right(&mut head, &shown, theme.muted(), width);
-    lines.push(head);
-    lines.push(Line::from(Span::styled("─".repeat(width), theme.muted())));
-    for part in body.iter().skip(reader.scroll).take(height) {
-        let style = if part.starts_with("@@") {
-            theme.diff_meta()
-        } else if part.starts_with('+') {
-            theme.diff_added()
-        } else if part.starts_with('-') {
-            theme.diff_removed()
-        } else {
-            theme.text()
-        };
-        let mut line = Line::from(Span::raw("  "));
-        push(&mut line, part.clone(), style, width);
-        lines.push(line);
-    }
-    while lines.len() < height + 2 {
-        lines.push(Line::default());
-    }
-    let mut foot = Line::from(Span::raw("  "));
-    push(
-        &mut foot,
-        "↑↓/pgup/pgdn scroll · g/G top/bottom · esc close",
-        theme.muted(),
-        width,
-    );
-    lines.push(foot);
-    paint.render_widget(Paragraph::new(lines), area);
-}

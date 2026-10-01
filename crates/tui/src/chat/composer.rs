@@ -150,7 +150,7 @@ pub fn edge_row(
     }
     // The key that unfolds the row into the pane, named last.
     if !groups.is_empty() {
-        groups.push(vec![("ctrl+t".to_owned(), theme.faint())]);
+        groups.push(vec![("ctrl+o".to_owned(), theme.faint())]);
     }
     let usage = strip
         .usage

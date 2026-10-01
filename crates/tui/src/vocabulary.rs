@@ -346,6 +346,7 @@ fn row_sets() -> Vec<RowSet> {
             exit_code,
             output_head: output.iter().map(|s| (*s).into()).collect(),
             more_lines: more,
+            output_tail: output.iter().map(|s| (*s).into()).collect(),
             duration_ms: Some(12_400),
         })
     };

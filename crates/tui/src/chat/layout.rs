@@ -408,7 +408,8 @@ impl Frame<'_> {
             ..RowFacts::default()
         };
         if expanded && matches!(row.kind, ui_view::RowKind::FileChange { .. }) {
-            facts.patch = ui_view::patch_head(state, &row.id, OPEN_LINES);
+            // Opened, an edit shows its whole patch.
+            facts.patch = ui_view::patch_head(state, &row.id, usize::MAX);
         }
         let drawn = feed::row_lines(&row, &placement, expanded, &facts, self.width, self.theme)?;
         let mut lines = drawn.lines;

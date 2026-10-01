@@ -34,11 +34,6 @@ pub enum AskAction {
     /// The answer was not confirmed: send it again, or forget it.
     Resend,
     Discard,
-    /// Open the whole diff, plan or arguments in the reader.
-    Read {
-        title: String,
-        text: String,
-    },
     /// Hand the terminal to the agent's own interface.
     Attach,
     /// Open a link in the person's browser; the ask stays.
@@ -122,8 +117,10 @@ pub struct AskUi {
     /// Whether the person has the ask's keys, or has handed them to the
     /// composer for a moment to keep drafting.
     pub drafting: bool,
-    /// The boxed ask's command or arguments shown whole.
+    /// The boxed ask's command, arguments or diff shown whole.
     show_all: bool,
+    /// How far an opened diff taller than the box can hold is scrolled.
+    diff_scroll: usize,
     /// The choice last sent, for the line the box shows until the agent
     /// confirms it.
     sent: Option<usize>,
@@ -463,30 +460,6 @@ impl AskUi {
         self.stage = Stage::Other;
     }
 
-    fn reader(card: &AskCard) -> Option<AskAction> {
-        let (title, text) = match &card.body {
-            AskBody::Edit { path, diff, .. } => (path.clone(), diff.clone()),
-            AskBody::Plan { plan } => ("plan".to_owned(), plan.clone()),
-            AskBody::Tool {
-                server,
-                tool,
-                arguments,
-            } => (format!("{server} · {tool}"), arguments.clone()),
-            AskBody::Command { command, .. } => ("command".to_owned(), command.clone()),
-            AskBody::Question(questions) => (
-                "preview".to_owned(),
-                questions
-                    .iter()
-                    .flat_map(|q| q.options.iter())
-                    .map(|o| o.preview.as_str())
-                    .filter(|p| !p.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n\n"),
-            ),
-            _ => return None,
-        };
-        (!text.is_empty()).then_some(AskAction::Read { title, text })
-    }
 
     /// One key on the card. Ctrl+X is the chat's and never reaches here.
     pub fn key(&mut self, card: &AskCard, key: KeyEvent, attach: bool) -> AskAction {
@@ -500,9 +473,6 @@ impl AskUi {
                 };
             }
             CardState::Open | CardState::Rejected(_) => {}
-        }
-        if key.code == KeyCode::Char('f') && !self.editing() && !self.on_other(card) {
-            return Self::reader(card).unwrap_or(AskAction::None);
         }
         if let AskBody::Question(questions) = &card.body {
             return self.question_key(card, questions, key);
@@ -1015,9 +985,6 @@ impl AskUi {
                     hint = "enter send · esc back".into();
                 }
             }
-        }
-        if Self::reader(card).is_some() && !self.editing() {
-            hint.push_str(" · f open");
         }
         hint.push_str(" · ctrl+x stop");
         lines.push(indent(hint, theme.muted(), width));
@@ -1551,10 +1518,6 @@ impl AskUi {
             }
     }
 
-    /// The whole diff, for the reader.
-    fn full_diff(card: &AskCard) -> AskAction {
-        Self::reader(card).unwrap_or(AskAction::None)
-    }
 
     /// Sends the box's choice at `at`, the deny with its note.
     fn box_send(&mut self, card: &AskCard, at: usize) -> AskAction {
@@ -1636,12 +1599,12 @@ impl AskUi {
             KeyCode::Tab if self.on_noted_deny(card) => self.noting = true,
             // Esc only points at the way out, the refusal; Enter takes it.
             KeyCode::Esc => self.selected = count.saturating_sub(1),
-            KeyCode::Char('f') => match card.body {
-                AskBody::Edit { .. } => return Self::full_diff(card),
-                // The plan is in the feed, whole.
-                AskBody::Plan { .. } => {}
-                _ => self.show_all = !self.show_all,
-            },
+            // F shows the whole command, arguments or diff in the box, and
+            // cuts it again. The plan is in the feed, whole.
+            KeyCode::Char('f') if !matches!(card.body, AskBody::Plan { .. }) => {
+                self.show_all = !self.show_all;
+                self.diff_scroll = 0;
+            }
             _ => {}
         }
         AskAction::None
@@ -1678,7 +1641,11 @@ impl AskUi {
                 self.show_all = !self.show_all;
                 AskAction::None
             }
-            BoxSpot::FullDiff => Self::full_diff(card),
+            BoxSpot::FullDiff => {
+                self.show_all = !self.show_all;
+                self.diff_scroll = 0;
+                AskAction::None
+            }
         }
     }
 
@@ -1875,9 +1842,28 @@ impl AskUi {
                         !l.starts_with("@@") && !l.starts_with("---") && !l.starts_with("+++")
                     })
                     .collect();
-                let cut = lines.len() > DIFF_LINES;
-                let take = if cut { DIFF_LINES - 1 } else { lines.len() };
-                for l in lines.iter().take(take) {
+                // Opened ([Full Diff] or f), the whole patch shows in the
+                // box, which grows to fill the chat and scrolls (wheel,
+                // PgUp/PgDn) when even that is too little.
+                let opened = self.show_all && lines.len() > DIFF_LINES;
+                let cut = lines.len() > DIFF_LINES && !opened;
+                let rows = if self.room == 0 { 36 } else { self.room };
+                let fits = rows
+                    .saturating_sub(DIFF_CHROME + box_choices(card).len())
+                    .max(DIFF_LINES);
+                let scroll = if opened {
+                    self.diff_scroll.min(lines.len().saturating_sub(fits))
+                } else {
+                    0
+                };
+                let take = if cut {
+                    DIFF_LINES - 1
+                } else if opened {
+                    fits.min(lines.len())
+                } else {
+                    lines.len()
+                };
+                for l in lines.iter().skip(scroll).take(take) {
                     let (mark, style) = match l.chars().next() {
                         Some('+') => ('+', theme.diff_added()),
                         Some('-') => ('-', theme.diff_removed()),
@@ -1909,6 +1895,26 @@ impl AskUi {
                     out.spots
                         .push((out.lines.len(), (from, from + 11), BoxSpot::FullDiff));
                     out.lines.push(more);
+                } else if opened {
+                    let mut less = Line::default();
+                    if take < lines.len() {
+                        push(
+                            &mut less,
+                            format!(
+                                "lines {}–{} of {} · wheel or pgup/pgdn  ",
+                                scroll + 1,
+                                scroll + take,
+                                lines.len()
+                            ),
+                            theme.faint(),
+                            width,
+                        );
+                    }
+                    let from = text::line_width(&less);
+                    push(&mut less, "[Show Less]", theme.muted(), width);
+                    out.spots
+                        .push((out.lines.len(), (from, from + 11), BoxSpot::FullDiff));
+                    out.lines.push(less);
                 }
                 String::new()
             }
@@ -2861,7 +2867,21 @@ fn preview_lines(
     (lines.into_iter().take(keep).collect(), hidden)
 }
 
+/// The rows an opened diff leaves to the rest of the chat: the header, a
+/// little feed, the box's own lines around the diff, and the hint.
+const DIFF_CHROME: usize = 16;
+
 impl AskUi {
+    /// Scrolls an opened diff in the box by `lines`; false when none is
+    /// open, so the feed scrolls instead.
+    pub fn scroll_diff(&mut self, card: &AskCard, lines: isize) -> bool {
+        if !self.show_all || !matches!(card.body, AskBody::Edit { .. }) {
+            return false;
+        }
+        self.diff_scroll = self.diff_scroll.saturating_add_signed(lines);
+        true
+    }
+
     /// How many rows the terminal has, so previews leave the feed room.
     pub fn set_room(&mut self, rows: usize, attach: bool) {
         self.room = rows;
@@ -3110,18 +3130,8 @@ pub(crate) fn access_words(
     }
 }
 
-/// `text` in at most `max` columns, cut in the middle so both ends show.
 fn middle_cut(text: &str, max: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= max || max < 8 {
-        return text.to_owned();
-    }
-    let head = (max - 1) / 2;
-    let tail = max - 1 - head;
-    let mut out: String = chars[..head].iter().collect();
-    out.push('…');
-    out.extend(&chars[chars.len() - tail..]);
-    out
+    text::ellipsize_middle(text, max)
 }
 
 impl AskUi {
