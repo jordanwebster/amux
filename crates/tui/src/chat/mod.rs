@@ -292,6 +292,8 @@ pub struct ChatView {
     setting_prefix: bool,
     /// A setting being chosen, above the composer.
     picker: Option<crate::setup::Picker>,
+    /// The picker's flyover as last drawn, for clicks.
+    flyover: crate::setup::Flyover,
     stretch_cache: StretchCache,
     /// Where the feed's first line was drawn, for clicks.
     feed_origin: (u16, u16),
@@ -361,6 +363,7 @@ impl ChatView {
             feed_tail: Vec::new(),
             setting_prefix: false,
             picker: None,
+            flyover: crate::setup::Flyover::default(),
             stretch_cache: StretchCache::default(),
             feed_origin: (0, 0),
             epoch: 0,
@@ -873,27 +876,10 @@ impl ChatView {
     /// where the agent lets a client change them. None when the key is
     /// not this.
     fn setting_key(&mut self, state: &SessionState, key: KeyEvent) -> Option<Vec<ChatEffect>> {
-        use crate::setup::{Item, Pick, Picker};
+        use crate::setup::{Item, Picker};
         if let Some(picker) = &mut self.picker {
-            let item = picker.item;
-            return Some(match picker.key(key) {
-                Pick::None => vec![],
-                Pick::Close => {
-                    self.picker = None;
-                    vec![]
-                }
-                Pick::Value(value) => {
-                    self.picker = None;
-                    let change = match item {
-                        Item::Effort => ui_view::SettingChange::Effort(value),
-                        _ => ui_view::SettingChange::Model(value),
-                    };
-                    ui_view::setting_input(state.kind(), &change)
-                        .map(ChatEffect::Answer)
-                        .into_iter()
-                        .collect()
-                }
-            });
+            let pick = picker.key(key);
+            return Some(self.picked(state, pick));
         }
         if std::mem::take(&mut self.setting_prefix) {
             let (model, effort) = changeable(state);
@@ -912,6 +898,7 @@ impl ChatView {
                             detail: String::new(),
                             value: model.value.clone(),
                             current: model.current,
+                            disabled: false,
                         })
                         .collect();
                     self.picker = Some(Picker::new(Item::Model, "Model", choices));
@@ -929,6 +916,7 @@ impl ChatView {
                             },
                             value: effort.value.clone(),
                             current: effort.current,
+                            disabled: false,
                         })
                         .collect();
                     self.picker = Some(Picker::new(Item::Effort, "Effort", choices));
@@ -942,6 +930,32 @@ impl ChatView {
             return Some(vec![]);
         }
         None
+    }
+
+    /// What a model or effort flyover's key or click did.
+    fn picked(&mut self, state: &SessionState, pick: crate::setup::Pick) -> Vec<ChatEffect> {
+        use crate::setup::{Item, Pick};
+        let Some(item) = self.picker.as_ref().map(|picker| picker.item) else {
+            return vec![];
+        };
+        match pick {
+            Pick::None => vec![],
+            Pick::Close => {
+                self.picker = None;
+                vec![]
+            }
+            Pick::Value(value) => {
+                self.picker = None;
+                let change = match item {
+                    Item::Effort => ui_view::SettingChange::Effort(value),
+                    _ => ui_view::SettingChange::Model(value),
+                };
+                ui_view::setting_input(state.kind(), &change)
+                    .map(ChatEffect::Answer)
+                    .into_iter()
+                    .collect()
+            }
+        }
     }
 
     /// Scrolls an opened diff in the ask's box; false when there is none.
@@ -1137,6 +1151,20 @@ impl ChatView {
                 _ => {}
             }
             return vec![];
+        }
+        // A flyover is open: a click on a choice picks it, anywhere else
+        // closes it.
+        if self.picker.is_some() && event.kind == MouseEventKind::Down(MouseButton::Left) {
+            let (x, y) = (event.column, event.row);
+            let pick = match self.flyover.choice_at(x, y) {
+                Some(at) => self
+                    .picker
+                    .as_mut()
+                    .map_or(crate::setup::Pick::None, |picker| picker.click(at)),
+                None if self.flyover.covers(x, y) => crate::setup::Pick::None,
+                None => crate::setup::Pick::Close,
+            };
+            return self.picked(state, pick);
         }
         let control = self
             .header_spots
@@ -1986,18 +2014,6 @@ impl ChatView {
             bottom.push(line);
         }
 
-        // A setting being chosen sits above the composer, like an ask's
-        // choices.
-        let mut picker_at = None;
-        if let Some(picker) = &self.picker {
-            let (lines, at) = picker.lines(width, theme);
-            if !bottom.is_empty() {
-                bottom.push(Line::default());
-            }
-            picker_at = at.map(|col| (bottom.len(), col));
-            bottom.extend(lines);
-            bottom.push(Line::default());
-        }
         let mut cursor = None;
         let card = self.card(state);
         // A plan stays in the feed, as the agent's text, while the box asks.
@@ -2101,7 +2117,7 @@ impl ChatView {
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
                 self.ask.set_room(usize::from(area.height), self.attach);
                 let drawn = self.ask.box_lines(card, inner, theme);
-                let (lines, mode) = framed(
+                let (lines, mode, _) = framed(
                     drawn.lines,
                     theme.accent(),
                     &EdgeWords {
@@ -2172,7 +2188,7 @@ impl ChatView {
                 let body = strip.sign_in.as_ref().map_or_else(Vec::new, |sign_in| {
                     sign_in_lines(state.kind(), &host, sign_in, inner, theme)
                 });
-                let (lines, mode) = framed(
+                let (lines, mode, _) = framed(
                     body,
                     theme.accent(),
                     &EdgeWords {
@@ -2212,8 +2228,8 @@ impl ChatView {
         // Ctrl+S: its legend, at once; a picker: its keys.
         if footer.is_none() {
             if let Some(picker) = &self.picker {
-                hint = Err(picker.hint().to_owned());
-                cursor = picker_at;
+                hint = Err(picker.hint());
+                cursor = None;
             } else if self.setting_prefix {
                 let (model, effort) = changeable(state);
                 let mut pairs = Vec::new();
@@ -2490,8 +2506,20 @@ impl ChatView {
             self.pane_rect = Some(rect);
             self.draw_side_pane(paint, rect, &strip, &jobs, lit.as_ref(), now_ms, theme);
         }
+        // A model or effort being chosen: its flyover rises from the model's
+        // words on the composer's edge, over the box (and the pane).
+        let mut flyover_cursor = None;
+        if let (Some(picker), Some((at, boxed))) = (&self.picker, &boxed_at) {
+            let anchor = area.x + boxed.label.unwrap_or(4) as u16;
+            let above = (area.y as usize + bottom_start + at) as u16;
+            self.flyover = crate::setup::draw_flyover(paint, picker, anchor, above, area, theme);
+            flyover_cursor = self.flyover.cursor;
+        }
+        if let Some(at) = flyover_cursor {
+            paint.set_cursor_position(at);
+        }
         // While the pane has the keys, the composer shows no cursor.
-        if let Some((row, col)) = cursor.filter(|_| !pane_keys) {
+        if let Some((row, col)) = cursor.filter(|_| !pane_keys && self.picker.is_none()) {
             let y = area.y as usize + bottom_start + row;
             let x = area.x as usize + col.min(width.saturating_sub(1));
             if y < (area.y + area.height) as usize {
@@ -2999,6 +3027,9 @@ struct Boxed {
     lines: Vec<Line<'static>>,
     cursor: (usize, usize),
     mode: Option<(usize, usize)>,
+    /// Where the model's words start on the bottom edge: a model or effort
+    /// flyover rises from there.
+    label: Option<usize>,
     text_x: usize,
     skip: usize,
     wrap: usize,
@@ -3031,11 +3062,12 @@ fn boxed_composer(
         theme.hairline()
     };
     let body = body.into_iter().skip(skip).take(COMPOSER_LINES).collect();
-    let (lines, mode) = framed(body, edge, edge_words, width, theme);
+    let (lines, mode, label) = framed(body, edge, edge_words, width, theme);
     Boxed {
         lines,
         cursor: (1 + row - skip, MARGIN + 2 + col),
         mode,
+        label,
         text_x: MARGIN + 4,
         skip,
         wrap: inner,
@@ -3069,15 +3101,16 @@ fn marked_edge_in(
 }
 
 /// `body` in the composer's box at the margin, its edge in `edge`, with
-/// the model, effort and mode on the bottom edge. Returns the lines and
-/// the mode's columns on the last line, for clicks.
+/// the model, effort and mode on the bottom edge. Returns the lines, the
+/// mode's columns on the last line, for clicks, and where the edge's words
+/// start.
 fn framed(
     body: Vec<Line<'static>>,
     edge: ratatui::style::Style,
     edge_words: &EdgeWords,
     width: usize,
     theme: Theme,
-) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
+) -> (Vec<Line<'static>>, Option<(usize, usize)>, Option<usize>) {
     const MARGIN: usize = 2;
     let span = width.saturating_sub(2 * MARGIN + 2);
     let mut out = Vec::new();
@@ -3122,12 +3155,14 @@ fn framed(
     let mut bottom = Line::from(Span::raw(" ".repeat(MARGIN)));
     push(&mut bottom, "╰", edge, width);
     let mut mode = None;
+    let mut label_at = None;
     if label.is_empty() || label_width + 6 > span {
         push(&mut bottom, "─".repeat(span), edge, width);
     } else {
         let rule = span.saturating_sub(label_width + 3).max(1);
         push(&mut bottom, "─".repeat(rule), edge, width);
         push(&mut bottom, " ", edge, width);
+        label_at = Some(text::line_width(&bottom));
         bottom.spans.extend(label);
         if let Some(words) = &mode_words {
             let to = text::line_width(&bottom);
@@ -3138,7 +3173,7 @@ fn framed(
     text::pad_to(&mut bottom, width - MARGIN - 1);
     push(&mut bottom, "╯", edge, width);
     out.push(bottom);
-    (out, mode)
+    (out, mode, label_at)
 }
 
 /// The keys under the composer, by what is happening, few enough to read

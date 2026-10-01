@@ -407,6 +407,16 @@ pub enum ColorSetting {
     Ansi,
 }
 
+/// Where a person chats with their agents: in amux's own chat, or in each
+/// agent's own terminal, which a new agent is attached to when it starts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatInSetting {
+    #[default]
+    Amux,
+    Terminal,
+}
+
 /// Client UI configuration (the TUI; future desktop clients read the same
 /// keys).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -416,6 +426,8 @@ pub struct UiSettings {
     pub theme: ThemeSetting,
     /// Whether to detect, force, or disable truecolor output.
     pub color: ColorSetting,
+    /// Where new agents are chatted with: `amux` or `terminal`.
+    pub chat_in: ChatInSetting,
 }
 
 /// Preferences shared by every profile in an installation.

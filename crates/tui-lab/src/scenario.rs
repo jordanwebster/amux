@@ -33,6 +33,10 @@ pub struct Scenario {
     pub cwd: String,
     #[serde(default)]
     pub repositories: Vec<String>,
+    /// Where the person chats with their agents: `amux` (the default) or
+    /// `terminal`, which starts a new agent from a form and attaches to it.
+    #[serde(default)]
+    pub chat_in: Option<String>,
 }
 
 fn laptop() -> String {

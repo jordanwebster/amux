@@ -91,6 +91,8 @@ pub struct FleetView {
     /// Draw the old framed grid regardless of the variant: the tests that
     /// still describe it set this, since the variant is process-wide.
     pub legacy: bool,
+    /// Where the person chats, which decides how a new agent starts.
+    pub chat_in: crate::setup::ChatIn,
 }
 
 fn kind_word(kind: Kind) -> &'static str {
@@ -340,6 +342,7 @@ impl FleetView {
                 local_host: &self.local_host,
                 working_dir: &self.working_dir,
                 attach: self.attach,
+                chat_in: self.chat_in,
             };
             self.home
                 .draw(paint, area, fleet, footer, now_ms, theme, &place);

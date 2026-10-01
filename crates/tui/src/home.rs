@@ -24,7 +24,7 @@ use wire::{Agent, Kind, Presence, Trust};
 use crate::chat::composer::editor_lines;
 use crate::editor::Editor;
 use crate::fleet::FleetEffect;
-use crate::setup::{Item as Setting, Pick, Picker, Setup};
+use crate::setup::{ChatIn, Form, FormHit, FormOutcome, Item as Setting, Pick, Picker, Setup};
 use crate::hosts;
 use crate::text::{self, pad_to, push};
 use crate::theme::Theme;
@@ -93,6 +93,8 @@ enum Hit {
     Key(KeyEvent),
     /// One of the draft's settings on the composer's edge.
     Setting(Setting),
+    /// A place on the form for an agent used in its own terminal.
+    Form(FormHit),
 }
 
 /// A clickable span of one screen row.
@@ -142,8 +144,13 @@ pub struct Draft {
     /// What will run it and where; filled from the defaults when it first
     /// shows.
     pub setup: Option<Setup>,
-    /// A setting being chosen, above the composer.
+    /// A setting being chosen, in a flyover over its place on the edge.
     picker: Option<Picker>,
+    /// For an agent used in its own terminal, the form that starts it in
+    /// place of the composer.
+    form: Option<Form>,
+    /// The flyover as last drawn, for clicks.
+    flyover: crate::setup::Flyover,
     /// Ctrl+S was pressed: the next letter names a setting.
     prefix: bool,
     /// The edge item under the pointer.
@@ -268,8 +275,13 @@ impl Home {
 
     /// The create call came back: the draft is spent.
     pub fn started(&mut self) {
+        // The next agent keeps these settings but not this one's name.
+        let mut setup = self.draft.setup.take();
+        if let Some(setup) = &mut setup {
+            setup.name = None;
+        }
         self.draft = Draft {
-            setup: self.draft.setup.take(),
+            setup,
             ..Draft::default()
         };
     }
@@ -280,8 +292,18 @@ impl Home {
     pub fn new_agent(&mut self, setup: Setup) {
         self.draft.setup = Some(setup);
         self.draft.picker = None;
+        self.draft.form = None;
         self.draft.prefix = false;
         self.draft.open = true;
+    }
+
+    /// Where the person chats changed: the next new agent starts from the
+    /// defaults for it.
+    pub fn forget_draft_setup(&mut self) {
+        self.draft.setup = None;
+        self.draft.form = None;
+        self.draft.picker = None;
+        self.draft.open = false;
     }
 
     pub fn start_failed(&mut self) {
@@ -769,6 +791,28 @@ impl Home {
             }
             return vec![];
         }
+        // An agent used in its own terminal: the form has the keys.
+        if self.draft.setup.as_ref().is_some_and(|setup| setup.chat_in == ChatIn::Terminal) {
+            let (Some(setup), Some(form)) = (&mut self.draft.setup, &mut self.draft.form) else {
+                return vec![];
+            };
+            return match form.key(setup, fleet, key) {
+                FormOutcome::None => vec![],
+                FormOutcome::Close => {
+                    self.draft.open = false;
+                    vec![]
+                }
+                FormOutcome::Start => {
+                    self.draft.starting = true;
+                    vec![FleetEffect::Start {
+                        setup: setup.clone(),
+                        text: String::new(),
+                        attachments: Vec::new(),
+                        open: true,
+                    }]
+                }
+            };
+        }
         if let Some(picker) = &mut self.draft.picker {
             match picker.key(key) {
                 Pick::None => {}
@@ -786,12 +830,13 @@ impl Home {
         // Ctrl+S, then a letter: the setting it names.
         if std::mem::take(&mut self.draft.prefix) {
             let item = match key.code {
+                KeyCode::Char('n') => Some(Setting::Name),
                 KeyCode::Char('m') => Some(Setting::Model),
                 KeyCode::Char('e') => Some(Setting::Effort),
                 KeyCode::Char('d') => Some(Setting::Folder),
                 KeyCode::Char('h') => Some(Setting::Host),
                 KeyCode::Char('w') => Some(Setting::Worktree),
-                KeyCode::Char('k') => Some(Setting::Kind),
+                KeyCode::Char('a') => Some(Setting::Kind),
                 _ => None,
             };
             if let Some(item) = item {
@@ -839,7 +884,13 @@ impl Home {
             setup.pick(Setting::Worktree, "");
             return;
         }
+        if item == Setting::Name {
+            let name = setup.name.clone().unwrap_or_default();
+            self.draft.picker = Some(Picker::text(Setting::Name, "Name", &name));
+            return;
+        }
         let title = match item {
+            Setting::Name => "Name",
             Setting::Kind => "Agent",
             Setting::Model => "Model",
             Setting::Effort => "Effort",
@@ -870,6 +921,30 @@ impl Home {
                 .map(|spot| spot.hit.clone())
         };
         let listing = self.overlay.is_none() && !self.draft.open;
+        // A flyover is open: a click on a choice picks it, anywhere else
+        // closes it.
+        if self.draft.open
+            && self.draft.picker.is_some()
+            && let MouseEventKind::Down(MouseButton::Left) = event.kind
+        {
+            let pick = match self.draft.flyover.choice_at(x, y) {
+                Some(at) => self.draft.picker.as_mut().map(|picker| picker.click(at)),
+                None if self.draft.flyover.covers(x, y) => None,
+                None => Some(Pick::Close),
+            };
+            match pick {
+                Some(Pick::Value(value)) => {
+                    let item = self.draft.picker.as_ref().map(|picker| picker.item);
+                    if let (Some(setup), Some(item)) = (&mut self.draft.setup, item) {
+                        setup.pick(item, &value);
+                    }
+                    self.draft.picker = None;
+                }
+                Some(Pick::Close) => self.draft.picker = None,
+                _ => {}
+            }
+            return vec![];
+        }
         match event.kind {
             MouseEventKind::Moved if self.draft.open => {
                 self.draft.hover = match hit(false) {
@@ -902,6 +977,13 @@ impl Home {
                 Some(Hit::Setting(item)) if !self.draft.starting => {
                     self.draft.prefix = false;
                     self.open_setting(fleet, item);
+                    vec![]
+                }
+                Some(Hit::Form(hit)) if !self.draft.starting => {
+                    if let (Some(setup), Some(form)) = (&mut self.draft.setup, &mut self.draft.form)
+                    {
+                        form.click(setup, hit);
+                    }
                     vec![]
                 }
                 Some(Hit::Close(agent)) if listing => {
@@ -942,31 +1024,59 @@ impl Home {
         // A blank line above the top line keeps it off the terminal's edge.
         let mut laid: Vec<Laid> = vec![Laid::default()];
         let mut cursor;
+        // Where the new agent's composer box starts, for its flyover.
+        let mut box_top = None;
         if self.draft.open {
             if self.draft.setup.is_none() {
-                self.draft.setup = Some(Setup::defaults(place.working_dir, place.local_host));
+                self.draft.setup = Some(Setup::defaults(
+                    place.chat_in,
+                    place.working_dir,
+                    place.local_host,
+                ));
             }
             laid.push(Laid::plain(self.draft_top(width, theme)));
-            let (composer, at) = self.composer(fleet, place, width, height, theme);
-            // A setting being chosen sits above the box, like an ask's
-            // choices, with a blank between.
-            let (picker, picker_at) = match &self.draft.picker {
-                Some(picker) => {
-                    let (mut lines, at) = picker.lines(width, theme);
-                    lines.push(Line::default());
-                    (lines, at)
+            let terminal = self
+                .draft
+                .setup
+                .as_ref()
+                .is_some_and(|setup| setup.chat_in == ChatIn::Terminal);
+            if terminal {
+                // An agent used in its own terminal: the form, under a blank.
+                if self.draft.form.is_none() {
+                    self.draft.form = self.draft.setup.as_ref().map(Form::new);
                 }
-                None => (Vec::new(), None),
-            };
-            let body = height.saturating_sub(3 + composer.len() + picker.len());
-            laid.resize_with(2 + body, Laid::default);
-            let picker_top = laid.len();
-            laid.extend(picker.into_iter().map(Laid::plain));
-            cursor = at.map(|(col, row)| (col, laid.len() + row));
-            if let Some(col) = picker_at {
-                cursor = Some((col, picker_top));
+                laid.push(Laid::default());
+                cursor = None;
+                if let (Some(setup), Some(form)) = (&self.draft.setup, &self.draft.form) {
+                    let (lines, at) = form.lines(setup, fleet, width - MARGIN, theme);
+                    let first = laid.len();
+                    for (line, spots) in lines {
+                        let mut indented = Line::from(Span::raw(" ".repeat(MARGIN)));
+                        indented.spans.extend(line.spans);
+                        laid.push(Laid {
+                            line: indented,
+                            spots: spots
+                                .into_iter()
+                                .map(|(from, to, hit)| {
+                                    (Some((MARGIN + from, MARGIN + to)), Hit::Form(hit))
+                                })
+                                .collect(),
+                        });
+                    }
+                    cursor = at
+                        .filter(|_| !self.draft.starting)
+                        .map(|(col, row)| (MARGIN + col, first + row));
+                }
+            } else {
+                let (composer, at) = self.composer(fleet, place, width, height, theme);
+                let body = height.saturating_sub(3 + composer.len());
+                laid.resize_with(2 + body, Laid::default);
+                box_top = Some(laid.len());
+                cursor = at
+                    .filter(|_| self.draft.picker.is_none())
+                    .map(|(col, row)| (col, laid.len() + row));
+                laid.extend(composer);
             }
-            laid.extend(composer);
         } else {
             let (top, at) = self.top_line(fleet, width, theme, place);
             laid.push(Laid::plain(top));
@@ -1022,6 +1132,24 @@ impl Home {
                 area.x + x.min(width - 1) as u16,
                 area.y + y as u16,
             ));
+        }
+        // A setting being chosen: its flyover rises from the setting's place
+        // on the edge, over the box. Effort lives in the model's words.
+        if let (Some(picker), Some(top)) = (&self.draft.picker, box_top) {
+            let item = match picker.item {
+                Setting::Effort => Setting::Model,
+                item => item,
+            };
+            let anchor = self
+                .spots
+                .iter()
+                .find(|spot| matches!(&spot.hit, Hit::Setting(at) if *at == item))
+                .map_or(area.x + MARGIN as u16, |spot| spot.x.0);
+            let above = area.y + top as u16;
+            self.draft.flyover = crate::setup::draw_flyover(paint, picker, anchor, above, area, theme);
+            if let Some(at) = self.draft.flyover.cursor {
+                paint.set_cursor_position(at);
+            }
         }
     }
 
@@ -1336,7 +1464,7 @@ impl Home {
             .draft
             .setup
             .clone()
-            .unwrap_or_else(|| Setup::defaults(place.working_dir, place.local_host));
+            .unwrap_or_else(|| Setup::defaults(place.chat_in, place.working_dir, place.local_host));
         let mut groups = setup.edge(fleet);
         let room = (width - 2 * MARGIN - 2).saturating_sub(6);
         let measure = |groups: &Vec<Vec<(Setting, String)>>| {
@@ -1469,19 +1597,47 @@ impl Home {
                 push(&mut line, "starting the agent…", theme.muted(), width);
                 return (Laid::plain(line), None);
             }
+            None if self.draft.open && self.draft.form.is_some() => self
+                .draft
+                .form
+                .as_ref()
+                .map(|form| form.hints())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(keys, action)| {
+                    let code = match keys {
+                        "enter" => KeyCode::Enter,
+                        "esc" => KeyCode::Esc,
+                        "space" => KeyCode::Char(' '),
+                        "tab" => KeyCode::Tab,
+                        "←→" => KeyCode::Right,
+                        _ => KeyCode::Down,
+                    };
+                    (keys, action, key(code))
+                })
+                .collect(),
             None if self.draft.open => match (&self.draft.picker, self.draft.prefix) {
-                (Some(_), _) => vec![
-                    ("↑↓", "move", key(KeyCode::Down)),
-                    ("enter", "pick", key(KeyCode::Enter)),
-                    ("esc", "back", key(KeyCode::Esc)),
-                ],
+                (Some(picker), _) => picker
+                    .hints()
+                    .into_iter()
+                    .map(|(keys, action)| {
+                        let code = match keys {
+                            "enter" => KeyCode::Enter,
+                            "esc" => KeyCode::Esc,
+                            "tab" => KeyCode::Tab,
+                            _ => KeyCode::Down,
+                        };
+                        (keys, action, key(code))
+                    })
+                    .collect(),
                 (None, true) => vec![
+                    ("n", "name", key(KeyCode::Char('n'))),
                     ("m", "model", key(KeyCode::Char('m'))),
                     ("e", "effort", key(KeyCode::Char('e'))),
                     ("d", "folder", key(KeyCode::Char('d'))),
                     ("h", "host", key(KeyCode::Char('h'))),
                     ("w", "worktree", key(KeyCode::Char('w'))),
-                    ("k", "kind", key(KeyCode::Char('k'))),
+                    ("a", "agent", key(KeyCode::Char('a'))),
                     ("esc", "back", key(KeyCode::Esc)),
                 ],
                 (None, false) => vec![
@@ -1541,10 +1697,13 @@ pub fn help_rows() -> Vec<(&'static str, String)> {
         ),
         ("enter, click", "open the chat".into()),
         ("/", "filter by name, project or host; esc clears".into()),
-        ("n", "new agent: its first prompt, then enter".into()),
+        (
+            "n",
+            "new agent: its first prompt, then enter (or its form, for its own terminal)".into(),
+        ),
         (
             "ctrl+s then a letter",
-            "a new agent's model, effort, folder, host, worktree, kind".into(),
+            "a new agent's name, model, effort, folder, host, worktree, agent".into(),
         ),
         ("→ / ←, space", "show or hide a family's agents".into()),
         ("r / s / d, ×", "rename · stop · delete".into()),
@@ -1559,6 +1718,8 @@ pub struct Place<'a> {
     /// Where a new agent works, as the person would write it.
     pub working_dir: &'a str,
     pub attach: bool,
+    /// Where the person chats, which decides how a new agent starts.
+    pub chat_in: ChatIn,
 }
 
 /// `key word` pairs, three blanks apart, as many as fit; each is a click

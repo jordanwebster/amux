@@ -1,4 +1,4 @@
-description: Starting agents. From home, press n; the composer's bottom edge holds what will run it (kind, model, mode), where (folder, worktree) and on which machine. Click an item or press ctrl+s then a letter to change it. Open a chat and press ctrl+a n to start a sibling with that chat's settings.
+description: Starting agents. From home, press n. Chatting in amux (the default), the composer's bottom edge holds the new agent's name ("+ Name"), which agent (Claude or Codex), model, mode, folder, worktree and host; click an item or press ctrl+s then a letter, and its flyover rises from the edge. Press F4 to chat in the agents' own terminals instead, and n opens a short form that starts the agent and attaches to it. Open a chat and press ctrl+a n to start a sibling.
 local_host: laptop
 hosts:
   - id: studio

@@ -1356,6 +1356,7 @@ fn raw_attach_is_only_for_terminals_on_this_machine() {
         version: "0.7.0".into(),
         local_host: b"a".to_vec(),
         layout: None,
+        chat_in: crate::setup::ChatIn::Amux,
     };
     let agent = |host: &[u8], kind: Kind| wire::Agent {
         host_id: host.to_vec(),
@@ -2325,6 +2326,7 @@ const HOME_PLACE: crate::home::Place<'static> = crate::home::Place {
     local_host: b"a",
     working_dir: "~/work/amux",
     attach: false,
+    chat_in: crate::setup::ChatIn::Amux,
 };
 
 fn home_screen(home: &mut crate::home::Home, fleet: &FleetState, theme: Theme) -> String {

@@ -1,3 +1,18 @@
+2026-10-01 — **Two agents, two ways to start them.** A person now chooses
+Claude or Codex, never "(terminal)" or "(headless)": where they chat decides
+what runs behind it, through a new `ui.chat_in` setting (`amux`, the
+default, or `terminal`). Chatting in amux, a new agent is composer-first as
+before, its edge now led by a "+ Name" call to name it, and every setting
+changes in a flyover that rises from its place on the edge (a hairline
+panel, the chat visible around it; long lists filter, a click picks or
+closes). Chatting in the agents' own terminals, `n` opens a short form
+(name, agent, folder, host, worktree, choices changed in place) whose Enter
+starts the agent and attaches to it: Claude in its terminal, Codex on its
+app server with `codex resume` on the same thread. A running chat's model
+and effort change in the same flyover. `ctrl+a n` starts a sibling in the
+person's style; next in family has no key. The lab flips the setting with
+F4.
+
 2026-10-01 — **A new agent's settings live on the composer's edge.** The new
 agent's box shows what will run it and where: kind, model (effort) and
 mode, folder and worktree, host. Each item lights as a chip under the

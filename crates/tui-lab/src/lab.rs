@@ -59,7 +59,7 @@ fn lab_chord(key: &KeyEvent) -> bool {
     ctrl && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'))
 }
 
-const HELP: &str = "lab: F2 feedback · F3 variant · ^] r restart scenario · ^] ? keys";
+const HELP: &str = "lab: F2 feedback · F3 variant · F4 chat in amux or terminal · ^] r restart scenario · ^] ? keys";
 
 pub async fn run(scenario: &Scenario, place: Option<Place>, theme: Theme) -> Result<Leave> {
     // The client's layout lives with the lab's other state, so it outlasts
@@ -317,6 +317,10 @@ fn lab_key(
                 cycle_variant(app);
                 LabKey::Handled
             }
+            KeyCode::F(4) => {
+                flip_chat_in(app);
+                LabKey::Handled
+            }
             _ if lab_chord(&key) => {
                 *mode = Mode::Chord;
                 app.notice(
@@ -328,6 +332,23 @@ fn lab_key(
             _ => LabKey::Pass,
         },
     }
+}
+
+/// Where the person chats, flipped: how the next new agent starts.
+fn flip_chat_in(app: &mut tui::App) {
+    use tui::setup::ChatIn;
+    let next = match app.config.chat_in {
+        ChatIn::Amux => ChatIn::Terminal,
+        ChatIn::Terminal => ChatIn::Amux,
+    };
+    app.set_chat_in(next);
+    app.notice(
+        match next {
+            ChatIn::Amux => "new agents: chat in amux",
+            ChatIn::Terminal => "new agents: chat in their own terminal",
+        },
+        Tone::Info,
+    );
 }
 
 fn cycle_variant(app: &mut tui::App) {

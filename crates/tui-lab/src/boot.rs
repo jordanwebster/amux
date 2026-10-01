@@ -42,6 +42,10 @@ pub async fn boot(
         version: "lab".into(),
         local_host: world.local_host(),
         layout,
+        chat_in: match scenario.chat_in.as_deref() {
+            Some("terminal") => tui::setup::ChatIn::Terminal,
+            _ => tui::setup::ChatIn::Amux,
+        },
     };
     let mut app = App::new(client, fleet, config);
     // The fleet has already caught up, so no change will arrive to open the
