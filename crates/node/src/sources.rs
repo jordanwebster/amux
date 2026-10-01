@@ -140,6 +140,37 @@ impl Sources {
         }
         self.settling.clear();
         self.ready.clear();
+        self.following.clear();
+    }
+
+    /// Whether `session` is the one `host`'s agents are sourced under now,
+    /// caught up or still following.
+    fn is_current(&self, host: &[u8], session: u64) -> bool {
+        self.ready.get(host) == Some(&session) || self.following.get(host) == Some(&session)
+    }
+
+    /// `host` came back under a new generation: its sources, opened with
+    /// the inventory to tail the old one, stop, and whatever opens next
+    /// runs under a fresh session. The old session is then stale by
+    /// number, so a stopped source still finishing its last step can
+    /// neither absorb nor unregister what replaces it. Returns the tasks
+    /// to abort, which the caller does outside the lock, and the new
+    /// session.
+    fn generation_changed(&mut self, host: &[u8]) -> (Vec<JoinHandle<()>>, u64) {
+        self.settled.retain(|key| key.host != host);
+        self.settling.retain(|key| key.host != host);
+        let keys: Vec<AgentKey> = self
+            .open
+            .keys()
+            .filter(|key| key.host == host)
+            .cloned()
+            .collect();
+        let stopped = keys
+            .into_iter()
+            .filter_map(|key| self.open.remove(&key).map(|(_, task)| task))
+            .collect();
+        self.next_session += 1;
+        (stopped, self.next_session)
     }
 }
 
@@ -437,6 +468,7 @@ impl ProfileRuntime {
         generation: Option<u64>,
         listed: Vec<Agent>,
     ) -> Result<u64, StoreError> {
+        let mut session = session;
         let host_bytes = host.as_bytes().to_vec();
         let mut store = self.store.lock().await;
         let listed_keys: HashSet<Vec<u8>> =
@@ -461,22 +493,10 @@ impl ProfileRuntime {
             // The sources opened with the inventory followed the old
             // generation's cursors; they stop here, under the store lock
             // no absorb happens without, and the sweep below opens fresh
-            // ones that tail the new generation, so every open chat sees
-            // its Reset.
-            let stopped = {
-                let mut sources = self.sources.lock().unwrap();
-                sources.settled.retain(|key| key.host != host_bytes);
-                sources.settling.retain(|key| key.host != host_bytes);
-                let keys: Vec<AgentKey> = sources
-                    .open
-                    .keys()
-                    .filter(|key| key.host == host_bytes)
-                    .cloned()
-                    .collect();
-                keys.into_iter()
-                    .filter_map(|key| sources.open.remove(&key).map(|(_, task)| task))
-                    .collect::<Vec<_>>()
-            };
+            // ones under a fresh session that tail the new generation, so
+            // every open chat sees its Reset.
+            let (stopped, fresh) = self.sources.lock().unwrap().generation_changed(&host_bytes);
+            session = fresh;
             for task in stopped {
                 task.abort();
             }
@@ -653,9 +673,7 @@ impl ProfileRuntime {
     }
 
     fn session_current(&self, key: &AgentKey, session: u64) -> bool {
-        let sources = self.sources.lock().unwrap();
-        sources.ready.get(&key.host) == Some(&session)
-            || sources.following.get(&key.host) == Some(&session)
+        self.sources.lock().unwrap().is_current(&key.host, session)
     }
 
     fn source_ended(&self, key: &AgentKey, session: u64, settled: bool) {
@@ -1296,4 +1314,71 @@ pub(crate) fn from_wire(agent: &Agent) -> AgentRow {
     row.producer_version = agent.producer_version.clone();
     row.incarnation = agent.incarnation;
     row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn following(sources: &mut Sources, host: &[u8]) -> u64 {
+        sources.next_session += 1;
+        let session = sources.next_session;
+        sources.following.insert(host.to_vec(), session);
+        session
+    }
+
+    fn open(sources: &mut Sources, host: &[u8], agent: u8, session: u64) -> AgentKey {
+        let key = AgentKey {
+            host: host.to_vec(),
+            agent: vec![agent],
+        };
+        let task = tokio::spawn(std::future::pending::<()>());
+        sources.open.insert(key.clone(), (session, task));
+        key
+    }
+
+    #[tokio::test]
+    async fn a_generation_change_retires_the_session_its_sources_ran_under() {
+        let host = b"host";
+        let mut sources = Sources::default();
+        let session = following(&mut sources, host);
+        let key = open(&mut sources, host, 1, session);
+        sources.settled.insert(AgentKey {
+            host: host.to_vec(),
+            agent: vec![2],
+        });
+        let other = open(&mut sources, b"other", 1, 7);
+
+        let (stopped, fresh) = sources.generation_changed(host);
+
+        assert_eq!(stopped.len(), 1);
+        assert_ne!(fresh, session);
+        assert!(!sources.open.contains_key(&key));
+        assert!(sources.open.contains_key(&other));
+        assert!(sources.settled.is_empty());
+        sources.following.remove(host.as_slice());
+        sources.ready.insert(host.to_vec(), fresh);
+        assert!(
+            !sources.is_current(host, session),
+            "the old session must read stale"
+        );
+        assert!(sources.is_current(host, fresh));
+        for task in stopped {
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_following_session_is_current_until_the_sources_are_aborted() {
+        let host = b"host";
+        let mut sources = Sources::default();
+        let session = following(&mut sources, host);
+        open(&mut sources, host, 1, session);
+        assert!(sources.is_current(host, session));
+
+        sources.abort_all();
+
+        assert!(!sources.is_current(host, session));
+        assert!(sources.open.is_empty());
+    }
 }

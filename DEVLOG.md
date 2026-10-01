@@ -1,3 +1,15 @@
+2026-10-01 — **A stopped session reads stale by number.**
+Two gaps in what counts as the current session, both from the early
+sources this branch opens with the inventory. A generation change
+aborted a host's sources and reopened them under the same session, so
+an old task finishing its last step could unregister its replacement or
+absorb under it; the change now assigns a fresh session, so the old one
+is stale by construction. And stopping replication cleared the ready
+map but not the following one, so a source caught between awaits still
+read as current; both are cleared. The bookkeeping moved onto the
+replication state so it is unit-tested without a runtime. Codex review
+findings.
+
 2026-10-01 — **The phone's baseline is re-recorded after the handshake change.**
 Every budget met; reconciliation through the relay at 100 ms now
 baselines near 1,000 ms, the rest within noise.
