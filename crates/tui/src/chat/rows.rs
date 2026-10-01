@@ -296,10 +296,10 @@ pub(crate) fn markdown_linked(
 /// An attachment's chip, from its reference alone.
 pub fn chip(view: &AttachmentView) -> String {
     match view {
-        AttachmentView::Image(blob) => {
-            format!("[image {} · {}]", blob.name, text::bytes(blob.size))
+        // The name says what it is.
+        AttachmentView::Image(blob) | AttachmentView::File(blob) => {
+            format!("[{} · {}]", blob.name, text::bytes(blob.size))
         }
-        AttachmentView::File(blob) => format!("[file {} · {}]", blob.name, text::bytes(blob.size)),
         AttachmentView::Text { name, lines } => format!("[{name} · {lines} lines]"),
         AttachmentView::Review { comments, .. } => match comments {
             1 => "[review · 1 comment]".into(),
@@ -349,7 +349,7 @@ pub fn segment_lines(
                 }
                 if let Some(last) = lines.last_mut() {
                     last.spans
-                        .push(Span::styled(text::ellipsize(&chip, width), theme.code()));
+                        .push(Span::styled(text::ellipsize(&chip, width), theme.chip_raised()));
                 }
             }
         }
@@ -936,7 +936,7 @@ fn body(
                 BoundaryKind::Resumed => "resumed",
                 BoundaryKind::Forked => "forked",
                 BoundaryKind::Restarted => "restarted",
-                BoundaryKind::Exited => "ended",
+                BoundaryKind::Exited => "exited",
                 BoundaryKind::DaemonLost => "lost its daemon",
                 BoundaryKind::Unspecified => "session",
             };
@@ -1070,7 +1070,7 @@ pub(crate) fn tail(text: &str, max: usize) -> String {
 
 /// A session boundary, drawn like home's section headings: the words in
 /// the faint ink, then a hairline to the right margin.
-fn rule(words: &str, width: usize, theme: Theme) -> Line<'static> {
+pub(crate) fn rule(words: &str, width: usize, theme: Theme) -> Line<'static> {
     let mut line = Line::from(Span::raw("  "));
     push(&mut line, format!("{words} "), theme.faint(), width);
     let end = width.saturating_sub(2);

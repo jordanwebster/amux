@@ -25,7 +25,7 @@ use ratatui::widgets::{Clear, Paragraph};
 use tokio::sync::watch;
 use tui::{Flow, TerminalGuard, Theme, Tone};
 
-use crate::boot::{boot, restore_chat};
+use crate::boot::{boot, restore_chat, seed_draft};
 use crate::place::{self, Place};
 use crate::scenario::Scenario;
 
@@ -96,6 +96,7 @@ pub async fn run(scenario: &Scenario, place: Option<Place>, theme: Theme) -> Res
         {
             restore = None;
         }
+        seed_draft(app, &world);
         let open = app.chat.as_ref().map(|chat| chat.view.agent_id.clone());
         if chat.as_ref().map(|(id, _)| id) != open.as_ref() {
             chat = app

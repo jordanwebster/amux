@@ -987,7 +987,7 @@ impl Home {
             Connection::Live => {}
             Connection::Connecting => parts.push(("connecting".into(), theme.muted())),
             Connection::Reconnecting => {
-                parts.push(("reconnecting to amux".into(), theme.warn()));
+                parts.push(("reconnecting to amux".into(), theme.warning()));
             }
         }
         match away.as_slice() {
@@ -1290,7 +1290,7 @@ impl Home {
                 } else {
                     format!("Stop {name}? It can be resumed later.")
                 };
-                push(&mut line, words, theme.warn(), width);
+                push(&mut line, words, theme.warning(), width);
                 push(&mut line, "   ", theme.muted(), width);
                 let verb = if *delete { "delete" } else { "stop" };
                 vec![

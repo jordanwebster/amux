@@ -1,3 +1,17 @@
+2026-10-01 — **The composer says what stands in its way.** Its top edge
+carries one reason, most pressing first: a refused prompt, the host away,
+an exited agent ("Enter resumes"), or a usage limit reached ("5-hour limit
+reached · resets 23:24", in the theme's yellow, now the `warning` token;
+sending stays open). An exited agent's feed ends with an "exited · crashed"
+boundary line, and Enter resumes it with whatever was typed, or with
+nothing. An agent whose account needs signing in gets an ask-like box
+saying how ("Run `codex login` on laptop"), with the draft kept behind it;
+the foot cards for sign-in and usage are gone from the new chat.
+Attachment chips read `[screenshot.png · 240 KB]` on the highlight surface
+in the draft and inside sent messages. The lab gains a composer-states
+scenario, scenario drafts with attachments, and prompts that keep their
+attachments.
+
 2026-10-01 — **Buttons in Title Case.** The bracketed controls follow the
 case rule shared with the phone (Title Case for what you act on, sentence
 case for what you read): [Send Now], [Show All], [Show Less], [Full Diff].

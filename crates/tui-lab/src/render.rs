@@ -13,7 +13,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tui::Theme;
 
-use crate::boot::{boot, restore_chat, settle};
+use crate::boot::{boot, restore_chat, seed_draft, settle};
 use crate::place::{Place, write_frame};
 use crate::scenario::Scenario;
 
@@ -62,10 +62,11 @@ pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
         request.layout.clone(),
     )
     .await?;
+    let world = booted.world.clone();
     let app = &mut booted.app;
     let (width, height) = request.sizes.first().copied().unwrap_or((120, 40));
     let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-    draw_settle(app, &mut terminal, &place).await?;
+    draw_settle(app, &world, &mut terminal, &place).await?;
     for step in &request.keys {
         match step {
             Step::Input(event) => {
@@ -78,7 +79,7 @@ pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
                 }
             }
         }
-        draw_settle(app, &mut terminal, &place).await?;
+        draw_settle(app, &world, &mut terminal, &place).await?;
     }
     let mut written = Vec::new();
     for (width, height) in request.sizes {
@@ -100,12 +101,14 @@ pub async fn render(request: Request<'_>) -> Result<Vec<String>> {
 /// times until the frame has what it asked for.
 async fn draw_settle(
     app: &mut tui::App,
+    world: &crate::world::World,
     terminal: &mut Terminal<TestBackend>,
     place: &Place,
 ) -> Result<()> {
     for _ in 0..3 {
         settle(app, QUIET).await;
         restore_chat(app, place);
+        seed_draft(app, world);
         terminal.draw(|frame| app.draw(frame))?;
     }
     Ok(())

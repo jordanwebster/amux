@@ -484,7 +484,7 @@ impl FleetView {
                 } else {
                     format!("Stop {name}? It can be resumed later. y stop · n keep")
                 };
-                push(&mut line, words, theme.warn(), inner);
+                push(&mut line, words, theme.warning(), inner);
                 return (line, None);
             }
             (Some(Overlay::New { selected }), _) => {
@@ -535,7 +535,7 @@ impl FleetView {
                 ("●", theme.ok(), words)
             }
             Connection::Connecting => ("◌", theme.muted(), "connecting".to_owned()),
-            Connection::Reconnecting => ("◌", theme.warn(), "reconnecting to amux".to_owned()),
+            Connection::Reconnecting => ("◌", theme.warning(), "reconnecting to amux".to_owned()),
         };
         push(&mut line, dot, dot_style, inner);
         pad_to(&mut line, BADGE_COL);

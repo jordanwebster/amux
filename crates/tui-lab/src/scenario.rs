@@ -167,6 +167,28 @@ pub struct AgentSpec {
     /// How the lab's link treats a prompt sent to this agent.
     #[serde(default)]
     pub send: SendSpec,
+    /// What sits in the composer the first time the chat opens: words,
+    /// then attachments as if pasted.
+    #[serde(default)]
+    pub draft: Option<DraftSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftSpec {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub attach: Vec<AttachSpec>,
+}
+
+/// A pasted file: its name (an image by its extension) and its size in
+/// bytes.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttachSpec {
+    pub name: String,
+    pub size: u64,
 }
 
 /// How the lab's link treats a prompt sent to an agent, to show the

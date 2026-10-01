@@ -895,6 +895,15 @@ impl App {
                     _ => None,
                 }
             }),
+            ChatEffect::Resume { text, attachments }
+                if text.trim().is_empty() && attachments.is_empty() =>
+            {
+                self.spawn(async move {
+                    session.resume().await.err().map(|error| {
+                        AppEvent::Notice(format!("could not resume: {error}"), Tone::Warn)
+                    })
+                })
+            }
             ChatEffect::Resume { text, attachments } => self.spawn(async move {
                 let kind = session.state().kind();
                 let input = inputs::prompt(kind, &text, attachments.clone())?;
@@ -1106,7 +1115,7 @@ impl App {
         let theme = self.theme();
         if self.quit_armed.is_some() {
             let mut line = Line::from(Span::raw("  "));
-            push(&mut line, "press ctrl+c again to quit", theme.warn(), width);
+            push(&mut line, "press ctrl+c again to quit", theme.warning(), width);
             return Some(line);
         }
         let panel_chat = self
@@ -1127,7 +1136,7 @@ impl App {
         let mut line = Line::from(Span::raw("  "));
         let style = match tone {
             Tone::Info => theme.muted(),
-            Tone::Warn => theme.warn(),
+            Tone::Warn => theme.warning(),
         };
         push(&mut line, words.clone(), style, width);
         Some(line)

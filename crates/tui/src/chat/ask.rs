@@ -938,7 +938,7 @@ impl AskUi {
                 lines.push(head);
                 lines.push(indent(
                     "Your answer was not confirmed: the connection dropped before the agent replied.",
-                    theme.warn(),
+                    theme.warning(),
                     width,
                 ));
                 lines.push(indent(
@@ -1219,7 +1219,7 @@ impl AskUi {
                 let style = if pick.answered() {
                     theme.text()
                 } else {
-                    theme.warn()
+                    theme.warning()
                 };
                 lines.push(indent(
                     format!("{}. {label} · {answer}", i + 1),
@@ -1352,7 +1352,7 @@ impl AskUi {
                 if field.valid() {
                     theme.muted()
                 } else {
-                    theme.warn()
+                    theme.warning()
                 },
                 width,
             );
@@ -1724,7 +1724,7 @@ impl AskUi {
                 out.lines.push(line(
                     "Your answer was not confirmed: the connection dropped before the agent replied."
                         .into(),
-                    theme.warn(),
+                    theme.warning(),
                 ));
                 out.lines
                     .push(line("r resend · d discard".into(), theme.faint()));

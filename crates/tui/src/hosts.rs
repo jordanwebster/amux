@@ -158,7 +158,7 @@ pub fn banner(
     {
         return Some((
             format!("⚠ amux {running} is running · restart to update"),
-            theme.warn(),
+            theme.warning(),
         ));
     }
     let hosts = listed(fleet);
@@ -174,20 +174,20 @@ pub fn banner(
                 host.name,
                 shell_target(&host.name)
             ),
-            theme.warn(),
+            theme.warning(),
         ));
     }
     if let Some(host) = trusted().find(|host| host.presence() == Presence::Away) {
         return Some((
             format!("⚠ {} is away · its agents are as it last said", host.name),
-            theme.warn(),
+            theme.warning(),
         ));
     }
     let signed_out = ui_view::signed_out(fleet, local_host);
     if signed_out && trusted().any(|host| host.presence() != Presence::Online) {
         return Some((
             "sign in to reach your agents from anywhere · amux login".to_owned(),
-            theme.warn(),
+            theme.warning(),
         ));
     }
     None

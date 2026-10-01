@@ -186,6 +186,19 @@ impl Sim {
     /// Writes an item: a new key appends at the next order, a known key is
     /// a new revision of that item.
     fn commit(&mut self, key: &str, body: &Body, text: &str, at_ms: i64, input_id: &[u8]) {
+        self.commit_with(key, body, text, at_ms, input_id, &[]);
+    }
+
+    /// An item with attachments: a prompt as it was sent.
+    fn commit_with(
+        &mut self,
+        key: &str,
+        body: &Body,
+        text: &str,
+        at_ms: i64,
+        input_id: &[u8],
+        attachments: &[wire::Attachment],
+    ) {
         self.revision += 1;
         let item = Item {
             agent: self.id().to_vec(),
@@ -195,7 +208,7 @@ impl Sim {
             producer_version: "lab".into(),
             input_id: input_id.to_vec(),
             text: text.to_owned(),
-            attachments: Vec::new(),
+            attachments: attachments.to_vec(),
             kind: wire::kind_tag(self.kind).into(),
             body: body::encode(self.kind, body),
             at_ms,
@@ -319,6 +332,9 @@ pub struct World {
     /// Scripts apply at once, with no pacing: the headless renderer's
     /// world, where a frame must not depend on timing.
     instant: bool,
+    /// Agents whose scenario draft is already in the composer, so it goes
+    /// in once.
+    seeded: Mutex<std::collections::HashSet<Vec<u8>>>,
 }
 
 impl World {
@@ -374,6 +390,7 @@ impl World {
                 created: 0,
             }),
             instant,
+            seeded: Mutex::default(),
         });
         for spec in &scenario.agents {
             world.add_agent(spec.clone(), now_ms());
@@ -437,6 +454,39 @@ impl World {
                 self.enqueue(&id, beat.play.clone());
             }
         }
+    }
+
+    /// The agent's scenario draft, the first time its chat opens: its text
+    /// and its attachments, as pasted.
+    pub fn draft_once(&self, id: &[u8]) -> Option<(String, Vec<wire::Attachment>)> {
+        if !self.seeded.lock().unwrap().insert(id.to_vec()) {
+            return None;
+        }
+        let inner = self.inner.lock().unwrap();
+        let draft = inner.agents[inner.index(id)?].spec.draft.clone()?;
+        let attachments = draft
+            .attach
+            .iter()
+            .map(|file| {
+                let image = ["png", "jpg", "jpeg", "gif", "webp"]
+                    .iter()
+                    .any(|ext| file.name.to_lowercase().ends_with(ext));
+                let blob = BlobRef {
+                    hash: Sha256::digest(file.name.as_bytes()).to_vec(),
+                    name: file.name.clone(),
+                    mime: if image { "image/png" } else { "application/octet-stream" }.into(),
+                    size: file.size,
+                };
+                wire::Attachment {
+                    of: Some(if image {
+                        wire::attachment::Of::Image(blob)
+                    } else {
+                        wire::attachment::Of::File(blob)
+                    }),
+                }
+            })
+            .collect();
+        Some((draft.text, attachments))
     }
 
     /// How the link treats a prompt sent to the agent.
@@ -1049,7 +1099,7 @@ impl World {
                 return;
             }
             let queued = sim.queue.remove(0);
-            let script = prompt_script(sim, &queued.text, &queued.input_id);
+            let script = prompt_script(sim, &queued.text, &queued.attachments, &queued.input_id);
             inner.touch(index);
             script
         };
@@ -1261,7 +1311,13 @@ impl World {
         true
     }
 
-    fn prompt(self: &Arc<Self>, id: &[u8], text: &str, input_id: &[u8]) -> SendInputResponse {
+    fn prompt(
+        self: &Arc<Self>,
+        id: &[u8],
+        text: &str,
+        attachments: &[wire::Attachment],
+        input_id: &[u8],
+    ) -> SendInputResponse {
         let queued = {
             let mut inner = self.inner.lock().unwrap();
             let Some(index) = inner.index(id) else {
@@ -1276,6 +1332,7 @@ impl World {
                 sim.queue.push(QueuedInput {
                     input_id: input_id.to_vec(),
                     text: text.to_owned(),
+                    attachments: attachments.to_vec(),
                     ..QueuedInput::default()
                 });
                 inner.touch(index);
@@ -1291,7 +1348,7 @@ impl World {
             let mut inner = self.inner.lock().unwrap();
             let sim = inner.sim(id).expect("the agent was found above");
             sim.forced = None;
-            prompt_script(sim, text, input_id)
+            prompt_script(sim, text, attachments, input_id)
         };
         self.enqueue(id, script);
         accepted(false)
@@ -1301,7 +1358,7 @@ impl World {
         use wire::{claude_pty_input as pty, claude_sdk_input as sdk, codex_input as cx, input};
         let input_id = input.input_id.clone();
         enum Act {
-            Prompt(String),
+            Prompt(String, Vec<wire::Attachment>),
             Answer(wire::AnswerInput),
             Approve(wire::Approve),
             Interrupt,
@@ -1316,7 +1373,7 @@ impl World {
         }
         let act = match input.of {
             Some(input::Of::ClaudePty(i)) => match i.of {
-                Some(pty::Of::Prompt(p)) => Act::Prompt(p.text),
+                Some(pty::Of::Prompt(p)) => Act::Prompt(p.text, p.attachments),
                 Some(pty::Of::Answer(a)) => Act::Answer(a),
                 Some(pty::Of::Interrupt(_)) => Act::Interrupt,
                 Some(pty::Of::Withdraw(w)) => Act::Withdraw(w.queued_input_id),
@@ -1328,7 +1385,7 @@ impl World {
                 _ => Act::Other,
             },
             Some(input::Of::ClaudeSdk(i)) => match i.of {
-                Some(sdk::Of::Prompt(p)) => Act::Prompt(p.text),
+                Some(sdk::Of::Prompt(p)) => Act::Prompt(p.text, p.attachments),
                 Some(sdk::Of::Answer(a)) => Act::Answer(a),
                 Some(sdk::Of::Interrupt(_)) => Act::Interrupt,
                 Some(sdk::Of::Withdraw(w)) => Act::Withdraw(w.queued_input_id),
@@ -1340,7 +1397,7 @@ impl World {
                 None => Act::Other,
             },
             Some(input::Of::Codex(i)) => match i.of {
-                Some(cx::Of::Prompt(p)) => Act::Prompt(p.text),
+                Some(cx::Of::Prompt(p)) => Act::Prompt(p.text, p.attachments),
                 Some(cx::Of::Answer(a)) => Act::Answer(a),
                 Some(cx::Of::Approve(a)) => Act::Approve(a),
                 Some(cx::Of::Interrupt(_)) => Act::Interrupt,
@@ -1354,7 +1411,7 @@ impl World {
             _ => Act::Other,
         };
         match act {
-            Act::Prompt(text) => self.prompt(id, &text, &input_id),
+            Act::Prompt(text, attachments) => self.prompt(id, &text, &attachments, &input_id),
             Act::Answer(answer) => {
                 let verdict = verdict_of(&answer, &self.questions(id, &answer.ask_key));
                 if self.answer(id, &answer.ask_key, verdict) {
@@ -1672,10 +1729,15 @@ fn option_label(option: &OptionSpec) -> String {
 }
 
 /// A prompt's reflection and the agent's scripted reply to it.
-fn prompt_script(sim: &mut Sim, text: &str, input_id: &[u8]) -> Vec<Entry> {
+fn prompt_script(
+    sim: &mut Sim,
+    text: &str,
+    attachments: &[wire::Attachment],
+    input_id: &[u8],
+) -> Vec<Entry> {
     let key = sim.fresh_key();
     let now = now_ms();
-    sim.commit(&key, &Body::Prompt, text, now, input_id);
+    sim.commit_with(&key, &Body::Prompt, text, now, input_id, attachments);
     sim.turn_open = Some(now);
     let short: String = text.chars().take(60).collect();
     sim.working_on(Some(short), now);
@@ -2545,6 +2607,7 @@ impl Client for LabClient {
             reply: None,
             implement: None,
             send: Default::default(),
+            draft: None,
         };
         let agent = self.0.add_agent(spec, now_ms());
         let world = self.0.clone();
@@ -2570,7 +2633,7 @@ impl Client for LabClient {
             }
             if let Some(text) = prompt {
                 let id = format!("create-{}", String::from_utf8_lossy(&agent_id));
-                world.prompt(&agent_id, &text, id.as_bytes());
+                world.prompt(&agent_id, &text, &[], id.as_bytes());
             }
         };
         if self.0.instant {
@@ -2632,7 +2695,7 @@ impl Client for LabClient {
         if let Some(input) = request.initial_prompt
             && let Some(text) = prompt_text(&input)
         {
-            self.0.prompt(&request.agent_id, &text, &input.input_id);
+            self.0.prompt(&request.agent_id, &text, &prompt_attachments(&input), &input.input_id);
         }
         Ok(agent)
     }
@@ -2724,6 +2787,27 @@ impl Client for LabClient {
             "the lab has nothing to dump",
         ))
     }
+}
+
+/// A prompt input's attachments, in the order of its placeholders.
+fn prompt_attachments(input: &Input) -> Vec<wire::Attachment> {
+    use wire::{claude_pty_input as pty, claude_sdk_input as sdk, codex_input as cx, input};
+    let found = match input.of.as_ref() {
+        Some(input::Of::ClaudePty(i)) => match i.of.as_ref() {
+            Some(pty::Of::Prompt(p)) => Some(p.attachments.clone()),
+            _ => None,
+        },
+        Some(input::Of::ClaudeSdk(i)) => match i.of.as_ref() {
+            Some(sdk::Of::Prompt(p)) => Some(p.attachments.clone()),
+            _ => None,
+        },
+        Some(input::Of::Codex(i)) => match i.of.as_ref() {
+            Some(cx::Of::Prompt(p)) => Some(p.attachments.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    found.unwrap_or_default()
 }
 
 fn prompt_text(input: &Input) -> Option<String> {

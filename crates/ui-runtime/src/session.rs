@@ -470,6 +470,17 @@ impl Session {
     /// The exited composer's one tap: the draft becomes the new
     /// incarnation's first prompt. On failure the draft is the composer's
     /// to keep.
+    /// Resumes an exited agent with no first message.
+    pub async fn resume(&self) -> Result<Agent, RpcError> {
+        let request = ResumeAgentRequest {
+            agent_id: self.inner.agent_id.clone(),
+            initial_prompt: None,
+        };
+        let agent = self.inner.client.resume_agent(request).await?;
+        self.inner.apply(Msg::Entry(agent.clone()));
+        Ok(agent)
+    }
+
     pub async fn resume_with(&self, mut draft: Input) -> Result<Agent, RpcError> {
         if draft.input_id.is_empty() {
             draft.input_id = inputs::input_id();

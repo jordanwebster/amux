@@ -700,6 +700,10 @@ impl ChatView {
             let action = self.ask.key(&card, key, self.attach);
             return self.ask_effects(state, &card, action);
         }
+        // Signing in happens elsewhere; the draft waits behind the box.
+        if self.redesigned() && session_strip(state).sign_in.is_some() {
+            return vec![];
+        }
         if let Some(selected) = self.tray {
             return self.tray_key(state, selected, key);
         }
@@ -866,7 +870,8 @@ impl ChatView {
     /// Enter in the composer: send when caught up and live, resume an
     /// exited agent with the draft, and otherwise keep the draft.
     fn submit(&mut self, state: &SessionState) -> Vec<ChatEffect> {
-        if self.editor.is_empty() {
+        // Enter on an exited agent resumes it, with or without a message.
+        if self.editor.is_empty() && state.composer() != Composer::Resume {
             return vec![];
         }
         match state.composer() {
@@ -1841,6 +1846,14 @@ impl ChatView {
             tail.push(quiet_activity(activity, width, theme));
             tail.push(Line::default());
         }
+        // An exited agent's feed ends saying so, like a session boundary,
+        // unless the agent wrote that boundary itself.
+        if let PhaseView::Exited { cause } = state.phase()
+            && !ends_with_exit(state)
+        {
+            tail.push(rows::rule(&exit_words(cause.as_deref()), width, theme));
+            tail.push(Line::default());
+        }
         self.feed_tail = tail;
         let mut row_at = None;
         // Prompts queued behind the running turn wait just above the
@@ -1902,7 +1915,6 @@ impl ChatView {
             row_at = Some((bottom.len(), text::line_width(&line)));
             bottom.push(line);
         }
-        bottom.extend(foot_cards(&strip, width, theme));
 
         let mut cursor = None;
         let card = self.card(state);
@@ -1939,10 +1951,10 @@ impl ChatView {
                                 cursor: &mut Option<(usize, usize)>,
                                 editor: &Editor,
                                 takes_keys: bool| {
-            // Kept from sending, the box's edge says why; the empty
-            // field still invites the draft.
+            // Kept from sending, or exited, the box's edge says why; the
+            // empty field still invites the draft.
             let invite = match state.composer() {
-                Composer::Disabled(_) => format!("Message {name}"),
+                Composer::Disabled(_) | Composer::Resume => format!("Message {name}"),
                 composer => placeholder(&composer, &name, &host, self.away),
             };
             let boxed = boxed_composer(
@@ -2070,6 +2082,34 @@ impl ChatView {
                     hint = Err(legend());
                 }
             }
+            // The agent's account needs signing in: the box says how, as an
+            // ask would, and keeps the draft for afterwards.
+            None if strip.sign_in.is_some() => {
+                const MARGIN: usize = 2;
+                let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
+                let body = strip.sign_in.as_ref().map_or_else(Vec::new, |sign_in| {
+                    sign_in_lines(state.kind(), &host, sign_in, inner, theme)
+                });
+                let (lines, mode) = framed(
+                    body,
+                    theme.accent(),
+                    &EdgeWords {
+                        model: crate::words::model_words(state),
+                        effort: strip.effort.clone(),
+                        mode: crate::words::mode_words(state),
+                    },
+                    width,
+                    theme,
+                );
+                if let Some(cols) = mode {
+                    ask_mode = Some((bottom.len() + lines.len() - 1, cols));
+                }
+                bottom.extend(lines);
+                boxed = true;
+                if footer.is_none() {
+                    hint = Err(format!("ctrl+{} more", self.leader));
+                }
+            }
             None => {
                 plain_box = Some(bottom.len());
                 composer_box(&mut bottom, &mut cursor, &self.editor, self.tray.is_none());
@@ -2082,13 +2122,23 @@ impl ChatView {
                 }
             }
         }
-        // The plain composer's top edge says why a prompt cannot go: the
-        // last one refused, in the error ink, or the link to the host down.
+        // The plain composer's top edge says what stands in the way of
+        // sending, most pressing first: the last prompt refused (error
+        // ink), the link to the host down, an exited agent that Enter
+        // resumes, a usage limit reached (warning ink; sending stays open).
         if let Some(at) = plain_box {
             let words = match &self.not_sent {
                 Some(reason) => Some((reason.clone(), theme.error())),
                 None => waiting_words(&state.composer(), &host, self.away)
-                    .map(|words| (words, theme.faint())),
+                    .map(|words| (words, theme.faint()))
+                    .or_else(|| {
+                        (state.composer() == Composer::Resume)
+                            .then(|| ("Enter resumes".to_owned(), theme.muted()))
+                    })
+                    .or_else(|| {
+                        composer::limit_reached(&strip, now_ms)
+                            .map(|words| (words, theme.warning()))
+                    }),
             };
             if let Some((words, ink)) = words
                 && let Some(top) = bottom.get_mut(at)
@@ -2558,7 +2608,7 @@ impl ChatView {
                 None => used,
             };
             let style = if context.in_strip {
-                theme.warn()
+                theme.warning()
             } else {
                 theme.faint()
             };
@@ -2668,6 +2718,98 @@ fn problem_words(
 
 /// While the agent works, one quiet line that it is, and for how long.
 /// What it is doing shows as live steps in the feed.
+/// "exited", or "exited · crashed": how an exited agent's feed ends.
+fn exit_words(cause: Option<&str>) -> String {
+    match cause {
+        Some(cause) if !cause.is_empty() && cause != "exited" => format!("exited · {cause}"),
+        _ => "exited".to_owned(),
+    }
+}
+
+/// Whether the agent's newest row is its own exit boundary.
+fn ends_with_exit(state: &SessionState) -> bool {
+    let transcript = state.transcript();
+    let Some(held) = transcript.head().and_then(|head| transcript.at(head)) else {
+        return false;
+    };
+    let everything = ChatOptions {
+        tools: ToolRows::ShowAll,
+    };
+    chat_rows_for(state, std::slice::from_ref(&held.item.key), &everything)
+        .last()
+        .is_some_and(|row| {
+            matches!(
+                row.kind,
+                RowKind::Boundary {
+                    kind: wire::BoundaryKind::Exited,
+                    ..
+                }
+            )
+        })
+}
+
+/// The box for an agent whose account needs signing in: who, the account
+/// and what went wrong, then how to sign in. Nothing here can do it for
+/// you, so there are no choices.
+fn sign_in_lines(
+    kind: wire::Kind,
+    host: &str,
+    sign_in: &ui_view::SignInView,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let (who, steps): (&str, Vec<(&str, bool)>) = match kind {
+        wire::Kind::Codex => ("Codex", vec![("Run ", false), ("codex login", true), (" on ", false)]),
+        _ => (
+            "Claude",
+            vec![
+                ("Run ", false),
+                ("claude", true),
+                (" and sign in with ", false),
+                ("/login", true),
+                (" on ", false),
+            ],
+        ),
+    };
+    let mut lines = Vec::new();
+    let mut head = Line::from(Span::styled("● ", theme.accent()));
+    push(&mut head, format!("{who} needs you to sign in"), theme.text(), width);
+    lines.push(head);
+    lines.push(Line::default());
+    let what = match sign_in.state {
+        wire::SignInState::Expired => "Sign-in expired",
+        wire::SignInState::Failed => "Sign-in failed",
+        _ => "Signed out",
+    };
+    let mut status = Line::default();
+    push(&mut status, what, theme.muted(), width);
+    if !sign_in.account.is_empty() {
+        push(&mut status, format!(" · {}", sign_in.account), theme.muted(), width);
+    }
+    lines.push(status);
+    for part in text::wrap(&sign_in.message, width.max(1)) {
+        if part.is_empty() {
+            continue;
+        }
+        let mut line = Line::default();
+        push(&mut line, part, theme.faint(), width);
+        lines.push(line);
+    }
+    lines.push(Line::default());
+    let mut how = Line::default();
+    for (words, code) in steps {
+        push(
+            &mut how,
+            words,
+            if code { theme.code() } else { theme.text() },
+            width,
+        );
+    }
+    push(&mut how, format!("{host}."), theme.text(), width);
+    lines.push(how);
+    lines
+}
+
 /// Whether a prompt sent now draws in the feed, as the turn it starts: the
 /// agent is idle with nothing queued. Otherwise it waits in the queue
 /// block.
@@ -3267,7 +3409,7 @@ fn state_words(
         // Resuming asks the host, so why it is away matters more than how
         // the agent ended.
         (_, PhaseView::Exited { .. }) if host_away => {
-            (format!("exited · {}", away_words()), theme.warn())
+            (format!("exited · {}", away_words()), theme.warning())
         }
         (_, PhaseView::Exited { cause }) => (
             match cause {
@@ -3278,8 +3420,8 @@ fn state_words(
             },
             theme.muted(),
         ),
-        (Composer::Disabled(Waiting::Detached), _) => (away_words(), theme.warn()),
-        (Composer::Disabled(Waiting::Reconnecting), _) => ("reconnecting".to_owned(), theme.warn()),
+        (Composer::Disabled(Waiting::Detached), _) => (away_words(), theme.warning()),
+        (Composer::Disabled(Waiting::Reconnecting), _) => ("reconnecting".to_owned(), theme.warning()),
         (Composer::Disabled(Waiting::CatchingUp), _) => ("catching up".to_owned(), theme.muted()),
         (_, _) if state.reset_pending() => ("refreshing".to_owned(), theme.muted()),
         (_, PhaseView::NeedsYou) => ("needs you".to_owned(), theme.accent()),

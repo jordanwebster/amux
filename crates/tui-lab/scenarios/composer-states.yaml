@@ -1,0 +1,80 @@
+description: The composer when something stands in the way, and a draft with attachments. An agent that exited (type and Enter resumes it, or Enter alone); one at its usage limit (sending still works); Claude and Codex agents signed out of their accounts; and a draft holding a screenshot and a log.
+local_host: laptop
+cwd: ~/source/amux
+open: chips
+agents:
+  - id: gone
+    name: relay soak
+    kind: claude
+    ago: 12m
+    model: opus
+    exited: crashed
+    transcript:
+      - boundary: started
+      - user: Soak the relay for an hour with 200 idle tunnels.
+      - bash: { command: "scripts/soak --tunnels 200 --for 1h", took: 40s }
+      - say: The soak is running; I'll report the drop count at the end.
+      - turn: { took: 1m }
+    reply:
+      - say: "Back. {prompt}"
+      - turn: {}
+  - id: limited
+    name: pricing copy
+    kind: claude_sdk
+    ago: 4m
+    model: opus
+    usage:
+      state: blocked
+      windows:
+        - { name: 5h, used: 100, resets_in: 2h }
+        - { name: 7d, used: 64, resets_in: 3d }
+    transcript:
+      - boundary: started
+      - user: Rewrite the pricing page's FAQ in plain words.
+      - say: The FAQ is rewritten; the refund answer now says 14 days up front.
+      - turn: { took: 3m }
+    reply:
+      - say: "Done: {prompt}"
+      - turn: {}
+  - id: signed-out
+    name: docs pass
+    kind: claude_sdk
+    ago: 30m
+    model: opus
+    sign_in: { state: signed_out, account: jordan@example.com }
+    draft:
+      text: Then check the links in docs/RELAY.md.
+    transcript:
+      - boundary: started
+      - user: Tidy the pairing section of TERMINAL.md.
+      - say: Tidied; the pairing steps now read in the order you do them.
+      - turn: { took: 2m }
+  - id: codex-out
+    name: upload retries
+    kind: codex
+    ago: 1h
+    model: gpt-5-codex
+    sign_in: { state: expired, account: jordan@example.com, message: Your ChatGPT session expired. }
+    transcript:
+      - boundary: started
+      - user: Retry failed uploads with backoff.
+      - say: Uploads now retry three times with backoff, and the chip says so while it waits.
+      - turn: { took: 5m }
+  - id: chips
+    name: phone layout
+    kind: claude_sdk
+    ago: 2m
+    model: opus
+    draft:
+      text: "The composer overflows on the SE; here's the screenshot and the layout log: "
+      attach:
+        - { name: screenshot.png, size: 245760 }
+        - { name: layout.log, size: 18432 }
+    transcript:
+      - boundary: started
+      - user: Why does the composer clip on small phones?
+      - say: The composer's minimum height assumes the larger type size; on the SE it runs past the keyboard.
+      - turn: { took: 1m }
+    reply:
+      - say: "Looking at it: {prompt}"
+      - turn: {}

@@ -508,8 +508,13 @@ fn tinted(line: Line<'static>, surface: Style, width: usize) -> Line<'static> {
     };
     let mut out = Line::from(Span::raw(" ".repeat(EDGE)));
     for span in line.spans {
-        out.spans
-            .push(Span::styled(span.content, span.style.patch(surface)));
+        // A span with its own ground (a chip) keeps it.
+        let style = if span.style.bg.is_some() {
+            span.style
+        } else {
+            span.style.patch(surface)
+        };
+        out.spans.push(Span::styled(span.content, style));
     }
     text::fill(&mut out, surface, width - EDGE);
     out

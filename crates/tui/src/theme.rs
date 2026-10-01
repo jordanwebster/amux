@@ -89,7 +89,7 @@ pub struct Tokens {
     pub focus: Token,
     pub code: Token,
     pub ok: Token,
-    pub warn: Token,
+    pub warning: Token,
     pub error: Token,
     pub diff_added_fg: Token,
     pub diff_added_bg: Token,
@@ -119,7 +119,7 @@ pub struct TerminalColors {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Semantic {
     Ok,
-    Warn,
+    Warning,
     Error,
     Accent,
     Code,
@@ -132,7 +132,7 @@ impl Semantic {
         match self {
             Self::Error => (1, 9),
             Self::Ok => (2, 10),
-            Self::Warn => (3, 11),
+            Self::Warning => (3, 11),
             Self::Accent => (4, 12),
             Self::Focus => (5, 13),
             Self::Code => (6, 14),
@@ -303,7 +303,7 @@ impl Theme {
                 focus: Token::new((156, 140, 214), Color::Magenta),
                 code: Token::new((86, 182, 194), Color::Cyan),
                 ok: Token::new((134, 184, 122), Color::Green),
-                warn: Token::new((210, 162, 76), Color::Yellow),
+                warning: Token::new((210, 162, 76), Color::Yellow),
                 error: Token::new((222, 123, 132), Color::Red),
                 diff_added_fg: Token::new((143, 203, 138), Color::Black),
                 diff_added_bg: Token::new((22, 38, 27), Color::Green),
@@ -338,7 +338,7 @@ impl Theme {
                 // faces code shares the accent's blue, in a different context.
                 code: Token::new((14, 112, 122), Color::Blue),
                 ok: Token::new((47, 122, 68), Color::Green),
-                warn: Token::new((138, 91, 16), Color::Yellow),
+                warning: Token::new((138, 91, 16), Color::Yellow),
                 error: Token::new((168, 50, 68), Color::Red),
                 diff_added_fg: Token::new((34, 107, 51), Color::Black),
                 diff_added_bg: Token::new((227, 242, 229), Color::Green),
@@ -413,7 +413,7 @@ impl Theme {
             diff_removed_bg: surface(0.055),
             ok: hue(Semantic::Ok),
             diff_added_fg: hue(Semantic::Ok),
-            warn: hue(Semantic::Warn),
+            warning: hue(Semantic::Warning),
             error: hue(Semantic::Error),
             diff_removed_fg: hue(Semantic::Error),
             accent: hue(Semantic::Accent),
@@ -497,7 +497,7 @@ impl Theme {
             TokenKind::Plain => self.tokens.text,
             TokenKind::Keyword => self.tokens.focus,
             TokenKind::String | TokenKind::Inserted => self.tokens.ok,
-            TokenKind::Number => self.tokens.warn,
+            TokenKind::Number => self.tokens.warning,
             TokenKind::Type => self.tokens.code,
             TokenKind::Function => self.tokens.accent,
             TokenKind::Comment => self.tokens.faint,
@@ -511,9 +511,10 @@ impl Theme {
         Style::default().fg(self.color(self.tokens.ok))
     }
 
-    /// Attention accents (`needs you`, question marks).
-    pub(crate) fn warn(self) -> Style {
-        Style::default().fg(self.color(self.tokens.warn))
+    /// Warning ink (the terminal's yellow, made readable): something in the
+    /// way that is not a failure, like a usage limit reached.
+    pub(crate) fn warning(self) -> Style {
+        Style::default().fg(self.color(self.tokens.warning))
     }
 
     /// Failure accents (`✗`, API errors, failed sends).
@@ -533,6 +534,17 @@ impl Theme {
     pub(crate) fn row_surface(self) -> Option<Style> {
         (self.name == ThemeName::Adopted && self.mode == ColorMode::TrueColor)
             .then(|| Style::default().bg(self.color(self.tokens.user_surface)))
+    }
+
+    /// An attachment chip set into the person's own words: on the
+    /// highlight surface in the draft, a step further from the ground
+    /// inside a message block, which already sits on that surface.
+    pub(crate) fn chip(self) -> Style {
+        self.text().bg(self.color(self.tokens.user_surface))
+    }
+
+    pub(crate) fn chip_raised(self) -> Style {
+        self.text().bg(self.color(self.tokens.hairline))
     }
 
     /// A section rule: separates without being read.
@@ -637,7 +649,7 @@ impl Theme {
             (self.tokens.code, 'c'),
             (self.tokens.accent, 'a'),
             (self.tokens.ok, 'o'),
-            (self.tokens.warn, 'w'),
+            (self.tokens.warning, 'w'),
             (self.tokens.error, 'x'),
             (self.tokens.diff_meta, 'M'),
         ] {
@@ -744,7 +756,7 @@ pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, Theme
         emphasis: mapped_token(file, "base06")?,
         error: mapped_token(file, accent_base("base08", "base12"))?,
         diff_removed_fg: mapped_token(file, accent_base("base08", "base12"))?,
-        warn: mapped_token(file, accent_base("base09", "base14"))?,
+        warning: mapped_token(file, accent_base("base09", "base14"))?,
         ok: mapped_token(file, accent_base("base0B", "base13"))?,
         diff_added_fg: mapped_token(file, accent_base("base0B", "base13"))?,
         code: mapped_token(file, accent_base("base0C", "base17"))?,
@@ -865,7 +877,7 @@ fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>, faces: &Faces
     lift(&mut tokens.focus, "focus", &surfaces, READABLE_LABEL, true);
     lift(&mut tokens.code, "code", &surfaces, READABLE_LABEL, true);
     lift(&mut tokens.ok, "ok", &surfaces, READABLE_LABEL, true);
-    lift(&mut tokens.warn, "warn", &surfaces, READABLE_LABEL, true);
+    lift(&mut tokens.warning, "warning", &surfaces, READABLE_LABEL, true);
     lift(&mut tokens.error, "error", &surfaces, READABLE_LABEL, true);
     lift(
         &mut tokens.diff_added_fg,
@@ -1200,7 +1212,7 @@ fn set_token(tokens: &mut Tokens, name: &str, token: Token) -> Result<(), ThemeE
         "focus" => &mut tokens.focus,
         "code" => &mut tokens.code,
         "ok" => &mut tokens.ok,
-        "warn" => &mut tokens.warn,
+        "warning" => &mut tokens.warning,
         "error" => &mut tokens.error,
         "diff_added_fg" => &mut tokens.diff_added_fg,
         "diff_added_bg" => &mut tokens.diff_added_bg,
@@ -1368,7 +1380,7 @@ mod tests {
         assert_eq!(theme.classify(theme.italic()), 'i');
         assert_eq!(theme.classify(theme.code()), 'c');
         assert_eq!(theme.classify(theme.ok()), 'o');
-        assert_eq!(theme.classify(theme.warn()), 'w');
+        assert_eq!(theme.classify(theme.warning()), 'w');
         assert_eq!(theme.classify(theme.error()), 'x');
         assert_eq!(theme.classify(theme.user_surface()), 'U');
         assert_eq!(theme.classify(theme.panel()), 'P');
@@ -1482,7 +1494,7 @@ mod tests {
             (theme.tokens.text, (0x60, 0x60, 0x60), "text"),
             (theme.tokens.emphasis, (0x70, 0x70, 0x70), "emphasis"),
             (theme.tokens.error, (0x90, 0x00, 0x00), "error"),
-            (theme.tokens.warn, (0xa0, 0x60, 0x00), "warn"),
+            (theme.tokens.warning, (0xa0, 0x60, 0x00), "warning"),
             (theme.tokens.ok, (0x00, 0x90, 0x00), "ok"),
             (theme.tokens.code, (0x00, 0x80, 0x90), "code"),
             (theme.tokens.accent, (0x00, 0x60, 0xa0), "accent"),
@@ -1524,10 +1536,10 @@ mod tests {
                 "ok",
             ),
             (
-                theme.tokens.warn,
+                theme.tokens.warning,
                 (0xd0, 0x90, 0x20),
                 (0xb0, 0x60, 0x20),
-                "warn",
+                "warning",
             ),
             (
                 theme.tokens.code,
@@ -1712,7 +1724,7 @@ mod tests {
                 (tokens.focus, READABLE_LABEL, "focus"),
                 (tokens.code, READABLE_LABEL, "code"),
                 (tokens.ok, READABLE_LABEL, "ok"),
-                (tokens.warn, READABLE_LABEL, "warn"),
+                (tokens.warning, READABLE_LABEL, "warning"),
                 (tokens.error, READABLE_LABEL, "error"),
             ] {
                 for (surface, name) in surfaces {
@@ -1758,7 +1770,7 @@ mod tests {
                 (tokens.focus, "focus", &surfaces[..]),
                 (tokens.code, "code", &surfaces[..]),
                 (tokens.ok, "ok", &surfaces[..]),
-                (tokens.warn, "warn", &surfaces[..]),
+                (tokens.warning, "warning", &surfaces[..]),
                 (tokens.error, "error", &surfaces[..]),
                 (
                     tokens.diff_added_fg,
@@ -2051,7 +2063,7 @@ mod tests {
                 (tokens.focus, "focus"),
                 (tokens.code, "code"),
                 (tokens.ok, "ok"),
-                (tokens.warn, "warn"),
+                (tokens.warning, "warning"),
                 (tokens.error, "error"),
             ] {
                 check(token, what, &surfaces, READABLE_LABEL);
@@ -2162,7 +2174,7 @@ mod tests {
                 theme.tokens.focus,
                 theme.tokens.code,
                 theme.tokens.ok,
-                theme.tokens.warn,
+                theme.tokens.warning,
                 theme.tokens.error,
                 theme.tokens.diff_added_fg,
                 theme.tokens.diff_removed_fg,

@@ -121,3 +121,19 @@ pub async fn settle(app: &mut App, quiet: Duration) {
         }
     }
 }
+
+/// Puts the open agent's scenario draft into the composer, once.
+pub fn seed_draft(app: &mut App, world: &World) {
+    let Some(chat) = app.chat.as_mut() else {
+        return;
+    };
+    if !chat.view.editor.is_empty() {
+        return;
+    }
+    if let Some((text, attachments)) = world.draft_once(&chat.view.agent_id) {
+        chat.view.editor.insert_str(&text);
+        for attachment in attachments {
+            chat.view.editor.insert_attachment(attachment);
+        }
+    }
+}

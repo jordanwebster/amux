@@ -72,7 +72,7 @@ pub fn strip_line(strip: &Strip, width: usize, theme: Theme) -> Option<Line<'sta
     if let Some(context) = strip.context.as_ref().filter(|c| c.in_strip)
         && let Some(percent) = context.percent
     {
-        parts.push((format!("{percent}% context"), theme.warn()));
+        parts.push((format!("{percent}% context"), theme.warning()));
     }
     if let Some(count) = strip.background {
         parts.push((format!("{count} in background"), theme.muted()));
@@ -84,7 +84,7 @@ pub fn strip_line(strip: &Strip, width: usize, theme: Theme) -> Option<Line<'sta
             .map(|window| format!("{} {:.0}%", window.name, window.used_percent))
             .collect::<Vec<_>>()
             .join(" · ");
-        parts.push((format!("Near the usage limit · {near}"), theme.warn()));
+        parts.push((format!("Near the usage limit · {near}"), theme.warning()));
     }
     for server in &strip.failed_servers {
         let words = if server.needs_auth {
@@ -92,7 +92,7 @@ pub fn strip_line(strip: &Strip, width: usize, theme: Theme) -> Option<Line<'sta
         } else {
             format!("{} failed to start", server.name)
         };
-        parts.push((words, theme.warn()));
+        parts.push((words, theme.warning()));
     }
     if parts.is_empty() {
         return None;
@@ -218,11 +218,7 @@ fn usage_words(
     now_ms: i64,
     theme: Theme,
 ) -> Vec<(String, ratatui::style::Style)> {
-    let name = match window.name.as_str() {
-        "5h" => "5-hour limit".to_owned(),
-        "7d" => "Weekly limit".to_owned(),
-        other => format!("{other} limit"),
-    };
+    let name = limit_name(&window.name);
     let mut spans = vec![
         (name, theme.muted()),
         (format!(" {:.0}% used", window.used_percent), theme.text()),
@@ -231,6 +227,35 @@ fn usage_words(
         spans.push((format!(" · resets {}", resets(at, now_ms)), theme.faint()));
     }
     spans
+}
+
+/// A usage window by its name: "5h" is the 5-hour limit, "7d" the weekly
+/// one; the provider's own name otherwise.
+fn limit_name(name: &str) -> String {
+    match name {
+        "5h" => "5-hour limit".to_owned(),
+        "7d" => "Weekly limit".to_owned(),
+        other => format!("{other} limit"),
+    }
+}
+
+/// "5-hour limit reached · resets 23:24": the fullest window of a usage
+/// limit that has been reached, for the composer's edge. None when no limit
+/// is reached.
+pub fn limit_reached(strip: &Strip, now_ms: i64) -> Option<String> {
+    let usage = strip.usage.as_ref().filter(|usage| usage.blocked)?;
+    let Some(window) = usage
+        .windows
+        .iter()
+        .max_by(|a, b| a.used_percent.total_cmp(&b.used_percent))
+    else {
+        return Some("Usage limit reached".to_owned());
+    };
+    let mut words = format!("{} reached", limit_name(&window.name));
+    if let Some(at) = window.resets_at_ms.filter(|at| *at > now_ms) {
+        words.push_str(&format!(" · resets {}", resets(at, now_ms)));
+    }
+    Some(words)
 }
 
 /// When a limit resets: the time today, else the weekday.
@@ -520,7 +545,7 @@ pub fn editor_lines(
                 place(&rows, used, at, &mut position);
                 at += 1;
                 if let Some(row) = rows.last_mut() {
-                    row.push(Span::styled(chip, theme.code()));
+                    row.push(Span::styled(chip, theme.chip()));
                 }
                 used += w;
             }
