@@ -346,6 +346,17 @@ replica of it dropped at the next inventory catch-up; nothing else
 invalidates a replica. Untrusting a host drops its replicas and ends its
 followers.
 
+The remembered agents' subscriptions are opened in the same flight as the
+inventory's, before it has caught up, so a fleet reconciles in one round
+trip rather than two. The one edge is a host that came back under a new
+generation: a session catch-up landing a moment before the inventory's can
+merge records of the new generation onto rows of the old, since the cursor
+is a number the origin may have reused. The inventory's catch-up then drops
+the host's replicas, retires the session those sources ran under, and
+reopens them on a tail of the new generation, which every open chat sees as
+a Reset. Nothing of the mix outlives that catch-up, which left the host
+with the one it followed.
+
 **The relay** is the same binary run as `amux server start --cloud`
 ([`crates/amux/src/relay.rs`](../crates/amux/src/relay.rs)). A signed-in
 profile keeps one cloud link to it, over QUIC with a TLS-over-TCP fallback,

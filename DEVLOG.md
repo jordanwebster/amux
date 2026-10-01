@@ -1,3 +1,12 @@
+2026-10-01 — **The early sessions' generation edge is written down.**
+A session catch-up that lands before the inventory's can merge new-
+generation records onto old rows when the origin reused the cursor's
+number; the inventory's catch-up drops the host's replicas, retires
+the session and reopens the sources on a tail, which an open chat sees
+as a Reset. Accepted when the subscriptions moved into the inventory's
+flight; a second Codex pass raised it, so the replication paragraph
+now says so.
+
 2026-10-01 — **A row read twice before the list looks is measured again.**
 The chat model named the rows it read on each wake in a list the
 transcript list consumed with the revision; two wakes in one run-loop
