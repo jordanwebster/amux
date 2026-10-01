@@ -149,6 +149,102 @@ agents:
             then:
               - say: Thanks. I'll draft the attach changes around those answers.
               - turn: {}
+  - id: preview-question
+    name: settings screen
+    kind: claude_sdk
+    ago: 4m
+    transcript:
+      - user: Add a settings screen to the terminal client for the relay and the theme.
+      - read: crates/tui/src/home.rs
+      - read: crates/tui/src/theme.rs
+      - ask:
+          question:
+            questions:
+              - header: Layout
+                question: How should the settings screen be laid out?
+                other: false
+                options:
+                  - label: Sidebar
+                    description: Sections listed on the left, the chosen one on the right.
+                    recommended: true
+                    preview: |
+                      ┌──────────────┬───────────────────────────────┐
+                      │ › Relay      │ Relay                         │
+                      │   Theme      │                               │
+                      │   Keys       │ Address   relay.amux.dev      │
+                      │   Accounts   │ Keepalive 30s                 │
+                      │              │ Status    connected           │
+                      │              │                               │
+                      └──────────────┴───────────────────────────────┘
+                  - label: Stacked
+                    description: One scrolling page, a heading per section.
+                    preview: |
+                      Relay ─────────────────────────────
+                        Address    relay.amux.dev
+                        Keepalive  30s
+                      Theme ─────────────────────────────
+                        Palette    from the terminal
+                  - label: Dashboard
+                    description: Every section at once as cards, edited in place.
+                    preview: |
+                      ╭─ Relay ──────────────╮  ╭─ Theme ──────────────╮
+                      │ Address              │  │ Palette              │
+                      │   relay.amux.dev     │  │   from the terminal  │
+                      │ Keepalive            │  │ Contrast             │
+                      │   30s                │  │   repaired           │
+                      │ Status               │  │ Code colours         │
+                      │   connected          │  │   on                 │
+                      ╰──────────────────────╯  ╰──────────────────────╯
+                      ╭─ Keys ───────────────╮  ╭─ Accounts ───────────╮
+                      │ Leader               │  │ Signed in            │
+                      │   ctrl+a             │  │   jordan             │
+                      │ Overview             │  │ Profiles             │
+                      │   ctrl+t             │  │   work, home         │
+                      │ Stop                 │  │ Usage                │
+                      │   ctrl+x             │  │   41% of 5-hour      │
+                      ╰──────────────────────╯  ╰──────────────────────╯
+                      ╭─ Hosts ──────────────╮  ╭─ About ──────────────╮
+                      │ laptop   this one    │  │ amux 0.7.2           │
+                      │ desk     online      │  │ protocol v1          │
+                      │ pi       away        │  │                      │
+                      ╰──────────────────────╯  ╰──────────────────────╯
+              - header: Storage
+                question: Where should the settings be stored?
+                other: false
+                options:
+                  - label: TOML file
+                    description: Hand-editable, next to the layout file.
+                    recommended: true
+                    preview: |
+                      ```toml
+                      # ~/.amux/tui/settings.toml
+                      [relay]
+                      address = "relay.amux.dev"
+                      keepalive = "30s"
+
+                      [theme]
+                      palette = "terminal"
+                      code_colours = true
+                      ```
+                  - label: In the daemon
+                    description: Shared by every client of this host.
+                    preview: |
+                      ```rust
+                      /// Settings every client of this host shares.
+                      pub struct HostSettings {
+                          pub relay: RelaySettings,
+                          pub theme: ThemeChoice,
+                      }
+
+                      impl Daemon {
+                          pub async fn settings(&self) -> HostSettings {
+                              self.store.settings().await
+                          }
+                      }
+                      ```
+            then:
+              - say: Building the sidebar layout, with settings in a TOML file.
+              - turn: {}
   - id: one-question
     name: release notes
     kind: claude_sdk

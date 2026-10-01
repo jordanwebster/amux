@@ -1762,6 +1762,7 @@ impl ChatView {
             Some(card) if ask::boxed(card) => {
                 const MARGIN: usize = 2;
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
+                self.ask.set_room(usize::from(area.height));
                 let drawn = self.ask.box_lines(card, inner, theme);
                 let (lines, mode) = framed(
                     drawn.lines,

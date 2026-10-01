@@ -1,3 +1,14 @@
+2026-10-01 — **Question options show their previews.** When a question's
+options carry previews (Claude's), the box shows the options in a column
+of labels beside the highlighted option's preview, split by a hairline, and
+under ~90 columns puts the preview under the options instead. Previews that
+are drawn (box characters, indents, aligned columns) keep their spacing
+line for line; the rest go through the markdown renderer, so fenced code
+is coloured. A tall preview is cut to leave the feed room with "… N more
+lines [Show all]" (f toggles; shown whole it still stops at the screen).
+The lab's asks scenario gains a settings-screen question with layout
+mockups and code previews.
+
 2026-10-01 — **"Reply instead" is a footer; "Something else" opens on Tab.**
 Reply instead leaves the numbered list: it sits under the options after a
 blank line, unnumbered and faint until highlighted, reached by ↓ and never

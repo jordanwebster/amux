@@ -125,6 +125,8 @@ pub struct AskUi {
     /// A question ask's "Reply instead": the composer has the keys and what
     /// is sent goes as the reply.
     replying: bool,
+    /// The terminal's rows, so a question's preview leaves the feed room.
+    room: usize,
 }
 
 fn scope_words(scope: &Scope) -> String {
@@ -1864,9 +1866,6 @@ fn text_tail(words: &str, max: usize) -> String {
     format!("…{}", out.into_iter().collect::<String>())
 }
 
-/// Lines of a highlighted option's preview shown under the options.
-const PREVIEW_LINES: usize = 8;
-
 /// A question's rows in the box: its options, "Something else" when it
 /// takes one, then "Reply instead".
 struct QuestionRows {
@@ -2134,6 +2133,14 @@ impl AskUi {
                 }
             }
             KeyCode::Tab if self.on_other_row(questions) => self.noting = true,
+            KeyCode::Char('f')
+                if questions[self.step]
+                    .options
+                    .iter()
+                    .any(|option| !option.preview.is_empty()) =>
+            {
+                self.show_all = !self.show_all;
+            }
             KeyCode::Char(' ') if self.selected < rows.options => {
                 return self.question_row(card, questions, self.selected, false);
             }
@@ -2165,6 +2172,10 @@ impl AskUi {
                 }
             }
             BoxSpot::Choice(at) => self.question_row(card, questions, at, false),
+            BoxSpot::ShowAll => {
+                self.show_all = !self.show_all;
+                AskAction::None
+            }
             _ => AskAction::None,
         }
     }
@@ -2291,23 +2302,6 @@ impl AskUi {
         out.lines.push(head);
         out.lines.push(Line::default());
 
-        let row_line = |at: usize, lit: bool| {
-            let mut row = Line::default();
-            push(
-                &mut row,
-                if lit { "› " } else { "  " },
-                theme.accent(),
-                width,
-            );
-            push(
-                &mut row,
-                format!("{}. ", at + 1),
-                if lit { theme.bright() } else { theme.text() },
-                width,
-            );
-            row
-        };
-
         if review {
             // Each question as asked, faint, then "→ answer" under it; the
             // highlighted one's lines brighten.
@@ -2381,7 +2375,6 @@ impl AskUi {
         }
 
         let question = &questions[self.step];
-        let pick = &self.picks[self.step];
         let rows = QuestionRows::of(question);
         for part in text::wrap(&question.question, width.max(1)) {
             let mut line = Line::default();
@@ -2395,6 +2388,200 @@ impl AskUi {
         }
         out.lines.push(Line::default());
 
+        // With previews, the options and the highlighted one's preview side
+        // by side where the box is wide enough, else the preview under them.
+        let previews = question.options.iter().any(|o| !o.preview.is_empty());
+        let side = previews && width >= SIDE_BY_SIDE;
+        let left_width = if side {
+            let widest = question
+                .options
+                .iter()
+                .map(|o| text::str_width(&o.label))
+                .max()
+                .unwrap_or(0);
+            (widest + 6).clamp(LEFT_MIN, LEFT_MAX)
+        } else {
+            width
+        };
+        let left = self.question_rows(question, &rows, left_width, !previews, theme);
+        let preview = question
+            .options
+            .get(self.selected)
+            .map(|option| option.preview.as_str())
+            .filter(|preview| !preview.is_empty());
+        // Tall previews are cut so the box leaves the feed room; shown whole,
+        // one still stops where the box would leave the screen.
+        let room = if self.room == 0 { 36 } else { self.room };
+        // The rows the rest of the screen needs: the chat's header, the
+        // box's edges, the hints, a little feed, and (under the options)
+        // the box's own lines above the preview.
+        let above = out.lines.len() + if side { 0 } else { left.lines.len() + 1 };
+        let fits = room.saturating_sub(10 + above).max(3);
+        let cap = if self.show_all {
+            fits
+        } else {
+            (room / 2).saturating_sub(6).clamp(3, fits.max(3))
+        };
+        let control = if self.show_all {
+            "[Show less]"
+        } else {
+            "[Show all]"
+        };
+        let base = out.lines.len();
+        if side {
+            let right_width = width.saturating_sub(left_width + 3).max(1);
+            let (right, more) = match preview {
+                Some(preview) => preview_lines(preview, right_width, cap, theme),
+                None => (Vec::new(), 0),
+            };
+            let height = left.lines.len().max(right.len() + usize::from(more > 0));
+            for i in 0..height {
+                let mut line = left.lines.get(i).cloned().unwrap_or_default();
+                text::pad_to(&mut line, left_width);
+                push(&mut line, " │ ", theme.hairline(), width);
+                if let Some(part) = right.get(i) {
+                    line.spans.extend(part.spans.iter().cloned());
+                } else if more > 0 && i == right.len() {
+                    push_more(&mut line, more, control, theme, width);
+                    let end = text::line_width(&line);
+                    out.spots
+                        .push((base + i, (end - control.len(), end), BoxSpot::ShowAll));
+                }
+                out.lines.push(line);
+            }
+        } else {
+            out.lines.extend(left.lines.iter().cloned());
+            if let Some(preview) = preview {
+                out.lines.push(Line::default());
+                let (lines, more) = preview_lines(preview, width, cap, theme);
+                out.lines.extend(lines);
+                if more > 0 {
+                    let mut line = Line::default();
+                    push_more(&mut line, more, control, theme, width);
+                    let end = text::line_width(&line);
+                    out.spots.push((
+                        out.lines.len(),
+                        (end - control.len(), end),
+                        BoxSpot::ShowAll,
+                    ));
+                    out.lines.push(line);
+                }
+            }
+        }
+        for (row, cols, spot) in left.spots {
+            out.spots.push((base + row, cols, spot));
+        }
+        if let Some((row, col)) = left.cursor {
+            out.cursor = Some((base + row, col));
+        }
+        out
+    }
+}
+
+/// Boxes this wide put a question's options and a preview side by side.
+const SIDE_BY_SIDE: usize = 82;
+/// The options' column beside a preview.
+const LEFT_MIN: usize = 22;
+const LEFT_MAX: usize = 34;
+
+/// "… 12 more lines [Show all]".
+fn push_more(line: &mut Line<'static>, hidden: usize, control: &str, theme: Theme, width: usize) {
+    let s = if hidden == 1 { "" } else { "s" };
+    push(
+        line,
+        format!("… {hidden} more line{s} "),
+        theme.faint(),
+        width,
+    );
+    push(line, control.to_owned(), theme.muted(), width);
+}
+
+/// Whether a preview is drawn rather than written: a line with box-drawing
+/// characters, two spaces between words, or a leading indent. Such a
+/// preview keeps its spacing, line for line, never reflowed.
+fn preformatted(preview: &str) -> bool {
+    !preview.contains("```")
+        && preview.lines().any(|line| {
+            let body = line.trim_end();
+            body.chars().any(|c| ('\u{2500}'..='\u{257f}').contains(&c))
+                || body.trim_start().starts_with(['+', '|'])
+                || body.starts_with("  ")
+                || body.trim().contains("  ")
+        })
+}
+
+/// A preview's lines at `width`, at most `cap` of them, and how many more
+/// there are. Drawn previews are kept as drawn, cut at the width; anything
+/// else is markdown, with code coloured.
+fn preview_lines(
+    preview: &str,
+    width: usize,
+    cap: usize,
+    theme: Theme,
+) -> (Vec<Line<'static>>, usize) {
+    let lines: Vec<Line<'static>> = if preformatted(preview) {
+        preview
+            .trim_end()
+            .lines()
+            .map(|line| {
+                let mut out = Line::default();
+                push(&mut out, text::ellipsize(line, width), theme.text(), width);
+                out
+            })
+            .collect()
+    } else {
+        crate::markdown::markdown_rows(preview.trim_end(), width, theme)
+            .into_iter()
+            .map(Line::from)
+            .collect()
+    };
+    if lines.len() <= cap {
+        return (lines, 0);
+    }
+    let keep = cap.saturating_sub(1).max(1);
+    let hidden = lines.len() - keep;
+    (lines.into_iter().take(keep).collect(), hidden)
+}
+
+impl AskUi {
+    /// How many rows the terminal has, so previews leave the feed room.
+    pub fn set_room(&mut self, rows: usize) {
+        self.room = rows;
+    }
+
+    /// A question's rows at `width`: its options (with their descriptions
+    /// when `descriptions`), "Something else", then the "Reply instead"
+    /// footer.
+    fn question_rows(
+        &self,
+        question: &QuestionView,
+        rows: &QuestionRows,
+        width: usize,
+        descriptions: bool,
+        theme: Theme,
+    ) -> BoxLines {
+        let mut out = BoxLines {
+            lines: Vec::new(),
+            cursor: None,
+            spots: Vec::new(),
+        };
+        let pick = &self.picks[self.step];
+        let row_line = |at: usize, lit: bool| {
+            let mut row = Line::default();
+            push(
+                &mut row,
+                if lit { "› " } else { "  " },
+                theme.accent(),
+                width,
+            );
+            push(
+                &mut row,
+                format!("{}. ", at + 1),
+                if lit { theme.bright() } else { theme.text() },
+                width,
+            );
+            row
+        };
         for (at, option) in question.options.iter().enumerate() {
             let lit = self.selected == at;
             let mut row = row_line(at, lit);
@@ -2414,15 +2601,29 @@ impl AskUi {
                 if lit { theme.bright() } else { theme.text() },
                 width,
             );
+            // "recommended" after the label where it fits, else under it.
+            let mut under = None;
             if option.recommended {
-                push(&mut row, " · recommended", theme.faint(), width);
+                if text::line_width(&row) + 14 <= width {
+                    push(&mut row, " · recommended", theme.faint(), width);
+                } else {
+                    let mut line = Line::from(Span::raw(" ".repeat(indent)));
+                    push(&mut line, "recommended", theme.faint(), width);
+                    under = Some(line);
+                }
             }
             out.spots
                 .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
+            if let Some(line) = under {
+                out.lines.push(row);
+                out.spots
+                    .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
+                row = line;
+            }
             // The description after the label when it fits, else under it,
             // hanging at the label.
             let description = option.description.trim();
-            if !description.is_empty() {
+            if descriptions && !description.is_empty() {
                 let used = text::line_width(&row);
                 if used + 3 + text::str_width(description) <= width {
                     push(&mut row, format!(" · {description}"), theme.faint(), width);
@@ -2485,21 +2686,6 @@ impl AskUi {
         out.spots
             .push((out.lines.len(), (0, width), BoxSpot::Choice(rows.reply)));
         out.lines.push(row);
-
-        // The highlighted option's preview, as the card drew it.
-        if let Some(preview) = question
-            .options
-            .get(self.selected)
-            .map(|option| option.preview.as_str())
-            .filter(|preview| !preview.is_empty())
-        {
-            out.lines.push(Line::default());
-            for part in preview.lines().take(PREVIEW_LINES) {
-                let mut line = Line::default();
-                push(&mut line, text::ellipsize(part, width), theme.code(), width);
-                out.lines.push(line);
-            }
-        }
         out
     }
 }
