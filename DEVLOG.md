@@ -1,3 +1,11 @@
+2026-10-01 — **The phone's baseline on the pinned Mac is recorded.**
+`just ios perf -- --baseline` with every budget met: cold first frame
+638 ms median and 649 worst, store read 30, fleet render 84,
+reconciliation 84 over loopback and 767 over 100 ms each way, streaming
+hitch 0.0 ms/s with the main thread at 50% and 69 MB, idle 0 and 0.
+perf/baselines/phone/pinned-mac.json is listed in the catalog; later
+runs on this Mac are judged on drift from it as well as on the budgets.
+
 2026-10-01 — **A source opened with the inventory is current from the start.**
 `just ios verify`'s replication spec that drops a stream after its
 Snapshot found the replica caught up where it expected it waiting out
