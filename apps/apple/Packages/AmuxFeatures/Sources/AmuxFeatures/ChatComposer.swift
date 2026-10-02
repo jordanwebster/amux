@@ -352,7 +352,7 @@ extension DraftAttachment {
         switch self {
         case .image(let blob): .image(blob)
         case .file(let blob): .file(blob)
-        case .text(let name, let text): .text(name: name, lines: UInt32(ChatModel.lines(text)))
+        case .text(let name, let text): .text(name: name, lines: UInt32(ChatModel.lines(text)), text: text)
         case .review(let diff, let comments): .review(comments: UInt32(comments.count), patch: diff.patch)
         }
     }

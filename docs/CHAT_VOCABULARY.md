@@ -48,7 +48,7 @@ kind is the [`ui_view::RowKind`](../crates/ui-view/src/rows.rs) variant the view
 | Thinking | `Thinking { text, open, duration_ms }` | A quiet "Thought for 8s" row that opens to the text when there is text. | partial | full | full: summary and full text |
 | Message between agents | `AgentMessage { from, kind, text, to, sent, rejection }` | Sender and first line, opening to the body; a sent message shows its recipient and how the send went. | full | full | full |
 
-![Chat prose rows in the terminal: a finished reply with markdown, a reply still streaming with its cursor, a working note set apart in a muted colour, a focused row with its left bar, and a row flagged for attention.](figures/vocabulary/row_prose.light.png)
+![Chat prose rows in the terminal: a finished reply with markdown, a reply still streaming with its cursor, a working note, a focused row with its left bar, and a row flagged for attention.](figures/vocabulary/row_prose.light.png)
 
 ![Messages between agents: one received, a child's finished report, one sent and delivered, and one the recipient refused.](figures/vocabulary/row_agent_message.light.png)
 
@@ -70,11 +70,11 @@ A native subagent (Claude's Task tool, a Codex child thread) is a row with detai
 transcript, not an agent. Only an amux spawn makes an agent with a chat of its own
 ([AGENT_TOOLS.md](AGENT_TOOLS.md)).
 
-![A tool-server call running, one allowed for the session with its decision on the row, one denied with a note, and one failed, opened to its result.](figures/vocabulary/row_tool_call.light.png)
+![Tool-server calls as steps: one running, one always allowed, one denied with its note under it, and one failed, opened to its result.](figures/vocabulary/row_tool_call.light.png)
 
-![Command rows: one waiting for the person's permission, one running, one denied with a note, one succeeded with its output head, and one failed with its exit code and the first lines of its output.](figures/vocabulary/row_command.light.png)
+![Commands as steps: one waiting for the person's permission, one running, one denied with its note, one that ran, and one failed with its exit code, opened to its last lines of output.](figures/vocabulary/row_command.light.png)
 
-![File changes: an edit across two files with counts, a created file, a deletion and a move, one auto-approved.](figures/vocabulary/row_file_change.light.png)
+![File changes as steps: an edit across two files with counts, a created file auto-approved, and a deletion with a move waiting for permission.](figures/vocabulary/row_file_change.light.png)
 
 ### Session events
 
@@ -106,13 +106,13 @@ one of:
 | `Retrying { attempt, max_attempts, retry_at_ms }` | The provider failed a request and says it will try again. |
 
 The line is empty unless the phase is working. Elapsed time is measured from the relevant item's timestamp with
-the renderer's clock, which is why the terminal ticks while an agent works and at no other time.
-
-![The activity line for each kind of work: working, thinking, a running command with its subject, three subagents working, compacting, and retrying with and without a cap, each with the stop key at the right.](figures/vocabulary/activity_line.light.png)
+the renderer's clock, which is why the terminal ticks while an agent works and at no other time. The terminal
+draws it as the running turn's live end in the feed (`Working · 33s`), where `Worked 6m` stands once the turn
+ends; its steps say what is running.
 
 ## Asks
 
-An ask docks where the composer was. The chat above stays visible as context, and the draft is kept. Every kind
+An ask takes over the composer's box. The chat above stays visible as context, and the draft is kept. Every kind
 of ask has one anatomy, the [`AskCard`](../crates/ui-view/src/ask.rs):
 
 - **Head, subject, choices.** What it wants, "1 of 3" when several are open (`position`, `count`), then exactly
@@ -148,9 +148,9 @@ short diff, the full document one key away) or `Tool` (server, tool and pretty-p
 | `Deny { stops }` | every kind. Terminal Claude's denial always ends the turn (`stops: true`), so there it is the only deny |
 | `DenyAndStop` | headless Claude and Codex, beside a denial that lets the agent carry on |
 
-![A command permission from Claude: the command, where it runs and why, allow once, always allow the command in this project, allow for this session, deny with a note, deny and stop, and Stop the turn in the menu; the first of three open asks.](figures/vocabulary/ask_command.light.png)
+![A command permission from Claude in the composer's box: the command and why, yes, always allow the command in this project, don't ask again this session, and no, which takes a note; the first of three open asks.](figures/vocabulary/ask_command.light.png)
 
-![A Codex command approval: allow once, allow commands starting with the same prefix, allow network access to the host it names, deny, deny and stop, and Stop the turn.](figures/vocabulary/ask_codex_command.light.png)
+![A Codex command approval: yes, allow commands starting with the same prefix, allow network access to the host it names, and no.](figures/vocabulary/ask_codex_command.light.png)
 
 ### Questions
 
@@ -178,11 +178,11 @@ question: `Options(indices)` or `Other(text)`.
 | `Access { reason, read, write, network, hosts }` | `GrantForTurn`, `GrantForSession` and `Deny` (Codex). A grant covers everything the agent asked for; the row records what was granted and for how long. |
 | `Unanswerable { reason }` | None: the provider showed something this build cannot read. The only ways out are Stop and, where the agent's own terminal is on this machine, attaching to it. |
 
-![A plan to approve, approve and accept edits without asking, or send back with a note, with f to read the whole plan.](figures/vocabulary/ask_plan.light.png)
+![A plan's decision in the composer's box, the plan itself in the feed above: start building, start and accept edits without asking, or keep planning with a note.](figures/vocabulary/ask_plan.light.png)
 
-![A form from a tool server with a text field, a choice and a toggle, to submit or decline.](figures/vocabulary/ask_form.light.png)
+![A form from a tool server, a step per field in the server's order, the first a required text field, with decline as the way out.](figures/vocabulary/ask_form.light.png)
 
-![The escape from an ask this client cannot answer: the reason, which sends the person to Claude's own terminal, Stop the turn, and attaching a terminal to answer it.](figures/vocabulary/ask_unanswerable.light.png)
+![The escape from an ask this client cannot answer: the reason, which sends the person to Claude's own terminal, and opening that terminal; ctrl+x stops the turn.](figures/vocabulary/ask_unanswerable.light.png)
 
 ## In the chat afterwards
 
@@ -202,7 +202,7 @@ Once settled, an ask leaves one of two things behind, because rows are one per i
 The attention ink is reserved for what needs you and for failures: `Row.attention` is set when an open ask points at the
 row or the row failed.
 
-![Asks that became rows: a question answered with a note, two questions answered with a note, a plan approved and one sent back with its note, three fields sent to a tool server, a link declined, write access granted for the turn, a question still open, and a dialog this build could not read, dismissed and cancelled.](figures/vocabulary/row_ask.light.png)
+![Asks that became rows: a question answered, two questions answered, a plan approved and one sent back with its note, three fields sent to a tool server, a link declined, write access granted for the turn, a question still open, and a dialog this build could not read, dismissed twice.](figures/vocabulary/row_ask.light.png)
 
 ## The session strip
 

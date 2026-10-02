@@ -21,7 +21,7 @@
 ## 40 recorded 39: fact Stream type=assistant uuid=e131be6b-a5b7-4818-a832-bb250c0df915
   row    7 msg_011CfREJXPZXEeiW2yMcRTkT:1 Prose { text: [Text("Now I'll execute the task. First, I'll start the background command:")], streaming: false, working_note: false }
 ## 42 recorded 41: fact Stream type=assistant uuid=a49dd41a-225a-4f8f-a713-88ae7e5f8cf9
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true }
+  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None }
   composer Send activity=Some(Running { key: "toolu_0197msubRxYrMAEYvpZ2dxbz" }) queue=[] outbox=[]
 ## 44 recorded 43: fact Stream type=control_request
   ask 3754846d-c2d2-4486-93e8-8dd6c456bed3 -> "toolu_0197msubRxYrMAEYvpZ2dxbz" 1/1 Open
@@ -29,39 +29,39 @@
     body Command { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", cwd: "", reason: "Contains simple_expansion", description: "Run loop that prints three ticks with 2-second delays" }
   composer Send activity=None queue=[] outbox=[]
 ## 45 recorded 44: input stdin-3
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "toolu_0197msubRxYrMAEYvpZ2dxbz" }) queue=[] outbox=[]
 ## 48 recorded 47: fact Stream type=system subtype=task_started uuid=8480e707-9d21-4bb3-b58a-153ba57cf9c9 tool_use_id=toolu_0197msubRxYrMAEYvpZ2dxbz
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
   row    9 task:bghyz1cki Hidden collapsed
   composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
 ## 50 recorded 49: fact Stream type=user uuid=6b82bbd9-fa57-4159-a5d8-5a1937558d6d
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(111) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
 ## 55 recorded 54: fact Stream type=assistant uuid=6a2accbb-fac8-42cf-aee0-10fbf23ea3a9
   row   10 msg_011CfREJwNwuaDJkNzqp91kH:0 Thinking { text: "", open: false, duration_ms: Some(1862) }
 ## 57 recorded 56: fact Stream type=assistant uuid=da105f2c-eefe-4e3f-84f9-8f07de74b9b8
   row   11 msg_011CfREJwNwuaDJkNzqp91kH:1 Prose { text: [Text("Now I'll wait 8 seconds:")], streaming: false, working_note: false }
 ## 59 recorded 58: fact Stream type=assistant uuid=901fd496-24c9-47e1-acc0-fa4de2908262
-  row   12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row   12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
   composer Send activity=Some(Running { key: "toolu_01TfpDM8C7npd4Ff4eCUAae3" }) queue=[] outbox=[]
 ## 61 recorded 60: fact Stream type=system subtype=task_started uuid=571387d0-aeef-4b44-9635-849cc8ce3e6b tool_use_id=toolu_01TfpDM8C7npd4Ff4eCUAae3
-  row   12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row   12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
   row   13 task:bz1jxdcfb Hidden collapsed
   composer Send activity=Some(Subagents { count: 2 }) queue=[] outbox=[]
 ## 64 recorded 63: fact Stream type=system subtype=task_updated uuid=b19f8f6a-7ddb-49d4-bb83-07117a89af00
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(111) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
   row    9 task:bghyz1cki Hidden collapsed
   composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
 ## 65 recorded 64: fact Stream type=system subtype=task_notification uuid=59e5f220-89ca-4c87-902c-b3db8d196e73 tool_use_id=toolu_0197msubRxYrMAEYvpZ2dxbz
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(111) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
   row    9 task:bghyz1cki Hidden collapsed
 ## 67 recorded 66: fact Stream type=system subtype=task_notification uuid=4dbe7942-00da-42d1-98d7-6e57c0a1b3e5 tool_use_id=toolu_01TfpDM8C7npd4Ff4eCUAae3
-  row   12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row   12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
   row   13 task:bz1jxdcfb Hidden collapsed
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 69 recorded 68: fact Stream type=user uuid=105a6b9c-eac8-4e97-9c7a-9e2b917f44ed
-  row   12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, duration_ms: Some(8039) }
+  row   12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(8039) }
 ## 71 recorded 70: fact Stream type=assistant uuid=d5f88cc1-6a74-4847-960e-338661f7986c
   row   14 msg_011CfREKhQ6Ks8tH8G4Ptgd7:0 Thinking { text: "", open: false, duration_ms: Some(6547) }
 ## 73 recorded 72: fact Stream type=assistant uuid=da659c6e-7065-47c4-841f-c9544aeb011a
@@ -87,11 +87,11 @@
      5 toolu_01VBRzFR5g9K7VvEwbiEud4e Explore { verb: Search, subject: "select:Monitor", state: Succeeded }
      6 msg_011CfREJXPZXEeiW2yMcRTkT:0 Thinking { text: "", open: false, duration_ms: Some(4594) }
      7 msg_011CfREJXPZXEeiW2yMcRTkT:1 Prose { text: [Text("Now I'll execute the task. First, I'll start the background command:")], streaming: false, working_note: false }
-     8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+     8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(111) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
      9 task:bghyz1cki Hidden collapsed
     10 msg_011CfREJwNwuaDJkNzqp91kH:0 Thinking { text: "", open: false, duration_ms: Some(1862) }
     11 msg_011CfREJwNwuaDJkNzqp91kH:1 Prose { text: [Text("Now I'll wait 8 seconds:")], streaming: false, working_note: false }
-    12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, duration_ms: Some(8039) }
+    12 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(8039) }
     13 task:bz1jxdcfb Hidden collapsed
     14 msg_011CfREKhQ6Ks8tH8G4Ptgd7:0 Thinking { text: "", open: false, duration_ms: Some(6547) }
     15 msg_011CfREKhQ6Ks8tH8G4Ptgd7:1 Prose { text: [Text("Perfect! The background command has completed. Now I'll read its output:")], streaming: false, working_note: false }

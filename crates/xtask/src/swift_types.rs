@@ -770,6 +770,11 @@ mod tests {
             // draws: ui_view::patch_head is called by no bridge function.
             "PatchHead",
             "PatchLine",
+            // A run of tool steps folded to one line, which only the
+            // terminal draws: ui_view::stretch is called by no bridge
+            // function.
+            "Stretch",
+            "StretchCounts",
         ];
         let definitions = definitions();
         let root = repository();

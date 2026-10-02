@@ -113,11 +113,11 @@ async fn codex_attaches_in_stream_mode_and_the_fleet_returns_to_the_same_view() 
 
     say("<leader> s: the fleet over the attached view");
     term.type_keys(FLEET).await;
-    term.shows("o terminal").await;
+    term.shows("a attach").await;
     assert!(term.contents().contains("coder"), "{}", term.contents());
 
-    say("o: back to the same view");
-    term.type_keys(b"o").await;
+    say("a: back to the same view");
+    term.type_keys(b"a").await;
     term.shows("> one").await;
     term.type_keys(b"tial\r").await;
     // A new view would have started with an empty line.

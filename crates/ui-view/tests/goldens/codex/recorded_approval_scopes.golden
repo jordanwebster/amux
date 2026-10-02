@@ -38,7 +38,7 @@
 ## 54 recorded 53: fact Rpc method=item/completed
   row    4 msg_02124244eb5c39e0016ab72ebbee9087d29690042342276e5e Prose { text: [Text("I’ll perform the three requested file operations in order.")], streaming: false, working_note: true }
 ## 57 recorded 56: fact Rpc method=item/started
-  row    5 exec-8a1d3127-60a9-47f2-b755-b836fdff6745 Command { command: "/bin/zsh -lc 'touch first.txt'", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row    5 exec-8a1d3127-60a9-47f2-b755-b836fdff6745 Command { command: "/bin/zsh -lc 'touch first.txt'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
   composer Send activity=Some(Running { key: "exec-8a1d3127-60a9-47f2-b755-b836fdff6745" }) queue=[] outbox=[]
 ## 59 recorded 58: fact Rpc method=item/commandExecution/requestApproval
   ask 0 -> "exec-8a1d3127-60a9-47f2-b755-b836fdff6745" 1/1 Open
@@ -46,11 +46,11 @@
     body Command { command: "/bin/zsh -lc 'touch first.txt'", cwd: "<MACHINE_PATH>", reason: "May I create the requested first.txt file in the workspace?", description: "" }
   composer Send activity=None queue=[] outbox=[]
 ## 60 recorded 59: input stdin-5
-  row    5 exec-8a1d3127-60a9-47f2-b755-b836fdff6745 Command { command: "/bin/zsh -lc 'touch first.txt'", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None } decision=Decision { outcome: Allowed, scope: Some("similar"), note: None, elsewhere: false }
+  row    5 exec-8a1d3127-60a9-47f2-b755-b836fdff6745 Command { command: "/bin/zsh -lc 'touch first.txt'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Allowed, scope: Some("similar"), note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "exec-8a1d3127-60a9-47f2-b755-b836fdff6745" }) queue=[] outbox=[]
 ## 65 recorded 64: fact Rpc method=item/completed
-  row    5 exec-8a1d3127-60a9-47f2-b755-b836fdff6745 Command { command: "/bin/zsh -lc 'touch first.txt'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, duration_ms: Some(46) } decision=Decision { outcome: Allowed, scope: Some("similar"), note: None, elsewhere: false }
+  row    5 exec-8a1d3127-60a9-47f2-b755-b836fdff6745 Command { command: "/bin/zsh -lc 'touch first.txt'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(46) } decision=Decision { outcome: Allowed, scope: Some("similar"), note: None, elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 70 recorded 69: fact Rpc method=item/started
   row    6 rs_02124244eb5c39e0016ab72ebf3dcc87d2911c7e5054679a5c Thinking { text: "", open: true, duration_ms: None }
@@ -64,7 +64,7 @@
 ## 77 recorded 76: fact Rpc method=item/fileChange/requestApproval
   ask 1 -> "exec-1a0fca9e-2c71-46fa-bc5c-ffb0c1bb9a17" 1/1 Open
     choices AllowOnce*, AllowForSession, Deny { stops: false }, DenyAndStop
-    body Edit { path: "<MACHINE_PATH>", files: 1, added: 0, removed: 0, diff: "one\n", reason: "" }
+    body Edit { path: "<MACHINE_PATH>", files: 1, added: 0, removed: 0, diff: "one\n", reason: "", created: true }
   composer Send activity=None queue=[] outbox=[]
 ## 79 recorded 78: input stdin-6
   row    7 exec-1a0fca9e-2c71-46fa-bc5c-ffb0c1bb9a17 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 0 }, added: 0, removed: 0 }], state: Running } decision=Decision { outcome: Allowed, scope: Some("session"), note: None, elsewhere: false }
@@ -103,7 +103,7 @@
      2 prompt:737464696e2d34 Prompt { text: [Text("Do these steps in order, one tool call each: run the shell command `touch first.txt`; then use apply_patch to create notes.txt containing the line one; then use apply_patch to change that line to two. Then reply DONE.")], steered: false }
      3 rs_02124244eb5c39e0016ab72eba75cc87d2b609246652884370 Thinking { text: "", open: false, duration_ms: Some(5951) }
      4 msg_02124244eb5c39e0016ab72ebbee9087d29690042342276e5e Prose { text: [Text("I’ll perform the three requested file operations in order.")], streaming: false, working_note: true }
-     5 exec-8a1d3127-60a9-47f2-b755-b836fdff6745 Command { command: "/bin/zsh -lc 'touch first.txt'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, duration_ms: Some(46) } decision=Decision { outcome: Allowed, scope: Some("similar"), note: None, elsewhere: false }
+     5 exec-8a1d3127-60a9-47f2-b755-b836fdff6745 Command { command: "/bin/zsh -lc 'touch first.txt'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(46) } decision=Decision { outcome: Allowed, scope: Some("similar"), note: None, elsewhere: false }
      6 rs_02124244eb5c39e0016ab72ebf3dcc87d2911c7e5054679a5c Thinking { text: "", open: false, duration_ms: Some(1112) }
      7 exec-1a0fca9e-2c71-46fa-bc5c-ffb0c1bb9a17 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 0 }, added: 0, removed: 0 }], state: Succeeded } decision=Decision { outcome: Allowed, scope: Some("session"), note: None, elsewhere: false }
      8 diff:01a0db8e-7231-72d3-806c-b4b1972f6a9f Hidden collapsed

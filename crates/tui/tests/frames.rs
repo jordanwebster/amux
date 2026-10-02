@@ -614,8 +614,10 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
         .max()
         .unwrap()
         + 1_000;
-    let mut view = FleetView::default();
-    view.local_host = net.host("laptop").unwrap().host_id.as_bytes().to_vec();
+    let mut view = FleetView {
+        local_host: net.host("laptop").unwrap().host_id.as_bytes().to_vec(),
+        ..FleetView::default()
+    };
     // The planner's family unfolded, as Right does on its row.
     let family = fleet
         .agents()

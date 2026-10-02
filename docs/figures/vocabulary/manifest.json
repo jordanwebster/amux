@@ -15,7 +15,7 @@
         1000,
         330
       ],
-      "sha256": "648ba3658102a4989983a1117c89b6ca3ea973b0550e7b1779b635f3fd8773c3"
+      "sha256": "62ed04d56fd5afe7f3c04fb5f8088d7f392cab943f4e9db3676da234c7b48131"
     },
     {
       "fixture": "row_tool_call",
@@ -23,13 +23,13 @@
       "theme": "light",
       "viewport": [
         100,
-        6
+        10
       ],
       "pixels": [
         1000,
-        132
+        220
       ],
-      "sha256": "1b1743bb0866047186280a7dfc283b35a0592c65e62862df60872c4dc9f3a76b"
+      "sha256": "a6723924b101211776297b23f9a9405a20fd187934f43b9b4ebe968a0001bf6e"
     },
     {
       "fixture": "row_command",
@@ -37,13 +37,13 @@
       "theme": "light",
       "viewport": [
         100,
-        12
+        15
       ],
       "pixels": [
         1000,
-        264
+        330
       ],
-      "sha256": "490ec02e61a1700d15f266bbb5c7844ff3b65c6cb25d77bdbaeaba816ec1fbc6"
+      "sha256": "5499dc44fd830703adf153f85497ddd619a00887b7d8d8641eb85f2078117d79"
     },
     {
       "fixture": "row_file_change",
@@ -51,13 +51,13 @@
       "theme": "light",
       "viewport": [
         100,
-        12
+        8
       ],
       "pixels": [
         1000,
-        264
+        176
       ],
-      "sha256": "5714f2e9ba55ae78069c3de1aa39acb849a193c666b87c28a54adcc591a562a6"
+      "sha256": "b0191cdb5cb6e8c9c02fcfd8c8e161c09a59dac48c3a63f661d515cfa6cca5b8"
     },
     {
       "fixture": "row_ask",
@@ -65,13 +65,13 @@
       "theme": "light",
       "viewport": [
         100,
-        26
+        28
       ],
       "pixels": [
         1000,
-        572
+        616
       ],
-      "sha256": "04dd1309b4bf8c57a3562f9318c537728da60c8166d1fd082e9fd05d84b7da7f"
+      "sha256": "8247959814f185eb09582f2b2d2061048dc883b8ff468d92af4e11b9f1a014a4"
     },
     {
       "fixture": "row_boundary",
@@ -85,7 +85,7 @@
         1000,
         352
       ],
-      "sha256": "aa94410097b52fb4e539b9822ef03924802007cb6b88ef36208266f6464a5e13"
+      "sha256": "cb8f88e1e2055b2624fe3078047d2257bfe246006e8677034acabdadf6f408c1"
     },
     {
       "fixture": "row_agent_message",
@@ -99,11 +99,25 @@
         1000,
         264
       ],
-      "sha256": "4bb604cc4548406f8f57ada1dd4fa3fc2739d6b09d0fd741299e76371bda6274"
+      "sha256": "2372ba5f5fa41a50b3d01890e193033b18ef5463e81ff0ea9c53c6b587e8f5ec"
     },
     {
-      "fixture": "activity_line",
-      "file": "activity_line.light.png",
+      "fixture": "ask_command",
+      "file": "ask_command.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        8
+      ],
+      "pixels": [
+        1000,
+        176
+      ],
+      "sha256": "279984d6965285db5f6d8c98f0018480e7f2f5f608e94d6c475ccebb086ec4a2"
+    },
+    {
+      "fixture": "ask_codex_command",
+      "file": "ask_codex_command.light.png",
       "theme": "light",
       "viewport": [
         100,
@@ -113,35 +127,7 @@
         1000,
         154
       ],
-      "sha256": "0c021e0a18de0b05641b835de1619097d529063e995a643dcf8397c6dc928162"
-    },
-    {
-      "fixture": "ask_command",
-      "file": "ask_command.light.png",
-      "theme": "light",
-      "viewport": [
-        100,
-        10
-      ],
-      "pixels": [
-        1000,
-        220
-      ],
-      "sha256": "e1137ce6ce8000a23fdbb4b6c2d85f8d21521dd699445001401f040d77dc7f2e"
-    },
-    {
-      "fixture": "ask_codex_command",
-      "file": "ask_codex_command.light.png",
-      "theme": "light",
-      "viewport": [
-        100,
-        10
-      ],
-      "pixels": [
-        1000,
-        220
-      ],
-      "sha256": "21ca42469780f4154eda836c4a081d4af19c1de8caf06e44826f1ecc2e059df6"
+      "sha256": "7822843c3e7aaccb28a56eacac7059fb9900ea19ad9a6f12cadac874a57c7209"
     },
     {
       "fixture": "ask_question_single",
@@ -155,11 +141,25 @@
         1000,
         154
       ],
-      "sha256": "c8b9c9803c908bb0f6ebefa84ecc4eee95a93ff0b2d4dd364466607ee602d57e"
+      "sha256": "0f7938af03757a93e5f0d7530ae1307cc3bdff6be6bcfed5da3c31cb2dc10bbc"
     },
     {
       "fixture": "ask_plan",
       "file": "ask_plan.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        5
+      ],
+      "pixels": [
+        1000,
+        110
+      ],
+      "sha256": "02a1784838ca1211ea71601243dde0aaa7c0b3b94fc108c818f54e2a16501d9d"
+    },
+    {
+      "fixture": "ask_form",
+      "file": "ask_form.light.png",
       "theme": "light",
       "viewport": [
         100,
@@ -169,21 +169,7 @@
         1000,
         242
       ],
-      "sha256": "9c5d2eff4806000dbb100ef01520f6e9a096da0d4ded275bff648437d7eba004"
-    },
-    {
-      "fixture": "ask_form",
-      "file": "ask_form.light.png",
-      "theme": "light",
-      "viewport": [
-        100,
-        9
-      ],
-      "pixels": [
-        1000,
-        198
-      ],
-      "sha256": "0cdbf138fa4514960492aceb5c943cdafe5451b3f6e0e4015c182bc19357835c"
+      "sha256": "d282096b77cae7dd26a7dc1a70fcc47086f418da5122932427a48f7ebe6530a0"
     },
     {
       "fixture": "ask_unanswerable",
@@ -197,7 +183,7 @@
         1000,
         132
       ],
-      "sha256": "381139532bbd6290b44e6af32b5f8062f458d59973684cace024c51ce744541b"
+      "sha256": "0bffe5c3207d29f7f316783751dd72f7d02525f00b2f1059323ad75baf1164ac"
     }
   ]
 }

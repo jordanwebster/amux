@@ -76,7 +76,7 @@ public struct ChatRowView: View {
                 opens: !result.isEmpty, open: expanded, toggle: toggle)
         case .fileChange(let files, let state):
             fileChange(files, state)
-        case .command(let command, let state, let outputHead, let moreLines, let durationMs, let exitCode):
+        case .command(let command, let state, let outputHead, let moreLines, _, let durationMs, let exitCode):
             let verb = ChatWords.verb(
                 state, row, wants: String(localized: "Wants to run"),
                 doing: String(localized: "Running"), done: String(localized: "Ran"))
@@ -106,7 +106,7 @@ public struct ChatRowView: View {
                 note: running && !lastTool.isEmpty ? "└ \(lastTool)" : nil,
                 detail: !running && !answer.isEmpty ? answer : nil, detailFace: .text,
                 detailLines: expanded ? nil : 2, opens: true, open: expanded, toggle: toggle)
-        case .background(let command, let running):
+        case .background(let command, let running, _):
             GridRow(
                 kind: "background", glyph: "play", rail: rail,
                 verb: String(localized: "In background"), subject: ChatWords.firstLine(command),
@@ -1050,7 +1050,7 @@ private struct AskRowView: View {
         case .question(let questions, let answers, let resolution, let note),
              .questions(let questions, let answers, let resolution, let note):
             questionsRow(questions, answers, resolution, note)
-        case .plan(let plan, let verdict, let note):
+        case .plan(let plan, let verdict, _, _, let note):
             let sentBack = verdict == .sentBack && !(note ?? "").isEmpty
             GridRow(
                 kind: "plan", glyph: "list.bullet.rectangle", accented: verdict == .open,

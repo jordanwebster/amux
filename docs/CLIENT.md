@@ -304,6 +304,12 @@ each renderer. A client may also read the state directly.
 | `patch_head(state, key, max)`, `run_subjects(state, order, n)` | The first lines of an edit's patch, and the subjects of a run's newest members. |
 | `stretch_at(state, order)`, `stretch_steps(state, stretch)` | The stretch of tool steps between two pieces of the agent's text that holds an item: its steps counted by what they did, whether a step still runs, whether text or the turn's end has closed it, and the failures its ended turn left unresolved; and its steps' orders. Thinking, retries, a subagent's own steps and items that draw nothing pass through a stretch. |
 
+A few facts exist so that a client can say what happened without reading further: an edit's ask says whether it
+`created` the file (so it reads "Wants to create"); a plan's row carries `edits_accepted` (approved with edits
+accepted from then on) and `writing` (the plan still streaming in); pasted text's chip carries the `text` itself, so
+a sent message can show what was pasted in place of the chip; a command's row keeps its `output_tail` beside its
+head, for a step opened to show how it ended; and a background command's row its `duration_ms` once it has ended.
+
 **Rows are items.** `chat_rows` emits exactly one [`Row`](../crates/ui-view/src/rows.rs) per item, and the row id
 is always the item key. A `Row` carries its `kind` (a `RowKind`), its `run` (`RunInfo`, when it is in one), a
 `collapsed` flag the client skips, the permission `decision` drawn on a tool call's own row, `attention` (an open

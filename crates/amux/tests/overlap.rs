@@ -162,7 +162,7 @@ async fn a_tui_of_the_previous_build_works_on_after_an_update() {
     term.shows("helper").await;
     term.type_keys(b"\r").await;
     term.shows("started").await;
-    term.shows("working").await;
+    term.shows("Working · ").await;
     let daemon = desk.daemon_pid();
 
     channel.publish(running, std::fs::read(amux_binary()).unwrap());
@@ -197,10 +197,10 @@ async fn a_tui_of_the_previous_build_works_on_after_an_update() {
     ));
 
     // Back at the fleet it names the newer daemon.
-    term.type_keys(b"\x01s").await;
-    term.shows(&format!("amux {running} is running · restart to update"))
+    term.type_keys(b"\x01h").await;
+    term.shows(&format!("amux {running} running · restart to update"))
         .await;
-    term.shows("? help").await;
+    term.shows("? keys").await;
     say(format!("-- the {previous} fleet:\n{}", term.contents()));
     term.type_keys(b"q").await;
     term.exits().await;

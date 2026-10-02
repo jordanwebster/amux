@@ -60,7 +60,7 @@ final class ChatWordsTests: XCTestCase {
     }
 
     func testTheRailRunsBetweenGridRowsAndBreaksAtProse() {
-        let tool = row(.background(command: "npm run dev", running: true))
+        let tool = row(.background(command: "npm run dev", running: true, durationMs: nil))
         let prose = row(.prose(text: [.text("Done.")], streaming: false, workingNote: false))
         XCTAssertEqual(RailJoin.of(tool, next: tool), RailJoin(continues: true))
         XCTAssertEqual(RailJoin.of(tool, next: prose), RailJoin(continues: false))

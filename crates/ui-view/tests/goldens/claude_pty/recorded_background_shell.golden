@@ -16,15 +16,15 @@
 ## 49 recorded 47: fact Transcript type=assistant uuid=db4d8326-725b-49fc-87d7-83dd37d04ed1
   row    4 db4d8326-725b-49fc-87d7-83dd37d04ed1 Prose { text: [Text("I'll run the background loop command, wait 8 seconds, and then read the output.")], streaming: false, working_note: false }
 ## 50 recorded 48: fact Transcript type=assistant uuid=2cd9a2e0-e816-4b7d-9a0d-c5c4bfb5e70e
-  row    5 toolu_01HUWUypBzyzC593e5BuR9db Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true }
+  row    5 toolu_01HUWUypBzyzC593e5BuR9db Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None }
   composer Send activity=Some(Running { key: "toolu_01HUWUypBzyzC593e5BuR9db" }) queue=[] outbox=[]
 ## 51 recorded 49: fact Transcript type=user uuid=323edd7b-bf6d-4a3e-ab87-c1137231c2ad
-  row    5 toolu_01HUWUypBzyzC593e5BuR9db Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false }
+  row    5 toolu_01HUWUypBzyzC593e5BuR9db Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(148) }
   composer Send activity=Some(Running { key: "toolu_01PYf9RAUvxv4nhnWRuY4fwj" }) queue=[] outbox=[]
 ## 52 recorded 50: fact Transcript type=assistant uuid=f5411335-a6b8-4570-a141-2883f2ec95e3
-  row    6 toolu_01PYf9RAUvxv4nhnWRuY4fwj Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row    6 toolu_01PYf9RAUvxv4nhnWRuY4fwj Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
 ## 58 recorded 56: fact Transcript type=user uuid=2a4fafea-0c90-49ed-85b2-cd8662e11585
-  row    6 toolu_01PYf9RAUvxv4nhnWRuY4fwj Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, duration_ms: Some(8089) }
+  row    6 toolu_01PYf9RAUvxv4nhnWRuY4fwj Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(8089) }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 71 recorded 69: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_015Zd8iUXCxUrCYDWoBJfLcj
   composer Send activity=Some(Running { key: "toolu_015Zd8iUXCxUrCYDWoBJfLcj" }) queue=[] outbox=[]
@@ -52,8 +52,8 @@
      2 fbda38b3-ae45-4f56-8110-efb13d2ad714 Prompt { text: [Text("Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed.")], steered: false }
      3 a5736859-3e57-49de-8392-9006054f91a5 Thinking { text: "", open: false, duration_ms: Some(5512) }
      4 db4d8326-725b-49fc-87d7-83dd37d04ed1 Prose { text: [Text("I'll run the background loop command, wait 8 seconds, and then read the output.")], streaming: false, working_note: false }
-     5 toolu_01HUWUypBzyzC593e5BuR9db Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false }
-     6 toolu_01PYf9RAUvxv4nhnWRuY4fwj Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, duration_ms: Some(8089) }
+     5 toolu_01HUWUypBzyzC593e5BuR9db Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(148) }
+     6 toolu_01PYf9RAUvxv4nhnWRuY4fwj Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(8089) }
      7 cef869e2-71de-4ede-8feb-0026b5ec5de7 Thinking { text: "", open: false, duration_ms: Some(9964) }
      8 6a1e15a3-bec8-4595-94b6-01d126f3dc61 Prose { text: [Text("Now let me read the background output file:")], streaming: false, working_note: false }
      9 toolu_015Zd8iUXCxUrCYDWoBJfLcj Explore { verb: Read, subject: "<MACHINE_PATH>", state: Succeeded }

@@ -14,7 +14,7 @@
 ## 28 recorded 27: fact Stream type=control_request
   ask a2641657-d51d-40cd-aff6-a3116ba3b5e7 -> "toolu_016PfCGyBF7wh9t6sSCcd1Lv" 1/1 Open
     choices AllowOnce*, AllowAlways { subjects: [], directories: [], mode: "acceptEdits", scope: Session, label: "" }, Deny { stops: false }+note, DenyAndStop+note
-    body Edit { path: "<MACHINE_PATH>", files: 1, added: 1, removed: 0, diff: "+HOOK_OK\n", reason: "" }
+    body Edit { path: "<MACHINE_PATH>", files: 1, added: 1, removed: 0, diff: "+HOOK_OK\n", reason: "", created: true }
   composer Send activity=None queue=[] outbox=[]
 ## 30 recorded 29: input stdin-5
   row    4 toolu_016PfCGyBF7wh9t6sSCcd1Lv FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Running } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }

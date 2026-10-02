@@ -10,7 +10,7 @@
 ## 24 recorded 22: fact Transcript type=assistant uuid=f08bc37e-03c3-4f7b-af02-f331434a1f69
   row    3 f08bc37e-03c3-4f7b-af02-f331434a1f69 Thinking { text: "", open: false, duration_ms: Some(3303) }
 ## 25 recorded 23: fact Transcript type=assistant uuid=76f964e3-7c06-4aee-9f48-e7ccfc507f04
-  row    4 toolu_011sqpyfi3W1ULow63dEXrhs Command { command: "python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row    4 toolu_011sqpyfi3W1ULow63dEXrhs Command { command: "python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
 ## 27 recorded 25: fact Transcript type=user uuid=6b0c800f-b309-48a7-b0b6-d6699fbc72db
   row    4 toolu_011sqpyfi3W1ULow63dEXrhs Command { command: "python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH", state: Cancelled, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell yo…
   composer Send activity=Some(Working) queue=[] outbox=[]

@@ -313,7 +313,7 @@ public struct AnswerView: Codable, Hashable, Sendable {
 
 public enum AskBody: Codable, Hashable, Sendable {
     case command(command: String, cwd: String, reason: String, description: String)
-    case edit(path: String, files: UInt32, added: UInt32, removed: UInt32, diff: String, reason: String)
+    case edit(path: String, files: UInt32, added: UInt32, removed: UInt32, diff: String, reason: String, created: Bool)
     case tool(server: String, tool: String, arguments: String)
     case question([QuestionView])
     case plan(plan: String)
@@ -350,6 +350,7 @@ public enum AskBody: Codable, Hashable, Sendable {
         case removed
         case diff
         case reason
+        case created
     }
 
     private enum ToolKeys: String, CodingKey {
@@ -412,7 +413,8 @@ public enum AskBody: Codable, Hashable, Sendable {
                 added: try _fields.decode(UInt32.self, forKey: .added),
                 removed: try _fields.decode(UInt32.self, forKey: .removed),
                 diff: try _fields.decode(String.self, forKey: .diff),
-                reason: try _fields.decode(String.self, forKey: .reason))
+                reason: try _fields.decode(String.self, forKey: .reason),
+                created: try _fields.decode(Bool.self, forKey: .created))
         case .tool:
             let _fields = try _container.nestedContainer(
                 keyedBy: ToolKeys.self, forKey: .tool)
@@ -467,7 +469,7 @@ public enum AskBody: Codable, Hashable, Sendable {
             try _fields.encode(cwd, forKey: .cwd)
             try _fields.encode(reason, forKey: .reason)
             try _fields.encode(description, forKey: .description)
-        case .edit(let path, let files, let added, let removed, let diff, let reason):
+        case .edit(let path, let files, let added, let removed, let diff, let reason, let created):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: EditKeys.self, forKey: .edit)
             try _fields.encode(path, forKey: .path)
@@ -476,6 +478,7 @@ public enum AskBody: Codable, Hashable, Sendable {
             try _fields.encode(removed, forKey: .removed)
             try _fields.encode(diff, forKey: .diff)
             try _fields.encode(reason, forKey: .reason)
+            try _fields.encode(created, forKey: .created)
         case .tool(let server, let tool, let arguments):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: ToolKeys.self, forKey: .tool)
@@ -564,7 +567,7 @@ public enum AskRow: Codable, Hashable, Sendable {
     /// A Claude AskUserQuestion call: its questions, then what was picked
     /// and typed for each, read from the tool's recorded result.
     case question(questions: [QuestionView], answers: [AnswerView], resolution: Resolution, note: String?)
-    case plan(plan: String, verdict: PlanVerdict, note: String?)
+    case plan(plan: String, verdict: PlanVerdict, editsAccepted: Bool, writing: Bool, note: String?)
     /// Questions asked as the work, then the answers sent.
     case questions(questions: [QuestionView], answers: [AnswerView], resolution: Resolution, note: String?)
     /// A tool server's form: "Sent 3 fields to github".
@@ -598,6 +601,8 @@ public enum AskRow: Codable, Hashable, Sendable {
     private enum PlanKeys: String, CodingKey {
         case plan
         case verdict
+        case editsAccepted = "edits_accepted"
+        case writing
         case note
     }
 
@@ -660,6 +665,8 @@ public enum AskRow: Codable, Hashable, Sendable {
             self = .plan(
                 plan: try _fields.decode(String.self, forKey: .plan),
                 verdict: try _fields.decode(PlanVerdict.self, forKey: .verdict),
+                editsAccepted: try _fields.decode(Bool.self, forKey: .editsAccepted),
+                writing: try _fields.decode(Bool.self, forKey: .writing),
                 note: try _fields.decodeIfPresent(String.self, forKey: .note))
         case .questions:
             let _fields = try _container.nestedContainer(
@@ -714,11 +721,13 @@ public enum AskRow: Codable, Hashable, Sendable {
             try _fields.encode(answers, forKey: .answers)
             try _fields.encode(resolution, forKey: .resolution)
             try _fields.encodeIfPresent(note, forKey: .note)
-        case .plan(let plan, let verdict, let note):
+        case .plan(let plan, let verdict, let editsAccepted, let writing, let note):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: PlanKeys.self, forKey: .plan)
             try _fields.encode(plan, forKey: .plan)
             try _fields.encode(verdict, forKey: .verdict)
+            try _fields.encode(editsAccepted, forKey: .editsAccepted)
+            try _fields.encode(writing, forKey: .writing)
             try _fields.encodeIfPresent(note, forKey: .note)
         case .questions(let questions, let answers, let resolution, let note):
             var _container = encoder.container(keyedBy: Tag.self)
@@ -766,7 +775,9 @@ public enum AttachmentView: Codable, Hashable, Sendable {
     case empty
     case image(BlobRef)
     case file(BlobRef)
-    case text(name: String, lines: UInt32)
+    /// Pasted text: its name, its length in lines, and the text itself,
+    /// which a sent message shows in place of the chip.
+    case text(name: String, lines: UInt32, text: String)
     case review(comments: UInt32, patch: BlobRef?)
 
     private enum Tag: String, CodingKey {
@@ -779,6 +790,7 @@ public enum AttachmentView: Codable, Hashable, Sendable {
     private enum TextKeys: String, CodingKey {
         case name
         case lines
+        case text
     }
 
     private enum ReviewKeys: String, CodingKey {
@@ -815,7 +827,8 @@ public enum AttachmentView: Codable, Hashable, Sendable {
                 keyedBy: TextKeys.self, forKey: .text)
             self = .text(
                 name: try _fields.decode(String.self, forKey: .name),
-                lines: try _fields.decode(UInt32.self, forKey: .lines))
+                lines: try _fields.decode(UInt32.self, forKey: .lines),
+                text: try _fields.decode(String.self, forKey: .text))
         case .review:
             let _fields = try _container.nestedContainer(
                 keyedBy: ReviewKeys.self, forKey: .review)
@@ -836,11 +849,12 @@ public enum AttachmentView: Codable, Hashable, Sendable {
         case .file(let _value):
             var _container = encoder.container(keyedBy: Tag.self)
             try _container.encode(_value, forKey: .file)
-        case .text(let name, let lines):
+        case .text(let name, let lines, let text):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: TextKeys.self, forKey: .text)
             try _fields.encode(name, forKey: .name)
             try _fields.encode(lines, forKey: .lines)
+            try _fields.encode(text, forKey: .text)
         case .review(let comments, let patch):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: ReviewKeys.self, forKey: .review)
@@ -2935,7 +2949,7 @@ public struct Row: Codable, Hashable, Sendable {
     /// The client skips a collapsed row: an older run member, or a tool row
     /// when tool rows are hidden, or a row that carries nothing to draw.
     public var collapsed: Bool
-    /// Drawn in the accent: an open ask points at it, or it failed.
+    /// Drawn in the attention ink: an open ask points at it, or it failed.
     public var attention: Bool
     /// A permission decision, meta on the tool call's own row.
     public var decision: Decision?
@@ -2977,10 +2991,10 @@ public enum RowKind: Codable, Hashable, Sendable {
     case thinking(text: String, open: Bool, durationMs: Int64?)
     case toolCall(server: String, tool: String, fact: String, state: ToolStateView, result: String)
     case fileChange(files: [FileRow], state: ToolStateView)
-    case command(command: String, state: ToolStateView, outputHead: [String], moreLines: UInt, durationMs: Int64?, exitCode: Int32?)
+    case command(command: String, state: ToolStateView, outputHead: [String], moreLines: UInt, outputTail: [String], durationMs: Int64?, exitCode: Int32?)
     case explore(verb: ExploreVerb, subject: String, state: ToolStateView)
     case subagent(description: String, running: Bool, toolCount: UInt32, lastTool: String, answer: String, durationMs: Int64?)
-    case background(command: String, running: Bool)
+    case background(command: String, running: Bool, durationMs: Int64?)
     case image(path: String, generated: Bool, image: BlobRef?)
     case slashOutput(command: String, args: String, output: String)
     /// An ask that is the work: resolves in place.
@@ -3054,6 +3068,7 @@ public enum RowKind: Codable, Hashable, Sendable {
         case state
         case outputHead = "output_head"
         case moreLines = "more_lines"
+        case outputTail = "output_tail"
         case durationMs = "duration_ms"
         case exitCode = "exit_code"
     }
@@ -3076,6 +3091,7 @@ public enum RowKind: Codable, Hashable, Sendable {
     private enum BackgroundKeys: String, CodingKey {
         case command
         case running
+        case durationMs = "duration_ms"
     }
 
     private enum ImageKeys: String, CodingKey {
@@ -3205,6 +3221,7 @@ public enum RowKind: Codable, Hashable, Sendable {
                 state: try _fields.decode(ToolStateView.self, forKey: .state),
                 outputHead: try _fields.decode([String].self, forKey: .outputHead),
                 moreLines: try _fields.decode(UInt.self, forKey: .moreLines),
+                outputTail: try _fields.decode([String].self, forKey: .outputTail),
                 durationMs: try _fields.decodeIfPresent(Int64.self, forKey: .durationMs),
                 exitCode: try _fields.decodeIfPresent(Int32.self, forKey: .exitCode))
         case .explore:
@@ -3229,7 +3246,8 @@ public enum RowKind: Codable, Hashable, Sendable {
                 keyedBy: BackgroundKeys.self, forKey: .background)
             self = .background(
                 command: try _fields.decode(String.self, forKey: .command),
-                running: try _fields.decode(Bool.self, forKey: .running))
+                running: try _fields.decode(Bool.self, forKey: .running),
+                durationMs: try _fields.decodeIfPresent(Int64.self, forKey: .durationMs))
         case .image:
             let _fields = try _container.nestedContainer(
                 keyedBy: ImageKeys.self, forKey: .image)
@@ -3343,13 +3361,14 @@ public enum RowKind: Codable, Hashable, Sendable {
             var _fields = _container.nestedContainer(keyedBy: FileChangeKeys.self, forKey: .fileChange)
             try _fields.encode(files, forKey: .files)
             try _fields.encode(state, forKey: .state)
-        case .command(let command, let state, let outputHead, let moreLines, let durationMs, let exitCode):
+        case .command(let command, let state, let outputHead, let moreLines, let outputTail, let durationMs, let exitCode):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: CommandKeys.self, forKey: .command)
             try _fields.encode(command, forKey: .command)
             try _fields.encode(state, forKey: .state)
             try _fields.encode(outputHead, forKey: .outputHead)
             try _fields.encode(moreLines, forKey: .moreLines)
+            try _fields.encode(outputTail, forKey: .outputTail)
             try _fields.encodeIfPresent(durationMs, forKey: .durationMs)
             try _fields.encodeIfPresent(exitCode, forKey: .exitCode)
         case .explore(let verb, let subject, let state):
@@ -3367,11 +3386,12 @@ public enum RowKind: Codable, Hashable, Sendable {
             try _fields.encode(lastTool, forKey: .lastTool)
             try _fields.encode(answer, forKey: .answer)
             try _fields.encodeIfPresent(durationMs, forKey: .durationMs)
-        case .background(let command, let running):
+        case .background(let command, let running, let durationMs):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: BackgroundKeys.self, forKey: .background)
             try _fields.encode(command, forKey: .command)
             try _fields.encode(running, forKey: .running)
+            try _fields.encodeIfPresent(durationMs, forKey: .durationMs)
         case .image(let path, let generated, let image):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: ImageKeys.self, forKey: .image)

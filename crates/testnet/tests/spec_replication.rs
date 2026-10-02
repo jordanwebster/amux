@@ -1539,6 +1539,8 @@ async fn an_ask_open_across_a_daemon_restart_is_the_same_ask_and_is_answered_aft
                         header: "Suite".into(),
                         options: vec!["unit".into(), "full".into()],
                         multi_select: false,
+                        other: false,
+                        secret: false,
                     }],
                 }),
                 text("running unit"),

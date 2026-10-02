@@ -227,7 +227,7 @@ public enum ChatWords {
         switch view {
         case .image(let blob): "\(blob.name) · \(bytes(blob.size))"
         case .file(let blob): "\(blob.name) · \(bytes(blob.size))"
-        case .text(let name, let lines): String(localized: "\(name) · \(lines) lines")
+        case .text(let name, let lines, _): String(localized: "\(name) · \(lines) lines")
         case .review(let comments, _):
             comments == 1
                 ? String(localized: "Review · 1 comment")
@@ -298,7 +298,7 @@ public enum ChatWords {
     /// What a row names when the activity line points at it.
     public static func subject(of row: Row) -> String? {
         switch row.kind {
-        case .command(let command, _, _, _, _, _): firstLine(command)
+        case .command(let command, _, _, _, _, _, _): firstLine(command)
         case .explore(_, let subject, _): subject
         case .toolCall(let server, let tool, _, _, _): server.isEmpty ? tool : "\(server) · \(tool)"
         case .fileChange(let files, _): files.first?.path
@@ -553,7 +553,7 @@ public enum ChatWords {
     public static func headline(_ card: AskCard) -> String {
         switch card.body {
         case .command: return String(localized: "Wants to run a command")
-        case .edit(_, let files, _, _, _, _) where files > 1:
+        case .edit(_, let files, _, _, _, _, _) where files > 1:
             return String(localized: "Wants to edit \(files) files")
         case .edit: return String(localized: "Wants to edit a file")
         case .tool(let server, let tool, _):

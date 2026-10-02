@@ -1,3 +1,21 @@
+2026-10-02 — **The new terminal client, documented; the phone's types
+caught up.** `docs/TERMINAL.md` is rewritten for the new client: home, a
+new agent in both ways of chatting, hosts, the chat, asks, the overview,
+the review page, reporting a problem, settings, and every key with the
+reasoning behind the layout. The chat vocabulary's figures are redrawn
+from the new rows and asks (the activity line is gone; working shows in
+the feed). The view facts this branch added (a file change that creates,
+a plan's accepted edits and draft, a pasted text's contents, a command's
+output tail, a background job's duration) are regenerated into the
+phone's Swift types, and the phone's views and tests take them; the phone
+builds. The `amux` command's terminal tests drive the new home: `a`
+returns to an attached view, the leader then `h` goes home, and the
+update notice reads "amux X running · restart to update". The
+interpreter's and the view's goldens take the facts this branch added (a
+plan approved with edits accepted, command tails, background durations,
+created files); a folded run of tool steps stays in Rust, as only the
+terminal draws it.
+
 2026-10-02 — **The terminal client's tests describe the new design.** The
 TUI unit tests, the component goldens and the served frames are rewritten
 for the new home and chat; tests of screens that are gone are removed, and

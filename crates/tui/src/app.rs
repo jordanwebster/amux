@@ -261,13 +261,15 @@ fn plain(error: InputError) -> String {
 impl App {
     pub fn new(client: Arc<dyn Client>, fleet: Fleet, config: TuiConfig) -> App {
         let (events, receiver) = mpsc::unbounded_channel();
-        let mut fleet_view = FleetView::default();
-        fleet_view.attach = config.attach;
-        fleet_view.version = config.version.clone();
-        fleet_view.local_host = config.local_host.clone();
-        fleet_view.working_dir = config.working_dir.to_string_lossy().into_owned();
-        fleet_view.chat_in = config.chat_in;
-        fleet_view.defaults = config.defaults.clone();
+        let fleet_view = FleetView {
+            attach: config.attach,
+            version: config.version.clone(),
+            local_host: config.local_host.clone(),
+            working_dir: config.working_dir.to_string_lossy().into_owned(),
+            chat_in: config.chat_in,
+            defaults: config.defaults.clone(),
+            ..FleetView::default()
+        };
         let layout = Layout::load(config.layout.as_deref());
         App {
             layout,
@@ -1426,11 +1428,14 @@ fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
             "enter",
             "choose; on a text field, answer and move on".into(),
         ),
+        ("space", "tick a box where several can be picked".into()),
         (
             "tab / shift+tab, ← / →",
             "the next or previous question".into(),
         ),
+        ("tab on No", "add a note to the refusal".into()),
         ("esc", "to the way out (No, Decline)".into()),
+        ("f", "the whole diff or command, inside the box".into()),
         ("", String::new()),
         ("Leader", String::new()),
     ]);

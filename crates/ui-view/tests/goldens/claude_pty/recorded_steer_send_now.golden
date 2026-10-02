@@ -10,7 +10,7 @@
 ## 42 recorded 40: fact Transcript type=assistant uuid=f41c7fd7-d400-45fe-9697-53f1e7176f57
   row    3 f41c7fd7-d400-45fe-9697-53f1e7176f57 Thinking { text: "", open: false, duration_ms: Some(2123) }
 ## 43 recorded 41: fact Transcript type=assistant uuid=dec67a35-5eac-42c7-9060-e366b98e337c
-  row    4 toolu_01NG2nrg9ukVCrHuC45fehtJ Command { command: "python3 -c 'import time; time.sleep(30)'; echo S1", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row    4 toolu_01NG2nrg9ukVCrHuC45fehtJ Command { command: "python3 -c 'import time; time.sleep(30)'; echo S1", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
 ## 48 recorded 46: fact Transcript type=user uuid=b785e6c1-4ef3-4a9e-9b50-a923f598b807
   row    4 toolu_01NG2nrg9ukVCrHuC45fehtJ Command { command: "python3 -c 'import time; time.sleep(30)'; echo S1", state: Succeeded, exit_code: None, output_head: ["Command was moved to the background (ID: ba4rtox6w) so that a message that arrived while it was running can reach you; it was not interrupted. Output is being written to: /private<MACHINE_PATH> You will be notified when it completes. To check…
   composer Send activity=Some(Working) queue=[] outbox=[]

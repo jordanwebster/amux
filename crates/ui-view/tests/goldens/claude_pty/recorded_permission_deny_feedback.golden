@@ -15,12 +15,12 @@
 ## 43 recorded 41: fact Transcript type=assistant uuid=4dea177e-44ea-4480-a62d-76946d9fab36
   row    3 4dea177e-44ea-4480-a62d-76946d9fab36 Thinking { text: "", open: false, duration_ms: Some(1889) }
 ## 45 recorded 43: fact Transcript type=assistant uuid=81d188b1-3248-4a45-8867-7c93a0911348
-  row    4 toolu_01CDE89AMC7xR2jvcSMh2RsT Command { command: "printf denied > denied.txt", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None } attention
+  row    4 toolu_01CDE89AMC7xR2jvcSMh2RsT Command { command: "printf denied > denied.txt", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } attention
   ask ask:1 -> "toolu_01CDE89AMC7xR2jvcSMh2RsT" 1/1 Open
     choices AllowOnce*, AllowAlways { subjects: [], directories: ["<MACHINE_PATH>"], mode: "", scope: Session, label: "" }, Deny { stops: true }+note
     body Command { command: "printf denied > denied.txt", cwd: "", reason: "", description: "Write \"denied\" to denied.txt" }
 ## 47 recorded 45: fact Transcript type=user uuid=517eb65b-46bc-474f-8915-f00d50ac6d10
-  row    4 toolu_01CDE89AMC7xR2jvcSMh2RsT Command { command: "printf denied > denied.txt", state: Denied, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."], more_lines: 0, duration_ms: Some(144) }…
+  row    4 toolu_01CDE89AMC7xR2jvcSMh2RsT Command { command: "printf denied > denied.txt", state: Denied, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."], more_lines: 0, output_tail: ["The user …
   ask none
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 50 recorded 48: fact Transcript type=user uuid=cbcedc43-9485-480d-a7d7-7914fab141d9
@@ -34,7 +34,7 @@
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 8633ad29-e7db-475f-9f54-cf9aa908e195 Prompt { text: [Text("Use the Bash tool to run exactly: printf denied > denied.txt. Then stop.")], steered: false }
      3 4dea177e-44ea-4480-a62d-76946d9fab36 Thinking { text: "", open: false, duration_ms: Some(1889) }
-     4 toolu_01CDE89AMC7xR2jvcSMh2RsT Command { command: "printf denied > denied.txt", state: Denied, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."], more_lines: 0, duration_ms: Some(144) }…
+     4 toolu_01CDE89AMC7xR2jvcSMh2RsT Command { command: "printf denied > denied.txt", state: Denied, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."], more_lines: 0, output_tail: ["The user …
      5 cbcedc43-9485-480d-a7d7-7914fab141d9 Hidden collapsed
      6 turn:1 Stopped
      7 bb9829a2-d4d0-4aa9-8f30-f3fbe430ccbc Prompt { text: [Text("Use a read-only command instead")], steered: false }

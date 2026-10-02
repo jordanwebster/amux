@@ -366,7 +366,7 @@ private struct AskBodyView: View {
                            cwd.isEmpty ? "" : String(localized: "in \(cwd)")]
                 .filter { !$0.isEmpty }.joined(separator: " · ")
             if !purpose.isEmpty { why(purpose) }
-        case .edit(let path, _, let added, let removed, let diff, let reason):
+        case .edit(let path, _, let added, let removed, let diff, let reason, _):
             SubjectBox(text: path, lines: 2, counts: (added, removed))
             if !diff.isEmpty { DiffPreview(diff: diff, whole: wholeDiff) }
             if diff.split(separator: "\n").count > DiffPreview.lines {

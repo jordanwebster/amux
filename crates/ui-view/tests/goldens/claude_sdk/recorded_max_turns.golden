@@ -14,7 +14,7 @@
 ## 21 recorded 20: fact Stream type=control_request
   ask 0b05a30e-e39d-4ed4-8128-68436829707d -> "toolu_01BKZvAXFn8dyHs4jMMgWxEc" 1/1 Open
     choices AllowOnce*, AllowAlways { subjects: [], directories: [], mode: "acceptEdits", scope: Session, label: "" }, Deny { stops: false }+note, DenyAndStop+note
-    body Edit { path: "<MACHINE_PATH>", files: 1, added: 1, removed: 0, diff: "+A\n", reason: "" }
+    body Edit { path: "<MACHINE_PATH>", files: 1, added: 1, removed: 0, diff: "+A\n", reason: "", created: true }
   composer Send activity=None queue=[] outbox=[]
 ## 23 recorded 22: input stdin-3
   row    4 toolu_01BKZvAXFn8dyHs4jMMgWxEc FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Running } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
@@ -29,7 +29,7 @@
 ## 29 recorded 28: fact Stream type=control_request
   ask 0aface3b-0270-45a5-b4be-9d5f7f5b817a -> "toolu_01HdQGvREG7VZBP1bzkm6xCa" 1/1 Open
     choices AllowOnce*, AllowAlways { subjects: [], directories: [], mode: "acceptEdits", scope: Session, label: "" }, Deny { stops: false }+note, DenyAndStop+note
-    body Edit { path: "<MACHINE_PATH>", files: 1, added: 1, removed: 0, diff: "+B\n", reason: "" }
+    body Edit { path: "<MACHINE_PATH>", files: 1, added: 1, removed: 0, diff: "+B\n", reason: "", created: true }
   composer Send activity=None queue=[] outbox=[]
 ## 30 recorded 29: input stdin-4
   row    5 toolu_01HdQGvREG7VZBP1bzkm6xCa FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Running } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }

@@ -349,6 +349,12 @@ pub enum QuestionOption {
     },
 }
 
+impl From<&str> for QuestionOption {
+    fn from(label: &str) -> Self {
+        QuestionOption::Label(label.to_owned())
+    }
+}
+
 impl QuestionOption {
     pub fn label(&self) -> &str {
         match self {

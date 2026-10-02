@@ -64,6 +64,8 @@ fn question() -> Step {
             header: "Suite".into(),
             options: vec!["unit".into(), "full".into()],
             multi_select: false,
+            other: false,
+            secret: false,
         }],
     })
 }

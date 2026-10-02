@@ -592,7 +592,7 @@ final class ChatModelTests: XCTestCase {
             inputId: [7],
             text: [
                 .text("Look at these."),
-                .attachment(.text(name: "Pasted text", lines: 3)),
+                .attachment(.text(name: "Pasted text", lines: 3, text: "line one\nline two\nline three")),
             ],
             mine: true, steered: false, canWithdraw: true, canSendNow: true, fromAgent: nil)
         model.withdraw(queued)

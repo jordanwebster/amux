@@ -862,8 +862,10 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
     );
     assert!(!screen.contains("not signed in"), "{screen}");
     // Home's top line says how to sign in again.
-    let mut fleet_view = FleetView::default();
-    fleet_view.local_host = b"laptop".to_vec();
+    let mut fleet_view = FleetView {
+        local_host: b"laptop".to_vec(),
+        ..FleetView::default()
+    };
     let screen = fleet_screen(&mut fleet_view, &fleet);
     assert!(screen.contains("signed out · amux login"), "{screen}");
 
@@ -1100,9 +1102,11 @@ fn the_fleet_says_restart_to_update_when_the_daemon_runs_another_build() {
         &mut fleet,
         wire::inventory_event::Of::CaughtUp(wire::CaughtUp { revision: 0 }),
     );
-    let mut view = FleetView::default();
-    view.version = "0.8.0".into();
-    view.local_host = b"a".to_vec();
+    let mut view = FleetView {
+        version: "0.8.0".into(),
+        local_host: b"a".to_vec(),
+        ..FleetView::default()
+    };
     let screen = fleet_screen(&mut view, &fleet);
     assert!(!screen.contains("restart to update"), "{screen}");
     view.version = "0.7.0".into();

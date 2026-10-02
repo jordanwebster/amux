@@ -6,9 +6,9 @@ The terminal client is the fleet and the chat in a full-screen terminal interfac
 opens it. It is a library ([`crates/tui`](../crates/tui/src/lib.rs)) that the `amux` binary
 ([`crates/amux`](../crates/amux/src/main.rs)) calls, never a second executable, and it is built on the shared
 client library described in [CLIENT.md](CLIENT.md): it reads the local runtime only through the session and fleet
-drivers, composes the view values (fleet rows, chat rows, the ask card, the session strip, composer tokens) in its
-own layout, and owns only panes, the scroll anchor, expanded rows, drafts and focus. Nothing it holds outlives the
-process.
+drivers, composes the view values (fleet rows, chat rows, asks, composer tokens) in its own layout, and owns only
+the overview pane, the scroll anchor, opened rows, drafts and focus. Nothing it holds outlives the process except
+the overview's layout, kept per terminal in `<root>/tui/layout.json`.
 
 The same binary carries the command-line verbs, listed [at the end of this page](#command-line-verbs).
 
@@ -20,148 +20,224 @@ amux --profile work         # on a profile named by label or id
 amux --config path/to.yaml  # with another installation config (or AMUX_CONFIG)
 ```
 
-`amux` connects to the selected profile's local socket with the gRPC client, opens the fleet, and draws. If the
-daemon is not running, start it with `amux server start` (see [SUPERVISOR.md](SUPERVISOR.md)).
+`amux` connects to the selected profile's local socket with the gRPC client, opens home, and draws. If the daemon
+is not running, start it with `amux server start` (see [SUPERVISOR.md](SUPERVISOR.md)).
 
 The client redraws only when something changed: a key, a change from the fleet or the open chat, or a finished
 task. It ticks on a clock only while something on screen moves with time: every 250 ms while the open agent is
-working (the activity line's elapsed time) or its chat is still empty, and at the end of the quit guard or a
+working (the running turn's elapsed time) or its chat is still empty, and at the end of the quit guard or a
 notice. See [the two draw loops](CLIENT.md#the-two-draw-loops).
 
 ## Screens
 
-Home and the chat share one geometry. A margin of two columns runs down each side, and every edge sits on it:
-tinted blocks (your messages, the highlighted row on home), the composer's box, the header, the key line and the
-arrows of sections and stretches. Text inside a block, the agent's text, labels and marks sit two columns further
-in. One blank line sits above the top line and one below it. A block's half line of padding is drawn only while
-its words are on screen, so a block scrolled half off leaves no band behind.
+Every screen has a top line, its content and a line of keys. A margin of two columns runs down each side, and
+every edge sits on it: tinted blocks (your messages, the highlighted row on home), the composer's box, the header,
+the key line and the arrows of sections and stretches. Text inside a block, the agent's text, labels and marks sit
+two columns further in. One blank line sits above the top line and one below it. A block's half line of padding
+is drawn only while its words are on screen, so a block scrolled half off leaves no band behind.
 
-### The fleet
+Ink goes by importance, in four steps mixed from the terminal's own text and ground: brightest for what the eye
+should land on (names, the key in a legend), normal for what you act on, grey for what you read, faint for what
+you look up (ages, folders, hosts, counts). Colour marks meaning only: the attention ink (the terminal's blue) for
+what needs you, red for failure, the terminal's cyan for code and paths inside the agent's text, and green and red
+for lines added and removed wherever you read a diff. Anything that looks like a control can be clicked, and every
+key in a key line too.
 
-The fleet is home: the client opens on it, and every chat returns to it. It is a framed grid titled `amux`, with
-one row per family head, loudest family first (needs you, working, starting, idle, exited), then most recently
-active. Each row shows the attention mark, the agent's name, its kind (`claude`, `claude sdk`, `codex`), its host
-and how that host is reached, the age of its last activity, its status word and what it is working on; narrower
-terminals drop the working-on summary first, then the status word. Above the rows sit "N need you" when any do,
-and the agent count. A banner line reports a reachability problem when there is one. The status bar shows the
-connection, the host count and the keys that fit.
+### Home
 
-A family's children are hidden until the family is expanded; an expanded family lists its members indented under
-their parents. Children an agent spawned through amux are agents of their own, with their own chats.
+The client opens on home, and every chat returns to it. The top line is `amux` and the overall state at the
+right: hosts that are away, how many agents are working and how many need you, a daemon running another build
+(`amux 0.8.0 running · restart to update`) and, when this machine's hosts are away because it is signed out,
+`signed out · amux login`. `/` turns the top line into a filter over names, folders and hosts; Enter keeps it, Esc
+clears it, and it looks into folded sections too.
 
-Overlays on the fleet:
+Below it, `+ New Agent`, then the agents in sections drawn alike (a fold marker, the label, a count, a faint rule):
+**Needs you**, **Running** (working and idle) and **Exited**, folded until opened. Within a section agents are
+listed newest first, so a row never moves while an agent streams. A family sits in its loudest member's section;
+`→`, `←` or Space shows and hides its members, indented under their parent.
 
-- **New agent** (`n`): pick Claude (terminal), Claude (SDK) or Codex by `1`–`3` or the arrows and Enter. The agent
-  works in the directory `amux` was started in, and its chat opens as soon as it exists.
-- **Rename** (`r`): a one-line field; Enter applies, Esc cancels.
-- **Stop** (`s`) and **delete** (`d`): a confirmation; `y` or Enter confirms, `n` or Esc cancels. Stop is not
-  offered for an agent that has already exited. Delete removes the agent, its history and its children; children
-  on hosts that cannot be reached stay listed on their own, and a notice says how many.
+Each row is the agent's mark (`○` idle, starting, exited or on a host that is away; `●` working; `●` in the
+attention ink when it needs you), its name, its folder and its host when that is not this machine, faint, and its
+age at the right. A second line says what only words can: why it exited (`finished`, a crash in red), that its
+host is away. The highlighted row is tinted, with half a line of the tint above and below; under the pointer or the
+keys alike, and it shows `[x]` in place of its age to stop the agent, or delete it once it has exited, after asking.
+
+On a row, `r` renames it in place (Enter saves, Esc cancels), `s` stops it and `x` deletes it, each asking first
+in a small window (Enter confirms, Esc cancels). A daemon that has not answered yet shows `connecting` at the
+right of the top line.
+
+### A new agent
+
+`n`, `+ New Agent`, or the leader then `n` from a chat start a new agent. What opens depends on where the person
+chats with their agents, the installation's `ui.chat_in`:
+
+- **In amux** (`amux`, the default): the composer, first. Type what the new agent should work on and Enter starts
+  it and opens its chat (Ctrl+Enter starts it and stays home). The composer's bottom edge is the settings:
+  `+ Name │ Claude · Opus (high) · default │ ~/source/amux │ laptop`, that is the name (named automatically
+  unless given one), the agent with its model, effort and mode, the folder and the host. `ctrl+s` then a letter
+  opens one in a small panel rising from its place on the edge: `n` name, `m` model, `e` effort, `d` folder, `h`
+  host, `a` agent (Claude or Codex); clicking an item does the same. Long lists filter as you type; the folder's
+  panel lists that host's recent folders and takes a typed path; hosts that are away cannot be picked. Shift+Tab
+  steps the mode. Claude runs headless here, Codex on its app server.
+- **In each agent's own terminal** (`terminal`): a small window over home with the name, the agent (Claude or
+  Codex), the folder and the host, and no prompt or model, which the agent's own terminal sets. Enter moves from
+  row to row and starts the agent from the last; ←/→ change a choice. Started on this machine, the terminal is
+  handed straight to the new agent (see [raw attach](#raw-attach)); started on another machine its chat opens
+  instead, and says why.
+
+A new agent always shows the values it will start with: each agent's model, effort and mode come from the
+installation's `new_agent.claude` and `new_agent.codex`, and the leader then `n` from a chat starts from that
+chat's agent, folder and host instead.
 
 ### Hosts
 
-`h` opens the hosts overlay inside the fleet's frame: every trusted host whatever its presence, with how it is
-reached now (`local` for this machine, `direct`, `relay`, `ssh`, or `away` and `offline`) and what stands in its
-way: the host has stopped trusting this machine, this machine is signed out of its account, or the host is not
-signed in (which matters only for reaching it through the relay). Hosts that local-network discovery currently
-sees and that are not yet trusted are listed too. Esc, `q` or `h` closes it. Pairing, unpairing and signing in
-happen from the command line ([`amux pair`](#command-line-verbs) and friends); [HOW_IT_WORKS.md](HOW_IT_WORKS.md)
-explains hosts, pairing and the relay.
+`p`, or the leader then `p` from a chat, opens the hosts window over home: every trusted host whatever its
+presence, with `this machine`, how it is reached (`direct`, `relay`) or why not (`offline · not signed in`, `away ·
+this machine is signed out`, `no longer trusts this machine`). Hosts that local-network discovery sees and that are
+not yet trusted are listed faint, with the command that pairs them (`found nearby · amux pair desk`); a faint line
+says to pair another with `amux pair`. Esc, `q` or `p` closes it. Pairing, unpairing and signing in happen from the
+command line ([`amux pair`](#command-line-verbs) and friends); [HOW_IT_WORKS.md](HOW_IT_WORKS.md) explains hosts,
+pairing and the relay.
 
 ### The chat
 
-Enter on a fleet row opens its chat. From top to bottom:
+Enter on a row opens its chat. From top to bottom:
 
-- **The header**, under one blank line: the agent's name, a faint `│`, then faintly the directory it works in
-  (`~/source/amux`) and, when it runs on another machine, `· <host>`. At the right, split by the same faint `│`,
-  how much of its context is used (`41K / 200K`, in the warning ink when near the limit), `[Diff +a
-  −b]` with the working tree's lines added and removed, which opens the review page, and `[Home]`, which goes
-  back home; both brighten under the mouse. The totals are read when the chat opens and again each time a turn
-  ends. The header says where the chat stands only when that is a problem: `exited` with its cause, `catching
-  up` before the first CaughtUp, `reconnecting` while the local runtime is being reconnected, `refreshing` while
-  a rebuilt history is on its way, or why the host is away (not current, this machine signed out, or the host
-  has stopped trusting this machine). Working and asks show in the feed.
+- **The header**: the agent's name, a faint `│`, then faintly the folder it works in (`~/source/amux`) and, when it
+  runs on another machine, `· <host>`. At the right, split by the same faint `│`: how much of its context is used
+  (`41K / 200K`, in the warning ink near the limit), `[Diff]`, which opens the review page, and `[Home]`. The
+  header says where the chat stands only when that is a problem: `exited` with its cause, `catching up` before the
+  first CaughtUp, `reconnecting`, `refreshing` while a rebuilt history is on its way, or why the host is away (not
+  current, this machine signed out, or the host no longer trusts this machine).
 - **The family line**, for an agent with a parent or children: the parent, the number of subagents and how many
   need you.
 - **The feed**, read one turn at a time, laid out upward from the newest or from wherever the reader scrolled:
-  - your message is a tinted block, a whole tinted line above and below its words, with the time at its right;
-  - the message that started the turn owning the feed's top line stays pinned under the header, cut to one
-    line, as you scroll through a long answer or through history; as the next turn's message nears the top the
-    pinned one fades to the faint ink, then that message takes the pin. It is best effort: a message older than
-    the rows held pins once the page bringing it lands, and one whose own block is on screen is not pinned
-    twice. Clicking the pinned message scrolls to it;
-  - everything the agent wrote is in one reading ink, to at most 100 columns a line on a wide terminal; code
-    and paths in it wear the terminal's own cyan, straight from its palette; its thinking is not drawn;
+  - your message is a tinted block with the time at its right; pasted text shows in place, cut after eight lines
+    with `… N more lines [Show All]`;
+  - the message that started the turn owning the feed's top line stays pinned under the header, cut to one line,
+    as you scroll through a long answer; as the next turn's message nears the top the pinned one fades, then that
+    message takes the pin. Clicking it scrolls to the message;
+  - everything the agent wrote is in one reading ink, at most 100 columns a line; code and paths wear the
+    terminal's cyan, and code blocks are highlighted in its palette. Thinking is never drawn;
   - each stretch of tool steps between two pieces of its text folds to one faint line of what the steps did
-    (`▸ 3 commands · 2 edits · 4 reads`). Clicking it, or `<leader> o` on it, opens the stretch to one line per
-    step, every step on its own (merging reads would only repeat the folded line); clicking a step opens its detail (a command's
-    output, an edit's patch, a call's result);
+    (`▸ 3 commands · 2 edits · 4 reads`). Clicking it, or the leader then `o`, opens it to one line per step,
+    verb first (`Ran just lint · exit 1 · 22s`, `Edited session.rs · +0 −1`); clicking a step opens its detail: a
+    command's last lines of output, an edit's patch, a call's result;
   - a failure the turn ended without fixing stays under its folded stretch in red; one fixed later in the turn
     folds away with the rest;
-  - while the agent is at a stretch, its newest three steps show as they happen, the current one bright, with a
-    line for the ones above them, and the stretch folds once the agent writes again;
-  - a turn ends with a faint `Worked 6m`.
+  - while the agent is at a stretch, its newest three steps show as they happen, the current one bright, and the
+    running turn ends in `Working · 33s`, which becomes a faint `Worked 6m` when the turn ends;
+  - a plan is drawn as the agent's text under a landmark that folds like a stretch (`▾ Plan · Move the
+    journal`), and once decided folds to `▸ Plan · Move the journal · approved` or `· sent back` with the note
+    under it;
+  - session boundaries (`started`, `resumed`, `exited · crashed`) read like home's headings: faint words and a
+    hairline.
+- **The queue**, just above the composer: prompts waiting behind the running turn, one line each, faint on your
+  message's surface, saying how each waits (`queued`, `queued from relay` from another agent, `sending into this
+  turn`, `waiting for desk…`, `may not have arrived`).
+- **The row above the composer**, when there is something to say: tool servers that need signing in (in red), the
+  task in progress and `3 of 4 tasks`, and `ctrl+o` for the overview.
+- **The composer**, boxed, with `Model (effort) · mode` on its bottom edge in the words a person reads (`Opus
+  (high) · accept edits`). Its top edge says what stands in the way of sending, most pressing first: a prompt the
+  agent refused (`not sent: it is shutting down`, in red), the host away (`desk is away`), an exited agent (`Enter
+  resumes`), a usage limit reached (`5-hour limit reached · resets 23:24`, in the warning ink; sending stays
+  open). One blank line below it, the key line: `shift+tab mode · ctrl+a more` at rest, `enter queue · ctrl+x
+  stop` added while the agent works, `enter resume` once it has exited, `Draft kept · sending waits` while the
+  host is away. What everyone knows (Enter sends, pasting attaches) is not said.
 
-  Asks, errors, boundaries and the other rows [CHAT_VOCABULARY.md](CHAT_VOCABULARY.md) lists keep their own
-  drawing for now.
-- **The ask card**, when the agent is waiting on you, docked where the composer was; the draft stays underneath
-  it.
-- **The composer**, boxed, with `Model (effort) · mode` on its bottom edge, in the words a person reads
-  (`Opus (high) · accept edits`: the model's offered name, the mode never as its identifier); above it a quiet line while the
-  agent works, the session strip, any foot card (a sign-in problem or a usage block) and the tray of queued and
-  unconfirmed prompts; one blank line below it, a line of keys, all at the left. The keys are the few that
-  matter now and always end with the way to more: `shift+tab mode · ctrl+a more` at rest, `enter queue ·
-  ctrl+x stop` added while the agent works, `enter resume` once it has exited. What everyone knows (Enter
-  sends, pasting attaches) is not said; `ctrl+j newline` appears while typing only where the terminal cannot
-  tell Shift+Enter from Enter. Every key in the line can be clicked.
+The composer takes a draft at any time. Enter sends while the chat is current and the agent is live; while the
+agent works it queues the prompt behind the running turn; when the agent has exited it resumes it with the draft as
+its first prompt (an empty Enter just resumes). A prompt to an idle agent shows at once in the feed, and one to a
+busy agent at once in the queue. A draft typed while the host is away stays in the composer. A prompt the agent
+refuses comes back into the composer with the reason; one whose connection dropped before a reply waits in the
+queue as `may not have arrived`, to resend or discard, and nothing is resent by itself.
 
-Scrolled back, a control floats at the bottom centre of the feed, `↓ Jump to Bottom  ctrl+end`, or `↓ 3 new`
-when rows arrived meanwhile; clicking it or Ctrl+End returns to the newest. The mouse also cycles the mode by
-the mode on the composer's edge, places the cursor in the draft, and selects a queued or unconfirmed prompt in
-the tray. Because the client reads the mouse, the terminal's own text selection takes its modifier: Shift+drag,
-or Option+drag in iTerm2 and Ghostty.
-
-A mouse-wheel event scrolls one line, so a trackpad's stream of small events moves smoothly; events arriving
-close together in one direction step up to two and then three lines, and input already waiting is applied
-before the next frame is drawn, so a burst never draws once per event. The rule is `tui::wheel`, shared by the
-chat, the review page and home.
-
-Design variant 1 (F3 in [the lab](#the-lab)) draws the chat as it was before this redesign: a header with
-the kind, host, model and mode, every row drawn in full, and an unboxed composer.
-
-The composer takes a draft at any time. Enter sends only while the chat is current and the agent is live; while
-the agent works, Enter queues the prompt behind the running turn. When the agent has exited, Enter resumes it with
-the draft as its first prompt. A draft typed while the chat is catching up or its host is away is kept, and the
-key line says sending waits.
+Scrolled back, a control floats at the bottom centre of the feed, `↓ Jump to Bottom  ctrl+end`, or `↓ 3 new` when
+rows arrived meanwhile; clicking it or Ctrl+End returns to the newest. Because the client reads the mouse, the
+terminal's own text selection takes its modifier: Shift+drag, or Option+drag in iTerm2 and Ghostty. A mouse-wheel
+event scrolls one line, so a trackpad's stream of small events moves smoothly; events arriving close together in
+one direction step up to two and then three lines (`tui::wheel`, shared by the chat, the review page and home).
 
 An empty chat says it is loading after 300 ms. Scrolling up keeps the reader's place while rows arrive below; the
 client asks for older rows by itself when fewer than a page (40 rows) is held above the screen.
 
-**Attachments.** Ctrl+V reads the clipboard: an image or a copied file is stored with the agent and inserted at
-the cursor as an attachment chip; text is pasted. A paste of eight lines or more, or of 1000 characters or more,
-becomes a text attachment instead of flooding the draft. One Backspace removes a chip with its attachment.
-[ATTACHMENTS.md](ATTACHMENTS.md) covers what happens to attachments after that.
+**Attachments.** Ctrl+V reads the clipboard: an image or a copied file is stored with the agent and inserted at the
+cursor as a chip in the person's own words (`[screenshot.png · 240 KB]`); text is pasted. A paste of eight lines or
+more, or of 1000 characters or more, becomes a pasted-text chip (`[pasted-1 · 23 lines]`). A chip keeps a space
+after itself; one Backspace removes a chip with its attachment. [ATTACHMENTS.md](ATTACHMENTS.md) covers what happens
+to attachments after that.
 
-**The reader.** `f` on an ask card opens the whole diff, plan, command, arguments or question previews full
-screen; `j`/`k`, the arrows, Page Up/Down, Space, `g`/`G` and Home/End scroll it, and Esc or `q` closes it.
+### Asks
+
+When the agent waits on you, the ask takes over the composer's box, its edge in the attention ink; the draft waits
+behind it and comes back after. The plan or the call it is about stays in the feed above.
+
+- **A permission** (`● Wants to run`, `Wants to edit`, `Wants to create`, `Wants to use`): the command, the file
+  with its diff, or the tool and its arguments, then numbered choices worded as what happens (`1. Yes`, `2. Yes,
+  and always allow cargo test in this project`, `3. Yes, and don't ask again this session`) and the way out last
+  (`No`). Tab on `No` adds a note that goes back to the agent with the refusal. A long diff or command is cut,
+  with `[Full Diff]` or `[Show All]` (or `f`) opening the whole of it inside the box.
+- **A plan** (`● Plan ready`): `Yes, start building`, `Yes, and accept edits without asking` where the agent
+  offers it, and `No, keep planning`, which takes a note.
+- **Questions**: one at a time; several get a row of tabs (`‹ Layout   Entry   Review ›`), answered ones ticked,
+  and end on a review that lists each answer and sends them all. Options read `label · recommended ·
+  description`; several picks are `[ ]` boxes under `Select all that apply`; options with previews show the
+  highlighted one's preview beside them. `Something else · enter to type` opens a field for an answer of your own.
+  Secret answers type as dots.
+- **A tool server's form** (`● linear needs details`): its message, then each field as a step in the server's
+  order (a choice, Yes / No, boxes, or a typed value, numbers checked), required ones marked, and a review with
+  Submit; `Decline` is the way out.
+- **A tool server's link** (`● grafana needs you to sign in`): the message and the address, `1. Open the link`
+  (the box stays), `2. I'm signed in`, and `Decline`.
+- **Wider access** (Codex): what it wants and why, `Allow for this turn`, `Allow for this session`, `No`.
+- **What this client cannot answer** (a dialog only Claude's own terminal shows): the reason, and `Open Claude's
+  terminal` where that terminal can be attached here.
+- **Sign-in**: when the agent's account needs signing in again, the box says so with the provider's message and
+  where to do it (`Run claude and sign in with /login on desk`); nothing here can sign in, so it offers no choice.
+
+After an answer the box shows one sending line; if the connection dropped before a reply, `r` resends and `d`
+discards. Answered, an ask becomes a step in the feed: `Answered 2 questions` with each question and `→ the
+answer`, `Sent the form to linear` with the fields it carried, `Signed in to grafana`, `Granted … · for this
+turn`.
+
+### The overview
+
+`ctrl+o` opens the overview beside the chat (over it on a narrow terminal): what the agent has in flight, in
+sections like home's, each foldable: its tasks (`✓` done, `●` current, `○` to do) and its tool servers that need
+signing in. It stays open across chats until closed, and remembers its folds per agent.
 
 ### The review page
 
-`<leader> r` asks the agent's host for its working-tree diff and opens it as a full-screen review page, frozen as
-it was when the page opened. You move line by line, leave comments on lines or on whole files, and go back to the
-chat; the comments ride in the draft as one review attachment, which the page keeps in step as comments are saved
-and deleted. `<leader> r` again with a review already in the draft returns to that page rather than reading a
-fresh diff. The page opens only while the chat is current, and says so when the working tree has no changes.
-[ATTACHMENTS.md](ATTACHMENTS.md) describes the review attachment and how the agent receives it.
+The leader then `r`, or `[Diff]` in the header, asks the agent's host for its working-tree diff and opens it as a
+full-screen review page, frozen as it was when the page opened. The header names the agent and the folder, with
+`review · working tree at 3f2a1c9 │ 42 files · +109 −74` at the right. The changed files are listed on the left,
+grouped by directory with each file's lines added and removed; beside them one stream of every file in that order,
+each under its own landmark, its hunks set apart by their faint `@@` lines and its added and removed lines tinted.
+The file the stream is in is highlighted in the list; picking a file in the list takes the stream to it. Tab moves
+the keys between the list and the stream, and `/` filters the list and the stream with it. Below 100 columns the
+list shows only while it has the keys.
+
+You move line by line, leave comments on lines or on whole files, and go back to the chat; the comments ride in the
+draft as one review chip, which the page keeps in step as comments are saved and deleted. The leader then `r` again
+with a review already in the draft returns to that page rather than reading a fresh diff. The page opens only while
+the chat is current, and says so when the working tree has no changes. [ATTACHMENTS.md](ATTACHMENTS.md) describes
+the review attachment and how the agent receives it.
+
+### Reporting a problem
+
+`b` on home, or the leader then `b` in a chat, freezes the screen and opens a report over it: drag with the mouse
+over anything that looks wrong to mark it, write a note on each mark and one overall, and Enter writes the report
+into the installation's `reports/` directory and says where; Esc leaves without writing. [DEBUGGING.md](DEBUGGING.md#a-report-from-the-terminal)
+lists what the report holds.
 
 ### Settings
 
-The terminal client has no settings sheet. Shift+Tab moves the agent to its next mode where it has one to move to
-(terminal Claude cycles its own permission modes; for the others the next offered mode that still asks before
-acting), and the composer's bottom edge shows the model, effort and mode. Terminal Claude's model and effort change by typing its
-own command in the composer. The phone's settings sheet offers every model, effort and mode the agent reports.
+The terminal client has no settings screen. Shift+Tab moves the agent to its next mode where it has one, and
+`ctrl+s` then `m` or `e` changes a running agent's model or effort where it lets a client change them (terminal
+Claude's change by typing its own `/model` or `/effort`). The phone's settings sheet offers every model, effort and
+mode the agent reports.
 
-The terminal's own appearance and leader key come from the installation config file
+The terminal's appearance, its leader key and how new agents start come from the installation config file
 (`~/.config/amux/config.yaml` unless `--config` or `AMUX_CONFIG` names another), read by
 [`crates/settings`](../crates/settings/src/lib.rs):
 
@@ -171,17 +247,28 @@ keybinds:
 ui:
   theme: terminal     # terminal, dark, light, or a path to a YAML theme file
   color: auto         # auto, truecolor or ansi
+  chat_in: amux       # amux, or terminal: chat in each agent's own terminal
+new_agent:
+  claude: { model: opus, effort: high, mode: default }
+  codex: { model: gpt-5-codex, effort: medium, mode: auto }
 ```
 
-`theme: terminal` asks the terminal for its own colours at startup and derives the palette from them, falling
-back to the shipped dark palette when the terminal does not answer. A theme file's path is resolved beside the
-config file. `color: auto` reads `COLORTERM` and `TERM` to choose truecolor or ANSI, and `NO_COLOR` turns colour
-off.
+`theme: terminal` asks the terminal for its own colours at startup and derives the palette from them, falling back
+to the shipped dark palette when the terminal does not answer. A theme file's path is resolved beside the config
+file; its `tokens:` may name any semantic token directly (`attention: "#5f87d7"`). `color: auto` reads `COLORTERM`
+and `TERM` to choose truecolor or ANSI, and `NO_COLOR` turns colour off.
 
 ## Keys
 
-`?` shows the key help from the fleet, or from the chat while the composer is empty and nothing else has the
-keys; any key closes it.
+Keys come in three layers. **amux** keys are about amux itself (home, a new agent, hosts, reporting, leaving): on
+home they are bare letters, and in a chat the leader then the same letter. **This chat** keys act on the open chat
+(review, attach, focus rows), also under the leader. **Local** keys belong to whatever has focus (an ask, a panel,
+the overview, home's list, a window) and never leak out of it. One letter means one thing across home and the
+leader. Control chords are kept for speed and habit only: Ctrl+X stops the turn, Shift+Tab steps the mode, Ctrl+C
+clears the field, Ctrl+O opens the overview, Ctrl+S opens the settings letters. Esc backs out one level and never
+stops the agent or answers an ask; clearing a field and stopping the agent are never the same key.
+
+`?` on home, or the leader then `?`, shows every key; j/k or the wheel scroll it and any other key closes it.
 
 ### Everywhere
 
@@ -190,18 +277,23 @@ keys; any key closes it.
 | Ctrl+C | Clears the field that has the keys, if it holds text (Ctrl+Y brings it back). On nothing, press it twice within three seconds to quit. |
 | Ctrl+A, then a key | A leader chord; see [the leader key](#the-leader-key). |
 
-### Fleet
+### Home
 
 | Key | Action |
 |---|---|
-| ↑ ↓ or `k` `j` | Move the selection |
-| Home End or `g` `G` | First or last row |
-| Enter | Open the chat |
-| `o` or Ctrl+Enter | Attach to the agent's own terminal (agents on this machine only) |
-| `z`, Space or Tab | Show or hide a family's agents |
-| `n` `r` `s` `d` | New agent, rename, stop, delete |
-| `h` | The hosts overlay |
-| `q` | Quit |
+| ↑ ↓ or `k` `j` | Move the highlight |
+| Home End or `g` `G` | First or last |
+| Enter | Open the chat; on a section heading, fold or unfold it |
+| `a` or Ctrl+Enter | Attach to the agent's own terminal (agents on this machine only) |
+| `/` | Filter by name, folder or host |
+| → ← or Space | Show or hide a family's agents |
+| `n` | A new agent |
+| `r` | Rename, in place |
+| `s`, `x` | Stop, or delete, asking first |
+| `p` | Hosts |
+| `b` | Report a problem |
+| `d`, `q` | Leave for the shell; agents keep running |
+| `?` | Every key |
 
 ### Chat
 
@@ -210,39 +302,36 @@ keys; any key closes it.
 | Enter | Send; queue while the agent works; resume an exited agent |
 | Shift+Enter, or Ctrl+J in any terminal | New line |
 | Ctrl+V | Attach an image or file from the clipboard |
-| ↑ on the first line | Into the tray of queued and unconfirmed prompts |
-| Ctrl+X | Stop the turn; the agent stays live and idle |
+| ↑ in an empty composer | Into the queue |
+| Ctrl+X | Stop the turn; the agent stays live and idle, and the draft is untouched |
 | Shift+Tab | The agent's next mode, where it has one |
+| Ctrl+S then `m` or `e` | The agent's model or effort, where it can change from here |
+| Ctrl+O | The overview |
 | Page Up, Page Down, mouse wheel | Scroll |
 | Ctrl+Home, Ctrl+End | The oldest held row; follow the newest |
-| Esc | Close the reader, then clear focus, then follow the newest. Esc never answers an ask and never stops the agent. |
+| Esc | Back out one level: a panel, a field, the overview's keys, focus |
 
 The draft editor takes readline keys: Ctrl+B and Ctrl+F move by character, Ctrl+Left and Ctrl+Right by word,
-Ctrl+E and End to the line's end, Home to its start, Ctrl+P and Ctrl+N (or ↑ and ↓) between lines; Ctrl+W,
-Ctrl+U and Ctrl+K kill the word before, the line before and the line after the cursor; Ctrl+D deletes forward;
-Ctrl+Y yanks the last kill back.
+Ctrl+E and End to the line's end, Home to its start, Ctrl+P and Ctrl+N (or ↑ and ↓) between lines; Ctrl+W, Ctrl+U
+and Ctrl+K kill the word before, the line before and the line after the cursor; Ctrl+D deletes forward; Ctrl+Y
+yanks the last kill back.
 
-In the tray, ↑ and ↓ move, Esc leaves; on a queued prompt Enter or `s` sends it now (steering it into the running
-turn) and `w`, Delete or Backspace withdraws it back into the composer; on an unconfirmed prompt `r` resends and
-`d` discards; on a rejected prompt `e` puts its words back in the composer and `d` discards it.
+In the queue, ↑ and ↓ move and the highlighted prompt shows its controls; Enter does the first and Backspace the
+second: on a queued prompt, send it now into the running turn, or withdraw it back into the composer; on one that
+may not have arrived, resend or discard it. Esc or typing returns to the composer.
 
-### Ask card
+### Asks
 
 | Key | Action |
 |---|---|
-| ↑ ↓, `1`–`9` | Select a choice |
-| Enter | Confirm it. A choice that takes a note (a Claude denial, a plan sent back) opens the note field first; Enter sends, Esc goes back. |
-| `f` | Open the whole diff, plan, command, arguments or previews in the reader |
-| Ctrl+X | Stop the turn |
-
-Stop the turn always follows the choices, and an ask this client cannot answer also offers to attach the agent's
-own terminal when it is on this machine. For questions, Enter picks and moves on, Space toggles a
-choice in a multi-select question, Tab and Shift+Tab (or → and ←) move between questions, and typing on
-"Something else…" starts a typed answer. One pick-one question without previews answers on Enter; every other
-shape ends on a review screen, where `1`–`9` goes back to a question, `n` adds a note where the agent takes one,
-and Enter sends. For a form, ↑ and ↓ move through the fields and then the choices, Enter edits a field, and Space
-flips a toggle or steps a choice. After an answer the card shows one sending line; if the connection dropped
-before a reply, `r` resends and `d` discards.
+| ↑ ↓, `j` `k`, `1`–`9` | Move, or pick at once by number |
+| Enter | Choose; on a text field, answer and move on |
+| Space | Tick a box where several can be picked |
+| Tab, Shift+Tab, ← → | The next or previous question or field, skipping without answering |
+| Tab on a refusal | Add a note to it |
+| Esc | To the way out (`No`, `Decline`); in an open field, clear and close it |
+| `f` | Open or close the whole diff or command inside the box |
+| Ctrl+X | Stop the turn, from anywhere |
 
 ### Review page
 
@@ -253,42 +342,47 @@ before a reply, `r` resends and `d` discards.
 | `g` `G`, Home End | First or last line |
 | `J` `K` | Next or previous hunk |
 | `]` `[` | Next or previous file |
-| `c` | Comment on the line (on a file header, the whole file) |
-| Enter | Edit the newest comment here, or write one |
+| `c` | Comment on the line (on a file's landmark, the whole file) |
+| Enter | Edit the newest comment here |
 | `d` | Delete the newest comment here |
-| `q`, Esc | Back to the chat |
+| Tab | Move the keys between the file list and the stream |
+| `/` | Filter the files |
+| `q`, Esc | Back out: the filter, the list, then the page |
 
 While writing a comment, Enter saves it, Ctrl+J adds a line, and Esc cancels.
 
 ## The leader key
 
 The leader is a control key, Ctrl+A unless `keybinds.leader` names another `ctrl+<letter>`. Pressed on its own it
-waits for one more key. In the chat, after a pause of 400 ms a panel lists every chord and what it does, and a
-chord typed quickly never draws it; each line of the panel can be clicked, and clicking `ctrl+a more` in the key
-line opens it at once. In the old chat (design variant 1) the footer lists the chords instead. In the chat:
+waits for one more key. In a chat, after a pause of 400 ms the next keys rise in a panel from the key line's
+`ctrl+a more`, in two groups, amux then this chat; a chord typed quickly never draws it, and each key in it can be
+clicked.
 
 | Chord | Action |
 |---|---|
-| `<leader> s` | Back to the fleet; the chat closes |
+| `<leader> h` | Home |
+| `<leader> n` | A new agent, starting from this chat's agent, folder and host |
+| `<leader> p` | Hosts |
+| `<leader> b` | Report a problem |
 | `<leader> d` | Leave for the shell; agents keep running |
-| `<leader> k`, `<leader> j` | Focus an older or newer row |
-| `<leader> o` | Open or close the focused row, or its run |
-| `<leader> y` | Copy the focused row (through the terminal's OSC 52 clipboard) |
+| `<leader> ?` | Every key |
 | `<leader> r` | Review the working tree; comments go in the draft |
-| `<leader> n` | Open the next agent in this agent's family, wrapping |
-| `<leader> t` | Attach to the agent's own terminal, when it is on this machine |
-| `<leader> ?` | Every key, the full reference |
+| `<leader> a` | Attach to the agent's own terminal, when it is on this machine |
+| `<leader> k`, `<leader> j` | Focus an older or newer row |
+| `<leader> o` | Open or close the focused row or stretch |
+| `<leader> y` | Copy the focused row (through the terminal's OSC 52 clipboard) |
 
-In the fleet the leader has no chords. During raw attach the leader is read out of the bytes you type:
-`<leader> d` detaches to the shell, `<leader> s` opens the fleet over the attached agent, and a leader followed by
-any other key goes to the agent exactly as typed. The leader is recognised both as its control byte and in the
-form terminals send when an agent has switched on the kitty keyboard protocol.
+During raw attach the leader is read out of the bytes you type: `<leader> d` detaches to the shell, `<leader> s`
+returns home over the attached agent, and a leader followed by any other key goes to the agent exactly as typed.
+The leader is recognised both as its control byte and in the form terminals send when an agent has switched on the
+kitty keyboard protocol.
 
 ## Raw attach
 
-Raw attach hands the terminal to an agent's own interface: terminal Claude's own screen, or a Codex terminal view
-of the agent's thread. It is reached with `amux attach <agent>`, with `o` or Ctrl+Enter in the fleet, with
-`<leader> t` in a chat, or from an ask card this client cannot answer.
+Raw attach hands the terminal to an agent's own interface: terminal Claude's own screen, or a Codex terminal view of
+the agent's thread. It is reached with `amux attach <agent>`, with `a` or Ctrl+Enter on home, with the leader then
+`a` in a chat, by starting an agent for someone who chats in each agent's own terminal, or from an ask this client
+cannot answer.
 
 Terminal bytes never travel over the wire. The client finds the agent's directory by convention,
 `<profile directory>/agents/<agent id>/`, and connects straight to its `pty.sock`; the daemon is not involved.
@@ -297,7 +391,7 @@ late attacher and how each Codex attach gets its own view of the thread. Two ref
 chat, which reaches every agent:
 
 - **An agent on another host.** Its terminal is on another machine. `amux attach` says so and suggests opening its
-  chat with `amux` and Enter; the fleet shows the same notice.
+  chat with `amux` and Enter; home shows the same notice.
 - **Headless Claude** (`claude_sdk`). It has no terminal.
 
 While attached, typing and resizes go to the agent. How it ends:
@@ -305,13 +399,13 @@ While attached, typing and resizes go to the agent. How it ends:
 | Ending | `amux attach` | From the terminal client |
 |---|---|---|
 | `<leader> d` | Prints `[detached from <name>]` and returns to the shell | Leaves the client for the shell |
-| `<leader> s` | Opens the fleet over the attached agent | Returns to the fleet |
+| `<leader> s` | Opens home over the attached agent | Returns home |
 | The agent ends the connection | Prints `[<name>: <why>]` or `[<name> ended]` and returns to the shell | Leaves the client for the shell |
 
-Only the fleet chord comes back to the fleet. Leaving for the fleet keeps the connection and a model of the
-agent's screen, so attaching to the same agent again repaints it where it was rather than starting over; picking
-another agent opens a second connection. The terminal is restored whichever way attach ends, including the modes
-the agent's interface switched on.
+Only `<leader> s` comes back home. Leaving for home keeps the connection and a model of the agent's screen, so
+attaching to the same agent again repaints it where it was rather than starting over; picking another agent opens
+a second connection. The terminal is restored whichever way attach ends, including the modes the agent's interface
+switched on.
 
 ## Command-line verbs
 
@@ -353,12 +447,12 @@ peer's link over SSH).
 
 | What | Where | Run |
 |---|---|---|
-| Behaviour: keys, effects, layout, paging, the ask card, the tray, the review page | `crates/tui/src/tests.rs` | `just test-tui` |
-| Component goldens in light and dark: every row kind, the activity line, each ask, the strip, the tray, the composer states, the review page | `crates/tui/tests/golden.rs`, `crates/tui/tests/golden/` | `just test-tui`; rewrite with `UPDATE_GOLDENS=1 just test-tui` |
-| Whole frames from served hosts: the fleet at several widths, the hosts overlay, chats mid-call and through a rewind | `crates/tui/tests/frames.rs` | `just test-tui` |
+| Behaviour: keys, effects, layout, paging, asks, the queue, home, the review page | `crates/tui/src/tests.rs` | `just test-tui` |
+| Component goldens in light and dark: every row kind as the feed draws it, each ask in its box, the queue, the composer's states, the review page | `crates/tui/tests/golden.rs`, `crates/tui/tests/golden/` | `just test-tui`; rewrite with `UPDATE_GOLDENS=1 just test-tui` |
+| Whole frames from served hosts: home at several widths and with every standing, the hosts window, chats mid-call, an ask this client cannot answer, and a chat through a rewind | `crates/tui/tests/frames.rs` | `just test-tui` |
 | PNG renderings of the components | [`crates/shot`](../crates/shot/README.md) | `just shot -- render vocabulary --out DIR` |
 | Raw attach, the CLI and the binary against real daemons | `crates/amux/tests/` | `just test-crate amux` |
-| Journeys through the real terminal client | `journeys/`, `scripts/terminal-journey.py` | `just journey terminal <name>` |
+| Journeys through the real terminal client: deciding asks and plans, the queue, sending, the composer's states, starting and managing agents, attachments and review, reaching hosts, recovering, reporting a problem | `journeys/`, `scripts/terminal-journey.py` | `just journey terminal <name>` |
 | Sets: every declared world loads and names only agents it declares | `crates/tui-set`, `journeys/sets/` | `just test-crate tui-set` |
 
 [TESTING.md](TESTING.md) places these in the suite catalogue.
