@@ -1,13 +1,13 @@
-  ● Can't answer this here
-    Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal
-    to answer it, or stop the agent.
-  › 1. Stop the turn
-    2. Attach a terminal to answer it
-    ↑↓/1-9 select · enter confirm · ctrl+x stop
+● Can't answer this here
+
+Claude is showing a form from a tool server this build can't read. Attach to Claude's
+terminal to answer it, or stop the agent.
+
+› Open Claude's terminal
 --- styles
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+aa..................................................................................................
+....................................................................................................
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...........................................................
+....................................................................................................
+aa??????????????????????............................................................................

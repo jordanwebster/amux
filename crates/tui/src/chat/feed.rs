@@ -372,8 +372,10 @@ fn prompt_block(
     {
         let mut line = Line::from(Span::raw(" ".repeat(inset)));
         line.spans.extend(words.spans);
+        // Muted rather than faint: faint falls below the readable floor on
+        // the block's surface.
         if i == 0 {
-            push_right(&mut line, when, theme.faint(), inner - inset);
+            push_right(&mut line, when, theme.muted(), inner - inset);
         }
         let line = tinted(line, surface, width);
         match hit {
@@ -614,7 +616,7 @@ pub fn pinned_prompt(row: &Row, faint: bool, width: usize, theme: Theme) -> Vec<
         ink,
         inset + room,
     );
-    push_right(&mut line, &when, theme.faint(), inner - inset);
+    push_right(&mut line, &when, theme.muted(), inner - inset);
     // One line: the in-feed prompt keeps its padding, the pin gives the
     // feed every line it can.
     vec![tinted(line, surface, width)]
@@ -1026,6 +1028,9 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
         RowKind::FileChange { files, state } => {
             let file = files.first();
             let verb = match (state, file.map(|f| &f.change)) {
+                (ToolStateView::Pending, Some(FileChangeView::Created { .. })) => "Wants to create",
+                (ToolStateView::Pending, Some(FileChangeView::Deleted)) => "Wants to delete",
+                (ToolStateView::Pending, Some(FileChangeView::Moved { .. })) => "Wants to move",
                 (ToolStateView::Pending, _) => "Wants to edit",
                 (ToolStateView::Running, _) => "Editing",
                 (_, Some(FileChangeView::Created { .. })) => "Created",
@@ -1193,7 +1198,7 @@ fn step(
         return None;
     }
     // An open ask points at this step: it waits on the person, so it reads
-    // as the step under way, marked in the accent, and nothing it has not
+    // as the step under way, marked in the attention ink, and nothing it has not
     // done yet is said about it.
     let asking = row.attention && verb.starts_with("Wants");
     let meta = if asking { String::new() } else { meta };
@@ -1211,7 +1216,7 @@ fn step(
     if failed {
         push(&mut line, "✗", theme.error(), width);
     } else if asking {
-        push(&mut line, "●", theme.accent(), width);
+        push(&mut line, "●", theme.attention(), width);
     } else if current {
         push(&mut line, "●", theme.text(), width);
     } else {
@@ -1286,14 +1291,13 @@ fn step(
             pad_to(&mut more, WORDS);
             push(&mut more, "and ", theme.muted(), width);
             push(&mut more, file.path.clone(), theme.muted(), width);
-            if matches!(file.change, FileChangeView::Edited) {
-                push(
-                    &mut more,
-                    format!(" · +{} −{}", file.added, file.removed),
-                    theme.faint(),
-                    width,
-                );
-            }
+            let detail = match &file.change {
+                FileChangeView::Edited => format!(" · +{} −{}", file.added, file.removed),
+                FileChangeView::Created { lines } => format!(" · created · {lines} lines"),
+                FileChangeView::Moved { to } => format!(" → {to}"),
+                FileChangeView::Deleted => " · deleted".to_owned(),
+            };
+            push(&mut more, detail, theme.faint(), width);
             drawn.hit_line(more, FeedHit::Step(row.id.clone()));
         }
     }

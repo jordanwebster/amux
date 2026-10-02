@@ -199,7 +199,7 @@ Once settled, an ask leaves one of two things behind, because rows are one per i
   fields sent, `Link`, `Grant` with what was `Granted` and for how long, and `Unanswerable`. Each carries a
   `Resolution`: `Open`, `Answered`, `Declined`, `Cancelled` or `Dismissed`.
 
-The accent is reserved for what needs you and for failures: `Row.attention` is set when an open ask points at the
+The attention ink is reserved for what needs you and for failures: `Row.attention` is set when an open ask points at the
 row or the row failed.
 
 ![Asks that became rows: a question answered with a note, two questions answered with a note, a plan approved and one sent back with its note, three fields sent to a tool server, a link declined, write access granted for the turn, a question still open, and a dialog this build could not read, dismissed and cancelled.](figures/vocabulary/row_ask.light.png)

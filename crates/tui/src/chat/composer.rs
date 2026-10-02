@@ -346,7 +346,7 @@ pub fn editor_lines(
     let lead = "▎ ";
     let room = width.saturating_sub(2).max(1);
     if editor.is_empty() {
-        let mut line = Line::from(Span::styled(lead, theme.accent()));
+        let mut line = Line::from(Span::styled(lead, theme.attention()));
         push(&mut line, placeholder, theme.muted(), width);
         return (vec![line], (0, 2));
     }
@@ -407,7 +407,7 @@ pub fn editor_lines(
         .map(|(i, spans)| {
             let mut line = Line::from(Span::styled(
                 if i == 0 { lead } else { "  " },
-                theme.accent(),
+                theme.attention(),
             ));
             line.spans.extend(spans);
             line

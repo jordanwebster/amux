@@ -184,7 +184,7 @@ fn a_scrolled_reader_keeps_its_place_as_rows_arrive() {
     assert!(matches!(view.anchor, Anchor::Top { .. }));
     assert_eq!(tell(&mut view, &mut state), Some(false));
     let (before, _) = feed(&mut view, &state);
-    assert!(before.contains("scrolled back"), "{before}");
+    assert!(before.contains("↓ Jump to Bottom"), "{before}");
     for order in 61..=65 {
         state.update(event(session_event::Of::Item(item(order, None))));
     }
@@ -203,7 +203,7 @@ fn a_scrolled_reader_keeps_its_place_as_rows_arrive() {
             .join("\n")
     };
     assert_eq!(top(&before), top(&after));
-    assert!(after.contains("new activity below"), "{after}");
+    assert!(after.contains("↓ 5 new"), "{after}");
     view.key(
         &state,
         KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL),
@@ -277,92 +277,7 @@ fn scrolling_down_past_the_newest_row_follows_again() {
     assert_eq!(view.anchor, Anchor::Bottom);
 }
 
-// --- runs ------------------------------------------------------------------
-
-#[test]
-fn a_run_collapses_to_its_summary_and_expands_by_item_key() {
-    let mut items = replies(1, 1);
-    items.extend((2..=5).map(|order| item(order, Some(&format!("src/file{order}.rs")))));
-    items.extend(replies(6, 6));
-    let mut state = chat(items);
-    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    let (screen, _) = feed(&mut view, &state);
-    assert!(screen.contains("4 reads"), "{screen}");
-    assert!(!screen.contains("src/file2.rs"), "{screen}");
-
-    // Focus the summary and open it.
-    view.move_focus(&state, true, theme());
-    feed(&mut view, &state);
-    view.move_focus(&state, true, theme());
-    assert_eq!(view.focus.as_deref(), Some("k5"));
-    view.toggle_expanded(&state);
-    let (screen, _) = feed(&mut view, &state);
-    for order in 2..=5 {
-        assert!(screen.contains(&format!("src/file{order}.rs")), "{screen}");
-    }
-
-    // The run grows at the head and stays open: expansion is by key.
-    state.update(event(session_event::Of::Item(item(
-        7,
-        Some("src/file7.rs"),
-    ))));
-    let (screen, _) = feed(&mut view, &state);
-    assert!(screen.contains("src/file2.rs"), "{screen}");
-
-    // And closes again from the summary.
-    view.focus = Some("k5".into());
-    view.toggle_expanded(&state);
-    assert!(view.expanded.is_empty());
-    let (screen, _) = feed(&mut view, &state);
-    assert!(!screen.contains("src/file2.rs"), "{screen}");
-}
-
-/// A lone tool row stands on its own; consecutive ones hang off one rail
-/// in the gutter with no blank line between them, and a blank line ends
-/// the run.
-#[test]
-fn consecutive_tool_rows_share_the_rail_and_a_lone_one_has_none() {
-    let mut items = replies(1, 1);
-    items.extend((2..=4).map(|order| item(order, Some(&format!("src/file{order}.rs")))));
-    items.extend(replies(5, 5));
-    let state = chat(items);
-    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    let (screen, _) = feed(&mut view, &state);
-    let summary = screen
-        .lines()
-        .find(|line| line.contains("3 reads"))
-        .expect(&screen);
-    assert!(summary.starts_with("  ⌄ 3 reads"), "{screen}");
-    assert!(
-        summary.contains("src/file3.rs, src/file4.rs · ctrl+a o expand"),
-        "the last two subjects, oldest first: {screen}"
-    );
-
-    view.expanded.insert("k4".into());
-    let (screen, _) = feed(&mut view, &state);
-    let lines: Vec<&str> = screen.lines().collect();
-    let first = lines
-        .iter()
-        .position(|line| line.contains("src/file2.rs"))
-        .expect(&screen);
-    for (at, order) in (2..=4).enumerate() {
-        let line = lines[first + at];
-        assert!(
-            line.starts_with("│ ") && line.contains(&format!("src/file{order}.rs")),
-            "{screen}"
-        );
-    }
-    let after = &lines[first + 3..];
-    let end = after
-        .iter()
-        .position(|line| !line.starts_with('│'))
-        .expect(&screen);
-    assert!(
-        after[end].trim().is_empty(),
-        "a blank line ends the run: {screen}"
-    );
-    assert!(after[end + 1].contains("reply number 5"), "{screen}");
-}
+// --- modes -----------------------------------------------------------------
 
 /// Shift+Tab moves a headless Claude to the next mode that still asks
 /// before acting, and the composer names the key.
@@ -418,8 +333,10 @@ fn unanswerable() -> SessionState {
     state
 }
 
+/// Every kind of ask takes the composer's box, and the keys under it say
+/// how to stop the turn.
 #[test]
-fn every_ask_body_draws_with_stop_in_its_menu() {
+fn every_ask_body_draws_in_the_box_with_the_way_to_stop() {
     let mut seen = HashSet::new();
     let mut check = |state: &SessionState, at: i64, label: &str| {
         let Some(card) = ask_card(state) else {
@@ -432,7 +349,7 @@ fn every_ask_body_draws_with_stop_in_its_menu() {
         let mut view = ChatView::new(b"agent".to_vec(), at, false);
         let (buffer, _) = draw(&mut view, state, at, 120, 60, theme());
         let screen = text(&buffer);
-        assert!(screen.contains("Stop the turn"), "{label}: {screen}");
+        assert!(screen.contains("╭"), "{label}: {screen}");
         assert!(screen.contains("ctrl+x stop"), "{label}: {screen}");
     };
     for (kind, dir) in [
@@ -481,19 +398,10 @@ fn every_ask_body_draws_with_stop_in_its_menu() {
 }
 
 #[test]
-fn stop_in_the_menu_is_the_interrupt() {
+fn ctrl_x_stops_the_turn_while_an_ask_waits() {
     let (state, at) = fixtures::Named::CodexApproval.state();
-    let card = ask_card(&state).expect("an approval");
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
     draw(&mut view, &state, at, W, H, theme());
-    let stop = card.choices.len() + 1;
-    let digit = char::from_digit(stop as u32, 10).unwrap();
-    view.key(&state, key(KeyCode::Char(digit)), theme());
-    assert_eq!(
-        view.key(&state, key(KeyCode::Enter), theme()),
-        vec![ChatEffect::Interrupt]
-    );
-    // Ctrl+X is the same act from anywhere in the chat.
     assert_eq!(
         view.key(&state, ctrl('x'), theme()),
         vec![ChatEffect::Interrupt]
@@ -517,25 +425,21 @@ fn the_likely_choice_answers_in_the_kinds_own_arm() {
 }
 
 #[test]
-fn an_unanswerable_ask_offers_stop_and_the_terminal() {
+fn an_unanswerable_ask_offers_the_terminal_and_stop() {
     let state = unanswerable();
     let mut view = ChatView::new(b"agent".to_vec(), 0, true);
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(screen.contains("Can't answer this here"), "{screen}");
-    assert!(screen.contains("1. Stop the turn"), "{screen}");
-    assert!(
-        screen.contains("2. Attach a terminal to answer it"),
-        "{screen}"
-    );
-    assert_eq!(
-        view.key(&state, key(KeyCode::Enter), theme()),
-        vec![ChatEffect::Interrupt]
-    );
-    view.key(&state, key(KeyCode::Down), theme());
+    assert!(screen.contains("Open Claude's terminal"), "{screen}");
+    assert!(screen.contains("ctrl+x stop"), "{screen}");
     assert_eq!(
         view.key(&state, key(KeyCode::Enter), theme()),
         vec![ChatEffect::RawAttach]
+    );
+    assert_eq!(
+        view.key(&state, ctrl('x'), theme()),
+        vec![ChatEffect::Interrupt]
     );
 }
 
@@ -543,18 +447,21 @@ fn an_unanswerable_ask_offers_stop_and_the_terminal() {
 fn a_denial_takes_a_note_that_goes_back_to_the_agent() {
     let (state, at) = fixtures::Named::ClaudePermissionAsk.state();
     let card = ask_card(&state).unwrap();
-    let deny = card
-        .choices
-        .iter()
-        .position(|choice| choice.takes_note)
-        .expect("Claude's deny takes a note");
+    assert!(
+        card.choices.iter().any(|choice| choice.takes_note),
+        "Claude's deny takes a note"
+    );
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    let digit = char::from_digit(deny as u32 + 1, 10).unwrap();
-    view.key(&state, key(KeyCode::Char(digit)), theme());
-    assert!(view.key(&state, key(KeyCode::Enter), theme()).is_empty());
+    // Esc reaches the way out; Tab opens its note.
+    assert!(view.key(&state, key(KeyCode::Esc), theme()).is_empty());
+    assert!(view.key(&state, key(KeyCode::Tab), theme()).is_empty());
     typed(&mut view, &state, "use cargo clean");
     let (buffer, _) = draw(&mut view, &state, at, W, H, theme());
-    assert!(text(&buffer).contains("Tell it why (optional): use cargo clean"));
+    assert!(
+        text(&buffer).contains("No: use cargo clean"),
+        "{}",
+        text(&buffer)
+    );
     let effects = view.key(&state, key(KeyCode::Enter), theme());
     let [ChatEffect::Answer(input)] = effects.as_slice() else {
         panic!("{effects:?}");
@@ -595,10 +502,7 @@ fn questions_answer_through_steps_and_a_review() {
         assert!(effects.is_empty(), "{effects:?}");
     }
     let (buffer, _) = draw(&mut view, &state, at, 120, 60, theme());
-    assert!(text(&buffer).contains("[review]"));
-    view.key(&state, key(KeyCode::Char('n')), theme());
-    typed(&mut view, &state, "keep it short");
-    view.key(&state, key(KeyCode::Enter), theme());
+    assert!(text(&buffer).contains("Send answers"), "{}", text(&buffer));
     for effect in view.key(&state, key(KeyCode::Enter), theme()) {
         if let ChatEffect::Answer(input) = effect {
             sent = Some(input);
@@ -616,36 +520,6 @@ fn questions_answer_through_steps_and_a_review() {
         panic!("{decoded:?}");
     };
     assert_eq!(answers.answers.len(), questions.len());
-    assert_eq!(answers.note, "keep it short");
-}
-
-/// Terminal Claude's form has nowhere to type a note for the answers, so
-/// its review offers none and `n` writes nothing.
-#[test]
-fn terminal_claude_questions_take_no_note() {
-    let (state, at) = fixtures::frame_where(
-        Kind::ClaudePty,
-        "recorded_question_every_shape",
-        |state| matches!(ask_card(state).map(|card| card.body), Some(AskBody::Question(questions)) if questions.len() > 1),
-    );
-    let card = ask_card(&state).unwrap();
-    assert!(!card.question_note);
-    let AskBody::Question(questions) = &card.body else {
-        unreachable!()
-    };
-    let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    for question in questions {
-        if question.multi_select {
-            view.key(&state, key(KeyCode::Char(' ')), theme());
-        }
-        view.key(&state, key(KeyCode::Enter), theme());
-    }
-    view.key(&state, key(KeyCode::Char('n')), theme());
-    let (buffer, _) = draw(&mut view, &state, at, 120, 60, theme());
-    let screen = text(&buffer);
-    assert!(screen.contains("1-9 change · enter send"), "{screen}");
-    assert!(!screen.contains("add a note"), "{screen}");
-    assert!(!screen.contains("Note for the agent"), "{screen}");
 }
 
 #[test]
@@ -658,21 +532,10 @@ fn a_form_submits_what_was_typed() {
             )
         });
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    // Edit the first field, then submit.
-    view.key(&state, key(KeyCode::Enter), theme());
+    // The one field takes the typing; Enter submits it.
     typed(&mut view, &state, "jlw/amux");
-    view.key(&state, key(KeyCode::Enter), theme());
     let (buffer, _) = draw(&mut view, &state, at, 120, 60, theme());
-    assert!(text(&buffer).contains("jlw/amux"), "{}", text(&buffer));
-    let AskBody::Form { schema_json, .. } = ask_card(&state).unwrap().body else {
-        unreachable!()
-    };
-    let fields = serde_json::from_str::<serde_json::Value>(&schema_json).unwrap()["properties"]
-        .as_object()
-        .map_or(0, |fields| fields.len());
-    for _ in 0..fields {
-        view.key(&state, key(KeyCode::Down), theme());
-    }
+    assert!(text(&buffer).contains("› jlw/amux"), "{}", text(&buffer));
     let effects = view.key(&state, key(KeyCode::Enter), theme());
     let [ChatEffect::Answer(input)] = effects.as_slice() else {
         panic!("{effects:?}");
@@ -756,11 +619,11 @@ fn an_exited_entry_offers_resume_with_the_draft() {
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
-    assert!(screen.contains("worker has exited"), "{screen}");
+    assert!(screen.contains("Enter resumes"), "{screen}");
     assert!(screen.contains("exited · finished"), "{screen}");
     typed(&mut view, &state, "carry on");
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
-    assert!(text(&buffer).contains("enter resume with this message"));
+    assert!(text(&buffer).contains("enter resume"));
     assert_eq!(
         view.key(&state, key(KeyCode::Enter), theme()),
         vec![ChatEffect::Resume {
@@ -784,17 +647,24 @@ fn an_unconfirmed_prompt_offers_resend_and_discard() {
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
-    assert!(screen.contains("not confirmed  did this land"), "{screen}");
-    assert!(screen.contains("resend · discard"), "{screen}");
+    assert!(screen.contains("did this land"), "{screen}");
+    assert!(screen.contains("may not have arrived"), "{screen}");
     view.key(&state, key(KeyCode::Up), theme());
     assert_eq!(view.tray, Some(0));
+    let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    let screen = text(&buffer);
+    assert!(screen.contains("[Resend] [Discard]"), "{screen}");
+    assert!(
+        screen.contains("enter resend   backspace discard"),
+        "{screen}"
+    );
     assert_eq!(
-        view.key(&state, key(KeyCode::Char('r')), theme()),
+        view.key(&state, key(KeyCode::Enter), theme()),
         vec![ChatEffect::Resend { id: b"p1".to_vec() }]
     );
     view.key(&state, key(KeyCode::Up), theme());
     assert_eq!(
-        view.key(&state, key(KeyCode::Char('d')), theme()),
+        view.key(&state, key(KeyCode::Backspace), theme()),
         vec![ChatEffect::Discard { id: b"p1".to_vec() }]
     );
 }
@@ -811,21 +681,26 @@ fn a_queued_prompt_can_be_withdrawn_or_sent_now() {
     assert_eq!(queue_rows(&state).len(), 1);
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    let screen = text(&buffer);
     assert!(
-        text(&buffer).contains("queued  and then the docs"),
-        "{}",
-        text(&buffer)
+        screen.contains("and then the docs") && screen.contains("queued"),
+        "{screen}"
     );
     view.key(&state, key(KeyCode::Up), theme());
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
-    assert!(text(&buffer).contains("enter send now · w withdraw"));
+    let screen = text(&buffer);
+    assert!(screen.contains("[Send Now] [Withdraw]"), "{screen}");
+    assert!(
+        screen.contains("enter send now   backspace withdraw"),
+        "{screen}"
+    );
     assert_eq!(
         view.key(&state, key(KeyCode::Enter), theme()),
         vec![ChatEffect::SendNow { id: b"q1".to_vec() }]
     );
     view.tray = Some(0);
     assert_eq!(
-        view.key(&state, key(KeyCode::Char('w')), theme()),
+        view.key(&state, key(KeyCode::Backspace), theme()),
         vec![ChatEffect::Withdraw {
             id: b"q1".to_vec(),
             text: "and then the docs".into(),
@@ -835,7 +710,7 @@ fn a_queued_prompt_can_be_withdrawn_or_sent_now() {
 }
 
 #[test]
-fn a_steered_prompt_reads_steered_until_its_reflection() {
+fn a_steered_prompt_reads_sending_into_this_turn_until_its_reflection() {
     let queued = wire::QueuedInput {
         input_id: b"q1".to_vec(),
         text: "use the other file".into(),
@@ -846,10 +721,10 @@ fn a_steered_prompt_reads_steered_until_its_reflection() {
     state.update(snapshot(Phase::Working, vec![], vec![queued]));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    let screen = text(&buffer);
     assert!(
-        text(&buffer).contains("steered  use the other file"),
-        "{}",
-        text(&buffer)
+        screen.contains("use the other file") && screen.contains("sending into this turn"),
+        "{screen}"
     );
 }
 
@@ -882,7 +757,7 @@ fn ctrl_v_attaches_a_file_through_put_blob() {
     });
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     assert!(
-        text(&buffer).contains("see [image shot.png · 9 B]"),
+        text(&buffer).contains("see [shot.png · 9 B]"),
         "{}",
         text(&buffer)
     );
@@ -913,8 +788,9 @@ fn detached_keeps_the_rows_and_disables_send() {
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(screen.contains("studio away · not current"), "{screen}");
+    assert!(screen.contains("studio is away"), "{screen}");
     assert!(screen.contains("reply number 5"), "{screen}");
-    assert!(screen.contains("draft kept · sending waits"), "{screen}");
+    assert!(screen.contains("Draft kept · sending waits"), "{screen}");
     assert!(view.key(&state, key(KeyCode::Enter), theme()).is_empty());
     assert_eq!(view.editor.text(), "still typing");
 }
@@ -966,11 +842,11 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(
-        screen.contains("draft kept · sending waits until this machine signs in"),
+        screen.contains("Draft kept · sending waits until this machine signs in"),
         "{screen}"
     );
 
-    let screen: Vec<String> = crate::hosts::overlay_lines(&fleet, b"laptop", 100, theme())
+    let screen: Vec<String> = crate::hosts::modal_rows(&fleet, b"laptop", theme())
         .iter()
         .map(|line| {
             line.spans
@@ -984,19 +860,12 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
         screen.contains("offline · this machine is signed out"),
         "{screen}"
     );
-    assert!(
-        screen.contains("·local · this machine is signed out"),
-        "{screen}"
-    );
     assert!(!screen.contains("not signed in"), "{screen}");
-    // The fleet says what signing in would bring back.
+    // Home's top line says how to sign in again.
     let mut fleet_view = FleetView::default();
     fleet_view.local_host = b"laptop".to_vec();
     let screen = fleet_screen(&mut fleet_view, &fleet);
-    assert!(
-        screen.contains("sign in to reach your agents from anywhere · amux login"),
-        "{screen}"
-    );
+    assert!(screen.contains("signed out · amux login"), "{screen}");
 
     // Signed in again, the words are what they always were.
     let mut signed_in = host(
@@ -1044,7 +913,7 @@ fn a_host_that_revoked_trust_says_so_instead_of_not_signed_in() {
     }
     inventory(&mut fleet, desk);
 
-    let screen: Vec<String> = crate::hosts::overlay_lines(&fleet, b"laptop", 100, theme())
+    let screen: Vec<String> = crate::hosts::modal_rows(&fleet, b"laptop", theme())
         .iter()
         .map(|line| {
             line.spans
@@ -1158,7 +1027,7 @@ fn the_hosts_overlay_draws_trusted_hosts_and_candidates() {
             wire::Presence::Online,
         ),
     );
-    let lines = crate::hosts::overlay_lines(&fleet, b"a", 100, theme());
+    let lines = crate::hosts::modal_rows(&fleet, b"a", theme());
     let screen: Vec<String> = lines
         .iter()
         .map(|line| {
@@ -1176,10 +1045,10 @@ fn the_hosts_overlay_draws_trusted_hosts_and_candidates() {
             .unwrap_or_else(|| panic!("{name}\n{screen}"))
             .to_owned()
     };
-    assert!(row("laptop").ends_with("·offline"), "{screen}");
-    assert!(row("studio").ends_with("·direct"), "{screen}");
+    assert!(row("laptop").ends_with("offline"), "{screen}");
+    assert!(row("studio").ends_with("this machine"), "{screen}");
     assert!(
-        row("den mac").ends_with("found · run amux pair 'den mac'"),
+        row("den mac").ends_with("found nearby · amux pair 'den mac'"),
         "{screen}"
     );
     let studio = screen.find("studio").unwrap();
@@ -1206,74 +1075,6 @@ fn agent_row(
         }),
         ..Default::default()
     })
-}
-
-#[test]
-fn the_fleet_lists_families_and_acts_on_the_selected_agent() {
-    let mut fleet = FleetState::new();
-    inventory(
-        &mut fleet,
-        host(b"a", "studio", wire::Trust::Trusted, wire::Presence::Online),
-    );
-    inventory(&mut fleet, agent_row(b"p", "planner", Phase::Idle, None));
-    inventory(
-        &mut fleet,
-        agent_row(b"c", "worker", Phase::NeedsYou, Some(b"p")),
-    );
-    inventory(&mut fleet, agent_row(b"s", "solo", Phase::Working, None));
-    inventory(
-        &mut fleet,
-        wire::inventory_event::Of::CaughtUp(wire::CaughtUp { revision: 0 }),
-    );
-    let mut view = FleetView::default();
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
-    let mut screen = String::new();
-    terminal
-        .draw(|frame| {
-            let area = frame.area();
-            view.draw(frame, area, &fleet, None, 0, theme());
-        })
-        .unwrap();
-    screen.push_str(&text(terminal.backend().buffer()));
-    // The family asking for the person leads, folded with its count.
-    let planner = screen.find("planner").expect(&screen);
-    let solo = screen.find("solo").expect(&screen);
-    assert!(planner < solo, "{screen}");
-    assert!(screen.contains("▸1"), "{screen}");
-    assert!(!screen.contains("worker"), "{screen}");
-
-    view.key(&fleet, key(KeyCode::Char('z')));
-    let rows = view.rows(&fleet);
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[1].card.name, "worker");
-    assert_eq!(rows[1].depth, 1);
-
-    let effects = view.key(&fleet, key(KeyCode::Enter));
-    assert!(matches!(effects.as_slice(), [FleetEffect::Open(agent)] if agent.agent == b"p"));
-    view.key(&fleet, key(KeyCode::Char('n')));
-    assert_eq!(
-        view.key(&fleet, key(KeyCode::Enter)),
-        vec![FleetEffect::Create {
-            kind: Kind::ClaudePty
-        }]
-    );
-    view.key(&fleet, key(KeyCode::Char('d')));
-    let effects = view.key(&fleet, key(KeyCode::Char('y')));
-    assert!(matches!(effects.as_slice(), [FleetEffect::Delete(agent)] if agent.agent == b"p"));
-    view.key(&fleet, key(KeyCode::Char('r')));
-    view.key(&fleet, ctrl('u'));
-    for c in "lead".chars() {
-        view.key(&fleet, key(KeyCode::Char(c)));
-    }
-    let effects = view.key(&fleet, key(KeyCode::Enter));
-    assert!(matches!(effects.as_slice(), [FleetEffect::Rename { name, .. }] if name == "lead"));
-    // Raw attach is offered only when the CLI can hand the terminal over.
-    assert!(view.key(&fleet, key(KeyCode::Char('o'))).is_empty());
-    view.attach = true;
-    assert!(matches!(
-        view.key(&fleet, key(KeyCode::Char('o'))).as_slice(),
-        [FleetEffect::Attach(_)]
-    ));
 }
 
 fn fleet_screen(view: &mut FleetView, fleet: &FleetState) -> String {
@@ -1307,7 +1108,7 @@ fn the_fleet_says_restart_to_update_when_the_daemon_runs_another_build() {
     view.version = "0.7.0".into();
     let screen = fleet_screen(&mut view, &fleet);
     assert!(
-        screen.contains("amux 0.8.0 is running · restart to update"),
+        screen.contains("amux 0.8.0 running · restart to update"),
         "{screen}"
     );
 }
@@ -1345,12 +1146,12 @@ fn an_answered_question_row_reads_the_question_and_what_was_picked() {
         (
             Kind::ClaudePty,
             "recorded_question_single",
-            "Answered Which color do you prefer? · Red",
+            "Which color do you prefer?\n  │   → Red",
         ),
         (
             Kind::ClaudePty,
             "recorded_question_other_single",
-            "Answered Which color do you prefer? · \"a warm ochre\"",
+            "Which color do you prefer?\n  │   → a warm ochre",
         ),
         (
             Kind::ClaudeSdk,
@@ -1364,8 +1165,10 @@ fn an_answered_question_row_reads_the_question_and_what_was_picked() {
         let screen = text(&buffer);
         assert!(screen.contains(row), "{name}:\n{screen}");
         if kind == Kind::ClaudeSdk {
-            assert!(screen.contains("Tools: Hammer, Drill"), "{screen}");
-            assert!(screen.contains("Snack: \"Dried mango\""), "{screen}");
+            assert!(screen.contains("→ Hammer, Drill"), "{screen}");
+            assert!(screen.contains("→ Dried mango"), "{screen}");
+        } else {
+            assert!(screen.contains("Answered a question"), "{screen}");
         }
     }
 }
@@ -1426,15 +1229,18 @@ fn the_review_page_lists_files_and_styles_hunks() {
     view.open_review_at(working_tree_diff(), PATCH.into(), None);
     let (screen, buffer) = review_screen(&mut view, &state);
     assert!(
-        screen.contains("Review · working tree at 3f2a1c9"),
+        screen.contains("review · working tree at 3f2a1c9"),
         "{screen}"
     );
     assert!(screen.contains("2 files · +3 −1"), "{screen}");
-    assert!(screen.contains("M  src/lib.rs  +2 −1"), "{screen}");
-    assert!(screen.contains("A  notes.md    +1 −0"), "{screen}");
+    // The list beside the stream, files under their directories.
+    assert!(screen.contains("notes.md           +1  │"), "{screen}");
+    assert!(screen.contains("src/"), "{screen}");
+    assert!(screen.contains("lib.rs        +2 −1  │"), "{screen}");
     assert!(screen.contains("@@ -10,3 +10,4 @@ fn main() {"), "{screen}");
     // The page opens on the first changed line.
-    assert!(screen.contains("▌  11     - let b = 2;"), "{screen}");
+    assert!(screen.contains("│▌       1 + hello"), "{screen}");
+    assert!(screen.contains("   11     - let b = 2;"), "{screen}");
     assert!(screen.contains("       11 + let b = 3;"), "{screen}");
 
     // Added and removed lines carry the diff tints across the row.
@@ -1465,15 +1271,17 @@ fn the_first_saved_comment_puts_a_review_token_in_the_draft_at_the_cursor() {
     typed(&mut view, &state, "look at this ");
     view.open_review_at(working_tree_diff(), PATCH.into(), None);
 
-    // Down to the first added line and comment on it.
-    view.key(&state, key(KeyCode::Char('j')), theme());
+    // Down past notes.md to src/lib.rs's first added line, and comment.
+    for _ in 0..4 {
+        view.key(&state, key(KeyCode::Char('j')), theme());
+    }
     view.key(&state, key(KeyCode::Char('c')), theme());
     typed(&mut view, &state, "why three?");
     assert!(review_token(&view).is_none(), "nothing until it is saved");
     view.key(&state, key(KeyCode::Enter), theme());
     let (screen, _) = review_screen(&mut view, &state);
     assert!(screen.contains("│ why three?"), "{screen}");
-    assert!(screen.contains("src/lib.rs  +2 −1 · 1 comment"), "{screen}");
+    assert!(screen.contains("2 files · +3 −1 · 1 comment"), "{screen}");
 
     let review = review_token(&view).expect("the token is in the draft");
     assert_eq!(review.diff, Some(working_tree_diff()));
@@ -1488,7 +1296,7 @@ fn the_first_saved_comment_puts_a_review_token_in_the_draft_at_the_cursor() {
     );
     assert_eq!(
         view.editor.text(),
-        format!("look at this {}", attachments::PLACEHOLDER)
+        format!("look at this {} ", attachments::PLACEHOLDER)
     );
 
     // A comment on the removed line lands on its old-side number, and the
@@ -1545,6 +1353,8 @@ fn deleting_comments_and_the_token_drops_the_draft_review() {
     typed(&mut view, &state, "two");
     view.key(&state, key(KeyCode::Enter), theme());
     view.key(&state, key(KeyCode::Char('q')), theme());
+    // The space the token keeps after itself, then the token.
+    view.key(&state, key(KeyCode::Backspace), theme());
     view.key(&state, key(KeyCode::Backspace), theme());
     assert!(view.editor.is_empty());
     assert!(!view.resume_review());
@@ -1725,6 +1535,7 @@ fn a_call_row_leads_with_what_happened_to_it() {
             exit_code: None,
             output_head: vec![],
             more_lines: 0,
+            output_tail: vec![],
             duration_ms: None,
         })
     };
@@ -1795,7 +1606,7 @@ fn an_exited_agent_on_an_away_host_names_why_it_is_away() {
         screen.contains("exited · desk away · this machine is signed out"),
         "{screen}"
     );
-    assert!(screen.contains("worker has exited"), "{screen}");
+    assert!(screen.contains("Enter resumes"), "{screen}");
 
     // Back online, the header says how it ended.
     state.update(Msg::Host(wire::HostEntry {
@@ -1837,16 +1648,28 @@ fn an_agent_that_exited_while_the_daemon_was_away_says_exited_once() {
         ),
     );
     inventory(&mut fleet, wire::inventory_event::Of::Agent(exited));
+    // Home lists it under Exited, which starts folded.
     let mut fleet_view = FleetView::default();
+    fleet_view.key(&fleet, key(KeyCode::Char('G')));
+    fleet_view.key(&fleet, key(KeyCode::Enter));
     let screen = fleet_screen(&mut fleet_view, &fleet);
-    let row = screen.lines().find(|line| line.contains("worker")).unwrap();
-    assert!(row.contains(" exited "), "{screen}");
-    assert!(row.contains("while the daemon was"), "{screen}");
-    assert_eq!(row.matches("exited").count(), 1, "{screen}");
+    let row = screen
+        .lines()
+        .position(|line| line.contains("worker"))
+        .expect(&screen);
+    let rows = screen
+        .lines()
+        .skip(row)
+        .take(2)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rows.contains("while the daemon was away"), "{screen}");
+    assert!(!rows.contains("exited · exited"), "{screen}");
 }
 
+/// Thinking is never drawn, with or without a measured time.
 #[test]
-fn thinking_with_no_measured_time_reads_thought_alone() {
+fn thinking_is_never_drawn() {
     use wire::claude_sdk_item::Kind as K;
     let thinking = |order: u64, at_ms: i64| Item {
         key: format!("t{order}"),
@@ -1861,18 +1684,18 @@ fn thinking_with_no_measured_time_reads_thought_alone() {
         at_ms,
         ..Item::default()
     };
-    // The first thinking lands with the reply before it; the second three
-    // seconds after the first.
     let state = chat(vec![item(1, None), thinking(2, 1_000), thinking(3, 4_000)]);
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
     let (screen, _) = feed(&mut view, &state);
-    assert!(!screen.contains("Thought for 0ms"), "{screen}");
-    assert!(screen.contains("~ Thought\n"), "{screen}");
-    assert!(screen.contains("~ Thought for 3s"), "{screen}");
+    assert!(screen.contains("reply number 1"), "{screen}");
+    assert!(!screen.contains("Thought"), "{screen}");
+    assert!(!screen.contains("weighing it"), "{screen}");
 }
 
+/// "Something else" opens its field on Enter (letters move the list, as
+/// j and k do), and what is typed then is the answer.
 #[test]
-fn typing_on_something_else_starts_the_answer() {
+fn enter_on_something_else_opens_its_answer() {
     let (state, at) = fixtures::frame_where(
         Kind::ClaudeSdk,
         "recorded_question_every_shape",
@@ -1887,13 +1710,12 @@ fn typing_on_something_else_starts_the_answer() {
         view.key(&state, key(KeyCode::Down), theme());
     }
     let (buffer, _) = draw(&mut view, &state, at, 120, 60, theme());
-    assert!(text(&buffer).contains("Something else…"));
-    // 'f' would open the reader anywhere else on the card.
+    assert!(text(&buffer).contains("Something else · enter to type"));
+    view.key(&state, key(KeyCode::Enter), theme());
     typed(&mut view, &state, "fish");
     let (buffer, _) = draw(&mut view, &state, at, 120, 60, theme());
     let screen = text(&buffer);
     assert!(screen.contains("Something else: fish"), "{screen}");
-    assert!(view.reader.is_none());
 }
 
 // --- keys and pastes go to the field or overlay that is open -----------------
@@ -1903,13 +1725,10 @@ fn screen_of(view: &mut ChatView, state: &SessionState, at: i64) -> String {
     text(&buffer)
 }
 
-/// Picks the permission card's deny, which opens its note.
+/// Esc reaches the box's way out; Tab opens the note it carries.
 fn deny_with_note(view: &mut ChatView, state: &SessionState) {
-    let card = ask_card(state).unwrap();
-    let deny = card.choices.iter().position(|c| c.takes_note).unwrap();
-    let digit = char::from_digit(deny as u32 + 1, 10).unwrap();
-    view.key(state, key(KeyCode::Char(digit)), theme());
-    view.key(state, key(KeyCode::Enter), theme());
+    view.key(state, key(KeyCode::Esc), theme());
+    view.key(state, key(KeyCode::Tab), theme());
 }
 
 fn multi_question() -> (SessionState, i64) {
@@ -1979,7 +1798,11 @@ fn ctrl_c_in_an_ask_field_clears_that_field_and_never_the_draft() {
     assert!(view.field_text(&state));
     assert!(view.kill_field(&state));
     kept(&view);
-    assert!(screen_of(&mut view, &state, at).contains("Tell it why (optional):\n"));
+    let screen = screen_of(&mut view, &state, at);
+    assert!(
+        screen.contains("› 3. No") && !screen.contains("No: no"),
+        "{screen}"
+    );
 
     // "Something else…".
     let (state, at) = multi_question();
@@ -1991,6 +1814,7 @@ fn ctrl_c_in_an_ask_field_clears_that_field_and_never_the_draft() {
     for _ in 0..questions[0].options.len() {
         view.key(&state, key(KeyCode::Down), theme());
     }
+    view.key(&state, key(KeyCode::Enter), theme());
     typed(&mut view, &state, "fish");
     assert!(view.field_text(&state));
     assert!(view.kill_field(&state));
@@ -2002,9 +1826,6 @@ fn ctrl_c_in_an_ask_field_clears_that_field_and_never_the_draft() {
     let (state, at) = form();
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
     draft(&mut view);
-    view.key(&state, key(KeyCode::Enter), theme());
-    view.kill_field(&state);
-    kept(&view);
     typed(&mut view, &state, "jlw/amux");
     assert!(view.field_text(&state));
     assert!(view.kill_field(&state));
@@ -2032,7 +1853,7 @@ fn a_paste_goes_to_the_field_with_the_keys() {
     let review = review_token(&view).expect("the comment is saved");
     assert_eq!(review.comments[0].text, "why this?");
     assert_eq!(
-        view.editor.text().chars().count(),
+        view.editor.text().trim_end().chars().count(),
         1,
         "only the review token"
     );
@@ -2045,12 +1866,9 @@ fn a_paste_goes_to_the_field_with_the_keys() {
     view.paste_text(&state, "because");
     assert!(view.editor.is_empty());
     let screen = screen_of(&mut view, &state, at);
-    assert!(
-        screen.contains("Tell it why (optional): because\n"),
-        "{screen}"
-    );
+    assert!(screen.contains("No: because"), "{screen}");
 
-    // "Something else…": a paste on it starts the answer, as typing does.
+    // "Something else", once Enter has opened it.
     let (state, at) = multi_question();
     let Some(AskBody::Question(questions)) = ask_card(&state).map(|card| card.body) else {
         unreachable!()
@@ -2059,6 +1877,7 @@ fn a_paste_goes_to_the_field_with_the_keys() {
     for _ in 0..questions[0].options.len() {
         view.key(&state, key(KeyCode::Down), theme());
     }
+    view.key(&state, key(KeyCode::Enter), theme());
     view.paste_text(&state, "fish");
     view.paste_text(&state, " soup");
     assert!(view.editor.is_empty());
@@ -2068,13 +1887,10 @@ fn a_paste_goes_to_the_field_with_the_keys() {
     // A form field.
     let (state, at) = form();
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.key(&state, key(KeyCode::Enter), theme());
-    view.kill_field(&state);
     view.paste_text(&state, "jlw/amux");
-    view.key(&state, key(KeyCode::Enter), theme());
     assert!(view.editor.is_empty());
     let screen = screen_of(&mut view, &state, at);
-    assert!(screen.contains("jlw/amux"), "{screen}");
+    assert!(screen.contains("› jlw/amux"), "{screen}");
 }
 
 #[test]
@@ -2100,8 +1916,8 @@ fn a_paste_into_a_secret_answer_shows_as_bullets() {
     };
     let mut ask = crate::chat::ask::AskUi::default();
     ask.sync(&card);
-    ask.paste(&card, "s3cret");
-    let lines = ask.render(&card, "worker", false, 100, theme());
+    ask.paste_box_note(&card, "s3cret");
+    let lines = ask.box_lines(&card, 100, theme());
     let screen: Vec<String> = lines
         .lines
         .iter()
@@ -2113,7 +1929,7 @@ fn a_paste_into_a_secret_answer_shows_as_bullets() {
         })
         .collect();
     let screen = screen.join("\n");
-    assert!(screen.contains("Answer: ••••••"), "{screen}");
+    assert!(screen.contains("› ••••••"), "{screen}");
     assert!(!screen.contains("s3cret"), "{screen}");
 }
 
@@ -2152,13 +1968,13 @@ fn q_and_question_mark_reach_an_open_fleet_overlay_first() {
     assert_eq!(view.key(&fleet, help), vec![FleetEffect::Help]);
 
     // The hosts overlay: q closes it, and the next q quits.
-    view.key(&fleet, key(KeyCode::Char('h')));
+    view.key(&fleet, key(KeyCode::Char('p')));
     assert!(fleet_screen(&mut view, &fleet).contains("studio"));
     assert_eq!(view.key(&fleet, q), vec![]);
     assert_eq!(view.key(&fleet, q), vec![FleetEffect::Quit]);
 
     // New and confirm keep their overlay.
-    for opens in ['n', 'd'] {
+    for opens in ['n', 'x'] {
         view.key(&fleet, key(KeyCode::Char(opens)));
         assert_eq!(view.key(&fleet, q), vec![], "{opens}");
         assert_eq!(view.key(&fleet, help), vec![], "{opens}");
@@ -2178,7 +1994,7 @@ fn q_and_question_mark_reach_an_open_fleet_overlay_first() {
 }
 
 #[test]
-fn esc_on_a_later_question_and_the_review_goes_back() {
+fn left_on_a_later_question_and_the_review_goes_back() {
     let (state, at) = multi_question();
     let Some(AskBody::Question(questions)) = ask_card(&state).map(|card| card.body) else {
         unreachable!()
@@ -2193,7 +2009,7 @@ fn esc_on_a_later_question_and_the_review_goes_back() {
     }
     view.key(&state, key(KeyCode::Enter), theme());
     asks(&mut view, &questions[1].question);
-    view.key(&state, key(KeyCode::Esc), theme());
+    view.key(&state, key(KeyCode::Left), theme());
     asks(&mut view, &questions[0].question);
 
     for question in &questions {
@@ -2202,10 +2018,10 @@ fn esc_on_a_later_question_and_the_review_goes_back() {
         }
         view.key(&state, key(KeyCode::Enter), theme());
     }
-    asks(&mut view, "enter send · esc back");
-    view.key(&state, key(KeyCode::Esc), theme());
+    asks(&mut view, "Send answers");
+    view.key(&state, key(KeyCode::Left), theme());
     let screen = screen_of(&mut view, &state, at);
-    assert!(!screen.contains("enter send"), "{screen}");
+    assert!(!screen.contains("Send answers"), "{screen}");
     asks(&mut view, &questions[questions.len() - 1].question);
 }
 
@@ -2272,6 +2088,7 @@ fn home_fleet() -> FleetState {
 static HOME_PLACE: std::sync::LazyLock<crate::home::Place<'static>> =
     std::sync::LazyLock::new(|| crate::home::Place {
         local_host: b"a",
+        version: "",
         working_dir: "~/work/amux",
         attach: false,
         chat_in: crate::setup::ChatIn::Amux,
@@ -2321,13 +2138,14 @@ fn home_leads_with_what_needs_you_and_folds_the_exited() {
     assert!(!screen.contains('┌'), "home has no frame: {screen}");
 }
 
+/// Home lists agents in the order they were made: work streaming in and a
+/// turn ending leave every row where it was.
 #[test]
-fn streaming_never_reorders_home_but_a_turn_ending_does() {
+fn home_keeps_its_order_while_agents_stream_and_finish() {
     let mut fleet = home_fleet();
     let mut home = crate::home::Home::default();
     home_screen(&mut home, &fleet, theme());
-    // beta streams: its activity time moves past alpha's, its attention
-    // does not.
+    // beta streams: its activity time moves past alpha's.
     inventory(
         &mut fleet,
         home_agent(b"w2", "beta", Phase::Working, None, now()),
@@ -2337,14 +2155,14 @@ fn streaming_never_reorders_home_but_a_turn_ending_does() {
         row_of(&screen, "alpha") < row_of(&screen, "beta"),
         "{screen}"
     );
-    // beta's turn ends: that is a moment, and it moves up.
+    // beta's turn ends, and it stays put.
     inventory(
         &mut fleet,
         home_agent(b"w2", "beta", Phase::Idle, None, now()),
     );
     let screen = home_screen(&mut home, &fleet, theme());
     assert!(
-        row_of(&screen, "beta") < row_of(&screen, "alpha"),
+        row_of(&screen, "alpha") < row_of(&screen, "beta"),
         "{screen}"
     );
 }
@@ -2436,12 +2254,11 @@ fn a_new_agent_starts_from_a_draft_with_its_first_prompt() {
         "{screen}"
     );
     assert!(
-        screen.contains("Claude (terminal) · ~/work/amux"),
+        screen.contains("Claude · Opus (high) · default │ ~/work/amux"),
         "{screen}"
     );
-    // Enter on an empty draft does nothing; Tab picks the next provider.
+    // Enter on an empty draft does nothing.
     assert!(home.key(&fleet, key(KeyCode::Enter), false).is_empty());
-    home.key(&fleet, key(KeyCode::Tab), false);
     for c in "fix it".chars() {
         home.key(&fleet, key(KeyCode::Char(c)), false);
     }
@@ -2451,7 +2268,7 @@ fn a_new_agent_starts_from_a_draft_with_its_first_prompt() {
         false,
     );
     assert!(
-        matches!(effects.as_slice(), [FleetEffect::Start { kind: Kind::ClaudeSdk, text, open: false, .. }] if text == "fix it"),
+        matches!(effects.as_slice(), [FleetEffect::Start { setup, text, open: false, .. }] if text == "fix it" && setup.kind() == Kind::ClaudeSdk),
         "{effects:?}"
     );
     // While it starts, keys do not edit the draft.
@@ -2671,8 +2488,8 @@ fn the_prompt_of_the_turn_at_the_top_is_pinned_under_the_header() {
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
     let pinned = |view: &mut ChatView, state: &SessionState| {
         let (screen, _) = feed(view, state);
-        // The header, a blank line, then the pin's padding and words.
-        screen.lines().nth(4).unwrap_or_default().to_owned()
+        // A blank line, the header, a blank line, then the pin.
+        screen.lines().nth(3).unwrap_or_default().to_owned()
     };
     // Deep in the first turn: its prompt is pinned.
     view.anchor = crate::chat::layout::Anchor::Top {
@@ -2695,7 +2512,7 @@ fn the_prompt_of_the_turn_at_the_top_is_pinned_under_the_header() {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 10,
-            row: 4,
+            row: 3,
             modifiers: KeyModifiers::NONE,
         },
         theme(),

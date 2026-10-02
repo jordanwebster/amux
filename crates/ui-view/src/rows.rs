@@ -33,7 +33,7 @@ pub struct Row {
     pub collapsed: bool,
     /// A permission decision, meta on the tool call's own row.
     pub decision: Option<Decision>,
-    /// Drawn in the accent: an open ask points at it, or it failed.
+    /// Drawn in the attention ink: an open ask points at it, or it failed.
     pub attention: bool,
     /// A subagent's own step: collapsed under the subagent's row, which
     /// opens to it.

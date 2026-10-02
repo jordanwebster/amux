@@ -1,7 +1,7 @@
-
-▎ fixer has exited · type to resume it with a message
-  enter resume with this message · ctrl+j newline
+  ╭─ Enter resumes ──────────────────────────────────────────────────────────────────────────────╮
+  │ › Message fixer                                                                              │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 --- styles
-....................................................................................................
-aammmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...............................................
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...................................................
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..
+..mmmmmmmmmmmmmmmmm..............................................................................m..
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..

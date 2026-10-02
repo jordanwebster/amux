@@ -251,6 +251,9 @@ fn kind_word(kind: Kind) -> &'static str {
 /// The last path component: the project an agent works in.
 fn project(cwd: &str) -> &str {
     let trimmed = cwd.trim_end_matches('/');
+    if trimmed.is_empty() && cwd.starts_with('/') {
+        return "/";
+    }
     trimmed
         .rsplit('/')
         .next()
@@ -1222,7 +1225,7 @@ impl Home {
             .as_ref()
             .filter(|_| self.filtering || self.needle().is_some())
         {
-            push(&mut line, "/ ", theme.accent(), width);
+            push(&mut line, "/ ", theme.attention(), width);
             let at = text::line_width(&line);
             push(&mut line, filter.text(), theme.text(), width);
             let cursor = self.filtering.then(|| at + filter.cursor_chars());
@@ -1307,7 +1310,7 @@ impl Home {
         if need > 0 {
             parts.push((
                 format!("{need} need{} you", if need == 1 { "s" } else { "" }),
-                theme.accent(),
+                theme.attention(),
             ));
         }
         let mut right = Line::default();
@@ -1393,9 +1396,10 @@ impl Home {
                     let marker = if self.folded(*section) { "▸" } else { "▾" };
                     let (marker_style, label) = match (chosen, section) {
                         (true, _) => (theme.emphasis(), theme.emphasis()),
-                        (false, Section::NeedsYou) => {
-                            (theme.faint(), theme.accent().add_modifier(Modifier::BOLD))
-                        }
+                        (false, Section::NeedsYou) => (
+                            theme.faint(),
+                            theme.attention().add_modifier(Modifier::BOLD),
+                        ),
                         (false, _) => (theme.faint(), theme.muted().add_modifier(Modifier::BOLD)),
                     };
                     push(&mut line, marker, marker_style, width);
@@ -1925,17 +1929,17 @@ fn tint(line: Line<'static>, chosen: bool, width: usize, theme: Theme) -> Line<'
 }
 
 /// An agent's mark: empty when nothing is happening, full while it works,
-/// and full in the accent when it needs you. Every other state is said in
+/// and full in the attention ink when it needs you. Every other state is said in
 /// words on the second line, so there are only three marks to learn.
 fn mark(entry: &Entry, quiet: bool, theme: Theme) -> (&'static str, Style) {
     if quiet {
         return ("○", theme.faint());
     }
     if entry.loud.is_some() {
-        return ("●", theme.accent());
+        return ("●", theme.attention());
     }
     match ui_state::attention(&entry.agent) {
-        Attention::NeedsYou => ("●", theme.accent()),
+        Attention::NeedsYou => ("●", theme.attention()),
         Attention::Working => ("●", theme.text()),
         Attention::Starting | Attention::Idle => ("○", theme.muted()),
         Attention::Exited => ("○", theme.faint()),
@@ -1999,6 +2003,7 @@ fn agent_lines(
         if let Some(host) = host.filter(|host| host.host_id != place.local_host) {
             parts.push(host.name.clone());
         }
+        parts.retain(|part| !part.is_empty());
         parts.join(" · ")
     };
     let room = right_at.saturating_sub(NAME_COL + indent + 2);
@@ -2019,7 +2024,7 @@ fn agent_lines(
     if let Some(fold) = fold {
         let from = text::line_width(&first);
         let style = if entry.loud.is_some() {
-            theme.accent()
+            theme.attention()
         } else {
             theme.faint()
         };

@@ -1,7 +1,7 @@
-
-▎ studio is away · this machine is signed out
-  draft kept · sending waits until this machine signs in
+  ╭─ studio is away · this machine is signed out ────────────────────────────────────────────────╮
+  │ › Message fixer                                                                              │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 --- styles
-....................................................................................................
-aammmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.......................................................
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm............................................
+..mmm???????????????????????????????????????????mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..
+..mmmmmmmmmmmmmmmmm..............................................................................m..
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..

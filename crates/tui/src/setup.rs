@@ -800,7 +800,10 @@ impl Picker {
         let from = selected.saturating_sub(SHOWN - 1);
         for (at, choice) in shown.iter().enumerate().skip(from).take(SHOWN) {
             let lit = at == selected && !choice.disabled;
-            let mut row = Line::from(Span::styled(if lit { "› " } else { "  " }, theme.accent()));
+            let mut row = Line::from(Span::styled(
+                if lit { "› " } else { "  " },
+                theme.attention(),
+            ));
             if !self.filtering() {
                 push(&mut row, format!("{}. ", at + 1), theme.muted(), wide);
             }

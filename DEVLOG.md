@@ -1,3 +1,21 @@
+2026-10-02 — **The terminal client's tests describe the new design.** The
+TUI unit tests, the component goldens and the served frames are rewritten
+for the new home and chat; tests of screens that are gone are removed, and
+behaviour each test claimed is kept where it still holds (Esc's way out,
+the box's note, Enter opening "Something else", withdraw on Backspace).
+The component vocabulary draws rows as the feed draws them, every ask in
+the composer's box, the queued prompts and the composer's states. Served
+frames no longer depend on the temp path or the clock: their agents work
+in `/`, times of day and durations are masked, and policy time moves
+between spawns so home's order holds. The theme's `accent` token is
+`attention` (and so is its key in a theme file). Fixes found on the way:
+words wrap with their punctuation; a pending file change names its own
+action and each file's; a removed chip takes its space with it, so a
+draft emptied of its review is empty; a prompt's time reads in muted
+rather than faint, which fell below the readable floor on its surface;
+the dark theme's ANSI error ink is light red, as its true colour is; and a
+row whose folder is `/` no longer reads "  · desk".
+
 2026-10-02 — **Report a Problem in the terminal.** `b` on home, or the
 leader then `b` in a chat, freezes the screen and opens a report over it:
 drag with the mouse to mark what looks wrong, a note on each mark and one

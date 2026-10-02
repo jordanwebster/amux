@@ -156,11 +156,18 @@ impl Editor {
         let Some((at, _)) = self.text.match_indices(PLACEHOLDER).nth(index) else {
             return;
         };
-        let len = PLACEHOLDER.len_utf8();
+        // The token and the space after it, which [`Editor::attach`] adds:
+        // a draft left holding only that space would not read as empty.
+        let mut len = PLACEHOLDER.len_utf8();
+        if self.text[at + len..].starts_with(' ') {
+            len += 1;
+        }
         self.text.replace_range(at..at + len, "");
         self.attachments.remove(index);
-        if self.cursor > at {
+        if self.cursor >= at + len {
             self.cursor -= len;
+        } else if self.cursor > at {
+            self.cursor = at;
         }
     }
 
@@ -457,13 +464,14 @@ mod tests {
     fn a_long_paste_becomes_one_text_token() {
         let mut editor = Editor::default();
         editor.paste(&"line\n".repeat(PASTE_TOKEN_LINES));
-        assert_eq!(editor.text(), PLACEHOLDER.to_string());
+        // The token, and the space a chip keeps after itself.
+        assert_eq!(editor.text(), format!("{PLACEHOLDER} "));
         assert!(matches!(
             &editor.attachments()[0].of,
             Some(attachment::Of::Text(text)) if text.name == "pasted-1"
         ));
         editor.paste("short");
-        assert_eq!(editor.text(), format!("{PLACEHOLDER}short"));
+        assert_eq!(editor.text(), format!("{PLACEHOLDER} short"));
         // As a terminal delivers it: carriage returns between the lines.
         editor.paste(&"line\r".repeat(PASTE_TOKEN_LINES));
         assert!(matches!(

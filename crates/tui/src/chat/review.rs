@@ -615,7 +615,7 @@ impl ReviewPage {
         let mut cursor = None;
         match &self.filter {
             Some(filter) => {
-                push(&mut title, "/ ", theme.accent(), width);
+                push(&mut title, "/ ", theme.attention(), width);
                 let at = text::line_width(&title);
                 push(&mut title, filter.text(), theme.text(), width);
                 if self.filtering {
@@ -911,7 +911,7 @@ impl ReviewPage {
                 {
                     let mut line = Line::from(Span::raw(" ".repeat(indent)));
                     let lead = if i == 0 { "│ " } else { "  " };
-                    push(&mut line, lead, theme.accent(), width);
+                    push(&mut line, lead, theme.attention(), width);
                     push(&mut line, part, theme.text(), width);
                     lines.push(line);
                 }

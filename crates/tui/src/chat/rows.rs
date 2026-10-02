@@ -97,7 +97,7 @@ pub fn row_lines(
     let bar = if state.focused {
         Some(Span::styled("▌", theme.focus_bar()))
     } else if row.attention {
-        Some(Span::styled("▌", theme.accent()))
+        Some(Span::styled("▌", theme.attention()))
     } else {
         None
     };
@@ -155,7 +155,7 @@ pub(crate) fn call_verb(
 
 fn state_glyph(state: ToolStateView, done: &'static str, theme: Theme) -> (&'static str, Style) {
     match state {
-        ToolStateView::Pending | ToolStateView::Running => ("▸", theme.accent()),
+        ToolStateView::Pending | ToolStateView::Running => ("▸", theme.attention()),
         ToolStateView::Succeeded => (done, theme.muted()),
         ToolStateView::Failed => ("✗", theme.error()),
         ToolStateView::Denied | ToolStateView::Cancelled => ("⊘", theme.muted()),
@@ -471,7 +471,7 @@ fn resolution_verb(resolution: Resolution, answered: &'static str) -> &'static s
 
 fn resolution_glyph(resolution: Resolution, theme: Theme) -> (&'static str, Style) {
     match resolution {
-        Resolution::Open => ("?", theme.accent()),
+        Resolution::Open => ("?", theme.attention()),
         Resolution::Answered => ("✔", theme.ok()),
         _ => ("⊘", theme.muted()),
     }
@@ -519,7 +519,7 @@ fn body(
                 .into_iter()
                 .enumerate()
             {
-                let mut line = Line::from(Span::styled("▎   ", theme.accent_bar()));
+                let mut line = Line::from(Span::styled("▎   ", theme.attention_bar()));
                 line.spans.extend(
                     words
                         .spans
@@ -759,7 +759,7 @@ fn body(
                 meta.push(text::duration(*ms));
             }
             let glyph = if *running {
-                ("◇", theme.accent())
+                ("◇", theme.attention())
             } else {
                 ("◆", theme.muted())
             };
@@ -1161,7 +1161,7 @@ fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'st
             ..
         } => {
             let (glyph, verb) = match verdict {
-                PlanVerdict::Open => (("?", theme.accent()), "Plan proposed"),
+                PlanVerdict::Open => (("?", theme.attention()), "Plan proposed"),
                 PlanVerdict::Approved => (("✔", theme.ok()), "Plan approved"),
                 PlanVerdict::SentBack => (("↩", theme.muted()), "Plan sent back"),
                 PlanVerdict::Dismissed => (("⊘", theme.muted()), "Plan dismissed"),

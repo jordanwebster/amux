@@ -694,7 +694,7 @@ impl AskUi {
             }
             _ => {}
         }
-        let mut head = Line::from(Span::styled("● ", theme.accent()));
+        let mut head = Line::from(Span::styled("● ", theme.attention()));
         push(&mut head, asking_verb(card), theme.text(), width);
         if card.count > 1 {
             push_right(
@@ -913,7 +913,7 @@ impl AskUi {
             push(
                 &mut row,
                 if lit { "› " } else { "  " },
-                theme.accent(),
+                theme.attention(),
                 width,
             );
             push(&mut row, format!("{}. ", at + 1), ink, width);
@@ -1491,7 +1491,7 @@ impl AskUi {
 
         // A form says who asks and why first; its fields are the tabs.
         if let Some((server, message)) = form {
-            let mut top = Line::from(Span::styled("● ", theme.accent()));
+            let mut top = Line::from(Span::styled("● ", theme.attention()));
             push(
                 &mut top,
                 format!("{server} needs details"),
@@ -1511,7 +1511,7 @@ impl AskUi {
         let head_row = out.lines.len();
         let mut head = Line::from(Span::styled(
             if form.is_some() { "" } else { "● " },
-            theme.accent(),
+            theme.attention(),
         ));
         if count == 1 && form.is_some() {
             // One field: no tabs, its label says it all.
@@ -1589,7 +1589,7 @@ impl AskUi {
                     push(
                         &mut row,
                         if lit && i == 0 { "› " } else { "  " },
-                        theme.accent(),
+                        theme.attention(),
                         width,
                     );
                     push(
@@ -1633,7 +1633,7 @@ impl AskUi {
             push(
                 &mut send,
                 if lit { "› " } else { "  " },
-                theme.accent(),
+                theme.attention(),
                 width,
             );
             // Nothing goes with a required field empty, nor, where the
@@ -1910,7 +1910,7 @@ impl AskUi {
             push(
                 &mut row,
                 if lit { "› " } else { "  " },
-                theme.accent(),
+                theme.attention(),
                 width,
             );
             push(
@@ -1988,7 +1988,7 @@ impl AskUi {
             push(
                 &mut row,
                 if lit { "› " } else { "  " },
-                theme.accent(),
+                theme.attention(),
                 width,
             );
             let typed = if question.secret {
@@ -2055,7 +2055,7 @@ impl AskUi {
         push(
             &mut row,
             if lit { "› " } else { "  " },
-            theme.accent(),
+            theme.attention(),
             width,
         );
         push(
@@ -2257,7 +2257,7 @@ impl AskUi {
             cursor: None,
             spots: Vec::new(),
         };
-        let mut head = Line::from(Span::styled("● ", theme.accent()));
+        let mut head = Line::from(Span::styled("● ", theme.attention()));
         push(
             &mut head,
             format!("{server} needs you to sign in"),
@@ -2287,7 +2287,7 @@ impl AskUi {
             push(
                 &mut row,
                 if lit { "› " } else { "  " },
-                theme.accent(),
+                theme.attention(),
                 width,
             );
             let ink = if lit { theme.bright() } else { theme.text() };
@@ -2302,7 +2302,7 @@ impl AskUi {
         push(
             &mut row,
             if lit { "› " } else { "  " },
-            theme.accent(),
+            theme.attention(),
             width,
         );
         push(
@@ -2333,7 +2333,7 @@ impl AskUi {
             cursor: None,
             spots: Vec::new(),
         };
-        let mut head = Line::from(Span::styled("● ", theme.accent()));
+        let mut head = Line::from(Span::styled("● ", theme.attention()));
         push(&mut head, "Can't answer this here", theme.text(), width);
         out.lines.push(head);
         out.lines.push(Line::default());
@@ -2350,7 +2350,7 @@ impl AskUi {
         if self.attach {
             out.lines.push(Line::default());
             let mut row = Line::default();
-            push(&mut row, "› ", theme.accent(), width);
+            push(&mut row, "› ", theme.attention(), width);
             push(&mut row, "Open Claude's terminal", theme.bright(), width);
             out.spots
                 .push((out.lines.len(), (0, width), BoxSpot::Choice(0)));

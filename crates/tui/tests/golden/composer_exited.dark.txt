@@ -1,7 +1,7 @@
-
-▎ Carry on from the failing test.
-  enter resume with this message · ctrl+j newline
+  ╭─ Enter resumes ──────────────────────────────────────────────────────────────────────────────╮
+  │ › Carry on from the failing test.                                                            │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 --- styles
-....................................................................................................
-aa..................................................................................................
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...................................................
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..
+..mmmm...........................................................................................m..
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..

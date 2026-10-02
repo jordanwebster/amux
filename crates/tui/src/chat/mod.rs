@@ -1882,7 +1882,7 @@ impl ChatView {
         // Where the plain composer's box starts, to mark its top edge.
         let mut plain_box: Option<usize> = None;
         // A permission ask takes over the composer's box: its edge in the
-        // accent, the draft kept behind it.
+        // attention ink, the draft kept behind it.
         let mut ask_box: Option<(usize, Vec<ask::Spot>)> = None;
         let mut ask_mode: Option<(usize, (usize, usize))> = None;
         match &card {
@@ -1893,7 +1893,7 @@ impl ChatView {
                 let drawn = self.ask.box_lines(card, inner, theme);
                 let (lines, mode, _) = framed(
                     drawn.lines,
-                    theme.accent(),
+                    theme.attention(),
                     &EdgeWords {
                         model: crate::words::model_words(state),
                         effort: strip.effort.clone(),
@@ -1943,7 +1943,7 @@ impl ChatView {
                 });
                 let (lines, mode, _) = framed(
                     body,
-                    theme.accent(),
+                    theme.attention(),
                     &EdgeWords {
                         model: crate::words::model_words(state),
                         effort: strip.effort.clone(),
@@ -2005,19 +2005,14 @@ impl ChatView {
         // ink), the link to the host down, an exited agent that Enter
         // resumes, a usage limit reached (warning ink; sending stays open).
         if let Some(at) = plain_box {
-            let words = match &self.not_sent {
-                Some(reason) => Some((reason.clone(), theme.error())),
-                None => waiting_words(&state.composer(), &host, self.away)
-                    .map(|words| (words, theme.faint()))
-                    .or_else(|| {
-                        (state.composer() == Composer::Resume)
-                            .then(|| ("Enter resumes".to_owned(), theme.muted()))
-                    })
-                    .or_else(|| {
-                        composer::limit_reached(&strip, now_ms)
-                            .map(|words| (words, theme.warning()))
-                    }),
-            };
+            let words = edge_title(
+                self.not_sent.as_deref(),
+                &state.composer(),
+                &host,
+                self.away,
+                composer::limit_reached(&strip, now_ms),
+                theme,
+            );
             if let Some((words, ink)) = words
                 && let Some(top) = bottom.get_mut(at)
             {
@@ -2685,7 +2680,7 @@ fn sign_in_lines(
         ),
     };
     let mut lines = Vec::new();
-    let mut head = Line::from(Span::styled("● ", theme.accent()));
+    let mut head = Line::from(Span::styled("● ", theme.attention()));
     push(
         &mut head,
         format!("{who} needs you to sign in"),
@@ -2753,6 +2748,60 @@ fn waiting_words(composer: &Composer, host: &str, away: Away) -> Option<String> 
         Composer::Disabled(Waiting::CatchingUp) => "catching up".to_owned(),
         Composer::Send | Composer::Resume => return None,
     })
+}
+
+/// What the plain composer's top edge says stands in the way of sending,
+/// most pressing first, with its ink: the last prompt refused, the link to
+/// the host down, an exited agent that Enter resumes, a usage limit
+/// reached (sending stays open).
+fn edge_title(
+    not_sent: Option<&str>,
+    composer: &Composer,
+    host: &str,
+    away: Away,
+    limit: Option<String>,
+    theme: Theme,
+) -> Option<(String, ratatui::style::Style)> {
+    if let Some(reason) = not_sent {
+        return Some((reason.to_owned(), theme.error()));
+    }
+    waiting_words(composer, host, away)
+        .map(|words| (words, theme.faint()))
+        .or_else(|| {
+            (*composer == Composer::Resume).then(|| ("Enter resumes".to_owned(), theme.muted()))
+        })
+        .or_else(|| limit.map(|words| (words, theme.warning())))
+}
+
+/// The plain composer as the chat draws it for `name` on `host`: the draft
+/// or the invitation in its box, and its top edge saying what stands in the
+/// way. For the vocabulary.
+#[cfg(feature = "fixtures")]
+pub(crate) fn composer_lines(
+    editor: &Editor,
+    composer: &Composer,
+    name: &str,
+    host: &str,
+    away: Away,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let invite = match composer {
+        Composer::Disabled(_) | Composer::Resume => format!("Message {name}"),
+        composer => placeholder(composer, name, host, away),
+    };
+    let edge = EdgeWords {
+        model: None,
+        effort: None,
+        mode: None,
+    };
+    let mut lines = boxed_composer(editor, &invite, &edge, true, width, theme).lines;
+    if let Some((words, ink)) = edge_title(None, composer, host, away, None, theme)
+        && let Some(top) = lines.first_mut()
+    {
+        *top = marked_edge_in(&words, ink, width, theme);
+    }
+    lines
 }
 
 /// Why the agent refused a prompt, in words, from the wire's reasons.
@@ -3282,7 +3331,7 @@ fn state_words(
         }
         (Composer::Disabled(Waiting::CatchingUp), _) => ("catching up".to_owned(), theme.muted()),
         (_, _) if state.reset_pending() => ("refreshing".to_owned(), theme.muted()),
-        (_, PhaseView::NeedsYou) => ("needs you".to_owned(), theme.accent()),
+        (_, PhaseView::NeedsYou) => ("needs you".to_owned(), theme.attention()),
         (_, PhaseView::Working) => ("working".to_owned(), theme.muted()),
         (_, PhaseView::Idle) => ("idle".to_owned(), theme.muted()),
         (_, PhaseView::Starting) => ("starting".to_owned(), theme.muted()),
@@ -3323,7 +3372,7 @@ fn family_line(family: &FamilyHeader, width: usize, theme: Theme) -> Line<'stati
                 " · {waiting} need{} you",
                 if waiting == 1 { "s" } else { "" }
             ),
-            theme.accent(),
+            theme.attention(),
             width,
         );
     }

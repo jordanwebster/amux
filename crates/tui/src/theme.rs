@@ -81,7 +81,7 @@ pub struct Tokens {
     /// A third ink, below muted: metadata read only when looked for.
     pub faint: Token,
     pub emphasis: Token,
-    pub accent: Token,
+    pub attention: Token,
     pub user_surface: Token,
     pub panel: Token,
     /// Section rules: a line that separates without being read.
@@ -121,7 +121,7 @@ enum Semantic {
     Ok,
     Warning,
     Error,
-    Accent,
+    Attention,
     Code,
     Focus,
 }
@@ -133,7 +133,7 @@ impl Semantic {
             Self::Error => (1, 9),
             Self::Ok => (2, 10),
             Self::Warning => (3, 11),
-            Self::Accent => (4, 12),
+            Self::Attention => (4, 12),
             Self::Focus => (5, 13),
             Self::Code => (6, 14),
         }
@@ -283,7 +283,7 @@ impl Theme {
     /// amux's own dark palette: a cool near-black that is not quite
     /// black, one clearly lighter surface for the person's own words, and
     /// soft accents so nothing in the feed shouts. As in a terminal's own
-    /// palette, the accent ("needs you") is a blue and code a cyan.
+    /// palette, the attention ink ("needs you") is a blue and code a cyan.
     /// Tuned by eye at 120x40 against the working Claude and Codex
     /// screens; every hex is amux's, borrowed from no published scheme.
     pub const fn dark(mode: ColorMode) -> Self {
@@ -295,8 +295,8 @@ impl Theme {
                 faint: Token::new((96, 102, 116), Color::DarkGray),
                 emphasis: Token::new((242, 244, 247), Color::White),
                 // The sixteen conventional blues are too dark to read on
-                // black, so in that face the accent takes light cyan.
-                accent: Token::new((108, 160, 232), Color::LightCyan),
+                // black, so in that face attention takes light cyan.
+                attention: Token::new((108, 160, 232), Color::LightCyan),
                 user_surface: Token::new((24, 32, 40), Color::Black),
                 panel: Token::new((23, 27, 34), Color::Blue),
                 hairline: Token::new((44, 50, 58), Color::DarkGray),
@@ -304,7 +304,7 @@ impl Theme {
                 code: Token::new((86, 182, 194), Color::Cyan),
                 ok: Token::new((134, 184, 122), Color::Green),
                 warning: Token::new((210, 162, 76), Color::Yellow),
-                error: Token::new((222, 123, 132), Color::Red),
+                error: Token::new((222, 123, 132), Color::LightRed),
                 diff_added_fg: Token::new((143, 203, 138), Color::Black),
                 diff_added_bg: Token::new((22, 38, 27), Color::Green),
                 diff_removed_fg: Token::new((224, 141, 149), Color::White),
@@ -318,7 +318,7 @@ impl Theme {
     }
 
     /// amux's own light palette: a warm off-white that is easier to sit
-    /// in front of than pure white, the same blue accent and cyan code
+    /// in front of than pure white, the same blue attention and cyan code
     /// darkened until they hold their own on paper, and diff tints kept pale enough that a
     /// hunk still reads as text.
     pub const fn light(mode: ColorMode) -> Self {
@@ -329,13 +329,13 @@ impl Theme {
                 muted: Token::new((106, 112, 128), Color::Black),
                 faint: Token::new((134, 139, 150), Color::DarkGray),
                 emphasis: Token::new((21, 24, 31), Color::Black),
-                accent: Token::new((38, 94, 168), Color::Blue),
+                attention: Token::new((38, 94, 168), Color::Blue),
                 user_surface: Token::new((236, 241, 243), Color::Cyan),
                 panel: Token::new((240, 240, 238), Color::Gray),
                 hairline: Token::new((220, 223, 228), Color::Gray),
                 focus: Token::new((109, 78, 156), Color::Magenta),
                 // Conventional cyan does not read on paper; in the sixteen
-                // faces code shares the accent's blue, in a different context.
+                // faces code shares attention's blue, in a different context.
                 code: Token::new((14, 112, 122), Color::Blue),
                 ok: Token::new((47, 122, 68), Color::Green),
                 warning: Token::new((138, 91, 16), Color::Yellow),
@@ -416,7 +416,7 @@ impl Theme {
             warning: hue(Semantic::Warning),
             error: hue(Semantic::Error),
             diff_removed_fg: hue(Semantic::Error),
-            accent: hue(Semantic::Accent),
+            attention: hue(Semantic::Attention),
             code: hue(Semantic::Code),
             focus: hue(Semantic::Focus),
         };
@@ -499,7 +499,7 @@ impl Theme {
             TokenKind::String | TokenKind::Inserted => self.tokens.ok,
             TokenKind::Number => self.tokens.warning,
             TokenKind::Type => self.tokens.code,
-            TokenKind::Function => self.tokens.accent,
+            TokenKind::Function => self.tokens.attention,
             TokenKind::Comment => self.tokens.faint,
             TokenKind::Deleted => self.tokens.error,
         };
@@ -552,16 +552,16 @@ impl Theme {
         Style::default().fg(self.color(self.tokens.hairline))
     }
 
-    /// The accent on the bare page: "needs you", an open ask's mark, the
+    /// Attention on the bare page: "needs you", an open ask's mark, the
     /// composer's edge.
-    pub(crate) fn accent(self) -> Style {
-        Style::default().fg(self.color(self.tokens.accent))
+    pub(crate) fn attention(self) -> Style {
+        Style::default().fg(self.color(self.tokens.attention))
     }
 
-    /// The accent column down the left edge of a filled surface.
-    pub(crate) fn accent_bar(self) -> Style {
+    /// The attention column down the left edge of a filled surface.
+    pub(crate) fn attention_bar(self) -> Style {
         Style::default()
-            .fg(self.color(self.tokens.accent))
+            .fg(self.color(self.tokens.attention))
             .bg(self.color(self.tokens.user_surface))
     }
 
@@ -598,7 +598,7 @@ impl Theme {
         let fg = style.fg.filter(|color| *color != Color::Reset);
         let bg = style.bg.filter(|color| *color != Color::Reset);
 
-        if fg == Some(self.color(self.tokens.accent))
+        if fg == Some(self.color(self.tokens.attention))
             && bg == Some(self.color(self.tokens.user_surface))
         {
             return 'A';
@@ -637,7 +637,7 @@ impl Theme {
         for (token, class) in [
             (self.tokens.muted, 'm'),
             (self.tokens.code, 'c'),
-            (self.tokens.accent, 'a'),
+            (self.tokens.attention, 'a'),
             (self.tokens.ok, 'o'),
             (self.tokens.warning, 'w'),
             (self.tokens.error, 'x'),
@@ -712,7 +712,7 @@ fn normalize_base_key(key: &str) -> Option<String> {
 /// | warning | 09 | 14 |
 /// | success, added foreground | 0B | 13 |
 /// | code | 0C | 17 |
-/// | accent | 0D | 15 |
+/// | attention | 0D | 15 |
 /// | focus | 0E | 16 |
 ///
 /// base16 has no diff backgrounds, so both tints start from `base01` and are
@@ -750,7 +750,7 @@ pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, Theme
         ok: mapped_token(file, accent_base("base0B", "base13"))?,
         diff_added_fg: mapped_token(file, accent_base("base0B", "base13"))?,
         code: mapped_token(file, accent_base("base0C", "base17"))?,
-        accent: mapped_token(file, accent_base("base0D", "base15"))?,
+        attention: mapped_token(file, accent_base("base0D", "base15"))?,
         focus: mapped_token(file, accent_base("base0E", "base16"))?,
         diff_added_bg: mapped_token(file, "base01")?,
         diff_removed_bg: mapped_token(file, "base01")?,
@@ -858,8 +858,8 @@ fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>, faces: &Faces
     lift(&mut tokens.muted, "muted", &surfaces, READABLE_LABEL, true);
     lift(&mut tokens.faint, "faint", &surfaces, READABLE_TRIM, true);
     lift(
-        &mut tokens.accent,
-        "accent",
+        &mut tokens.attention,
+        "attention",
         &surfaces,
         READABLE_LABEL,
         true,
@@ -1202,7 +1202,7 @@ fn set_token(tokens: &mut Tokens, name: &str, token: Token) -> Result<(), ThemeE
         "muted" => &mut tokens.muted,
         "faint" => &mut tokens.faint,
         "emphasis" => &mut tokens.emphasis,
-        "accent" => &mut tokens.accent,
+        "attention" => &mut tokens.attention,
         "user_surface" => &mut tokens.user_surface,
         "panel" => &mut tokens.panel,
         "focus" => &mut tokens.focus,
@@ -1379,14 +1379,12 @@ mod tests {
         assert_eq!(theme.classify(theme.warning()), 'w');
         assert_eq!(theme.classify(theme.error()), 'x');
         assert_eq!(theme.classify(theme.user_surface()), 'U');
-        assert_eq!(theme.classify(theme.panel()), 'P');
-        assert_eq!(theme.classify(theme.accent_bar()), 'A');
+        assert_eq!(theme.classify(theme.attention_bar()), 'A');
         assert_eq!(theme.classify(theme.focus_bar()), 'F');
         assert_eq!(theme.classify(theme.diff_added()), '+');
         assert_eq!(theme.classify(theme.diff_removed()), '-');
         assert_eq!(theme.classify(theme.diff_context()), '.');
-        assert_eq!(theme.classify(theme.diff_meta()), 'M');
-        assert_eq!(theme.classify(theme.accent()), 'a');
+        assert_eq!(theme.classify(theme.attention()), 'a');
     }
 
     #[test]
@@ -1397,14 +1395,13 @@ mod tests {
     }
 
     #[test]
-    fn classify_resolves_ansi_faces_without_confusing_the_accent_and_code() {
+    fn classify_resolves_ansi_faces_without_confusing_attention_and_code() {
         for theme in [Theme::dark(ColorMode::Ansi), Theme::light(ColorMode::Ansi)] {
-            assert_eq!(theme.classify(theme.accent_bar()), 'A');
+            assert_eq!(theme.classify(theme.attention_bar()), 'A');
             assert_eq!(theme.classify(theme.code()), 'c');
             assert_eq!(theme.classify(theme.diff_added()), '+');
             assert_eq!(theme.classify(theme.diff_removed()), '-');
             assert_eq!(theme.classify(theme.user_surface()), 'U');
-            assert_eq!(theme.classify(theme.panel()), 'P');
         }
     }
 
@@ -1493,7 +1490,7 @@ mod tests {
             (theme.tokens.warning, (0xa0, 0x60, 0x00), "warning"),
             (theme.tokens.ok, (0x00, 0x90, 0x00), "ok"),
             (theme.tokens.code, (0x00, 0x80, 0x90), "code"),
-            (theme.tokens.accent, (0x00, 0x60, 0xa0), "accent"),
+            (theme.tokens.attention, (0x00, 0x60, 0xa0), "attention"),
             (theme.tokens.focus, (0x70, 0x40, 0xa0), "focus"),
         ] {
             let (hue, saturation) = hue_and_saturation(token.rgb);
@@ -1566,22 +1563,25 @@ mod tests {
 
         // A token named directly is the user's own word, so it is taken
         // literally in both faces rather than repaired.
-        assert_eq!(theme.tokens.accent.rgb, (0xab, 0xcd, 0xef));
-        assert_eq!(theme.tokens.accent.ansi, nearest_ansi((0xab, 0xcd, 0xef)));
+        assert_eq!(theme.tokens.attention.rgb, (0xab, 0xcd, 0xef));
+        assert_eq!(
+            theme.tokens.attention.ansi,
+            nearest_ansi((0xab, 0xcd, 0xef))
+        );
     }
 
     #[test]
     fn base24_direct_override_reaches_the_rendered_frame() {
         let file = parse_theme_file(BASE24_SAMPLE).expect("parse base24 fixture");
         let theme = theme_from_file(&file, ColorMode::TrueColor).expect("resolve base24 fixture");
-        let buffer = render_claude_working(theme);
+        let buffer = render_named(Named::ClaudePermissionAsk, theme);
 
         assert!(
             buffer
                 .content()
                 .iter()
                 .any(|cell| cell.fg == Color::Rgb(0xab, 0xcd, 0xef)),
-            "ClaudeWorking should paint its accent bars from the direct accent override"
+            "an ask's box should paint its edge from the direct attention override"
         );
     }
 
@@ -1647,11 +1647,11 @@ mod tests {
     #[test]
     fn bad_override_colour_names_the_token_and_value() {
         let mut file = parse_theme_file(BASE16_SAMPLE).expect("parse fixture");
-        file.tokens.insert("accent".into(), "#xyzxyz".into());
+        file.tokens.insert("attention".into(), "#xyzxyz".into());
         assert!(matches!(
             theme_from_file(&file, ColorMode::TrueColor),
             Err(ThemeError::BadColor { key, value })
-                if key == "accent" && value == "#xyzxyz"
+                if key == "attention" && value == "#xyzxyz"
         ));
     }
 
@@ -1716,7 +1716,7 @@ mod tests {
                 (tokens.text, READABLE_BODY, "text"),
                 (tokens.emphasis, READABLE_BODY, "emphasis"),
                 (tokens.muted, READABLE_LABEL, "muted"),
-                (tokens.accent, READABLE_LABEL, "accent"),
+                (tokens.attention, READABLE_LABEL, "attention"),
                 (tokens.focus, READABLE_LABEL, "focus"),
                 (tokens.code, READABLE_LABEL, "code"),
                 (tokens.ok, READABLE_LABEL, "ok"),
@@ -1948,8 +1948,8 @@ mod tests {
                 "{name}: error is not the terminal's red"
             );
             assert!(
-                same_hue(theme.tokens.accent, [4, 12]),
-                "{name}: accent is not the terminal's blue"
+                same_hue(theme.tokens.attention, [4, 12]),
+                "{name}: attention is not the terminal's blue"
             );
 
             // The surfaces are steps off the ground, in the direction of the
@@ -1978,7 +1978,7 @@ mod tests {
             for (token, slots, what) in [
                 (theme.tokens.ok, [2usize, 10], "ok"),
                 (theme.tokens.error, [1, 9], "error"),
-                (theme.tokens.accent, [4, 12], "accent"),
+                (theme.tokens.attention, [4, 12], "attention"),
             ] {
                 let face = token.resolve(ColorMode::Ansi);
                 assert!(
@@ -2055,7 +2055,7 @@ mod tests {
             check(tokens.emphasis, "emphasis", &surfaces, READABLE_BODY);
             for (token, what) in [
                 (tokens.muted, "muted"),
-                (tokens.accent, "accent"),
+                (tokens.attention, "attention"),
                 (tokens.focus, "focus"),
                 (tokens.code, "code"),
                 (tokens.ok, "ok"),
@@ -2164,7 +2164,7 @@ mod tests {
                 theme.tokens.text,
                 theme.tokens.muted,
                 theme.tokens.emphasis,
-                theme.tokens.accent,
+                theme.tokens.attention,
                 theme.tokens.user_surface,
                 theme.tokens.panel,
                 theme.tokens.focus,

@@ -1,10 +1,11 @@
 //! Whole-frame goldens reached through served hosts: a testnet desk and
 //! laptop running real daemons and agent processes on the fake providers,
 //! observed from the laptop's client service the way a terminal there
-//! subscribes, and drawn by the fleet and chat views into the test
-//! backend. The fleet at two widths, a chat with its strip, and a replica
-//! chat across its origin's rewind: rows kept on screen until the Reset's
-//! CaughtUp, then the rebuilt transcript.
+//! subscribes, and drawn by home and the chat into the test backend. Home
+//! at two widths and with every standing, the hosts overlay, a chat, an
+//! ask the chat cannot answer, a call running, and a replica chat across
+//! its origin's rewind: rows kept on screen until the Reset's CaughtUp,
+//! then the rebuilt transcript.
 //!
 //! Rewrite with `UPDATE_GOLDENS=1 just test-tui`; CI refuses to rewrite.
 //!
@@ -49,16 +50,19 @@ fn topology() -> Topology {
         .link("desk", "laptop")
 }
 
-/// The served agents, least recently active first. The fleet lists the most
-/// recently active first, so each starts once the one before it has
-/// settled: started together, their first turns race and so would the rows.
+/// The served agents, in the order home lists them: each starts once the
+/// one before it has settled, since started together their first turns
+/// race and so would the rows. Each works in `/`, the same on every
+/// machine, so the header's folder never moves.
 fn agents() -> [AgentDecl; 3] {
     [
         AgentDecl::new("coder", "desk")
+            .cwd("/")
             .kind(FakeKind::Codex)
             .steps(vec![text("Hello from Codex."), Step::TurnEnd])
             .prompt("Say hello."),
         AgentDecl::new("worker", "desk")
+            .cwd("/")
             .kind(FakeKind::ClaudeSdk)
             .steps(vec![
                 text("Ready when you are."),
@@ -71,6 +75,7 @@ fn agents() -> [AgentDecl; 3] {
             ])
             .prompt("Get ready."),
         AgentDecl::new("scout", "desk")
+            .cwd("/")
             .kind(FakeKind::ClaudePty)
             .steps(vec![
                 text("pty.sock is named in crates/agent-dir/src/lib.rs."),
@@ -81,7 +86,10 @@ fn agents() -> [AgentDecl; 3] {
 }
 
 /// Spawns `decl` and returns once it has settled after its first turn.
+/// Policy time moves a second first: the net's clock stands still
+/// otherwise, and home orders agents by when each was made.
 async fn spawn_settled(net: &mut Net, decl: AgentDecl) {
+    net.advance(Duration::from_secs(1)).unwrap();
     let name = decl.name.clone();
     net.spawn(decl).await.unwrap();
     net.settle(&name).await.unwrap();
@@ -229,7 +237,65 @@ fn frame(name: &str, buffer: &Buffer) {
             .any(|(known, _)| *known == name),
         "{name} is not described in tui::vocabulary::FRAMES"
     );
-    assert_golden(&format!("frame_{name}"), &capture(buffer, theme()));
+    assert_golden(
+        &format!("frame_{name}"),
+        &capture(&without_clock(buffer), theme()),
+    );
+}
+
+/// The frame with every time of day ("14:59") read as "hh:mm" and every
+/// measured duration ("Worked 1s", "Working · 0ms") as "<t>", cell for
+/// cell, styles kept: these follow the wall clock and the machine's pace.
+fn without_clock(buffer: &Buffer) -> Buffer {
+    let mut out = buffer.clone();
+    let area = buffer.area;
+    for y in 0..area.height {
+        let row: String = (0..area.width)
+            .map(|x| buffer[(x, y)].symbol().to_owned())
+            .collect();
+        for lead in ["Worked ", "Working · "] {
+            let Some(at) = row.find(lead) else {
+                continue;
+            };
+            // Cells, not bytes: everything before it on these rows is one
+            // cell a character.
+            let start = row[..at].chars().count() + lead.chars().count();
+            let mut x = start as u16;
+            let mut masked = "<t>".chars();
+            while x < area.width && !buffer[(x, y)].symbol().trim().is_empty() {
+                out[(x, y)].set_char(masked.next().unwrap_or(' '));
+                x += 1;
+            }
+            for mask in masked {
+                if x >= area.width {
+                    break;
+                }
+                out[(x, y)].set_char(mask);
+                x += 1;
+            }
+        }
+    }
+    let digit = |x: u16, y: u16| {
+        buffer[(x, y)].symbol().chars().all(|c| c.is_ascii_digit())
+            && !buffer[(x, y)].symbol().is_empty()
+    };
+    for y in 0..area.height {
+        for x in 0..area.width.saturating_sub(4) {
+            let bounded = (x == 0 || !digit(x - 1, y)) && (x + 5 >= area.width || !digit(x + 5, y));
+            if bounded
+                && digit(x, y)
+                && digit(x + 1, y)
+                && buffer[(x + 2, y)].symbol() == ":"
+                && digit(x + 3, y)
+                && digit(x + 4, y)
+            {
+                for (i, mask) in "hh:mm".chars().enumerate() {
+                    out[(x + i as u16, y)].set_char(mask);
+                }
+            }
+        }
+    }
+    out
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -256,10 +322,10 @@ async fn served_frames_match_their_goldens() {
         .unwrap()
         .to_vec();
     let now = now_of(&events) + 1_000;
-    frame("fleet", &draw_fleet(&fleet, now, 110, 16));
-    frame("fleet_60col", &draw_fleet(&fleet, now, 60, 16));
+    frame("home", &draw_fleet(&fleet, now, 110, 16));
+    frame("home_60col", &draw_fleet(&fleet, now, 60, 16));
     let state = chat_state(&fleet, worker.as_bytes(), &events);
-    frame("chat_strip", &draw_chat(&state, 110, 24));
+    frame("chat", &draw_chat(&state, 110, 24));
 
     // A terminal Claude on the desk shows a tool server's dialog in its own
     // terminal: the laptop's chat docks the escape where the composer was,
@@ -267,6 +333,7 @@ async fn served_frames_match_their_goldens() {
     let gatekeeper = net
         .spawn(
             AgentDecl::new("gatekeeper", "desk")
+                .cwd("/")
                 .kind(FakeKind::ClaudePty)
                 .steps(vec![
                     text("Signing in to the tracker first."),
@@ -318,6 +385,7 @@ async fn served_frames_match_their_goldens() {
     let runner = net
         .spawn(
             AgentDecl::new("runner", "desk")
+                .cwd("/")
                 .kind(FakeKind::ClaudePty)
                 .steps(vec![
                     text("Reading the relay logs first."),
@@ -432,6 +500,7 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
         .link("laptop", "studio")
         .agent(
             AgentDecl::new("fixer", "desk")
+                .cwd("/")
                 .kind(FakeKind::ClaudeSdk)
                 .steps(vec![
                     text("Running the auth tests first."),
@@ -448,6 +517,7 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
         )
         .agent(
             AgentDecl::new("runner", "desk")
+                .cwd("/")
                 .kind(FakeKind::ClaudePty)
                 .steps(vec![
                     text("Running the relay tests."),
@@ -460,25 +530,27 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
         )
         .agent(
             AgentDecl::new("crasher", "desk")
+                .cwd("/")
                 .kind(FakeKind::Codex)
                 .steps(vec![text("Starting."), Step::Exit { code: 1 }])
                 .prompt("Migrate the store."),
         );
     let mut net = Net::start(topology).await.unwrap();
-    // The idle heads share a standing, so the fleet lists them most
-    // recently active first: each starts once the one before it has
-    // settled, least recently active first. Started together, their
-    // first turns race and so would the rows.
+    // Each starts once the one before it has settled: started together,
+    // their first turns race and so would the rows.
     let idle = [
         AgentDecl::new("scout", "desk")
+            .cwd("/")
             .kind(FakeKind::ClaudePty)
             .steps(vec![text("Found it."), Step::TurnEnd])
             .prompt("Find the socket name."),
         AgentDecl::new("archivist", "studio")
+            .cwd("/")
             .kind(FakeKind::ClaudePty)
             .steps(vec![text("Archived."), Step::TurnEnd])
             .prompt("Archive the old logs."),
         AgentDecl::new("planner", "desk")
+            .cwd("/")
             .kind(FakeKind::ClaudeSdk)
             .steps(vec![
                 text("Handing the specs to a helper."),
@@ -500,10 +572,12 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
     })
     .await;
     let planner = net.agent("planner").unwrap().id;
+    net.advance(Duration::from_secs(1)).unwrap();
     let specs = net
         .spawn_child(
             "planner",
             AgentDecl::new("specs", "desk")
+                .cwd("/")
                 .kind(FakeKind::ClaudeSdk)
                 .steps(vec![text("3 specs updated."), Step::TurnEnd])
                 .prompt("Update the three specs."),
@@ -542,20 +616,30 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
         + 1_000;
     let mut view = FleetView::default();
     view.local_host = net.host("laptop").unwrap().host_id.as_bytes().to_vec();
-    view.expanded.insert(planner.as_bytes().to_vec());
-    frame(
-        "fleet_standings",
-        &draw_fleet_view(&mut view, &fleet, now, 110, 16),
+    // The planner's family unfolded, as Right does on its row.
+    let family = fleet
+        .agents()
+        .find(|agent| agent.agent_id == planner.as_bytes())
+        .map(ui_state::agent_key)
+        .unwrap();
+    view.select(family);
+    view.key(
+        &fleet,
+        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Right),
     );
     frame(
-        "fleet_standings_80col",
-        &draw_fleet_view(&mut view, &fleet, now, 80, 16),
+        "home_standings",
+        &draw_fleet_view(&mut view, &fleet, now, 110, 30),
+    );
+    frame(
+        "home_standings_80col",
+        &draw_fleet_view(&mut view, &fleet, now, 80, 30),
     );
     view.key(
         &fleet,
-        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('h')),
+        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('p')),
     );
-    frame("hosts", &draw_fleet_view(&mut view, &fleet, now, 110, 16));
+    frame("hosts", &draw_fleet_view(&mut view, &fleet, now, 110, 30));
 
     tokio::time::timeout(Duration::from_secs(60), net.shutdown())
         .await

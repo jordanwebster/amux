@@ -1,49 +1,49 @@
-  gatekeeper · claude @ desk                                               claude-fake-1 · default · needs you
+
+  gatekeeper │ /                                                                         1 │ [Diff] │ [Home]
 
 
 
 
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+    File the flaky relay test.                                                                       hh:mm
 
-▎   File the flaky relay test.
 
     Signing in to the tracker first.
 
-  ▸ Using tracker · sign_in
+  ▸ 1 call
 
-▌ ? Can't answer this here
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ● Can't answer this here                                                                               │
+  │                                                                                                        │
+  │ Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to      │
+  │ answer it, or stop the agent.                                                                          │
+  ╰───────────────────────────────────────────────────────────────────────────────────── Fake 1 · default ─╯
 
-
-  ● Can't answer this here
-    Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to answer
-    it, or stop the agent.
-  › 1. Stop the turn
-    ↑↓/1-9 select · enter confirm · ctrl+x stop
-
+  ctrl+x stop
 --- styles
-..eeeeeeeeeemmmmmmmmmmmmmmmm...............................................mmmmmmmmmmmmmmmmmmmmmmmmmmaaaaaaaaa
+..............................................................................................................
+..??????????????.........................................................................????mmmmmm???mmmmmm..
 ..............................................................................................................
 ..............................................................................................................
 ..............................................................................................................
 ..............................................................................................................
+..??????????????????????????????????????????????????????????????????????????????????????????????????????????..
+..............................................................................................................
+..UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU..
+..UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU..
+..UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU..
 ..............................................................................................................
 ..............................................................................................................
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
 ..............................................................................................................
-AAAAUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+..?.??????....................................................................................................
 ..............................................................................................................
+..aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..
+..aaaa.....................................................................................................a..
+..aa.......................................................................................................a..
+..aammmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm......a..
+..aammmmmmmmmmmmmmmmmmmmmmmmmmmmm..........................................................................a..
+..aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?????????.......aaa..
 ..............................................................................................................
-..............................................................................................................
-..a.eeeee.ccccccccccccccccc...................................................................................
-..............................................................................................................
-a.a.eeeeeeeeeeeeeeeeeeeeee....................................................................................
-..............................................................................................................
-..............................................................................................................
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
-..............................................................................................................
+..eeeeee?????.................................................................................................

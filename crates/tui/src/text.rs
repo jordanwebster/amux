@@ -209,7 +209,7 @@ pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
     for paragraph in text.split('\n') {
         let mut line = String::new();
         let mut used = 0usize;
-        for word in paragraph.split_word_bounds() {
+        for word in words(paragraph) {
             let w = str_width(word);
             if used + w <= width {
                 line.push_str(word);
@@ -241,6 +241,26 @@ pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
         out.push(line.trim_end().to_owned());
     }
     out
+}
+
+/// `paragraph` as the runs a line may break between: each run of spaces,
+/// and each run of everything else, so punctuation stays with its word
+/// ("order." never leaves its full stop for the next line).
+fn words(paragraph: &str) -> impl Iterator<Item = &str> {
+    let mut bounds = paragraph.split_word_bound_indices().peekable();
+    std::iter::from_fn(move || {
+        let (start, first) = bounds.next()?;
+        let space = first.trim().is_empty();
+        let mut end = start + first.len();
+        while let Some((at, next)) = bounds.peek() {
+            if next.trim().is_empty() != space || space {
+                break;
+            }
+            end = at + next.len();
+            bounds.next();
+        }
+        Some(&paragraph[start..end])
+    })
 }
 
 /// The first line of `text`, for a row that opens to the rest.
@@ -310,6 +330,12 @@ mod tests {
         assert_eq!(wrap("alpha beta gamma", 10), vec!["alpha beta", "gamma"]);
         assert_eq!(wrap("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
         assert_eq!(wrap("one\n\ntwo", 10), vec!["one", "", "two"]);
+        // Punctuation stays with its word.
+        assert_eq!(
+            wrap("in this order. 1: go", 13),
+            vec!["in this", "order. 1: go"]
+        );
+        assert_eq!(wrap("see e.g. here", 7), vec!["see", "e.g.", "here"]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
-
-▎ studio no longer trusts this machine
-  draft kept · sending waits until you pair again
+  ╭─ studio no longer trusts this machine ───────────────────────────────────────────────────────╮
+  │ › Message fixer                                                                              │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 --- styles
-....................................................................................................
-aammmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..............................................................
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...................................................
+..mmm????????????????????????????????????mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..
+..mmmmmmmmmmmmmmmmm..............................................................................m..
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..

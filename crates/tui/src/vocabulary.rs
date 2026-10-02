@@ -1,25 +1,32 @@
 //! The chat vocabulary as terminal components, drawn from authored view
-//! values rather than from sessions: every row kind, not-confirmed prompts
-//! and answers, and the review page, once each. The renderer never sees
-//! the provider kind, and ui-view's own goldens prove the projection per
-//! kind, so one drawing of each component is the whole terminal claim.
+//! values rather than from sessions: every row kind as the feed draws it,
+//! each ask body in the composer's box, the queued prompts, the composer's
+//! states and the review page, once each. The renderer never sees the
+//! provider kind, and ui-view's own goldens prove the projection per kind,
+//! so one drawing of each component is the whole terminal claim.
 //!
 //! The component goldens and the PNG renderer both draw this set.
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use ui_state::{Composer, Waiting};
 use ui_view::{
-    AnswerView, AskRow, AttachmentView, Decision, DecisionView, ExploreVerb, FileChangeView,
-    FileRow, Granted, LineKind, OptionView, PatchHead, PatchLine, PlanVerdict, QuestionView,
-    Resolution, Row, RowKind, RunInfo, Segment, ToolStateView,
+    AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CardState, Choice, ChoiceOutcome,
+    Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, LineKind, OptionView,
+    PatchHead, PatchLine, PlanVerdict, QuestionView, QueuedRow, Resolution, Row, RowKind, RunInfo,
+    Scope, Segment, ToolStateView,
 };
 use wire::{BlobRef, BoundaryKind, EnvelopeKind, SendState};
 
+use crate::chat::ask::AskUi;
+use crate::chat::composer::QueueEntry;
 use crate::chat::review::ReviewPage;
-use crate::chat::rows::{RowFacts, RowState, on_rail, row_lines};
+use crate::chat::rows::{RowFacts, RowState, row_lines};
+use crate::chat::{composer_lines, feed};
+use crate::editor::Editor;
 use crate::theme::Theme;
 
 /// Columns every component is drawn at.
@@ -34,32 +41,29 @@ const UNANSWERABLE: &str = "Claude is showing a form from a tool server this bui
 /// frames test draws exactly these.
 pub const FRAMES: &[(&str, &str)] = &[
     (
-        "fleet",
-        "The fleet at 110 columns as the laptop sees it, framed and titled amux: a terminal Claude, a headless Claude and a Codex on the desk, every one idle, each row with its attention mark, name, kind, host and how it is reached, age, status word and what it is working on; the agent count above, the connection, host count and keys on the status bar.",
+        "home",
+        "Home at 110 columns as the laptop sees it: a terminal Claude, a headless Claude and a Codex on the desk, every one idle, newest first, each row with its mark, name, folder and host and its age; the first selected, its age giving way to the close mark; the keys under the list.",
     ),
     (
-        "fleet_60col",
-        "The same fleet at 60 columns: rows keep name, kind, host and age and drop the status word and summary; the status bar keeps the keys that fit.",
+        "home_60col",
+        "The same home at 60 columns: rows keep their mark, name, folder and host.",
     ),
     (
-        "fleet_standings",
-        "A fleet of every standing at 110 columns: a headless Claude asking for permission leads with its mark and status in accent and the needs-you count above, a terminal Claude working, an expanded family whose one-shot child finished, a Codex whose provider exited with its cause, an idle agent, and an agent on a studio that went offline, its row muted with no current status; the status bar counts the offline host.",
+        "home_standings",
+        "Home with every standing at 110 columns: the top line says the studio is away and counts who is working and who needs you; a headless Claude asking for permission under Needs you; under Running, an unfolded family whose one-shot child finished, an agent on the offline studio saying so, an idle agent and a working one; and the exited Codex folded under Exited.",
     ),
-    (
-        "fleet_standings_80col",
-        "The same fleet at 80 columns: the host cell narrows and the working-on summary is dropped before the status word.",
-    ),
+    ("home_standings_80col", "The same home at 80 columns."),
     (
         "hosts",
-        "The hosts overlay over that fleet: every trusted host with how it is reached (this machine local, the desk direct, the studio offline), inside the fleet's frame, with esc to close.",
+        "The hosts overlay over that home: every trusted host with how it is reached (the desk direct, this machine, the studio offline), with how to pair another and esc to close.",
     ),
     (
-        "chat_strip",
-        "A headless Claude chat on the desk read from the laptop: header with model and mode, the first turn, the composer and its keys.",
+        "chat",
+        "A headless Claude chat on the desk read from the laptop: the header with its folder and the way to the diff and home, the first turn, the composer with its model and mode, and its keys.",
     ),
     (
         "ask_escape",
-        "A terminal Claude on the desk showing a tool server's sign-in dialog in its own terminal, read from the laptop: the escape card docked where the composer was, its reason sending the person to Claude's own terminal and Stop as the one choice (a remote agent's terminal is not offered here), with the conversation still above it: the prompt, the text that introduced the tool server's call and the call, in the order Claude wrote them.",
+        "A terminal Claude on the desk showing a tool server's sign-in dialog in its own terminal, read from the laptop: the escape in the composer's box, its reason sending the person to Claude's own terminal (a remote agent's terminal is not offered here) and ctrl+x to stop, with the conversation still above it: the prompt, the text that introduced the tool server's call, and the call folded.",
     ),
     (
         "running_call",
@@ -67,7 +71,7 @@ pub const FRAMES: &[(&str, &str)] = &[
     ),
     (
         "rewind_before_swap",
-        "The same chat after the desk rewound under it: the Reset is pending, the second turn's rows stay on screen and the header says the host is away until the rebuilt transcript catches up.",
+        "The same headless chat after the desk rewound under it: the Reset is pending, the second turn's rows stay on screen, and the header and the composer's edge say the host is away until the rebuilt transcript catches up.",
     ),
     (
         "rewind_after_swap",
@@ -96,26 +100,109 @@ pub fn components(theme: Theme) -> Vec<Component> {
     };
     for (name, shows, rows) in row_sets() {
         let mut lines = Vec::new();
-        // Consecutive tool rows share the rail, as a chat draws them.
-        for (i, (row, state)) in rows.iter().enumerate() {
-            let tool = on_rail(row);
-            let older = i > 0 && on_rail(&rows[i - 1].0);
-            let newer = rows.get(i + 1).is_some_and(|(next, _)| on_rail(next));
-            let state = RowState {
-                rail: tool && (older || newer),
-                joined: tool && newer,
-                ..*state
-            };
-            lines.extend(row_lines(row, state, &facts(row), w, theme));
+        for (row, state) in &rows {
+            lines.extend(feed_lines(row, *state, w, theme));
         }
+        add(name, shows, lines);
+    }
+    for (name, shows, card, attach) in cards() {
+        let mut ui = AskUi::default();
+        ui.sync(&card);
+        // Room for the whole ask, as on a tall terminal.
+        ui.set_room(60, attach);
+        add(name, shows, ui.box_lines(&card, BOX_WIDTH, theme).lines);
+    }
+    add(
+        "queue",
+        "Prompts waiting above the composer: one queued, one waiting for its host, one that may not have arrived, and the queued one highlighted, its controls in place of how it waits.",
+        queue(w, theme),
+    );
+    for (name, shows, composer, away, draft) in composers() {
+        let mut editor = Editor::default();
+        editor.set(draft, Vec::new());
+        let lines = composer_lines(&editor, &composer, "fixer", "studio", away, w, theme);
         add(name, shows, lines);
     }
     out.push(Component {
         name: "review_page",
-        shows: "The full-screen review page over a working-tree diff: title with head and totals, the file list with status, counts and comments, hunks with added and removed lines tinted, a saved comment under its line and the comment editor open on another.",
+        shows: "The full-screen review page over a working-tree diff: the file list beside one stream of files and hunks, added and removed lines tinted, a saved comment under its line and the comment editor open on another.",
         buffer: review_page(theme),
     });
     out
+}
+
+/// A row as the feed draws it outside a stretch: the agent's and the
+/// person's words, turn ends, asks and steps in the feed's own drawing
+/// (thinking draws nothing), everything else as a row; a focused one with
+/// its bar.
+fn feed_lines(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let feeds = matches!(
+        row.kind,
+        RowKind::Prompt { .. }
+            | RowKind::Prose { .. }
+            | RowKind::Thinking { .. }
+            | RowKind::TurnEnd { .. }
+            | RowKind::Stopped
+            | RowKind::Ask(_)
+    ) || feed::is_step(row);
+    if !feeds {
+        return row_lines(row, state, &facts(row), width, theme);
+    }
+    let Some(drawn) = feed::row_lines(
+        row,
+        &feed::Placement::Plain,
+        state.expanded,
+        &facts(row),
+        width,
+        theme,
+    ) else {
+        return Vec::new();
+    };
+    let mut lines = drawn.lines;
+    if state.focused {
+        for line in &mut lines {
+            line.spans.insert(0, Span::styled("▌", theme.focus_bar()));
+            if let Some(second) = line.spans.get_mut(1)
+                && second.content.starts_with(' ')
+            {
+                second.content = second.content[1..].to_owned().into();
+            }
+        }
+    }
+    lines
+}
+
+/// The width an ask's box draws its words in, inside its frame and margins.
+const BOX_WIDTH: usize = WIDTH as usize - 8;
+
+fn queue(width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let entries = [
+        QueueEntry::Queued(QueuedRow {
+            input_id: vec![1],
+            text: text("Then run the relay tests."),
+            from_agent: None,
+            mine: true,
+            steered: false,
+            can_withdraw: true,
+            can_send_now: true,
+        }),
+        QueueEntry::Sending {
+            input_id: vec![2],
+            text: text("Check the deployment once."),
+            waiting: Some("laptop".into()),
+        },
+        QueueEntry::Unconfirmed {
+            input_id: vec![3],
+            text: text("Stop the server."),
+        },
+    ];
+    let mut lines: Vec<Line<'static>> = entries
+        .iter()
+        .map(|entry| feed::queued_line(entry, false, width, theme).line)
+        .collect();
+    lines.push(Line::default());
+    lines.push(feed::queued_line(&entries[0], true, width, theme).line);
+    lines
 }
 
 fn paint_lines(lines: Vec<Line<'static>>) -> Buffer {
@@ -421,7 +508,7 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_thinking",
-            "Thinking closed with its duration, then opened.",
+            "Thinking is never drawn, closed or opened, with its duration or without.",
             vec![
                 (
                     row(RowKind::Thinking {
@@ -499,7 +586,7 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_file_change",
-            "An edit across two files with counts, a created file, a deletion and a move, one auto-approved.",
+            "An edit across two files with counts, a created file auto-approved, and a deletion with a move waiting for permission.",
             vec![
                 (
                     row(RowKind::FileChange {
@@ -726,7 +813,7 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_slash_output",
-            "A slash command's output, closed and opened.",
+            "A slash command's output, the same closed or opened.",
             vec![
                 (
                     row(RowKind::SlashOutput {
@@ -748,7 +835,7 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_ask",
-            "Asks that became rows: a question answered with a note, several questions answered with a note, a plan approved and one sent back with its note, a form sent, a link declined, access granted for the turn, an open question, and a dialog this build couldn't read, closed and opened.",
+            "Asks that became rows: a question answered, several questions answered, a plan approved and one sent back with its note, a form sent with the fields it carried, a link declined, access granted for the turn, an open question, and two dismissed.",
             vec![
                 (
                     row(RowKind::Ask(AskRow::Question {
@@ -853,7 +940,7 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_turn_end",
-            "The quiet footer under a finished turn, with cost, and a failed turn.",
+            "The quiet line under a finished turn, and a failed turn.",
             vec![
                 (
                     row(RowKind::TurnEnd {
@@ -1035,3 +1122,372 @@ fn row_sets() -> Vec<RowSet> {
 }
 
 // --- the activity line -----------------------------------------------------
+
+fn choice(outcome: ChoiceOutcome) -> Choice {
+    Choice {
+        outcome,
+        primary: false,
+        takes_note: false,
+        answer: ui_view::Answer::Claude(wire::ClaudeAnswer::default()),
+    }
+}
+
+fn card(body: AskBody, mut choices: Vec<Choice>) -> AskCard {
+    if let Some(first) = choices.first_mut() {
+        first.primary = true;
+    }
+    AskCard {
+        kind: wire::Kind::ClaudeSdk,
+        key: "ask".into(),
+        item_key: "k".into(),
+        position: 1,
+        count: 1,
+        body,
+        choices,
+        question_note: true,
+        state: CardState::Open,
+    }
+}
+
+type CardSet = (&'static str, &'static str, AskCard, bool);
+
+#[allow(clippy::too_many_lines)]
+fn cards() -> Vec<CardSet> {
+    let command = || AskBody::Command {
+        command: "deploy --check".into(),
+        cwd: "/workspace".into(),
+        reason: "Verify the deploy before tagging".into(),
+        description: "Runs the deploy dry run".into(),
+    };
+    let command_choices = || {
+        vec![
+            choice(ChoiceOutcome::AllowOnce),
+            choice(ChoiceOutcome::AllowAlways {
+                subjects: vec!["deploy --check".into()],
+                directories: vec![],
+                mode: String::new(),
+                scope: Scope::Project,
+                label: String::new(),
+            }),
+            choice(ChoiceOutcome::AllowForSession),
+            Choice {
+                takes_note: true,
+                ..choice(ChoiceOutcome::Deny { stops: false })
+            },
+            choice(ChoiceOutcome::DenyAndStop),
+        ]
+    };
+    let option = |label: &str, description: &str, preview: &str, recommended| OptionView {
+        label: label.into(),
+        description: description.into(),
+        preview: preview.into(),
+        recommended,
+    };
+    let rollout = QuestionView {
+        header: "Rollout".into(),
+        question: "How should the migration roll out?".into(),
+        multi_select: false,
+        options: vec![
+            option("Behind a flag", "Off by default for one release", "", true),
+            option("All at once", "", "", false),
+        ],
+        allow_other: true,
+        secret: false,
+    };
+    let platforms = QuestionView {
+        header: "Platforms".into(),
+        question: "Which platforms ship first?".into(),
+        multi_select: true,
+        options: vec![
+            option("macOS", "", "", false),
+            option("Linux", "x86_64 and arm64", "", false),
+            option("Windows", "", "", false),
+        ],
+        allow_other: true,
+        secret: false,
+    };
+    let layout = QuestionView {
+        header: "Layout".into(),
+        question: "Which layout for the host list?".into(),
+        multi_select: false,
+        options: vec![
+            option(
+                "Cards",
+                "One card per host",
+                "┌──────────────────────┐\n│ Studio        ● live │\n│ ~/src/amux  3 agents │\n└──────────────────────┘",
+                false,
+            ),
+            option(
+                "Grouped list",
+                "",
+                "Studio   ● live   3 agents\nLaptop   ○ away   1 agent",
+                false,
+            ),
+        ],
+        allow_other: false,
+        secret: false,
+    };
+    let token = QuestionView {
+        header: "Token".into(),
+        question: "Paste the deploy token".into(),
+        multi_select: false,
+        options: vec![],
+        allow_other: true,
+        secret: true,
+    };
+    let mut sending = card(command(), command_choices());
+    sending.state = CardState::Sending;
+    let mut rejected = card(command(), command_choices());
+    rejected.state = CardState::Rejected("the ask was already answered".into());
+    let mut not_confirmed = card(command(), command_choices());
+    not_confirmed.state = CardState::NotConfirmed;
+    let mut second = card(command(), command_choices());
+    second.position = 1;
+    second.count = 3;
+    vec![
+        (
+            "ask_command",
+            "A command permission in the composer's box: the command and why, every scope stated as what happens, and No with its note; one of three waiting.",
+            second,
+            false,
+        ),
+        (
+            "ask_edit",
+            "A file edit permission with its counts and diff.",
+            card(
+                AskBody::Edit {
+                    path: "crates/tui/src/fleet.rs".into(),
+                    files: 1,
+                    added: 2,
+                    removed: 1,
+                    diff: "@@ -10,3 +10,4 @@\n let a = 1;\n-let b = 2;\n+let b = 3;\n+let c = 4;".into(),
+                    reason: String::new(),
+                    created: false,
+                },
+                vec![
+                    choice(ChoiceOutcome::AllowOnce),
+                    choice(ChoiceOutcome::AllowForSession),
+                    choice(ChoiceOutcome::Deny { stops: false }),
+                ],
+            ),
+            false,
+        ),
+        (
+            "ask_tool",
+            "A tool-server permission with its arguments.",
+            card(
+                AskBody::Tool {
+                    server: "github".into(),
+                    tool: "create_issue".into(),
+                    arguments: "{\n  \"repo\": \"jlw/amux\",\n  \"title\": \"Flicker\"\n}".into(),
+                },
+                vec![
+                    choice(ChoiceOutcome::AllowOnce),
+                    choice(ChoiceOutcome::Deny { stops: false }),
+                ],
+            ),
+            false,
+        ),
+        (
+            "ask_codex_command",
+            "A Codex command approval: allow similar commands by prefix, a network rule for its hosts, and decline.",
+            card(
+                AskBody::Command {
+                    command: "curl localhost:8080/health".into(),
+                    cwd: "/workspace".into(),
+                    reason: String::new(),
+                    description: String::new(),
+                },
+                vec![
+                    choice(ChoiceOutcome::AllowOnce),
+                    choice(ChoiceOutcome::AllowSimilar {
+                        prefix: vec!["curl".into()],
+                    }),
+                    choice(ChoiceOutcome::AllowNetwork {
+                        hosts: vec!["localhost".into()],
+                    }),
+                    choice(ChoiceOutcome::Deny { stops: false }),
+                    choice(ChoiceOutcome::DenyAndStop),
+                ],
+            ),
+            false,
+        ),
+        (
+            "ask_question_single",
+            "One pick-one question with the recommended option named and Something else.",
+            card(AskBody::Question(vec![rollout.clone()]), vec![]),
+            false,
+        ),
+        (
+            "ask_question_multi",
+            "One multi-select question: square boxes before any pick.",
+            card(AskBody::Question(vec![platforms.clone()]), vec![]),
+            false,
+        ),
+        (
+            "ask_questions_steps",
+            "Several questions: the header chips are the steps, the first open.",
+            card(
+                AskBody::Question(vec![rollout, platforms, token.clone()]),
+                vec![],
+            ),
+            false,
+        ),
+        (
+            "ask_question_previews",
+            "A question with previews: the highlighted option's preview beside the options.",
+            card(AskBody::Question(vec![layout]), vec![]),
+            false,
+        ),
+        (
+            "ask_question_secret",
+            "A question whose answer is secret: typed characters show as bullets.",
+            card(AskBody::Question(vec![token]), vec![]),
+            false,
+        ),
+        (
+            "ask_plan",
+            "A plan to approve, approve with edits accepted automatically, or send back with a note.",
+            card(
+                AskBody::Plan {
+                    plan: "## Plan\n\n1. Collapse the pairing failures into one error.\n2. Update the three specs.\n3. Keep the wire codes.".into(),
+                },
+                vec![
+                    choice(ChoiceOutcome::ApprovePlan {
+                        auto_accept_edits: false,
+                    }),
+                    choice(ChoiceOutcome::ApprovePlan {
+                        auto_accept_edits: true,
+                    }),
+                    Choice {
+                        takes_note: true,
+                        ..choice(ChoiceOutcome::SendBack)
+                    },
+                ],
+            ),
+            false,
+        ),
+        (
+            "ask_form",
+            "A form from a tool server, a step per field in the server's order, to submit or decline.",
+            card(
+                AskBody::Form {
+                    server: "github".into(),
+                    message: "Create the issue in which repository?".into(),
+                    schema_json: r#"{"type":"object","properties":{"repository":{"type":"string","title":"Repository"},"labels":{"type":"string","enum":["bug","ios","docs"],"title":"Labels"},"assign":{"type":"boolean","title":"Assign to me"}},"required":["repository"]}"#.into(),
+                },
+                vec![
+                    choice(ChoiceOutcome::Submit),
+                    choice(ChoiceOutcome::Decline),
+                ],
+            ),
+            false,
+        ),
+        (
+            "ask_link",
+            "A tool server asking to open a link.",
+            card(
+                AskBody::Link {
+                    server: "linear".into(),
+                    message: "Sign in to Linear".into(),
+                    url: "https://linear.app/oauth/authorize".into(),
+                },
+                vec![
+                    choice(ChoiceOutcome::OpenLink),
+                    choice(ChoiceOutcome::Decline),
+                ],
+            ),
+            false,
+        ),
+        (
+            "ask_access",
+            "An access grant for files and network, for the turn or the session, or deny.",
+            card(
+                AskBody::Access {
+                    reason: "Write the build output and fetch crates".into(),
+                    read: vec!["~/.cargo".into()],
+                    write: vec!["~/src/amux/target".into()],
+                    network: true,
+                    hosts: vec!["crates.io".into()],
+                },
+                vec![
+                    choice(ChoiceOutcome::GrantForTurn),
+                    choice(ChoiceOutcome::GrantForSession),
+                    choice(ChoiceOutcome::Deny { stops: false }),
+                ],
+            ),
+            false,
+        ),
+        (
+            "ask_unanswerable",
+            "The escape from an ask this client cannot answer: the reason, and the agent's own terminal where it has one; ctrl+x stops the turn.",
+            card(
+                AskBody::Unanswerable {
+                    reason: UNANSWERABLE.into(),
+                },
+                vec![],
+            ),
+            true,
+        ),
+        (
+            "ask_sending",
+            "An answer on its way: the box says so and takes no second answer.",
+            sending,
+            false,
+        ),
+        (
+            "ask_rejected",
+            "An answer the agent refused, with its reason.",
+            rejected,
+            false,
+        ),
+        (
+            "ask_not_confirmed",
+            "An answer that was sent but never confirmed, with r to resend and d to discard.",
+            not_confirmed,
+            false,
+        ),
+    ]
+}
+
+// --- the strip -------------------------------------------------------------
+
+fn composers() -> Vec<(&'static str, &'static str, Composer, Away, &'static str)> {
+    vec![
+        (
+            "composer_exited",
+            "The exited composer: one Enter resumes the agent with the draft as its first prompt.",
+            Composer::Resume,
+            Away::Plain,
+            "Carry on from the failing test.",
+        ),
+        (
+            "composer_exited_empty",
+            "The exited composer before anything is typed.",
+            Composer::Resume,
+            Away::Plain,
+            "",
+        ),
+        (
+            "composer_detached",
+            "The composer while the agent's host is away: the draft is kept and sending waits.",
+            Composer::Disabled(Waiting::Detached),
+            Away::Plain,
+            "",
+        ),
+        (
+            "composer_detached_signed_out",
+            "The composer while the agent's host is away and this machine is signed out of its account: the cause is this machine's, the draft is kept and sending waits until it signs in.",
+            Composer::Disabled(Waiting::Detached),
+            Away::SignedOut,
+            "",
+        ),
+        (
+            "composer_detached_revoked",
+            "The composer while the agent's host has said it no longer trusts this machine: the draft is kept and sending waits until the two are paired again.",
+            Composer::Disabled(Waiting::Detached),
+            Away::Revoked,
+            "",
+        ),
+    ]
+}
