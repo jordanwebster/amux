@@ -496,3 +496,108 @@ async fn the_initialize_answer_offers_the_scripted_models_and_commands() {
     );
     assert_eq!(host.close().await, 0);
 }
+
+#[tokio::test]
+async fn account_and_session_facts_play_in_recorded_shapes() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("notes.md");
+    std::fs::write(&file, "old line\n").unwrap();
+    let mut host = Host::start(json!({
+        "servers": [
+            {"name": "linear", "status": "connected"},
+            {"name": "grafana", "status": "needs-auth"},
+            {"name": "broken", "status": "failed"},
+        ],
+        "context_tokens": 64000,
+        "edit_files": true,
+        "chunk_ms": 30,
+        "steps": [
+            {"usage": {"status": "allowed_warning", "windows": [
+                {"name": "five_hour", "used_percent": 81.0, "resets_in_s": 3600},
+                {"name": "seven_day", "used_percent": 40.0, "resets_in_s": 86400},
+            ]}},
+            {"text": {"chunks": ["Wri", "ting"]}},
+            {"tool": {"name": "Edit", "class": "consequential", "input": {
+                "file_path": file, "old_string": "old line", "new_string": "new line",
+            }}},
+            {"tool": {"name": "Write", "class": "consequential", "input": {
+                "file_path": dir.path().join("fresh/new.md"), "content": "fresh\n",
+            }}},
+            {"tool": {"name": "TaskCreate", "class": "consequential", "input": {"subject": "Draft", "description": "Draft it"}}},
+            {"tool": {"name": "TaskUpdate", "class": "consequential", "input": {"taskId": "1", "status": "in_progress"}}},
+            {"ask": {"question": {"questions": [{
+                "question": "Which layout?",
+                "header": "Layout",
+                "options": [
+                    {"label": "Sidebar", "description": "Navigation on the left", "preview": "│S│ content"},
+                    "Topbar",
+                ],
+            }]}}},
+            {"usage": {"status": "rejected", "windows": [
+                {"name": "five_hour", "used_percent": 100.0, "resets_in_s": 600},
+            ]}},
+            "turn_end",
+            {"auth_failed": {"message": "Failed to authenticate. API Error: 401 API key is invalid."}},
+        ],
+    }))
+    .await;
+    host.prompt(A, "Go", None).await;
+    let init = host.until(|frame| frame["subtype"] == "init").await;
+    assert_eq!(init["mcp_servers"][1]["status"], "needs-auth");
+    let warning = host
+        .until(|frame| frame["type"] == "rate_limit_event")
+        .await;
+    assert_eq!(warning["rate_limit_info"]["status"], "allowed_warning");
+    let ask = host
+        .until(|frame| frame["request"]["subtype"] == "can_use_tool")
+        .await;
+    let options = &ask["request"]["input"]["questions"][0]["options"];
+    assert_eq!(options[0]["preview"], "│S│ content");
+    assert_eq!(options[1]["description"], "Topbar");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "new line\n");
+    let results: Vec<&Value> = host
+        .frames
+        .iter()
+        .filter_map(|frame| frame.get("tool_use_result"))
+        .collect();
+    assert!(results.iter().any(|result| result["task"]["id"] == "1"));
+    assert!(
+        results
+            .iter()
+            .any(|result| result["statusChange"]["to"] == "in_progress")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("fresh/new.md")).unwrap(),
+        "fresh\n"
+    );
+    host.send(json!({
+        "type": "control_response",
+        "response": {
+            "subtype": "success",
+            "request_id": ask["request_id"],
+            "response": {"behavior": "allow", "updatedInput": {
+                "questions": ask["request"]["input"]["questions"],
+                "answers": {"Which layout?": "Sidebar"},
+            }},
+        },
+    }))
+    .await;
+    let reached = host
+        .until(|frame| frame["type"] == "rate_limit_event")
+        .await;
+    assert_eq!(reached["rate_limit_info"]["status"], "rejected");
+    let result = host.until(|frame| frame["type"] == "result").await;
+    assert_eq!(
+        result["modelUsage"]["claude-fake-1"]["contextWindow"],
+        200000
+    );
+    host.prompt(B, "Again", None).await;
+    let error = host
+        .until(|frame| frame["is_api_error_message"] == true)
+        .await;
+    assert_eq!(error["error"], "authentication_failed");
+    let failed = host.until(|frame| frame["type"] == "result").await;
+    assert_eq!(failed["is_error"], true);
+    assert_eq!(failed["api_error_status"], 401);
+    assert_eq!(host.close().await, 0);
+}

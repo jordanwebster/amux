@@ -534,10 +534,15 @@ impl Net {
                 .prompt
                 .as_deref()
                 .map(|text| prompt(decl.kind, b"testnet-first", text)),
-            cwd: decl
-                .cwd
-                .clone()
-                .unwrap_or_else(|| host.work.to_string_lossy().into_owned()),
+            cwd: match &decl.repository {
+                Some(repository) => host
+                    .work
+                    .with_file_name(REPOSITORIES)
+                    .join(repository)
+                    .to_string_lossy()
+                    .into_owned(),
+                None => work_dir(&host.work, decl.cwd.as_deref())?,
+            },
             kind: decl.kind.wire() as i32,
             config: Some(match decl.kind {
                 FakeKind::Codex => {
@@ -652,6 +657,20 @@ impl Net {
                 host: agent.host.clone(),
                 error: error.to_string(),
             })
+    }
+
+    /// Stops the agent on its own host, as a person does there: it exits
+    /// and can be resumed.
+    pub async fn stop(&self, name: &str) -> Result<Ack, NetError> {
+        let agent = self.agent(name)?.clone();
+        self.client(&agent.host)?
+            .stop_agent(tonic::Request::new(wire::StopAgentRequest {
+                agent_id: agent.id.as_bytes().to_vec(),
+                mode: wire::StopMode::Graceful as i32,
+            }))
+            .await
+            .map_err(|status| NetError::Refused(Box::new(status)))?;
+        Ok(self.ack(format!("{name} stopped")))
     }
 
     /// Deletes the agent on its own host.
@@ -921,15 +940,52 @@ impl Net {
         for repository in &decl.repositories {
             let path = dir.join(REPOSITORIES).join(repository);
             std::fs::create_dir_all(&path)?;
-            let initialized = std::process::Command::new("git")
-                .args(["init", "--quiet"])
-                .current_dir(&path)
-                .status()?;
-            if !initialized.success() {
-                return Err(NetError::Host {
-                    host: decl.name.clone(),
-                    error: format!("git init {} failed: {initialized}", path.display()),
-                });
+            let git = |args: &[&str]| -> Result<(), NetError> {
+                // Named here, so a machine with no git identity commits too.
+                let ran = std::process::Command::new("git")
+                    .args([
+                        "-c",
+                        "user.name=testnet",
+                        "-c",
+                        "user.email=testnet@localhost",
+                    ])
+                    .args(args)
+                    .current_dir(&path)
+                    .status()?;
+                if ran.success() {
+                    Ok(())
+                } else {
+                    Err(NetError::Host {
+                        host: decl.name.clone(),
+                        error: format!(
+                            "git {} in {} failed: {ran}",
+                            args.join(" "),
+                            path.display()
+                        ),
+                    })
+                }
+            };
+            git(&["init", "--quiet"])?;
+            let mut files = false;
+            for (file, text) in &decl.files {
+                if decl.repository_of(file) != Some(repository.as_str()) {
+                    continue;
+                }
+                let target = dir.join(REPOSITORIES).join(file);
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&target, text)?;
+                files = true;
+            }
+            if files {
+                git(&["add", "--all"])?;
+                git(&[
+                    "commit",
+                    "--quiet",
+                    "--message",
+                    "The files the topology declares",
+                ])?;
             }
         }
         let profile = node::create_profile(&data_dir)?;
@@ -1633,4 +1689,19 @@ fn agent_dirs(dir: &Path) -> Vec<PathBuf> {
         }
     }
     found
+}
+
+/// The directory an agent starts in: its host's work directory, a folder
+/// below it named relatively (made when missing), or an absolute path as
+/// it is.
+fn work_dir(work: &Path, cwd: Option<&str>) -> Result<String, NetError> {
+    let Some(cwd) = cwd else {
+        return Ok(work.to_string_lossy().into_owned());
+    };
+    if cwd.is_empty() || Path::new(cwd).is_absolute() {
+        return Ok(cwd.to_owned());
+    }
+    let dir = work.join(cwd);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.to_string_lossy().into_owned())
 }

@@ -34,7 +34,8 @@ pub fn corpus(kind: Kind) -> &'static Corpus {
 
 /// Write a script where a fake can read it.
 pub fn script_file(dir: &Path, script: Value) -> std::path::PathBuf {
-    let script: Script = serde_json::from_value(script).unwrap();
+    // Parsed from text: a form schema keeps the text it was written as.
+    let script: Script = serde_json::from_str(&script.to_string()).unwrap();
     let path = dir.join("script.json");
     std::fs::write(&path, serde_json::to_vec(&script).unwrap()).unwrap();
     path

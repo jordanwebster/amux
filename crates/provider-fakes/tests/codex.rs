@@ -374,3 +374,57 @@ async fn model_and_skill_lists_answer_from_the_script() {
     assert_eq!(skill["description"], "Review the diff");
     assert_eq!(skill["scope"], "user");
 }
+
+#[tokio::test]
+async fn account_and_session_facts_play_in_recorded_shapes() {
+    let dir = tempfile::tempdir().unwrap();
+    let added = dir.path().join("docs/new.md");
+    let mut host = Host::start(json!({
+        "context_tokens": 182000,
+        "edit_files": true,
+        "chunk_ms": 30,
+        "steps": [
+            {"usage": {"status": "allowed_warning", "windows": [
+                {"name": "five_hour", "used_percent": 86.0, "resets_in_s": 3600},
+                {"name": "seven_day", "used_percent": 40.0, "resets_in_s": 86400},
+            ]}},
+            {"text": {"chunks": ["Wri", "ting"]}},
+            {"tool": {"name": "apply_patch", "class": "consequential", "input": [
+                {"diff": "fresh\n", "kind": {"type": "add"}, "path": added},
+            ]}},
+            {"ask": {"question": {"questions": [
+                {"question": "The token?", "header": "Token", "options": [], "other": true, "secret": true},
+            ]}}},
+            "turn_end",
+            {"auth_failed": {"message": "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header"}},
+        ],
+    }))
+    .await;
+    host.turn("Go").await;
+    let limits = host
+        .line
+        .until(|frame| frame["method"] == "account/rateLimits/updated")
+        .await;
+    assert_eq!(limits["params"]["rateLimits"]["primary"]["usedPercent"], 86);
+    let ask = host
+        .line
+        .until(|frame| frame["method"] == "item/tool/requestUserInput")
+        .await;
+    let question = &ask["params"]["questions"][0];
+    assert_eq!(question["isSecret"], true);
+    assert_eq!(question["isOther"], true);
+    assert_eq!(std::fs::read_to_string(&added).unwrap(), "fresh\n");
+    host.line
+        .send(json!({"id": ask["id"], "result": {"answers": {"q0": {"answers": ["s3cret"]}}}}))
+        .await;
+    let usage = host
+        .line
+        .until(|frame| frame["method"] == "thread/tokenUsage/updated")
+        .await;
+    assert_eq!(usage["params"]["tokenUsage"]["last"]["inputTokens"], 182000);
+    host.completed().await;
+    host.turn("Again").await;
+    let failed = host.completed().await;
+    assert_eq!(failed["params"]["turn"]["status"], "failed");
+    assert_eq!(host.line.close().await, 0);
+}

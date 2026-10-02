@@ -71,6 +71,32 @@ pub struct Script {
     /// with code 1.
     #[serde(default)]
     pub untrusted_folder: bool,
+    /// The tool servers headless Claude reports at the start of each turn,
+    /// with their state (`connected`, `failed`, `needs-auth`).
+    #[serde(default)]
+    pub servers: Vec<ServerState>,
+    /// The context the session reports in use, in tokens, on each message
+    /// (headless Claude) or at each turn's end (Codex).
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
+    /// How long the provider takes between a message's chunks, where it
+    /// streams them, as a model writing does.
+    #[serde(default)]
+    pub chunk_ms: u64,
+    /// File tools change the files they name, as the real tools do: a
+    /// Write writes its content, an Edit replaces its old string, a Codex
+    /// patch writes each file it adds. Off by default, so a script's paths
+    /// need not exist.
+    #[serde(default)]
+    pub edit_files: bool,
+}
+
+/// A tool server as headless Claude reports it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServerState {
+    pub name: String,
+    pub status: String,
 }
 
 /// A model a scripted session offers.
@@ -146,6 +172,13 @@ pub enum Step {
     TurnEnd,
     /// Exit the provider process with this code, mid-turn or not.
     Exit { code: i32 },
+    /// The account's usage limits as the provider reports them (headless
+    /// Claude, Codex).
+    Usage(Usage),
+    /// The provider's credential is refused, and the turn fails on it:
+    /// headless Claude retries, says so in an error message and ends the
+    /// turn; Codex reconnects a few times and fails the turn.
+    AuthFailed { message: String },
     /// Play `steps` this many times in a row, as if written out: a flood
     /// of messages without a script the size of the flood. `{pass}` in the
     /// text or thinking of a step directly inside becomes the pass's
@@ -211,7 +244,7 @@ pub enum Ask {
     Form {
         server: String,
         message: String,
-        schema: Value,
+        schema: Schema,
     },
     /// A tool server's request to open a link.
     Link {
@@ -243,9 +276,124 @@ pub enum Ask {
 pub struct Question {
     pub question: String,
     pub header: String,
-    pub options: Vec<String>,
+    pub options: Vec<QuestionOption>,
     #[serde(default)]
     pub multi_select: bool,
+    /// Codex: an answer may be typed instead of picked.
+    #[serde(default)]
+    pub other: bool,
+    /// Codex: the answer is a secret.
+    #[serde(default)]
+    pub secret: bool,
+}
+
+/// A tool server's form schema, kept exactly as written: a parsed JSON
+/// value would sort its keys, and the order of its properties is the order
+/// the form asks for them.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Schema(pub Box<serde_json::value::RawValue>);
+
+impl Schema {
+    pub fn text(&self) -> &str {
+        self.0.get()
+    }
+
+    /// The schema on one line, its keys in their order: whitespace outside
+    /// strings dropped.
+    pub fn compact(&self) -> String {
+        let mut out = String::with_capacity(self.text().len());
+        let (mut quoted, mut escaped) = (false, false);
+        for c in self.text().chars() {
+            if quoted {
+                out.push(c);
+                match (escaped, c) {
+                    (true, _) => escaped = false,
+                    (false, '\\') => escaped = true,
+                    (false, '"') => quoted = false,
+                    _ => {}
+                }
+            } else if c == '"' {
+                quoted = true;
+                out.push(c);
+            } else if !c.is_whitespace() {
+                out.push(c);
+            }
+        }
+        out
+    }
+}
+
+impl PartialEq for Schema {
+    fn eq(&self, other: &Schema) -> bool {
+        self.text() == other.text()
+    }
+}
+
+/// Where a frame carries a form schema, written out as the schema's own
+/// text when the frame is sent.
+pub const SCHEMA_SLOT: &str = "__fake_schema__";
+
+/// One option of a question: its label, or the label with a description
+/// and a preview (headless and terminal Claude).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum QuestionOption {
+    Label(String),
+    Full {
+        label: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        preview: Option<String>,
+    },
+}
+
+impl QuestionOption {
+    pub fn label(&self) -> &str {
+        match self {
+            QuestionOption::Label(label) | QuestionOption::Full { label, .. } => label,
+        }
+    }
+
+    /// Its description; the label where none is given.
+    pub fn description(&self) -> &str {
+        match self {
+            QuestionOption::Full {
+                description: Some(description),
+                ..
+            } => description,
+            option => option.label(),
+        }
+    }
+
+    pub fn preview(&self) -> Option<&str> {
+        match self {
+            QuestionOption::Full { preview, .. } => preview.as_deref(),
+            QuestionOption::Label(_) => None,
+        }
+    }
+}
+
+/// Usage limits, as both providers report them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Usage {
+    /// `allowed`, `allowed_warning` (near a limit) or `rejected` (a limit
+    /// reached), in headless Claude's words.
+    pub status: String,
+    pub windows: Vec<UsageWindow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UsageWindow {
+    /// `five_hour` or `seven_day`.
+    pub name: String,
+    /// How much of it is used, out of 100.
+    pub used_percent: f64,
+    /// When it resets, in seconds from now.
+    pub resets_in_s: i64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -265,6 +413,11 @@ pub enum ScriptError {
         provider: &'static str,
         ask: &'static str,
     },
+    #[error("{provider} cannot play a {step} step")]
+    UnsupportedStep {
+        provider: &'static str,
+        step: &'static str,
+    },
 }
 
 impl Script {
@@ -279,9 +432,15 @@ impl Script {
         })
     }
 
-    /// Refuse asks this provider has no way to raise.
-    pub fn check(&self, provider: &'static str, raises: &[&str]) -> Result<(), ScriptError> {
-        check_steps(&self.steps, provider, raises)
+    /// Refuse asks this provider has no way to raise, and steps it has no
+    /// way to play (`plays` names the provider-specific ones it can).
+    pub fn check(
+        &self,
+        provider: &'static str,
+        raises: &[&str],
+        plays: &[&str],
+    ) -> Result<(), ScriptError> {
+        check_steps(&self.steps, provider, raises, plays)
     }
 }
 
@@ -305,7 +464,12 @@ impl Tool {
     }
 }
 
-fn check_steps(steps: &[Step], provider: &'static str, raises: &[&str]) -> Result<(), ScriptError> {
+fn check_steps(
+    steps: &[Step],
+    provider: &'static str,
+    raises: &[&str],
+    plays: &[&str],
+) -> Result<(), ScriptError> {
     for step in steps {
         match step {
             Step::Ask(ask) if !raises.contains(&ask.kind()) => {
@@ -314,11 +478,31 @@ fn check_steps(steps: &[Step], provider: &'static str, raises: &[&str]) -> Resul
                     ask: ask.kind(),
                 });
             }
-            Step::Repeat { steps, .. } => check_steps(steps, provider, raises)?,
-            _ => {}
+            Step::Repeat { steps, .. } => check_steps(steps, provider, raises, plays)?,
+            step => {
+                if let Some(kind) = step.provider_kind()
+                    && !plays.contains(&kind)
+                {
+                    return Err(ScriptError::UnsupportedStep {
+                        provider,
+                        step: kind,
+                    });
+                }
+            }
         }
     }
     Ok(())
+}
+
+impl Step {
+    /// The name of a step only some providers can play.
+    pub fn provider_kind(&self) -> Option<&'static str> {
+        match self {
+            Step::Usage(_) => Some("usage"),
+            Step::AuthFailed { .. } => Some("auth_failed"),
+            _ => None,
+        }
+    }
 }
 
 /// The next step to play, with repeats unrolled one pass at a time so a
@@ -434,6 +618,23 @@ mod repeat_tests {
                 text("1"),
                 text("2"),
             ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::Schema;
+
+    #[test]
+    fn a_schema_keeps_its_key_order_on_one_line() {
+        let schema: Schema = serde_json::from_str(
+            "{\n  \"properties\": {\n    \"team\": {\"title\": \"Team name\"},\n    \"\\\"quoted\\\" key\": {}\n  }\n}",
+        )
+        .unwrap();
+        assert_eq!(
+            schema.compact(),
+            r#"{"properties":{"team":{"title":"Team name"},"\"quoted\" key":{}}}"#
         );
     }
 }

@@ -23,6 +23,8 @@ use crate::{DRIFT_EXIT, Mode};
 
 /// The asks Codex can raise.
 pub const RAISES: &[&str] = &["permission", "question", "plan", "form", "link", "grant"];
+/// The provider-specific steps Codex can play.
+pub const PLAYS: &[&str] = &["usage", "auth_failed"];
 
 /// The Codex version the fake reports: the newest the corpus shows.
 pub const VERSION: &str = "0.157.0";
@@ -61,8 +63,13 @@ pub fn main() -> i32 {
                 }
             }
             Mode::Script(script) => {
-                if let Err(error) = script.check("Codex", RAISES) {
+                if let Err(error) = script.check("Codex", RAISES, PLAYS) {
                     eprintln!("fake-codex: {error}");
+                    return DRIFT_EXIT;
+                }
+                if reaches_a_limit(&script.steps) {
+                    // No recording shows how Codex reports a reached limit.
+                    eprintln!("fake-codex: Codex can be scripted near a usage limit, not past it");
                     return DRIFT_EXIT;
                 }
                 Engine::new(script).run().await
@@ -98,6 +105,11 @@ struct Engine {
     last_message: Option<Value>,
     /// The tool servers the launch configured.
     servers: crate::mcp::ToolServers,
+    context_tokens: Option<u64>,
+    edit_files: bool,
+    chunk_ms: u64,
+    /// A form schema the next frame carries, as the script wrote it.
+    schema: Option<crate::script::Schema>,
 }
 
 impl Engine {
@@ -142,6 +154,10 @@ impl Engine {
             servers: crate::mcp::ToolServers::from_codex(
                 &std::env::args().skip(1).collect::<Vec<_>>(),
             ),
+            context_tokens: script.context_tokens,
+            edit_files: script.edit_files,
+            chunk_ms: script.chunk_ms,
+            schema: None,
         }
     }
 
@@ -164,7 +180,19 @@ impl Engine {
     }
 
     async fn send(&mut self, frame: Value) {
-        if self.out.send(&frame).await.is_err() {
+        // A form schema waits for the frame that carries it.
+        let carries = self
+            .schema
+            .as_ref()
+            .is_some_and(|_| frame.to_string().contains(crate::script::SCHEMA_SLOT));
+        let sent = match self.schema.take() {
+            Some(schema) if carries => self.out.send_with_schema(&frame, &schema).await,
+            kept => {
+                self.schema = kept;
+                self.out.send(&frame).await
+            }
+        };
+        if sent.is_err() {
             std::process::exit(0);
         }
     }
@@ -552,6 +580,25 @@ impl Engine {
                 }
                 Step::TurnEnd => break None,
                 Step::Exit { code } => break Some(code),
+                Step::Usage(usage) => self.rate_limits(&usage).await,
+                Step::AuthFailed { message } => {
+                    self.unauthorized(&turn, &message).await;
+                    let mut failed = self.turn_value(&turn, "failed", vec![]);
+                    failed["error"] = json!({
+                        "additionalDetails": null,
+                        "codexErrorInfo": "other",
+                        "message": message,
+                        "misalignment": null,
+                    });
+                    self.status(None).await;
+                    self.notify(
+                        "turn/completed",
+                        json!({ "threadId": thread, "turn": failed }),
+                    )
+                    .await;
+                    self.turn = None;
+                    return None;
+                }
                 Step::Repeat { .. } => unreachable!("next_step unrolls repeats"),
             }
         };
@@ -566,7 +613,7 @@ impl Engine {
             }
             "interrupted"
         } else {
-            let usage = token_usage();
+            let usage = token_usage(self.context_tokens);
             self.notify(
                 "thread/tokenUsage/updated",
                 json!({ "threadId": thread, "turnId": turn, "tokenUsage": usage }),
@@ -643,6 +690,81 @@ impl Engine {
         self.item(turn, "item/completed", &item).await;
     }
 
+    /// The account's usage limits, as Codex reports them between items:
+    /// the first window as its primary, the second as its secondary.
+    async fn rate_limits(&mut self, usage: &crate::script::Usage) {
+        let now = now_ms() / 1000;
+        let window = |at: usize| {
+            usage.windows.get(at).map_or(Value::Null, |window| {
+                json!({
+                    "resetsAt": now + window.resets_in_s,
+                    "usedPercent": window.used_percent.round() as i64,
+                    "windowDurationMins": if window.name == "five_hour" { 300 } else { 10080 },
+                })
+            })
+        };
+        let reached = (usage.status == "rejected").then_some("primary");
+        self.notify(
+            "account/rateLimits/updated",
+            json!({ "rateLimits": {
+                "credits": { "balance": "0", "hasCredits": false, "unlimited": false },
+                "individualLimit": null,
+                "limitId": "codex",
+                "limitName": null,
+                "normalModelSlug": null,
+                "planType": "pro",
+                "primary": window(0),
+                "rateLimitReachedType": reached,
+                "secondary": window(1),
+                "spendControlReached": null,
+            }}),
+        )
+        .await;
+    }
+
+    /// A refused credential, as Codex reports it: reconnects that fail with
+    /// 401, the thread's system error, and the error that ends the turn.
+    async fn unauthorized(&mut self, turn: &str, message: &str) {
+        let thread = self.thread_id();
+        for attempt in 1..=2 {
+            self.notify(
+                "error",
+                json!({
+                    "error": {
+                        "additionalDetails": message,
+                        "codexErrorInfo": { "responseStreamDisconnected": { "httpStatusCode": 401 } },
+                        "message": format!("Reconnecting... {attempt}/5"),
+                        "misalignment": null,
+                    },
+                    "threadId": thread,
+                    "turnId": turn,
+                    "willRetry": true,
+                }),
+            )
+            .await;
+        }
+        self.notify(
+            "thread/status/changed",
+            json!({ "status": { "type": "systemError" }, "threadId": thread }),
+        )
+        .await;
+        self.notify(
+            "error",
+            json!({
+                "error": {
+                    "additionalDetails": null,
+                    "codexErrorInfo": "other",
+                    "message": message,
+                    "misalignment": null,
+                },
+                "threadId": thread,
+                "turnId": turn,
+                "willRetry": false,
+            }),
+        )
+        .await;
+    }
+
     async fn text(&mut self, turn: &str, chunks: &[String]) {
         let id = self.item_id("msg_");
         let thread = self.thread_id();
@@ -656,7 +778,14 @@ impl Engine {
             "type": "agentMessage",
         });
         self.item(turn, "item/started", &item).await;
-        for chunk in chunks {
+        for (at, chunk) in chunks.iter().enumerate() {
+            if at > 0 && self.chunk_ms > 0 {
+                let until =
+                    tokio::time::Instant::now() + std::time::Duration::from_millis(self.chunk_ms);
+                while tokio::time::Instant::now() < until && !self.interrupted {
+                    self.pump().await;
+                }
+            }
             self.notify(
                 "item/agentMessage/delta",
                 json!({ "delta": chunk, "itemId": id, "threadId": thread, "turnId": turn }),
@@ -749,6 +878,9 @@ impl Engine {
             } else {
                 "completed"
             });
+            if self.edit_files && !declined && !tool.outcome.error {
+                add_files(&item["changes"]);
+            }
             self.item(turn, "item/completed", &item).await;
             return;
         }
@@ -893,11 +1025,12 @@ impl Engine {
                 message,
                 schema,
             } => {
+                self.schema = Some(schema);
                 let params = json!({
                     "_meta": null,
                     "message": message,
                     "mode": "form",
-                    "requestedSchema": schema,
+                    "requestedSchema": crate::script::SCHEMA_SLOT,
                     "serverName": server,
                     "threadId": thread,
                     "turnId": turn,
@@ -1076,26 +1209,36 @@ fn accepted(answer: &Value) -> bool {
 }
 
 fn question(index: usize, question: &Question) -> Value {
+    // A question with no options is answered in words alone.
+    let options: Vec<Value> = question
+        .options
+        .iter()
+        .map(|option| {
+            json!({
+                "description": option.description(),
+                "label": option.label(),
+            })
+        })
+        .collect();
     json!({
         "header": question.header,
         "id": format!("q{index}"),
-        "isOther": false,
-        "isSecret": false,
-        "options": question.options.iter().map(|label| json!({
-            "description": label,
-            "label": label,
-        })).collect::<Vec<_>>(),
+        "isOther": question.other,
+        "isSecret": question.secret,
+        "options": options,
         "question": question.question,
     })
 }
 
-fn token_usage() -> Value {
+/// The thread's token tally; `context` tokens in use when scripted.
+fn token_usage(context: Option<u64>) -> Value {
+    let input = context.unwrap_or(1);
     let tally = json!({
         "cachedInputTokens": 0,
-        "inputTokens": 1,
+        "inputTokens": input,
         "outputTokens": 1,
         "reasoningOutputTokens": 0,
-        "totalTokens": 2,
+        "totalTokens": input + 1,
     });
     json!({ "last": tally, "total": tally, "modelContextWindow": 258400 })
 }
@@ -1105,4 +1248,31 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as i64)
         .unwrap_or_default()
+}
+
+/// Writes each file a patch adds, its diff being the new file's text.
+fn add_files(changes: &Value) {
+    for change in changes.as_array().into_iter().flatten() {
+        if change["kind"]["type"] != "add" {
+            continue;
+        }
+        let Some(path) = change["path"].as_str() else {
+            continue;
+        };
+        let path = std::path::Path::new(path);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(error) = std::fs::write(path, change["diff"].as_str().unwrap_or_default()) {
+            eprintln!("fake-codex: {}: {error}", path.display());
+        }
+    }
+}
+
+fn reaches_a_limit(steps: &[Step]) -> bool {
+    steps.iter().any(|step| match step {
+        Step::Usage(usage) => usage.status == "rejected",
+        Step::Repeat { steps, .. } => reaches_a_limit(steps),
+        _ => false,
+    })
 }

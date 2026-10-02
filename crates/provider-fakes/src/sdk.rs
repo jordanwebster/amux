@@ -25,6 +25,8 @@ use crate::{DRIFT_EXIT, Mode};
 
 /// The asks headless Claude can raise.
 pub const RAISES: &[&str] = &["permission", "question", "plan", "form"];
+/// The provider-specific steps headless Claude can play.
+pub const PLAYS: &[&str] = &["usage", "auth_failed"];
 
 pub fn main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -60,7 +62,7 @@ pub fn main() -> i32 {
                 }
             }
             Mode::Script(script) => {
-                if let Err(error) = script.check("headless Claude", RAISES) {
+                if let Err(error) = script.check("headless Claude", RAISES, PLAYS) {
                     eprintln!("fake-claude-sdk: {error}");
                     return DRIFT_EXIT;
                 }
@@ -128,6 +130,18 @@ struct Engine {
     answers: BTreeMap<String, Value>,
     turns: u32,
     last_text: String,
+    /// The tool servers each turn's init reports.
+    server_states: Vec<crate::script::ServerState>,
+    /// The context in use each message reports, when scripted.
+    context_tokens: Option<u64>,
+    edit_files: bool,
+    chunk_ms: u64,
+    /// The turn ended on a refused credential, with Claude's message.
+    auth_failed: Option<String>,
+    /// A form schema the next frame carries, as the script wrote it.
+    schema: Option<crate::script::Schema>,
+    /// The tasks the session's task tools made, by id, with their status.
+    tasks: Vec<(String, String)>,
 }
 
 impl Engine {
@@ -188,6 +202,13 @@ impl Engine {
             answers: BTreeMap::new(),
             turns: 0,
             last_text: String::new(),
+            server_states: script.servers,
+            context_tokens: script.context_tokens,
+            edit_files: script.edit_files,
+            chunk_ms: script.chunk_ms,
+            auth_failed: None,
+            schema: None,
+            tasks: Vec::new(),
         }
     }
 
@@ -230,7 +251,19 @@ impl Engine {
     }
 
     async fn send(&mut self, frame: Value) {
-        if self.out.send(&frame).await.is_err() {
+        // A form schema waits for the frame that carries it.
+        let carries = self
+            .schema
+            .as_ref()
+            .is_some_and(|_| frame.to_string().contains(crate::script::SCHEMA_SLOT));
+        let sent = match self.schema.take() {
+            Some(schema) if carries => self.out.send_with_schema(&frame, &schema).await,
+            kept => {
+                self.schema = kept;
+                self.out.send(&frame).await
+            }
+        };
+        if sent.is_err() {
             // The host is gone; so is the reason to run.
             std::process::exit(0);
         }
@@ -463,7 +496,11 @@ impl Engine {
             "cwd": self.cwd,
             "fast_mode_disabled_reason": "sdk_opt_in_required",
             "fast_mode_state": "off",
-            "mcp_servers": [],
+            "mcp_servers": self.server_states.iter().map(|server| json!({
+                "name": server.name,
+                "source": "user",
+                "status": server.status,
+            })).collect::<Vec<_>>(),
             "memory_paths": { "auto": format!("{}/memory", self.cwd) },
             "per_turn_effort_active": false,
             "product_feedback_disabled": false,
@@ -547,11 +584,30 @@ impl Engine {
                 }
                 Step::TurnEnd => break None,
                 Step::Exit { code } => break Some(code),
+                Step::Usage(usage) => self.rate_limit(&usage).await,
+                Step::AuthFailed { message } => {
+                    self.auth_retries().await;
+                    let frame = self.auth_error(&request, &message);
+                    self.send(frame).await;
+                    self.auth_failed = Some(message);
+                    break None;
+                }
                 Step::Repeat { .. } => unreachable!("next_step unrolls repeats"),
             }
         };
         if let Some(code) = exit {
             return Some(code);
+        }
+        if let Some(message) = self.auth_failed.take() {
+            self.failed(calls, &message).await;
+            for command in std::mem::take(&mut self.absorbed)
+                .into_iter()
+                .chain(self.running.take())
+            {
+                self.lifecycle(&command, "completed").await;
+            }
+            self.busy = false;
+            return None;
         }
         // Commands folded into a finished turn complete before its result,
         // the one that started it after; a preempted turn's are cancelled.
@@ -656,7 +712,7 @@ impl Engine {
                 "stop_reason": null,
                 "stop_sequence": null,
                 "type": "message",
-                "usage": usage(),
+                "usage": usage(self.context_tokens),
             },
             "parent_tool_use_id": null,
             "request_id": request,
@@ -681,7 +737,7 @@ impl Engine {
                     "stop_reason": null,
                     "stop_sequence": null,
                     "type": "message",
-                    "usage": usage(),
+                    "usage": usage(self.context_tokens),
                 },
             }))
             .await;
@@ -691,7 +747,10 @@ impl Engine {
                 "content_block": { "type": "text", "text": "" },
             }))
             .await;
-            for chunk in chunks {
+            for (at, chunk) in chunks.iter().enumerate() {
+                if at > 0 && self.chunk_ms > 0 {
+                    self.pause(self.chunk_ms).await;
+                }
                 self.stream(json!({
                     "type": "content_block_delta",
                     "index": 0,
@@ -707,6 +766,120 @@ impl Engine {
                 .await;
         }
         self.last_text = text;
+    }
+
+    /// Stay busy for `ms`, still taking the host's frames.
+    async fn pause(&mut self, ms: u64) {
+        let until = tokio::time::Instant::now() + std::time::Duration::from_millis(ms);
+        while tokio::time::Instant::now() < until && self.cut.is_none() {
+            self.pump().await;
+        }
+    }
+
+    /// The account's usage limits, as Claude reports them between frames.
+    async fn rate_limit(&mut self, usage: &crate::script::Usage) {
+        let now = now_s();
+        // Claude names both windows every time; one the script leaves out
+        // is barely used.
+        let mut windows = serde_json::Map::new();
+        for (name, resets_in_s) in [("five_hour", 5 * 3600), ("seven_day", 7 * 86400)] {
+            windows.insert(
+                name.to_owned(),
+                json!({ "resetsAt": now + resets_in_s, "utilization": 0.01 }),
+            );
+        }
+        for window in &usage.windows {
+            windows.insert(
+                window.name.clone(),
+                json!({
+                    "resetsAt": now + window.resets_in_s,
+                    "utilization": window.used_percent / 100.0,
+                }),
+            );
+        }
+        let first = usage.windows.first();
+        let mut info = json!({
+            "isUsingOverage": false,
+            "overageDisabledReason": "org_level_disabled",
+            "overageStatus": "rejected",
+            "rateLimitType": first.map_or("five_hour", |window| window.name.as_str()),
+            "resetsAt": now + first.map_or(0, |window| window.resets_in_s),
+            "status": usage.status,
+            "unifiedWindows": windows,
+        });
+        // Past a threshold Claude also says how much is used.
+        if usage.status != "allowed" {
+            let used = first.map_or(0.0, |window| window.used_percent / 100.0);
+            info["utilization"] = json!(used);
+            info["surpassedThreshold"] = json!(0.75);
+        }
+        let frame = json!({
+            "type": "rate_limit_event",
+            "rate_limit_info": info,
+            "session_id": self.session,
+            "uuid": uuid(),
+        });
+        self.send(frame).await;
+    }
+
+    /// Claude retries a refused credential twice before giving up.
+    async fn auth_retries(&mut self) {
+        for (attempt, delay) in [(1, 612), (2, 1233)] {
+            let frame = json!({
+                "type": "system",
+                "subtype": "api_retry",
+                "attempt": attempt,
+                "error": "authentication_failed",
+                "error_status": 401,
+                "max_retries": 2,
+                "retry_delay_ms": delay,
+                "session_id": self.session,
+                "uuid": uuid(),
+            });
+            self.send(frame).await;
+        }
+    }
+
+    /// The error message Claude writes as the turn's reply when its
+    /// credential is refused.
+    fn auth_error(&mut self, request: &str, message: &str) -> Value {
+        let id = self.ids.next("msg_fake");
+        let mut frame = self.assistant(request, &id, json!({ "type": "text", "text": message }));
+        frame["error"] = json!("authentication_failed");
+        frame["is_api_error_message"] = json!(true);
+        frame["message"]["model"] = json!("<synthetic>");
+        frame["message"]["stop_reason"] = json!("stop_sequence");
+        frame["message"]["stop_sequence"] = json!("");
+        self.last_text = message.to_owned();
+        frame
+    }
+
+    /// A turn that ended on a refused credential: an error result.
+    async fn failed(&mut self, calls: u32, message: &str) {
+        let frame = json!({
+            "type": "result",
+            "subtype": "success",
+            "api_error_status": 401,
+            "duration_api_ms": 0,
+            "duration_ms": 1,
+            "fast_mode_disabled_reason": "sdk_opt_in_required",
+            "fast_mode_state": "off",
+            "is_error": true,
+            "modelUsage": {},
+            "result_index": 0,
+            "subagent_stats": subagent_stats(),
+            "num_turns": calls + 1,
+            "permission_denials": [],
+            "queued_turn_count": self.queue.len(),
+            "result": message,
+            "session_id": self.session,
+            "stop_reason": "stop_sequence",
+            "terminal_reason": "completed",
+            "total_cost_usd": 0.0,
+            "usage": turn_usage(),
+            "uuid": uuid(),
+        });
+        self.send(frame).await;
     }
 
     async fn stream(&mut self, event: Value) {
@@ -765,8 +938,18 @@ impl Engine {
                 (output.clone(), true, json!(format!("Error: {output}")))
             }
             Ok(output) => {
-                let sidecar = sidecar(&name, input, &output);
-                (output, false, sidecar)
+                if self.edit_files
+                    && let Err(error) = crate::claude::apply_file_tool(&name, input)
+                {
+                    eprintln!("fake-claude-sdk: {name}: {error}");
+                }
+                match self.task_tool(&name, input) {
+                    Some((said, sidecar)) => (said, false, sidecar),
+                    None => {
+                        let sidecar = sidecar(&name, input, &output);
+                        (output, false, sidecar)
+                    }
+                }
             }
             Err(refusal) => (refusal.clone(), true, json!(format!("Error: {refusal}"))),
         };
@@ -789,6 +972,39 @@ impl Engine {
             "uuid": uuid(),
         });
         self.send(frame).await;
+    }
+
+    /// What a task tool says and returns, as Claude's do: a created task
+    /// gets the next id; an update reports the status it changed.
+    fn task_tool(&mut self, name: &str, input: &Value) -> Option<(String, Value)> {
+        let text = |key: &str| input[key].as_str().unwrap_or_default().to_owned();
+        match name {
+            "TaskCreate" => {
+                let id = (self.tasks.len() + 1).to_string();
+                let subject = text("subject");
+                self.tasks.push((id.clone(), "pending".into()));
+                Some((
+                    format!("Task #{id} created successfully: {subject}"),
+                    json!({ "task": { "id": id, "subject": subject } }),
+                ))
+            }
+            "TaskUpdate" => {
+                let id = text("taskId");
+                let to = text("status");
+                let task = self.tasks.iter_mut().find(|(known, _)| *known == id)?;
+                let from = std::mem::replace(&mut task.1, to.clone());
+                Some((
+                    format!("Updated task #{id} status"),
+                    json!({
+                        "statusChange": { "from": from, "to": to },
+                        "success": true,
+                        "taskId": id,
+                        "updatedFields": ["status"],
+                    }),
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Send a control request and wait for its response, or for the turn to
@@ -946,13 +1162,14 @@ impl Engine {
                 let id = self
                     .named_tool_use(request, message, &name, &json!({}))
                     .await;
+                self.schema = Some(schema);
                 let answer = self
                     .request(json!({
                         "subtype": "elicitation",
                         "mcp_server_name": server,
                         "message": prompt,
                         "mode": "form",
-                        "requested_schema": schema,
+                        "requested_schema": crate::script::SCHEMA_SLOT,
                     }))
                     .await;
                 let Some(answer) = answer else { return };
@@ -1001,7 +1218,7 @@ impl Engine {
             "fast_mode_disabled_reason": "sdk_opt_in_required",
             "fast_mode_state": "off",
             "is_error": false,
-            "modelUsage": {},
+            "modelUsage": self.model_usage(),
             "result_index": 0,
             "subagent_stats": subagent_stats(),
             "num_turns": calls + 1,
@@ -1016,6 +1233,26 @@ impl Engine {
             "uuid": uuid(),
         });
         self.send(frame).await;
+    }
+
+    /// Per-model tallies, with the context window, when the script names a
+    /// context in use.
+    fn model_usage(&self) -> Value {
+        match self.context_tokens {
+            Some(tokens) => json!({
+                self.model.clone(): {
+                    "inputTokens": tokens,
+                    "outputTokens": 1,
+                    "cacheReadInputTokens": 0,
+                    "cacheCreationInputTokens": 0,
+                    "webSearchRequests": 0,
+                    "costUSD": 0.0,
+                    "contextWindow": 200000,
+                    "maxOutputTokens": 32000,
+                },
+            }),
+            None => json!({}),
+        }
     }
 
     /// Drop the rest of a cut turn's steps.
@@ -1102,14 +1339,15 @@ impl Engine {
     }
 }
 
-/// A message's token tally.
-fn usage() -> Value {
+/// A message's token tally: `context` tokens in, when the script names a
+/// context in use.
+fn usage(context: Option<u64>) -> Value {
     json!({
         "cache_creation": { "ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 0 },
         "cache_creation_input_tokens": 0,
         "cache_read_input_tokens": 0,
         "inference_geo": "not_available",
-        "input_tokens": 1,
+        "input_tokens": context.unwrap_or(1),
         "output_tokens": 1,
         "service_tier": "standard",
     })
@@ -1117,7 +1355,7 @@ fn usage() -> Value {
 
 /// A turn's token tally, as its result carries it.
 pub(crate) fn turn_usage() -> Value {
-    let mut usage = usage();
+    let mut usage = usage(None);
     usage["iterations"] = json!([]);
     usage["output_tokens_details"] = json!({ "thinking_tokens": 0 });
     usage["server_tool_use"] = json!({ "web_fetch_requests": 0, "web_search_requests": 0 });
@@ -1161,11 +1399,24 @@ fn question(question: &Question) -> Value {
         "question": question.question,
         "header": question.header,
         "multiSelect": question.multi_select,
-        "options": question.options.iter().map(|label| json!({
-            "label": label,
-            "description": label,
-        })).collect::<Vec<_>>(),
+        "options": question.options.iter().map(|option| {
+            let mut offered = json!({
+                "label": option.label(),
+                "description": option.description(),
+            });
+            if let Some(preview) = option.preview() {
+                offered["preview"] = json!(preview);
+            }
+            offered
+        }).collect::<Vec<_>>(),
     })
+}
+
+fn now_s() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or_default()
 }
 
 /// The Claude tool a scripted call names, with its input.

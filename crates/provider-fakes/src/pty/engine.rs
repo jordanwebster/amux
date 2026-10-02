@@ -80,7 +80,7 @@ enum In {
 }
 
 pub async fn run(script: Script, args: Args) -> i32 {
-    if let Err(error) = script.check("terminal Claude", RAISES) {
+    if let Err(error) = script.check("terminal Claude", RAISES, &[]) {
         eprintln!("fake-claude-pty: {error}");
         return DRIFT_EXIT;
     }
@@ -335,6 +335,8 @@ struct Engine {
     started: bool,
     offers_auto_mode: bool,
     untrusted_folder: bool,
+    /// File tools change the files they name.
+    edit_files: bool,
 }
 
 impl Engine {
@@ -357,6 +359,7 @@ impl Engine {
             steps: script.steps.into(),
             offers_auto_mode: script.offers_auto_mode,
             untrusted_folder: script.untrusted_folder,
+            edit_files: script.edit_files,
             model: args
                 .model
                 .clone()
@@ -703,6 +706,7 @@ impl Engine {
                 break None;
             };
             match step {
+                // Claude's terminal shows a message whole once written.
                 Step::Text { chunks } => {
                     let text = chunks.concat();
                     self.screen(&text);
@@ -754,6 +758,9 @@ impl Engine {
                 }
                 Step::TurnEnd => break None,
                 Step::Exit { code } => break Some(code),
+                Step::Usage(_) | Step::AuthFailed { .. } => {
+                    unreachable!("refused when the script loaded")
+                }
                 Step::Repeat { .. } => unreachable!("next_step unrolls repeats"),
             }
         };
@@ -902,6 +909,11 @@ impl Engine {
                 (output.clone(), true, json!(format!("Error: {output}")))
             }
             Ok(output) => {
+                if self.edit_files
+                    && let Err(error) = crate::claude::apply_file_tool(name, input)
+                {
+                    eprintln!("fake-claude-pty: {name}: {error}");
+                }
                 let result = sidecar(name, input, &output);
                 (output, false, result)
             }
@@ -1312,7 +1324,7 @@ impl Engine {
                     .iter()
                     .zip(&picked)
                     .filter(|(_, on)| **on)
-                    .map(|(label, _)| label.clone())
+                    .map(|(option, _)| option.label().to_owned())
                     .collect();
                 if other_on && let Some(other) = other {
                     labels.push(other);
@@ -1329,7 +1341,7 @@ impl Engine {
                 if digit == other_row {
                     answers.push(self.line().await?);
                 } else if (1..other_row).contains(&digit) {
-                    answers.push(q.options[digit - 1].clone());
+                    answers.push(q.options[digit - 1].label().to_owned());
                 } else {
                     answers.push(String::new());
                 }
@@ -1363,10 +1375,16 @@ fn question(question: &Question) -> Value {
         "question": question.question,
         "header": question.header,
         "multiSelect": question.multi_select,
-        "options": question.options.iter().map(|label| json!({
-            "label": label,
-            "description": label,
-        })).collect::<Vec<_>>(),
+        "options": question.options.iter().map(|option| {
+            let mut offered = json!({
+                "label": option.label(),
+                "description": option.description(),
+            });
+            if let Some(preview) = option.preview() {
+                offered["preview"] = json!(preview);
+            }
+            offered
+        }).collect::<Vec<_>>(),
     })
 }
 

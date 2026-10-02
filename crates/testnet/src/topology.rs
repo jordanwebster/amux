@@ -4,7 +4,7 @@
 //! loader both construct it, and [`Topology::validate`] catches unknown and
 //! duplicate names before anything starts.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use provider_fakes::script::{Script, Step};
@@ -91,6 +91,11 @@ pub struct HostDecl {
     /// root, by path below it; none leaves the host without a root.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repositories: Vec<String>,
+    /// Files committed when the repositories are made, by path below the
+    /// repository root (`amux/README.md`), so an agent's edits show as a
+    /// working-tree diff.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<String, String>,
 }
 
 /// Two hosts that trust each other, linked in process over a loopback
@@ -124,9 +129,13 @@ pub struct AgentDecl {
     /// An agent declared before this one, on any host.
     #[serde(default)]
     pub parent: Option<String>,
-    /// The directory it starts in; none is its host's work directory. An
-    /// empty one names none, as an agent's spawn tool sends it, and leaves
-    /// the choice to the host that starts it.
+    /// One of its host's repositories to start in, instead of `cwd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// The directory it starts in; none is its host's work directory, and
+    /// a relative one a folder below it. An empty one names none, as an
+    /// agent's spawn tool sends it, and leaves the choice to the host that
+    /// starts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
 }
@@ -139,6 +148,19 @@ pub enum FakeKind {
     #[default]
     ClaudeSdk,
     Codex,
+}
+
+impl HostDecl {
+    /// The declared repository a committed file's path lies in.
+    pub fn repository_of(&self, path: &str) -> Option<&str> {
+        self.repositories
+            .iter()
+            .find(|repository| {
+                path.strip_prefix(repository.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .map(String::as_str)
+    }
 }
 
 impl FakeKind {
@@ -204,6 +226,10 @@ pub enum TopologyError {
     UnknownAccount { host: String, account: String },
     #[error("account {0:?} is declared twice")]
     DuplicateAccount(String),
+    #[error("agent {agent:?} works in {repository:?}, which its host does not declare")]
+    UnknownRepository { agent: String, repository: String },
+    #[error("host {host:?} commits {path:?} outside the repositories it declares")]
+    FileOutsideRepositories { host: String, path: String },
     #[error("agent {0:?} has both an inline script and a script file")]
     TwoScripts(String),
     #[error("agent {agent:?}'s script {path}: {error}")]
@@ -315,6 +341,14 @@ impl Topology {
             if host.bonjour && (!host.lan || host.discovery) {
                 return Err(TopologyError::BonjourNeedsLan(host.name.clone()));
             }
+            for path in host.files.keys() {
+                if host.repository_of(path).is_none() {
+                    return Err(TopologyError::FileOutsideRepositories {
+                        host: host.name.clone(),
+                        path: path.clone(),
+                    });
+                }
+            }
         }
         let mut accounts = BTreeSet::new();
         for account in self.relay.iter().flat_map(|relay| &relay.accounts) {
@@ -369,6 +403,17 @@ impl Topology {
             }
             if agent.script.is_some() && agent.script_file.is_some() {
                 return Err(TopologyError::TwoScripts(agent.name.clone()));
+            }
+            if let Some(repository) = &agent.repository
+                && !self
+                    .hosts
+                    .iter()
+                    .any(|host| host.name == agent.host && host.repositories.contains(repository))
+            {
+                return Err(TopologyError::UnknownRepository {
+                    agent: agent.name.clone(),
+                    repository: repository.clone(),
+                });
             }
             if let Some(parent) = &agent.parent
                 && !agents.contains(parent.as_str())

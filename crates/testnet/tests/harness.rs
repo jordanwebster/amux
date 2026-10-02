@@ -791,6 +791,9 @@ fn every_door_verb_maps_to_one_capability_and_the_crate_docs_list_the_same_map()
             agent: "x".into(),
             text: "hi".into(),
         },
+        Control::Stop { agent: "x".into() },
+        Control::Freeze { agent: "x".into() },
+        Control::Thaw { agent: "x".into() },
         Control::OpenGate { name: "g".into() },
         Control::Inventory { host: "a".into() },
         Control::Block {

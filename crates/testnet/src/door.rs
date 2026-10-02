@@ -92,6 +92,15 @@ pub enum Control {
         agent: String,
         text: String,
     },
+    Stop {
+        agent: String,
+    },
+    Freeze {
+        agent: String,
+    },
+    Thaw {
+        agent: String,
+    },
     OpenGate {
         name: String,
     },
@@ -134,6 +143,9 @@ pub const CAPABILITIES: &[(&str, &str)] = &[
     ("Spawn", "Net::spawn"),
     ("Resume", "Net::resume"),
     ("Send", "Net::send"),
+    ("Stop", "Net::stop"),
+    ("Freeze", "Net::freeze"),
+    ("Thaw", "Net::thaw"),
     ("OpenGate", "Net::open_gate"),
     (
         "Inventory",
@@ -168,6 +180,9 @@ impl Control {
             Self::Spawn { .. } => "Spawn",
             Self::Resume { .. } => "Resume",
             Self::Send { .. } => "Send",
+            Self::Stop { .. } => "Stop",
+            Self::Freeze { .. } => "Freeze",
+            Self::Thaw { .. } => "Thaw",
             Self::OpenGate { .. } => "OpenGate",
             Self::Inventory { .. } => "Inventory",
             Self::Block { .. } => "Block",
@@ -467,6 +482,9 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
             let verdict = net.send(&agent, &text).await?;
             json!({ "verdict": format!("{:?}", verdict.of) })
         }
+        Control::Stop { agent } => value(net.stop(&agent).await?),
+        Control::Freeze { agent } => value(net.freeze(&agent)?),
+        Control::Thaw { agent } => value(net.thaw(&agent)?),
         Control::OpenGate { name } => value(net.open_gate(&name)?),
         Control::Inventory { host } => {
             let mut inventory = net.observe_inventory(&host).await?;

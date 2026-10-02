@@ -46,6 +46,9 @@
 //! | `Spawn` | `Net::spawn` |
 //! | `Resume` | `Net::resume` |
 //! | `Send` | `Net::send` |
+//! | `Stop` | `Net::stop` |
+//! | `Freeze` | `Net::freeze` |
+//! | `Thaw` | `Net::thaw` |
 //! | `OpenGate` | `Net::open_gate` |
 //! | `Inventory` | `Net::observe_inventory + observe_until(CaughtUp)` |
 //! | `Block` | `Net::assert_block_invariant` |

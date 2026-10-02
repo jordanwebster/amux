@@ -69,6 +69,7 @@ The same network as JSON, as `testnet serve` reads it:
 | `hosts[].account` | The relay account this host's profile signs in to at start; needs a `relay`. |
 | `hosts[].script` | What agents a client creates on this host play; none plays nothing. |
 | `hosts[].repositories` | Git repositories made under the host's repository root, by path below it. |
+| `hosts[].files` | Files committed in those repositories when they are made, by path below the root (`amux/README.md`), so an agent's edits show as a working-tree diff. |
 | `links[]` | `{"a", "b"}`: two hosts that trust each other and are linked at start. |
 | `relay.accounts[]` | `{"name", "tier"}`, tier `pro` (the default: relayed tunnels) or `free` (hosts are listed; the relay opens no tunnels). |
 | `settle` | Start each declared agent only once the one before it has settled (see `settle(name)` below), so agents that come to rest in the same standing are listed in declaration order, the last declared as most recently active. Every declared agent must come to rest. Without it the agents start together and which first turn ends last is a race. |
@@ -77,7 +78,8 @@ The same network as JSON, as `testnet serve` reads it:
 | `agents[].script` or `script_file` | What the fake plays, inline or from a file relative to the topology file; not both. |
 | `agents[].prompt` | The first prompt, sent at creation. |
 | `agents[].parent` | An agent declared earlier, on any host. |
-| `agents[].cwd` | Its working directory; none is the host's work directory. |
+| `agents[].cwd` | Its working directory; none is the host's work directory, and a relative path a folder below it. |
+| `agents[].repository` | One of its host's repositories to work in, instead of `cwd`. |
 
 JSON topologies live in `journeys/topologies`; scripts shared between them in `journeys/scripts`.
 
@@ -128,6 +130,7 @@ The harness owns resources, verbs and observations, never scenarios. Scenarios l
 | `spawn(decl)`, `resume(name, text)` | Start an agent; start an exited agent's next incarnation. |
 | `settle(name)` | Wait until the agent rests on its host: idle or needing the person, nothing queued, so a creation prompt's turn has run. The fleet lists agents of one standing most recently active first; settling each before starting the next fixes that order. |
 | `send(name, text)`, `input(...)` | Send a prompt, or any input (an answer, a withdrawal, an interrupt), through the agent's own host. |
+| `stop(name)` | Stop the agent on its own host, as a person does; it can be resumed. |
 | `delete(name)`, `delete_family(name)` | Delete an agent, or delete it with its children and report what the cascade reached. |
 | `spawn_child(parent, decl)` | Spawn through the parent's tool socket, naming the child's host. |
 | `next_start(name, script)` | Give the next process the host starts for `name` this script, for a resume the host makes itself. |
@@ -234,6 +237,8 @@ verb without fields is a bare string (`"Shutdown"`).
 | `{"Spawn": {"agent": {…}}}` | Start an agent declared as in a topology: `{"id": "…"}`. |
 | `{"Resume": {"agent", "text"}}` | Start an exited agent again, optionally with a prompt: `{"incarnation": n}`. |
 | `{"Send": {"agent", "text"}}` | Send a prompt through the agent's host: `{"verdict": "…"}`. |
+| `{"Stop": {"agent"}}` | Stop the agent on its host, as a person does; it can be resumed. |
+| `{"Freeze": {"agent"}}`, `{"Thaw": {"agent"}}` | Stop the agent's process where it stands, answering nothing, and let it run again. |
 | `{"OpenGate": {"name"}}` | Release `wait_for` steps waiting on that file. |
 | `{"Inventory": {"host"}}` | The host's fleet once its inventory has caught up: `{"agents": [{"name", "id", "host_id", "lifecycle", "phase"}]}`. |
 | `{"Chat": {"host", "agent"}}` | Everything the host holds of a chat, read to its first CaughtUp: `{"items": [{"key", "order", "text", "input_id", "attachments"}], "phase"}`. `agent` is a declared name or, for an agent a client created, its id. |

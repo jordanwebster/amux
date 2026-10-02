@@ -137,3 +137,38 @@ fn process_tag() -> u32 {
 /// The Claude Code version the fakes report: the newest one the corpora
 /// were recorded against.
 pub const VERSION: &str = "2.1.283";
+
+/// Carries out a file tool's change, as Claude's own Write and Edit do: a
+/// Write writes its content, an Edit replaces its old string (every one
+/// with `replace_all`). A relative path is the working directory's.
+pub fn apply_file_tool(name: &str, input: &serde_json::Value) -> std::io::Result<()> {
+    let text = |key: &str| input.get(key).and_then(serde_json::Value::as_str);
+    let Some(path) = text("file_path") else {
+        return Ok(());
+    };
+    let path = std::path::Path::new(path);
+    match name {
+        "Write" => {
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, text("content").unwrap_or_default())
+        }
+        "Edit" => {
+            let old = text("old_string").unwrap_or_default();
+            let new = text("new_string").unwrap_or_default();
+            let was = std::fs::read_to_string(path)?;
+            let all = input
+                .get("replace_all")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
+            let now = if all {
+                was.replace(old, new)
+            } else {
+                was.replacen(old, new, 1)
+            };
+            std::fs::write(path, now)
+        }
+        _ => Ok(()),
+    }
+}

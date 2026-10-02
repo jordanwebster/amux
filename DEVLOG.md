@@ -1,3 +1,18 @@
+2026-10-02 — **The fake providers and the test network can stage more of a
+person's day.** Scripts gain the facts the new terminal client shows:
+usage limits as each provider reports them (headless Claude can reach a
+limit; Codex only nears one, since no recording shows how it reports a
+reached limit), a refused credential (headless Claude's retries and error
+reply, Codex's failing reconnects), tool servers' states, the context in
+use, questions with descriptions, previews, free text and secrets, paced
+streaming, task lists with Claude's task tools, and file tools that really
+change files. A form's schema keeps the order it was written in. Every new
+frame is held to the recorded corpora's shapes. The test network gains
+`Stop`, `Freeze` and `Thaw` at its door, agents that start in a folder
+below their host's work directory or in one of its repositories, and
+repositories seeded with committed files, so an agent's edits make a real
+working-tree diff.
+
 2026-10-02 — **A plan waiting on terminal Claude shows in the chat.**
 Claude in its own terminal writes a plan's call to its transcript only
 once the plan is decided (its recording shows the order), so the chat
