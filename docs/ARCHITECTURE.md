@@ -433,6 +433,7 @@ checks.
 | [`attachments`](../crates/attachments/src/lib.rs) | Attachments as positioned text, and the `<amux-attachment>` element the model sees. |
 | [`settings`](../crates/settings/src/lib.rs) | Installation, profile and UI settings, and where their files live. |
 | [`redaction`](../crates/redaction/src/lib.rs) | The structural redactor for free text and JSON in reports, logs and captures. |
+| [`release`](../crates/release/src/lib.rs) | A release channel's signed manifest: signing, verification and the build a host installs, shared by the daemon and the release tool. |
 | [`version-stamp`](../crates/version-stamp/src/lib.rs) | The version stamp in a built binary, and re-stamping a copy. |
 
 **The agent side** — everything that reads a provider.
@@ -510,12 +511,12 @@ The allowed sets encode the layering above:
 
 | Crate | May depend on | Why |
 |---|---|---|
-| `wire`, `model`, `settings`, `redaction`, `version-stamp`, `codex`, `pty-host` | nothing in the workspace | leaves everything else builds on |
+| `wire`, `model`, `settings`, `redaction`, `release`, `version-stamp`, `codex`, `pty-host` | nothing in the workspace | leaves everything else builds on |
 | `journal`, `store`, `agent-dir`, `attachments` | `wire` | |
 | `interpret` | `wire`, `redaction` | the pure step and its body redactor |
 | `claude` | `pty-host` | |
 | `agent` | `agent-dir`, `attachments`, `claude`, `interpret`, `journal`, `pty-host`, `wire` | the agent process is the only production crate that reads a provider |
-| `node` | `agent-dir`, `interpret`, `journal`, `settings`, `store`, `version-stamp`, `wire` | reaches agents only through the directory contract, never the `agent` crate, so the phone can host a runtime with no provider in its graph; `interpret` only for the debug bundle's per-kind redactor |
+| `node` | `agent-dir`, `interpret`, `journal`, `release`, `settings`, `store`, `version-stamp`, `wire` | reaches agents only through the directory contract, never the `agent` crate, so the phone can host a runtime with no provider in its graph; `interpret` only for the debug bundle's per-kind redactor |
 | `client` | `agent-dir`, `wire` | the local socket and the clock come from the contract crate |
 | `ui-state` → `model`, `wire`; `ui-view` → `attachments`, `ui-state`, `wire`; `ui-runtime` → `client`, `ui-state`, `wire` | | the view library |
 | `tui` | `attachments`, `client`, `ui-runtime`, `ui-state`, `ui-view`, `wire` | |
@@ -524,7 +525,7 @@ The allowed sets encode the layering above:
 | `app-ffi` | `app-embedded`, `app-runtime`, `client`, `model`, `node`, `ui-view` | the C ABI over both |
 | `amux` | `agent`, `agent-dir`, `claude`, `client`, `node`, `settings`, `store`, `tui`, `wire` | the one binary |
 | `replay-support` | `interpret`, `journal`, `redaction`, `ui-state`, `ui-view`, `wire` | replays the three pure stages |
-| `xtask` | `app-runtime`, `model`, `ui-view`, `version-stamp` | generates the Swift mirrors |
+| `xtask` | `app-runtime`, `model`, `release`, `ui-view`, `version-stamp` | generates the Swift mirrors; signs releases |
 
 The phone bridge (`app-embedded`, `app-ffi`) links `node` on purpose: it
 hosts the runtime in process. `just embedded-check` and `just mobile-check`

@@ -31,14 +31,16 @@ ALLOWED_LOCAL = {
     # provider in its graph.
     # interpret only for the dump path's per-kind redactor: the one stated
     # exception to "the daemon interprets nothing".
-    "node": {"agent-dir", "interpret", "journal", "settings", "store", "version-stamp", "wire"},
+    "node": {"agent-dir", "interpret", "journal", "release", "settings", "store", "version-stamp", "wire"},
     "amux": {"agent", "agent-dir", "claude", "client", "node", "settings", "store", "tui", "wire"},
-    # The version stamp a release tool can rewrite in a built binary; the
-    # xtask shares it without building the daemon.
+    # The version stamp a release tool can rewrite in a built binary, and the
+    # release manifest the tool signs and the daemon verifies; the xtask
+    # shares both without building the daemon.
     "version-stamp": set(),
+    "release": set(),
     # The Swift mirrors of the view values are generated from their
     # definitions, so the generator reads them.
-    "xtask": {"app-runtime", "model", "ui-view", "version-stamp"},
+    "xtask": {"app-runtime", "model", "release", "ui-view", "version-stamp"},
     # The seam both clients call the local runtime through: the local socket
     # and the shared clock trait come from the agent directory contract.
     "client": {"agent-dir", "wire"},

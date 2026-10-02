@@ -1,3 +1,15 @@
+2026-10-02 — **The release manifest is its own crate.**
+Signing releases from xtask reached the manifest, its signature and the
+choice of build through the daemon, so the release tool built the
+whole daemon and the dependency policy, which says the tool shares the
+version stamp without doing that, failed in `just ci`. The manifest,
+signing, verification, rollout placement and the choice are now the
+`release` crate, shared by the daemon and the tool like the version
+stamp; the daemon keeps what a build knows about itself (its target,
+its version and its key) and re-exports the rest. Policy and
+architecture tables updated. Found by the first full `just ci` since
+the signing landed.
+
 2026-10-02 — **The proto baseline records the session-model breaks.**
 The tool class renumbered and lost its exploration value, and the task
 message lost its call key, both on purpose; the only-add check now

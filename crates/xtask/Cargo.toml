@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 app-runtime = { workspace = true }
 model = { workspace = true }
-node = { workspace = true }
+release = { workspace = true }
 semver = { workspace = true }
 schemars = { workspace = true }
 ui-view = { workspace = true }

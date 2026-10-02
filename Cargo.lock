@@ -2281,6 +2281,7 @@ dependencies = [
  "provider-fakes",
  "quinn",
  "rcgen",
+ "release",
  "reqwest",
  "ring",
  "rustls",
@@ -3446,6 +3447,19 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "release"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ring",
+ "semver",
+ "serde",
+ "sha2",
+ "thiserror 2.0.20",
+ "uuid",
+]
 
 [[package]]
 name = "replay-support"
@@ -5433,11 +5447,11 @@ version = "0.1.0"
 dependencies = [
  "app-runtime",
  "model",
- "node",
  "png 0.17.16",
  "prost",
  "prost-types",
  "protoc-bin-vendored",
+ "release",
  "schemars",
  "semver",
  "serde",

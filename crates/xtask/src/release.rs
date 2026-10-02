@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use node::release::{self, Manifest, Release};
+use release::{Manifest, Release};
 
 /// The keychain item that holds the seed, as `security` names it.
 const KEYCHAIN_SERVICE: &str = "amux-release-key";

@@ -419,8 +419,8 @@ cargo = [
 [[suite]]
 name = "daemon-library-units"
 contract = "Daemon-side libraries preserve their local parsing, state, routing, lifecycle, persistence, agent-directory and wire invariants."
-paths = ["crates/agent-dir/src", "crates/client/src", "crates/node/src", "crates/settings/src", "crates/version-stamp/src", "crates/wire/src"]
-recipe = "just test -- --lib -p agent-dir -p client -p node -p settings -p version-stamp -p wire"
+paths = ["crates/agent-dir/src", "crates/client/src", "crates/node/src", "crates/release/src", "crates/settings/src", "crates/version-stamp/src", "crates/wire/src"]
+recipe = "just test -- --lib -p agent-dir -p client -p node -p release -p settings -p version-stamp -p wire"
 boundary = "Single daemon"
 oracle = "Value assertions, explicit state transitions, wire round trips, and owned-resource observations."
 real = ["temporary files and local sockets in integration-shaped unit cases"]
@@ -434,6 +434,7 @@ cargo = [
   { package = "agent-dir", kind = "lib", targets = ["agent_dir"], features = [] },
   { package = "client", kind = "lib", targets = ["client"], features = [] },
   { package = "node", kind = "lib", targets = ["node"], features = [] },
+  { package = "release", kind = "lib", targets = ["release"], features = [] },
   { package = "settings", kind = "lib", targets = ["settings"], features = [] },
   { package = "version-stamp", kind = "lib", targets = ["version_stamp"], features = [] },
   { package = "wire", kind = "lib", targets = ["wire"], features = [] },
