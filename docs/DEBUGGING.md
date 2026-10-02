@@ -191,6 +191,26 @@ Find the item that looks wrong by its key, then compare layer by layer:
 A row carries its agent and key; the key finds the journal frames that wrote it, and the replayed facts show which
 event produced the step that first emitted it.
 
+## A report from the terminal
+
+`b` on home, or the leader then `b` in a chat, freezes the screen as it was and opens a report over it; at the same
+instant the client starts a dump of the profile with its own parts. Drag with the mouse over anything wrong to mark
+it, and each mark takes a note of its own; one note covers the whole. Enter writes the bundle into the
+installation's `reports/` directory and says where; Esc leaves without writing anything. The terminal client has
+no account upload of its own, so the bundle stays on this machine.
+
+The bundle, `reports/report-<unix ms>-<n>/`, readable by its user only:
+
+| File | Contents |
+| --- | --- |
+| `report.json` | The phone's header (schema 2): build, time, note, marks in cells, the viewport in cells, and every part declared present or absent with a reason |
+| `frame.txt` | The frozen screen as text, without the report's own panel |
+| `dump/…` | The profile's dump, as above, with this client's fleet and open chat parts under `client/` |
+
+A terminal frame is cells, so there is no `frame.png`; the client keeps no log of its own (the daemon's is in the
+dump) and records no view trace (its runtime's order of events is in the dump's `client/` parts), and
+`report.json` says so.
+
 ## A report from the phone
 
 A phone gives up its diagnostics two ways, both under Help. **Export Diagnostics** writes a dump of the profile,

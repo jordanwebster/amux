@@ -1,3 +1,13 @@
+2026-10-02 — **Report a Problem in the terminal.** `b` on home, or the
+leader then `b` in a chat, freezes the screen and opens a report over it:
+drag with the mouse to mark what looks wrong, a note on each mark and one
+overall, Enter to save. The bundle goes into the installation's `reports/`
+with the phone's header (marks in cells), the frozen screen as text and the
+profile's dump with this client's parts, started at the key; the parts a
+terminal does not have are declared absent with their reasons. The terminal
+has no account upload of its own, so the bundle stays local. A journey marks
+a reply with a drag and reads the bundle back.
+
 2026-10-02 — **Journeys for the new chat's flows.** Eight terminal stories
 on a new topology (`journeys/topologies/terminal-flows.json`): deciding a
 plan with headless Claude and with Claude in its own terminal (sent back

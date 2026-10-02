@@ -58,6 +58,9 @@ pub struct TuiConfig {
     /// Where this client keeps its layout between runs; None keeps it for
     /// this run only.
     pub layout: Option<std::path::PathBuf>,
+    /// Where a report of a problem is written: the installation's reports
+    /// directory. None writes it beside the dump it carries.
+    pub reports: Option<std::path::PathBuf>,
     /// Where the person chats with their agents: in amux, or in each
     /// agent's own terminal, attached on start.
     pub chat_in: crate::setup::ChatIn,
@@ -223,6 +226,9 @@ pub struct App {
     notice: Option<(String, Tone, Instant)>,
     opening: Option<AgentKey>,
     layout: Layout,
+    /// A report asked for: the next frame drawn is the one it freezes.
+    report_asked: bool,
+    report: Option<crate::report::Report>,
     events: mpsc::UnboundedSender<AppEvent>,
     pub receiver: mpsc::UnboundedReceiver<AppEvent>,
 }
@@ -277,6 +283,8 @@ impl App {
             help_scroll: 0,
             notice: None,
             opening: None,
+            report_asked: false,
+            report: None,
             events,
             receiver,
         }
@@ -559,6 +567,21 @@ impl App {
     }
 
     pub fn input(&mut self, event: Event) -> Flow {
+        // A report has every key, click and paste until it is saved or
+        // left: the frame under it is a picture of a moment that is over.
+        if let Some(report) = &mut self.report {
+            match event {
+                Event::Key(key) if key.kind != KeyEventKind::Release => match report.key(key) {
+                    crate::report::ReportAction::None => {}
+                    crate::report::ReportAction::Cancel => self.report = None,
+                    crate::report::ReportAction::Save => self.save_report(),
+                },
+                Event::Mouse(mouse) => report.mouse(mouse),
+                Event::Paste(text) => report.paste(&text),
+                _ => {}
+            }
+            return Flow::Continue;
+        }
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.key(key),
             Event::Paste(text) => {
@@ -668,6 +691,10 @@ impl App {
     }
 
     fn chord(&mut self, key: KeyEvent) -> Flow {
+        if key.code == KeyCode::Char(REPORT_KEY) {
+            self.report_asked = true;
+            return Flow::Continue;
+        }
         let theme = self.theme();
         let Some(chat) = &mut self.chat else {
             return Flow::Continue;
@@ -790,6 +817,7 @@ impl App {
         match effect {
             FleetEffect::Quit => return Some(Flow::Quit),
             FleetEffect::Help => self.help = true,
+            FleetEffect::Report => self.report_asked = true,
             FleetEffect::Open(agent) => self.open(agent),
             FleetEffect::Attach(agent) => return self.raw_attach(&agent),
             FleetEffect::Start {
@@ -1193,11 +1221,71 @@ impl App {
                 None
             }
         };
+        if std::mem::take(&mut self.report_asked) {
+            let frozen = paint.buffer_mut().clone();
+            self.report = Some(crate::report::Report::new(frozen, self.start_dump()));
+        }
+        if let Some(report) = &self.report {
+            report.draw(paint, theme);
+        }
         if let Some(n) = page {
             self.chat_effect(ChatEffect::Page(n));
         }
     }
+
+    /// The profile's dump with this client's parts, started as the screen
+    /// freezes so it is ready by the time the note is.
+    fn start_dump(&self) -> crate::report::Dump {
+        let client = self.client.clone();
+        let mut parts = vec![self.fleet.dump_part()];
+        if let Some(chat) = &self.chat {
+            parts.push(chat.session.dump_part());
+        }
+        tokio::spawn(async move {
+            let response = client
+                .dump(wire::DumpRequest {
+                    agent_ids: Vec::new(),
+                    reason: "report a problem".to_owned(),
+                    automatic: false,
+                })
+                .await
+                .map_err(|error| format!("the daemon could not dump: {error}"))?;
+            if response.report_path.is_empty() {
+                return Err("the daemon wrote its dump on another machine".to_owned());
+            }
+            let bundle = std::path::PathBuf::from(response.report_path);
+            for part in &parts {
+                ui_runtime::write_part(&bundle, part)
+                    .map_err(|error| format!("writing this client's part of the dump: {error}"))?;
+            }
+            Ok(bundle)
+        })
+    }
+
+    /// Writes the report and says where.
+    fn save_report(&mut self) {
+        let Some(report) = self.report.take() else {
+            return;
+        };
+        let reports = self.config.reports.clone();
+        let build = self.config.version.clone();
+        self.notice("saving the report…", Tone::Info);
+        self.spawn(async move {
+            Some(match report.save(reports, build).await {
+                Ok(dir) => {
+                    AppEvent::Notice(format!("report saved in {}", dir.display()), Tone::Info)
+                }
+                Err(error) => {
+                    AppEvent::Notice(format!("could not save the report: {error}"), Tone::Warn)
+                }
+            })
+        });
+    }
 }
+
+/// The key that reports a problem: bare on home, after the leader in a
+/// chat. "b" for bug: "report" and "problem" hold letters that are taken.
+const REPORT_KEY: char = 'b';
 
 /// A new agent's settings copied from a chat: its model, effort, mode,
 /// folder and host ([`crate::setup::Setup::sibling`] then sets the agent and
@@ -1272,6 +1360,7 @@ fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
         entry("amux", "n", "new agent", 'n'),
         entry("amux", "p", "hosts", 'p'),
         entry("amux", "d", "detach", 'd'),
+        entry("amux", "b", "bug report", 'b'),
         entry("amux", "?", "all keys", '?'),
         entry("this chat", "r", "review changes", 'r'),
     ];
@@ -1346,11 +1435,12 @@ fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
         ("Leader", String::new()),
     ]);
     // The leader's chords, by their whole keys.
-    let chords: [(&str, &str); 10] = [
+    let chords: [(&str, &str); 11] = [
         ("h", "home"),
         ("n", "new agent, starting from this chat's settings"),
         ("p", "hosts"),
         ("d", "detach: leave to the shell; agents keep running"),
+        ("b", "report a problem: mark the screen, write a note"),
         ("r", "review changes; comments go in the draft"),
         ("a", "attach to the agent's own terminal (this machine)"),
         ("k / j", "focus an older or newer row"),

@@ -121,6 +121,13 @@
       "claim": "For someone who chats in each agent's own terminal, a new agent starts from a form. Started on this machine, the terminal is handed to the new Claude and what is typed there reaches it once, and the leader's s comes back home; started on another machine, the agent runs there and its chat opens, saying its terminal is elsewhere."
     },
     {
+      "id": "report-a-problem",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "In a chat, the leader's b freezes the screen and opens a report on it. A drag with the mouse marks what looks wrong and takes a note of its own, an overall note follows, and Enter writes one bundle into the installation's reports directory: report.json with the marks in cells and both notes, the frozen screen as text, and the profile's dump with this client's parts, every part not captured declared absent with its reason, readable by this user only."
+    },
+    {
       "id": "account-sign-in",
       "stage": 16,
       "clients": ["phone"],

@@ -58,6 +58,7 @@ pub async fn render(request: Request) -> Result<Vec<String>> {
         version: "set".into(),
         local_host: request.local_host.clone(),
         layout: None,
+        reports: None,
         chat_in: match config.ui.chat_in {
             settings::ChatInSetting::Amux => tui::setup::ChatIn::Amux,
             settings::ChatInSetting::Terminal => tui::setup::ChatIn::Terminal,

@@ -1,0 +1,34 @@
+
+  limited │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                              1 │ [Diff] │ [Home]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+    Rewrite the pricing page's FAQ.                                                                  hh:mm
+
+
+    The FAQ is rewritten.
+
+    Worked <t>
+
+  Report a problem · 1 mark ────────────────────────────────────────────────────────────────────────────────
+
+  ▎ The reply claims work it did not do.
+
+  enter save   esc cancel   drag to mark

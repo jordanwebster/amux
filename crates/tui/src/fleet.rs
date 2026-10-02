@@ -34,6 +34,8 @@ pub enum FleetEffect {
     Quit,
     /// Show the key help.
     Help,
+    /// Freeze the screen and report a problem with it.
+    Report,
 }
 
 #[derive(Debug, Default)]

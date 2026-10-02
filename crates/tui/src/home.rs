@@ -596,6 +596,7 @@ impl Home {
         match key.code {
             KeyCode::Char('q') => return vec![FleetEffect::Quit],
             KeyCode::Char('?') => return vec![FleetEffect::Help],
+            KeyCode::Char('b') => return vec![FleetEffect::Report],
             KeyCode::Up | KeyCode::Char('k') => self.step(&targets, -1),
             KeyCode::Down | KeyCode::Char('j') => self.step(&targets, 1),
             KeyCode::Home | KeyCode::Char('g') => self.step(&targets, isize::MIN),
@@ -1765,6 +1766,10 @@ pub fn help_rows() -> Vec<(&'static str, String)> {
         ("s", "stop; it can be resumed".into()),
         ("x", "delete; it asks first".into()),
         ("p", "hosts".into()),
+        (
+            "b",
+            "report a problem: mark the screen, write a note".into(),
+        ),
         (
             "d, q",
             "detach: leave to the shell; agents keep running".into(),

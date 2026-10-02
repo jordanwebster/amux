@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -875,6 +876,67 @@ def new_agent_terminal(journey: TerminalJourney) -> list[str]:
     ]
 
 
+
+def report_a_problem(journey: TerminalJourney) -> list[str]:
+    pane = journey.launch("terminal", "laptop")
+    journey.open_chat(pane, "limited")
+    journey.wait_terms(pane, "The FAQ is rewritten.")
+    before = journey.capture(pane)
+    journey.keys(pane, "C-a", "b")
+    journey.wait_terms(pane, "Report a problem", "What went wrong?", "enter save")
+    # A drag over the reply, as the terminal reports a mouse: press, move,
+    # let go, in cells counted from one.
+    row = next(i for i, line in enumerate(before.splitlines()) if "The FAQ is rewritten." in line)
+    col = before.splitlines()[row].index("The FAQ")
+    press = f"\x1b[<0;{col + 1};{row + 1}M"
+    drag = f"\x1b[<32;{col + 21};{row + 1}M"
+    release = f"\x1b[<0;{col + 21};{row + 1}m"
+    for sequence in (press, drag, release):
+        journey.type(pane, sequence)
+        time.sleep(0.15)
+    journey.wait_terms(pane, "Mark 1: what is wrong here?", "1 mark")
+    journey.type(pane, "This says rewritten but nothing changed.")
+    journey.keys(pane, "Enter")
+    journey.type(pane, "The reply claims work it did not do.")
+    journey.frame(pane, "report")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "report saved in")
+    reports = Path(journey.ready["root"]) / "laptop" / "data" / "reports"
+    (bundle,) = [path for path in reports.iterdir() if path.name.startswith("report-")]
+    # Kept with the run's evidence, to read.
+    shutil.copytree(bundle, journey.output / "bundle")
+    header = json.loads((bundle / "report.json").read_text())
+    expected_mark = {"x": col, "y": row, "width": 21, "height": 1, "note": "This says rewritten but nothing changed."}
+    if header["marks"] != [expected_mark] or header["note"] != "The reply claims work it did not do.":
+        raise RuntimeError(f"report.json holds {header!r}")
+    if header["viewport"] != [110, 34] or header["parts"]["frame"] != "present" or header["parts"]["dump"] != "present":
+        raise RuntimeError(f"report.json declares {header!r}")
+    for part in ("frame_png", "trace", "log"):
+        if not header["parts"][part].get("absent", {}).get("reason"):
+            raise RuntimeError(f"{part} is not declared absent with a reason: {header['parts']!r}")
+    frame = (bundle / "frame.txt").read_text()
+    if "The FAQ is rewritten." not in frame or "limited │" not in frame or "Report a problem" in frame:
+        raise RuntimeError(f"frame.txt is not the frozen chat:\n{frame}")
+    dump = bundle / "dump"
+    if not (dump / "manifest.json").is_file() or not any(dump.rglob("row.pb")):
+        raise RuntimeError(f"the dump is not whole: {sorted(str(p.relative_to(dump)) for p in dump.rglob('*'))}")
+    client_parts = [p for p in dump.rglob("*") if p.is_file() and "client" in str(p.relative_to(dump))]
+    if not client_parts:
+        raise RuntimeError(f"the dump has no client parts: {sorted(str(p.relative_to(dump)) for p in dump.rglob('*'))}")
+    if os.stat(bundle).st_mode & 0o077 or os.stat(bundle / "report.json").st_mode & 0o077:
+        raise RuntimeError("the report is readable by others")
+    journey.quit_client(pane)
+    return [
+        "leader b froze the chat under the report's panel",
+        "a mouse drag marked the reply, and its note and the overall note were written",
+        f"the bundle holds report.json with the mark in cells ({expected_mark['x']},{expected_mark['y']} 21×1) and both notes",
+        "frame.txt is the chat as it was at the key, without the report's panel",
+        "the dump is whole: its manifest, the agents' rows and this client's parts",
+        "the parts not captured are declared absent with their reasons, and only this user can read the report",
+        "the client exited 0",
+    ]
+
+
 STORIES = {
     "conversation-decision-claude-pty": lambda j: conversation_decision(j, "decision-pty", False),
     "conversation-decision-claude-sdk": lambda j: conversation_decision(j, "decision-sdk", True),
@@ -892,6 +954,7 @@ STORIES = {
     "send-while-away": send_while_away,
     "composer-limits": composer_limits,
     "new-agent-terminal": new_agent_terminal,
+    "report-a-problem": report_a_problem,
 }
 
 

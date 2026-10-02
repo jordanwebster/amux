@@ -1323,6 +1323,7 @@ fn raw_attach_is_only_for_terminals_on_this_machine() {
         version: "0.7.0".into(),
         local_host: b"a".to_vec(),
         layout: None,
+        reports: None,
         chat_in: crate::setup::ChatIn::Amux,
         defaults: crate::setup::Defaults::default(),
     };
