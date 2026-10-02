@@ -77,7 +77,9 @@ pub use net::{
     Ack, ClockMode, EdgeHook, HostInfo, JournalCut, LaunchHook, Net, NetAgent, NetError,
     NetOptions, local_channel, prompt, withdraw,
 };
-pub use observe::{InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
+pub use observe::{
+    InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck, holds_for, until, until_within,
+};
 pub use relay::{CREDENTIAL_TTL, RELAY_HOST, Relay};
 pub use topology::{
     AccountDecl, AgentDecl, FakeKind, HostDecl, LinkDecl, RelayDecl, TierDecl, Topology,

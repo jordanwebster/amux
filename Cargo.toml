@@ -18,6 +18,7 @@ members = [
     "crates/journal",
     "crates/model",
     "crates/node",
+    "crates/patience",
     "crates/provider-fakes",
     "crates/pty-host",
     "crates/qualification",
@@ -49,6 +50,7 @@ app-embedded = { path = "crates/app-embedded" }
 app-ffi = { path = "crates/app-ffi" }
 app-runtime = { path = "crates/app-runtime" }
 node = { path = "crates/node" }
+patience = { path = "crates/patience" }
 release = { path = "crates/release" }
 version-stamp = { path = "crates/version-stamp" }
 testnet = { path = "crates/testnet" }

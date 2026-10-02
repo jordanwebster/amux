@@ -5,8 +5,9 @@
 //! and only one of them passes: the predicate held, the deadline passed
 //! with it unmet ([`Stuck::Deadline`]), or the stream ended with it unmet
 //! ([`Stuck::Closed`]), reported at once rather than at the deadline. The
-//! polling waiters beside it hold to the same rule: a check that never
-//! answers is a failure, never a pass.
+//! polling waiters beside it, and the plain ones re-exported from the
+//! `patience` crate, hold to the same rule: a check that never answers is
+//! a failure, never a pass.
 
 use std::fmt::{self, Write as _};
 use std::future::Future;
@@ -17,33 +18,10 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use wire::{InventoryEvent, SessionEvent, inventory_event, session_event};
 
-/// How long an observation or a convergence waits by default. Real work on
-/// loopback settles well inside it; a wait that reaches it is a hang.
-pub const PATIENCE: Duration = Duration::from_secs(30);
+pub use patience::{PATIENCE, Stuck, holds_for, until, until_within};
 
 /// How often the polling waiters look again.
 const POLL: Duration = Duration::from_millis(20);
-
-/// Why an observation or a wait did not pass.
-#[derive(Debug, thiserror::Error)]
-pub enum Stuck {
-    #[error("{what}: nothing satisfied the predicate within {waited:?}; saw:\n{seen}")]
-    Deadline {
-        what: String,
-        waited: Duration,
-        seen: String,
-    },
-    #[error("{what}: the stream ended before the predicate held; saw:\n{seen}")]
-    Closed { what: String, seen: String },
-    #[error("{what}: the check itself did not answer within {waited:?}")]
-    Hung { what: String, waited: Duration },
-    #[error("{what}: the condition broke after {after:?} of {window:?}")]
-    Broke {
-        what: String,
-        after: Duration,
-        window: Duration,
-    },
-}
 
 /// One line per event, the way a failure report and a transcript show it.
 pub trait Describe {
@@ -365,42 +343,6 @@ where
                 waited: deadline,
                 seen: String::new(),
             });
-        }
-        tokio::time::sleep(POLL).await;
-    }
-}
-
-/// Holds `check` true for all of `window`, looking every poll. A false
-/// answer fails at once; so does a check that does not answer within
-/// [`PATIENCE`], which the old stability waiter wrongly took for a pass.
-pub async fn holds_for<F>(
-    what: &str,
-    window: Duration,
-    mut check: impl FnMut() -> F,
-) -> Result<(), Stuck>
-where
-    F: Future<Output = bool>,
-{
-    let start = Instant::now();
-    loop {
-        match tokio::time::timeout(PATIENCE, check()).await {
-            Ok(true) => {}
-            Ok(false) => {
-                return Err(Stuck::Broke {
-                    what: what.to_owned(),
-                    after: start.elapsed(),
-                    window,
-                });
-            }
-            Err(_) => {
-                return Err(Stuck::Hung {
-                    what: what.to_owned(),
-                    waited: PATIENCE,
-                });
-            }
-        }
-        if start.elapsed() >= window {
-            return Ok(());
         }
         tokio::time::sleep(POLL).await;
     }

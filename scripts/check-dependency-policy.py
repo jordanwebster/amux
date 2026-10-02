@@ -70,6 +70,7 @@ ALLOWED_LOCAL = {
 UI_CRATES = {"model", "client", "ui-state", "ui-view", "ui-runtime", "tui", "app-runtime"}
 FORBIDDEN_FOR_UI = {"node", "store", "interpret", "agent", "claude", "codex", "pty-host"}
 TEST_SUPPORT = {
+    "patience",
     "testnet",
     "qualification",
     "claude-specs",
@@ -81,7 +82,10 @@ TEST_SUPPORT = {
 SUPPORT_ALLOWED_LOCAL = {
     # The many-daemons harness: real daemons in process, real agents on the
     # fake providers, synthetic journals, and the production boundaries.
-    "testnet": {"agent-dir", "journal", "node", "provider-fakes", "store", "wire"},
+    # The one wait and its failure, shared by every test crate; the harness
+    # builds its stream and cursor waits on it.
+    "patience": set(),
+    "testnet": {"agent-dir", "journal", "node", "patience", "provider-fakes", "store", "wire"},
     # Qualification owns environment-dependent provider and performance
     # checks while reusing the network harness rather than shipping it.
     "qualification": {"node", "provider-fakes", "store", "testnet", "wire"},

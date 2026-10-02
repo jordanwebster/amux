@@ -478,6 +478,7 @@ checks.
 
 | Crate | What it is |
 |---|---|
+| [`patience`](../crates/patience/src/lib.rs) | Waiting in tests: one deadline, one way to fail, and what was last seen. Every test crate waits through it; the harness builds its stream and cursor waits on it. |
 | [`testnet`](../crates/testnet/src/lib.rs) | The many-daemons harness: topologies of production runtimes in one process, faults and observations. See [testnet](TESTNET.md). |
 | [`provider-fakes`](../crates/provider-fakes/src/lib.rs) | Scripted stand-ins for the Claude and Codex binaries, playing authored scripts or recordings. |
 | [`qualification`](../crates/qualification/src/lib.rs) | Environment-dependent checks: live providers and performance baselines on enrolled machines. |
@@ -499,7 +500,7 @@ workspace crates, and ignores dev-dependencies. Its rules:
    check fails when the actual set differs in either direction, so adding
    an edge, or dropping one, is a deliberate edit to the policy. A crate
    missing from the policy fails too.
-2. **Production never depends on test support.** `testnet`,
+2. **Production never depends on test support.** `patience`, `testnet`,
    `qualification`, `claude-specs`, `codex-specs`, `provider-fakes`,
    `fake-amux` and `shot` may be depended on only by each other.
 3. **The UI never reaches the daemon or a provider.** `model`, `client`,

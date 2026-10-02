@@ -2625,6 +2625,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "patience"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "pem"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4289,6 +4297,7 @@ dependencies = [
  "interpret",
  "journal",
  "node",
+ "patience",
  "prost",
  "provider-fakes",
  "quinn",

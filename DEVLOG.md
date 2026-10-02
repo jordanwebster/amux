@@ -1,3 +1,15 @@
+2026-10-02 — **One wait for every test crate: `patience`.**
+The suite had about thirty-five copies of the same poll loop, one per
+crate, with four different patiences and a timeout message that said
+only what never happened. The new crate holds the one wait: a probe
+answers what it found or what it saw instead, the last answer is what
+a missed deadline reports, a probe that never answers is a hang, and
+`holds_for` is the one wait that measures time, for asserting that
+nothing happens when nothing the test controls gates it. testnet's
+`Stuck` and `PATIENCE` moved there and are re-exported; the daemon
+crates' tests can use it because it depends on nothing of theirs. The
+sweep of the copies onto it follows crate by crate.
+
 2026-10-02 — **The rearchitect branch's CI scaffolding is gone.**
 The branch is on main, so `just ci-remote` (push the branch and wait
 for its run) and the `testing` and `rearchitect` push triggers in the
