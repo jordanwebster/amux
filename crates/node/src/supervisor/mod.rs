@@ -489,7 +489,7 @@ impl Supervisor {
 
     fn put_prev_back(&mut self) -> Result<(), SuperviseError> {
         self.files
-            .restore_prev(&self.binary)
+            .restore_prev(&self.binary, &self.mine)
             .map_err(files_error("putting prev back"))?;
         tracing::info!("put prev back over the binary");
         self.failed = 0;

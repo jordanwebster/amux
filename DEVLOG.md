@@ -1,3 +1,15 @@
+2026-10-02 — **A Windows swap and its rollback never leave the install path empty.**
+Windows cannot replace a running executable, so the swap moves the
+current binary aside before moving the staged one in; a failure between
+the two left the path, which Task Scheduler starts the supervisor by,
+with nothing at it, and the daemon already stopped. The current binary
+now goes back before the failure is reported. And a supervisor that
+restarted after a swap, before activation, runs the new build itself;
+rolling back renamed prev over its own running image, which Windows
+refuses on every try. The image moves aside first, as the forward swap
+already did for prev. From the branch-wide Codex review; unit tests,
+cross-checked for Windows from the Mac.
+
 2026-10-01 — **A type size change measures the chat's rows again.**
 The list forgot its cached heights when the design or an accessibility
 setting it carries changed, but not when the type size did: the rows

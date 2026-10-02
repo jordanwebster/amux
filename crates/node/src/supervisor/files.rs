@@ -81,8 +81,16 @@ impl Files {
         self.remove_prev()
     }
 
-    /// Renames prev back over the binary.
-    pub fn restore_prev(&self, binary: &Path) -> io::Result<()> {
+    /// Renames prev back over the binary. On Windows the binary may be
+    /// this supervisor's own running image, when it started after a swap
+    /// and before the activation that would have retired prev; that cannot
+    /// be replaced, so it moves aside first, where the next start removes
+    /// it.
+    pub fn restore_prev(&self, binary: &Path, mine: &FileId) -> io::Result<()> {
+        if cfg!(windows) && FileId::of(binary).is_ok_and(|current| current == *mine) {
+            let _ = std::fs::remove_file(&self.aside);
+            std::fs::rename(binary, &self.aside)?;
+        }
         std::fs::rename(&self.prev, binary)?;
         sync_parent(binary)
     }
@@ -100,9 +108,23 @@ impl Files {
         std::fs::hard_link(binary, &self.prev)?;
         #[cfg(windows)]
         std::fs::rename(binary, &self.prev)?;
-        std::fs::rename(&self.staged, binary)?;
+        std::fs::rename(&self.staged, binary).inspect_err(|_| self.put_back(binary))?;
         sync_parent(binary)
     }
+
+    /// Undoes the move aside after the staged binary failed to take the
+    /// path. The path is what the service manager starts the supervisor
+    /// by, and on Windows it is empty now: the current binary goes back
+    /// before the failure is reported.
+    #[cfg(windows)]
+    fn put_back(&self, binary: &Path) {
+        let _ = std::fs::rename(&self.prev, binary);
+    }
+
+    /// On Unix the path never moved, and prev, a link to it, is
+    /// recognised at the next start; there is nothing to undo.
+    #[cfg(not(windows))]
+    fn put_back(&self, _binary: &Path) {}
 
     /// What an interrupted download or a Windows update leaves behind.
     pub fn clear_leftovers(&self) {
@@ -182,4 +204,42 @@ pub fn inherited_file(_fd: u64) -> io::Result<File> {
     Err(io::Error::other(
         "a Windows supervisor takes its lock again",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn install() -> (tempfile::TempDir, PathBuf, Files) {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("amux");
+        std::fs::write(&binary, b"running").unwrap();
+        let files = Files::beside(&binary);
+        (dir, binary, files)
+    }
+
+    #[test]
+    fn a_failed_install_leaves_the_binary_at_its_path() {
+        let (_dir, binary, files) = install();
+        // Nothing staged: the rename into place fails.
+        let error = files.install_staged(&binary).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(std::fs::read(&binary).unwrap(), b"running");
+        if cfg!(windows) {
+            assert!(!files.prev_exists(), "prev went back over the empty path");
+        }
+    }
+
+    #[test]
+    fn prev_goes_back_over_a_binary_that_is_the_running_image() {
+        let (_dir, binary, files) = install();
+        std::fs::write(&files.prev, b"previous").unwrap();
+        let mine = FileId::of(&binary).unwrap();
+        files.restore_prev(&binary, &mine).unwrap();
+        assert_eq!(std::fs::read(&binary).unwrap(), b"previous");
+        assert!(!files.prev_exists());
+        if cfg!(windows) {
+            assert_eq!(std::fs::read(&files.aside).unwrap(), b"running");
+        }
+    }
 }
