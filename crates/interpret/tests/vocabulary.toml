@@ -50,7 +50,7 @@ codex = { mark = "full", carriers = ["item:agent_message"], golden = [" agent_me
 id = "C5"
 item = "Exploring"
 claude_pty = { mark = "full", carriers = ["item:tool"], golden = [" tool final ", "\" Read TOOL_STATE_SUCCEEDED"] }
-claude_sdk = { mark = "full", carriers = ["item:tool"], golden = [" tool final ", "\" Read TOOL_STATE_SUCCEEDED", " exploration"] }
+claude_sdk = { mark = "full", carriers = ["item:tool"], golden = [" tool final ", "\" Read TOOL_STATE_SUCCEEDED", " read"] }
 codex = { mark = "partial", carriers = ["item:work.web_search", "item:work.command"], golden = [" work ", " web_search "] }
 
 [[row]]

@@ -195,16 +195,20 @@ fn in_flight(state: i32) -> bool {
     )
 }
 
-fn exploration(class: i32) -> bool {
-    class == wire::ToolClass::Exploration as i32
+/// What a call of this class did, if it only looked.
+fn explore(class: i32) -> Option<Explore> {
+    match wire::ToolClass::try_from(class) {
+        Ok(wire::ToolClass::Read) => Some(Explore::Read),
+        Ok(wire::ToolClass::Search | wire::ToolClass::WebSearch) => Some(Explore::Search),
+        Ok(wire::ToolClass::List | wire::ToolClass::Fetch | wire::ToolClass::Look) => {
+            Some(Explore::Other)
+        }
+        Ok(wire::ToolClass::Unspecified | wire::ToolClass::Consequential) | Err(_) => None,
+    }
 }
 
 fn claude_tool(tool: &wire::ToolCall) -> ItemClass {
-    let explore = exploration(tool.class).then_some(match tool.name.as_str() {
-        "Read" => Explore::Read,
-        "Grep" | "Glob" | "WebSearch" => Explore::Search,
-        _ => Explore::Other,
-    });
+    let explore = explore(tool.class);
     ItemClass::Tool(ToolFacts {
         in_flight: in_flight(tool.state),
         subagent: tool
@@ -218,16 +222,7 @@ fn claude_tool(tool: &wire::ToolCall) -> ItemClass {
 
 fn codex_work(work: &wire::Work) -> ItemClass {
     use wire::work::Of;
-    let explore = exploration(work.class).then(|| match &work.of {
-        Some(Of::Command(command)) if command.action.split(',').any(|kind| kind == "read") => {
-            Explore::Read
-        }
-        Some(Of::Command(command)) if command.action.split(',').any(|kind| kind == "search") => {
-            Explore::Search
-        }
-        Some(Of::WebSearch(_)) => Explore::Search,
-        _ => Explore::Other,
-    });
+    let explore = explore(work.class);
     ItemClass::Tool(ToolFacts {
         in_flight: in_flight(work.state),
         subagent: matches!(work.of, Some(Of::Collab(_))) && in_flight(work.state),

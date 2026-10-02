@@ -59,6 +59,19 @@ where
         .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
 }
 
+impl ToolClass {
+    /// Whether a call of this class only looks, so views fold a run of
+    /// them together.
+    pub fn explores(self) -> bool {
+        !matches!(self, ToolClass::Unspecified | ToolClass::Consequential)
+    }
+}
+
+/// Whether a call's class on the wire only looks; an unknown value does not.
+pub fn explores(class: i32) -> bool {
+    ToolClass::try_from(class).is_ok_and(ToolClass::explores)
+}
+
 /// The kind tag an item or snapshot envelope carries for each interpreter.
 pub const fn kind_tag(kind: Kind) -> &'static str {
     match kind {

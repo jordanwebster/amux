@@ -20,9 +20,9 @@ snapshot WORKING queue=[] working_on=- at=1788080221135 asks=[] session=2108a7ed
 ## 27 recorded 25: fact Transcript type=assistant uuid=851351a8-c18d-47a6-b496-e7693d0052ba
 item 851351a8-c18d-47a6-b496-e7693d0052ba message final at=1788080220811 text="I'll read config.txt, edit it, and then display the result."
 ## 28 recorded 26: fact Transcript type=assistant uuid=38b7cfca-6491-427c-9c86-3799df4e999d
-item toolu_01YappKR9wgb79BsMWZ9T7Mk tool final at=1788080221139 text="" Read TOOL_STATE_RUNNING exploration input="{\"file_path\":\"<MACHINE_PATH>\"}"
+item toolu_01YappKR9wgb79BsMWZ9T7Mk tool final at=1788080221139 text="" Read TOOL_STATE_RUNNING read input="{\"file_path\":\"<MACHINE_PATH>\"}"
 ## 30 recorded 28: fact Transcript type=user uuid=83163616-3f4f-496e-9470-ee1770442189
-item toolu_01YappKR9wgb79BsMWZ9T7Mk tool final at=1788080221139 text="" Read TOOL_STATE_SUCCEEDED exploration ended=1788080221185 input="{\"file_path\":\"<MACHINE_PATH>\"}" out="1\tVALUE=1\n2\t"
+item toolu_01YappKR9wgb79BsMWZ9T7Mk tool final at=1788080221139 text="" Read TOOL_STATE_SUCCEEDED read ended=1788080221185 input="{\"file_path\":\"<MACHINE_PATH>\"}" out="1\tVALUE=1\n2\t"
 ## 33 recorded 31: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01Mxtd6WkCNMK9U7KSDpsLGD
 snapshot WORKING queue=[] working_on=- at=1788080222791 asks=[] session=2108a7ed-b28f-457f-9480-37df2991fb5e model=claude-haiku-4-5-20251001 mode=bypassPermissions context=34349 tasks=? background=? running=toolu_01Mxtd6WkCNMK9U7KSDpsLGD Edit since=1788080222791
 ## 35 recorded 33: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01Mxtd6WkCNMK9U7KSDpsLGD

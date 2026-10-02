@@ -1,3 +1,15 @@
+2026-10-02 — **The tool class carries the verb a look is drawn with.**
+The interpreters marked a call exploration or consequential, and both
+views then re-derived read, search, list, fetch and web search from
+the tool's name (Claude) or the command's action kinds (Codex): a
+second classification from text, which the records say the interpreter
+owns. The class is now read, search, list, fetch, web search, look (a
+look drawn its own way: a read-only tool-server call, an image) or
+consequential, set once from native kinds; the views map it to the
+row's verb and the run's counts, and the name tables are gone.
+Interpreter goldens re-recorded for the class names; the view goldens
+did not move.
+
 2026-10-02 — **The ingest-cost baseline's move is accepted and written down.**
 The flood's ingest cost per frame moved from 21.0 to 23.8 µs with the
 measurement change that priced a fixed backlog over shares. The plan was

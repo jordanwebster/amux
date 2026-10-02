@@ -254,7 +254,6 @@ message ToolCall {
   string outcome_text = 4;
   bytes outcome_json = 5;
   repeated Attachment attachments = 6;
-  // Set by the interpreter from native tool kinds, never from text.
   ToolClass class = 7;
   // A permission decision is meta on the tool call's own row.
   ToolDecision decision = 8;
@@ -281,11 +280,20 @@ enum ToolState {
   TOOL_STATE_CANCELLED = 6;
 }
 
+// What a call does to the world, set by the interpreter from native tool
+// kinds, never from text. Every class but CONSEQUENTIAL only looks: the views
+// fold runs of those together and name each by its verb. LOOK is a look with
+// no verb of its own, drawn its own way: a read-only tool-server call, an
+// image viewed.
 enum ToolClass {
   TOOL_CLASS_UNSPECIFIED = 0;
-  // Reads, searches, listings, fetches: collapsed into runs by the views.
-  TOOL_CLASS_EXPLORATION = 1;
-  TOOL_CLASS_CONSEQUENTIAL = 2;
+  TOOL_CLASS_CONSEQUENTIAL = 1;
+  TOOL_CLASS_READ = 2;
+  TOOL_CLASS_SEARCH = 3;
+  TOOL_CLASS_LIST = 4;
+  TOOL_CLASS_FETCH = 5;
+  TOOL_CLASS_WEB_SEARCH = 6;
+  TOOL_CLASS_LOOK = 7;
 }
 
 message ToolDecision {

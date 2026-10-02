@@ -541,7 +541,6 @@ pub struct ToolCall {
     pub outcome_json: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, repeated, tag = "6")]
     pub attachments: ::prost::alloc::vec::Vec<Attachment>,
-    /// Set by the interpreter from native tool kinds, never from text.
     #[prost(enumeration = "ToolClass", tag = "7")]
     pub class: i32,
     /// A permission decision is meta on the tool call's own row.
@@ -1786,13 +1785,22 @@ impl ToolState {
         }
     }
 }
+/// What a call does to the world, set by the interpreter from native tool
+/// kinds, never from text. Every class but CONSEQUENTIAL only looks: the views
+/// fold runs of those together and name each by its verb. LOOK is a look with
+/// no verb of its own, drawn its own way: a read-only tool-server call, an
+/// image viewed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ToolClass {
     Unspecified = 0,
-    /// Reads, searches, listings, fetches: collapsed into runs by the views.
-    Exploration = 1,
-    Consequential = 2,
+    Consequential = 1,
+    Read = 2,
+    Search = 3,
+    List = 4,
+    Fetch = 5,
+    WebSearch = 6,
+    Look = 7,
 }
 impl ToolClass {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1802,16 +1810,26 @@ impl ToolClass {
     pub fn as_str_name(&self) -> &'static str {
         match self {
             Self::Unspecified => "TOOL_CLASS_UNSPECIFIED",
-            Self::Exploration => "TOOL_CLASS_EXPLORATION",
             Self::Consequential => "TOOL_CLASS_CONSEQUENTIAL",
+            Self::Read => "TOOL_CLASS_READ",
+            Self::Search => "TOOL_CLASS_SEARCH",
+            Self::List => "TOOL_CLASS_LIST",
+            Self::Fetch => "TOOL_CLASS_FETCH",
+            Self::WebSearch => "TOOL_CLASS_WEB_SEARCH",
+            Self::Look => "TOOL_CLASS_LOOK",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
             "TOOL_CLASS_UNSPECIFIED" => Some(Self::Unspecified),
-            "TOOL_CLASS_EXPLORATION" => Some(Self::Exploration),
             "TOOL_CLASS_CONSEQUENTIAL" => Some(Self::Consequential),
+            "TOOL_CLASS_READ" => Some(Self::Read),
+            "TOOL_CLASS_SEARCH" => Some(Self::Search),
+            "TOOL_CLASS_LIST" => Some(Self::List),
+            "TOOL_CLASS_FETCH" => Some(Self::Fetch),
+            "TOOL_CLASS_WEB_SEARCH" => Some(Self::WebSearch),
+            "TOOL_CLASS_LOOK" => Some(Self::Look),
             _ => None,
         }
     }

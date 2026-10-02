@@ -36,7 +36,7 @@ fn event(of: session_event::Of) -> Msg {
 
 fn body(kind: Kind, tool: Option<(&str, bool)>, text: bool) -> Vec<u8> {
     use wire::{claude_pty_item as pty, claude_sdk_item as sdk, codex_item as codex};
-    let class = |explore: bool| if explore { ToolClass::Exploration } else { ToolClass::Consequential } as i32;
+    let class = |explore: bool| if explore { ToolClass::Read } else { ToolClass::Consequential } as i32;
     match (kind, tool) {
         (Kind::Codex, Some((name, explore))) => wire::CodexItem {
             kind: Some(codex::Kind::Work(wire::Work {
@@ -1204,7 +1204,7 @@ fn tool_item(
     state: ToolState,
 ) -> Item {
     let class = if name == "Read" {
-        ToolClass::Exploration
+        ToolClass::Read
     } else {
         ToolClass::Consequential
     };

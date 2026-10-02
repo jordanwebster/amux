@@ -884,33 +884,14 @@ fn claude_tool(
             state: view,
             result: tool.outcome_text.clone(),
         }
+    } else if let Some(verb) = explore_verb(tool.class) {
+        RowKind::Explore {
+            verb,
+            subject,
+            state: view,
+        }
     } else {
         match tool.name.as_str() {
-            "Read" => RowKind::Explore {
-                verb: ExploreVerb::Read,
-                subject,
-                state: view,
-            },
-            "Grep" | "Glob" | "ToolSearch" => RowKind::Explore {
-                verb: ExploreVerb::Search,
-                subject,
-                state: view,
-            },
-            "LS" => RowKind::Explore {
-                verb: ExploreVerb::List,
-                subject,
-                state: view,
-            },
-            "WebFetch" => RowKind::Explore {
-                verb: ExploreVerb::Fetch,
-                subject,
-                state: view,
-            },
-            "WebSearch" => RowKind::Explore {
-                verb: ExploreVerb::WebSearch,
-                subject,
-                state: view,
-            },
             "Bash" if tool.background => RowKind::Background {
                 command: field(&input, "command"),
                 running: in_flight(view),
@@ -1076,6 +1057,22 @@ fn claude_counts(tool: &ToolCall, input: &Value) -> (u32, u32) {
     })
 }
 
+/// The verb a call that only looks is drawn with; none for one drawn its
+/// own way.
+fn explore_verb(class: i32) -> Option<ExploreVerb> {
+    match wire::ToolClass::try_from(class) {
+        Ok(wire::ToolClass::Read) => Some(ExploreVerb::Read),
+        Ok(wire::ToolClass::Search) => Some(ExploreVerb::Search),
+        Ok(wire::ToolClass::List) => Some(ExploreVerb::List),
+        Ok(wire::ToolClass::Fetch) => Some(ExploreVerb::Fetch),
+        Ok(wire::ToolClass::WebSearch) => Some(ExploreVerb::WebSearch),
+        Ok(
+            wire::ToolClass::Look | wire::ToolClass::Unspecified | wire::ToolClass::Consequential,
+        )
+        | Err(_) => None,
+    }
+}
+
 fn subagent(state: &SessionState, held: &Held, tool: &ToolCall, input: &Value) -> RowKind {
     // Headless Claude reports a subagent's progress as a task item that
     // names this call; terminal Claude reports it on the call itself.
@@ -1113,74 +1110,67 @@ fn codex_work(held: &Held, work: &wire::Work) -> (RowKind, Option<Decision>, boo
     let decision = decision_view(work.decision.as_ref());
     let view = state_view(work.state);
     let failed = view == ToolStateView::Failed;
-    let exploring = work.class == wire::ToolClass::Exploration as i32;
-    let kind = match &work.of {
-        Some(Of::Command(command)) if exploring => {
-            let actions: Vec<&str> = command.action.split(',').collect();
-            let verb = if actions.contains(&"read") {
-                ExploreVerb::Read
-            } else if actions.contains(&"search") {
-                ExploreVerb::Search
-            } else {
-                ExploreVerb::List
-            };
-            RowKind::Explore {
-                verb,
-                subject: command.command.clone(),
-                state: view,
-            }
-        }
-        Some(Of::Command(command)) if command.background => RowKind::Background {
-            command: command.command.clone(),
-            running: in_flight(view),
+    let kind = match (&work.of, explore_verb(work.class)) {
+        (Some(Of::Command(command)), Some(verb)) => RowKind::Explore {
+            verb,
+            subject: command.command.clone(),
+            state: view,
         },
-        Some(Of::Command(command)) => {
-            let (output_head, more_lines) = output_head(&held.item.text);
-            RowKind::Command {
+        (of, _) => match of {
+            Some(Of::Command(command)) if command.background => RowKind::Background {
                 command: command.command.clone(),
-                state: view,
-                exit_code: command.exit_code,
-                output_head,
-                more_lines,
-                duration_ms: duration(held, work.ended_at_ms),
-            }
-        }
-        Some(Of::FileChange(change)) => RowKind::FileChange {
-            files: change.changes.iter().map(codex_file).collect(),
-            state: view,
-        },
-        Some(Of::Mcp(call)) => RowKind::ToolCall {
-            server: call.server.clone(),
-            tool: call.tool.clone(),
-            fact: first_fact(&serde_json::from_slice(&call.arguments_json).unwrap_or(Value::Null)),
-            state: view,
-            result: if call.error.is_empty() {
-                String::from_utf8_lossy(&call.result_json).into_owned()
-            } else {
-                call.error.clone()
+                running: in_flight(view),
             },
-        },
-        Some(Of::WebSearch(search)) => RowKind::Explore {
-            verb: ExploreVerb::WebSearch,
-            subject: search.query.clone(),
-            state: view,
-        },
-        Some(Of::Image(image)) => RowKind::Image {
-            image: image_of(&held.item.attachments),
-            path: image.path.clone(),
-            generated: image.generated,
-        },
-        Some(Of::Collab(collab)) => RowKind::Subagent {
-            description: collab.prompt.clone(),
-            running: in_flight(view),
-            tool_count: 0,
-            last_tool: collab.tool.clone(),
-            answer: String::new(),
-            duration_ms: duration(held, work.ended_at_ms),
-        },
-        None => RowKind::Unrecognized {
-            what: "work".into(),
-            summary: String::new(),
+            Some(Of::Command(command)) => {
+                let (output_head, more_lines) = output_head(&held.item.text);
+                RowKind::Command {
+                    command: command.command.clone(),
+                    state: view,
+                    exit_code: command.exit_code,
+                    output_head,
+                    more_lines,
+                    duration_ms: duration(held, work.ended_at_ms),
+                }
+            }
+            Some(Of::FileChange(change)) => RowKind::FileChange {
+                files: change.changes.iter().map(codex_file).collect(),
+                state: view,
+            },
+            Some(Of::Mcp(call)) => RowKind::ToolCall {
+                server: call.server.clone(),
+                tool: call.tool.clone(),
+                fact: first_fact(
+                    &serde_json::from_slice(&call.arguments_json).unwrap_or(Value::Null),
+                ),
+                state: view,
+                result: if call.error.is_empty() {
+                    String::from_utf8_lossy(&call.result_json).into_owned()
+                } else {
+                    call.error.clone()
+                },
+            },
+            Some(Of::WebSearch(search)) => RowKind::Explore {
+                verb: ExploreVerb::WebSearch,
+                subject: search.query.clone(),
+                state: view,
+            },
+            Some(Of::Image(image)) => RowKind::Image {
+                image: image_of(&held.item.attachments),
+                path: image.path.clone(),
+                generated: image.generated,
+            },
+            Some(Of::Collab(collab)) => RowKind::Subagent {
+                description: collab.prompt.clone(),
+                running: in_flight(view),
+                tool_count: 0,
+                last_tool: collab.tool.clone(),
+                answer: String::new(),
+                duration_ms: duration(held, work.ended_at_ms),
+            },
+            None => RowKind::Unrecognized {
+                what: "work".into(),
+                summary: String::new(),
+            },
         },
     };
     (kind, decision, failed)

@@ -155,15 +155,15 @@ order in `[oldest_held, head]`. Each item is decoded once per revision into a `H
 - The window also indexes items by input id (a prompt's reflection) and by referrer (a headless Claude task item
   that reports a subagent's progress on the row of the call that started it).
 
-**Runs.** A run is two or more consecutive held tool items whose interpreter marked them as exploration (reads,
-searches, listings, fetches, web searches). [`RunIndex`](../crates/ui-state/src/transcript.rs) keeps run
+**Runs.** A run is two or more consecutive held tool items whose class says they only looked (a read, search,
+listing, fetch or web search, each by its verb). [`RunIndex`](../crates/ui-state/src/transcript.rs) keeps run
 membership current on every message rather than rediscovering it per frame: an item at the head extends the
 last run in place; a change inside the window rebuilds only the runs around it. `RunIndex::rebuild` is the
 oracle the incremental upkeep is tested against. A run whose oldest member is the oldest held item while older
 history exists is `open_below`: it may continue below the window.
 
-Whether a call is exploration is a per-kind fact the interpreter sets from native tool kinds, never a text rule
-in a view; once it is set, run detection is kind-independent.
+A call's class, including the verb a look is drawn with, is a per-kind fact the interpreter sets from native
+tool kinds, never a text rule in a view; once it is set, run detection and the rows are kind-independent.
 
 ### Reading the state
 

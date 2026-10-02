@@ -51,7 +51,7 @@ fn item(order: u64, read: Option<&str>) -> Item {
             kind: Some(K::Tool(wire::ToolCall {
                 name: "Read".into(),
                 state: ToolState::Succeeded as i32,
-                class: ToolClass::Exploration as i32,
+                class: ToolClass::Read as i32,
                 input_json: format!(r#"{{"file_path":"{path}"}}"#).into_bytes(),
                 ..Default::default()
             })),
