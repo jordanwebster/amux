@@ -4842,35 +4842,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tui-lab"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "clap",
- "client",
- "crossterm 0.29.0",
- "futures-util",
- "libc",
- "prost",
- "ratatui",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "shell-words",
- "shot",
- "tempfile",
- "tokio",
- "tui",
- "ui-runtime",
- "ui-state",
- "ui-view",
- "wire",
-]
-
-[[package]]
 name = "tui-set"
 version = "0.1.0"
 dependencies = [

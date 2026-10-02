@@ -17,8 +17,8 @@ use ui_runtime::{Fleet, InputError, Session, inputs};
 use ui_state::{AgentKey, Composer, InputOutcome, PhaseView};
 use ui_view::family_header;
 use wire::{
-    Agent, Attachment, CreateAgentRequest, DeleteAgentRequest, Diff, RenameAgentRequest,
-    SendInputResponse, StopAgentRequest, StopMode, send_input_response,
+    Agent, Attachment, DeleteAgentRequest, Diff, RenameAgentRequest, SendInputResponse,
+    StopAgentRequest, StopMode, send_input_response,
 };
 
 use crate::chat::layout::{CAP, PAGE};
@@ -155,7 +155,6 @@ pub enum AppEvent {
         agent_id: Vec<u8>,
         blob: wire::BlobRef,
     },
-    Created(Agent),
     /// An agent created with its first prompt: its chat opens, or home
     /// stays and says it started.
     Started {
@@ -285,13 +284,6 @@ impl App {
 
     fn theme(&self) -> Theme {
         self.config.theme
-    }
-
-    /// Where the person chats: changes how the next new agent starts.
-    pub fn set_chat_in(&mut self, chat_in: crate::setup::ChatIn) {
-        self.config.chat_in = chat_in;
-        self.fleet_view.chat_in = chat_in;
-        self.fleet_view.home.forget_draft_setup();
     }
 
     pub fn notice(&mut self, words: impl Into<String>, tone: Tone) {
@@ -495,11 +487,6 @@ impl App {
                     chat.view.diff_stat = Some((added, removed));
                     chat.view.diff_files = Some(files);
                 }
-            }
-            AppEvent::Created(agent) => {
-                let key = ui_state::agent_key(&agent);
-                self.fleet_view.select(key.clone());
-                self.open(key);
             }
             AppEvent::Started {
                 agent,
@@ -805,24 +792,6 @@ impl App {
             FleetEffect::Help => self.help = true,
             FleetEffect::Open(agent) => self.open(agent),
             FleetEffect::Attach(agent) => return self.raw_attach(&agent),
-            FleetEffect::Create { kind } => {
-                let cwd = self.config.working_dir.to_string_lossy().into_owned();
-                self.spawn(async move {
-                    let request = CreateAgentRequest {
-                        agent_id: inputs::input_id(),
-                        cwd,
-                        kind: kind as i32,
-                        ..CreateAgentRequest::default()
-                    };
-                    Some(match client.create_agent(request).await {
-                        Ok(agent) => AppEvent::Created(agent),
-                        Err(error) => AppEvent::Notice(
-                            format!("could not start the agent: {error}"),
-                            Tone::Warn,
-                        ),
-                    })
-                });
-            }
             FleetEffect::Start {
                 setup,
                 text,
@@ -1051,9 +1020,6 @@ impl App {
                     })
                 });
             }
-            ChatEffect::Copy(text) => {
-                let _ = crate::terminal::write_osc52(&mut std::io::stdout(), &text);
-            }
             ChatEffect::Review => self.review(None),
             ChatEffect::ReviewAt(path) => self.review(Some(path)),
             ChatEffect::OpenUrl(url) => {
@@ -1156,11 +1122,7 @@ impl App {
             );
             return Some(line);
         }
-        let panel_chat = self
-            .chat
-            .as_ref()
-            .is_some_and(|chat| chat.view.redesigned());
-        if self.leader_pending && !panel_chat {
+        if self.leader_pending && self.chat.is_none() {
             let mut line = Line::from(Span::raw("  "));
             let words = if self.chat.is_some() {
                 "h home · n new agent · p hosts · d detach · r review · k/j focus · o open · y copy"
@@ -1188,12 +1150,7 @@ impl App {
         let theme = self.theme();
         let width = usize::from(area.width);
         if self.help {
-            let lines = help_lines(
-                self.config.leader,
-                self.fleet_view.redesigned(),
-                width,
-                theme,
-            );
+            let lines = help_lines(self.config.leader, width, theme);
             self.help_scroll = self
                 .help_scroll
                 .min(lines.len().saturating_sub(usize::from(area.height)));
@@ -1330,24 +1287,9 @@ fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
     entries
 }
 
-fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec<Line<'static>> {
+fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
     let leader = format!("ctrl+{leader}");
-    let mut rows: Vec<(&str, String)> = if redesigned {
-        crate::home::help_rows()
-    } else {
-        vec![
-            ("Fleet", String::new()),
-            ("enter", "open the chat".into()),
-            (
-                "o / ctrl+enter",
-                "the agent's own terminal (this machine)".into(),
-            ),
-            ("n / r / s / d", "new · rename · stop · delete".into()),
-            ("z", "show or hide a family's agents".into()),
-            ("h", "hosts: trusted and found nearby".into()),
-            ("q", "quit".into()),
-        ]
-    };
+    let mut rows: Vec<(&str, String)> = crate::home::help_rows();
     rows.extend([
         ("", String::new()),
         ("Chat", String::new()),
@@ -1366,10 +1308,7 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
         ),
         ("ctrl+x", "stop the turn; the agent stays".into()),
         ("ctrl+c", "clear the draft; twice on nothing quits".into()),
-        (
-            "ctrl+o",
-            "the overview: tasks, background jobs, changes".into(),
-        ),
+        ("ctrl+o", "the overview of what is in flight".into()),
         ("shift+tab", "the agent's next mode".into()),
         (
             "ctrl+s then m / e",
@@ -1402,7 +1341,7 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
             "tab / shift+tab, ← / →",
             "the next or previous question".into(),
         ),
-        ("esc", "to the way out (No, Decline, Reply instead)".into()),
+        ("esc", "to the way out (No, Decline)".into()),
         ("", String::new()),
         ("Leader", String::new()),
     ]);

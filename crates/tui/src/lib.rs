@@ -23,7 +23,6 @@ pub mod setup;
 pub mod terminal;
 pub(crate) mod text;
 pub mod theme;
-pub mod variant;
 #[cfg(feature = "fixtures")]
 pub mod vocabulary;
 pub mod wheel;

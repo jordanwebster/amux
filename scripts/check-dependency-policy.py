@@ -75,7 +75,6 @@ TEST_SUPPORT = {
     "provider-fakes",
     "fake-amux",
     "shot",
-    "tui-lab",
     "tui-set",
 }
 SUPPORT_ALLOWED_LOCAL = {
@@ -95,9 +94,6 @@ SUPPORT_ALLOWED_LOCAL = {
     "fake-amux": {"agent-dir", "node"},
     # Renders the terminal client's named states to PNG for review.
     "shot": {"tui"},
-    # The terminal client over a scripted fake runtime, for design work;
-    # no daemon in its graph, so it relinks in seconds.
-    "tui-lab": {"client", "shot", "tui", "ui-runtime", "ui-state", "wire"},
     # Serves a declared world with `testnet serve` and runs the terminal
     # client on it, or draws it headlessly through `shot`.
     "tui-set": {"agent-dir", "client", "settings", "shot", "tui", "ui-runtime", "wire"},

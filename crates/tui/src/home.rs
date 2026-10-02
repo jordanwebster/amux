@@ -268,13 +268,6 @@ impl Home {
         self.reveal = true;
     }
 
-    pub fn selected_agent(&self) -> Option<&AgentKey> {
-        match &self.selected {
-            Some(Target::Agent(agent)) => Some(agent),
-            _ => None,
-        }
-    }
-
     /// The create call came back: the draft is spent.
     pub fn started(&mut self) {
         // The next agent keeps these settings but not this one's name.
@@ -297,15 +290,6 @@ impl Home {
         self.draft.form = None;
         self.draft.prefix = false;
         self.draft.open = true;
-    }
-
-    /// Where the person chats changed: the next new agent starts from the
-    /// defaults for it.
-    pub fn forget_draft_setup(&mut self) {
-        self.draft.setup = None;
-        self.draft.form = None;
-        self.draft.picker = None;
-        self.draft.open = false;
     }
 
     /// The hosts modal, from a chat's `ctrl+a p`.
@@ -1287,6 +1271,23 @@ impl Home {
             .map(|host| host.name.as_str())
             .collect();
         let mut parts: Vec<(String, Style)> = Vec::new();
+        // A daemon that restarted into a newer build keeps serving this
+        // older client; only the person can restart it.
+        if let Some(running) = fleet
+            .host(local_host)
+            .and_then(|host| host.version.as_deref())
+            .filter(|running| !place.version.is_empty() && *running != place.version)
+        {
+            parts.push((
+                format!("amux {running} running · restart to update"),
+                theme.warning(),
+            ));
+        }
+        // Signed out, hosts out of reach can only be reached again by
+        // signing in.
+        if !away.is_empty() && ui_view::signed_out(fleet, local_host) {
+            parts.push(("signed out · amux login".into(), theme.warning()));
+        }
         match fleet.connection() {
             Connection::Live => {}
             Connection::Connecting => parts.push(("connecting".into(), theme.muted())),
@@ -1774,6 +1775,8 @@ pub fn help_rows() -> Vec<(&'static str, String)> {
 /// What home needs from the app that is not the fleet's.
 pub struct Place<'a> {
     pub local_host: &'a [u8],
+    /// This build's version, compared with the daemon's.
+    pub version: &'a str,
     /// Where a new agent works, as the person would write it.
     pub working_dir: &'a str,
     pub attach: bool,

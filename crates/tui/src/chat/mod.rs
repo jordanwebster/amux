@@ -32,16 +32,13 @@ use ui_view::{
 use wire::{Attachment, attachment};
 
 use self::ask::{AskAction, AskUi};
-use self::composer::{
-    COMPOSER_LINES, QueueEntry, activity_line, edge_row, editor_lines, foot_cards, placeholder,
-    strip_line,
-};
+use self::composer::{COMPOSER_LINES, QueueEntry, edge_row, editor_lines, placeholder};
 use self::feed::FeedHit;
 use self::layout::{Anchor, Frame, Laid, StretchCache, Toggle};
 use self::review::{ReviewAction, ReviewPage};
 use crate::clipboard::ClipboardContent;
 use crate::editor::{Edit, Editor};
-use crate::text::{self, push, push_right};
+use crate::text::{self, push};
 use crate::theme::Theme;
 use crate::wheel::Direction;
 
@@ -102,7 +99,6 @@ pub enum ChatEffect {
         mime: String,
         bytes: Vec<u8>,
     },
-    Copy(String),
     /// Hand the terminal to the agent's own interface.
     RawAttach,
     /// Open the working tree's diff on the review page.
@@ -209,9 +205,6 @@ pub struct ChatView {
     pub leader: char,
     /// Stretches of steps the reader opened, by their oldest step.
     pub stretches: HashSet<Key>,
-    /// Draw the old chat regardless of the design variant: the tests that
-    /// still describe it set this, since the variant is process-wide.
-    pub legacy: bool,
     /// Whether the agent runs on this machine; the header names its host
     /// only when it does not.
     pub local: bool,
@@ -325,7 +318,6 @@ impl ChatView {
             away: Away::Plain,
             leader: 'a',
             stretches: HashSet::new(),
-            legacy: false,
             local: true,
             diff_stat: None,
             stat_seen: None,
@@ -385,17 +377,11 @@ impl ChatView {
             height: self.feed.1,
             theme,
             leader: self.leader,
-            redesigned: self.redesigned(),
             stretches: &self.stretches,
             cache: &self.stretch_cache,
             asking: self.asking.as_ref(),
             tail: &self.feed_tail,
         }
-    }
-
-    /// Whether the chat draws as redesigned.
-    pub fn redesigned(&self) -> bool {
-        !self.legacy && crate::variant::get() == 0
     }
 
     /// The card to draw, synced with this client's picks. With no ask
@@ -506,14 +492,11 @@ impl ChatView {
         if self.review_open {
             return self.review.as_ref().is_some_and(ReviewPage::editing);
         }
-        if self.redesigned() && self.pane_open && self.pane_keys {
+        if self.pane_open && self.pane_keys {
             return false;
         }
         if let Some(card) = self.card_takes_keys(state) {
-            if self.redesigned() && ask::boxed(&card) {
-                return self.ask.box_note_text(&card);
-            }
-            return self.ask.field_text(&card);
+            return self.ask.box_note_text(&card);
         }
         self.tray.is_none() && !self.editor.is_empty()
     }
@@ -536,10 +519,7 @@ impl ChatView {
             return self.review.as_mut().is_some_and(ReviewPage::kill_field);
         }
         if let Some(card) = self.card_takes_keys(state) {
-            if self.redesigned() && ask::boxed(&card) {
-                return self.ask.in_box_note(&card) && self.ask.kill_box_note();
-            }
-            return self.ask.editing_on(&card) && self.ask.kill_field();
+            return self.ask.in_box_note(&card) && self.ask.kill_box_note();
         }
         self.tray.is_none() && self.editor.kill_all()
     }
@@ -555,11 +535,7 @@ impl ChatView {
         }
         if let Some(card) = self.card_takes_keys(state) {
             self.ask.sync(&card);
-            if self.redesigned() && ask::boxed(&card) {
-                self.ask.paste_box_note(&card, text);
-            } else {
-                self.ask.paste(&card, text);
-            }
+            self.ask.paste_box_note(&card, text);
             return;
         }
         if self.tray.is_none() {
@@ -591,13 +567,11 @@ impl ChatView {
             }
             return vec![];
         }
-        if self.redesigned() && key.code == KeyCode::Char('o') && ctrl {
+        if key.code == KeyCode::Char('o') && ctrl {
             self.pane_toggle_key();
             return vec![];
         }
-        if self.redesigned()
-            && let Some(effects) = self.setting_key(state, key)
-        {
+        if let Some(effects) = self.setting_key(state, key) {
             return effects;
         }
         match key.code {
@@ -639,26 +613,18 @@ impl ChatView {
         }
         // The pane has the keys: it takes the ones it uses and ignores the
         // rest; Esc hands the keys back to the composer.
-        if self.redesigned() && self.pane_open && self.pane_keys {
+        if self.pane_open && self.pane_keys {
             return self.pane_key(state, key);
         }
         if let Some(card) = self.card_takes_keys(state) {
             self.ask.sync(&card);
-            // The permission kinds take over the composer's box, and Esc
-            // there never leaves the ask.
-            if self.redesigned() && ask::boxed(&card) {
-                let action = self.ask.box_key(&card, key);
-                return self.ask_effects(state, &card, action);
-            }
-            if key.code == KeyCode::Esc && !self.ask.takes_escape(&card) {
-                self.escape();
-                return vec![];
-            }
-            let action = self.ask.key(&card, key, self.attach);
+            // An ask takes over the composer's box, and Esc there never
+            // leaves the ask.
+            let action = self.ask.box_key(&card, key);
             return self.ask_effects(state, &card, action);
         }
         // Signing in happens elsewhere; the draft waits behind the box.
-        if self.redesigned() && session_strip(state).sign_in.is_some() {
+        if session_strip(state).sign_in.is_some() {
             return vec![];
         }
         if let Some(selected) = self.tray {
@@ -687,7 +653,6 @@ impl ChatView {
                 }
                 vec![ChatEffect::Answer(*input)]
             }
-            AskAction::Interrupt => vec![ChatEffect::Interrupt],
             AskAction::Resend => state
                 .answering(&card.key)
                 .map(|sent| {
@@ -921,11 +886,11 @@ impl ChatView {
     /// Scrolls an opened diff in the ask's box; false when there is none.
     fn scroll_box_diff(&mut self, state: &SessionState, lines: isize) -> bool {
         match self.card_takes_keys(state) {
-            Some(card) if self.redesigned() && ask::boxed(&card) => {
+            Some(card) => {
                 self.ask.sync(&card);
                 self.ask.scroll_diff(&card, lines)
             }
-            _ => false,
+            None => false,
         }
     }
 
@@ -1308,7 +1273,6 @@ impl ChatView {
     /// that is when the agent's changes land. Never on every frame.
     pub fn wants_diff_stat(&mut self, state: &SessionState) -> bool {
         if !crate::pending::diff_counts()
-            || !self.redesigned()
             || !matches!(state.composer(), Composer::Send | Composer::Resume)
         {
             return false;
@@ -1422,9 +1386,8 @@ impl ChatView {
         self.focus = Some(key);
     }
 
-    /// `<leader> o`: expand or collapse the focused row, or its run; in
-    /// the redesigned feed, a folded stretch opens, an open stretch's first
-    /// step folds it again, and any other step opens its detail.
+    /// `<leader> o`: a folded stretch opens, an open stretch's first step
+    /// folds it again, and any other step opens its detail.
     pub fn toggle_expanded(&mut self, state: &SessionState) {
         let Some(key) = self.focus.clone() else {
             return;
@@ -1555,11 +1518,6 @@ impl ChatView {
         held
     }
 
-    /// A frozen diff and its patch: the review page opens over the chat.
-    pub fn open_review(&mut self, diff: wire::Diff, patch: String) {
-        self.open_review_at(diff, patch, None);
-    }
-
     /// The review page, at the file `at` when one is named.
     pub fn open_review_at(&mut self, diff: wire::Diff, patch: String, at: Option<&str>) {
         let mut page = ReviewPage::new(diff, patch);
@@ -1619,7 +1577,6 @@ impl ChatView {
             self.focus = None;
             self.page_asked = None;
         }
-        let width = usize::from(area.width);
         if self.review_open
             && let Some(page) = &mut self.review
         {
@@ -1635,169 +1592,12 @@ impl ChatView {
             page.draw(paint, area, footer, theme);
             return None;
         }
-        if self.redesigned() {
-            return self.draw_turns(paint, area, state, family, footer, now_ms, theme);
-        }
-        let mut top: Vec<Line<'static>> = vec![header(state, self.away, width, theme)];
-        if let Some(family) = family {
-            top.push(family_line(family, width, theme));
-        }
-        top.push(Line::default());
-
-        let mut bottom: Vec<Line<'static>> = Vec::new();
-        if self.anchor != Anchor::Bottom {
-            let words = if state.arrivals_held() {
-                "↓ new activity below · pgdn or ctrl+end for the newest"
-            } else {
-                "↓ scrolled back · pgdn or ctrl+end for the newest"
-            };
-            let mut line = Line::from(Span::raw("  "));
-            push(&mut line, words, theme.muted(), width);
-            bottom.push(line);
-        }
-        let view = composer(state, now_ms);
-        if let Some(activity) = &view.activity {
-            let running = match &activity.kind {
-                ActivityKind::Running { key } => running_subject(state, key),
-                _ => None,
-            };
-            bottom.push(activity_line(activity, running.as_deref(), width, theme));
-        }
-        let strip = session_strip(state);
-        if let Some(line) = strip_line(&strip, width, theme) {
-            bottom.push(line);
-        }
-        bottom.extend(foot_cards(&strip, width, theme));
-        let tray = self.queue_entries(state, "");
-        if let Some(selected) = self.tray {
-            if tray.is_empty() {
-                self.tray = None;
-            } else if selected >= tray.len() {
-                self.tray = Some(tray.len() - 1);
-            }
-        }
-        for (i, row) in tray.iter().enumerate() {
-            bottom.push(row.line(self.tray == Some(i), width, theme));
-        }
-
-        let name = state
-            .agent()
-            .name
-            .clone()
-            .unwrap_or_else(|| "the agent".into());
-        let host = state
-            .host()
-            .map(|host| host.name.clone())
-            .unwrap_or_else(|| "its host".into());
-        let mut cursor = None;
-        let card = self.card(state);
-        let mut hint = match &footer {
-            Some(footer) => footer.clone(),
-            None => Line::default(),
-        };
-        match &card {
-            Some(card) => {
-                let lines = self.ask.render(card, &name, self.attach, width, theme);
-                let cap = (usize::from(area.height) / 2).max(4);
-                let start = bottom.len() + 1;
-                let skip = lines.lines.len().saturating_sub(cap);
-                if let Some((row, col)) = lines.cursor.filter(|(row, _)| *row >= skip) {
-                    cursor = Some((start + row - skip, col));
-                }
-                bottom.push(Line::default());
-                bottom.extend(on_panel(
-                    lines.lines.into_iter().skip(skip).collect(),
-                    width,
-                    theme,
-                ));
-                if footer.is_none() && card.state == CardState::Dismissed {
-                    let (lines, at) = editor_lines(
-                        &self.editor,
-                        &placeholder(&state.composer(), &name, &host, self.away),
-                        width,
-                        theme,
-                    );
-                    cursor = Some((bottom.len() + at.0, at.1));
-                    bottom.extend(lines);
-                    hint = composer_hint(state, &self.editor, self.away, self.leader, width, theme);
-                }
-            }
-            None => {
-                bottom.push(Line::default());
-                let (mut lines, at) = editor_lines(
-                    &self.editor,
-                    &placeholder(&state.composer(), &name, &host, self.away),
-                    width,
-                    theme,
-                );
-                let skip = (at.0 + 1).saturating_sub(COMPOSER_LINES);
-                lines = lines.into_iter().skip(skip).take(COMPOSER_LINES).collect();
-                if self.tray.is_none() {
-                    cursor = Some((bottom.len() + at.0 - skip, at.1));
-                }
-                bottom.extend(lines);
-                if footer.is_none() {
-                    hint = match self.tray.and_then(|i| tray.get(i)) {
-                        Some(row) => {
-                            let mut line = Line::from(Span::raw("  "));
-                            push(&mut line, row.hint(), theme.muted(), width);
-                            line
-                        }
-                        None => {
-                            composer_hint(state, &self.editor, self.away, self.leader, width, theme)
-                        }
-                    };
-                }
-            }
-        }
-        bottom.push(hint);
-
-        let height = usize::from(area.height);
-        let feed_height = height.saturating_sub(top.len() + bottom.len());
-        self.feed = (width, feed_height);
-        let mut lines = top;
-        let top_len = lines.len();
-        if state.transcript().is_empty() {
-            lines.extend(empty_feed(
-                state,
-                feed_height,
-                now_ms - self.opened_at_ms,
-                width,
-                theme,
-            ));
-            self.laid = Laid::default();
-        } else {
-            let laid = self.frame(theme).layout(state);
-            lines.extend(laid.lines.iter().cloned());
-            self.laid = laid;
-        }
-        let bottom_start = lines.len();
-        lines.extend(bottom);
-        paint.render_widget(Paragraph::new(lines), area);
-        if let Some((row, col)) = cursor {
-            let y = area.y as usize + bottom_start + row;
-            let x = area.x as usize + col.min(width.saturating_sub(1));
-            if y < (area.y + area.height) as usize {
-                paint.set_cursor_position(Position::new(x as u16, y as u16));
-            }
-        }
-        let _ = top_len;
-        let page = if state.transcript().is_empty() {
-            state.transcript().has_older().then_some(layout::PAGE)
-        } else {
-            self.laid.page
-        };
-        match page {
-            Some(n) if self.page_asked != state.oldest_order() || self.page_asked.is_none() => {
-                Some(n)
-            }
-            _ => None,
-        }
+        self.draw_turns(paint, area, state, family, footer, now_ms, theme)
     }
 }
 
 impl ChatView {
-    /// The redesigned chat: a top line naming the agent and where it
+    /// The chat: a top line naming the agent and where it
     /// stands, the feed as turns, and the composer boxed with the model and
     /// mode on its bottom edge. Returns the page to ask for, as `draw` does.
     #[allow(clippy::too_many_arguments)]
@@ -2079,7 +1879,6 @@ impl ChatView {
             Some(footer) => Ok(footer.clone()),
             None => Ok(Line::default()),
         };
-        let mut boxed = false;
         // Where the plain composer's box starts, to mark its top edge.
         let mut plain_box: Option<usize> = None;
         // A permission ask takes over the composer's box: its edge in the
@@ -2112,7 +1911,6 @@ impl ChatView {
                 }
                 ask_box = Some((at, drawn.spots));
                 bottom.extend(lines);
-                boxed = true;
                 if footer.is_none()
                     && let Some(words) = self.ask.question_hint(card, self.leader)
                 {
@@ -2134,30 +1932,10 @@ impl ChatView {
                     });
                 }
             }
-            Some(card) => {
-                let lines = self.ask.render(card, &name, self.attach, width, theme);
-                let cap = (usize::from(area.height) / 2).max(4);
-                // The feed's last row already ends in a blank line.
-                let start = bottom.len();
-                let skip = lines.lines.len().saturating_sub(cap);
-                if let Some((row, col)) = lines.cursor.filter(|(row, _)| *row >= skip) {
-                    cursor = Some((start + row - skip, col));
-                }
-                bottom.extend(on_panel(
-                    lines.lines.into_iter().skip(skip).collect(),
-                    width,
-                    theme,
-                ));
-                if footer.is_none() && card.state == CardState::Dismissed {
-                    plain_box = Some(bottom.len());
-                    composer_box(&mut bottom, &mut cursor, &self.editor, true);
-                    boxed = true;
-                    hint = Err(legend());
-                }
-            }
             // The agent's account needs signing in: the box says how, as an
-            // ask would, and keeps the draft for afterwards.
-            None if strip.sign_in.is_some() => {
+            // ask would, and keeps the draft for afterwards. An ask the
+            // agent exited with leaves the composer to say it exited.
+            _ if strip.sign_in.is_some() => {
                 const MARGIN: usize = 2;
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
                 let body = strip.sign_in.as_ref().map_or_else(Vec::new, |sign_in| {
@@ -2178,12 +1956,11 @@ impl ChatView {
                     ask_mode = Some((bottom.len() + lines.len() - 1, cols));
                 }
                 bottom.extend(lines);
-                boxed = true;
                 if footer.is_none() {
                     hint = Err(format!("ctrl+{} more", self.leader));
                 }
             }
-            None => {
+            _ => {
                 plain_box = Some(bottom.len());
                 composer_box(
                     &mut bottom,
@@ -2191,7 +1968,6 @@ impl ChatView {
                     &self.editor,
                     self.tray.is_none() && self.picker.is_none(),
                 );
-                boxed = true;
                 if footer.is_none() {
                     hint = Err(match self.tray.and_then(|i| entries.get(i)) {
                         Some(entry) => entry.hint().to_owned(),
@@ -2249,9 +2025,7 @@ impl ChatView {
             }
         }
         // A blank line lets the composer's box breathe above the keys.
-        if boxed {
-            bottom.push(Line::default());
-        }
+        bottom.push(Line::default());
         let (hint, hint_keys) = match hint {
             Ok(line) => (line, Vec::new()),
             Err(words) => keys_line(&words, width, theme),
@@ -3466,78 +3240,6 @@ fn mime_of(name: &str) -> &'static str {
     }
 }
 
-/// What the activity line names while a tool runs: the call's subject.
-fn running_subject(state: &SessionState, key: &Key) -> Option<String> {
-    let opts = ChatOptions {
-        tools: ToolRows::ShowAll,
-    };
-    let row = chat_rows_for(state, std::slice::from_ref(key), &opts).pop()?;
-    Some(match row.kind {
-        RowKind::Command { command, .. } => text::first_line(&command).to_owned(),
-        RowKind::Explore { subject, .. } => subject,
-        RowKind::ToolCall { server, tool, .. } if server.is_empty() => tool,
-        RowKind::ToolCall { server, tool, .. } => format!("{server} · {tool}"),
-        RowKind::FileChange { files, .. } => {
-            files.first().map(|f| f.path.clone()).unwrap_or_default()
-        }
-        _ => return None,
-    })
-}
-
-fn kind_word(kind: wire::Kind) -> &'static str {
-    match kind {
-        wire::Kind::ClaudePty => "claude",
-        wire::Kind::ClaudeSdk => "claude sdk",
-        wire::Kind::Codex => "codex",
-        wire::Kind::Unspecified => "agent",
-    }
-}
-
-/// "fix-auth · claude @ mbp          opus · high · default · working"
-fn header(state: &SessionState, away: Away, width: usize, theme: Theme) -> Line<'static> {
-    let agent = state.agent();
-    let name = agent.name.clone().unwrap_or_else(|| "unnamed".into());
-    let host = state
-        .host()
-        .map(|host| host.name.clone())
-        .unwrap_or_default();
-    let mut line = Line::from(Span::raw("  "));
-    push(&mut line, name, theme.emphasis(), width);
-    let mut about = format!(" · {}", kind_word(state.kind()));
-    if !host.is_empty() {
-        about.push_str(&format!(" @ {host}"));
-    }
-    push(&mut line, about, theme.muted(), width);
-    let (words, style) = state_words(state, away, &host, theme);
-    let strip = session_strip(state);
-    let facts: Vec<String> = [strip.model, strip.effort, strip.mode]
-        .into_iter()
-        .flatten()
-        .filter(|fact| !fact.is_empty())
-        .collect();
-    let mut right = facts.join(" · ");
-    let room = width.saturating_sub(text::line_width(&line) + 4);
-    if right.is_empty() || text::str_width(&right) + text::str_width(&words) + 3 > room {
-        right = words.clone();
-    } else {
-        right = format!("{right} · {words}");
-    }
-    let styled_words = right.ends_with(&words) && style != theme.muted();
-    if styled_words {
-        let prefix = right[..right.len() - words.len()].to_owned();
-        let total = text::str_width(&right);
-        let used = text::line_width(&line);
-        if used + 2 + total <= width {
-            line.spans.push(Span::raw(" ".repeat(width - used - total)));
-            line.spans.push(Span::styled(prefix, theme.muted()));
-            line.spans.push(Span::styled(words, style));
-        }
-    } else {
-        push_right(&mut line, &right, theme.muted(), width);
-    }
-    line
-}
-
 /// The one word, or few, for where the chat stands: needs you, working,
 /// idle, exited with its cause, or why it cannot be current.
 fn state_words(
@@ -3628,71 +3330,6 @@ fn family_line(family: &FamilyHeader, width: usize, theme: Theme) -> Line<'stati
     line
 }
 
-fn composer_hint(
-    state: &SessionState,
-    editor: &Editor,
-    away: Away,
-    leader: char,
-    width: usize,
-    theme: Theme,
-) -> Line<'static> {
-    let keys = HintKeys {
-        working: state.phase() == PhaseView::Working,
-        leader,
-        mode: next_mode(state).is_some(),
-    };
-    hint_line(&state.composer(), away, keys, editor, width, theme)
-}
-
-/// What the keys under the composer depend on beyond its mode and draft.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct HintKeys {
-    pub working: bool,
-    pub leader: char,
-    /// Shift+Tab changes the agent's mode.
-    pub mode: bool,
-}
-
-/// The keys under the composer, for its mode and draft, with the mode key
-/// at the right while the composer sends.
-pub(crate) fn hint_line(
-    composer: &Composer,
-    away: Away,
-    keys: HintKeys,
-    editor: &Editor,
-    width: usize,
-    theme: Theme,
-) -> Line<'static> {
-    let review = format!("ctrl+{} r review", keys.leader);
-    let words = match composer {
-        Composer::Send if keys.working => {
-            "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop".to_owned()
-        }
-        Composer::Send if editor.is_empty() => {
-            format!("enter send · ctrl+j newline · ctrl+v attach · {review} · ? help")
-        }
-        Composer::Send => format!("enter send · ctrl+j newline · ctrl+v attach · {review}"),
-        Composer::Resume => "enter resume with this message · ctrl+j newline".to_owned(),
-        Composer::Disabled(Waiting::Detached) if away == Away::SignedOut => {
-            "draft kept · sending waits until this machine signs in".to_owned()
-        }
-        Composer::Disabled(Waiting::Detached) if away == Away::Revoked => {
-            "draft kept · sending waits until you pair again".to_owned()
-        }
-        Composer::Disabled(_) => "draft kept · sending waits".to_owned(),
-    };
-    let mut line = Line::from(Span::raw("  "));
-    let mode = if keys.mode && *composer == Composer::Send {
-        "shift+tab mode"
-    } else {
-        ""
-    };
-    let room = width.saturating_sub(text::str_width(mode) + 3);
-    push(&mut line, words, theme.muted(), room);
-    push_right(&mut line, mode, theme.muted(), width.saturating_sub(1));
-    line
-}
-
 /// The mode Shift+Tab moves the agent to: its own next mode where the
 /// agent only cycles, else the next offered mode that still asks before
 /// acting. None where the mode cannot change from here.
@@ -3717,28 +3354,6 @@ pub(crate) fn next_mode(state: &SessionState) -> Option<ui_view::SettingChange> 
         .position(|mode| mode.current)
         .map_or(0, |at| (at + 1) % offered.len());
     Some(ui_view::SettingChange::Mode(offered[next].value.clone()))
-}
-
-/// The ask card's lines on the panel surface, edge to edge.
-pub(crate) fn on_panel(
-    lines: Vec<Line<'static>>,
-    width: usize,
-    theme: Theme,
-) -> Vec<Line<'static>> {
-    let panel = theme.panel();
-    lines
-        .into_iter()
-        .map(|line| {
-            let mut line = Line::from(
-                line.spans
-                    .into_iter()
-                    .map(|span| Span::styled(span.content, panel.patch(span.style)))
-                    .collect::<Vec<_>>(),
-            );
-            text::fill(&mut line, panel, width);
-            line
-        })
-        .collect()
 }
 
 fn empty_feed(

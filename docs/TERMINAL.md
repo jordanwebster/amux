@@ -359,55 +359,31 @@ peer's link over SSH).
 | PNG renderings of the components | [`crates/shot`](../crates/shot/README.md) | `just shot -- render vocabulary --out DIR` |
 | Raw attach, the CLI and the binary against real daemons | `crates/amux/tests/` | `just test-crate amux` |
 | Journeys through the real terminal client | `journeys/`, `scripts/terminal-journey.py` | `just journey terminal <name>` |
-| The lab's scenarios drawn at two sizes, and its fake runtime answering a prompt and an ask | `crates/tui-lab` | `just test-crate tui-lab` |
+| Sets: every declared world loads and names only agents it declares | `crates/tui-set`, `journeys/sets/` | `just test-crate tui-set` |
 
 [TESTING.md](TESTING.md) places these in the suite catalogue.
 
-## The lab
+## Sets
 
-The lab ([`crates/tui-lab`](../crates/tui-lab/src/main.rs)) runs this client over a scripted fake runtime instead
-of a daemon, for trying designs and walking through flows. The fake runtime implements the same `Client` the
-daemon's socket does and changes the way a daemon would: a sent prompt is reflected and answered, an answered ask
-closes and the agent carries on, a created agent starts and answers its first prompt, and stop, resume, rename,
-delete, the working-tree diff and attachments all work against it. No provider runs and nothing is persisted.
+A set is a declared world for working on this client: hosts, links and agents served by real daemons on the
+fake providers, with what each agent has said and does next. Sets live in `journeys/sets/` in the journeys'
+own format: a topology as `testnet serve` reads it, its fake-provider scripts inline (see
+[TestNet](TESTNET.md)), the host the client runs on, the chat frames open on, settings merged into that host's
+installation config, and a timeline of door requests played before the client starts and, after a `launch`
+beat, while it runs.
 
 ```sh
-just lab rich-chat        # open a scenario; relaunch at the same place on every change
-just lab                  # resume the last scenario and place
-just lab-list             # the scenarios
-just lab-render asks --keys enter --size 120x40 --size 80x24
+just tui-set list                      # the sets
+just tui-set busy-fleet                # serve it and run amux on it in this terminal
+just tui-set sending --door '{"Sever": {"a": "laptop", "b": "cabin"}}'   # change a running set
+just tui-set asks --frames "down enter" --size 120x36 --size 80x24 --open "flaky e2e"
 ```
 
-**Scenarios** are YAML files in `crates/tui-lab/scenarios/`, read at launch: the hosts and their presence, the
-agents (kind, host, family, phase, model and mode, context, usage, tasks, queue, a working-tree diff) with their
-transcripts written as one-key entries (`- user:`, `- say:`, `- read:`, `- bash:`, `- edit:`, `- subagent:`,
-`- ask:` with a permission, question, plan, form, link or unanswerable body, `- turn:`), what each agent says
-back to a prompt (`reply:`), and a timeline of beats that play in real time: an agent continues, a new agent
-appears, a host drops away and returns. Entries after an ask wait for its answer. `src/scenario.rs` documents
-every field.
+The set's installations are temporary and its door's address is in `target/tui-set/<name>/door.json`, so sets
+served from different worktrees never cross. `--frames KEYS` draws the client headlessly over the client host's
+own profile socket, to text and PNG under `target/tui-set/<name>/frames/` (or `--out`), after keys written like
+a shell line: named keys, `C-x` and `C-enter`, `hover:X,Y`, `click:X,Y`, `wheelup`, `wheeldown`, `paste:TEXT`
+for a bracketed paste, `wait:MS` to let the world move, `door:JSON` for a door request at that point, and
+anything else typed. Frames draw in the colours this terminal reported the last time `tui-set` ran in it
+(`--theme sample`, `dark` and `light` otherwise).
 
-**Relaunching.** `just lab` runs `tui-lab watch`, which polls the client's crates and the scenarios. A code change
-rebuilds in the background while the old lab stays on screen, then the lab saves its place and the new build
-reopens it there, in about two seconds after an edit in `crates/tui`. A scenario change relaunches without a
-build. A failed build leaves the old lab running with a notice naming the first error; the whole log is
-`notes/tui-lab/build.log`. The place is the scenario, how many timeline beats have fired, the open chat, the
-fleet's selection, the draft and the scroll anchor. What was done against the fake runtime is not kept: the world
-is rebuilt from the scenario and those beats.
-
-**Lab keys**, layered over the client's own:
-
-| Key | What it does |
-|---|---|
-| F2 or Ctrl+] f | Capture this screen with a one-line note: text, PNG, note and place go to `notes/tui-lab/feedback/<time>/` |
-| F3 or Ctrl+] v | Cycle the design variant (`tui::variant`), for renderers comparing designs; variant 0 is the current design, and variant 1 draws the old framed home in place of [`home.rs`](../crates/tui/src/home.rs) |
-| Ctrl+] r | Restart the scenario from its beginning |
-
-`tui-lab render` draws frames without a terminal: the scenario after `--step N` beats and a sequence of keys
-and mouse events (`--keys "down enter 'fix it' enter"`, with named keys, `C-x` and `C-enter` for Ctrl, and
-`hover:X,Y` or `click:X,Y` for the mouse at a zero-based cell, `wheelup` and `wheeldown` for one wheel event),
-in `--variant N`, at each `--size`, to text and
-PNG. By default it draws in the colours the person's terminal reported the last time the lab ran in it (kept in
-`notes/tui-lab/terminal-colors.json`), so frames look like theirs; `--theme sample` draws as if a fixed dark
-terminal had reported its colours, and `dark` and `light` are amux's own palettes, drawn as for a terminal that
-does not answer. Scripts
-play at once there, so a frame does not wait on timing.

@@ -218,8 +218,6 @@ impl Named {
     pub fn render(self, theme: Theme) -> Buffer {
         let (state, at) = self.state();
         let mut view = ChatView::new(b"agent".to_vec(), at, false);
-        // The vocabulary's components are still the old chat's.
-        view.legacy = true;
         draw(&mut view, &state, at, 120, 40, theme).0
     }
 }

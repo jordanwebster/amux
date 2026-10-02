@@ -1,3 +1,12 @@
+2026-10-02 — **The terminal client draws only its new home and chat.** The
+TUI lab and the switch between designs are gone, and with them the old
+fleet table, the old chat header, activity line, session strip and foot
+cards, the hint line, the queue tray's one-line rows and the old ask card
+with its menu keys: every open ask is answered in the composer's box. The
+daemon-version and signed-out notes the old fleet showed in a banner now
+sit on home's top line. Sets are how the client is looked at by hand; the
+component goldens keep the rows and the review page.
+
 2026-10-02 — **Sets: declared worlds for working on the terminal client.**
 `just tui-set <name>` serves a world from `journeys/sets/` on real daemons
 and the fake providers and opens the real `amux` on it; its door address

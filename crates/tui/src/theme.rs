@@ -552,11 +552,6 @@ impl Theme {
         Style::default().fg(self.color(self.tokens.hairline))
     }
 
-    /// The filled diff and ask-panel surface.
-    pub(crate) fn panel(self) -> Style {
-        self.text().bg(self.color(self.tokens.panel))
-    }
-
     /// The accent on the bare page: "needs you", an open ask's mark, the
     /// composer's edge.
     pub(crate) fn accent(self) -> Style {
@@ -594,11 +589,6 @@ impl Theme {
     /// where the text stopped would read as a sticker behind each line.
     pub(crate) fn diff_context(self) -> Style {
         Style::default().fg(self.color(self.tokens.diff_context))
-    }
-
-    /// Diff metadata, on whatever surface the row already has.
-    pub(crate) fn diff_meta(self) -> Style {
-        Style::default().fg(self.color(self.tokens.diff_meta))
     }
 
     /// Convert a rendered cell style into its semantic style-map class.

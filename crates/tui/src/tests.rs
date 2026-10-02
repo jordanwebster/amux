@@ -128,7 +128,6 @@ fn feed(view: &mut ChatView, state: &SessionState) -> (String, Option<u32>) {
 fn the_feed_follows_the_newest_row() {
     let state = chat(replies(1, 60));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (screen, page) = feed(&mut view, &state);
     assert!(screen.contains("reply number 60"), "{screen}");
     assert!(!screen.contains("reply number 1\n"), "{screen}");
@@ -141,7 +140,6 @@ fn fewer_than_a_page_of_held_rows_above_the_screen_asks_for_an_older_page() {
     let state = chat(replies(51, 70));
     assert!(state.transcript().has_older());
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (_, page) = feed(&mut view, &state);
     assert_eq!(page, Some(PAGE));
     // Once asked, it waits for the window to grow before asking again.
@@ -152,7 +150,6 @@ fn fewer_than_a_page_of_held_rows_above_the_screen_asks_for_an_older_page() {
     // A page's worth above the screen: no fetch.
     let state = chat(replies(51, 200));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (_, page) = feed(&mut view, &state);
     assert_eq!(page, None);
 }
@@ -173,7 +170,6 @@ fn an_open_collapsed_run_at_the_top_asks_for_a_larger_page() {
         epoch,
     });
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (screen, page) = feed(&mut view, &state);
     assert!(screen.contains("300+ reads"), "{screen}");
     assert_eq!(page, Some(300), "the run's count, under the cap");
@@ -183,7 +179,6 @@ fn an_open_collapsed_run_at_the_top_asks_for_a_larger_page() {
 fn a_scrolled_reader_keeps_its_place_as_rows_arrive() {
     let mut state = chat(replies(1, 60));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     feed(&mut view, &state);
     view.key(&state, key(KeyCode::PageUp), theme());
     assert!(matches!(view.anchor, Anchor::Top { .. }));
@@ -224,7 +219,6 @@ fn a_scrolled_reader_keeps_its_place_as_rows_arrive() {
 fn the_view_tells_the_session_once_when_the_reader_leaves_and_once_when_it_returns() {
     let mut state = chat(replies(1, 60));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     feed(&mut view, &state);
     assert_eq!(tell(&mut view, &mut state), None, "a chat opens following");
     view.key(&state, key(KeyCode::PageUp), theme());
@@ -245,7 +239,6 @@ fn a_following_chat_under_live_rows_issues_no_page() {
     // A long chat opened on its 40-row tail pages ahead once, then holds.
     let mut state = chat(replies(961, 1000));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (_, page) = feed(&mut view, &state);
     assert_eq!(page, Some(PAGE));
     view.page_sent(&state);
@@ -274,7 +267,6 @@ fn a_following_chat_under_live_rows_issues_no_page() {
 fn scrolling_down_past_the_newest_row_follows_again() {
     let state = chat(replies(1, 60));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     feed(&mut view, &state);
     view.key(&state, key(KeyCode::PageUp), theme());
     feed(&mut view, &state);
@@ -294,7 +286,6 @@ fn a_run_collapses_to_its_summary_and_expands_by_item_key() {
     items.extend(replies(6, 6));
     let mut state = chat(items);
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (screen, _) = feed(&mut view, &state);
     assert!(screen.contains("4 reads"), "{screen}");
     assert!(!screen.contains("src/file2.rs"), "{screen}");
@@ -336,7 +327,6 @@ fn consecutive_tool_rows_share_the_rail_and_a_lone_one_has_none() {
     items.extend(replies(5, 5));
     let state = chat(items);
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (screen, _) = feed(&mut view, &state);
     let summary = screen
         .lines()
@@ -380,7 +370,6 @@ fn consecutive_tool_rows_share_the_rail_and_a_lone_one_has_none() {
 fn shift_tab_sends_the_next_mode_that_still_asks() {
     let state = chat(replies(1, 1));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (screen, _) = feed(&mut view, &state);
     assert!(screen.contains("shift+tab mode"), "{screen}");
     let effects = view.key(&state, key(KeyCode::BackTab), theme());
@@ -441,7 +430,6 @@ fn every_ask_body_draws_with_stop_in_its_menu() {
         }
         seen.insert(body_name(&card.body));
         let mut view = ChatView::new(b"agent".to_vec(), at, false);
-        view.legacy = true;
         let (buffer, _) = draw(&mut view, state, at, 120, 60, theme());
         let screen = text(&buffer);
         assert!(screen.contains("Stop the turn"), "{label}: {screen}");
@@ -497,7 +485,6 @@ fn stop_in_the_menu_is_the_interrupt() {
     let (state, at) = fixtures::Named::CodexApproval.state();
     let card = ask_card(&state).expect("an approval");
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     draw(&mut view, &state, at, W, H, theme());
     let stop = card.choices.len() + 1;
     let digit = char::from_digit(stop as u32, 10).unwrap();
@@ -517,7 +504,6 @@ fn stop_in_the_menu_is_the_interrupt() {
 fn the_likely_choice_answers_in_the_kinds_own_arm() {
     let (state, at) = fixtures::Named::CodexApproval.state();
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     let effects = view.key(&state, key(KeyCode::Enter), theme());
     match effects.as_slice() {
         [ChatEffect::Answer(input)] => {
@@ -534,7 +520,6 @@ fn the_likely_choice_answers_in_the_kinds_own_arm() {
 fn an_unanswerable_ask_offers_stop_and_the_terminal() {
     let state = unanswerable();
     let mut view = ChatView::new(b"agent".to_vec(), 0, true);
-    view.legacy = true;
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(screen.contains("Can't answer this here"), "{screen}");
@@ -564,7 +549,6 @@ fn a_denial_takes_a_note_that_goes_back_to_the_agent() {
         .position(|choice| choice.takes_note)
         .expect("Claude's deny takes a note");
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     let digit = char::from_digit(deny as u32 + 1, 10).unwrap();
     view.key(&state, key(KeyCode::Char(digit)), theme());
     assert!(view.key(&state, key(KeyCode::Enter), theme()).is_empty());
@@ -602,7 +586,6 @@ fn questions_answer_through_steps_and_a_review() {
         unreachable!()
     };
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     let mut sent = None;
     for question in &questions {
         if question.multi_select {
@@ -651,7 +634,6 @@ fn terminal_claude_questions_take_no_note() {
         unreachable!()
     };
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     for question in questions {
         if question.multi_select {
             view.key(&state, key(KeyCode::Char(' ')), theme());
@@ -676,7 +658,6 @@ fn a_form_submits_what_was_typed() {
             )
         });
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     // Edit the first field, then submit.
     view.key(&state, key(KeyCode::Enter), theme());
     typed(&mut view, &state, "jlw/amux");
@@ -720,7 +701,6 @@ fn an_unconfirmed_answer_offers_resend_and_discard() {
     state.update(Msg::Sent(b"answer-1".to_vec(), InputOutcome::Lost));
     assert_eq!(ask_card(&state).unwrap().state, CardState::NotConfirmed);
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     let (buffer, _) = draw(&mut view, &state, at, W, H, theme());
     assert!(text(&buffer).contains("r resend · d discard"));
     assert_eq!(
@@ -748,7 +728,6 @@ fn a_draft_is_taken_any_time_and_sent_only_when_caught_up_and_live() {
     state.update(Msg::Connection(ui_state::Connection::Live));
     state.update(snapshot(Phase::Idle, vec![], vec![]));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     typed(&mut view, &state, "hello");
     assert!(view.key(&state, key(KeyCode::Enter), theme()).is_empty());
     assert_eq!(view.editor.text(), "hello");
@@ -775,7 +754,6 @@ fn an_exited_entry_offers_resume_with_the_draft() {
     exited.exit_cause = Some("finished".into());
     state.update(Msg::Entry(exited));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(screen.contains("worker has exited"), "{screen}");
@@ -804,7 +782,6 @@ fn an_unconfirmed_prompt_offers_resend_and_discard() {
     state.update(Msg::Send(prompt(b"p1", "did this land")));
     state.update(Msg::Sent(b"p1".to_vec(), InputOutcome::Lost));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(screen.contains("not confirmed  did this land"), "{screen}");
@@ -833,7 +810,6 @@ fn a_queued_prompt_can_be_withdrawn_or_sent_now() {
     state.update(snapshot(Phase::Working, vec![], vec![queued]));
     assert_eq!(queue_rows(&state).len(), 1);
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     assert!(
         text(&buffer).contains("queued  and then the docs"),
@@ -869,7 +845,6 @@ fn a_steered_prompt_reads_steered_until_its_reflection() {
     let mut state = chat(replies(1, 3));
     state.update(snapshot(Phase::Working, vec![], vec![queued]));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     assert!(
         text(&buffer).contains("steered  use the other file"),
@@ -882,7 +857,6 @@ fn a_steered_prompt_reads_steered_until_its_reflection() {
 fn ctrl_v_attaches_a_file_through_put_blob() {
     let state = chat(replies(1, 3));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     assert_eq!(
         view.key(&state, ctrl('v'), theme()),
         vec![ChatEffect::Paste]
@@ -935,7 +909,6 @@ fn detached_keeps_the_rows_and_disables_send() {
     }));
     state.update(event(session_event::Of::Detached(wire::Detached {})));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     typed(&mut view, &state, "still typing");
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
@@ -978,7 +951,6 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
     state.update(Msg::Host(fleet.host(b"host").unwrap().clone()));
     state.update(event(session_event::Of::Detached(wire::Detached {})));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     view.away = ui_view::away(&fleet, b"laptop", b"host");
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
@@ -1019,7 +991,6 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
     assert!(!screen.contains("not signed in"), "{screen}");
     // The fleet says what signing in would bring back.
     let mut fleet_view = FleetView::default();
-    fleet_view.legacy = true;
     fleet_view.local_host = b"laptop".to_vec();
     let screen = fleet_screen(&mut fleet_view, &fleet);
     assert!(
@@ -1093,7 +1064,6 @@ fn a_host_that_revoked_trust_says_so_instead_of_not_signed_in() {
     state.update(Msg::Host(fleet.host(b"host").unwrap().clone()));
     state.update(event(session_event::Of::Detached(wire::Detached {})));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     view.away = ui_view::away(&fleet, b"laptop", b"host");
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
@@ -1111,7 +1081,6 @@ fn a_host_that_revoked_trust_says_so_instead_of_not_signed_in() {
 fn a_reset_keeps_the_rows_until_caught_up_then_shows_the_newest() {
     let mut state = chat(replies(1, 60));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     feed(&mut view, &state);
     view.key(&state, key(KeyCode::PageUp), theme());
     let (before, _) = feed(&mut view, &state);
@@ -1257,7 +1226,6 @@ fn the_fleet_lists_families_and_acts_on_the_selected_agent() {
         wire::inventory_event::Of::CaughtUp(wire::CaughtUp { revision: 0 }),
     );
     let mut view = FleetView::default();
-    view.legacy = true;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
     let mut screen = String::new();
     terminal
@@ -1332,7 +1300,6 @@ fn the_fleet_says_restart_to_update_when_the_daemon_runs_another_build() {
         wire::inventory_event::Of::CaughtUp(wire::CaughtUp { revision: 0 }),
     );
     let mut view = FleetView::default();
-    view.legacy = true;
     view.version = "0.8.0".into();
     view.local_host = b"a".to_vec();
     let screen = fleet_screen(&mut view, &fleet);
@@ -1392,7 +1359,6 @@ fn an_answered_question_row_reads_the_question_and_what_was_picked() {
     ] {
         let (_, state, at) = fixtures::frames(kind, name).pop().unwrap();
         let mut view = ChatView::new(b"agent".to_vec(), at, false);
-        view.legacy = true;
         let (buffer, _) = draw(&mut view, &state, at, W, H, theme());
         let screen = text(&buffer);
         assert!(screen.contains(row), "{name}:\n{screen}");
@@ -1456,8 +1422,7 @@ fn review_token(view: &ChatView) -> Option<wire::Review> {
 fn the_review_page_lists_files_and_styles_hunks() {
     let state = chat(replies(1, 3));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
-    view.open_review(working_tree_diff(), PATCH.into());
+    view.open_review_at(working_tree_diff(), PATCH.into(), None);
     let (screen, buffer) = review_screen(&mut view, &state);
     assert!(
         screen.contains("Review · working tree at 3f2a1c9"),
@@ -1496,9 +1461,8 @@ fn the_review_page_lists_files_and_styles_hunks() {
 fn the_first_saved_comment_puts_a_review_token_in_the_draft_at_the_cursor() {
     let state = chat(replies(1, 3));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     typed(&mut view, &state, "look at this ");
-    view.open_review(working_tree_diff(), PATCH.into());
+    view.open_review_at(working_tree_diff(), PATCH.into(), None);
 
     // Down to the first added line and comment on it.
     view.key(&state, key(KeyCode::Char('j')), theme());
@@ -1558,8 +1522,7 @@ fn the_first_saved_comment_puts_a_review_token_in_the_draft_at_the_cursor() {
 fn deleting_comments_and_the_token_drops_the_draft_review() {
     let state = chat(replies(1, 3));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
-    view.open_review(working_tree_diff(), PATCH.into());
+    view.open_review_at(working_tree_diff(), PATCH.into(), None);
     view.key(&state, key(KeyCode::Char('c')), theme());
     typed(&mut view, &state, "one");
     view.key(&state, key(KeyCode::Enter), theme());
@@ -1576,7 +1539,7 @@ fn deleting_comments_and_the_token_drops_the_draft_review() {
     assert!(!view.resume_review(), "no token: a fresh diff is wanted");
 
     // A token backspaced out of the draft drops the review the same way.
-    view.open_review(working_tree_diff(), PATCH.into());
+    view.open_review_at(working_tree_diff(), PATCH.into(), None);
     view.key(&state, key(KeyCode::Char('c')), theme());
     typed(&mut view, &state, "two");
     view.key(&state, key(KeyCode::Enter), theme());
@@ -1707,13 +1670,12 @@ async fn a_review_asks_for_the_working_tree_diff_then_its_patch() {
 fn a_question_mark_types_into_a_review_comment() {
     let state = chat(replies(1, 3));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let question = key(KeyCode::Char('?'));
     assert!(
         view.opens_help(&state, question),
         "the empty composer's key"
     );
-    view.open_review(working_tree_diff(), PATCH.into());
+    view.open_review_at(working_tree_diff(), PATCH.into(), None);
     view.key(&state, key(KeyCode::Char('j')), theme());
     view.key(&state, key(KeyCode::Char('c')), theme());
     assert!(!view.opens_help(&state, question), "the comment's key");
@@ -1825,7 +1787,6 @@ fn an_exited_agent_on_an_away_host_names_why_it_is_away() {
         ..Default::default()
     }));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     view.away = ui_view::Away::SignedOut;
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
@@ -1856,7 +1817,6 @@ fn an_agent_that_exited_while_the_daemon_was_away_says_exited_once() {
     exited.exit_cause = Some("while the daemon was away".into());
     state.update(Msg::Entry(exited.clone()));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(
@@ -1877,7 +1837,6 @@ fn an_agent_that_exited_while_the_daemon_was_away_says_exited_once() {
     );
     inventory(&mut fleet, wire::inventory_event::Of::Agent(exited));
     let mut fleet_view = FleetView::default();
-    fleet_view.legacy = true;
     let screen = fleet_screen(&mut fleet_view, &fleet);
     let row = screen.lines().find(|line| line.contains("worker")).unwrap();
     assert!(row.contains(" exited "), "{screen}");
@@ -1905,7 +1864,6 @@ fn thinking_with_no_measured_time_reads_thought_alone() {
     // seconds after the first.
     let state = chat(vec![item(1, None), thinking(2, 1_000), thinking(3, 4_000)]);
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     let (screen, _) = feed(&mut view, &state);
     assert!(!screen.contains("Thought for 0ms"), "{screen}");
     assert!(screen.contains("~ Thought\n"), "{screen}");
@@ -1924,7 +1882,6 @@ fn typing_on_something_else_starts_the_answer() {
     };
     assert!(questions[0].allow_other);
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     for _ in 0..questions[0].options.len() {
         view.key(&state, key(KeyCode::Down), theme());
     }
@@ -1976,7 +1933,6 @@ fn a_note_answered_does_not_keep_ctrl_c_from_the_composer() {
     for note in ["use cargo clean", ""] {
         let (asking, at) = fixtures::Named::ClaudePermissionAsk.state();
         let mut view = ChatView::new(b"agent".to_vec(), at, false);
-        view.legacy = true;
         deny_with_note(&mut view, &asking);
         typed(&mut view, &asking, note);
         let effects = view.key(&asking, key(KeyCode::Enter), theme());
@@ -2010,7 +1966,6 @@ fn ctrl_c_in_an_ask_field_clears_that_field_and_never_the_draft() {
     // A denial's note.
     let (state, at) = fixtures::Named::ClaudePermissionAsk.state();
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     draft(&mut view);
     deny_with_note(&mut view, &state);
     assert!(
@@ -2031,7 +1986,6 @@ fn ctrl_c_in_an_ask_field_clears_that_field_and_never_the_draft() {
         unreachable!()
     };
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     draft(&mut view);
     for _ in 0..questions[0].options.len() {
         view.key(&state, key(KeyCode::Down), theme());
@@ -2046,7 +2000,6 @@ fn ctrl_c_in_an_ask_field_clears_that_field_and_never_the_draft() {
     // A form field.
     let (state, at) = form();
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     draft(&mut view);
     view.key(&state, key(KeyCode::Enter), theme());
     view.kill_field(&state);
@@ -2065,14 +2018,12 @@ fn a_paste_goes_to_the_field_with_the_keys() {
     // The composer, when it has them.
     let idle = chat(replies(1, 3));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
     view.paste_text(&idle, "hello");
     assert_eq!(view.editor.text(), "hello");
 
     // A review comment.
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.legacy = true;
-    view.open_review(working_tree_diff(), PATCH.into());
+    view.open_review_at(working_tree_diff(), PATCH.into(), None);
     view.key(&idle, key(KeyCode::Char('j')), theme());
     view.key(&idle, key(KeyCode::Char('c')), theme());
     view.paste_text(&idle, "why this?");
@@ -2088,7 +2039,6 @@ fn a_paste_goes_to_the_field_with_the_keys() {
     // A denial's note; on the menu there is nothing to paste into.
     let (state, at) = fixtures::Named::ClaudePermissionAsk.state();
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     view.paste_text(&state, "ignored");
     deny_with_note(&mut view, &state);
     view.paste_text(&state, "because");
@@ -2105,7 +2055,6 @@ fn a_paste_goes_to_the_field_with_the_keys() {
         unreachable!()
     };
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     for _ in 0..questions[0].options.len() {
         view.key(&state, key(KeyCode::Down), theme());
     }
@@ -2118,7 +2067,6 @@ fn a_paste_goes_to_the_field_with_the_keys() {
     // A form field.
     let (state, at) = form();
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     view.key(&state, key(KeyCode::Enter), theme());
     view.kill_field(&state);
     view.paste_text(&state, "jlw/amux");
@@ -2177,7 +2125,6 @@ fn a_paste_in_the_fleet_types_into_the_rename_field() {
     );
     inventory(&mut fleet, agent_row(b"p", "planner", Phase::Idle, None));
     let mut view = FleetView::default();
-    view.legacy = true;
     view.paste("ignored");
     view.key(&fleet, key(KeyCode::Char('r')));
     view.key(&fleet, ctrl('u'));
@@ -2199,7 +2146,6 @@ fn q_and_question_mark_reach_an_open_fleet_overlay_first() {
     );
     inventory(&mut fleet, agent_row(b"p", "planner", Phase::Idle, None));
     let mut view = FleetView::default();
-    view.legacy = true;
     let q = key(KeyCode::Char('q'));
     let help = key(KeyCode::Char('?'));
     assert_eq!(view.key(&fleet, help), vec![FleetEffect::Help]);
@@ -2237,7 +2183,6 @@ fn esc_on_a_later_question_and_the_review_goes_back() {
         unreachable!()
     };
     let mut view = ChatView::new(b"agent".to_vec(), at, false);
-    view.legacy = true;
     let asks = |view: &mut ChatView, question: &str| {
         let screen = screen_of(view, &state, at);
         assert!(screen.contains(question), "{question}\n{screen}");
@@ -2263,7 +2208,7 @@ fn esc_on_a_later_question_and_the_review_goes_back() {
     asks(&mut view, &questions[questions.len() - 1].question);
 }
 
-// --- home, as redesigned ------------------------------------------------------
+// --- home ------------------------------------------------------------------
 
 fn home_agent(
     id: &[u8],
@@ -2541,7 +2486,7 @@ fn the_filter_lives_in_the_top_line_and_narrows_the_list() {
     );
 }
 
-// --- the redesigned feed ---------------------------------------------------
+// --- the feed -------------------------------------------------------------
 
 fn click(view: &mut ChatView, state: &SessionState, screen: &str, words: &str) -> Vec<ChatEffect> {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
@@ -2658,7 +2603,7 @@ fn the_chat_header_names_the_agent_and_offers_the_diff_and_home() {
     assert!(matches!(effects.as_slice(), [ChatEffect::Home]));
 }
 
-// --- the redesigned chat: keys, the pinned prompt ---------------------------
+// --- the chat: keys, the pinned prompt -------------------------------------
 
 /// Your message at `order`, as the agent reflected it.
 fn prompt_item(order: u64, words: &str) -> Item {

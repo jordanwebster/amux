@@ -28,7 +28,6 @@ members = [
     "crates/store",
     "crates/testnet",
     "crates/tui",
-    "crates/tui-lab",
     "crates/tui-set",
     "crates/ui-runtime",
     "crates/ui-state",

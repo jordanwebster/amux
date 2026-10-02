@@ -144,21 +144,6 @@ journey CLIENT NAME *ARGS:
 tui-evidence *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1800 scripts/tui-evidence "$@"
 
-# Open the TUI lab on a scenario (`just lab-list`) and relaunch it at the
-# same place on every source or scenario change. Only the first build is
-# bounded here: the session is interactive, and the watcher bounds each
-# rebuild itself. With no scenario it resumes the last place.
-lab *SCENARIO:
-    {{bounded}} 900 cargo build --locked -p tui-lab && target/debug/tui-lab watch "$@"
-
-# List the TUI lab's scenarios.
-lab-list:
-    {{bounded}} 900 cargo build --locked -p tui-lab && target/debug/tui-lab list
-
-# Draw TUI lab frames headlessly to text and PNG: `just lab-render asks --keys enter`.
-lab-render *ARGS:
-    {{bounded}} 900 cargo build --locked -p tui-lab && {{bounded}} 300 target/debug/tui-lab render "$@"
-
 # Serve a declared world from journeys/sets on real daemons and the fake
 # providers, and run the real terminal client on it in this terminal; the
 # door's address is in target/tui-set/NAME/door.json. `--frames KEYS

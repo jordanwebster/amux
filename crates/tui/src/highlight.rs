@@ -55,14 +55,6 @@ pub fn preload() -> std::time::Duration {
     started.elapsed()
 }
 
-/// How long the first block takes once the grammars are in: `code`
-/// highlighted as `language`, for measuring.
-pub fn time_block(code: &str, language: &str) -> std::time::Duration {
-    let started = std::time::Instant::now();
-    let _ = highlight(code, language);
-    started.elapsed()
-}
-
 /// Whether blocks can be highlighted yet.
 pub(crate) fn ready() -> bool {
     SYNTAXES.get().is_some()

@@ -1,7 +1,0 @@
-description: A fresh install on one machine with no agents yet; the empty fleet a new person meets.
-local_host: laptop
-cwd: ~/source/amux
-repositories:
-  - ~/source/amux
-  - ~/source/amuxcloud
-  - ~/source/dotfiles

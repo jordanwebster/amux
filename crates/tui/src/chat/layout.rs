@@ -108,8 +108,6 @@ pub struct Frame<'a> {
     pub height: usize,
     pub theme: Theme,
     pub leader: char,
-    /// Draw the redesigned feed: turns, with stretches of steps folded.
-    pub redesigned: bool,
     /// Stretches the reader opened, by their oldest step.
     pub stretches: &'a HashSet<Key>,
     pub cache: &'a StretchCache,
@@ -200,9 +198,17 @@ impl Frame<'_> {
         order: u64,
         runs: &[RangeInclusive<u64>],
     ) -> Option<Block> {
-        if self.redesigned {
-            return self.feed_block(state, order, runs);
-        }
+        self.feed_block(state, order, runs)
+    }
+
+    /// A row drawn on its own, outside the feed's turns: asks closed long
+    /// ago, errors, boundaries and the other kinds the feed leaves as rows.
+    fn row_block(
+        &self,
+        state: &SessionState,
+        order: u64,
+        runs: &[RangeInclusive<u64>],
+    ) -> Option<Block> {
         let (shown, child_open) = self.shown(state, order, runs)?;
         let expanded = self.expanded.contains(&shown.id)
             || shown
@@ -275,7 +281,7 @@ impl Frame<'_> {
         Some((stretch, steps))
     }
 
-    /// A row of the redesigned feed. Inside a stretch, what draws depends on
+    /// A row of the feed. Inside a stretch, what draws depends on
     /// whether the stretch is open, under way or folded; outside one, text
     /// and turn ends draw from [`feed`], and the rest keeps its own drawing.
     fn feed_block(
@@ -390,9 +396,8 @@ impl Frame<'_> {
                         | ui_view::RowKind::Ask(_)
                 ) && !feed::is_step(&row)
                 {
-                    // Asks, errors, boundaries and the rest keep their own
-                    // drawing for now.
-                    return self.old_block(state, order, runs);
+                    // Errors, boundaries and the rest draw as rows.
+                    return self.row_block(state, order, runs);
                 }
                 let toggle = Toggle::Step(row.id.clone());
                 (Placement::Plain, row, toggle)
@@ -432,22 +437,6 @@ impl Frame<'_> {
             hits: drawn.hits,
             toggle,
         })
-    }
-
-    /// A row the redesign leaves as it was.
-    fn old_block(
-        &self,
-        state: &SessionState,
-        order: u64,
-        runs: &[RangeInclusive<u64>],
-    ) -> Option<Block> {
-        // Their glyphs already sit on the feed's left edge and their words on
-        // its second column.
-        let old = Frame {
-            redesigned: false,
-            ..*self
-        };
-        old.block(state, order, runs)
     }
 
     /// Held rows that would draw below `top`: every held order above the
