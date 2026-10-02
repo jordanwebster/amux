@@ -705,11 +705,17 @@ impl Edge {
 
     /// Asks the cloud what the account buys now, over the live cloud link.
     pub async fn refresh_entitlement(&self) -> Result<crate::Tier, String> {
-        match self.cloud.lock().await.as_ref() {
-            Some(link) => link
-                .refresh_entitlement()
-                .await
-                .map_err(|error| error.to_string()),
+        // The link's lock is held only to take the refresher: pausing,
+        // signing out and shutting down take it too, and must not wait
+        // behind the relay's answer.
+        let refresher = self
+            .cloud
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|link| link.refresher());
+        match refresher {
+            Some(refresher) => refresher.refresh().await.map_err(|error| error.to_string()),
             None => Err("the profile has no cloud link".to_owned()),
         }
     }

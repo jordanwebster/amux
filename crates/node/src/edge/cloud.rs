@@ -127,9 +127,54 @@ impl UdpBlockedMemory {
 #[allow(dead_code)]
 pub struct CloudLink {
     stop_tx: watch::Sender<bool>,
-    refresh_tx: Option<mpsc::Sender<LinkConnectorRefreshRequest>>,
+    refresher: Option<Refresher>,
     status: RuntimeStatus,
     task: JoinHandle<()>,
+}
+
+/// The longest an entitlement refresh waits for the relay's answer. The
+/// request is read only by a live connection; one made while the link is
+/// between connections would otherwise wait for the next, which may never
+/// come, and the phone asks right after a purchase.
+pub const REFRESH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Asks the relay what the account buys now, apart from the link it rides
+/// on, so the asker holds nothing the link's stop needs.
+#[derive(Clone)]
+pub(crate) struct Refresher {
+    refresh_tx: mpsc::Sender<LinkConnectorRefreshRequest>,
+    status: RuntimeStatus,
+}
+
+impl Refresher {
+    pub(crate) async fn refresh(&self) -> Result<crate::Tier, CloudError> {
+        if !matches!(self.status.current(), Observed::Connected { .. }) {
+            return Err(CloudError::Connection("cloud link is not connected".into()));
+        }
+        let (response, response_rx) = oneshot::channel();
+        self.refresh_tx
+            .send(LinkConnectorRefreshRequest { response })
+            .await
+            .map_err(|_| CloudError::Connection("cloud link is not connected".into()))?;
+        let answer = tokio::time::timeout(REFRESH_TIMEOUT, response_rx)
+            .await
+            .map_err(|_| {
+                CloudError::Connection("the cloud did not answer the refresh in time".into())
+            })?;
+        let tier = answer
+            .map_err(|_| CloudError::Connection("cloud link closed during refresh".into()))?
+            .map_err(cloud_error_from_refresh_status)?;
+        let carrier = match self.status.current() {
+            Observed::Connected { carrier, .. } => carrier,
+            _ => {
+                return Err(CloudError::Connection(
+                    "cloud link refreshed before it was connected".into(),
+                ));
+            }
+        };
+        self.status.report(Observed::Connected { tier, carrier });
+        Ok(tier)
+    }
 }
 
 struct CloudConnectionContext {
@@ -155,29 +200,10 @@ impl CloudLink {
         let _ = self.task.await;
     }
 
-    pub async fn refresh_entitlement(&self) -> Result<crate::Tier, CloudError> {
-        let refresh_tx = self.refresh_tx.as_ref().ok_or_else(|| {
-            CloudError::Connection("cloud link does not support token refresh".into())
-        })?;
-        let (response, response_rx) = oneshot::channel();
-        refresh_tx
-            .send(LinkConnectorRefreshRequest { response })
-            .await
-            .map_err(|_| CloudError::Connection("cloud link is not connected".into()))?;
-        let tier = response_rx
-            .await
-            .map_err(|_| CloudError::Connection("cloud link closed during refresh".into()))?
-            .map_err(cloud_error_from_refresh_status)?;
-        let carrier = match &*self.status.subscribe().borrow() {
-            Observed::Connected { carrier, .. } => *carrier,
-            _ => {
-                return Err(CloudError::Connection(
-                    "cloud link refreshed before it was connected".into(),
-                ));
-            }
-        };
-        self.status.report(Observed::Connected { tier, carrier });
-        Ok(tier)
+    /// What refreshes this link's entitlement, to be held across the wait
+    /// instead of the link itself.
+    pub(crate) fn refresher(&self) -> Option<Refresher> {
+        self.refresher.clone()
     }
 }
 
@@ -247,7 +273,10 @@ pub(crate) fn establish_cloud_link(
     );
     CloudLink {
         stop_tx,
-        refresh_tx: Some(refresh_tx),
+        refresher: Some(Refresher {
+            refresh_tx,
+            status: status.clone(),
+        }),
         status,
         task,
     }
@@ -748,4 +777,35 @@ fn random_unit_interval() -> f64 {
 
 fn should_reset_backoff_after_connection(connection_uptime: Duration) -> bool {
     connection_uptime >= BACKOFF_RESET_AFTER_ESTABLISHED
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refresher(observed: Observed) -> (Refresher, mpsc::Receiver<LinkConnectorRefreshRequest>) {
+        let (refresh_tx, refresh_rx) = mpsc::channel(1);
+        let status = RuntimeStatus::default();
+        status.report(observed);
+        (Refresher { refresh_tx, status }, refresh_rx)
+    }
+
+    #[tokio::test]
+    async fn a_refresh_between_connections_fails_at_once() {
+        let (refresher, _rx) = refresher(Observed::Retrying);
+        let error = refresher.refresh().await.unwrap_err();
+        assert!(error.to_string().contains("not connected"), "{error}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_refresh_nobody_answers_ends_at_the_timeout() {
+        let (refresher, _rx) = refresher(Observed::Connected {
+            tier: crate::Tier::Free,
+            carrier: RelayCarrier::Quic,
+        });
+        let started = tokio::time::Instant::now();
+        let error = refresher.refresh().await.unwrap_err();
+        assert!(error.to_string().contains("in time"), "{error}");
+        assert_eq!(started.elapsed(), REFRESH_TIMEOUT);
+    }
 }

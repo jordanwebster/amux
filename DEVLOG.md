@@ -1,3 +1,13 @@
+2026-10-02 — **An entitlement refresh answers in time and holds no lock.**
+The refresh request is read only by a live cloud connection; one made
+while the link was between connections sat in its one-slot buffer and
+the asker waited for an answer that might never come, holding the
+edge's cloud lock, behind which pause, sign-out and shutdown wait. The
+phone asks right after a purchase. The refresher is now taken out from
+under the lock and answers within 30 s or says the link is not
+connected. From the branch-wide Codex review; unit tests with paused
+time, parameter recorded.
+
 2026-10-02 — **The channel manifest is signed whole.**
 Each entry carried its own signature over target, version and hash,
 and nothing signed the channel or the rollout: whoever held the
