@@ -628,26 +628,33 @@ another server.
 
 ### The manifest
 
-A manifest is JSON: an optional rollout percentage and one entry per target
-triple.
+A manifest is JSON: the channel it is for, an optional rollout percentage,
+one entry per target triple, and one signature over all of it.
 
 ```json
 {
+  "channel": "stable",
   "rollout": 10,
   "targets": {
     "aarch64-apple-darwin": {
       "version": "0.8.0",
       "url": "https://example.com/amux-macos-arm64",
       "sha256": "<hex SHA-256 of the file at url>",
-      "signature": "<base64 Ed25519 signature>"
+      "size": 31457280
     }
-  }
+  },
+  "signature": "<base64 Ed25519 signature>"
 }
 ```
 
+- A supervisor on the stable channel refuses a manifest whose `channel` is
+  `preview`, however well it is signed: a build deployed to preview cannot
+  be served to stable by whoever holds the manifest's URL.
 - A binary looks itself up by the triple it was built for, which
   `crates/node/build.rs` compiles in as `AMUX_TARGET`.
-- `url` is fetched as-is; the file there is the whole `amux` binary.
+- `url` is fetched as-is; the file there is the whole `amux` binary, and
+  `size` is its length. The supervisor writes no more than `size` bytes
+  of it, and installs it only when its length and hash are the entry's.
 - `rollout`, when present and below 100, admits a host when SHA-256 of its
   host id, mod 100, is under the number. A host's place is fixed across every
   rollout and nothing is stored. Publishing at 10, watching, then raising to
@@ -662,21 +669,33 @@ triple.
 
 ### Signing and verification
 
-The signature is Ed25519 over exactly these bytes, with the hash in
-lowercase hex:
+The signature is Ed25519 over the whole manifest, as exactly these bytes:
+the channel, the rollout (`100` when absent), then for each target in name
+order its version, url, hash in lowercase hex, and size:
 
 ```
-amux release
+amux manifest
+<channel>
+<rollout>
 <target>
 <version>
+<url>
 <sha256>
+<size>
+...
 ```
 
-It binds the version to the binary's hash, so a tampered manifest cannot
-relabel an old signed binary as a newer release. The supervisor downloads to
-`amux.staged` beside the installed binary, computes the SHA-256 while
-downloading, and installs only if the hash matches the manifest and the
-signature verifies. `release::sign` is the publishing half of that check.
+One signature covers everything the server could otherwise change: which
+channel a build is on, how many hosts take it, and what each build is. A
+tampered manifest cannot relabel an old signed binary as a newer release,
+move a preview build onto stable, or widen a staged rollout. The
+supervisor verifies the manifest before reading anything from it, then
+downloads to `amux.staged` beside the installed binary, writing no more
+than the entry's size and computing the SHA-256 as it goes, and installs
+only if the length and the hash are the entry's. `release::sign` is the
+publishing half of that check. A manifest is at most 1 MiB and an
+artifact's signed size at most 256 MiB
+([Parameters](PARAMETERS.md)); more is refused unread.
 
 The public key is compiled into the binary from `AMUX_RELEASE_PUBLIC_KEY`, 64
 hex digits, set in the environment at build time:
@@ -733,7 +752,7 @@ just deploy 0.8.0 --rollout 10          # stable, a tenth of the machines; later
 `xtask release deploy` waits until the tagged GitHub Release holds
 `checksums.txt` (the workflow may still be building after a cut; it gives
 up after 45 minutes), reads the checksums, signs each target's hash with
-the keychain's seed, verifies every signature against the key the workflow
+the keychain's seed, verifies the signature against the key the workflow
 compiles in, writes the channel's manifest with each entry's URL pointing
 at the release's own asset (a copy stays in `target/release-manifests/`),
 and uploads `<channel>.json` to that same release, replacing one already
@@ -756,7 +775,7 @@ A machine reads `https://amux.sh/releases/<channel>.json`. amux.sh answers
 with the manifest of the newest GitHub Release that carries
 `<channel>.json`, cached for a few minutes, the way it already projects the
 older `/manifest.json` from the latest release's `checksums.txt`. It never
-holds the key and cannot alter a manifest without the signatures failing.
+holds the key and cannot alter a manifest without the signature failing.
 That route is the one piece that lives in the amuxcloud repository rather
 than here, and it is not deployed yet: until it is, both channel addresses
 answer 404, a supervised machine's hourly check finds nothing, and

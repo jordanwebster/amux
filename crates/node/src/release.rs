@@ -63,14 +63,22 @@ pub fn version() -> &'static str {
 
 pub use version_stamp::restamp;
 
-/// A channel's manifest.
+/// A channel's manifest, signed whole: the channel it is for, who takes it
+/// and every build in it are under the one signature, so the server that
+/// hands it out can neither move a build to another channel nor widen a
+/// rollout.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Manifest {
+    /// The channel this manifest is for; a supervisor on another refuses it.
+    pub channel: String,
     /// The share of hosts, out of 100, that take this release; absent is
     /// every host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout: Option<u8>,
     pub targets: BTreeMap<String, Release>,
+    /// Ed25519 over [`signed_message`], base64.
+    #[serde(default)]
+    pub signature: String,
 }
 
 /// One target's build in a manifest.
@@ -80,26 +88,40 @@ pub struct Release {
     pub url: String,
     /// The artifact's SHA-256, hex.
     pub sha256: String,
-    /// Ed25519 over [`signed_message`], base64.
-    pub signature: String,
+    /// The artifact's length in bytes: what a download may be, known
+    /// before it is read.
+    pub size: u64,
 }
 
-/// What a release's signature covers: the target, the version and the
-/// artifact's hash.
-pub fn signed_message(target: &str, version: &str, sha256_hex: &str) -> Vec<u8> {
-    format!(
-        "amux release\n{target}\n{version}\n{}\n",
-        sha256_hex.to_ascii_lowercase()
-    )
-    .into_bytes()
+/// What a manifest's signature covers: the channel, the rollout (100 when
+/// absent) and, per target in name order, the version, the url, the
+/// artifact's hash and its size.
+pub fn signed_message(manifest: &Manifest) -> Vec<u8> {
+    let mut message = format!(
+        "amux manifest\n{}\n{}\n",
+        manifest.channel,
+        manifest.rollout.unwrap_or(100)
+    );
+    for (target, release) in &manifest.targets {
+        let _ = write!(
+            message,
+            "{target}\n{}\n{}\n{}\n{}\n",
+            release.version,
+            release.url,
+            release.sha256.to_ascii_lowercase(),
+            release.size
+        );
+    }
+    message.into_bytes()
 }
 
-/// Signs a release with the private key's 32-byte seed; the publishing side
-/// of [`verify`].
-pub fn sign(seed: &[u8; 32], target: &str, version: &str, sha256_hex: &str) -> String {
+/// Signs a manifest with the private key's 32-byte seed; the publishing
+/// side of [`verify_manifest`]. The manifest's own `signature` field is not
+/// part of what is signed.
+pub fn sign(seed: &[u8; 32], manifest: &Manifest) -> String {
     use base64::Engine as _;
     let pair = Ed25519KeyPair::from_seed_unchecked(seed).expect("an Ed25519 seed is any 32 bytes");
-    let signature = pair.sign(&signed_message(target, version, sha256_hex));
+    let signature = pair.sign(&signed_message(manifest));
     base64::engine::general_purpose::STANDARD.encode(signature.as_ref())
 }
 
@@ -145,36 +167,58 @@ pub fn sha256_of(bytes: &[u8]) -> String {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum VerifyError {
+    #[error("the manifest is for the {actual} channel, not {expected}")]
+    Channel { expected: String, actual: String },
+    #[error("the manifest's signature does not verify against this build's key")]
+    Signature,
     #[error("the artifact's hash {actual} is not the manifest's {expected}")]
     Hash { expected: String, actual: String },
-    #[error("the release signature does not verify against this build's key")]
-    Signature,
+    #[error("the artifact is {actual} bytes, not the manifest's {expected}")]
+    Size { expected: u64, actual: u64 },
 }
 
-/// Checks a downloaded artifact's hash against the manifest and the
-/// manifest's signature against `key`.
-pub fn verify(
-    release: &Release,
-    target: &str,
-    actual_sha256_hex: &str,
+/// Checks that a manifest is for `channel` and that its signature verifies
+/// against `key`; done before anything in it is believed.
+pub fn verify_manifest(
+    manifest: &Manifest,
+    channel: &str,
     key: &[u8; 32],
 ) -> Result<(), VerifyError> {
     use base64::Engine as _;
+    if manifest.channel != channel {
+        return Err(VerifyError::Channel {
+            expected: channel.to_owned(),
+            actual: manifest.channel.clone(),
+        });
+    }
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(manifest.signature.trim())
+        .map_err(|_| VerifyError::Signature)?;
+    UnparsedPublicKey::new(&ED25519, key)
+        .verify(&signed_message(manifest), &signature)
+        .map_err(|_| VerifyError::Signature)
+}
+
+/// Checks a downloaded artifact's hash and size against its entry in a
+/// verified manifest.
+pub fn verify_artifact(
+    release: &Release,
+    actual_sha256_hex: &str,
+    actual_size: u64,
+) -> Result<(), VerifyError> {
+    if release.size != actual_size {
+        return Err(VerifyError::Size {
+            expected: release.size,
+            actual: actual_size,
+        });
+    }
     if !release.sha256.eq_ignore_ascii_case(actual_sha256_hex) {
         return Err(VerifyError::Hash {
             expected: release.sha256.clone(),
             actual: actual_sha256_hex.to_owned(),
         });
     }
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(release.signature.trim())
-        .map_err(|_| VerifyError::Signature)?;
-    UnparsedPublicKey::new(&ED25519, key)
-        .verify(
-            &signed_message(target, &release.version, &release.sha256),
-            &signature,
-        )
-        .map_err(|_| VerifyError::Signature)
+    Ok(())
 }
 
 /// Whether a host takes a release published to `percent` of hosts.

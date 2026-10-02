@@ -115,20 +115,22 @@ impl Channel {
 
     /// Names `bytes` as `version` for this target, signed with the test key.
     pub fn publish(&self, version: &str, bytes: Vec<u8>) {
-        let sha256 = release::sha256_of(&bytes);
-        let manifest = Manifest {
+        let mut manifest = Manifest {
+            channel: "stable".into(),
             rollout: None,
             targets: [(
                 release::TARGET.to_owned(),
                 Release {
                     version: version.to_owned(),
                     url: format!("{}/amux-{version}", self.url()),
-                    signature: release::sign(&TEST_SEED, release::TARGET, version, &sha256),
-                    sha256,
+                    sha256: release::sha256_of(&bytes),
+                    size: bytes.len() as u64,
                 },
             )]
             .into(),
+            signature: String::new(),
         };
+        manifest.signature = release::sign(&TEST_SEED, &manifest);
         *self.manifest.lock().unwrap() = serde_json::to_string(&manifest).unwrap();
         *self.artifact.lock().unwrap() = bytes;
     }

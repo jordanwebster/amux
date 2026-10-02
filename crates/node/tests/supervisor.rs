@@ -160,18 +160,20 @@ impl Server {
     /// Serves `bytes` as `version`, signed with `seed`, to `rollout`.
     fn publish(&self, version: &str, bytes: Vec<u8>, seed: &[u8; 32], rollout: Option<u8>) {
         let name = format!("amux-{version}");
-        let sha256 = release::sha256_of(&bytes);
         let release = Release {
             version: version.to_owned(),
             url: self.url(&format!("/artifacts/{name}")),
-            signature: release::sign(seed, release::TARGET, version, &sha256),
-            sha256,
+            sha256: release::sha256_of(&bytes),
+            size: bytes.len() as u64,
         };
         self.artifacts.lock().unwrap().insert(name, bytes);
-        let manifest = Manifest {
+        let mut manifest = Manifest {
+            channel: "stable".into(),
             rollout,
             targets: [(release::TARGET.to_owned(), release)].into(),
+            signature: String::new(),
         };
+        manifest.signature = release::sign(seed, &manifest);
         *self.manifest.lock().unwrap() = serde_json::to_string(&manifest).unwrap();
     }
 }
@@ -772,6 +774,7 @@ async fn the_amux_daemon_exits_when_its_supervisor_dies() {
 fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
     let running = Version::new(1, 0, 0);
     let manifest = |version: &str, rollout| Manifest {
+        channel: "stable".into(),
         rollout,
         targets: [(
             release::TARGET.to_owned(),
@@ -779,10 +782,11 @@ fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
                 version: version.to_owned(),
                 url: "http://example/amux".into(),
                 sha256: "00".into(),
-                signature: String::new(),
+                size: 1,
             },
         )]
         .into(),
+        signature: String::new(),
     };
     let host = Uuid::new_v4();
     let choose = |manifest: &Manifest, rejected: Option<&Version>, host: Option<&Uuid>| {
@@ -815,7 +819,6 @@ fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
         Choice::Install { .. }
     ));
     let other_target = Manifest {
-        rollout: None,
         targets: [(
             "another-triple".to_owned(),
             manifest("2.0.0", None)
@@ -825,6 +828,7 @@ fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
                 .unwrap(),
         )]
         .into(),
+        ..manifest("2.0.0", None)
     };
     assert_eq!(
         choose(&other_target, None, None),
@@ -867,52 +871,98 @@ fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
 }
 
 #[test]
-fn verify_checks_the_hash_and_the_signature_over_version_and_hash() {
+fn the_manifest_is_verified_whole_and_the_artifact_against_its_entry() {
     let key = release::TEST_RELEASE_KEY;
     let bytes = b"a build".to_vec();
-    let sha256 = release::sha256_of(&bytes);
-    let signed = |seed: &[u8; 32], version: &str| Release {
-        version: version.to_owned(),
+    let entry = Release {
+        version: "2.0.0".into(),
         url: String::new(),
-        sha256: sha256.clone(),
-        signature: release::sign(seed, release::TARGET, version, &sha256),
+        sha256: release::sha256_of(&bytes),
+        size: bytes.len() as u64,
     };
-    let good = signed(&TEST_SEED, "2.0.0");
+    let signed = |seed: &[u8; 32], channel: &str, rollout| {
+        let mut manifest = Manifest {
+            channel: channel.into(),
+            rollout,
+            targets: [(release::TARGET.to_owned(), entry.clone())].into(),
+            signature: String::new(),
+        };
+        manifest.signature = release::sign(seed, &manifest);
+        manifest
+    };
+    let good = signed(&TEST_SEED, "stable", Some(10));
+    assert_eq!(release::verify_manifest(&good, "stable", &key), Ok(()));
     assert_eq!(
-        release::verify(&good, release::TARGET, &sha256, &key),
+        release::verify_manifest(&signed(&OTHER_SEED, "stable", Some(10)), "stable", &key),
+        Err(VerifyError::Signature)
+    );
+    // A build deployed to preview does not pass as stable.
+    assert_eq!(
+        release::verify_manifest(&signed(&TEST_SEED, "preview", None), "stable", &key),
+        Err(VerifyError::Channel {
+            expected: "stable".into(),
+            actual: "preview".into()
+        })
+    );
+    // The rollout, a version, the hash and the size are all under the
+    // signature: changing any after signing breaks it.
+    for tampered in [
+        Manifest {
+            rollout: Some(100),
+            ..good.clone()
+        },
+        Manifest {
+            targets: [(
+                release::TARGET.to_owned(),
+                Release {
+                    version: "9.0.0".into(),
+                    ..entry.clone()
+                },
+            )]
+            .into(),
+            ..good.clone()
+        },
+        Manifest {
+            targets: [(
+                release::TARGET.to_owned(),
+                Release {
+                    sha256: release::sha256_of(b"other"),
+                    ..entry.clone()
+                },
+            )]
+            .into(),
+            ..good.clone()
+        },
+        Manifest {
+            targets: [(
+                release::TARGET.to_owned(),
+                Release {
+                    size: entry.size + 1,
+                    ..entry.clone()
+                },
+            )]
+            .into(),
+            ..good.clone()
+        },
+    ] {
+        assert_eq!(
+            release::verify_manifest(&tampered, "stable", &key),
+            Err(VerifyError::Signature)
+        );
+    }
+
+    assert_eq!(
+        release::verify_artifact(&entry, &release::sha256_of(&bytes), bytes.len() as u64),
         Ok(())
     );
     assert!(matches!(
-        release::verify(&good, release::TARGET, &release::sha256_of(b"other"), &key),
+        release::verify_artifact(&entry, &release::sha256_of(b"other"), bytes.len() as u64),
         Err(VerifyError::Hash { .. })
     ));
-    assert_eq!(
-        release::verify(
-            &signed(&OTHER_SEED, "2.0.0"),
-            release::TARGET,
-            &sha256,
-            &key
-        ),
-        Err(VerifyError::Signature)
-    );
-    // Relabelling a signed build as a newer version breaks the signature.
-    let relabelled = Release {
-        version: "9.0.0".into(),
-        ..good.clone()
-    };
-    assert_eq!(
-        release::verify(&relabelled, release::TARGET, &sha256, &key),
-        Err(VerifyError::Signature)
-    );
-    assert_eq!(
-        release::verify(&good, "another-triple", &sha256, &key),
-        Err(VerifyError::Signature)
-    );
-    assert_eq!(
-        release::release_key(),
-        Some(key),
-        "debug builds trust the test key"
-    );
+    assert!(matches!(
+        release::verify_artifact(&entry, &release::sha256_of(&bytes), 3),
+        Err(VerifyError::Size { .. })
+    ));
 }
 
 #[test]

@@ -303,23 +303,37 @@ fn deploy(version: &str, rest: &[&str]) -> Result<(), Box<dyn std::error::Error>
         "--output",
         "-",
     ])?;
+    let sizes = gh(&[
+        "release",
+        "view",
+        &tag,
+        "--json",
+        "assets",
+        "--jq",
+        r#".assets[] | "\(.name) \(.size)""#,
+    ])?;
     let mut targets = BTreeMap::new();
     for (target, asset) in ASSETS {
         let sha256 = checksum(&checksums, asset)
             .ok_or_else(|| format!("checksums.txt of {tag} has no line for {asset}"))?;
+        let size = asset_size(&sizes, asset)
+            .ok_or_else(|| format!("the release {tag} lists no size for {asset}"))?;
         let entry = Release {
             version: version.into(),
             url: format!("https://github.com/{repository}/releases/download/{tag}/{asset}"),
-            sha256: sha256.clone(),
-            signature: release::sign(&seed, target, version, &sha256),
+            sha256,
+            size,
         };
-        release::verify(&entry, target, &sha256, &key)?;
         targets.insert((*target).to_owned(), entry);
     }
-    let manifest = Manifest {
+    let mut manifest = Manifest {
+        channel: options.channel.clone(),
         rollout: options.rollout,
         targets,
+        signature: String::new(),
     };
+    manifest.signature = release::sign(&seed, &manifest);
+    release::verify_manifest(&manifest, &options.channel, &key)?;
     let json = serde_json::to_string_pretty(&manifest)?;
 
     let dir = root.join("target/release-manifests");
@@ -379,6 +393,17 @@ fn wait_for_release(tag: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 /// The hex digest `checksums.txt` records for `asset`, as `sha256sum` writes
 /// it: the digest, whitespace, the file name.
+/// The size of `asset` in a listing of `<name> <size>` lines, as `gh
+/// release view --json assets` is asked to print it.
+pub fn asset_size(listing: &str, asset: &str) -> Option<u64> {
+    listing.lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        let name = words.next()?;
+        let size = words.next()?.parse().ok()?;
+        (name == asset).then_some(size)
+    })
+}
+
 pub fn checksum(checksums: &str, asset: &str) -> Option<String> {
     checksums.lines().find_map(|line| {
         let mut words = line.split_whitespace();

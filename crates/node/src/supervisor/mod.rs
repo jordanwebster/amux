@@ -112,6 +112,8 @@ pub type UpdatesFn = Arc<dyn Fn() -> UpdatePolicy + Send + Sync>;
 /// Where releases come from.
 #[derive(Clone, Debug)]
 pub struct UpdateSource {
+    /// The channel followed, which the manifest must be signed for.
+    pub channel: String,
     /// The channel's manifest.
     pub manifest_url: String,
     /// The key release signatures must verify against.
@@ -617,9 +619,9 @@ impl Supervisor {
 /// bytes each, with room to spare. A server that answers with more is not
 /// serving a manifest, whatever it says, and is not buffered.
 const MANIFEST_LIMIT: u64 = 1 << 20;
-/// The most an artifact may be: the binary is tens of megabytes. Without
-/// the bound, a server without the release key could still fill the disk,
-/// since the signature is checked only once the whole file is down.
+/// The most an artifact may be: the binary is tens of megabytes. The
+/// manifest's signed size bounds what is downloaded; this bounds what a
+/// manifest may ask for, against a mistake of our own.
 const ARTIFACT_LIMIT: u64 = 256 << 20;
 
 /// Reads a body of at most `limit` bytes; one declared or streamed longer
@@ -713,6 +715,7 @@ async fn fetch(
             url: source.manifest_url.clone(),
             error,
         })?;
+    release::verify_manifest(&manifest, &source.channel, &source.key)?;
     let (release, version) =
         match release::choose(&manifest, target, running, rejected, host.as_ref()) {
             Choice::Install { release, version } => (release, version),
@@ -721,23 +724,19 @@ async fn fetch(
                 return Ok(Checked::Nothing(skipped(skip, target, running)));
             }
         };
+    if release.size > ARTIFACT_LIMIT {
+        return Err(CheckError::TooLarge {
+            what: "the artifact",
+            url: release.url.clone(),
+            limit: ARTIFACT_LIMIT,
+        });
+    }
     let mut response = client
         .get(&release.url)
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
         .map_err(fetch_error(&release.url))?;
-    let too_large = || CheckError::TooLarge {
-        what: "the artifact",
-        url: release.url.clone(),
-        limit: ARTIFACT_LIMIT,
-    };
-    if response
-        .content_length()
-        .is_some_and(|length| length > ARTIFACT_LIMIT)
-    {
-        return Err(too_large());
-    }
     let mut file = tokio::fs::File::create(staged)
         .await
         .map_err(CheckError::Stage)?;
@@ -745,20 +744,21 @@ async fn fetch(
     let mut written: u64 = 0;
     while let Some(chunk) = response.chunk().await.map_err(fetch_error(&release.url))? {
         written += chunk.len() as u64;
-        if written > ARTIFACT_LIMIT {
-            return Err(too_large());
+        // The signed size is the most that is written: a server serving
+        // more than the manifest promised is not serving the artifact.
+        if written > release.size {
+            return Err(release::VerifyError::Size {
+                expected: release.size,
+                actual: written,
+            }
+            .into());
         }
         hash.update(&chunk);
         file.write_all(&chunk).await.map_err(CheckError::Stage)?;
     }
     file.sync_all().await.map_err(CheckError::Stage)?;
     drop(file);
-    release::verify(
-        &release,
-        target,
-        &release::sha256_hex(&hash.finalize()),
-        &source.key,
-    )?;
+    release::verify_artifact(&release, &release::sha256_hex(&hash.finalize()), written)?;
     files::make_executable(staged).map_err(CheckError::Stage)?;
     Ok(Checked::Staged(version))
 }

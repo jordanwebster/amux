@@ -1,3 +1,15 @@
+2026-10-02 — **The channel manifest is signed whole.**
+Each entry carried its own signature over target, version and hash,
+and nothing signed the channel or the rollout: whoever held the
+manifest's URL could serve a signed preview build on the stable channel
+or widen a tenth to everyone, with nothing refusing it. One signature
+now covers the channel, the rollout and every entry, with each
+artifact's size added so a download is bounded by what was signed. A
+supervisor verifies the manifest for its own channel before it reads
+anything from it. Deploy signs the manifest it writes and verifies it
+against the workflow's key; the test servers sign theirs. From the
+branch-wide Codex review; the signature test covers every field.
+
 2026-10-02 — **The supervisor reads no more than a manifest or an artifact can be.**
 A manifest was buffered whole before it was parsed and an artifact
 written whole before its signature was checked, so a server without
