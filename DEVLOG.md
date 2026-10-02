@@ -1,3 +1,9 @@
+2026-10-02 — **The discovery wake monitor is desktop-only code.**
+The phone's build of the daemon uses the stub browser, so the clock
+trait and the sleep detector behind the mDNS browser were dead there
+and the mobile check in `just ci` warned four times. They sit in a
+desktop-only module now; nothing changes on the desktop.
+
 2026-10-02 — **The release manifest is its own crate.**
 Signing releases from xtask reached the manifest, its signature and the
 choice of build through the daemon, so the release tool built the

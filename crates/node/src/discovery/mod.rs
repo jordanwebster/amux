@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use tokio::sync::broadcast;
@@ -211,42 +211,55 @@ impl FoundHosts {
     }
 }
 
-pub(crate) trait MonotonicClock: Send + Sync + 'static {
-    fn now(&self) -> Instant;
-}
+/// The browser's clock and its sleep detector, desktop only: the phone's
+/// browser is the stub, and the app hears about sleep from the system.
+#[cfg(not(target_os = "ios"))]
+mod wake {
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
 
-pub(crate) struct SystemClock;
+    use super::WAKE_GAP;
 
-impl MonotonicClock for SystemClock {
-    fn now(&self) -> Instant {
-        Instant::now()
+    pub(crate) trait MonotonicClock: Send + Sync + 'static {
+        fn now(&self) -> Instant;
     }
-}
 
-/// Detects sleep/wake without depending on platform lifecycle notifications.
-pub(crate) struct WakeMonitor {
-    clock: Arc<dyn MonotonicClock>,
-    last_tick: Mutex<Instant>,
-}
+    pub(crate) struct SystemClock;
 
-impl WakeMonitor {
-    pub(crate) fn new(clock: Arc<dyn MonotonicClock>) -> Self {
-        let last_tick = clock.now();
-        Self {
-            clock,
-            last_tick: Mutex::new(last_tick),
+    impl MonotonicClock for SystemClock {
+        fn now(&self) -> Instant {
+            Instant::now()
         }
     }
 
-    pub(crate) fn tick(&self, requery: impl FnOnce()) {
-        let now = self.clock.now();
-        let mut last_tick = self.last_tick.lock().unwrap();
-        if now.saturating_duration_since(*last_tick) > WAKE_GAP {
-            requery();
+    /// Detects sleep/wake without depending on platform lifecycle notifications.
+    pub(crate) struct WakeMonitor {
+        clock: Arc<dyn MonotonicClock>,
+        last_tick: Mutex<Instant>,
+    }
+
+    impl WakeMonitor {
+        pub(crate) fn new(clock: Arc<dyn MonotonicClock>) -> Self {
+            let last_tick = clock.now();
+            Self {
+                clock,
+                last_tick: Mutex::new(last_tick),
+            }
         }
-        *last_tick = now;
+
+        pub(crate) fn tick(&self, requery: impl FnOnce()) {
+            let now = self.clock.now();
+            let mut last_tick = self.last_tick.lock().unwrap();
+            if now.saturating_duration_since(*last_tick) > WAKE_GAP {
+                requery();
+            }
+            *last_tick = now;
+        }
     }
 }
+
+#[cfg(not(target_os = "ios"))]
+pub(crate) use wake::{MonotonicClock, SystemClock, WakeMonitor};
 
 #[cfg(test)]
 mod tests;
