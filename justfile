@@ -202,10 +202,6 @@ no-update-flags:
 # Run the same task sequence exercised across continuous-integration jobs.
 ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy deletion-ledger-check docs-check tests-check test contracts-check doctest release-check embedded-check embedded-test mobile-check
 
-# Push the rearchitect branch head to origin without force and wait for its CI run.
-ci-remote:
-    scripts/ci-remote.sh
-
 # Run the live provider compatibility lane for one kind (claude_pty,
 # claude_sdk or codex) and scenario (initialize, respond, decide, interrupt,
 # resume, or all), under the operator's existing login. With no arguments

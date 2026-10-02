@@ -1,3 +1,10 @@
+2026-10-02 — **The rearchitect branch's CI scaffolding is gone.**
+The branch is on main, so `just ci-remote` (push the branch and wait
+for its run) and the `testing` and `rearchitect` push triggers in the
+CI workflow had nothing left to serve. The repeat lane stays, started
+by hand only: the deterministic-waits work is judged by it running
+clean three rounds in a row, and it retires once that lands.
+
 2026-10-02 — **The discovery wake monitor is desktop-only code.**
 The phone's build of the daemon uses the stub browser, so the clock
 trait and the sleep detector behind the mDNS browser were dead there

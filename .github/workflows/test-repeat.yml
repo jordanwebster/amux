@@ -1,13 +1,12 @@
 name: Test repeat
 
-# Runs the workspace tests several times per push on the runners where timing
-# races show up, so one round surfaces several of them instead of the one a
-# single run per platform happens to hit. It gates nothing: the CI workflow
-# is the run a change is held to.
+# Runs the workspace tests several times on the runners where timing races
+# show up, so one round surfaces several of them instead of the one a single
+# run per platform happens to hit. It gates nothing: the CI workflow is the
+# run a change is held to. Started by hand; a flight that is chasing races
+# adds its branch here for its duration.
 
 on:
-  push:
-    branches: [rearchitect]
   workflow_dispatch:
 
 env:

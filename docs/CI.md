@@ -11,8 +11,8 @@ recipes; [Testing](TESTING.md) describes the suites they run.
 
 | Workflow | File | When | What |
 | --- | --- | --- | --- |
-| CI | [`ci.yml`](../.github/workflows/ci.yml) | Pushes to `main`, `testing` and `rearchitect`; pull requests into `main` | Every check a change is held to, on Linux, macOS and Windows, plus the iOS gate |
-| Test repeat | [`test-repeat.yml`](../.github/workflows/test-repeat.yml) | Pushes to `rearchitect`, and by hand | The workspace tests six times on Linux and six on macOS; gates nothing ([below](#test-repeat)) |
+| CI | [`ci.yml`](../.github/workflows/ci.yml) | Pushes to `main`; pull requests into `main` | Every check a change is held to, on Linux, macOS and Windows, plus the iOS gate |
+| Test repeat | [`test-repeat.yml`](../.github/workflows/test-repeat.yml) | By hand | The workspace tests six times on Linux and six on macOS; gates nothing ([below](#test-repeat)) |
 | Weekly offline tests | [`offline.yml`](../.github/workflows/offline.yml) | Sundays 04:00 UTC, and by hand | The workspace tests with no external network |
 | iOS captures | [`ios-captures.yml`](../.github/workflows/ios-captures.yml) | Nightly 03:00 UTC, and by hand | The phone's photographed suites |
 | Release | [`release.yml`](../.github/workflows/release.yml) | A pushed `v*` tag | The `amux` release binaries; see [Release](RELEASE.md) |
@@ -144,16 +144,18 @@ compare.
 test job does, compile once with `just test -- --no-run`, then run `just test
 -- --no-fail-fast` twice; the second pass runs whether or not the first
 failed, and a job is red if either pass was. A race that shows up once in
-dozens of runs gets six chances per platform per push instead of the CI
+dozens of runs gets six chances per platform per round instead of the CI
 run's one, so a round surfaces several such failures together rather than
 one per round.
 
-It never gates: nothing waits for it, `just ci-remote` watches `ci.yml` only,
-and a green repeat run never stands in for the CI run a commit is held to. A
-red job is a race to root-cause like any other failure. To read it:
+It runs by hand (`gh workflow run test-repeat.yml --ref <branch>`); a flight
+that is chasing races adds its branch to the workflow's triggers for its
+duration. It never gates: nothing waits for it, and a green repeat run never
+stands in for the CI run a commit is held to. A red job is a race to
+root-cause like any other failure. To read it:
 
 ```sh
-gh run list --workflow test-repeat.yml --commit <sha>
+gh run list --workflow test-repeat.yml --branch <branch>
 gh run view <run-id> --log-failed
 ```
 
@@ -199,25 +201,6 @@ stopping at the first failure:
 | `mobile-check` | The provider-free graph for iOS devices and simulators |
 
 The terminal journeys and the iOS gate are in `ci.yml` but not in `just ci`.
-
-## `just ci-remote`
-
-`just ci-remote` runs the whole CI workflow on GitHub for the checked-out
-commit ([`scripts/ci-remote.sh`](../scripts/ci-remote.sh)). It refuses to
-start on any branch but `rearchitect` or with uncommitted changes, then:
-
-1. pushes `HEAD` to `rearchitect` on `origin`, never forced: if the remote
-   branch has moved on, the push fails and the divergence is left for a
-   person to reconcile;
-2. finds the push run of `ci.yml` for that exact commit with
-   `gh run list --commit`, waiting up to five minutes for GitHub to register
-   it;
-3. waits for the run with `gh run watch --exit-status`;
-4. on success prints the run's URL; on any other conclusion prints
-   `gh run view --log-failed` and exits non-zero.
-
-It needs the `gh` CLI signed in to an account that can push to the
-repository and read its Actions runs.
 
 ## Checking Windows from a Mac
 
