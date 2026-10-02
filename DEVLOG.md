@@ -1,3 +1,10 @@
+2026-10-02 — **A plan waiting on terminal Claude shows in the chat.**
+Claude in its own terminal writes a plan's call to its transcript only
+once the plan is decided (its recording shows the order), so the chat
+showed "Plan ready" with no plan above it. While the decision is open
+and that row has not arrived, the chat draws the plan from the ask, where
+the row will stand; once decided, the real row takes its place.
+
 2026-10-02 — **Nothing the protocol cannot carry is faked against a real
 agent.** Every feature the wire, daemon or shared views cannot back yet is
 now decided in one place, `crates/tui/src/pending.rs`, which the screens

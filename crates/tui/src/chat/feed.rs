@@ -556,6 +556,28 @@ pub fn pending_prompt(
     drawn.lines
 }
 
+/// A plan waiting on the person whose own row has not arrived, drawn from
+/// the ask where that row will stand: terminal Claude writes the plan's
+/// call to its transcript only once the plan is decided.
+pub fn waiting_plan(id: &Key, plan: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let mut drawn = Drawn::default();
+    plan_lines(
+        &mut drawn,
+        id,
+        &Plan {
+            text: plan,
+            verdict: PlanVerdict::Open,
+            edits_accepted: false,
+            note: None,
+            writing: false,
+        },
+        false,
+        width,
+        theme,
+    );
+    drawn.lines
+}
+
 /// A turn's prompt pinned under the header while that turn owns the top of
 /// the feed: one tinted line of the prompt, cut with "…" (its padding
 /// lines are the in-feed block's, not the pin's).

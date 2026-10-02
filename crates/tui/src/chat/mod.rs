@@ -1918,6 +1918,13 @@ impl ChatView {
                 theme,
             ));
         }
+        if let Some(card) = self.live_card(state)
+            && let AskBody::Plan { plan } = &card.body
+            && matches!(card.state, CardState::Open | CardState::Rejected(_))
+            && state.transcript().get(&card.item_key).is_none()
+        {
+            tail.extend(feed::waiting_plan(&card.item_key, plan, width, theme));
+        }
         if let Some(activity) = &view.activity {
             tail.push(quiet_activity(activity, width, theme));
             tail.push(Line::default());
