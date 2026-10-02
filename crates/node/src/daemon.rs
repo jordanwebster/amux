@@ -221,6 +221,23 @@ impl Installation {
         let entry =
             profiles::create_labelled(&self.data_dir, label).map_err(StartError::Registry)?;
         let profile = entry.id;
+        match self.bring_up(entry).await {
+            Ok(()) => Ok(profile),
+            Err(error) => {
+                // The entry is durable already; a profile that never came
+                // to be hosted is taken back, or the next start would host
+                // one the caller was told nothing of.
+                if let Err(discard) = profiles::discard(&self.data_dir, profile) {
+                    tracing::warn!(%profile, error = %discard, "could not take back the failed profile");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Opens, sweeps and hosts a profile the registry lists.
+    async fn bring_up(self: &Arc<Self>, entry: ProfileEntry) -> Result<(), StartError> {
+        let profile = entry.id;
         let runtime = self.open(profile)?;
         let looked = runtime
             .look()
@@ -230,8 +247,7 @@ impl Installation {
             .finish_sweep(looked)
             .await
             .map_err(|error| StartError::Sweep { profile, error })?;
-        self.host(runtime, entry).await?;
-        Ok(profile)
+        self.host(runtime, entry).await
     }
 
     pub(crate) fn publish(&self, event: ProfileEvent) {

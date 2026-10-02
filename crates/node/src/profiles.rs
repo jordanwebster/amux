@@ -92,8 +92,42 @@ pub(crate) fn create_labelled(data_dir: &Path, label: &str) -> io::Result<Profil
     Ok(entry)
 }
 
+/// Takes back a profile that was created but never came to be hosted: its
+/// registry entry and its directory go, so the next start does not host a
+/// profile nobody was told about and a retry does not make a second.
+pub(crate) fn discard(data_dir: &Path, profile: ProfileId) -> io::Result<()> {
+    let mut registry = Registry::read(data_dir)?;
+    registry.profiles.retain(|entry| entry.id != profile);
+    registry.write(data_dir)?;
+    match std::fs::remove_dir_all(profile_dir(data_dir, profile)) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
 /// The profile's host id, as written when it was created.
 pub fn host_id(profile_dir: &Path) -> io::Result<Uuid> {
     let text = std::fs::read_to_string(profile_dir.join(HOST_ID))?;
     Uuid::parse_str(text.trim()).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_discarded_profile_leaves_neither_an_entry_nor_a_directory() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let kept = create_labelled(data_dir.path(), "kept").unwrap();
+        let gone = create_labelled(data_dir.path(), "gone").unwrap();
+
+        discard(data_dir.path(), gone.id).unwrap();
+
+        let registry = Registry::read(data_dir.path()).unwrap();
+        assert_eq!(registry.profiles, vec![kept.clone()]);
+        assert!(!profile_dir(data_dir.path(), gone.id).exists());
+        assert!(profile_dir(data_dir.path(), kept.id).exists());
+        // Discarding what is already gone is not an error.
+        discard(data_dir.path(), gone.id).unwrap();
+    }
 }

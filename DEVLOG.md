@@ -1,3 +1,11 @@
+2026-10-02 — **A profile that fails to come up is taken back.**
+Creating a profile wrote its registry entry and directory first; a
+failure opening its store, sweeping, starting its edge or binding its
+socket left both behind, so the daemon hosted a profile nobody was told
+of at its next start while a retry made another. The entry and the
+directory are taken back on failure. Second branch-wide Codex pass;
+unit test on the registry.
+
 2026-10-02 — **An act dropped by the runtime's stop still answers.**
 The stop shuts the pool down and drops the acts still running, so an
 act in flight at a stop never called back and the app task awaiting it
