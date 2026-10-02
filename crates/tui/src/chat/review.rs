@@ -1,8 +1,11 @@
 //! The review page: a full-screen reading of the agent's working-tree diff,
 //! frozen when the page opened, with the person's comments on its lines.
 //!
-//! The document is ui-view's [`review_doc`]; this module owns the cursor,
-//! the scroll and the comment editor. Comments become one Review
+//! The changed files are listed on the left, the shared changes list the
+//! Overview also draws; beside it, one continuous stream of every file's
+//! hunks. The list follows the stream, and picking a file takes the stream
+//! to it. The document is ui-view's [`review_doc`]; this module owns the
+//! cursor, the scroll, the list's filter and the comment editor. Comments become one Review
 //! attachment in the chat's draft, which the chat keeps in step with the
 //! page as comments are saved and deleted.
 
@@ -11,9 +14,10 @@ use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ui_view::{FileStatus, LineKind, ReviewDoc, review_doc};
+use ui_view::{LineKind, ReviewDoc, review_doc};
 use wire::{Attachment, Diff, Review, ReviewComment, attachment};
 
+use super::changes::{FileLine, changes_lines, ordered};
 use super::composer::editor_lines;
 use crate::editor::Editor;
 use crate::text::{self, push};
@@ -29,6 +33,21 @@ enum Target {
         line: usize,
     },
 }
+
+/// Which side of the page has the keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    List,
+    Stream,
+}
+
+/// The file list's width: a quarter of the page, within these bounds.
+const LIST_MIN: usize = 24;
+const LIST_MAX: usize = 36;
+/// Narrower than this, the list shows only while it has the keys.
+const LIST_ALWAYS: usize = 100;
+/// The list's words sit this far in from its edges.
+const LIST_INSET: usize = 2;
 
 /// What a key on the page asks of the chat.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,32 +85,91 @@ pub struct ReviewPage {
     /// Whose changes these are, for the header: the agent's name and where
     /// it works, as the chat's header says them.
     owner: (String, String),
+    side: Side,
+    /// The list's filter, while one is typed or kept.
+    filter: Option<Editor>,
+    filtering: bool,
+    /// The document's files in the list's order, as the filter leaves them.
+    order: Vec<usize>,
+    /// The list's first line on screen.
+    list_top: usize,
+    /// The list's files on the last frame, for clicks: (row, columns, file).
+    list_spots: Vec<(u16, (u16, u16), usize)>,
+    /// The list's files on the last frame by the column's own lines.
+    list_rows: Vec<(usize, usize)>,
 }
 
 impl ReviewPage {
     pub fn new(diff: Diff, patch: String) -> ReviewPage {
         let doc = review_doc(&diff, &patch, &[]);
-        let targets = targets(&doc);
-        // Start on the first changed line: that is what the page is for.
-        let at = targets
-            .iter()
-            .position(|target| {
-                matches!(target, Target::Line { .. })
-                    && line_of(&doc, *target).is_some_and(|line| line.kind != LineKind::Context)
-            })
-            .unwrap_or(0);
-        ReviewPage {
+        let mut page = ReviewPage {
             diff,
             patch,
             comments: Vec::new(),
             doc,
-            targets,
-            at,
+            targets: Vec::new(),
+            at: 0,
             scroll: 0,
             composing: None,
             height: 0,
             owner: (String::new(), String::new()),
-        }
+            side: Side::Stream,
+            filter: None,
+            filtering: false,
+            order: Vec::new(),
+            list_top: 0,
+            list_spots: Vec::new(),
+            list_rows: Vec::new(),
+        };
+        page.reorder();
+        // Start on the first changed line: that is what the page is for.
+        page.at = page
+            .targets
+            .iter()
+            .position(|target| {
+                matches!(target, Target::Line { .. })
+                    && line_of(&page.doc, *target)
+                        .is_some_and(|line| line.kind != LineKind::Context)
+            })
+            .unwrap_or(0);
+        page
+    }
+
+    /// The files as the shared list takes them.
+    fn file_lines(&self) -> Vec<FileLine> {
+        self.doc
+            .files
+            .iter()
+            .map(|file| FileLine {
+                path: file.path.clone(),
+                added: file.added,
+                removed: file.removed,
+            })
+            .collect()
+    }
+
+    /// The list's order, as the filter leaves it, and the targets in that
+    /// order; the selection stays where it was when it still can.
+    fn reorder(&mut self) {
+        let was = (!self.targets.is_empty()).then(|| self.target());
+        let needle = self
+            .filter
+            .as_ref()
+            .map(|filter| filter.text().trim().to_lowercase())
+            .filter(|needle| !needle.is_empty());
+        self.order = ordered(&self.file_lines())
+            .into_iter()
+            .filter(|path| {
+                needle
+                    .as_ref()
+                    .is_none_or(|needle| path.to_lowercase().contains(needle))
+            })
+            .filter_map(|path| self.doc.files.iter().position(|file| file.path == path))
+            .collect();
+        self.targets = targets(&self.doc, &self.order);
+        self.at = was
+            .and_then(|was| self.targets.iter().position(|target| *target == was))
+            .unwrap_or(0);
     }
 
     pub fn comments(&self) -> &[ReviewComment] {
@@ -144,8 +222,26 @@ impl ReviewPage {
         if self.composing.is_some() {
             return self.composing_key(key);
         }
-        if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-            return ReviewAction::Close;
+        if self.filtering {
+            self.filter_key(key);
+            return ReviewAction::None;
+        }
+        if self.side == Side::List {
+            return self.list_key(key);
+        }
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return ReviewAction::Close,
+            KeyCode::Tab => {
+                self.side = Side::List;
+                return ReviewAction::None;
+            }
+            KeyCode::Char('/') => {
+                self.side = Side::List;
+                self.filtering = true;
+                self.filter.get_or_insert_with(Editor::default);
+                return ReviewAction::None;
+            }
+            _ => {}
         }
         if self.targets.is_empty() {
             return ReviewAction::None;
@@ -182,6 +278,97 @@ impl ReviewPage {
             _ => {}
         }
         ReviewAction::None
+    }
+
+    /// The list has the keys: j/k move between files, taking the stream
+    /// with them; Enter or Tab hands the keys to the stream; `/` filters;
+    /// Esc backs out one level.
+    fn list_key(&mut self, key: KeyEvent) -> ReviewAction {
+        match key.code {
+            KeyCode::Char('q') => return ReviewAction::Close,
+            KeyCode::Esc if self.filter.is_some() => {
+                self.filter = None;
+                self.reorder();
+            }
+            KeyCode::Esc | KeyCode::Tab | KeyCode::Enter | KeyCode::Char('l') => {
+                self.side = Side::Stream
+            }
+            KeyCode::Char('/') => {
+                self.filtering = true;
+                self.filter.get_or_insert_with(Editor::default);
+            }
+            KeyCode::Char('j') | KeyCode::Down => self.step_file(1),
+            KeyCode::Char('k') | KeyCode::Up => self.step_file(-1),
+            KeyCode::Char('g') | KeyCode::Home => self.step_file(isize::MIN / 2),
+            KeyCode::Char('G') | KeyCode::End => self.step_file(isize::MAX / 2),
+            _ => {}
+        }
+        ReviewAction::None
+    }
+
+    /// Typing the list's filter: the stream narrows to the files it
+    /// matches. Enter keeps it; Esc clears it.
+    fn filter_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.filtering = false;
+                self.filter = None;
+            }
+            KeyCode::Enter => {
+                self.filtering = false;
+                if self.filter.as_ref().is_some_and(Editor::is_empty) {
+                    self.filter = None;
+                }
+                return;
+            }
+            KeyCode::Down => return self.step_file(1),
+            KeyCode::Up => return self.step_file(-1),
+            _ => {
+                if let Some(filter) = &mut self.filter {
+                    filter.key(key);
+                }
+            }
+        }
+        self.reorder();
+    }
+
+    /// The stream to the file `by` places on in the list from the current
+    /// one, at its header.
+    fn step_file(&mut self, by: isize) {
+        if self.order.is_empty() {
+            return;
+        }
+        let here = (!self.targets.is_empty())
+            .then(|| file_of(self.target()))
+            .and_then(|file| self.order.iter().position(|f| *f == file))
+            .unwrap_or(0);
+        let next = here.saturating_add_signed(by).min(self.order.len() - 1);
+        let file = self.order[next];
+        if let Some(at) = self
+            .targets
+            .iter()
+            .position(|target| *target == Target::File(file))
+        {
+            self.at = at;
+        }
+    }
+
+    /// A click on the page: a file in the list takes the stream to it.
+    pub fn click(&mut self, x: u16, y: u16) {
+        let file = self
+            .list_spots
+            .iter()
+            .find(|(row, (from, to), _)| *row == y && (*from..*to).contains(&x))
+            .map(|(_, _, file)| *file);
+        if let Some(file) = file
+            && let Some(at) = self
+                .targets
+                .iter()
+                .position(|target| *target == Target::File(file))
+        {
+            self.at = at;
+            self.side = Side::List;
+        }
     }
 
     /// Selects the header of the file at `path`, when the diff has it.
@@ -309,6 +496,7 @@ impl ReviewPage {
 
     fn refresh(&mut self) {
         self.doc = review_doc(&self.diff, &self.patch, &self.comments);
+        self.reorder();
     }
 
     /// Paints the page over the whole of `area`. `footer` replaces the key
@@ -322,45 +510,22 @@ impl ReviewPage {
     ) {
         let width = usize::from(area.width);
         let height = usize::from(area.height);
-        let (body, selected, cursor) = self.body(width, theme);
+        // The list a quarter of the page on its left, past a hairline; on a
+        // narrow page only while it has the keys, the stream taking it all
+        // otherwise.
+        let list_width = (width / 4).clamp(LIST_MIN, LIST_MAX).min(width / 2);
+        let list_shown = width >= LIST_ALWAYS || self.side == Side::List;
+        let stream_width = if list_shown {
+            width.saturating_sub(list_width + 1)
+        } else {
+            width
+        };
+        let (body, selected, cursor) = self.body(stream_width, theme);
         // A blank above the header keeps it off the terminal's edge, as in
-        // the chat; hairlines set the file list apart.
-        let rule = || Line::from(Span::styled("─".repeat(width), theme.hairline()));
-        let mut top = vec![Line::default(), self.title(width, theme), Line::default()];
-        top.push(rule());
-        top.extend(self.file_list(width, theme));
-        top.push(rule());
-        let hint = footer.unwrap_or_else(|| {
-            let keys: &[(&str, &str)] = if self.composing.is_some() {
-                &[("enter", "save"), ("ctrl+j", "newline"), ("esc", "cancel")]
-            } else {
-                &[
-                    ("j/k", "move"),
-                    ("J/K", "hunk"),
-                    ("]/[", "file"),
-                    ("c", "comment"),
-                    ("enter", "edit"),
-                    ("d", "delete"),
-                    ("q", "back"),
-                ]
-            };
-            // The key reads first, its action recedes, as on every hint
-            // line.
-            let mut line = Line::from(Span::raw("  "));
-            for (i, (key, action)) in keys.iter().enumerate() {
-                if i > 0 {
-                    push(&mut line, "   ", theme.faint(), width);
-                }
-                push(&mut line, *key, theme.emphasis(), width);
-                push(&mut line, format!(" {action}"), theme.faint(), width);
-            }
-            line
-        });
-        // The file list gives way to the diff on a short screen.
+        // the chat; a blank under it.
+        let top = vec![Line::default(), self.title(width, theme), Line::default()];
+        let hint = footer.unwrap_or_else(|| self.hint_line(width, theme));
         let room = height.saturating_sub(1);
-        if top.len() + 4 > room {
-            top.truncate(room.saturating_sub(4).max(1));
-        }
         let body_height = room.saturating_sub(top.len());
         self.height = body_height;
         let (first, last) = selected;
@@ -370,22 +535,206 @@ impl ReviewPage {
             self.scroll = (last + 1).saturating_sub(body_height);
         }
         self.scroll = self.scroll.min(body.len().saturating_sub(body_height));
+        let stream: Vec<Line<'static>> = body
+            .into_iter()
+            .skip(self.scroll)
+            .take(body_height)
+            .collect();
+        let body_top = top.len();
         let mut lines = top;
-        let body_top = lines.len();
-        lines.extend(body.into_iter().skip(self.scroll).take(body_height));
+        self.list_spots.clear();
+        let mut list_cursor = None;
+        if list_shown {
+            let (list, at) = self.list_column(list_width, body_height, theme);
+            list_cursor = at;
+            // The side with the keys has the bright frame: the rule
+            // brightens beside the list's keys.
+            let rule = if self.side == Side::List {
+                theme.muted()
+            } else {
+                theme.hairline()
+            };
+            for (row, mut line) in list.into_iter().enumerate() {
+                text::pad_to(&mut line, list_width);
+                line.spans.push(Span::styled("│", rule));
+                if let Some(right) = stream.get(row) {
+                    line.spans.extend(right.spans.iter().cloned());
+                }
+                lines.push(line);
+            }
+            for (row, file) in self.list_rows.drain(..) {
+                self.list_spots.push((
+                    area.y + (body_top + row) as u16,
+                    (area.x, area.x + list_width as u16),
+                    file,
+                ));
+            }
+        } else {
+            lines.extend(stream);
+        }
         while lines.len() < room {
             lines.push(Line::default());
         }
         lines.push(hint);
         paint.render_widget(Paragraph::new(lines), area);
-        if let Some((row, col)) = cursor
+        let stream_x = if list_shown { list_width + 1 } else { 0 };
+        if let Some((col, row)) = list_cursor {
+            paint.set_cursor_position(Position::new(
+                area.x + col as u16,
+                area.y + (body_top + row) as u16,
+            ));
+        } else if let Some((row, col)) = cursor
             && row >= self.scroll
             && row < self.scroll + body_height
         {
             let y = area.y as usize + body_top + row - self.scroll;
-            let x = area.x as usize + col.min(width.saturating_sub(1));
+            let x = area.x as usize + stream_x + col.min(stream_width.saturating_sub(1));
             paint.set_cursor_position(Position::new(x as u16, y as u16));
         }
+    }
+
+    /// The list's column, `height` lines: its title (or the filter being
+    /// typed), a blank, then the shared changes list scrolled to keep the
+    /// stream's file in view on the flat highlight, its directory pinned
+    /// when the group runs above the edge. Returns the lines and the
+    /// filter's cursor as (column, line).
+    fn list_column(
+        &mut self,
+        width: usize,
+        height: usize,
+        theme: Theme,
+    ) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
+        let inner = width.saturating_sub(2 * LIST_INSET);
+        let focused = self.side == Side::List;
+        let mut title = Line::from(Span::raw(" ".repeat(LIST_INSET)));
+        let mut cursor = None;
+        match &self.filter {
+            Some(filter) => {
+                push(&mut title, "/ ", theme.accent(), width);
+                let at = text::line_width(&title);
+                push(&mut title, filter.text(), theme.text(), width);
+                if self.filtering {
+                    cursor = Some((at + filter.cursor_chars(), 0));
+                }
+            }
+            None => {
+                let ink = if focused {
+                    theme.bright()
+                } else {
+                    theme.muted()
+                };
+                push(&mut title, "Files", ink, width);
+                push(
+                    &mut title,
+                    format!(" {}", self.order.len()),
+                    theme.faint(),
+                    width,
+                );
+            }
+        }
+        let files: Vec<FileLine> = self
+            .order
+            .iter()
+            .map(|&f| {
+                let file = &self.doc.files[f];
+                FileLine {
+                    path: file.path.clone(),
+                    added: file.added,
+                    removed: file.removed,
+                }
+            })
+            .collect();
+        let list = changes_lines(&files, inner, theme);
+        let here = (!self.targets.is_empty()).then(|| file_of(self.target()));
+        let here_line = list.files.iter().find_map(|(line, path)| {
+            (here.map(|f| &self.doc.files[f].path) == Some(path)).then_some(*line)
+        });
+        let room = height.saturating_sub(2);
+        if let Some(line) = here_line {
+            if line < self.list_top + usize::from(self.list_top > 0) {
+                self.list_top = line.saturating_sub(1);
+            } else if line >= self.list_top + room {
+                self.list_top = line + 1 - room;
+            }
+        }
+        self.list_top = self.list_top.min(list.lines.len().saturating_sub(room));
+        let mut shown: Vec<Line<'static>> = list
+            .lines
+            .iter()
+            .skip(self.list_top)
+            .take(room)
+            .cloned()
+            .collect();
+        // A group scrolled above the edge keeps its directory in view.
+        if let Some(dir) = list.pin(self.list_top)
+            && let Some(first) = shown.first_mut()
+        {
+            *first = list.lines[dir].clone();
+        }
+        let mut rows = Vec::new();
+        for (line, path) in &list.files {
+            if (self.list_top..self.list_top + room).contains(line)
+                && let Some(file) = self.doc.files.iter().position(|f| &f.path == path)
+            {
+                rows.push((2 + line - self.list_top, file));
+            }
+        }
+        for line in &mut shown {
+            line.spans.insert(0, Span::raw(" ".repeat(LIST_INSET)));
+        }
+        if let Some(line) = here_line
+            && line >= self.list_top
+            && line < self.list_top + room
+        {
+            let at = line - self.list_top;
+            super::pane::card_highlight(&mut shown, at..at + 1, 0, width, false, theme);
+        }
+        self.list_rows = rows;
+        let mut out = vec![title, Line::default()];
+        out.extend(shown);
+        (out, cursor)
+    }
+
+    /// The keys for the side that has them: the key reads first, its
+    /// action recedes, as on every hint line.
+    fn hint_line(&self, width: usize, theme: Theme) -> Line<'static> {
+        let keys: &[(&str, &str)] = if self.composing.is_some() {
+            &[("enter", "save"), ("ctrl+j", "newline"), ("esc", "cancel")]
+        } else if self.filtering {
+            &[("enter", "keep"), ("esc", "clear"), ("↑↓", "file")]
+        } else if self.side == Side::List {
+            &[
+                ("j/k", "file"),
+                ("enter", "read"),
+                ("/", "filter"),
+                ("tab", "stream"),
+                ("q", "back"),
+            ]
+        } else {
+            &[
+                ("j/k", "move"),
+                ("J/K", "hunk"),
+                ("]/[", "file"),
+                ("c", "comment"),
+                ("enter", "edit"),
+                ("d", "delete"),
+                ("tab", "files"),
+                ("q", "back"),
+            ]
+        };
+        let mut line = Line::from(Span::raw("  "));
+        for (i, (key, action)) in keys.iter().enumerate() {
+            let need = 3 + text::str_width(key) + 1 + text::str_width(action);
+            if i > 0 && text::line_width(&line) + need > width {
+                break;
+            }
+            if i > 0 {
+                push(&mut line, "   ", theme.faint(), width);
+            }
+            push(&mut line, *key, theme.emphasis(), width);
+            push(&mut line, format!(" {action}"), theme.faint(), width);
+        }
+        line
     }
 
     /// Like the chat's header: whose changes at the left (`name │ path`),
@@ -438,73 +787,6 @@ impl ReviewPage {
         line
     }
 
-    /// One line per file: its status, path, counts and comments.
-    fn file_list(&self, width: usize, theme: Theme) -> Vec<Line<'static>> {
-        let path_room = self
-            .doc
-            .files
-            .iter()
-            .map(|file| text::str_width(&file_name(file)))
-            .max()
-            .unwrap_or(0)
-            .min(width.saturating_sub(24));
-        let here = (!self.targets.is_empty()).then(|| file_of(self.target()));
-        self.doc
-            .files
-            .iter()
-            .enumerate()
-            .map(|(i, file)| {
-                let mut line = Line::from(Span::raw("  "));
-                let (mark, style) = match file.status {
-                    FileStatus::Modified => ("M", theme.muted()),
-                    FileStatus::Added => ("A", theme.ok()),
-                    FileStatus::Deleted => ("D", theme.error()),
-                    FileStatus::Renamed => ("R", theme.muted()),
-                };
-                push(&mut line, format!("{mark}  "), style, width);
-                let name = text::ellipsize(&file_name(file), path_room);
-                let pad = path_room.saturating_sub(text::str_width(&name));
-                let name_style = if Some(i) == here {
-                    theme.emphasis()
-                } else {
-                    theme.text()
-                };
-                push(&mut line, name, name_style, width);
-                push(&mut line, " ".repeat(pad + 2), theme.text(), width);
-                if file.binary {
-                    push(&mut line, "binary", theme.muted(), width);
-                } else {
-                    push(&mut line, format!("+{}", file.added), theme.ok(), width);
-                    push(
-                        &mut line,
-                        format!(" −{}", file.removed),
-                        theme.error(),
-                        width,
-                    );
-                }
-                let comments = file.comments.len()
-                    + file
-                        .hunks
-                        .iter()
-                        .flat_map(|hunk| &hunk.lines)
-                        .map(|line| line.comments.len())
-                        .sum::<usize>();
-                if comments > 0 {
-                    push(
-                        &mut line,
-                        format!(
-                            " · {comments} comment{}",
-                            if comments == 1 { "" } else { "s" }
-                        ),
-                        theme.accent(),
-                        width,
-                    );
-                }
-                line
-            })
-            .collect()
-    }
-
     /// Every file's section as lines, with the selected target's first and
     /// last line and the comment editor's cursor.
     #[allow(clippy::type_complexity)]
@@ -542,30 +824,44 @@ impl ReviewPage {
             let comments: &[String] = match *target {
                 Target::File(f) => {
                     let file = &self.doc.files[f];
-                    if f > 0 {
+                    // Each file starts on a landmark like a plan's: its
+                    // path bright, its counts, a hairline to the margin.
+                    if !lines.is_empty() {
+                        lines.push(Line::default());
                         lines.push(Line::default());
                     }
                     let mut line = Line::from(bar);
-                    push(&mut line, file_name(file), theme.emphasis(), width);
+                    push(&mut line, file_name(file), theme.bright(), width);
                     if file.binary {
-                        push(&mut line, "  binary file", theme.muted(), width);
+                        push(&mut line, "  binary", theme.faint(), width);
                     } else {
-                        push(&mut line, format!("  +{}", file.added), theme.ok(), width);
-                        push(
-                            &mut line,
-                            format!(" −{}", file.removed),
-                            theme.error(),
-                            width,
-                        );
+                        push(&mut line, "  ", theme.faint(), width);
+                        if file.added > 0 {
+                            push(&mut line, format!("+{}", file.added), theme.ok(), width);
+                        }
+                        if file.removed > 0 {
+                            let gap = if file.added > 0 { " " } else { "" };
+                            push(
+                                &mut line,
+                                format!("{gap}\u{2212}{}", file.removed),
+                                theme.error(),
+                                width,
+                            );
+                        }
                     }
+                    push(&mut line, " ", theme.faint(), width);
+                    let rule = width.saturating_sub(text::line_width(&line) + 2);
+                    push(&mut line, "─".repeat(rule), theme.hairline(), width);
                     lines.push(line);
                     &file.comments
                 }
                 Target::Line { file, hunk, line } => {
                     let h = &self.doc.files[file].hunks[hunk];
+                    // Hunks apart by a blank line and their faint @@ line.
                     if line == 0 {
+                        lines.push(Line::default());
                         let mut header = Line::from(Span::raw("  "));
-                        push(&mut header, h.header.clone(), theme.diff_meta(), width);
+                        push(&mut header, h.header.clone(), theme.faint(), width);
                         lines.push(header);
                     }
                     let diff_line = &h.lines[line];
@@ -647,9 +943,11 @@ impl ReviewPage {
     }
 }
 
-fn targets(doc: &ReviewDoc) -> Vec<Target> {
+/// Every place a comment can go, file by file in `order`.
+fn targets(doc: &ReviewDoc, order: &[usize]) -> Vec<Target> {
     let mut out = Vec::new();
-    for (f, file) in doc.files.iter().enumerate() {
+    for &f in order {
+        let file = &doc.files[f];
         out.push(Target::File(f));
         for (h, hunk) in file.hunks.iter().enumerate() {
             for l in 0..hunk.lines.len() {

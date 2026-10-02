@@ -1,3 +1,12 @@
+2026-10-02 — **The review page is a list beside one stream.** The changed
+files sit on the left, drawn by the same component as the Overview's
+Changes section (now `chat/changes.rs`), and every file's hunks run as one
+stream beside them, each file on a landmark line. The list follows the
+stream and picking a file takes the stream to it; `/` filters both; Tab
+moves the keys between them, and the side with the keys has the bright
+frame. Under 100 columns the list shows only while it has the keys. A file
+name too long for its column keeps its start and extension.
+
 2026-10-02 — **Hosts move to `p`.** Home `p`, `ctrl+a p` in a chat; `t` is
 kept for a future tasks feature. The screen stays "Hosts" until its name is
 settled.

@@ -83,13 +83,7 @@ pub enum PaneItem {
     File(String),
 }
 
-/// A changed file as the pane lists it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileLine {
-    pub path: String,
-    pub added: u32,
-    pub removed: u32,
-}
+pub use super::changes::FileLine;
 
 /// What the pane shows, read once a frame.
 pub struct Contents<'a> {
@@ -133,10 +127,9 @@ impl Contents<'_> {
                     items.extend(self.jobs.iter().map(|job| PaneItem::Job(job.key.clone())))
                 }
                 Section::Changes => items.extend(
-                    grouped(self.files.unwrap_or_default())
+                    super::changes::ordered(self.files.unwrap_or_default())
                         .into_iter()
-                        .flat_map(|(_, files)| files)
-                        .map(|file| PaneItem::File(file.path.clone())),
+                        .map(PaneItem::File),
                 ),
                 Section::Tasks | Section::Servers => {}
             }
@@ -311,59 +304,26 @@ pub fn pane_lines(
                 }
             }
             Section::Changes => {
-                // Files under their directory: a faint line naming it,
-                // shortened in the middle so both ends survive, then each
-                // file's name two columns in with its lines added and
-                // removed at the right. Only files take the keys; a click
-                // (or Enter) opens the review page at one.
-                for (n, (dir, files)) in grouped(contents.files.unwrap_or_default())
-                    .into_iter()
-                    .enumerate()
-                {
-                    // A blank line sets each directory's group apart.
-                    if n > 0 {
-                        blank(&mut out);
-                    }
-                    let indent = if dir.is_empty() {
-                        0
-                    } else {
-                        let mut line = Line::default();
-                        push(&mut line, shorten_middle(dir, inner), theme.faint(), inner);
-                        out.dir_lines.push(out.body.len());
-                        push_line(&mut out, line, None, None);
-                        2
-                    };
-                    for file in files {
-                        // A zero side is left out: "+1", or "−5" for a
-                        // pure deletion.
-                        let added = if file.added > 0 {
-                            format!("+{}", file.added)
-                        } else {
-                            String::new()
-                        };
-                        let removed = match (file.removed, added.is_empty()) {
-                            (0, _) => String::new(),
-                            (n, true) => format!("\u{2212}{n}"),
-                            (n, false) => format!(" \u{2212}{n}"),
-                        };
-                        let counts = format!("{added}{removed}");
-                        let name = &file.path[dir.len()..];
-                        let room = inner.saturating_sub(indent + text::str_width(&counts) + 2);
-                        let mut line = Line::default();
-                        pad_to(&mut line, indent);
-                        push(&mut line, shorten_left(name, room), theme.text(), inner);
-                        pad_to(&mut line, inner.saturating_sub(text::str_width(&counts)));
-                        // Green and red from the terminal's palette, as
-                        // the review page colours them.
-                        push(&mut line, added, theme.ok(), inner);
-                        push(&mut line, removed, theme.error(), inner);
-                        let item = PaneItem::File(file.path.clone());
-                        if lit == Some(&item) {
-                            card = Some(out.body.len());
+                // The shared changes list; only files take the keys, and a
+                // click (or Enter) opens the review page at one.
+                let list =
+                    super::changes::changes_lines(contents.files.unwrap_or_default(), inner, theme);
+                let start = out.body.len();
+                out.dir_lines
+                    .extend(list.dir_lines.iter().map(|line| start + line));
+                let mut files = list.files.into_iter().peekable();
+                for (at, line) in list.lines.into_iter().enumerate() {
+                    match files.next_if(|(file_at, _)| *file_at == at) {
+                        Some((_, path)) => {
+                            let item = PaneItem::File(path);
+                            if lit == Some(&item) {
+                                card = Some(out.body.len());
+                            }
+                            out.item_lines.push((item.clone(), out.body.len()));
+                            push_line(&mut out, line, Some(entry), Some(PaneHit::Item(item)));
+                            entry += 1;
                         }
-                        out.item_lines.push((item.clone(), out.body.len()));
-                        push_line(&mut out, line, Some(entry), Some(PaneHit::Item(item)));
-                        entry += 1;
+                        None => push_line(&mut out, line, None, None),
                     }
                 }
                 out.changes_end = out.body.len();
@@ -541,70 +501,6 @@ fn tint(line: Line<'static>, from: usize, to: usize, surface: Style) -> Line<'st
         out.spans.push(Span::styled(" ".repeat(to - col), surface));
     }
     out
-}
-
-/// The changed files by directory, sorted by path: files at the root first,
-/// under no directory, then each directory with its files. A directory is
-/// named with its trailing slash.
-fn grouped(files: &[FileLine]) -> Vec<(&str, Vec<&FileLine>)> {
-    let mut sorted: Vec<&FileLine> = files.iter().collect();
-    sorted.sort_by(|a, b| {
-        let dir = |f: &FileLine| f.path.rfind('/').map_or(0, |at| at + 1);
-        f_key(a, dir(a)).cmp(&f_key(b, dir(b)))
-    });
-    let mut groups: Vec<(&str, Vec<&FileLine>)> = Vec::new();
-    for file in sorted {
-        let dir = &file.path[..file.path.rfind('/').map_or(0, |at| at + 1)];
-        match groups.last_mut() {
-            Some((last, members)) if *last == dir => members.push(file),
-            _ => groups.push((dir, vec![file])),
-        }
-    }
-    groups
-}
-
-/// Root files first, then by directory, then by name.
-fn f_key(file: &FileLine, dir: usize) -> (bool, &str, &str) {
-    (dir > 0, &file.path[..dir], &file.path[dir..])
-}
-
-/// A directory in at most `max` columns, cut in the middle at directories
-/// so its first and last parts survive: "apps/…/Sources/Chat/".
-fn shorten_middle(dir: &str, max: usize) -> String {
-    if text::str_width(dir) <= max {
-        return dir.to_owned();
-    }
-    let parts: Vec<&str> = dir.trim_end_matches('/').split('/').collect();
-    if let Some((first, rest)) = parts.split_first() {
-        for keep in (1..rest.len()).rev() {
-            let tail = rest[rest.len() - keep..].join("/");
-            let shown = format!("{first}/…/{tail}/");
-            if text::str_width(&shown) <= max {
-                return shown;
-            }
-        }
-    }
-    shorten_left(dir, max)
-}
-
-/// `path` in at most `max` columns, cut from the left at a directory so the
-/// file's name survives: "…/src/session.rs".
-fn shorten_left(path: &str, max: usize) -> String {
-    if text::str_width(path) <= max {
-        return path.to_owned();
-    }
-    let mut at = 0;
-    while let Some(slash) = path[at..].find('/') {
-        at += slash + 1;
-        let tail = &path[at..];
-        if text::str_width(tail) + 2 <= max {
-            return format!("…/{tail}");
-        }
-    }
-    let name = &path[at..];
-    let keep = max.saturating_sub(1);
-    let skip = name.chars().count().saturating_sub(keep);
-    format!("…{}", name.chars().skip(skip).collect::<String>())
 }
 
 /// How long a job has run, coarse enough not to tick every second once it

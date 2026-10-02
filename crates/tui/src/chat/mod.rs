@@ -7,6 +7,7 @@
 //! against the session; nothing in this module does I/O.
 
 pub mod ask;
+pub mod changes;
 pub mod composer;
 pub mod feed;
 pub mod layout;
@@ -1154,6 +1155,7 @@ impl ChatView {
             match event.kind {
                 MouseEventKind::ScrollUp => page.scroll_by(-wheel_lines(Direction::Up)),
                 MouseEventKind::ScrollDown => page.scroll_by(wheel_lines(Direction::Down)),
+                MouseEventKind::Down(MouseButton::Left) => page.click(event.column, event.row),
                 _ => {}
             }
             return vec![];
