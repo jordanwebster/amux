@@ -1,3 +1,7 @@
+2026-10-02 — **New Codex agents start on GPT-6.1-Sol.** The shipped
+default was `gpt-5-codex`, which current Codex no longer offers; it is
+now Codex's own default model, `gpt-6.1-sol`, at medium effort.
+
 2026-10-02 — **A new agent's composer sits where a chat's does.** Its
 box had no blank row above the keys, so it sat one row lower than in a
 chat and looked squashed; it now leaves the same breathing row.

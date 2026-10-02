@@ -386,7 +386,7 @@ impl Default for NewAgentSettings {
                 mode: "default".into(),
             },
             codex: NewAgentDefaults {
-                model: "gpt-5-codex".into(),
+                model: "gpt-6.1-sol".into(),
                 effort: "medium".into(),
                 mode: "auto".into(),
             },

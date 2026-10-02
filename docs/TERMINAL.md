@@ -250,7 +250,7 @@ ui:
   chat_in: amux       # amux, or terminal: chat in each agent's own terminal
 new_agent:
   claude: { model: opus, effort: high, mode: default }
-  codex: { model: gpt-5-codex, effort: medium, mode: auto }
+  codex: { model: gpt-6.1-sol, effort: medium, mode: auto }
 ```
 
 `theme: terminal` asks the terminal for its own colours at startup and derives the palette from them, falling back

@@ -95,7 +95,7 @@ impl Default for Defaults {
                 mode: "default".into(),
             },
             codex: AgentDefaults {
-                model: "gpt-5-codex".into(),
+                model: "gpt-6.1-sol".into(),
                 effort: "medium".into(),
                 mode: "auto".into(),
             },
