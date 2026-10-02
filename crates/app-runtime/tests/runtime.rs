@@ -183,8 +183,10 @@ async fn changes_wait_for_the_hosts_turn_and_rows_are_read_by_key() {
     );
 
     let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
-    until(&mut host, &chat, "the first turn", |chat| {
-        chat.frame().caught_up && says(chat, "turn one")
+    // The whole first turn, its end included: a prompt sent before the
+    // turn ends queues behind it instead of being sent.
+    until(&mut host, &chat, "the first turn to end", |chat| {
+        chat.frame().caught_up && says(chat, "turn one") && says(chat, "TurnEnd")
     })
     .await;
     let before = chat.keys();

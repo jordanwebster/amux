@@ -1,3 +1,10 @@
+2026-10-02 — **A prompt is sent once the first turn has ended.**
+The second repeat round on main caught the app runtime's send test: it
+sent its prompt once the first turn's text was on screen, and on a slow
+runner the turn had not ended, so the prompt queued behind it and the
+test, expecting it sent, failed. It waits for the turn-end row now, as
+the suite's other test already did.
+
 2026-10-02 — **The rewind frame waits for the detach it draws.**
 The first repeat round on main caught the terminal client's served
 frames: the frame before a rewind's swap is composed from the session
