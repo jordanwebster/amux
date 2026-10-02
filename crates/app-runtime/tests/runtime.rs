@@ -10,7 +10,7 @@ use std::time::Duration;
 use app_runtime::values::{ActOutcome, Draft, PageOutcome, RowOptions, ToolRowsOption};
 use app_runtime::{AppRuntime, Chat, Wake};
 use client::{Client, InProcess, SystemClock};
-use model::{AgentKey, InputState};
+use model::{AgentKey, InputState, PhaseView};
 use provider_fakes::script::{Ask, Question, Step, Tool, ToolClass};
 use testnet::{AgentDecl, FakeKind, Net, Topology};
 use tokio::sync::mpsc;
@@ -183,10 +183,16 @@ async fn changes_wait_for_the_hosts_turn_and_rows_are_read_by_key() {
     );
 
     let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
-    // The whole first turn, its end included: a prompt sent before the
-    // turn ends queues behind it instead of being sent.
+    // The whole first turn, its end and the idle that follows it: a prompt
+    // sent before the turn ends queues behind it instead of being sent,
+    // and the idle snapshot landing after the settle below would be a
+    // wake the send did not cause.
     until(&mut host, &chat, "the first turn to end", |chat| {
-        chat.frame().caught_up && says(chat, "turn one") && says(chat, "TurnEnd")
+        let frame = chat.frame();
+        frame.caught_up
+            && matches!(frame.phase, PhaseView::Idle)
+            && says(chat, "turn one")
+            && says(chat, "TurnEnd")
     })
     .await;
     let before = chat.keys();

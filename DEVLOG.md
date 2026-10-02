@@ -3,7 +3,10 @@ The second repeat round on main caught the app runtime's send test: it
 sent its prompt once the first turn's text was on screen, and on a slow
 runner the turn had not ended, so the prompt queued behind it and the
 test, expecting it sent, failed. It waits for the turn-end row now, as
-the suite's other test already did.
+the suite's other test already did, and for the idle that follows it,
+since the idle snapshot landing after the test's settle point would be
+a wake the send did not cause (the first fix, 59d83b82, missed that and
+was pushed on a local run that had not been checked).
 
 2026-10-02 — **The rewind frame waits for the detach it draws.**
 The first repeat round on main caught the terminal client's served
