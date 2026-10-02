@@ -1,3 +1,11 @@
+2026-10-02 — **The rewind frame waits for the detach it draws.**
+The first repeat round on main caught the terminal client's served
+frames: the frame before a rewind's swap is composed from the session
+events up to the Reset, and whether the desk's detach had reached the
+laptop by then was the runner's luck. The runtime orders them (the old
+source ends before the new one opens), so the test now waits for the
+Detached before the Reset and the frame is the same on every machine.
+
 2026-10-02 — **The rest of the suites wait through the one wait.**
 The binary's seven suites (their three `until` copies gone; the
 fixture that spawns the built binary keeps a longer patience and says
