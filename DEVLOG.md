@@ -1,3 +1,11 @@
+2026-10-02 — **An act dropped by the runtime's stop still answers.**
+The stop shuts the pool down and drops the acts still running, so an
+act in flight at a stop never called back and the app task awaiting it
+hung, holding its continuation. The callback is owed from the moment
+an act is spawned: its drop now answers that the runtime has stopped,
+the same error the app's own stopped path reports. Second branch-wide
+Codex pass; unit tests on the spawner.
+
 2026-10-02 — **The runtime stops under one hold of its lock.**
 Stop took the open profiles under the lock, closed them outside it and
 marked the runtime stopped under it again; an open landing between
