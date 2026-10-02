@@ -1,3 +1,21 @@
+2026-10-02 — **The phone journeys are drawn flat and held to the goldens' thresholds.**
+The whole-screen goldens and the component snapshots turned reduce
+transparency on so no picture holds glass the render server finishes
+on its own schedule; the journeys still drew glass and compared their
+live pages at 12 per channel and 600 pixels of slack. The journey
+driver now turns the flag on at every launch, including the reopens a
+story makes, so every compared phone picture is flat, and the
+goldens' tolerance of 1 per channel with no pixel past it is the
+driver's default; the goldens script no longer overrides it and the
+performance run opts out, measured as the app ships. The tight
+comparison caught one thing the slack had hidden: the turn footer
+named its surface after pulling its text up four points, so the
+volatile mask for a duration sat below the glyphs' tops. The surface
+is now the text. Journey goldens re-recorded once (the pixels of glass
+and two toolbar labels a point wider under the flat backdrop), the
+whole-screen goldens for the footer's frame, and both suites run twice
+over clean.
+
 2026-10-02 — **A headless subagent's task is progress on the call that started it.**
 Headless Claude reports a subagent or a background shell as task
 events naming the call. The interpreter wrote them as a task item of

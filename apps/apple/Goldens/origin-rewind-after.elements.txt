@@ -30,7 +30,7 @@ chat.resume | Resume |  | 276,779,103,44 (disabled)
  | Started |  | 18,132,366,34
  | Remember this recovery turn. |  | 18,166,366,40
  | The recovery state is safely stored. |  | 18,217,366,20
- | Worked <t> · $0.00 |  | 18,245,160,30
+ | Worked <t> · $0.00 |  | 48,245,130,16
  | Carry on. |  | 18,275,366,40
  | A second turn, after the checkpoint. |  | 18,326,366,20
- | Worked <t> · $0.00 |  | 18,354,160,30
+ | Worked <t> · $0.00 |  | 48,354,130,16

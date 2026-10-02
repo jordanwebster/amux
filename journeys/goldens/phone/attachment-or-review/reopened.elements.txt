@@ -45,7 +45,7 @@ hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,310,366,46
 hosts.caption.devices |  |  | 18,363,320,18
  | Back |  | 16,68,42,46
  | reviewer, /t/a/n/d/work · desk |  | 51,72,156,38
- | 1 file, 2 added, 1 removed |  | 280,73,60,36
+ | 1 file, 2 added, 1 removed |  | 279,73,61,36
  | More |  | 344,69,44,44
  | Attach |  | 23,779,44,44
  | claude-fake-1 |  | 71,779,139,44
@@ -54,4 +54,4 @@ hosts.caption.devices |  |  | 18,363,320,18
  | Started |  | 18,132,366,34
  | Please check against, Pasted text · 12 lines, Review · 1 comment |  | 18,166,366,103
  | I read the review. |  | 18,281,366,20
- | Worked <t> · $0.00 |  | 18,308,160,30
+ | Worked <t> · $0.00 |  | 48,308,130,16

@@ -42,19 +42,14 @@ SCRATCH_DIR = Path("/tmp/amux-phone-journey")
 SCRATCH_LOCK = Path("/tmp/amux-phone-journey.lock")
 # The pinned simulator whose system-chrome masks every comparison uses.
 SIMULATOR = "golden"
-# How far one channel may move before a pixel counts as different. A journey
-# photographs a live presentation, and the render server resolves glass up to
-# ten levels apart from one presentation of the same page to the next; a
-# changed word, place or colour moves pixels far further. Colour precision is
-# the whole-screen goldens' job: scripts/ios-goldens.py compares its fixed
-# screens with thresholds of its own.
-TOLERANCE = 12
-# How many pixels may differ beyond that: the glass header now and then
-# resolves some two hundred pixels of its edge and shadow further apart. The
-# element geometry beside each screen compares every word and frame exactly,
-# so the pixels are there for what geometry cannot say (colour, clipping,
-# overlap), and any of those moves thousands.
-MAX_DIFFERING = 600
+# How far one channel may move before a pixel counts as different, and how
+# many pixels may differ beyond that. Every picture a journey compares is
+# drawn flat (see `flat`), and drawn flat, four runs of every whole screen in
+# both appearances matched the same goldens pixel for pixel outside the masks,
+# so a screen is held to a channel's rounding (what the component snapshots
+# allow too) with no pixel past it. A needs-you dot alone is some 450 pixels.
+TOLERANCE = 1
+MAX_DIFFERING = 0
 # The golden simulator draws three pixels to the point.
 SCALE = 3
 # A surface a view reports under a name ending here holds text that moves with
@@ -247,6 +242,14 @@ class PhoneJourney:
         # How far a pixel may move, and how many may, before a screen differs.
         self.tolerance = TOLERANCE
         self.max_differing = MAX_DIFFERING
+        # Whether every launch turns the app's reduce-transparency setting on,
+        # so each frosted surface is drawn flat. The render server finishes
+        # glass after the app has drawn, on its own schedule, and a photograph
+        # at any fixed moment shows one stage or another of that work; drawn
+        # flat, the same screens repeat pixel for pixel. A run that measures
+        # the app as it ships, or photographs glass for a person to look at,
+        # turns this off before it launches.
+        self.flat = True
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
@@ -403,10 +406,15 @@ class PhoneJourney:
         while time.monotonic() < deadline:
             try:
                 self.app({"kind": "signposts"})
-                return
+                break
             except (OSError, DoorError):
                 time.sleep(0.5)
-        raise RuntimeError("the app's door did not open within a minute")
+        else:
+            raise RuntimeError("the app's door did not open within a minute")
+        if self.flat:
+            # Motion stays as the run has it: the door's own default, off.
+            self.app({"kind": "assist", "motion": False, "transparency": True})
+            self.actions.append("reduce transparency on")
 
     def quit(self) -> None:
         """The app closed, as a person swipes it away."""

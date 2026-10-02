@@ -53,4 +53,4 @@ hosts.caption.devices |  |  | 18,363,320,18
  | Check the deployment once. |  | 18,166,366,40
  | Allowed, deploy --check, <t>, deploy check: ok |  | 18,217,366,40
  | The deploy check passed. |  | 18,271,366,20
- | Worked <t> · $0.00 |  | 18,299,160,30
+ | Worked <t> · $0.00 |  | 48,299,130,16

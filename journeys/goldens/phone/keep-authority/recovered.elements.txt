@@ -64,10 +64,10 @@ you.help.caption |  |  | 18,853,354,31
  | Started |  | 18,132,366,34
  | hello |  | 18,166,366,40
  | Ready. |  | 18,217,366,20
- | Worked <t> · $0.00 |  | 18,245,160,30
+ | Worked <t> · $0.00 |  | 48,245,130,16
  | Are you there? |  | 18,275,366,40
  | Only this account reaches me. |  | 18,326,366,20
- | Worked <t> · $0.00 |  | 18,354,160,30
+ | Worked <t> · $0.00 |  | 48,354,130,16
  | Still there? |  | 18,384,366,40
  | The relay carries us again. |  | 18,435,366,20
- | Worked <t> · $0.00 |  | 18,463,160,30
+ | Worked <t> · $0.00 |  | 48,463,130,16

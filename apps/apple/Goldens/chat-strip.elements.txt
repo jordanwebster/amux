@@ -29,4 +29,4 @@ chat.send | Send |  | 335,779,44,44 (disabled)
  | Reading the pairing code first. |  | 18,217,366,20
  | Read, crates/wire/src/codes.rs |  | 18,249,366,20
  | The pairing errors all come from one table in the wire crate, so they can share one string. |  | 18,283,366,43
- | Worked <t> · $0.00 |  | 18,334,160,30
+ | Worked <t> · $0.00 |  | 48,334,130,16

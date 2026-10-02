@@ -1025,13 +1025,16 @@ private struct Footer: View {
     var accented = false
 
     var body: some View {
+        // Named on the text itself, so the surface a check masks as volatile
+        // (a duration) is where the glyphs are drawn: the negative padding
+        // below pulls them above the padded frame.
         Text(text)
             .designFont(.caption, design)
             .foregroundStyle(accented ? design.accent.color : design.inkFaint.color)
+            .identified("chat.row.\(kind)", label: text)
             .padding(.leading, RowGrid.text)
             .padding(.top, -4)
             .padding(.bottom, RowGrid.afterRun)
-            .identified("chat.row.\(kind)", label: text)
     }
 }
 

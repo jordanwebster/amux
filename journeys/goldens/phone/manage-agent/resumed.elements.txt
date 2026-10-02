@@ -59,9 +59,9 @@ hosts.caption.devices |  |  | 18,363,320,18
  | Started |  | 18,132,366,34
  | Say hello. |  | 18,166,366,40
  | Ready when you are. |  | 18,217,366,20
- | Worked <t> · $0.00 |  | 18,245,160,30
+ | Worked <t> · $0.00 |  | 48,245,130,16
  | Ended · stopped |  | 18,275,366,34
  | Resumed |  | 18,308,366,34
  | Welcome back. |  | 18,342,366,40
  | Ready when you are. |  | 18,394,366,20
- | Worked <t> · $0.00 |  | 18,421,160,30
+ | Worked <t> · $0.00 |  | 48,421,130,16

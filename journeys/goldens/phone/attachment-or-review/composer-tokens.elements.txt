@@ -42,7 +42,7 @@ hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,310,366,46
 hosts.caption.devices |  |  | 18,363,320,18
  | Back |  | 16,68,42,46
  | reviewer, /t/a/n/d/work · desk |  | 51,72,156,38
- | 1 file, 2 added, 1 removed |  | 280,73,60,36
+ | 1 file, 2 added, 1 removed |  | 279,73,61,36
  | More |  | 344,69,44,44
  | Plain Text |  | 38,689,10,13
  | Pasted text · 12 lines |  | 57,688,159,16

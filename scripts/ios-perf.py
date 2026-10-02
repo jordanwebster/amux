@@ -138,7 +138,10 @@ class Run:
     def __init__(self, journey: PhoneJourney, only: list[str] | None, flat: bool = False):
         self.journey = journey
         self.only = only
+        # The app is measured as it ships, glass and all, unless a flat run
+        # was asked for as a diagnostic.
         self.flat = flat
+        journey.flat = flat
         self.samples: dict[str, list[float]] = {name: [] for name in BUDGETS}
         self.notes: list[str] = []
         self.agent_ids = {item["name"]: item["id"] for item in journey.ready["agents"]}
@@ -292,7 +295,6 @@ class Run:
 
     def open_the_conversation(self) -> None:
         if self.flat:
-            self.journey.app({"kind": "assist", "motion": False, "transparency": True})
             self.notes.append("every surface drawn flat (reduce transparency)")
         agent = self.agent_ids[STREAM_AGENT]
         # Frames only while tapping: the app is measured as it ships.

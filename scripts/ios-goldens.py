@@ -56,13 +56,6 @@ OUTPUT = ROOT / "target/ios/goldens"
 PERTURBED = ROOT / "target/ios/goldens-perturb"
 SIMULATOR = "golden"
 APPEARANCES = ("light", "dark")
-# Whole screens are compared far more tightly than a journey's live pages.
-# Drawn flat, four runs of every screen in both appearances matched the same
-# goldens pixel for pixel outside the masks, so a screen is held to a
-# channel's rounding (what the component snapshots allow too) with no pixel
-# past it. A needs-you dot alone is some 450 pixels.
-TOLERANCE = 1
-MAX_DIFFERING = 0
 # Longer than the render server has been seen to take to finish glass after
 # it first draws (under 2 s), for the review captures.
 GLASS_FINISHES = 2.5
@@ -304,14 +297,11 @@ def main() -> int:
     )
     journey.update = options.update
     journey.covered_hidden = True
-    journey.tolerance = TOLERANCE
-    journey.max_differing = MAX_DIFFERING
+    # Review captures are of the glass itself.
+    journey.flat = not options.review
     goldens = Goldens(journey, manifest, wanted, options.review)
     try:
         journey.launch()
-        if not options.review:
-            # Motion stays as the run has it: the door's own default, off.
-            journey.app({"kind": "assist", "motion": False, "transparency": True})
         if options.perturb:
             journey.app({"kind": "perturb", "token": options.perturb})
         goldens.prepare_the_desk()

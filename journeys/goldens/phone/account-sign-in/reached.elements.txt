@@ -55,4 +55,4 @@ you.help.caption |  |  | 18,794,354,31
  | Started |  | 18,132,366,34
  | Are you there? |  | 18,166,366,40
  | Reached through the relay. |  | 18,217,366,20
- | Worked <t> · $0.00 |  | 18,245,160,30
+ | Worked <t> · $0.00 |  | 48,245,130,16

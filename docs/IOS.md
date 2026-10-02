@@ -339,8 +339,9 @@ writes `DIR/<id>.<appearance>.png`. Neither reads or writes a baseline,
 neither can fail on a picture, and neither runs in `just ci`, the gate or any
 check.
 
-The phone journeys still draw glass: they compare live pages with thresholds
-of their own, loose enough for it, and run only in the captures.
+The phone journeys are drawn flat too: the journey driver turns the flag on
+at every launch, including the reopens a story makes, and their screens are
+held to the same thresholds as the whole-screen goldens.
 
 ### Component snapshots
 
@@ -396,15 +397,15 @@ before and after the swap.
 
 `scripts/ios-goldens.py` reaches every screen the way a person does. It
 serves `journeys/topologies/phone-goldens.json`, installs the debug app
-fresh, turns the reduce-transparency flag on through the door's `assist`
-verb, pairs with the desk by the code it printed, and taps through to each
-screen while the served network makes the desk's agents act. Each screen is
-compared in light and dark twice over:
+fresh with the reduce-transparency flag on, pairs with the desk by the code
+it printed, and taps through to each screen while the served network makes
+the desk's agents act. Each screen is compared in light and dark twice over:
 
 - The display's pixels, with `xtask golden diff`, at a tolerance of 1 per
   channel with no pixel past it: drawn flat, repeated runs match their
   goldens pixel for pixel outside the masks. The measurement behind these
-  numbers sits beside them in the script.
+  numbers sits beside them in `scripts/journeys/phone.py`, the driver every
+  phone suite shares.
 - The door's element geometry, as `<screen>.elements.txt`, compared word for
   word and frame for frame. Tab pages covered by a pushed page are left out.
 
@@ -440,12 +441,13 @@ just ios journey -- --native
 ```
 
 `scripts/ios-journey.py` starts the story's topology with `testnet serve`,
-installs the debug app fresh on the leased simulator, and acts only as a
-person would, through the door: tap, type, paste, pair by the code or link a
-machine printed. It judges by what the machines recorded (the served
-network's chat, inventory and provider-input reads) and by screens compared
-with reviewed goldens under `journeys/goldens/phone/<story>/`, pixels and
-element geometry both. Results land in `target/journeys/phone/<story>/`;
+installs the debug app fresh on the leased simulator with the
+reduce-transparency flag on, and acts only as a person would, through the
+door: tap, type, paste, pair by the code or link a machine printed. It judges
+by what the machines recorded (the served network's chat, inventory and
+provider-input reads) and by screens compared with reviewed goldens under
+`journeys/goldens/phone/<story>/`, pixels and element geometry both, at the
+whole-screen goldens' thresholds. Results land in `target/journeys/phone/<story>/`;
 `UPDATE_JOURNEY_GOLDENS=1` rewrites the goldens that differ.
 
 The machines in a journey are real daemons with scripted providers, and the

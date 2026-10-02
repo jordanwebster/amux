@@ -47,6 +47,6 @@ hosts.caption.devices |  |  | 18,408,320,18
  | Started |  | 18,132,366,34
  | Get ready. |  | 18,166,366,40
  | Ready to deploy. |  | 18,217,366,20
- | Worked <t> · $0.00 |  | 18,245,160,30
+ | Worked <t> · $0.00 |  | 48,245,130,16
  | Deploy it. |  | 18,275,366,40
  | Wants to run, deploy --prod |  | 18,326,366,20
