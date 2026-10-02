@@ -12,12 +12,11 @@
 use std::fmt::{self, Write as _};
 use std::time::Duration;
 
+pub use patience::{PATIENCE, Stuck, holds_for, until, until_within};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use wire::{InventoryEvent, SessionEvent, inventory_event, session_event};
-
-pub use patience::{PATIENCE, Stuck, holds_for, until, until_within};
 
 /// One line per event, the way a failure report and a transcript show it.
 pub trait Describe {

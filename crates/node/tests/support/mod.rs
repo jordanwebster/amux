@@ -9,14 +9,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use node::{Daemon, Launch, ProfileId, ProfileRuntime, StartOptions};
+pub use patience::{PATIENCE, Stuck, holds_for, until};
 use provider_fakes::script::{SCRIPT_ENV, Script, Step};
 use wire::{
     AgentParent, ClaudeCreateConfig, ClaudeSdkInput, CreateAgentRequest, Input, Kind, PromptInput,
     StopMode, claude_sdk_input, create_agent_request, input,
 };
-
-/// How long any wait in these tests may take before it is a failure.
-pub use patience::{PATIENCE, Stuck, holds_for, until};
 
 /// The amux binary and the fake providers, built once per test run.
 pub fn binaries() -> &'static Path {

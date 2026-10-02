@@ -43,7 +43,10 @@ pub enum Stuck {
 }
 
 /// Waits until `probe` answers `Ok`, looking again every poll for
-/// [`PATIENCE`], and returns what it answered. Each `Err` is what the probe
+/// [`PATIENCE`], and returns what it answered. The probe returns a plain
+/// future (`|| async { .. }`), so a wait can run inside a spawned task;
+/// a probe that must mutate what it captures does so before the future,
+/// as in `|| std::future::ready(step())`. Each `Err` is what the probe
 /// saw instead, and the last of them is reported if the deadline passes.
 pub async fn until<T, E, F>(what: &str, probe: impl FnMut() -> F) -> Result<T, Stuck>
 where

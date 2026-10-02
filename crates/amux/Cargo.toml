@@ -50,6 +50,7 @@ libc = { workspace = true }
 
 [dev-dependencies]
 pty-host = { workspace = true }
+patience = { workspace = true }
 bytes = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }

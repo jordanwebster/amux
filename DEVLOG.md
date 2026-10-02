@@ -1,3 +1,18 @@
+2026-10-02 — **The rest of the suites wait through the one wait.**
+The binary's seven suites (their three `until` copies gone; the
+fixture that spawns the built binary keeps a longer patience and says
+why), the provider fakes' hook and row waits, the embedded client's
+`eventually` and relay-link waits, the client seam's redial, and the
+UI runtime's watch-driven wait (now one, naming its caller on failure
+instead of "the state never got there"). The scripted-fake test's
+catch-up says why running out of time there is tolerated. Nine more
+sleeps became windows with their reason beside them; two propagation
+sleeps stay, in the embedded client (a failed dial leaves nothing to
+wait on) and the scripted-fake comparison (extras past the recording
+are allowed, so nothing is asserted on them). The in-source test loops
+that already carry a deadline (a channel filling, a marker file, a
+pairing retry) are left as they are.
+
 2026-10-02 — **The daemon's and the agent's suites wait through the one wait.**
 The daemon's seven suites and the agent's five: their `until` copies,
 the supervisor fixture's four poll loops, the agent fixture's `wait`,

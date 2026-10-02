@@ -148,7 +148,18 @@ async fn until(host: &mut Host, chat: &Chat, what: &str, check: impl Fn(&Chat) -
         }
     })
     .await;
-    found.unwrap_or_else(|_| panic!("never saw {what}"));
+    if found.is_err() {
+        let keys = chat.keys();
+        let rows: Vec<String> = chat
+            .rows_for(&keys, &RowOptions::default())
+            .iter()
+            .map(|row| format!("{:?}", row.kind))
+            .collect();
+        panic!(
+            "never saw {what}; caught up {}, rows: {rows:?}",
+            chat.frame().caught_up
+        );
+    }
 }
 
 fn says(chat: &Chat, wanted: &str) -> bool {

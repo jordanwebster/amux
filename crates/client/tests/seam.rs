@@ -179,15 +179,14 @@ async fn a_socket_client_says_transport_while_its_daemon_is_down_and_redials_aft
         Ok(_) => panic!("nothing answers while the daemon is down"),
     }
     net.restart_daemon("desk").await.unwrap();
-    tokio::time::timeout(PATIENCE, async {
-        loop {
-            if client.subscribe_inventory().await.is_ok() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+    patience::until("the same client to redial the restarted daemon", || async {
+        client
+            .subscribe_inventory()
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     })
     .await
-    .expect("the same client redials the restarted daemon");
+    .unwrap();
     net.shutdown().await.unwrap();
 }

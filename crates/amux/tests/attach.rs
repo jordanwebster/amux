@@ -14,7 +14,7 @@ mod support;
 use provider_fakes::Step;
 use support::desk::{Desk, LONG_GRACE_SECS, say};
 use support::term::Term;
-use support::{chat, client, created_id, line_of, texts, until};
+use support::{chat, client, created_id, line_of, says, until};
 
 /// The leader, Ctrl+A, and its two chords.
 const DETACH: &[u8] = b"\x01d";
@@ -56,11 +56,14 @@ async fn terminal_claude_attaches_twice_takes_keys_and_a_resize_and_detaches() {
     ]);
     desk.run(&["server", "start"]).await;
     let scout = create(&desk, "claude_pty", "scout").await;
-    let mut chats = client(&desk.socket).await;
-    until("the first turn", async || {
-        texts(&chat(&mut chats, &scout).await).contains(&"hello from the agent")
+    let chats = client(&desk.socket).await;
+    until("the first turn", || {
+        let mut chats = chats.clone();
+        let scout = &scout;
+        async move { says(&chat(&mut chats, scout).await, "hello from the agent", 1) }
     })
-    .await;
+    .await
+    .unwrap();
 
     say("$ amux attach scout");
     let mut first = Term::attach(&desk, "scout", 30, 100);
@@ -97,11 +100,14 @@ async fn codex_attaches_in_stream_mode_and_the_fleet_returns_to_the_same_view() 
     let desk = desk(vec![text("codex was here"), Step::TurnEnd]);
     desk.run(&["server", "start"]).await;
     let coder = create(&desk, "codex", "coder").await;
-    let mut chats = client(&desk.socket).await;
-    until("the codex turn", async || {
-        texts(&chat(&mut chats, &coder).await).contains(&"codex was here")
+    let chats = client(&desk.socket).await;
+    until("the codex turn", || {
+        let mut chats = chats.clone();
+        let coder = &coder;
+        async move { says(&chat(&mut chats, coder).await, "codex was here", 1) }
     })
-    .await;
+    .await
+    .unwrap();
 
     say("$ amux attach coder");
     let mut term = Term::attach(&desk, "coder", 30, 100);

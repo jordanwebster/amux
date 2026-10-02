@@ -16,10 +16,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use agent::attach::Attached;
 use agent::local_socket::{self, LocalStream};
+use patience::{PATIENCE, until};
 use prost::Message as _;
 use provider_fakes::{SCRIPT_ENV, Script, Step};
 use tokio::io::{ReadHalf, WriteHalf};
@@ -29,9 +29,6 @@ use wire::{
     StopMode, claude_pty_input, claude_pty_item, claude_sdk_input, claude_sdk_item, codex_input,
     codex_item, ctl_frame, input, send_input_response,
 };
-
-/// How long any one wait may take before it is a hang.
-const PATIENCE: Duration = Duration::from_secs(30);
 /// Long enough that no deadline fires during a test: the daemon's absence
 /// is survived, never drained.
 const GRACE_MS: u32 = 10 * 60 * 1000;
@@ -143,16 +140,13 @@ impl Fixture {
 
     async fn dial(&self) -> Daemon {
         let path = self.dir.join(agent::CTL_SOCK);
-        let stream = tokio::time::timeout(PATIENCE, async {
-            loop {
-                if let Ok(stream) = local_socket::connect(&path).await {
-                    return stream;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+        let stream = until("ctl.sock to accept a connection", || async {
+            local_socket::connect(&path)
+                .await
+                .map_err(|error| error.to_string())
         })
         .await
-        .expect("ctl.sock accepts a connection");
+        .unwrap();
         let (mut reader, writer) = tokio::io::split(stream);
         let hello = match next_frame(&mut reader).await.of {
             Some(ctl_frame::Of::Hello(hello)) => hello,
@@ -184,19 +178,20 @@ impl Fixture {
         Log(self.journal().0)
     }
 
+    /// Waits until what the agent journaled satisfies `done`. A timeout
+    /// shows the journal's boundaries and the agent's logs.
     async fn wait(&self, what: &str, done: impl Fn(&Log) -> bool) {
-        let waited = tokio::time::timeout(PATIENCE, async {
-            while !done(&self.log()) {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
+        let waited = until(what, || {
+            std::future::ready(done(&self.log()).then_some(()).ok_or("not yet"))
         })
         .await;
-        assert!(
-            waited.is_ok(),
-            "timed out waiting for {what}; boundaries {:?}\nagent logs:\n{}",
-            self.log().boundaries(),
-            self.agent_logs()
-        );
+        if let Err(stuck) = waited {
+            panic!(
+                "{stuck}\nboundaries {:?}\nagent logs:\n{}",
+                self.log().boundaries(),
+                self.agent_logs()
+            );
+        }
     }
 
     fn agent_logs(&self) -> String {
@@ -244,16 +239,11 @@ impl Fixture {
 }
 
 async fn exits(child: &mut Child) -> std::process::ExitStatus {
-    tokio::time::timeout(PATIENCE, async {
-        loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                return status;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    until("the agent process to exit", || {
+        std::future::ready(child.try_wait().unwrap().ok_or("still running"))
     })
     .await
-    .expect("the agent process exits")
+    .unwrap()
 }
 
 async fn next_frame(reader: &mut ReadHalf<LocalStream>) -> CtlFrame {
@@ -536,13 +526,15 @@ async fn life_of_an_agent(kind: &'static str) {
     // group is the agent process this test started as its leader.
     assert_eq!(unsafe { libc::kill(-group, libc::SIGKILL) }, 0);
     assert!(!exits(&mut process).await.success());
-    let waited = tokio::time::timeout(PATIENCE, async {
-        while agent.anything_running() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    until("every process of the killed agent to go", || {
+        std::future::ready(
+            (!agent.anything_running())
+                .then_some(())
+                .ok_or("one lives on"),
+        )
     })
-    .await;
-    assert!(waited.is_ok(), "a process of the killed agent lives on");
+    .await
+    .unwrap();
     agent.assert_released();
 
     // The next incarnation records the end the killed one never wrote.

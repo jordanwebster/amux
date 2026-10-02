@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+use patience::until_within;
 use provider_fakes::playback::{self, Channel, Process};
 use provider_fakes::{Kind, SCRIPT_ENV};
 use serde_json::{Value, json};
@@ -450,11 +451,23 @@ async fn terminal(scenario: &Scenario) -> Result<(), String> {
             })
             .collect()
     };
+    // Gives the fake up to SYNC to reach the recording's row and hook
+    // counts before the next input. A recording may hold rows the fake
+    // never writes (a queued prompt's fold, say), so running out of time
+    // here is not the failure: the comparison at the end is the judge, and
+    // this only makes sure it is not comparing too early.
     let catch_up = async |rows: usize, hooks: usize| {
-        let until = Instant::now() + SYNC;
-        while (fake_rows().len() < rows || fake_hooks().len() < hooks) && Instant::now() < until {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        let _ = until_within("the fake to catch up with the recording", SYNC, || {
+            let (have_rows, have_hooks) = (fake_rows().len(), fake_hooks().len());
+            std::future::ready(if have_rows >= rows && have_hooks >= hooks {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{have_rows} of {rows} rows, {have_hooks} of {hooks} hooks"
+                ))
+            })
+        })
+        .await;
     };
     let mut rows = Vec::new();
     let mut hooks = Vec::new();
@@ -489,7 +502,9 @@ async fn terminal(scenario: &Scenario) -> Result<(), String> {
     }
     catch_up(rows.len(), hooks.len()).await;
     // Anything the fake would still write at this point is past the
-    // recording; give it the moment it needs to show.
+    // recording, and the fake may write more than it (a queued prompt's
+    // fold): the comparison below allows extras, so nothing is asserted on
+    // them. A propagation sleep, so a mismatch report shows them.
     tokio::time::sleep(Duration::from_millis(300)).await;
     let (fake_rows, fake_hooks) = (fake_rows(), fake_hooks());
     let _ = handle.signal_process_group(pty_host::ProcessGroupSignal::Kill);

@@ -16,6 +16,7 @@ use std::process::{Output, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use patience::{PATIENCE, holds_for, until, until_within};
 use provider_fakes::{SCRIPT_ENV, Script, Step};
 use tokio::io::AsyncBufReadExt as _;
 use tokio::process::{Child, Command};
@@ -23,9 +24,6 @@ use tonic::transport::{Channel, Endpoint};
 use wire::client_service_client::ClientServiceClient;
 use wire::profile_service_client::ProfileServiceClient;
 use wire::{ListProfilesRequest, SubscribeRequest, session_event, subscribe_request};
-
-/// How long any one wait may take before it is a hang.
-const PATIENCE: Duration = Duration::from_secs(30);
 /// How long agents outlive their daemon. Long enough to restart a daemon
 /// under them in a test, short enough to wait out when a test wants them
 /// gone.
@@ -167,10 +165,11 @@ impl Install {
             .spawn()
             .expect("the daemon starts");
         self.daemon = Some(child);
-        until("the front door answers", async || {
-            self.front_door().await.is_some()
+        until("the front door answers", || async {
+            self.front_door().await.map(|_| ()).ok_or("no front door")
         })
-        .await;
+        .await
+        .unwrap();
     }
 
     /// SIGKILLs the daemon: no clean shutdown, no chance to tell anyone.
@@ -240,22 +239,6 @@ async fn channel(path: &Path) -> std::io::Result<Channel> {
         }))
         .await
         .map_err(std::io::Error::other)
-}
-
-/// Waits until `done` holds; fails the test after `patience`.
-async fn until_within(what: &str, patience: Duration, mut done: impl AsyncFnMut() -> bool) {
-    let deadline = tokio::time::Instant::now() + patience;
-    while !done().await {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-async fn until(what: &str, done: impl AsyncFnMut() -> bool) {
-    until_within(what, PATIENCE, done).await;
 }
 
 /// An agent's chat as a client opening it reads it: every item's key and
@@ -389,12 +372,20 @@ async fn a_daemon_killed_mid_turn_loses_nothing() {
             ])
             .await,
     );
-    let mut client = install.client().await;
+    let client = install.client().await;
     for agent in [&sdk, &codex] {
-        until("both agents are mid-turn", async || {
-            texts(&chat(&mut client, agent).await).contains(&"started")
+        until("both agents are mid-turn", || {
+            let mut client = client.clone();
+            async move {
+                let chat = chat(&mut client, agent).await;
+                texts(&chat)
+                    .contains(&"started")
+                    .then_some(())
+                    .ok_or_else(|| format!("chat: {chat:?}"))
+            }
         })
-        .await;
+        .await
+        .unwrap();
     }
     assert!(line_of(&install.ok(&["ls"]).await, "sdk").contains("working"));
 
@@ -405,10 +396,14 @@ async fn a_daemon_killed_mid_turn_loses_nothing() {
     std::fs::write(&gate, b"").unwrap();
     for agent in [&sdk, &codex] {
         let dir = install.agent_dir(agent);
-        until("each agent finishes its turn with no daemon", async || {
-            turns_journaled(&dir) == 1
+        until("each agent finishes its turn with no daemon", || async {
+            let turns = turns_journaled(&dir);
+            (turns == 1)
+                .then_some(())
+                .ok_or_else(|| format!("{turns} turns journaled"))
         })
-        .await;
+        .await
+        .unwrap();
         assert!(agent_dir::locked(&dir), "the agent is still running");
     }
 
@@ -441,10 +436,18 @@ async fn a_daemon_killed_mid_turn_loses_nothing() {
     install.ok(&["stop", "sdk", "--mode", "graceful"]).await;
     assert!(line_of(&install.ok(&["ls"]).await, "sdk").contains("exited: stopped"));
     install.ok(&["resume", "sdk", "second", "task"]).await;
-    until("the resumed agent finishes its second turn", async || {
-        count(&chat(&mut client, &sdk).await, "finished") == 2
+    until("the resumed agent finishes its second turn", || {
+        let mut client = client.clone();
+        let sdk = &sdk;
+        async move {
+            let chat = chat(&mut client, sdk).await;
+            (count(&chat, "finished") == 2)
+                .then_some(())
+                .ok_or_else(|| format!("chat: {chat:?}"))
+        }
     })
-    .await;
+    .await
+    .unwrap();
     let after = chat(&mut client, &sdk).await;
     for item in &before["sdk"] {
         assert!(after.contains(item), "{item:?} survives the resume");
@@ -458,9 +461,14 @@ async fn a_daemon_killed_mid_turn_loses_nothing() {
     until_within(
         "codex drains and exits once its grace runs out",
         Duration::from_secs(GRACE_SECS) + PATIENCE,
-        async || !agent_dir::locked(&codex_dir),
+        || async {
+            (!agent_dir::locked(&codex_dir))
+                .then_some(())
+                .ok_or("the directory is still locked")
+        },
     )
-    .await;
+    .await
+    .unwrap();
     install.run_daemon().await;
     let mut client = install.client().await;
     assert!(
@@ -474,11 +482,18 @@ async fn a_daemon_killed_mid_turn_loses_nothing() {
         );
     }
     install.ok(&["resume", "codex", "second", "task"]).await;
-    until(
-        "the resumed codex agent finishes its second turn",
-        async || count(&chat(&mut client, &codex).await, "finished") == 2,
-    )
-    .await;
+    until("the resumed codex agent finishes its second turn", || {
+        let mut client = client.clone();
+        let codex = &codex;
+        async move {
+            let chat = chat(&mut client, codex).await;
+            (count(&chat, "finished") == 2)
+                .then_some(())
+                .ok_or_else(|| format!("chat: {chat:?}"))
+        }
+    })
+    .await
+    .unwrap();
     let after = chat(&mut client, &codex).await;
     for item in &before["codex"] {
         assert!(after.contains(item), "{item:?} survives the resume");
@@ -515,11 +530,12 @@ async fn the_cli_verbs_work_against_a_started_daemon() {
         line.contains("no supervisor") && line.contains("service manager"),
         "{line}"
     );
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(
-        install.front_door().await.is_none(),
-        "the waiting client started no daemon"
-    );
+    // A window: a daemon that must not start leaves no mark to wait on.
+    holds_for("no daemon started", Duration::from_millis(500), || async {
+        install.front_door().await.is_none()
+    })
+    .await
+    .expect("the waiting client started no daemon");
 
     // `amux server start` runs the startup path detached, and the waiting
     // client carries on once it answers.
@@ -546,18 +562,25 @@ async fn the_cli_verbs_work_against_a_started_daemon() {
             .ok(&["create", "claude_sdk", "--name", "helper", "--cwd", &work])
             .await,
     );
-    let mut client = install.client().await;
+    let client = install.client().await;
     assert!(
         install
             .ok(&["send", "helper", "hello", "there"])
             .await
             .contains("Sent")
     );
-    until("the prompt and its answer are in the chat", async || {
-        let chat = chat(&mut client, &helper).await;
-        count(&chat, "hello there") == 1 && count(&chat, "finished") == 1
+    until("the prompt and its answer are in the chat", || {
+        let mut client = client.clone();
+        let helper = &helper;
+        async move {
+            let chat = chat(&mut client, helper).await;
+            (count(&chat, "hello there") == 1 && count(&chat, "finished") == 1)
+                .then_some(())
+                .ok_or_else(|| format!("chat: {chat:?}"))
+        }
     })
-    .await;
+    .await
+    .unwrap();
 
     install.ok(&["rename", "helper", "aide"]).await;
     let listing = install.ok(&["ls"]).await;

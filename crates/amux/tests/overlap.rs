@@ -20,7 +20,7 @@ use provider_fakes::Step;
 use support::desk::{Desk, LONG_GRACE_SECS, lock_held, say};
 use support::term::Term;
 use support::{
-    Channel, amux_binary, chat, client, count, created_id, gated_turn, texts, turns_journaled,
+    Channel, amux_binary, chat, client, count, created_id, gated_turn, says, texts, turns_ended,
     until,
 };
 
@@ -84,10 +84,11 @@ async fn agents_of_the_previous_build_work_on_after_an_update() {
     let mut pids = BTreeMap::new();
     for (name, id) in &agents {
         let dir = desk.agent_dir(id);
-        until(&format!("{name} finishes its first turn"), async || {
-            turns_journaled(&dir) == 1
+        until(&format!("{name} finishes its first turn"), || async {
+            turns_ended(&dir, 1)
         })
-        .await;
+        .await
+        .unwrap();
         pids.insert(*name, agent_pid(&dir).expect("the agent runs"));
     }
 
@@ -98,7 +99,7 @@ async fn agents_of_the_previous_build_work_on_after_an_update() {
         "{updated}"
     );
 
-    let mut chats = client(&desk.socket).await;
+    let chats = client(&desk.socket).await;
     for (name, id) in &agents {
         let pid = agent_pid(&desk.agent_dir(id));
         assert_eq!(
@@ -109,9 +110,13 @@ async fn agents_of_the_previous_build_work_on_after_an_update() {
         desk.run(&["send", name, "second", "task"]).await;
         until(
             &format!("{name} finishes a turn under the new daemon"),
-            async || count(&chat(&mut chats, id).await, "finished") == 2,
+            || {
+                let mut chats = chats.clone();
+                async move { says(&chat(&mut chats, id).await, "finished", 2) }
+            },
         )
-        .await;
+        .await
+        .unwrap();
     }
     for name in agents.keys() {
         desk.run(&["stop", name, "--mode", "kill"]).await;
@@ -248,7 +253,9 @@ async fn the_previous_build_reopens_a_store_the_new_one_migrated_before_prepared
             .await,
     );
     let dir = desk.agent_dir(&agent);
-    until("the first turn ends", async || turns_journaled(&dir) == 1).await;
+    until("the first turn ends", || async { turns_ended(&dir, 1) })
+        .await
+        .unwrap();
     desk.run(&["stop", "headless"]).await;
     desk.run(&["server", "stop"]).await;
 
@@ -302,10 +309,13 @@ async fn the_previous_build_reopens_a_store_the_new_one_migrated_before_prepared
     let before = chat(&mut chats, &agent).await;
     assert_eq!(count(&before, "finished"), 1, "{:?}", texts(&before));
     desk.run(&["resume", "headless", "second", "task"]).await;
-    until("the previous build finishes a new turn", async || {
-        count(&chat(&mut chats, &agent).await, "finished") == 2
+    until("the previous build finishes a new turn", || {
+        let mut chats = chats.clone();
+        let agent = &agent;
+        async move { says(&chat(&mut chats, agent).await, "finished", 2) }
     })
-    .await;
+    .await
+    .unwrap();
     let after = chat(&mut chats, &agent).await;
     for item in &before {
         assert!(after.contains(item), "{item:?} is still in the store");
@@ -402,10 +412,13 @@ async fn restarting_the_launch_agent_leaves_the_agent_running() {
         .status()
         .unwrap();
     assert!(status.success(), "launchctl kickstart failed");
-    until("launchd's amux answers", async || {
-        std::os::unix::net::UnixStream::connect(&desk.socket).is_ok()
+    until("launchd's amux answers", || async {
+        std::os::unix::net::UnixStream::connect(&desk.socket)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     })
-    .await;
+    .await
+    .unwrap();
     let supervisor = desk
         .supervisor_pid()
         .expect("launchd started amux supervise");
@@ -424,11 +437,14 @@ async fn restarting_the_launch_agent_leaves_the_agent_running() {
             ])
             .await,
     );
-    let mut chats = client(&desk.socket).await;
-    until("the agent is mid-turn", async || {
-        texts(&chat(&mut chats, &agent).await).contains(&"started")
+    let chats = client(&desk.socket).await;
+    until("the agent is mid-turn", || {
+        let mut chats = chats.clone();
+        let agent = &agent;
+        async move { says(&chat(&mut chats, agent).await, "started", 1) }
     })
-    .await;
+    .await
+    .unwrap();
     let dir = desk.agent_dir(&agent);
     let pid = agent_pid(&dir).expect("the agent runs");
 
@@ -437,10 +453,14 @@ async fn restarting_the_launch_agent_leaves_the_agent_running() {
         .status()
         .unwrap();
     assert!(status.success(), "launchctl kickstart failed");
-    until("launchd restarts amux supervise", async || {
-        desk.supervisor_pid().is_some_and(|now| now != supervisor)
+    until("launchd restarts amux supervise", || async {
+        let now = desk.supervisor_pid();
+        now.is_some_and(|now| now != supervisor)
+            .then_some(())
+            .ok_or_else(|| format!("supervisor pid {now:?}, was {supervisor}"))
     })
-    .await;
+    .await
+    .unwrap();
     say(format!(
         "-- launchctl kickstart -k restarted amux supervise (pid {supervisor} -> {}) mid-turn",
         desk.supervisor_pid().unwrap()
@@ -449,15 +469,21 @@ async fn restarting_the_launch_agent_leaves_the_agent_running() {
     assert_eq!(agent_pid(&dir), Some(pid), "the same agent process");
 
     std::fs::write(&gate, b"").unwrap();
-    until("the daemon answers again", async || {
-        std::os::unix::net::UnixStream::connect(&desk.socket).is_ok()
+    until("the daemon answers again", || async {
+        std::os::unix::net::UnixStream::connect(&desk.socket)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     })
-    .await;
-    let mut chats = client(&desk.socket).await;
-    until("the turn finishes into the store", async || {
-        count(&chat(&mut chats, &agent).await, "finished") == 1
+    .await
+    .unwrap();
+    let chats = client(&desk.socket).await;
+    until("the turn finishes into the store", || {
+        let mut chats = chats.clone();
+        let agent = &agent;
+        async move { says(&chat(&mut chats, agent).await, "finished", 1) }
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(agent_pid(&dir), Some(pid));
     desk.run(&["stop", "headless", "--mode", "kill"]).await;
 }

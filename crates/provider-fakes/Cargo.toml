@@ -31,3 +31,6 @@ path = "src/bin/fake_claude_pty.rs"
 [[bin]]
 name = "fake-codex"
 path = "src/bin/fake_codex.rs"
+
+[dev-dependencies]
+patience = { workspace = true }

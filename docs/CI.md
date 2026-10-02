@@ -159,6 +159,21 @@ gh run list --workflow test-repeat.yml --branch <branch>
 gh run view <run-id> --log-failed
 ```
 
+### Waiting
+
+A timing race in a test is a wait on a proxy for "done": a row visible, an
+agent idle, text present, asserted on a neighbour that lands a moment
+later. Tests wait instead on what the runtime reports in its own terms,
+through one shared wait (the `patience` crate: `until`, a probe that
+answers what it found or what it saw instead, and a missed deadline that
+reports the last answer) and, across daemons, testnet's fences on a host's
+cursors ([testnet](TESTNET.md), "Fences"). Fixtures that know more show it
+under the wait's report: a terminal's screen, an agent's journal, a
+supervisor's log. The exception is `holds_for`, a window of real time for
+asserting that something does not happen when nothing the test controls
+gates it; every window carries a comment saying why time is the only
+witness, and a new one is a design question, not a default.
+
 ## Lanes
 
 Each suite in [`tests/catalog.toml`](../tests/catalog.toml) names a lane:

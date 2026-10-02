@@ -4,11 +4,14 @@
 
 #![cfg(unix)]
 
+mod support;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use client::{Client, GrpcClient, InProcess, SystemClock};
 use provider_fakes::script::Step;
+use support::until_within;
 use testnet::{AgentDecl, FakeKind, Net, Topology};
 use ui_runtime::{Fleet, Session};
 use ui_state::{Connection, InputState};
@@ -53,23 +56,6 @@ async fn grpc(net: &Net) -> GrpcClient {
     GrpcClient::connect(profiles[0].socket_path.as_ref())
         .await
         .expect("the profile socket answers")
-}
-
-async fn until<T>(
-    what: &str,
-    mut changed: tokio::sync::watch::Receiver<()>,
-    mut check: impl FnMut() -> Option<T>,
-) -> T {
-    tokio::time::timeout(PATIENCE, async {
-        loop {
-            if let Some(found) = check() {
-                return found;
-            }
-            changed.changed().await.expect("the driver is open");
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("never saw {what}"))
 }
 
 fn says(session: &Session, wanted: &str) -> bool {
@@ -132,7 +118,7 @@ async fn drive(client: Arc<dyn Client>, net: &Net) {
     let session = Session::open(client, agent, 2, CAP, SystemClock)
         .await
         .unwrap();
-    until("the first turn", session.changed(), || {
+    until_within(PATIENCE, session.changed(), || {
         (session.state().caught_up() && says(&session, "turn one")).then_some(())
     })
     .await;
@@ -140,17 +126,17 @@ async fn drive(client: Arc<dyn Client>, net: &Net) {
         let sent = session
             .send_prompt(&format!("next {turn}"), Vec::new())
             .await;
-        until("the prompt to settle", session.changed(), || {
+        until_within(PATIENCE, session.changed(), || {
             (session.state().input_state(&sent.id) == Some(InputState::Settled)).then_some(())
         })
         .await;
-        until("the turn's reply", session.changed(), || {
+        until_within(PATIENCE, session.changed(), || {
             says(&session, &format!("turn {turn}")).then_some(())
         })
         .await;
     }
     let sent = session.send_prompt("and now?", Vec::new()).await;
-    until("the reply to the session", session.changed(), || {
+    until_within(PATIENCE, session.changed(), || {
         (says(&session, "reply to the session")
             && session.state().input_state(&sent.id) == Some(InputState::Settled))
         .then_some(())
@@ -215,32 +201,32 @@ async fn a_session_over_the_socket_reconnects_across_a_daemon_restart() {
     let session = Session::open(client, agent, 40, CAP, SystemClock)
         .await
         .unwrap();
-    until("the first turn", session.changed(), || {
+    until_within(PATIENCE, session.changed(), || {
         (session.state().caught_up() && says(&session, "before")).then_some(())
     })
     .await;
 
     net.kill_daemon("desk").await.unwrap();
-    until("the session to notice", session.changed(), || {
+    until_within(PATIENCE, session.changed(), || {
         (session.state().connection() == Connection::Reconnecting).then_some(())
     })
     .await;
-    until("the fleet to notice", fleet.changed(), || {
+    until_within(PATIENCE, fleet.changed(), || {
         (fleet.state().connection() == Connection::Reconnecting).then_some(())
     })
     .await;
     net.restart_daemon("desk").await.unwrap();
-    until("the session to catch up again", session.changed(), || {
+    until_within(PATIENCE, session.changed(), || {
         let state = session.state();
         (state.connection() == Connection::Live && state.caught_up()).then_some(())
     })
     .await;
-    until("the fleet to catch up again", fleet.changed(), || {
+    until_within(PATIENCE, fleet.changed(), || {
         (fleet.state().caught_up() && fleet.state().find(worker.as_bytes()).is_some()).then_some(())
     })
     .await;
     let sent = session.send_prompt("still there?", Vec::new()).await;
-    until("the reply after the restart", session.changed(), || {
+    until_within(PATIENCE, session.changed(), || {
         (says(&session, "after the restart")
             && session.state().input_state(&sent.id) == Some(InputState::Settled))
         .then_some(())
