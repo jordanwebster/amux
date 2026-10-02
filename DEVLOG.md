@@ -1,3 +1,16 @@
+2026-10-02 — **The testnet suites wait on cursors, through the one wait.**
+Seven suites, about 220 wait sites: the two copies of `until` and the
+per-suite `wait_current`, `wait_replica_current` and `eventually` are
+gone. Replica waits are `Net::current`; every other wait is `until`
+with a probe that answers what it saw, so a timeout names the state
+instead of the wish. The sleeps went three ways: a dial that must be
+refused waits on its stored error; a timer that must not have fired
+(a source's backoff, a credential refresh) waits on its deadline armed
+on the policy clock; and the rest are `holds_for` windows with a
+comment saying why time is the only witness (a second link that must
+not open). One propagation sleep remains in the families spec, where
+a hand-off in flight to a frozen agent leaves no mark to wait on.
+
 2026-10-02 — **Fences: a test waits on the host's own cursors.**
 The hand-rolled waits that flaked in CI each picked a proxy for "done"
 and asserted on a neighbour that landed a moment later. testnet now

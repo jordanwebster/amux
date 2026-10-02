@@ -146,6 +146,11 @@ there by the host's account: a turn's end, an input's reflecting row, a row at a
 return the moment the write lands and never infer from time; `current` reads two hosts and looks again every
 poll. A missed deadline reports what the host last held.
 
+**Windows** are the exception. A test that must show something does *not* happen waits on the outcome of the
+thing that must have no effect (an input's rejection, a dial's stored error, a tick's re-armed deadline) and then
+asserts the absence. Only when nothing the test controls gates it, such as a purchase the runtime has not asked
+about yet, does `holds_for` hold a window of real time, and each such window says so in a comment beside it.
+
 **Observations** wait for consequences and return what they saw. `observe(host, agent, tail)` opens a Subscribe
 stream as a client would and records it; `observe_inventory(host)` does the same for the inventory. Their
 `observe_until(predicate, deadline)` passes only when the predicate holds: it fails with `Stuck::Deadline` when

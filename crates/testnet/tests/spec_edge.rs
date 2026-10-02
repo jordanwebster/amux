@@ -15,7 +15,7 @@ use std::time::Duration;
 use hyper_util::rt::TokioIo;
 use node::Edge;
 use node::harness::{HostVia, Tier};
-use testnet::{ClockMode, HostDecl, Net, NetOptions, PATIENCE, Relay, TierDecl, Topology};
+use testnet::{ClockMode, HostDecl, Net, NetOptions, PATIENCE, Relay, TierDecl, Topology, until};
 use tonic::transport::{Channel, Endpoint};
 use uuid::Uuid;
 use wire::profile_service_client::ProfileServiceClient;
@@ -89,21 +89,42 @@ fn host_ref(host: Uuid) -> Option<PeerRef> {
     })
 }
 
-/// Polls `check` until it holds, failing the test after the patience runs
-/// out with `what` it was waiting for.
-async fn until<F, Fut>(what: &str, mut check: F)
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    let deadline = tokio::time::Instant::now() + PATIENCE;
-    while !check().await {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+/// Waits for the outcome of `host`'s dial to `to`: the error it stored,
+/// which a route coming up would clear. The dial has failed, and nothing
+/// about the link is still in flight.
+async fn dial_failed(net: &Net, host: &str, to: Uuid) -> String {
+    until(&format!("{host}'s dial to fail"), || async {
+        edge(net, host)
+            .last_dial_error(to)
+            .await
+            .ok_or("no dial error stored")
+    })
+    .await
+    .unwrap()
+}
+
+/// Waits until a policy timer is armed for exactly `at_ms`: the step that
+/// arms it is complete and it has not fired. Policy time stands still, so
+/// the deadline is exact.
+async fn armed(net: &Net, at_ms: i64) {
+    tokio::time::timeout(PATIENCE, net.clock().unwrap().armed(at_ms))
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "nothing armed at {at_ms}; sleeping: {:?}",
+                net.clock().unwrap().sleeping()
+            )
+        });
+}
+
+/// The free tier's refresh interval the signed-in net sets, short enough
+/// to step past.
+const FREE_REFRESH: Duration = Duration::from_secs(60);
+
+/// How long a Pro link waits after a fresh credential before refreshing:
+/// five minutes before the credential expires.
+fn pro_refresh_ms() -> i64 {
+    (testnet::CREDENTIAL_TTL - Duration::from_secs(5 * 60)).as_millis() as i64
 }
 
 /// Reads a peer's inventory to its CaughtUp and returns the hosts it named.
@@ -207,12 +228,15 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
 
     // Discovery lists only the machines in this network's scope.
     until("the laptop in the desk's candidates", || async {
-        edge(&net, "desk")
-            .candidates()
+        let candidates = edge(&net, "desk").candidates();
+        candidates
             .iter()
             .any(|advert| advert.host_id == laptop_id)
+            .then_some(())
+            .ok_or_else(|| format!("candidates: {candidates:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     let desk_candidates = edge(&net, "desk")
         .candidates()
         .into_iter()
@@ -251,14 +275,24 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
 
     // Both sides now trust each other, and the laptop dialled the desk.
     until("the desk to trust the laptop", || async {
-        edge(&net, "desk").is_trusted(laptop_id)
+        edge(&net, "desk")
+            .is_trusted(laptop_id)
+            .then_some(())
+            .ok_or("not trusted")
     })
-    .await;
+    .await
+    .unwrap();
     until("a direct link both ways", || async {
-        edge(&net, "desk").via(laptop_id).await == HostVia::Direct
-            && edge(&net, "laptop").via(desk_id).await == HostVia::Direct
+        let via = (
+            edge(&net, "desk").via(laptop_id).await,
+            edge(&net, "laptop").via(desk_id).await,
+        );
+        (via == (HostVia::Direct, HostVia::Direct))
+            .then_some(())
+            .ok_or_else(|| format!("desk -> laptop, laptop -> desk: {via:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     let desk_peers = door(&net, "desk")
         .await
         .list_peers(ProfileRequest {
@@ -319,9 +353,10 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         .await
         .unwrap();
     edge(&net, "stranger").dial(desk_id, edge(&net, "desk").lan_addr().unwrap());
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    let refused = dial_failed(&net, "stranger", desk_id).await;
     assert_eq!(edge(&net, "desk").via(stranger_id).await, HostVia::Offline);
     assert_eq!(edge(&net, "stranger").via(desk_id).await, HostVia::Offline);
+    println!("the stranger's dial was refused: {refused}");
     let desk_addr = edge(&net, "desk").lan_addr().unwrap();
     let outside_pairing = match edge(&net, "stranger").unpinned_channel(desk_addr).await {
         Ok(channel) => wire::peer_service_client(channel)
@@ -389,10 +424,16 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         .unwrap();
     assert_eq!(removed.name, "laptop");
     until("the link to close both ways", || async {
-        edge(&net, "desk").via(laptop_id).await == HostVia::Offline
-            && edge(&net, "laptop").via(desk_id).await == HostVia::Offline
+        let via = (
+            edge(&net, "desk").via(laptop_id).await,
+            edge(&net, "laptop").via(desk_id).await,
+        );
+        (via == (HostVia::Offline, HostVia::Offline))
+            .then_some(())
+            .ok_or_else(|| format!("desk -> laptop, laptop -> desk: {via:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     let gone = door(&net, "desk")
         .await
         .get_peer(ProfileGetPeerRequest {
@@ -403,9 +444,9 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         .expect_err("an unpaired host is no peer");
     assert_eq!(gone.code(), tonic::Code::NotFound);
     edge(&net, "laptop").dial(desk_id, edge(&net, "desk").lan_addr().unwrap());
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    let refused = dial_failed(&net, "laptop", desk_id).await;
     assert_eq!(edge(&net, "desk").via(laptop_id).await, HostVia::Offline);
-    println!("desk unpaired the laptop; its redial is refused");
+    println!("desk unpaired the laptop; its redial is refused: {refused}");
 
     net.shutdown().await.unwrap();
 }
@@ -431,10 +472,16 @@ async fn trusted_edges_link_in_process_until_the_link_is_severed() {
         .link_in_process(&edge(&net, "two"))
         .unwrap();
     until("the in-process link", || async {
-        edge(&net, "one").via(two_id).await == HostVia::Direct
-            && edge(&net, "two").via(one_id).await == HostVia::Direct
+        let via = (
+            edge(&net, "one").via(two_id).await,
+            edge(&net, "two").via(one_id).await,
+        );
+        (via == (HostVia::Direct, HostVia::Direct))
+            .then_some(())
+            .ok_or_else(|| format!("one -> two, two -> one: {via:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     assert!(
         peer_inventory_hosts(&edge(&net, "two"), one_id)
             .await
@@ -443,10 +490,16 @@ async fn trusted_edges_link_in_process_until_the_link_is_severed() {
 
     link.sever();
     until("the severed link to leave both hosts", || async {
-        edge(&net, "one").via(two_id).await == HostVia::Offline
-            && edge(&net, "two").via(one_id).await == HostVia::Offline
+        let via = (
+            edge(&net, "one").via(two_id).await,
+            edge(&net, "two").via(one_id).await,
+        );
+        (via == (HostVia::Offline, HostVia::Offline))
+            .then_some(())
+            .ok_or_else(|| format!("one -> two, two -> one: {via:?}"))
     })
-    .await;
+    .await
+    .unwrap();
 
     net.shutdown().await.unwrap();
 }
@@ -462,7 +515,7 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         NetOptions {
             clock: ClockMode::Driven,
             edge: Some(Arc::new(|_, edge| {
-                edge.cloud.free_refresh_interval = Some(Duration::from_secs(60));
+                edge.cloud.free_refresh_interval = Some(FREE_REFRESH);
             })),
             ..NetOptions::default()
         },
@@ -491,23 +544,32 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
 
     until("the cloud link to connect", || async {
         let info = info(&net, "desk").await;
-        info.observed == wire::Observed::Connected as i32 && info.tier == wire::Tier::Free as i32
+        (info.observed == wire::Observed::Connected as i32 && info.tier == wire::Tier::Free as i32)
+            .then_some(())
+            .ok_or_else(|| format!("observed {}, tier {}", info.observed, info.tier))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(relay.links("ada").await, vec![(host_id, 1)]);
     assert_eq!(relay.connects().len(), 1);
     println!("bound as Ada; connected to the relay on the free tier");
 
     // The account buys Pro. Nothing happens until the runtime's clock
-    // reaches the free tier's refresh interval.
+    // reaches the free tier's refresh interval this net sets to a minute:
+    // the refresh is armed on the policy clock, which has not moved since
+    // the link connected, and has not fired.
     relay.set_tier("ada", Tier::Pro);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    armed(&net, net.now_ms() + FREE_REFRESH.as_millis() as i64).await;
     assert_eq!(relay.connects().len(), 1);
     net.advance(Duration::from_secs(60)).unwrap();
     until("the refreshed credential to carry the new tier", || async {
-        info(&net, "desk").await.tier == wire::Tier::Pro as i32
+        let tier = info(&net, "desk").await.tier;
+        (tier == wire::Tier::Pro as i32)
+            .then_some(())
+            .ok_or_else(|| format!("tier {tier}"))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(relay.connects().len(), 2);
     assert_eq!(
         relay.presented().as_slice(),
@@ -515,7 +577,9 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         "the relay saw the first credential in Hello and the second in Reauth"
     );
     println!("clock +60s: Reauth with relay-ada-2, tier Pro");
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // On Pro the next refresh is armed five minutes before the fresh
+    // credential expires, so nothing refreshes again at once.
+    armed(&net, net.now_ms() + pro_refresh_ms()).await;
     assert_eq!(
         relay.connects().len(),
         2,
@@ -527,10 +591,15 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
     // lives on a refreshed one.
     net.advance(Duration::from_secs(550)).unwrap();
     until("the Pro credential's refresh before expiry", || async {
-        relay.presented().contains(&"relay-ada-3".to_owned())
+        let presented = relay.presented();
+        presented
+            .contains(&"relay-ada-3".to_owned())
+            .then_some(())
+            .ok_or_else(|| format!("presented: {presented:?}"))
     })
-    .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    .await
+    .unwrap();
+    armed(&net, net.now_ms() + pro_refresh_ms()).await;
     assert_eq!(relay.links("ada").await, vec![(host_id, 1)]);
     assert_eq!(
         info(&net, "desk").await.observed,
@@ -551,9 +620,14 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         .into_inner();
     assert_eq!(paused.intent, wire::Intent::Paused as i32);
     until("the relay link to go with the pause", || async {
-        relay.links("ada").await.is_empty()
+        let links = relay.links("ada").await;
+        links
+            .is_empty()
+            .then_some(())
+            .ok_or_else(|| format!("ada's links: {links:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     door(&net, "desk")
         .await
         .resume_profile(wire::ProfileOperation {
@@ -563,9 +637,13 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         .await
         .unwrap();
     until("the relay link to come back", || async {
-        !relay.links("ada").await.is_empty()
+        let links = relay.links("ada").await;
+        (!links.is_empty())
+            .then_some(())
+            .ok_or_else(|| format!("ada's links: {links:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     let signed_out = door(&net, "desk")
         .await
         .logout_profile(wire::ProfileOperation {
@@ -578,9 +656,14 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
     assert_eq!(signed_out.intent, wire::Intent::LoggedOut as i32);
     assert_eq!(signed_out.email, "ada@example.com");
     until("the relay link to go with the sign-out", || async {
-        relay.links("ada").await.is_empty()
+        let links = relay.links("ada").await;
+        links
+            .is_empty()
+            .then_some(())
+            .ok_or_else(|| format!("ada's links: {links:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     println!("paused, resumed and signed out");
 
     net.shutdown().await.unwrap();

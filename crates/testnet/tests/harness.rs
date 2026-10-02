@@ -16,9 +16,10 @@ use provider_fakes::script::Step;
 use serde_json::{Value, json};
 use store::{Absorb, AgentRow, Store as _};
 use testnet::door::{CAPABILITIES, Control, ErrorKind, Readiness, Reply};
-use testnet::observe::{self, Mark, holds_for};
+use testnet::observe::{self, Mark};
 use testnet::{
     AgentDecl, FakeKind, JournalCut, Net, NetError, PATIENCE, Stuck, Topology, TopologyError,
+    holds_for, until_within,
 };
 use wire::{ClaudeSdkItem, SessionEvent, claude_sdk_item, session_event};
 
@@ -128,11 +129,14 @@ fn a_topology_rejects_unknown_and_duplicate_names_before_anything_starts() {
 #[tokio::test(start_paused = true)]
 async fn the_polling_waiters_fail_on_a_false_a_broken_or_a_hung_check() {
     let deadline = Duration::from_secs(1);
-    let never = observe::eventually("never", deadline, || async { false }).await;
-    assert!(matches!(never, Err(Stuck::Deadline { .. })), "{never:?}");
-    let hung = observe::eventually("hung", deadline, std::future::pending::<bool>).await;
+    let never = until_within("never", deadline, || async { Err::<(), _>("still no") }).await;
+    match &never {
+        Err(Stuck::Deadline { seen, .. }) => assert_eq!(seen, "still no"),
+        other => panic!("{other:?}"),
+    }
+    let hung = until_within("hung", deadline, std::future::pending::<Result<(), String>>).await;
     assert!(matches!(hung, Err(Stuck::Hung { .. })), "{hung:?}");
-    observe::eventually("at once", deadline, || async { true })
+    until_within("at once", deadline, || async { Ok::<_, String>(()) })
         .await
         .unwrap();
 
@@ -180,6 +184,21 @@ async fn a_real_agent_runs_on_each_fake_and_its_stream_opens_with_a_snapshot() {
     net.shutdown().await.unwrap();
 }
 
+/// Waits until both daemons' retention sweeps sleep until `at`.
+async fn sweeps_asleep(clock: &testnet::DrivenClock, at: i64) {
+    testnet::until(&format!("both retention sweeps asleep until {at}"), || {
+        let sleeping = clock.sleeping();
+        async move {
+            let asleep = sleeping.iter().filter(|until| **until == at).count();
+            (asleep == 2)
+                .then_some(())
+                .ok_or_else(|| format!("{asleep} asleep until {at}; sleeping: {sleeping:?}"))
+        }
+    })
+    .await
+    .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn every_daemon_sleeps_its_policy_timers_on_the_driven_clock() {
     let net = Net::start(Topology::new().host("a").host("b"))
@@ -190,30 +209,19 @@ async fn every_daemon_sleeps_its_policy_timers_on_the_driven_clock() {
     let interval = node::Launch::default().retention_interval_ms;
     // Each daemon's retention sweep ran at start and sleeps one interval on
     // the driven clock; wall time passing wakes neither.
-    observe::eventually("both retention sweeps asleep", PATIENCE, || {
-        let asleep = clock
-            .sleeping()
-            .iter()
-            .filter(|at| **at == start + interval)
-            .count();
-        async move { asleep == 2 }
-    })
+    sweeps_asleep(&clock, start + interval).await;
+    // A window: nothing gates the wall, so the only proof policy time
+    // ignores it is that it stays put while the wall moves.
+    holds_for(
+        "policy time to ignore the wall",
+        Duration::from_millis(200),
+        || async { net.now_ms() == start },
+    )
     .await
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(net.now_ms(), start, "policy time does not follow the wall");
 
     net.advance(Duration::from_millis(interval as u64)).unwrap();
-    observe::eventually("both sweeps ran and sleep again", PATIENCE, || {
-        let again = clock
-            .sleeping()
-            .iter()
-            .filter(|at| **at == start + 2 * interval)
-            .count();
-        async move { again == 2 }
-    })
-    .await
-    .unwrap();
+    sweeps_asleep(&clock, start + 2 * interval).await;
     net.shutdown().await.unwrap();
 }
 
@@ -394,9 +402,13 @@ async fn a_killed_daemon_leaves_its_agents_running_and_its_restart_reads_what_th
     // With no daemon, the agent goes on and writes its journal.
     let written = net.journal_end("worker").unwrap();
     net.open_gate("release").unwrap();
-    observe::eventually("the agent to write on", PATIENCE, || {
+    testnet::until("the agent to write on", || {
         let end = net.journal_end("worker").unwrap();
-        async move { end > written }
+        async move {
+            (end > written)
+                .then_some(())
+                .ok_or_else(|| format!("journal end {end}, was {written}"))
+        }
     })
     .await
     .unwrap();
@@ -446,7 +458,7 @@ async fn a_rewound_host_loses_what_the_drive_never_got_under_a_new_generation() 
         .unwrap();
     // Everything the agent wrote so far is committed, then reaches the
     // drive.
-    observe::eventually("the journal read to its end", PATIENCE, || async {
+    testnet::until("the journal read to its end", || async {
         let end = net.journal_end("worker").unwrap();
         let cursor = net
             .runtime("desk")
@@ -455,7 +467,9 @@ async fn a_rewound_host_loses_what_the_drive_never_got_under_a_new_generation() 
             .await
             .cursor(&key)
             .unwrap();
-        cursor == end
+        (cursor == end)
+            .then_some(())
+            .ok_or_else(|| format!("cursor {cursor} of {end}"))
     })
     .await
     .unwrap();

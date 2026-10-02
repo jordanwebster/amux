@@ -1090,9 +1090,13 @@ impl Net {
             .await
             .map_err(|status| NetError::Refused(Box::new(status)))?;
         let edge = self.edge(host)?;
-        observe::eventually(&format!("{host}'s relay link"), PATIENCE, || {
-            let connected = matches!(edge.observed(), node::Observed::Connected { .. });
-            async move { connected }
+        observe::until(&format!("{host}'s relay link"), || {
+            let observed = edge.observed();
+            async move {
+                matches!(observed, node::Observed::Connected { .. })
+                    .then_some(())
+                    .ok_or_else(|| format!("observed {observed:?}"))
+            }
         })
         .await?;
         Ok(self.ack(format!("{host} signed in to {account}")))
@@ -1251,9 +1255,13 @@ impl Net {
         } else {
             drop(daemon);
         }
-        observe::eventually(&format!("{name}'s runtime to be gone"), PATIENCE, || {
-            let gone = runs.iter().all(|run| run.upgrade().is_none());
-            async move { gone }
+        observe::until(&format!("{name}'s runtime to be gone"), || {
+            let live = runs.iter().filter(|run| run.upgrade().is_some()).count();
+            async move {
+                (live == 0)
+                    .then_some(())
+                    .ok_or_else(|| format!("{live} runtime references live"))
+            }
         })
         .await?;
         // A dead daemon's sockets die with its process, and the next one
@@ -1267,9 +1275,9 @@ impl Net {
         .and_then(|text| text.trim().parse::<u16>().ok())
         .filter(|_| host.decl.lan && !host.lan_handed);
         if let Some(port) = lan_port {
-            observe::eventually(&format!("{name}'s LAN port to be free"), PATIENCE, || {
-                let free = std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok();
-                async move { free }
+            observe::until(&format!("{name}'s LAN port to be free"), || {
+                let bound = std::net::UdpSocket::bind(("127.0.0.1", port));
+                async move { bound.map(|_| ()).map_err(|error| error.to_string()) }
             })
             .await?;
         }
@@ -1500,7 +1508,12 @@ impl Net {
     pub async fn wait_link(&self, a: &str, b: &str, up: bool) -> Result<(), NetError> {
         let (id_a, id_b) = (self.host(a)?.host_id, self.host(b)?.host_id);
         let what = format!("link {a} - {b} {}", if up { "up" } else { "down" });
-        observe::eventually(&what, PATIENCE, || async {
+        let wanted = if up {
+            HostVia::Direct
+        } else {
+            HostVia::Offline
+        };
+        observe::until(&what, || async {
             let via_ab = match self.edge(a) {
                 Ok(edge) => edge.via(id_b).await,
                 Err(_) => HostVia::Offline,
@@ -1509,11 +1522,9 @@ impl Net {
                 Ok(edge) => edge.via(id_a).await,
                 Err(_) => HostVia::Offline,
             };
-            if up {
-                via_ab == HostVia::Direct && via_ba == HostVia::Direct
-            } else {
-                via_ab == HostVia::Offline && via_ba == HostVia::Offline
-            }
+            (via_ab == wanted && via_ba == wanted)
+                .then_some(())
+                .ok_or_else(|| format!("{a} -> {b} {via_ab:?}, {b} -> {a} {via_ba:?}"))
         })
         .await?;
         Ok(())
@@ -1525,15 +1536,15 @@ impl Net {
     async fn wait_direct_gone(&self, a: &str, b: &str) -> Result<(), NetError> {
         let (id_a, id_b) = (self.host(a)?.host_id, self.host(b)?.host_id);
         let what = format!("the severed link {a} - {b} to go at both ends");
-        observe::eventually(&what, PATIENCE, || async {
-            for (near, far) in [(a, id_b), (b, id_a)] {
+        observe::until(&what, || async {
+            for (near, far, name) in [(a, id_b, a), (b, id_a, b)] {
                 if let Ok(edge) = self.edge(near)
                     && edge.via(far).await == HostVia::Direct
                 {
-                    return false;
+                    return Err(format!("{name} still routes direct"));
                 }
             }
-            true
+            Ok(())
         })
         .await?;
         Ok(())
@@ -1844,9 +1855,13 @@ async fn kill_agents_under(dir: &Path) -> Result<(), NetError> {
             .status()
             .await;
         let locked: Vec<PathBuf> = agent_dirs(dir);
-        observe::eventually("the killed agents to release their locks", PATIENCE, || {
-            let held = locked.iter().any(|dir| agent_dir::locked(dir));
-            async move { !held }
+        observe::until("the killed agents to release their locks", || {
+            let held: Vec<&PathBuf> = locked.iter().filter(|dir| agent_dir::locked(dir)).collect();
+            async move {
+                held.is_empty()
+                    .then_some(())
+                    .ok_or_else(|| format!("locks still held: {held:?}"))
+            }
         })
         .await?;
         Ok(())

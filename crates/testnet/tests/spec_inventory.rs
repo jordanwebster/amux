@@ -16,8 +16,10 @@ use std::time::Duration;
 
 use provider_fakes::script::Step;
 use store::Store as _;
-use testnet::observe::{self, Mark, holds_for, inventory_agents, inventory_hosts, marks};
-use testnet::{AgentDecl, HostDecl, JournalCut, Net, PATIENCE, Topology, withdraw};
+use testnet::observe::{self, Mark, inventory_agents, inventory_hosts, marks};
+use testnet::{
+    AgentDecl, HostDecl, JournalCut, Net, PATIENCE, Stuck, Topology, holds_for, withdraw,
+};
 use uuid::Uuid;
 use wire::{
     HostEntry, InventoryEvent, Presence, SessionEvent, Trust, inventory_event, session_event,
@@ -74,32 +76,6 @@ fn removed(events: &[InventoryEvent], id: Uuid, reason: &str) -> bool {
     })
 }
 
-/// Waits until `host` holds a caught-up replica of `agent`.
-async fn wait_replica_current(net: &Net, host: &str, agent: &str) {
-    let key = net.agent(agent).unwrap().key();
-    let origin = net.agent(agent).unwrap().host.clone();
-    observe::eventually(
-        &format!("{agent}'s replica at {host} to be current"),
-        PATIENCE,
-        || async {
-            let newest = {
-                let runtime = net.runtime(&origin).unwrap();
-                let store = runtime.store().await;
-                store.agent(&key).unwrap().map(|row| row.next_revision - 1)
-            };
-            let runtime = net.runtime(host).unwrap();
-            let store = runtime.store().await;
-            let Some(row) = store.agent(&key).unwrap() else {
-                return false;
-            };
-            Some(row.source_cursor) == newest
-                && store.cut(&key, 0).unwrap().marker == Some(store::Marker::CaughtUp)
-        },
-    )
-    .await
-    .unwrap();
-}
-
 /// A trusted host that cannot be reached stays in the host set, and its
 /// agents stay listed: a reconnect snapshot never forgets them. Only its
 /// presence says it is away.
@@ -111,7 +87,7 @@ async fn a_trusted_host_stays_in_every_snapshot_while_unreachable() {
             .prompt("go"),
     );
     let mut net = Net::start(topology).await.unwrap();
-    wait_replica_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let mut fleet = net.observe_inventory("laptop").await.unwrap();
     fleet
         .observe_until(
@@ -273,7 +249,7 @@ async fn a_replica_its_origin_no_longer_lists_is_dropped_and_its_chats_close() {
         .agent(AgentDecl::new("kept", "desk").steps(says("c")).prompt("go"));
     let mut net = Net::start(topology).await.unwrap();
     for agent in ["live", "quiet", "kept"] {
-        wait_replica_current(&net, "laptop", agent).await;
+        net.current("laptop", agent).await.unwrap();
     }
     let mut fleet = net.observe_inventory("laptop").await.unwrap();
     fleet
@@ -337,7 +313,7 @@ async fn a_replica_its_origin_no_longer_lists_is_dropped_and_its_chats_close() {
     );
 
     // The agent it still lists is untouched: no Reset, still current.
-    wait_replica_current(&net, "laptop", "kept").await;
+    net.current("laptop", "kept").await.unwrap();
     assert!(
         !marks(kept_chat.events()).contains(&Mark::Reset),
         "{}",
@@ -382,13 +358,13 @@ async fn a_generation_change_drops_one_hosts_replicas_and_nothing_else() {
         )
         .agent(AgentDecl::new("other", "lab").steps(says("o")).prompt("go"));
     let mut net = Net::start(topology).await.unwrap();
-    wait_replica_current(&net, "laptop", "worker").await;
-    wait_replica_current(&net, "laptop", "other").await;
+    net.current("laptop", "worker").await.unwrap();
+    net.current("laptop", "other").await.unwrap();
     net.checkpoint_host("desk").await.unwrap();
     net.spawn(AgentDecl::new("late", "desk").steps(says("l")).prompt("go"))
         .await
         .unwrap();
-    wait_replica_current(&net, "laptop", "late").await;
+    net.current("laptop", "late").await.unwrap();
 
     let mut fleet = net.observe_inventory("laptop").await.unwrap();
     fleet
@@ -490,7 +466,7 @@ async fn an_untrusted_host_leaves_the_set_with_its_replicas() {
             .prompt("go"),
     );
     let mut net = Net::start(topology).await.unwrap();
-    wait_replica_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let mut fleet = net.observe_inventory("laptop").await.unwrap();
     fleet
         .observe_until(observe::inventory_caught_up, PATIENCE)
@@ -613,7 +589,7 @@ async fn origin_rewind() {
     );
     let mut net = Net::start(topology).await.unwrap();
     let kind = net.agent("worker").unwrap().kind;
-    wait_replica_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let mut chat = net.observe("laptop", "worker", 20).await.unwrap();
     chat.observe_until(observe::caught_up, PATIENCE)
         .await
@@ -886,14 +862,18 @@ async fn a_peer_that_revokes_trust_over_the_relay_is_listed_as_having_revoked_it
         .unwrap();
     net.restart_daemon("desk").await.unwrap();
     reconnecting_until(&net, &mut fleet, online).await;
+    // Each second's retry runs; a window after each, since no outcome
+    // marks the revocation that must not come.
     for _ in 0..5 {
         net.advance(Duration::from_secs(1)).unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let revoked = fleet
+            .observe_until(ever_revoked, Duration::from_millis(100))
+            .await;
+        assert!(
+            matches!(revoked, Err(Stuck::Deadline { .. })),
+            "a relay route that goes away is not a revocation"
+        );
     }
-    assert!(
-        !ever_revoked(fleet.events()),
-        "a relay route that goes away is not a revocation"
-    );
 
     net.untrust("desk", "tablet").await.unwrap();
     reconnecting_until(&net, &mut fleet, |events| {

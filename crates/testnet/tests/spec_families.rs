@@ -16,8 +16,8 @@ use node::SourceVerdict;
 use prost::Message as _;
 use provider_fakes::script::{Ask, Question, Script, Step};
 use store::{AgentKey, AgentRow, Store as _};
-use testnet::observe::{self, eventually};
-use testnet::{AgentDecl, Net, PATIENCE, Topology};
+use testnet::observe;
+use testnet::{AgentDecl, Net, PATIENCE, Topology, holds_for, until};
 use tonic::{Code, Request};
 use ui_state::{Attention, FleetMsg, FleetState};
 use uuid::Uuid;
@@ -140,20 +140,23 @@ async fn with_input(net: &Net, agent: &str, input_id: &[u8]) -> usize {
 /// accepted by then is counted.
 async fn taken(net: &Net, agent: &str, text: &str) -> usize {
     let end = net.journal_end(agent).unwrap();
-    eventually(
+    until(
         &format!("{agent} idle past {end}, its messages taken"),
-        PATIENCE,
         || async move {
             let Some(row) = row(net, &net.agent(agent).unwrap().host, agent).await else {
-                return false;
+                return Err("no row".to_owned());
             };
-            let settled = row.ingest_cursor >= end
-                && row.phase == Phase::Idle as i32
-                && row
-                    .snapshot
-                    .is_some_and(|snapshot| snapshot.queue.is_empty());
+            let queued = row
+                .snapshot
+                .as_ref()
+                .map_or(0, |snapshot| snapshot.queue.len());
+            let settled =
+                row.ingest_cursor >= end && row.phase == Phase::Idle as i32 && queued == 0;
             if !settled {
-                return false;
+                return Err(format!(
+                    "cursor {} of {end}, phase {}, {queued} queued",
+                    row.ingest_cursor, row.phase
+                ));
             }
             let items = items(net, agent).await;
             let Some(message) = items
@@ -163,11 +166,13 @@ async fn taken(net: &Net, agent: &str, text: &str) -> usize {
                 .map(|item| item.order)
                 .max()
             else {
-                return true;
+                return Ok(());
             };
             items
                 .iter()
                 .any(|item| item.key.starts_with("turn:") && item.order > message)
+                .then_some(())
+                .ok_or_else(|| format!("no turn ended after the message at order {message}"))
         },
     )
     .await
@@ -441,12 +446,13 @@ async fn stop_and_send_are_lineage_checked_across_hosts() {
     // Stop cancels a running turn. Until Claude takes input the creation
     // prompt only waits in the queue, and an interrupt then cancels
     // nothing; the prompt's turn would run and wait on its gate forever.
-    eventually("desk to see helper's turn running", PATIENCE, || {
+    until("desk to see helper's turn running", || {
         let net = &net;
         async move {
-            row(net, "desk", "helper")
-                .await
-                .is_some_and(|row| row.phase == Phase::Working as i32)
+            let phase = row(net, "desk", "helper").await.map(|row| row.phase);
+            (phase == Some(Phase::Working as i32))
+                .then_some(())
+                .ok_or_else(|| format!("phase {phase:?}"))
         }
     })
     .await
@@ -469,9 +475,14 @@ async fn stop_and_send_are_lineage_checked_across_hosts() {
         "{verdict:?}"
     );
     println!("lead stops helper: accepted on server");
-    eventually("the interrupted one-shot child to exit", PATIENCE, || {
+    until("the interrupted one-shot child to exit", || {
         let net = &net;
-        async move { lifecycle(net, "server", "helper").await == Some(Lifecycle::Exited) }
+        async move {
+            let lifecycle = lifecycle(net, "server", "helper").await;
+            (lifecycle == Some(Lifecycle::Exited))
+                .then_some(())
+                .ok_or_else(|| format!("lifecycle {lifecycle:?}"))
+        }
     })
     .await
     .unwrap();
@@ -542,10 +553,16 @@ async fn a_cascade_delete_reaches_a_reachable_child_and_orphans_an_unreachable_o
     .unwrap();
     let helper = net.agent("helper").unwrap().clone();
     let scout = net.agent("scout").unwrap().clone();
-    eventually("desk to hold both children", PATIENCE, || {
+    until("desk to hold both children", || {
         let net = &net;
         async move {
-            row(net, "desk", "helper").await.is_some() && row(net, "desk", "scout").await.is_some()
+            let held = (
+                row(net, "desk", "helper").await.is_some(),
+                row(net, "desk", "scout").await.is_some(),
+            );
+            (held == (true, true))
+                .then_some(())
+                .ok_or_else(|| format!("helper, scout held: {held:?}"))
         }
     })
     .await
@@ -646,14 +663,19 @@ async fn an_away_parents_rows_wait_and_a_stale_incarnation_is_dropped() {
     net.sever_link("desk", "server").unwrap();
     net.wait_link("desk", "server", false).await.unwrap();
     net.open_gate("finish").unwrap();
-    eventually("helper's finished row", PATIENCE, || {
+    until("helper's finished row", || {
         let net = &net;
-        async move { outbox(net, "server").await == 1 }
+        async move {
+            let rows = outbox(net, "server").await;
+            (rows == 1)
+                .then_some(())
+                .ok_or_else(|| format!("{rows} outbox rows"))
+        }
     })
     .await
     .unwrap();
     net.advance(Duration::from_secs(120)).unwrap();
-    observe::holds_for(
+    holds_for(
         "the row to wait for its parent",
         Duration::from_secs(1),
         || {
@@ -666,9 +688,14 @@ async fn an_away_parents_rows_wait_and_a_stale_incarnation_is_dropped() {
     assert!(received(&net, "lead").await.is_empty());
     println!("desk away: helper's finished message waits on server");
     net.restore_link("desk", "server").await.unwrap();
-    eventually("the row to be delivered", PATIENCE, || {
+    until("the row to be delivered", || {
         let net = &net;
-        async move { outbox(net, "server").await == 0 }
+        async move {
+            let rows = outbox(net, "server").await;
+            (rows == 0)
+                .then_some(())
+                .ok_or_else(|| format!("{rows} outbox rows"))
+        }
     })
     .await
     .unwrap();
@@ -692,9 +719,14 @@ async fn an_away_parents_rows_wait_and_a_stale_incarnation_is_dropped() {
     net.sever_link("desk", "server").unwrap();
     net.wait_link("desk", "server", false).await.unwrap();
     net.open_gate("second").unwrap();
-    eventually("second's finished row", PATIENCE, || {
+    until("second's finished row", || {
         let net = &net;
-        async move { outbox(net, "server").await == 1 }
+        async move {
+            let rows = outbox(net, "server").await;
+            (rows == 1)
+                .then_some(())
+                .ok_or_else(|| format!("{rows} outbox rows"))
+        }
     })
     .await
     .unwrap();
@@ -706,9 +738,14 @@ async fn an_away_parents_rows_wait_and_a_stale_incarnation_is_dropped() {
         .unwrap();
     net.resume("lead", None).await.unwrap();
     net.restore_link("desk", "server").await.unwrap();
-    eventually("the stale row to be dropped", PATIENCE, || {
+    until("the stale row to be dropped", || {
         let net = &net;
-        async move { outbox(net, "server").await == 0 }
+        async move {
+            let rows = outbox(net, "server").await;
+            (rows == 0)
+                .then_some(())
+                .ok_or_else(|| format!("{rows} outbox rows"))
+        }
     })
     .await
     .unwrap();
@@ -775,9 +812,9 @@ async fn a_row_for_a_parent_resumed_out_of_sight_is_refused_where_the_parent_liv
     )
     .await
     .unwrap();
-    eventually("server to hold lead's replica", PATIENCE, || {
+    until("server to hold lead's replica", || {
         let net = &net;
-        async move { row(net, "server", "lead").await.is_some() }
+        async move { row(net, "server", "lead").await.map(|_| ()).ok_or("no row") }
     })
     .await
     .unwrap();
@@ -820,21 +857,33 @@ async fn a_row_for_a_parent_resumed_out_of_sight_is_refused_where_the_parent_liv
     net.open_gate("finish").unwrap();
     let helper = net.agent("helper").unwrap().key();
     let end = net.journal_end("helper").unwrap();
-    eventually("helper's turn end to be ingested", PATIENCE, || {
+    until("helper's turn end to be ingested", || {
         let net = &net;
         let helper = helper.clone();
         async move {
             let store = net.runtime("server").unwrap();
             let store = store.store().await;
             let row = store.agent(&helper).unwrap().unwrap();
-            !row.turn_open && row.ingest_cursor >= end
+            (!row.turn_open && row.ingest_cursor >= end)
+                .then_some(())
+                .ok_or_else(|| {
+                    format!(
+                        "turn open {}, cursor {} of {end}",
+                        row.turn_open, row.ingest_cursor
+                    )
+                })
         }
     })
     .await
     .unwrap();
-    eventually("the row to be settled", PATIENCE, || {
+    until("the row to be settled", || {
         let net = &net;
-        async move { outbox(net, "server").await == 0 }
+        async move {
+            let rows = outbox(net, "server").await;
+            (rows == 0)
+                .then_some(())
+                .ok_or_else(|| format!("{rows} outbox rows"))
+        }
     })
     .await
     .unwrap();
@@ -859,9 +908,14 @@ async fn concurrent_duplicate_sends_across_hosts_yield_one_item() {
     )
     .await
     .unwrap();
-    eventually("desk to hold reviewer's replica", PATIENCE, || {
+    until("desk to hold reviewer's replica", || {
         let net = &net;
-        async move { row(net, "desk", "reviewer").await.is_some() }
+        async move {
+            row(net, "desk", "reviewer")
+                .await
+                .map(|_| ())
+                .ok_or("no row")
+        }
     })
     .await
     .unwrap();
@@ -989,9 +1043,14 @@ async fn cross_host_family_journey() {
     say("3. phone answers \"unit\" in helper's chat: forwarded to server, accepted".into());
 
     // One finished message under a link fault.
-    eventually("helper's finished row", PATIENCE, || {
+    until("helper's finished row", || {
         let net = &net;
-        async move { outbox(net, "server").await == 1 }
+        async move {
+            let rows = outbox(net, "server").await;
+            (rows == 1)
+                .then_some(())
+                .ok_or_else(|| format!("{rows} outbox rows"))
+        }
     })
     .await
     .unwrap();
@@ -1003,9 +1062,14 @@ async fn cross_host_family_journey() {
     net.sever_link("server", "phone").unwrap();
     net.wait_link("desk", "server", false).await.unwrap();
     net.thaw("lead").unwrap();
-    eventually("lead to take the first hand-off", PATIENCE, || {
+    until("lead to take the first hand-off", || {
         let net = &net;
-        async move { received(net, "lead").await.len() == 1 }
+        async move {
+            let got = received(net, "lead").await;
+            (got.len() == 1)
+                .then_some(())
+                .ok_or_else(|| format!("lead received {got:?}"))
+        }
     })
     .await
     .unwrap();
@@ -1017,9 +1081,14 @@ async fn cross_host_family_journey() {
     say("4. helper finishes; server hands the message to desk; server's links drop before desk answers; lead has it, server still holds the row".into());
     net.restore_link("desk", "server").await.unwrap();
     net.restore_link("server", "phone").await.unwrap();
-    eventually("server's retry to settle the row", PATIENCE, || {
+    until("server's retry to settle the row", || {
         let net = &net;
-        async move { outbox(net, "server").await == 0 }
+        async move {
+            let rows = outbox(net, "server").await;
+            (rows == 0)
+                .then_some(())
+                .ok_or_else(|| format!("{rows} outbox rows"))
+        }
     })
     .await
     .unwrap();
@@ -1036,9 +1105,14 @@ async fn cross_host_family_journey() {
     ));
 
     // Resume by send.
-    eventually("the one-shot helper to exit", PATIENCE, || {
+    until("the one-shot helper to exit", || {
         let net = &net;
-        async move { lifecycle(net, "server", "helper").await == Some(Lifecycle::Exited) }
+        async move {
+            let lifecycle = lifecycle(net, "server", "helper").await;
+            (lifecycle == Some(Lifecycle::Exited))
+                .then_some(())
+                .ok_or_else(|| format!("lifecycle {lifecycle:?}"))
+        }
     })
     .await
     .unwrap();
@@ -1060,9 +1134,14 @@ async fn cross_host_family_journey() {
         .await
         .expect("lead's send resumes helper");
     assert_eq!(row(&net, "server", "helper").await.unwrap().incarnation, 2);
-    eventually("helper's second finished message", PATIENCE, || {
+    until("helper's second finished message", || {
         let net = &net;
-        async move { received(net, "lead").await.len() == 2 }
+        async move {
+            let got = received(net, "lead").await;
+            (got.len() == 2)
+                .then_some(())
+                .ok_or_else(|| format!("lead received {got:?}"))
+        }
     })
     .await
     .unwrap();

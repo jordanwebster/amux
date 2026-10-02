@@ -10,7 +10,6 @@
 //! a failure, never a pass.
 
 use std::fmt::{self, Write as _};
-use std::future::Future;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -19,9 +18,6 @@ use tokio::time::Instant;
 use wire::{InventoryEvent, SessionEvent, inventory_event, session_event};
 
 pub use patience::{PATIENCE, Stuck, holds_for, until, until_within};
-
-/// How often the polling waiters look again.
-const POLL: Duration = Duration::from_millis(20);
 
 /// One line per event, the way a failure report and a transcript show it.
 pub trait Describe {
@@ -313,37 +309,4 @@ pub fn short(id: &[u8]) -> String {
         .take(4)
         .map(|byte| format!("{byte:02x}"))
         .collect()
-}
-
-/// Waits until `check` holds. Fails at `deadline`, and fails as well when a
-/// single check does not answer by then: a hung probe is not a pass.
-pub async fn eventually<F>(
-    what: &str,
-    deadline: Duration,
-    mut check: impl FnMut() -> F,
-) -> Result<(), Stuck>
-where
-    F: Future<Output = bool>,
-{
-    let until = Instant::now() + deadline;
-    loop {
-        match tokio::time::timeout_at(until, check()).await {
-            Ok(true) => return Ok(()),
-            Ok(false) => {}
-            Err(_) => {
-                return Err(Stuck::Hung {
-                    what: what.to_owned(),
-                    waited: deadline,
-                });
-            }
-        }
-        if Instant::now() + POLL >= until {
-            return Err(Stuck::Deadline {
-                what: what.to_owned(),
-                waited: deadline,
-                seen: String::new(),
-            });
-        }
-        tokio::time::sleep(POLL).await;
-    }
 }
