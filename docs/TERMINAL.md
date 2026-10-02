@@ -372,7 +372,7 @@ clicked.
 | `<leader> o` | Open or close the focused row or stretch |
 | `<leader> y` | Copy the focused row (through the terminal's OSC 52 clipboard) |
 
-During raw attach the leader is read out of the bytes you type: `<leader> d` detaches to the shell, `<leader> s`
+During raw attach the leader is read out of the bytes you type: `<leader> d` detaches to the shell, `<leader> h`
 returns home over the attached agent, and a leader followed by any other key goes to the agent exactly as typed.
 The leader is recognised both as its control byte and in the form terminals send when an agent has switched on the
 kitty keyboard protocol.
@@ -399,10 +399,10 @@ While attached, typing and resizes go to the agent. How it ends:
 | Ending | `amux attach` | From the terminal client |
 |---|---|---|
 | `<leader> d` | Prints `[detached from <name>]` and returns to the shell | Leaves the client for the shell |
-| `<leader> s` | Opens home over the attached agent | Returns home |
+| `<leader> h` | Opens home over the attached agent | Returns home |
 | The agent ends the connection | Prints `[<name>: <why>]` or `[<name> ended]` and returns to the shell | Leaves the client for the shell |
 
-Only `<leader> s` comes back home. Leaving for home keeps the connection and a model of the agent's screen, so
+Only `<leader> h` comes back home. Leaving for home keeps the connection and a model of the agent's screen, so
 attaching to the same agent again repaints it where it was rather than starting over; picking another agent opens
 a second connection. The terminal is restored whichever way attach ends, including the modes the agent's interface
 switched on.

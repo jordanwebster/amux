@@ -31,7 +31,7 @@ use crate::verbs::display_name;
 pub enum Outcome {
     /// `<leader> d`: back to the shell, the agent untouched.
     Detached,
-    /// `<leader> s`: to the fleet, the connection kept.
+    /// `<leader> h`: to the fleet, the connection kept.
     Fleet,
     /// The agent ended the connection, saying why when it did.
     Ended(Option<String>),
@@ -350,7 +350,7 @@ enum Scanned {
     Fleet,
 }
 
-/// Finds `<leader> d` and `<leader> s` in typed bytes. The leader arrives
+/// Finds `<leader> d` and `<leader> h` in typed bytes. The leader arrives
 /// as its control byte, or as its CSI u form when the agent has switched
 /// on the kitty keyboard protocol; a leader followed by anything else goes
 /// to the agent as typed.
@@ -377,7 +377,7 @@ impl Chords {
         while at < bytes.len() {
             if let Some(leader) = self.pending.take() {
                 match bytes[at] {
-                    b'd' | b's' => {
+                    b'd' | b'h' => {
                         if !keys.is_empty() {
                             out.push(Scanned::Keys(std::mem::take(&mut keys)));
                         }
@@ -426,14 +426,14 @@ mod tests {
             vec![Scanned::Keys(b"ls\r".to_vec()), Scanned::Detach]
         );
         let mut scan = chords();
-        assert_eq!(scan.feed(b"\x01s"), vec![Scanned::Fleet]);
+        assert_eq!(scan.feed(b"\x01h"), vec![Scanned::Fleet]);
     }
 
     #[test]
     fn a_leader_split_across_reads_still_makes_a_chord() {
         let mut scan = chords();
         assert_eq!(scan.feed(b"a\x01"), vec![Scanned::Keys(b"a".to_vec())]);
-        assert_eq!(scan.feed(b"s"), vec![Scanned::Fleet]);
+        assert_eq!(scan.feed(b"h"), vec![Scanned::Fleet]);
     }
 
     #[test]

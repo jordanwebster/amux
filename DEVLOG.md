@@ -1,3 +1,8 @@
+2026-10-02 — **Raw attach goes home with the leader then `h`.** As
+everywhere else in the terminal client; `<leader> s` is no longer a
+chord during raw attach and goes to the agent as typed. The live-turn
+set's description no longer names the activity line.
+
 2026-10-02 — **The new terminal client, documented; the phone's types
 caught up.** `docs/TERMINAL.md` is rewritten for the new client: home, a
 new agent in both ways of chatting, hosts, the chat, asks, the overview,

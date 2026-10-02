@@ -1,5 +1,5 @@
 {
-  "description": "A chat that plays a whole turn live two seconds after launch: thinking, reads, streaming prose, edits and a permission ask mid-turn, so motion and the activity line can be judged. Answer the ask to see the turn finish.",
+  "description": "A chat that plays a whole turn live two seconds after launch: thinking, reads, streaming prose, edits and a permission ask mid-turn, so motion and the working line can be judged. Answer the ask to see the turn finish.",
   "client": "laptop",
   "open": "docs pass",
   "topology": {

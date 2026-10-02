@@ -18,7 +18,7 @@ use support::{chat, client, created_id, line_of, texts, until};
 
 /// The leader, Ctrl+A, and its two chords.
 const DETACH: &[u8] = b"\x01d";
-const FLEET: &[u8] = b"\x01s";
+const FLEET: &[u8] = b"\x01h";
 
 fn text(chunk: &str) -> Step {
     Step::Text {
@@ -111,7 +111,7 @@ async fn codex_attaches_in_stream_mode_and_the_fleet_returns_to_the_same_view() 
     // Half a line, held by the view process until Enter.
     term.type_keys(b"par").await;
 
-    say("<leader> s: the fleet over the attached view");
+    say("<leader> h: the fleet over the attached view");
     term.type_keys(FLEET).await;
     term.shows("a attach").await;
     assert!(term.contents().contains("coder"), "{}", term.contents());

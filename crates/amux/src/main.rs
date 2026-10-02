@@ -66,7 +66,7 @@ enum Command {
     },
     /// Hand this terminal to an agent's own interface: terminal Claude's
     /// or a Codex view. Only agents on this machine; <leader> d detaches,
-    /// <leader> s opens the fleet over it.
+    /// <leader> h opens the fleet over it.
     Attach {
         /// The agent's name or id.
         agent: String,

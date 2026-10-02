@@ -844,7 +844,7 @@ def new_agent_terminal(journey: TerminalJourney) -> list[str]:
     journey.type(pane, "Write the notes.")
     journey.keys(pane, "Enter")
     journey.wait_terms(pane, "Ready to write the release notes.")
-    journey.keys(pane, "C-a", "s")
+    journey.keys(pane, "C-a", "h")
     journey.wait(pane, lambda frame: at_home(frame) and agent_row(frame, "release-notes") is not None, "home with release-notes")
     made = journey.wait_inventory("laptop", lambda agents: any(a["name"] == "release-notes" for a in agents), "created-here")
     (local,) = [agent for agent in made if agent["name"] == "release-notes"]
@@ -870,7 +870,7 @@ def new_agent_terminal(journey: TerminalJourney) -> list[str]:
     journey.quit_client(pane)
     return [
         "for someone who chats in each agent's own terminal, n opened the New Agent form",
-        "Start on this machine handed the terminal to the new Claude; what was typed there reached it once; leader s came back home",
+        "Start on this machine handed the terminal to the new Claude; what was typed there reached it once; leader h came back home",
         "Start on the desk created the agent there and opened its chat, saying its terminal is on another machine",
         "the client exited 0",
     ]
