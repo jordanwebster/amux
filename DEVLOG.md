@@ -1,3 +1,11 @@
+2026-10-02 — **The ingest-cost baseline's move is accepted and written down.**
+The flood's ingest cost per frame moved from 21.0 to 23.8 µs with the
+measurement change that priced a fixed backlog over shares. The plan was
+to build the old commit under the new measurement and tell a real
+regression from the measurement's own effect; the difference is under
+3 ms of daemon time per thousand frames, so the figure is adopted
+as is and the performance page says so. Jordan's call.
+
 2026-10-02 — **Steering counts every pass that moved, and clears only its own handle.**
 The phone's steering loop re-runs while more was asked for and took
 the last pass's word on whether anything moved, so a catch-up pass

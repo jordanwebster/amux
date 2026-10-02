@@ -122,7 +122,11 @@ before committing the file.
 
 A baseline is only comparable with a run that measures the same way. Whenever a metric's measurement changes,
 re-record that metric's baseline in the same commit as the change. `--baseline` rewrites every median, so when only
-one measurement changed, keep the other metrics' committed values and commit only the changed one.
+one measurement changed, keep the other metrics' committed values and commit only the changed one. The ingest cost
+per frame moved from 21.0 to 23.8 µs when its measurement changed to a fixed backlog priced over shares (b972f117),
+and the new figure was adopted without building the old commit under the new measurement to tell the two apart: the
+difference is under 3 ms of daemon time per thousand frames, which no one feels, and the drift check guards the
+figure from here. A regression hiding inside that move would have to be found by profiling, not by the baseline.
 
 A baseline, or a run that qualifies a change, counts only when the machine is shown to be in the reference state,
 never assumed. Show it in the same session, with the machine state (`uptime`, `ps -Ao pcpu,comm -r | head`,
