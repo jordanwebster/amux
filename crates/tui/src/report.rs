@@ -4,11 +4,14 @@
 //!
 //! The bundle is the phone's layout with a terminal's frame: `report.json`
 //! declares every part present or absent with a reason and carries the
-//! note and the marks, measured in cells; `frame.txt` is the frozen screen;
-//! `dump/` is the profile's dump with this client's parts, started at the
-//! key so its round trip costs nothing while the note is written. The
-//! terminal keeps no log of its own (the daemon's is in the dump), draws no
-//! picture of its cells and records no view trace, and says so.
+//! note and the marks, measured in cells; `frame.txt` is the frozen screen
+//! as text to read, and `frame.json` the same cells with their colours and
+//! styles, from which a picture can be drawn later (`amux-shot frame`)
+//! without a font in this binary; `dump/` is the profile's dump with this
+//! client's parts, started at the key so its round trip costs nothing while
+//! the note is written. The terminal keeps no log of its own (the daemon's
+//! is in the dump), draws no picture itself and records no view trace, and
+//! says so.
 
 use std::path::{Path, PathBuf};
 
@@ -17,7 +20,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ratatui::Frame as Paint;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use serde_json::json;
@@ -53,6 +56,9 @@ pub type Dump = JoinHandle<Result<PathBuf, String>>;
 
 pub struct Report {
     frozen: Buffer,
+    /// The palette the frozen cells were drawn in, which names what a
+    /// cell left at the terminal's default looked like.
+    theme: Theme,
     at: DateTime<Utc>,
     marks: Vec<Mark>,
     /// Where a drag started, and where it is now.
@@ -65,9 +71,10 @@ pub struct Report {
 }
 
 impl Report {
-    pub fn new(frozen: Buffer, dump: Dump) -> Report {
+    pub fn new(frozen: Buffer, theme: Theme, dump: Dump) -> Report {
         Report {
             frozen,
+            theme,
             at: Utc::now(),
             marks: Vec::new(),
             drag: None,
@@ -277,7 +284,7 @@ impl Report {
             "image_frame": null,
             "parts": {
                 "frame": "present",
-                "frame_png": absent("a terminal frame is cells; frame.txt holds them"),
+                "frame_png": absent("a terminal frame is cells; frame.json holds them with their colours"),
                 "trace": absent("the terminal records no view trace; its runtime's order of events is in the dump"),
                 "dump": dump_part,
                 "log": absent("the terminal client keeps no log of its own; the daemon's is in the dump"),
@@ -289,6 +296,10 @@ impl Report {
             .map_err(|error| format!("writing report.json: {error}"))?;
         private_file(&dir.join("frame.txt"), frame_text(&self.frozen).as_bytes())
             .map_err(|error| format!("writing frame.txt: {error}"))?;
+        let cells = serde_json::to_string(&frame_cells(&self.frozen, self.theme))
+            .map_err(|error| error.to_string())?;
+        private_file(&dir.join("frame.json"), cells.as_bytes())
+            .map_err(|error| format!("writing frame.json: {error}"))?;
         Ok(dir)
     }
 }
@@ -334,6 +345,107 @@ fn frame_text(frame: &Buffer) -> String {
         out.push('\n');
     }
     out
+}
+
+/// The frozen cells with what they were drawn in: each row as runs of
+/// cells sharing one style, from their first column. A blank cell on the
+/// same ground joins the run before it, its ink being invisible, so words
+/// stay in one run with the spaces between them. A colour is `#rrggbb`,
+/// `ansi:N` for one of the terminal's own numbered colours, or `default`
+/// for the terminal's own ink or ground, whose values `default` gives as
+/// this client's palette had them.
+fn frame_cells(frame: &Buffer, theme: Theme) -> serde_json::Value {
+    let hex = |(red, green, blue): (u8, u8, u8)| format!("#{red:02x}{green:02x}{blue:02x}");
+    let rows: Vec<serde_json::Value> = (frame.area.top()..frame.area.bottom())
+        .map(|y| {
+            let mut runs: Vec<serde_json::Value> = Vec::new();
+            let mut current: Option<(u16, String, Color, Color, Modifier)> = None;
+            let mut skip = 0;
+            for x in frame.area.left()..frame.area.right() {
+                if skip > 0 {
+                    skip -= 1;
+                    continue;
+                }
+                let cell = &frame[(x, y)];
+                let symbol = cell.symbol();
+                skip = text::str_width(symbol).saturating_sub(1);
+                let style = (cell.fg, cell.bg, cell.modifier);
+                let drawn_on_blank =
+                    Modifier::UNDERLINED | Modifier::REVERSED | Modifier::CROSSED_OUT;
+                let blank =
+                    |modifier: Modifier| symbol == " " && !modifier.intersects(drawn_on_blank);
+                match &mut current {
+                    Some((_, text, fg, bg, modifier))
+                        if (*fg, *bg, *modifier) == style
+                            || (*bg == cell.bg && blank(cell.modifier) && blank(*modifier)) =>
+                    {
+                        text.push_str(symbol);
+                    }
+                    _ => {
+                        runs.extend(current.take().map(run));
+                        current = Some((x, symbol.to_owned(), style.0, style.1, style.2));
+                    }
+                }
+            }
+            runs.extend(current.map(run));
+            serde_json::Value::Array(runs)
+        })
+        .collect();
+    json!({
+        "width": frame.area.width,
+        "height": frame.area.height,
+        "default": {
+            "fg": hex(theme.tokens.text.rgb),
+            "bg": hex(theme.tokens.background.rgb),
+        },
+        "rows": rows,
+    })
+}
+
+fn run((x, text, fg, bg, modifier): (u16, String, Color, Color, Modifier)) -> serde_json::Value {
+    let mut out = json!({ "x": x, "text": text, "fg": color_name(fg), "bg": color_name(bg) });
+    let styles: Vec<&str> = [
+        (Modifier::BOLD, "bold"),
+        (Modifier::DIM, "dim"),
+        (Modifier::ITALIC, "italic"),
+        (Modifier::UNDERLINED, "underlined"),
+        (Modifier::REVERSED, "reversed"),
+        (Modifier::CROSSED_OUT, "crossed_out"),
+        (Modifier::HIDDEN, "hidden"),
+    ]
+    .into_iter()
+    .filter(|(flag, _)| modifier.contains(*flag))
+    .map(|(_, name)| name)
+    .collect();
+    if !styles.is_empty() {
+        out["styles"] = json!(styles);
+    }
+    out
+}
+
+fn color_name(color: Color) -> String {
+    let ansi = |index: u8| format!("ansi:{index}");
+    match color {
+        Color::Reset => "default".to_owned(),
+        Color::Rgb(red, green, blue) => format!("#{red:02x}{green:02x}{blue:02x}"),
+        Color::Indexed(index) => ansi(index),
+        Color::Black => ansi(0),
+        Color::Red => ansi(1),
+        Color::Green => ansi(2),
+        Color::Yellow => ansi(3),
+        Color::Blue => ansi(4),
+        Color::Magenta => ansi(5),
+        Color::Cyan => ansi(6),
+        Color::Gray => ansi(7),
+        Color::DarkGray => ansi(8),
+        Color::LightRed => ansi(9),
+        Color::LightGreen => ansi(10),
+        Color::LightYellow => ansi(11),
+        Color::LightBlue => ansi(12),
+        Color::LightMagenta => ansi(13),
+        Color::LightCyan => ansi(14),
+        Color::White => ansi(15),
+    }
 }
 
 /// Reports can hold prompts, code and paths: only this user reads them.

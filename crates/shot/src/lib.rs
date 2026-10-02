@@ -88,6 +88,8 @@ pub enum ShotError {
     Io(#[from] io::Error),
     #[error("verification failed: {0}")]
     Verify(String),
+    #[error("not a report's frame: {0}")]
+    Frame(String),
 }
 
 struct Fonts {
@@ -217,6 +219,83 @@ pub fn render_to_path(
         entry.clone(),
     )?;
     Ok(entry)
+}
+
+/// A report's `frame.json`, as the terminal client writes it: rows of
+/// runs, each a stretch of cells in one style from its first column.
+#[derive(Deserialize)]
+struct ReportFrame {
+    width: u16,
+    height: u16,
+    default: DefaultInk,
+    rows: Vec<Vec<Run>>,
+}
+
+#[derive(Deserialize)]
+struct DefaultInk {
+    fg: String,
+    bg: String,
+}
+
+#[derive(Deserialize)]
+struct Run {
+    x: u16,
+    text: String,
+    fg: String,
+    bg: String,
+    #[serde(default)]
+    styles: Vec<String>,
+}
+
+/// The cells a report froze, rebuilt from its `frame.json`. The terminal's
+/// own ink and ground take the values the report recorded for them, and its
+/// numbered colours the conventional ones.
+pub fn report_frame(json: &str) -> Result<Buffer, ShotError> {
+    let frame: ReportFrame =
+        serde_json::from_str(json).map_err(|error| ShotError::Frame(error.to_string()))?;
+    let color = |name: &str, default: &str| -> Result<Color, ShotError> {
+        let name = if name == "default" { default } else { name };
+        if let Some(index) = name.strip_prefix("ansi:") {
+            return index
+                .parse()
+                .map(Color::Indexed)
+                .map_err(|_| ShotError::Frame(format!("bad colour {name}")));
+        }
+        let hex = name
+            .strip_prefix('#')
+            .filter(|hex| hex.len() == 6)
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+            .ok_or_else(|| ShotError::Frame(format!("bad colour {name}")))?;
+        Ok(Color::Rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8))
+    };
+    let mut buffer = Buffer::empty(ratatui::layout::Rect::new(0, 0, frame.width, frame.height));
+    let ground = color(&frame.default.bg, &frame.default.bg)?;
+    let ink = color(&frame.default.fg, &frame.default.fg)?;
+    buffer.set_style(
+        buffer.area,
+        ratatui::style::Style::default().fg(ink).bg(ground),
+    );
+    for (y, runs) in frame.rows.iter().enumerate().take(frame.height as usize) {
+        for run in runs {
+            let mut style = ratatui::style::Style::default()
+                .fg(color(&run.fg, &frame.default.fg)?)
+                .bg(color(&run.bg, &frame.default.bg)?);
+            for name in &run.styles {
+                style = style.add_modifier(match name.as_str() {
+                    "bold" => Modifier::BOLD,
+                    "dim" => Modifier::DIM,
+                    "italic" => Modifier::ITALIC,
+                    "underlined" => Modifier::UNDERLINED,
+                    "reversed" => Modifier::REVERSED,
+                    "crossed_out" => Modifier::CROSSED_OUT,
+                    "hidden" => Modifier::HIDDEN,
+                    other => return Err(ShotError::Frame(format!("unknown style {other}"))),
+                });
+            }
+            buffer.set_string(run.x, y as u16, &run.text, style);
+        }
+    }
+    Ok(buffer)
 }
 
 pub fn rasterize(buffer: &Buffer, theme: Theme) -> Result<Raster, ShotError> {
@@ -667,7 +746,8 @@ mod tests {
     use tui::{ColorMode, Theme};
 
     use super::{
-        CELL_HEIGHT, CELL_WIDTH, Fonts, rasterize, render_to_path, render_vocabulary, verify,
+        CELL_HEIGHT, CELL_WIDTH, Fonts, ShotError, rasterize, render_to_path, render_vocabulary,
+        report_frame, verify,
     };
 
     /// Every non-ASCII glyph the vocabulary draws has a vendored face in
@@ -784,5 +864,23 @@ mod tests {
         fs::write(&output, bytes).unwrap();
         let error = verify(directory.path()).unwrap_err();
         assert!(error.to_string().contains("verification failed"));
+    }
+
+    #[test]
+    fn a_reports_frame_is_rebuilt_cell_for_cell() {
+        let frame = r##"{"width": 6, "height": 2, "default": {"fg": "#eeeeee", "bg": "#111111"},
+            "rows": [[{"x": 0, "text": "ab", "fg": "#ff0000", "bg": "default", "styles": ["bold"]},
+                      {"x": 2, "text": "c", "fg": "ansi:4", "bg": "ansi:0"}], []]}"##;
+        let buffer = report_frame(frame).unwrap();
+        assert_eq!(buffer[(0, 0)].symbol(), "a");
+        assert_eq!(buffer[(0, 0)].fg, Color::Rgb(255, 0, 0));
+        assert_eq!(buffer[(0, 0)].bg, Color::Rgb(17, 17, 17));
+        assert!(buffer[(1, 0)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(2, 0)].fg, Color::Indexed(4));
+        assert_eq!(buffer[(5, 1)].fg, Color::Rgb(238, 238, 238));
+        assert!(matches!(
+            report_frame(r#"{"width": 1}"#),
+            Err(ShotError::Frame(_))
+        ));
     }
 }

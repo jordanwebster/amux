@@ -917,6 +917,14 @@ def report_a_problem(journey: TerminalJourney) -> list[str]:
     frame = (bundle / "frame.txt").read_text()
     if "The FAQ is rewritten." not in frame or "limited │" not in frame or "Report a problem" in frame:
         raise RuntimeError(f"frame.txt is not the frozen chat:\n{frame}")
+    cells = json.loads((bundle / "frame.json").read_text())
+    runs = [run for row in cells["rows"] for run in row]
+    if (cells["width"], cells["height"]) != (110, 34) or len(cells["rows"]) != 34:
+        raise RuntimeError(f"frame.json is not the 110x34 screen: {cells['width']}x{cells['height']}")
+    if not any("The FAQ is rewritten." in run["text"] for run in runs):
+        raise RuntimeError("frame.json does not hold the reply")
+    if not any(run["fg"] != "default" for run in runs) or not any("bold" in run.get("styles", []) for run in runs):
+        raise RuntimeError(f"frame.json carries no colours or styles: {runs[:5]!r}")
     dump = bundle / "dump"
     if not (dump / "manifest.json").is_file() or not any(dump.rglob("row.pb")):
         raise RuntimeError(f"the dump is not whole: {sorted(str(p.relative_to(dump)) for p in dump.rglob('*'))}")
@@ -931,6 +939,7 @@ def report_a_problem(journey: TerminalJourney) -> list[str]:
         "a mouse drag marked the reply, and its note and the overall note were written",
         f"the bundle holds report.json with the mark in cells ({expected_mark['x']},{expected_mark['y']} 21×1) and both notes",
         "frame.txt is the chat as it was at the key, without the report's panel",
+        "frame.json holds the same 110x34 cells with their colours and styles",
         "the dump is whole: its manifest, the agents' rows and this client's parts",
         "the parts not captured are declared absent with their reasons, and only this user can read the report",
         "the client exited 0",

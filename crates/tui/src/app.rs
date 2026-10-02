@@ -1225,7 +1225,7 @@ impl App {
         };
         if std::mem::take(&mut self.report_asked) {
             let frozen = paint.buffer_mut().clone();
-            self.report = Some(crate::report::Report::new(frozen, self.start_dump()));
+            self.report = Some(crate::report::Report::new(frozen, theme, self.start_dump()));
         }
         if let Some(report) = &self.report {
             report.draw(paint, theme);

@@ -1,3 +1,12 @@
+2026-10-02 — **A terminal report keeps its screen's colours.** Beside
+`frame.txt`, a report from the terminal client now holds `frame.json`:
+the frozen cells as runs of one style, with each colour as drawn (a hex,
+one of the terminal's numbered colours, or its own ink and ground with
+the values this client's palette had for them). `just shot -- frame
+<bundle>` draws it into `frame.png`, so the client carries no fonts and
+a picture can still be had on any machine with the repository. The
+report journey checks the cells and their colours.
+
 2026-10-02 — **Raw attach goes home with the leader then `h`.** As
 everywhere else in the terminal client; `<leader> s` is no longer a
 chord during raw attach and goes to the agent as typed. The live-turn

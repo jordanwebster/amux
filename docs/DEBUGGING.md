@@ -205,9 +205,11 @@ The bundle, `reports/report-<unix ms>-<n>/`, readable by its user only:
 | --- | --- |
 | `report.json` | The phone's header (schema 2): build, time, note, marks in cells, the viewport in cells, and every part declared present or absent with a reason |
 | `frame.txt` | The frozen screen as text, without the report's own panel |
+| `frame.json` | The same cells with their colours and styles: each row as runs of one style from their first column, a colour as `#rrggbb`, `ansi:N` or `default` (the terminal's own ink or ground, whose values `default` records) |
 | `dump/…` | The profile's dump, as above, with this client's fleet and open chat parts under `client/` |
 
-A terminal frame is cells, so there is no `frame.png`; the client keeps no log of its own (the daemon's is in the
+The client draws no picture itself, so as to carry no fonts: `just shot -- frame <bundle>` draws `frame.json` into
+`frame.png` beside it, numbered colours in their conventional values. The client keeps no log of its own (the daemon's is in the
 dump) and records no view trace (its runtime's order of events is in the dump's `client/` parts), and
 `report.json` says so.
 

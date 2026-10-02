@@ -3,7 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use shot::{ShotError, render_vocabulary, verify, vocabulary_index};
+use shot::{
+    ShotError, rasterize, render_vocabulary, report_frame, verify, vocabulary_index, write_png,
+};
 use tui::vocabulary::FRAMES;
 use tui::{ColorMode, Theme};
 
@@ -34,6 +36,13 @@ enum Command {
     },
     /// Verify PNG dimensions, hashes, decoding, and completed sets.
     Verify { dir: PathBuf },
+    /// Draw a report's frozen screen: a report directory, or its
+    /// `frame.json`, to a PNG (`frame.png` beside it by default).
+    Frame {
+        report: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
@@ -94,6 +103,18 @@ fn run(cli: Cli) -> Result<(), ShotError> {
                 "rendered {written} PNGs and index.md into {}",
                 out.display()
             );
+            Ok(())
+        }
+        Command::Frame { report, out } => {
+            let json = if report.is_dir() {
+                report.join("frame.json")
+            } else {
+                report
+            };
+            let buffer = report_frame(&fs::read_to_string(&json)?)?;
+            let out = out.unwrap_or_else(|| json.with_file_name("frame.png"));
+            write_png(&rasterize(&buffer, Theme::default())?, &out)?;
+            println!("drew {}", out.display());
             Ok(())
         }
         Command::Verify { dir } => {

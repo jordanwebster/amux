@@ -15,10 +15,13 @@ just shot -- list
 just shot -- render vocabulary --out target/amux-shot/vocabulary
 just shot -- render vocabulary --theme dark --color ansi --out target/amux-shot/ansi
 just shot -- verify target/amux-shot/vocabulary
+just shot -- frame <root>/reports/report-<stamp>
 ```
 
 `render vocabulary` writes one PNG per component and theme, a
 `manifest.json` recording each file's size and SHA-256, and an `index.md`
 naming every golden file with what it shows beside its PNGs. `verify`
 checks every manifest below a directory: each PNG decodes, has the recorded
-hash, and is exactly its recorded cell grid times the cell size.
+hash, and is exactly its recorded cell grid times the cell size. `frame`
+draws a terminal report's frozen screen from its `frame.json` into
+`frame.png` beside it, so the client itself carries no fonts.
