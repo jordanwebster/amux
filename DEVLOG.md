@@ -1,3 +1,7 @@
+2026-10-02 — **A new agent's composer sits where a chat's does.** Its
+box had no blank row above the keys, so it sat one row lower than in a
+chat and looked squashed; it now leaves the same breathing row.
+
 2026-10-02 — **A terminal report keeps its screen's colours.** Beside
 `frame.txt`, a report from the terminal client now holds `frame.json`:
 the frozen cells as runs of one style, with each colour as drawn (a hex,

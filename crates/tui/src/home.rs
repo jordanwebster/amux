@@ -1054,7 +1054,9 @@ impl Home {
         if self.draft.open && !modal {
             laid.push(Laid::plain(self.draft_top(width, theme)));
             let (composer, at) = self.composer(fleet, place, width, height, theme);
-            let body = height.saturating_sub(3 + composer.len());
+            // As in a chat: a blank, the top line and a blank above; the
+            // box, a blank to let it breathe and the keys below.
+            let body = height.saturating_sub(4 + composer.len());
             laid.resize_with(2 + body, Laid::default);
             box_top = Some(laid.len());
             cursor = at
