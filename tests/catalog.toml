@@ -651,6 +651,24 @@ cargo = [
 ]
 
 [[suite]]
+name = "tui-set"
+contract = "Every declared world under journeys/sets loads, runs its client on a host it declares, and names only agents it declares or spawns."
+paths = ["crates/tui-set/src", "journeys/sets"]
+recipe = "just test-crate tui-set"
+boundary = "Journeys"
+oracle = "Each set's topology and timeline checked against each other."
+real = ["set files"]
+substituted = []
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "tool"
+evidence = ""
+update = "Edit the set's JSON under journeys/sets."
+cargo = [
+  { package = "tui-set", kind = "bin", targets = ["tui-set"] },
+]
+
+[[suite]]
 name = "client-runtime-drivers"
 contract = "The session and fleet drivers paint the snapshot and held rows before returning, page below the oldest held row, reconnect on their own clock, settle uncertain inputs, fetch attachment bytes lazily, keep a bounded replayable trace, and run alike in process and over the profile socket against a real node."
 paths = ["crates/ui-runtime/tests", "crates/ui-runtime/src"]

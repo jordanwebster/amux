@@ -159,6 +159,21 @@ lab-list:
 lab-render *ARGS:
     {{bounded}} 900 cargo build --locked -p tui-lab && {{bounded}} 300 target/debug/tui-lab render "$@"
 
+# Serve a declared world from journeys/sets on real daemons and the fake
+# providers, and run the real terminal client on it in this terminal; the
+# door's address is in target/tui-set/NAME/door.json. `--frames KEYS
+# [--size WxH]...` draws the client headlessly to text and PNG instead.
+# `just tui-set list` lists the sets. The session is interactive, so only
+# the build and frames are bounded.
+tui-set NAME *ARGS:
+    #!/usr/bin/env sh
+    set -eu
+    {{bounded}} 900 cargo build --locked -p amux -p provider-fakes -p testnet -p tui-set --bins {{desktop_features}}
+    case " $* " in
+    *" --frames"*) exec {{bounded}} 600 target/debug/tui-set "$@" ;;
+    *) exec target/debug/tui-set "$@" ;;
+    esac
+
 # Enforce production and test-infrastructure dependency boundaries.
 dependency-policy:
     {{bounded}} 60 scripts/py scripts/check-dependency-policy.py

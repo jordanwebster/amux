@@ -1,3 +1,16 @@
+2026-10-02 — **Sets: declared worlds for working on the terminal client.**
+`just tui-set <name>` serves a world from `journeys/sets/` on real daemons
+and the fake providers and opens the real `amux` on it; its door address
+is under `target/tui-set/<name>/`, so `just tui-set <name> --door '{…}'`
+changes the world from another terminal (sever a link, freeze an agent).
+`--frames KEYS --size WxH` draws the same client headlessly to text and
+PNG instead, with keys, mouse, pastes, waits and door requests. Fourteen
+sets cover what the TUI lab's scenarios showed: home's busy fleet, every
+ask, plans, questions and forms, the queue, sending (on its way, queued,
+host away, refused), composer states (crashed, limit reached, refused
+sign-in), pasted logs, markdown, live and mid turns, a long chat whose
+review page shows a real diff, and starting agents both ways.
+
 2026-10-02 — **The fake providers and the test network can stage more of a
 person's day.** Scripts gain the facts the new terminal client shows:
 usage limits as each provider reports them (headless Claude can reach a

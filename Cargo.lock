@@ -4871,6 +4871,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "tui-set"
+version = "0.1.0"
+dependencies = [
+ "agent-dir",
+ "anyhow",
+ "clap",
+ "client",
+ "crossterm 0.29.0",
+ "hyper-util",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "settings",
+ "shell-words",
+ "shot",
+ "tokio",
+ "tonic",
+ "tower",
+ "tui",
+ "ui-runtime",
+ "wire",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
