@@ -1,3 +1,17 @@
+2026-10-02 — **A headless subagent's task is progress on the call that started it.**
+Headless Claude reports a subagent or a background shell as task
+events naming the call. The interpreter wrote them as a task item of
+their own, the transcript kept a referrer index so the call's row could
+find it, and the view hid the task item and read the call's progress
+through that index; the call itself closed on its launch result, so a
+background subagent's row showed "launched" while it worked. The task
+now lands on the call: steps on an Agent row, the call open across the
+turn that launched it until the task's notification ends it with the
+task's answer, a background shell running until it finishes. The
+referrer index and the task's call key are gone; a task whose call
+was never shown is still an item of its own. Interpreter and view
+goldens re-recorded.
+
 2026-10-02 — **The tool class carries the verb a look is drawn with.**
 The interpreters marked a call exploration or consequential, and both
 views then re-derived read, search, list, fetch and web search from

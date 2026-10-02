@@ -41,19 +41,6 @@ impl ItemBody {
         decoded.unwrap_or(ItemBody::Undecodable)
     }
 
-    /// The item whose row this one is drawn on: headless Claude reports a
-    /// subagent's progress as a task item naming the call that started it.
-    pub fn refers(&self) -> Option<String> {
-        match self {
-            ItemBody::ClaudeSdk(wire::claude_sdk_item::Kind::Task(task))
-                if !task.tool_key.is_empty() =>
-            {
-                Some(task.tool_key.clone())
-            }
-            _ => None,
-        }
-    }
-
     /// The kind-neutral facts the model derives from.
     pub fn class(&self) -> ItemClass {
         use wire::claude_pty_item::Kind as Pty;

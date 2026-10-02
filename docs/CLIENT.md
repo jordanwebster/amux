@@ -133,8 +133,8 @@ order in `[oldest_held, head]`. Each item is decoded once per revision into a `H
   there.
 - Pages only extend the low edge.
 - While the reader follows, the window keeps the newest rows up to its cap and drops older rows from its top as
-  live rows arrive, so a chat left open under a flood holds a bounded set. The dropped rows' key, input-id,
-  referrer and run entries go with them, a later revision of a dropped key is ignored like any row below the
+  live rows arrive, so a chat left open under a flood holds a bounded set. The dropped rows' key, input-id
+  and run entries go with them, a later revision of a dropped key is ignored like any row below the
   window, and the run at the new low edge reads `open_below`. The rows stay in the runtime's store and come back
   only by paging from the low edge.
 - While the reader is in history, nothing is dropped and the window's head does not move. A row above the head
@@ -152,8 +152,7 @@ order in `[oldest_held, head]`. Each item is decoded once per revision into a `H
 - Nothing is paged downward, and no live row lands outside the window except into the held rows.
 - `has_older()` is true while the oldest held order is above 1 and neither a page came back exhausted nor the
   window was trimmed since. Orders start at one and are dense, so a window that reaches order one has everything.
-- The window also indexes items by input id (a prompt's reflection) and by referrer (a headless Claude task item
-  that reports a subagent's progress on the row of the call that started it).
+- The window also indexes items by input id (a prompt's reflection).
 
 **Runs.** A run is two or more consecutive held tool items whose class says they only looked (a read, search,
 listing, fetch or web search, each by its verb). [`RunIndex`](../crates/ui-state/src/transcript.rs) keeps run

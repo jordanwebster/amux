@@ -2518,7 +2518,8 @@ impl ::prost::Name for ClaudeSdkItem {
         "/amux.v1.ClaudeSdkItem".into()
     }
 }
-/// A subagent or background task the SDK reports with its own progress.
+/// A task the SDK reports whose starting call it never showed; a task of a
+/// known call is progress on that call instead.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Task {
     #[prost(string, tag = "1")]
@@ -2531,9 +2532,6 @@ pub struct Task {
     pub tool_count: u32,
     #[prost(string, tag = "5")]
     pub last_tool: ::prost::alloc::string::String,
-    /// The key of the tool call that started it.
-    #[prost(string, tag = "6")]
-    pub tool_key: ::prost::alloc::string::String,
     #[prost(uint64, tag = "7")]
     pub tokens: u64,
 }

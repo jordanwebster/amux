@@ -485,12 +485,7 @@ pub fn projection(transcript: &Transcript) -> Vec<(String, String)> {
     transcript
         .iter()
         .map(|held| {
-            let row = format!(
-                "{:?}|{:?}|{:?}",
-                held,
-                transcript.run_at(held.item.order),
-                transcript.referrer(&held.item.key)
-            );
+            let row = format!("{:?}|{:?}", held, transcript.run_at(held.item.order));
             (held.item.key.clone(), row)
         })
         .collect()

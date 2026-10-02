@@ -69,11 +69,7 @@ impl Structure for SessionState {
             self.head_moved_on()
         );
         for held in transcript.iter() {
-            let _ = write!(out, "  {} class={}", item(&held.item), variant(&held.class));
-            if let Some(refers) = &held.refers {
-                let _ = write!(out, " refers={refers}");
-            }
-            out.push('\n');
+            let _ = writeln!(out, "  {} class={}", item(&held.item), variant(&held.class));
         }
         let _ = writeln!(out, "inputs {}", self.inputs().iter().count());
         for sent in self.inputs().iter() {

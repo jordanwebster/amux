@@ -522,7 +522,7 @@ fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Decision>, boo
             }),
             Pty::Message(m) => plain(prose(held, m.complete, false)),
             Pty::Thinking(t) => plain(thinking(state, held, t.complete)),
-            Pty::Tool(tool) => claude_tool(state, held, tool),
+            Pty::Tool(tool) => claude_tool(held, tool),
             Pty::Turn(turn) => plain(turn_row(held, turn)),
             Pty::Compaction(c) => plain(compaction(c)),
             Pty::CompactSummary(_) | Pty::Task(_) | Pty::Interruption(_) => plain(RowKind::Hidden),
@@ -544,11 +544,7 @@ fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Decision>, boo
             }),
             Sdk::Message(m) => plain(prose(held, m.complete, false)),
             Sdk::Thinking(t) => plain(thinking(state, held, t.complete)),
-            Sdk::Tool(tool) => claude_tool(state, held, tool),
-            // A task is drawn on the Agent call that started it.
-            Sdk::Task(task) if state.transcript().get(&task.tool_key).is_some() => {
-                plain(RowKind::Hidden)
-            }
+            Sdk::Tool(tool) => claude_tool(held, tool),
             Sdk::Task(task) => plain(RowKind::Subagent {
                 description: task.description.clone(),
                 running: task.state() == wire::TaskState::Running,
@@ -859,11 +855,7 @@ fn image_of(attachments: &[Attachment]) -> Option<BlobRef> {
         })
 }
 
-fn claude_tool(
-    state: &SessionState,
-    held: &Held,
-    tool: &ToolCall,
-) -> (RowKind, Option<Decision>, bool) {
+fn claude_tool(held: &Held, tool: &ToolCall) -> (RowKind, Option<Decision>, bool) {
     let decision = decision_view(tool.decision.as_ref());
     let view = state_view(tool.state);
     let failed = view == ToolStateView::Failed;
@@ -946,7 +938,7 @@ fn claude_tool(
                     state: view,
                 }
             }
-            "Agent" | "Task" => subagent(state, held, tool, &input),
+            "Agent" | "Task" => subagent(held, tool, &input),
             "AskUserQuestion" => {
                 let questions = question_view(&input);
                 // A question cannot be declined: one that closed without
@@ -1073,35 +1065,16 @@ fn explore_verb(class: i32) -> Option<ExploreVerb> {
     }
 }
 
-fn subagent(state: &SessionState, held: &Held, tool: &ToolCall, input: &Value) -> RowKind {
-    // Headless Claude reports a subagent's progress as a task item that
-    // names this call; terminal Claude reports it on the call itself.
-    let task = state
-        .transcript()
-        .referrer(&held.item.key)
-        .and_then(|referrer| match &referrer.body {
-            ItemBody::ClaudeSdk(wire::claude_sdk_item::Kind::Task(task)) => Some(task.clone()),
-            _ => None,
-        });
+fn subagent(held: &Held, tool: &ToolCall, input: &Value) -> RowKind {
     let progress = tool.subagent.clone().unwrap_or_default();
     let view = state_view(tool.state);
-    match task {
-        Some(task) => RowKind::Subagent {
-            description: task.description,
-            running: task.state == wire::TaskState::Running as i32,
-            tool_count: task.tool_count,
-            last_tool: task.last_tool,
-            answer: String::new(),
-            duration_ms: None,
-        },
-        None => RowKind::Subagent {
-            description: field(input, "description"),
-            running: in_flight(view) || (tool.background && !progress.finished),
-            tool_count: progress.tool_count,
-            last_tool: progress.last_tool,
-            answer: tool.outcome_text.clone(),
-            duration_ms: duration(held, tool.ended_at_ms),
-        },
+    RowKind::Subagent {
+        description: field(input, "description"),
+        running: in_flight(view) || (tool.background && !progress.finished),
+        tool_count: progress.tool_count,
+        last_tool: progress.last_tool,
+        answer: tool.outcome_text.clone(),
+        duration_ms: duration(held, tool.ended_at_ms),
     }
 }
 

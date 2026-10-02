@@ -369,6 +369,12 @@ nothing is inferred.
   The result dismisses any ask still open.
 - **Boundaries.** Claude repeats its `init` at every turn; only a process
   start or a changed session id is a boundary, the latter a fork.
+- **Tasks.** A subagent or a shell in the background is reported as task
+  events naming the call that started it. They are progress on that call:
+  a subagent's steps on its Agent row, and the call stays running, across
+  the end of the turn that launched it, until the task's notification ends
+  it with the task's answer. A task whose call this interpreter never showed
+  is an item of its own.
 - **Agent messages** go as a user message on stdin, an immediate hand-off to
   Claude's own queue. The agent-message item is written at acceptance, and
   the message is consumed when Claude reports taking that UUID.
