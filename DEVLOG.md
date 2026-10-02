@@ -1,3 +1,13 @@
+2026-10-02 — **What the release key does and does not vouch for is written down.**
+The key keeps a compromised amux.sh, and a GitHub token stolen after a
+deploy, from putting code on machines. It does not vouch for the build:
+the Release workflow builds on GitHub's runners and deploy signs the
+digests it published, so a runner compromised between build and deploy
+gets its binary signed. Jordan keeps that trust deliberately; the
+release page now says so, with attestations named as the tightening if
+the window ever needs closing, and the deploy tool's own doc no longer
+overstates what the key does.
+
 2026-10-02 — **A profile is opened and registered under one hold of the lock.**
 Opening a profile called into the library under the runtime's lock and
 registered the result after letting it go; a stop between the two

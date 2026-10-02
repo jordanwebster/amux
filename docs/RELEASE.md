@@ -722,9 +722,23 @@ keychain of the Mac that cuts releases, as the generic password item with
 service `amux-release-key`. It is never in this repository, never on GitHub
 and never on amux.sh. That is the point of signing at all: the machines
 that install a release verify it against a key compiled into the binary
-they already run, so neither the build runner nor the server that hands
-out manifests can make them install something else. A compromised
-amux.sh can serve a stale manifest or none, and nothing worse.
+they already run, so the server that hands out manifests cannot make
+them install something else. A compromised amux.sh can serve a stale
+manifest or none, and nothing worse. A GitHub token stolen after a deploy
+can tag and build what it likes and re-upload any asset, and none of it
+reaches a machine either: a manifest needs the key, and a swapped asset
+fails the hash the key signed.
+
+What the key does not vouch for is the build itself. The binaries are
+built by the Release workflow on GitHub's runners, and `just deploy`
+signs the digests that workflow published, so a runner or release
+storage compromised between the build and the deploy gets its binary
+signed. That is the trust kept deliberately: the window is the one
+release being cut, the deploy is an act someone runs by hand, and the
+alternative is building every target on the release Mac. Should that
+window ever need closing, GitHub's artifact attestations would let the
+deploy prove each asset came from the workflow at the tagged commit
+before signing it, leaving only a compromised runner.
 
 `just release-key generate` makes a seed from the system's randomness,
 stores it in the keychain and prints the public half; it refuses when an

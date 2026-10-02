@@ -1,8 +1,11 @@
 //! Publishing the daemon's release feed: the signing key and the channel
 //! manifests. The private key is a 32-byte Ed25519 seed that lives only in
 //! this Mac's login keychain; the workflow that builds releases never sees
-//! it, and neither does the server that serves manifests, so a compromised
-//! build runner or cloud cannot sign a binary that machines would install.
+//! it, and neither does the server that serves manifests, so neither can
+//! sign a manifest machines would take. What is signed is what the
+//! workflow built: the key vouches for the digests GitHub published, not
+//! for the build, a trust kept deliberately and written up on the release
+//! page.
 //!
 //! A release is two acts at two times. `cut` makes the version exist: the
 //! number goes into the manifests, the commit is tagged and pushed, and the
