@@ -1,14 +1,14 @@
-  Review · working tree at 3134fb6                                                              1 file · +2 −1
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  M  deploy.sh  +2 −1
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  deploy.sh  +2 −1
-  @@ -1,3 +1,4 @@
-    1   1   #!/bin/sh
-    2   2   echo deploying
-    3     - rsync build/ prod:/srv
-▌       3 + rsync --delete build/ prod:/srv
-        4 + echo done
+
+  reviewer │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work      review · working tree at 3134fb6 │ 1 file · +2 −1
+
+  Files 1                  │  deploy.sh  +2 −1 ─────────────────────────────────────────────────────────────
+                           │
+  deploy.sh         +2 −1  │  @@ -1,3 +1,4 @@
+                           │    1   1   #!/bin/sh
+                           │    2   2   echo deploying
+                           │    3     - rsync build/ prod:/srv
+                           │▌       3 + rsync --delete build/ prod:/srv
+                           │        4 + echo done
 
 
 
@@ -31,4 +31,4 @@
 
 
 
-  j/k move · J/K hunk · ]/[ file · c comment · enter edit · d delete · q back to the chat
+  j/k move   J/K hunk   ]/[ file   c comment   enter edit   d delete   tab files   q back

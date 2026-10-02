@@ -78,6 +78,14 @@ impl Editor {
         )
     }
 
+    /// Takes the draft out to send it: without trailing whitespace, such
+    /// as the space that follows a chip attached last.
+    pub fn take_prompt(&mut self) -> (String, Vec<Attachment>) {
+        let (mut text, attachments) = self.take();
+        text.truncate(text.trim_end().len());
+        (text, attachments)
+    }
+
     /// Puts a draft back after what the field holds, on its own line.
     pub fn restore(&mut self, text: &str, attachments: Vec<Attachment>) {
         if self.is_empty() {

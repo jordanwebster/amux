@@ -1,4 +1,5 @@
-  guarded · claude sdk @ desk                 claude-fake-1 · default · desk away · this machine is signed out
+
+  guarded │ /tmp/aj-xxxxxxxx/testnetxxxxxx/de…  desk away · this machine is signed out │ 1 │ [Diff] │ [Home]
 
 
 
@@ -16,19 +17,18 @@
 
 
 
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+    Are you there?                                                                                   hh:mm
 
-
-
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Are you there?
 
     Only this account reaches me.
 
-    Worked <t> · $0.00
+    Worked <t>
 
+  ╭─ desk is away · this machine is signed out ────────────────────────────────────────────────────────────╮
+  │ › Still there?                                                                                         │
+  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
 
-▎ Still there?
-  draft kept · sending waits until this machine signs in
+  Draft kept · sending waits until this machine signs in

@@ -1,4 +1,5 @@
-  decision-sdk · claude sdk @ desk                                         claude-fake-1 · default · needs you
+
+  decision-sdk │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                1 │ [Diff] │ [Home]
 
 
 
@@ -15,20 +16,19 @@
 
 
 
-
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Check the deployment once.
-
-▌ ▸ Wants to run deploy --check
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-  ● Wants to run a command
-    $ deploy --check
-  › 1. Allow once
-    2. Always allow Bash in this project
-    3. Deny…
-    4. Deny and stop…
-    5. Stop the turn
-    ↑↓/1-9 select · enter confirm · f open · ctrl+x stop
+    Check the deployment once.                                                                       hh:mm
 
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ● Wants to run                                                                                         │
+  │ deploy --check                                                                                         │
+  │                                                                                                        │
+  │ › 1. Yes                                                                                               │
+  │   2. Yes, and always allow Bash in this project                                                        │
+  │   3. No  esc · tab to add a note                                                                       │
+  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
+
+  enter choose   ctrl+x stop   ctrl+a more

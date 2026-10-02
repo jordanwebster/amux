@@ -1,4 +1,5 @@
-  decision-pty · claude @ desk                                                  claude-fake-1 · default · idle
+
+  decision-pty │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                1 │ [Diff] │ [Home]
 
 
 
@@ -14,21 +15,20 @@
 
 
 
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+    Check the deployment once.                                                                       hh:mm
 
 
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Check the deployment once.
-
-  ✔ Ran deploy --check · <t> · allowed
-    └ deploy check: ok
+  ▸ 1 command
 
     The deploy check passed.
 
     Worked <t>
 
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message decision-pty                                                                                 │
+  ╰───────────────────────────────────────────────────────────────────────────────────── Fake 1 · default ─╯
 
-▎ Message decision-pty
-  enter send · ctrl+j newline · ctrl+v attach · C-a r review · ? help                          shift+tab mode
+  shift+tab mode   ctrl+a more

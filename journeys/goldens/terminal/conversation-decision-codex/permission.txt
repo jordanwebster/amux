@@ -1,4 +1,5 @@
-  decision-codex · codex @ desk                                              gpt-fake · on-request · needs you
+
+  decision-codex │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                  [Diff] │ [Home]
 
 
 
@@ -14,21 +15,20 @@
 
 
 
-
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Check the deployment once.
-
-▌ ▸ Wants to run /bin/zsh -lc 'deploy --check'
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-  ● Wants to run a command
-    $ /bin/zsh -lc 'deploy --check'
-    The script asks before running this. · in /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work
-  › 1. Allow once
-    2. Allow for this session
-    3. Deny
-    4. Deny and stop
-    5. Stop the turn
-    ↑↓/1-9 select · enter confirm · f open · ctrl+x stop
+    Check the deployment once.                                                                       hh:mm
 
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ● Wants to run                                                                                         │
+  │ /bin/zsh -lc 'deploy --check'                                                                          │
+  │ The script asks before running this.                                                                   │
+  │                                                                                                        │
+  │ › 1. Yes                                                                                               │
+  │   2. Yes, and don't ask again this session                                                             │
+  │   3. No  esc                                                                                           │
+  ╰────────────────────────────────────────────────────────────────────────────────────── gpt-fake · auto ─╯
+
+  enter choose   ctrl+x stop   ctrl+a more

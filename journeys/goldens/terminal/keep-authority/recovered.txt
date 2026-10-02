@@ -1,4 +1,5 @@
-  guarded · claude sdk @ desk                                                   claude-fake-1 · default · idle
+
+  guarded │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                              1 │ [Diff] │ [Home]
 
 
 
@@ -8,27 +9,26 @@
 
 
 
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+    Are you there?                                                                                   hh:mm
 
-
-
-
-
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Are you there?
 
     Only this account reaches me.
 
-    Worked <t> · $0.00
+    Worked <t>
 
-▎   Still there?
+
+    Still there?                                                                                     hh:mm
+
 
     The relay carries us again.
 
-    Worked <t> · $0.00
+    Worked <t>
 
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message guarded                                                                                      │
+  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
 
-▎ Message guarded
-  enter send · ctrl+j newline · ctrl+v attach · C-a r review · ? help                          shift+tab mode
+  shift+tab mode   ctrl+a more

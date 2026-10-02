@@ -1,4 +1,5 @@
-  unnamed · claude sdk @ desk                                                   claude-fake-1 · default · idle
+
+  the agent │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                           1 │ [Diff] │ [Home]
 
 
 
@@ -16,19 +17,18 @@
 
 
 
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+    Say hello.                                                                                       hh:mm
 
-
-
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Say hello.
 
     Ready when you are.
 
-    Worked <t> · $0.00
+    Worked <t>
 
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message the agent                                                                                    │
+  ╰──────────────────────────────────────────────────────────────────────────────── opus (high) · default ─╯
 
-▎ Message the agent
-  enter send · ctrl+j newline · ctrl+v attach · C-a r review · ? help                          shift+tab mode
+  shift+tab mode   ctrl+a more

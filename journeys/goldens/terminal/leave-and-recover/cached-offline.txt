@@ -1,4 +1,5 @@
-  keeper · claude sdk @ desk                                 claude-fake-1 · default · desk away · not current
+
+  keeper │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk     desk away · not current │ 1 │ [Diff] │ [Home]
 
 
 
@@ -16,19 +17,18 @@
 
 
 
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+    Remember this recovery turn.                                                                     hh:mm
 
-
-
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Remember this recovery turn.
 
     The recovery state is safely stored.
 
-    Worked <t> · $0.00
+    Worked <t>
 
+  ╭─ desk is away ─────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Keep this draft through the outage.                                                                  │
+  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
 
-▎ Keep this draft through the outage.
-  draft kept · sending waits
+  Draft kept · sending waits

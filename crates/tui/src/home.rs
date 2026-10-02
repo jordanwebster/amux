@@ -818,7 +818,7 @@ impl Home {
                 self.draft.starting = true;
                 return vec![FleetEffect::Start {
                     setup: Box::new(setup),
-                    text: self.draft.editor.text().to_owned(),
+                    text: self.draft.editor.text().trim_end().to_owned(),
                     attachments: self.draft.editor.attachments().to_vec(),
                     open: !ctrl,
                 }];

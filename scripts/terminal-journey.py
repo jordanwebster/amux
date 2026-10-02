@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 
-from journeys.terminal import ROOT, TerminalJourney, story
+from journeys.terminal import ROOT, TerminalJourney, agent_row, at_home, at_rest, chat_of, story, working
 
 PROMPT = "Check the deployment once."
 REPLY = "The deploy check passed."
@@ -50,16 +50,16 @@ def conversation_decision(journey: TerminalJourney, agent: str, provider_logs: b
     journey.type(pane, PROMPT)
     journey.keys(pane, "Enter")
     journey.wait_terms(pane, PROMPT)
-    card = journey.wait_terms(pane, "Wants to run a command", "deploy --check", "Allow once")
+    card = journey.wait_terms(pane, "Wants to run", "deploy --check", "1. Yes")
     sent = journey.wait_chat("desk", agent, lambda chat: len(prompts(chat, PROMPT)) >= 1, "prompt-reflected")
     reflected_once(sent, PROMPT)
     control = negative_control(reflected_once, sent, PROMPT + " (a wrong prompt)")
     journey.frame(pane, "permission")
-    # The first choice is Allow once.
-    journey.keys(pane, "1", "Enter")
+    # The first choice is Yes, this once.
+    journey.keys(pane, "1")
     journey.wait(
         pane,
-        lambda frame: REPLY in frame and "Wants to run a command" not in frame and "idle" in frame.splitlines()[0],
+        lambda frame: at_rest(frame, REPLY) and "Wants to run" not in frame,
         "the settled turn",
     )
     settled = journey.wait_chat(
@@ -72,7 +72,7 @@ def conversation_decision(journey: TerminalJourney, agent: str, provider_logs: b
     assertions = [
         f"{PROMPT!r} reflected once in the desk's chat",
         control,
-        "the permission card offered every outcome and Allow once was taken",
+        "the permission ask offered its choices in the composer's box and Yes was taken",
         f"the reply {REPLY!r} arrived and the desk says idle",
     ]
     if provider_logs:
@@ -106,7 +106,7 @@ def leave_and_recover(journey: TerminalJourney) -> list[str]:
     journey.open_chat(pane, "keeper")
     journey.wait_terms(pane, first, "desk away · not current")
     journey.type(pane, DRAFT)
-    journey.wait_terms(pane, DRAFT, "draft kept · sending waits")
+    journey.wait_terms(pane, DRAFT, "Draft kept · sending waits")
     journey.frame(pane, "cached-offline")
 
     # Work goes on at the desk while the laptop is cut off; when the link
@@ -135,7 +135,7 @@ def leave_and_recover(journey: TerminalJourney) -> list[str]:
     journey.request({"RestartDaemon": {"host": "laptop"}})
     journey.wait(
         pane,
-        lambda frame: DRAFT in frame and "enter send" in frame and second in frame,
+        lambda frame: DRAFT in frame and "Draft kept" not in frame and second in frame,
         "the chat live again after the restart",
     )
     journey.keys(pane, "Enter")
@@ -161,7 +161,7 @@ def leave_and_recover(journey: TerminalJourney) -> list[str]:
         "laptop-after-reset",
     )
     # A restored drive has no running processes: the agent reads exited.
-    journey.wait(pane, lambda frame: "not current" not in frame and third in frame and "exited" in frame, "the chat after the Reset")
+    journey.wait(pane, lambda frame: "not current" not in frame and third in frame and "enter resume" in frame, "the chat after the Reset")
     journey.frame(pane, "after-reset")
 
     journey.quit_client(pane)
@@ -196,28 +196,29 @@ def manage_agent(journey: TerminalJourney) -> list[str]:
     before = {agent["id"] for agent in journey.inventory("desk", "inventory-before")}
     pane = journey.launch("terminal", "desk")
     journey.wait_terms(pane, "keeper", "n new")
-    # Created from the fleet: a Claude session on the SDK, whose chat opens.
+    # Started from home with its first prompt: a Claude the desk runs
+    # headless, whose chat opens on the first reply.
     journey.keys(pane, "n")
-    journey.wait_terms(pane, "New: 1. Claude (terminal)  2. Claude (SDK)  3. Codex")
-    journey.keys(pane, "2")
-    journey.wait_terms(pane, "unnamed · claude sdk @ desk", "Nothing here yet.")
+    journey.wait_terms(pane, "What should the new agent work on?", "Claude")
+    journey.type(pane, HELLO)
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: chat_of(frame) is not None and at_rest(frame, HELLO, READY), "the first reply")
     created = journey.wait_inventory(
         "desk", lambda agents: len({a["id"] for a in agents} - before) == 1, "created"
     )
     (agent_id,) = {agent["id"] for agent in created} - before
-    lifecycle(created, agent_id, None, LIVE)
-    journey.type(pane, HELLO)
-    journey.keys(pane, "Enter")
-    journey.wait(pane, lambda frame: READY in frame and frame.splitlines()[0].endswith("idle"), "the first reply")
+    made = listed(created, agent_id)
+    if made is None or made["lifecycle"] != LIVE:
+        raise RuntimeError(f"the desk lists the new agent as {made!r}")
     journey.frame(pane, "created")
 
-    # Renamed from the fleet: the host lists the same agent under the name.
-    journey.keys(pane, "C-a", "s")
+    # Renamed in place on home: the host lists the same agent under the name.
+    journey.home(pane)
     journey.select_agent(pane, "unnamed")
     journey.keys(pane, "r", "C-u")
     journey.type(pane, "helper")
     journey.keys(pane, "Enter")
-    journey.wait_terms(pane, " helper ")
+    journey.wait(pane, lambda frame: agent_row(frame, "helper") is not None, "helper on home")
     lifecycle(
         journey.wait_inventory("desk", lambda agents: (listed(agents, agent_id) or {}).get("name") == "helper", "renamed"),
         agent_id,
@@ -228,9 +229,10 @@ def manage_agent(journey: TerminalJourney) -> list[str]:
     # Stopped: exited on the host with its history kept, and resumable.
     journey.select_agent(pane, "helper")
     journey.keys(pane, "s")
-    journey.wait_terms(pane, "Stop helper? It can be resumed later. y stop · n keep")
+    journey.wait_terms(pane, "Stop helper? It can be resumed later.")
+    journey.frame(pane, "stop-asked")
     journey.keys(pane, "y")
-    journey.wait(pane, lambda frame: re.search(r"helper .* exited +stopped", frame) is not None, "helper exited, stopped")
+    journey.wait(pane, lambda frame: "▸ Exited 1 " in frame and agent_row(frame, "helper") is None, "helper exited")
     stopped = journey.wait_inventory(
         "desk", lambda agents: (listed(agents, agent_id) or {}).get("lifecycle") == EXITED, "stopped"
     )
@@ -240,15 +242,15 @@ def manage_agent(journey: TerminalJourney) -> list[str]:
     reflected_once(kept, HELLO)
     if not any(READY in item["text"] for item in kept["items"]):
         raise RuntimeError(f"the stopped agent's history lost its reply: {kept!r}")
-    journey.select_agent(pane, "helper")
-    journey.keys(pane, "Enter")
-    journey.wait_terms(pane, HELLO, READY, "helper has exited · type to resume it with a message")
+    journey.open_exited(pane)
+    journey.open_chat(pane, "helper")
+    journey.wait_terms(pane, HELLO, READY, "enter resume")
     journey.frame(pane, "exited-and-resumable")
 
     # Resumed from the exited composer: the same identity, live again.
     journey.type(pane, BACK)
     journey.keys(pane, "Enter")
-    journey.wait(pane, lambda frame: frame.count(READY) == 2 and frame.splitlines()[0].endswith("idle"), "the resumed reply")
+    journey.wait(pane, lambda frame: frame.count(READY) == 2 and not working(frame), "the resumed reply")
     lifecycle(
         journey.wait_inventory("desk", lambda agents: (listed(agents, agent_id) or {}).get("lifecycle") == LIVE, "resumed"),
         agent_id,
@@ -260,23 +262,23 @@ def manage_agent(journey: TerminalJourney) -> list[str]:
     reflected_once(resumed, BACK)
     journey.frame(pane, "resumed")
 
-    # Deleted, explicitly: gone from the fleet and from the host.
-    journey.keys(pane, "C-a", "s")
+    # Deleted, explicitly: gone from home and from the host.
+    journey.home(pane)
     journey.select_agent(pane, "helper")
-    journey.keys(pane, "d")
-    journey.wait_terms(pane, "Delete helper and its history? y delete · n keep")
+    journey.keys(pane, "x")
+    journey.wait_terms(pane, "Delete helper and its history?")
     journey.keys(pane, "y")
-    journey.wait(pane, lambda frame: " helper " not in frame and "deleted" in frame, "the fleet without helper")
+    journey.wait(pane, lambda frame: agent_row(frame, "helper") is None, "home without helper")
     journey.wait_inventory("desk", lambda agents: listed(agents, agent_id) is None, "deleted")
     journey.frame(pane, "deleted")
     journey.quit_client(pane)
     return [
-        "n then 2 created a Claude SDK agent the desk lists, and its chat answered",
-        "r renamed it; the desk lists the same id as helper",
+        "n, a first prompt and enter started a headless Claude the desk lists, and its chat opened on the reply",
+        "r renamed it in place; the desk lists the same id as helper",
         "s stopped it: the desk lists it exited, with its prompt and reply kept",
         control,
         "a message from the exited composer resumed the same id, and each prompt is in the desk's chat once",
-        "d deleted it: gone from the fleet and from the desk",
+        "x deleted it: gone from home and from the desk",
         "the client exited 0",
     ]
 
@@ -299,9 +301,9 @@ def reach_host(journey: TerminalJourney) -> list[str]:
     prompt = "Hello from the laptop."
     # Unpaired: the laptop finds the desk and says how to pair with it.
     pane = journey.launch("terminal", "laptop")
-    journey.wait_terms(pane, "No agents yet")
-    journey.keys(pane, "h")
-    journey.wait_terms(pane, "desk", "found · run amux pair desk")
+    journey.wait(pane, at_home, "home")
+    journey.keys(pane, "p")
+    journey.wait_terms(pane, "desk", "found nearby · amux pair desk")
     journey.frame(pane, "found-not-paired")
     peers = journey.launch("peers", "laptop", "peers")
     listing = journey.wait_terms(peers, "AMUX_EXIT_0")
@@ -328,7 +330,7 @@ def reach_host(journey: TerminalJourney) -> list[str]:
     # The running client's overlay says so, and the desk's work is there.
     journey.wait(
         pane,
-        lambda frame: "found ·" not in frame and re.search(r"desk\s+·direct", frame) is not None,
+        lambda frame: "found nearby" not in frame and re.search(r"desk\s+direct", frame) is not None,
         "the desk paired in the overlay",
     )
     journey.frame(pane, "paired")
@@ -336,7 +338,7 @@ def reach_host(journey: TerminalJourney) -> list[str]:
     journey.open_chat(pane, "desk-work")
     journey.type(pane, prompt)
     journey.keys(pane, "Enter")
-    journey.wait(pane, lambda frame: "The desk is reachable." in frame and frame.splitlines()[0].endswith("idle"), "the desk's reply")
+    journey.wait(pane, lambda frame: at_rest(frame, "The desk is reachable."), "the desk's reply")
     heard = journey.wait_chat("desk", "desk-work", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, prompt)) == 1, "desk-heard")
     reflected_once(heard, prompt)
     journey.frame(pane, "usable-chat")
@@ -401,17 +403,18 @@ def attachment_or_review(journey: TerminalJourney) -> list[str]:
     journey.type(pane, "Please check ")
     journey.paste(pane, PASTED)
     journey.wait_terms(pane, "Please check [pasted-1 · 12 lines]")
-    journey.type(pane, " against ")
+    # The chip is followed by a space of its own.
+    journey.type(pane, "against ")
     journey.keys(pane, "C-a", "r")
-    journey.wait_terms(pane, "Review · working tree at", "deploy.sh  +2 −1")
+    journey.wait_terms(pane, "review · working tree at", "deploy.sh  +2 −1")
     for _ in range(12):
-        if re.search(r"^▌\s+3 \+ rsync --delete", journey.capture(pane), re.M):
+        if re.search(r"│▌\s+3 \+ rsync --delete", journey.capture(pane)):
             break
         journey.keys(pane, "j")
     else:
         raise RuntimeError(f"no line to comment on:\n{journey.capture(pane)}")
     journey.frame(pane, "review-diff")
-    journey.keys(pane, "Enter")
+    journey.keys(pane, "c")
     journey.type(pane, COMMENT)
     journey.keys(pane, "Enter")
     journey.wait_terms(pane, "1 file · +2 −1 · 1 comment", f"│ {COMMENT}")
@@ -420,7 +423,7 @@ def attachment_or_review(journey: TerminalJourney) -> list[str]:
     journey.wait_terms(pane, "Please check [pasted-1 · 12 lines] against [review · 1 comment]")
     journey.frame(pane, "composer-tokens")
     journey.keys(pane, "Enter")
-    journey.wait(pane, lambda frame: "I read the review." in frame and frame.splitlines()[0].endswith("idle"), "the reviewer's reply")
+    journey.wait(pane, lambda frame: at_rest(frame, "I read the review."), "the reviewer's reply")
 
     # The desk received the tokens in order, the paste's exact text, the
     # comment, and the patch it made itself, whose bytes are on its disk.
@@ -435,10 +438,11 @@ def attachment_or_review(journey: TerminalJourney) -> list[str]:
     if hashlib.sha256(bytes_).hexdigest() != patch or b"+rsync --delete build/ prod:/srv" not in bytes_:
         raise RuntimeError("the patch on the desk is not the reviewed diff")
 
-    # Revisited: the chat opened again still carries both tokens.
-    journey.keys(pane, "C-a", "s")
+    # Revisited: the chat opened again shows the paste's opening lines in
+    # place and the review as its token.
+    journey.home(pane)
     journey.open_chat(pane, "reviewer")
-    journey.wait_terms(pane, "Please check [pasted-1 · 12 lines] against [review · 1 comment]", "I read the review.")
+    journey.wait_terms(pane, "Please check", "deploy log 0:", "against [review · 1 comment]", "I read the review.")
     journey.frame(pane, "reopened")
     journey.quit_client(pane)
     return [
@@ -447,7 +451,7 @@ def attachment_or_review(journey: TerminalJourney) -> list[str]:
         f"the review carries one comment on deploy.sh line 3: {COMMENT!r}",
         control,
         "the review names a patch the desk computed; its bytes on the desk hash to that name and hold the edit",
-        "the chat opened again shows the sent tokens and the reply",
+        "the chat opened again shows the paste in place, the review token and the reply",
         "the client exited 0",
     ]
 
@@ -468,9 +472,9 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     created = journey.launch("profile", "laptop", "profile", "create", "work")
     journey.wait_terms(created, "Created profile work", "AMUX_EXIT_0")
     other = journey.launch("other", "laptop", "--profile", "work")
-    journey.wait_terms(other, "0 agents", "No agents yet")
-    journey.keys(other, "h")
-    journey.wait(other, lambda frame: re.search(r"laptop\s+·local", frame) is not None and "desk" not in frame, "hosts without the desk")
+    journey.wait_terms(other, "no agents yet")
+    journey.keys(other, "p")
+    journey.wait(other, lambda frame: re.search(r"laptop\s+this machine", frame) is not None and "desk" not in frame, "hosts without the desk")
     journey.frame(other, "other-profile")
     journey.keys(other, "Escape")
     journey.quit_client(other)
@@ -480,7 +484,7 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     journey.open_chat(pane, "guarded")
     journey.type(pane, asked)
     journey.keys(pane, "Enter")
-    journey.wait(pane, lambda frame: "Only this account reaches me." in frame and frame.splitlines()[0].endswith("idle"), "the first reply")
+    journey.wait(pane, lambda frame: at_rest(frame, "Only this account reaches me."), "the first reply")
     reflected_once(journey.wait_chat("desk", "guarded", lambda chat: chat["phase"] == "IDLE", "reached"), asked)
 
     # Signed out, the laptop has no way to the desk: the chat says so and
@@ -490,17 +494,16 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     # The reason named is this machine's sign-out, never a claim about the
     # desk, and the hosts overlay says the same.
     journey.wait_terms(pane, "desk away · this machine is signed out", "until this machine signs in")
-    journey.keys(pane, "C-a", "s")
-    journey.wait(pane, lambda frame: frame.startswith("┌ amux "), "the fleet")
-    journey.keys(pane, "h")
-    journey.wait_terms(pane, "·local · this machine is signed out", "·offline · this machine is signed out")
+    journey.home(pane)
+    journey.keys(pane, "p")
+    journey.wait_terms(pane, "signed out · amux login", "offline · this machine is signed out")
     journey.frame(pane, "blocked-hosts")
     journey.keys(pane, "Escape")
     journey.open_chat(pane, "guarded")
     journey.wait_terms(pane, "desk away · this machine is signed out")
     journey.type(pane, held)
     journey.keys(pane, "Enter")
-    journey.wait_terms(pane, f"▎ {held}", "draft kept · sending waits until this machine signs in")
+    journey.wait_terms(pane, held, "Draft kept · sending waits until this machine signs in")
     journey.frame(pane, "blocked")
     time.sleep(2)
     blocked = journey.chat("desk", "guarded", "while-signed-out")
@@ -509,9 +512,9 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
 
     # Signed in again: the chat is current and the held message goes once.
     journey.request({"SignIn": {"host": "laptop", "account": "ada"}})
-    journey.wait(pane, lambda frame: "not current" not in frame and held in frame and "enter send" in frame, "the chat current again")
+    journey.wait(pane, lambda frame: "not current" not in frame and held in frame and "Draft kept" not in frame, "the chat current again")
     journey.keys(pane, "Enter")
-    journey.wait(pane, lambda frame: "The relay carries us again." in frame and frame.splitlines()[0].endswith("idle"), "the reply after signing in")
+    journey.wait(pane, lambda frame: at_rest(frame, "The relay carries us again."), "the reply after signing in")
     after = journey.wait_chat("desk", "guarded", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, held)) == 1, "sent-after-sign-in")
     reflected_once(after, asked)
     reflected_once(after, held)

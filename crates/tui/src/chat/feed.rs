@@ -406,6 +406,13 @@ fn message_lines(
             Segment::Attachment(_) => false,
         });
         if !blank {
+            // Words after a paste start their own line, without the space
+            // the paste's chip left after itself.
+            if !out.is_empty()
+                && let Some(Segment::Text(text)) = run.first_mut()
+            {
+                *text = text.trim_start().to_owned();
+            }
             out.extend(
                 segment_lines(run, room, theme.text(), theme)
                     .into_iter()

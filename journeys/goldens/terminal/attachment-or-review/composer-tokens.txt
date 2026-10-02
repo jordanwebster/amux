@@ -1,5 +1,5 @@
-  reviewer · claude sdk @ desk                                                                            idle
 
+  reviewer │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                 [Diff] │ [Home]
 
 
 
@@ -27,8 +27,8 @@
 
 
 
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Please check [pasted-1 · 12 lines] against [review · 1 comment]                                      │
+  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-
-
-▎ Please check [pasted-1 · 12 lines] against [review · 1 comment]
-  enter send · ctrl+j newline · ctrl+v attach · C-a r review                                   shift+tab mode
+  ctrl+j newline   shift+tab mode   ctrl+a more

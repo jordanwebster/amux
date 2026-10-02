@@ -175,7 +175,12 @@ SCRATCH = re.compile(r"(aj-|testnet)([A-Za-z0-9_]{6,8})\b")
 FLEET_AGE = re.compile(r"(?<= )(now|\d{1,2}[mhd])(?=  )")
 
 
+# A prompt's time of day sits at its row's right edge.
+CLOCK = re.compile(r"(?<= )\d{2}:\d{2}$", re.M)
+
+
 def normalize(text: str) -> str:
+    text = CLOCK.sub("hh:mm", text)
     text = AGE.sub(lambda match: "<age>".ljust(len(match.group(0))), text)
     text = FLEET_AGE.sub(lambda match: "<a>" if len(match.group(0)) == 3 else "<>", text)
     return SCRATCH.sub(lambda match: match.group(1) + "x" * len(match.group(2)), text)
@@ -241,6 +246,47 @@ def mask_durations(
         out_texts.append(text)
         out_styles.append(row)
     return out_texts, out_styles
+
+
+# --- reading frames -------------------------------------------------------
+
+
+def at_home(frame: str) -> bool:
+    """Home's title line: amux at the left, the fleet's facts at the right."""
+    return any(line == "  amux" or line.startswith("  amux ") for line in frame.splitlines()[:3])
+
+
+def chat_of(frame: str) -> str | None:
+    """The agent whose chat is open: the header's first cell."""
+    for line in frame.splitlines()[:3]:
+        found = re.match(r"^  (\S.*?) │ ", line)
+        if found:
+            return found.group(1)
+    return None
+
+
+def agent_row(frame: str, agent: str) -> int | None:
+    """The line of home's row for `agent`: a mark, then its name."""
+    pattern = re.compile(rf"^\s+(› )?\S {re.escape(agent)}(  | ▸|$)")
+    return next((i for i, line in enumerate(frame.splitlines()) if pattern.match(line)), None)
+
+
+def selected_row(frame: str, agent: str) -> bool:
+    """Whether home's selection is on `agent`'s row: a band around it in
+    full colour, a › before it in the sixteen colours."""
+    at = agent_row(frame, agent)
+    lines = frame.splitlines()
+    return at is not None and (lines[at].lstrip().startswith("› ") or (at > 0 and "▄▄▄" in lines[at - 1]))
+
+
+def working(frame: str) -> bool:
+    """A turn is under way: the keys under the composer offer to stop it."""
+    return "ctrl+x stop" in frame
+
+
+def at_rest(frame: str, *terms: str) -> bool:
+    """Every term shows and no turn is under way."""
+    return all(term in frame for term in terms) and not working(frame)
 
 
 @dataclass(frozen=True)
@@ -384,8 +430,12 @@ class TerminalJourney:
             ]
         )
         held = command + "; status=$?; echo AMUX_EXIT_$status; sleep 600"
+        # In the host's work directory, as a person starts amux in a
+        # project: a new agent works where the client was started.
+        work = Path(self.ready["root"]) / host / "work"
         self.tmux(
-            "new-session", "-d", "-x", str(COLS), "-y", str(ROWS), "-s", pane, "sh", "-c", held
+            "new-session", "-d", "-x", str(COLS), "-y", str(ROWS), "-s", pane,
+            "-c", str(work if work.is_dir() else ROOT), "sh", "-c", held,
         )
         self.actions.append(f"launch {pane} on {host}: amux {' '.join(args)}")
         return pane
@@ -431,24 +481,35 @@ class TerminalJourney:
         self.actions.append(f"{pane}: paste {len(value.splitlines())} lines")
 
     def select_agent(self, pane: str, agent: str) -> str:
-        """Moves the fleet's selection onto `agent`."""
-        self.wait_terms(pane, agent)
+        """Moves home's selection onto `agent`: the row inside the band."""
+        self.wait(pane, lambda frame: agent_row(frame, agent) is not None, f"{agent} on home")
+        self.keys(pane, "g")
         for _ in range(40):
             frame = self.capture(pane)
-            if any(line.startswith("│ ▎") and f" {agent} " in line for line in frame.splitlines()):
+            if selected_row(frame, agent):
                 self.actions.append(f"{pane}: selected {agent}")
                 return frame
             self.keys(pane, "Down")
         raise RuntimeError(f"could not select {agent}; final frame:\n{self.capture(pane)}")
 
+    def open_exited(self, pane: str) -> str:
+        """Unfolds home's Exited section, the last thing on home while it
+        is folded."""
+        self.keys(pane, "G")
+        self.wait_terms(pane, "▸ Exited ", "enter show")
+        self.keys(pane, "Enter")
+        return self.wait_terms(pane, "▾ Exited ")
+
     def open_chat(self, pane: str, agent: str) -> str:
         self.select_agent(pane, agent)
         self.keys(pane, "Enter")
-        return self.wait(
-            pane,
-            lambda frame: frame.startswith(f"  {agent} ·") or f"\n  {agent} ·" in frame,
-            f"{agent}'s chat",
-        )
+        return self.wait(pane, lambda frame: chat_of(frame) == agent, f"{agent}'s chat")
+
+    def home(self, pane: str) -> str:
+        """Back to home from a chat."""
+        if not at_home(self.capture(pane)):
+            self.keys(pane, "C-a", "h")
+        return self.wait(pane, at_home, "home")
 
     def frame(self, pane: str, label: str) -> Frame:
         """Text and styles of what the pane shows now, compared with its
@@ -502,12 +563,9 @@ class TerminalJourney:
                 raise RuntimeError(f"journey golden differs: {path}\n{diff}")
 
     def quit_client(self, pane: str) -> None:
-        """Back to the fleet if a chat is open, then q; the client must say
-        it exited cleanly."""
-        frame = self.capture(pane)
-        if not frame.startswith("┌ amux "):
-            self.keys(pane, "C-a", "s")
-            self.wait(pane, lambda f: f.startswith("┌ amux "), "the fleet")
+        """Back home if a chat is open, then q; the client must say it
+        exited cleanly."""
+        self.home(pane)
         self.keys(pane, "q")
         self.wait_terms(pane, "AMUX_EXIT_0", timeout=30)
         self.tmux("kill-session", "-t", pane, check=False)

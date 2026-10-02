@@ -782,13 +782,13 @@ impl ChatView {
         }
         match state.composer() {
             Composer::Send if state.can_send() => {
-                let (text, attachments) = self.editor.take();
+                let (text, attachments) = self.editor.take_prompt();
                 self.not_sent = None;
                 self.follow();
                 vec![ChatEffect::Prompt { text, attachments }]
             }
             Composer::Resume => {
-                let (text, attachments) = self.editor.take();
+                let (text, attachments) = self.editor.take_prompt();
                 self.not_sent = None;
                 self.follow();
                 vec![ChatEffect::Resume { text, attachments }]

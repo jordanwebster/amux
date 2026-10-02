@@ -1,3 +1,14 @@
+2026-10-02 — **The terminal journeys walk the new home and chat.** The
+journey driver finds home by its title line, a selected row by its band or
+its › mark, an open chat by its header, and a turn at rest by the keys under
+the composer no longer offering to stop it; it starts the client in its
+host's work directory, so a new agent works there, and masks a prompt's
+time of day. The eight terminal stories pass on the new screens. Walking
+them found three faults, now fixed: the review page drew only as many diff
+lines as its file list had rows, so a one-file review showed none; a
+prompt ending in a chip was sent with the chip's trailing space; and words
+after a pasted block started with that space.
+
 2026-10-02 — **The terminal client draws only its new home and chat.** The
 TUI lab and the switch between designs are gone, and with them the old
 fleet table, the old chat header, activity line, session strip and foot

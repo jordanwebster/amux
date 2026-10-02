@@ -1,0 +1,34 @@
+
+  amux
+
+  + New Agent
+
+
+  ▾ Running 6 ──────────────────────────────────────────────────────────────────────────────────────────────
+
+  › ○ helper  work                                                                                     [x]
+                                  ╭─ Stop ────────────────────────────────╮
+    ○ decision-pty  work          │                                       │                            now
+                                  │ Stop helper? It can be resumed later. │
+    ○ reviewer  work              │                                       │                            now
+                                  │ [Stop]  [Cancel]                      │
+    ○ keeper  work                │ enter stop   esc cancel               │                            now
+                                  ╰───────────────────────────────────────╯
+    ○ decision-codex  work                                                                             now
+
+    ○ decision-sdk  work                                                                               now
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

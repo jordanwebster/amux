@@ -1,4 +1,5 @@
-  reviewer · claude sdk @ desk                                                  claude-fake-1 · default · idle
+
+  reviewer │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                             1 │ [Diff] │ [Home]
 
 
 
@@ -6,29 +7,28 @@
 
 
 
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+    Please check                                                                                     hh:mm
+    deploy log 0: rsync finished with status 0
+    deploy log 1: rsync finished with status 0
+    deploy log 2: rsync finished with status 0
+    deploy log 3: rsync finished with status 0
+    deploy log 4: rsync finished with status 0
+    deploy log 5: rsync finished with status 0
+    deploy log 6: rsync finished with status 0
+    deploy log 7: rsync finished with status 0
+    … 4 more lines [Show All]
+    against [review · 1 comment]
 
-
-
-
-
-
-
-
-
-
-
-
-
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Please check [pasted-1 · 12 lines] against [review · 1 comment]
 
     I read the review.
 
-    Worked <t> · $0.00
+    Worked <t>
 
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message reviewer                                                                                     │
+  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
 
-▎ Message reviewer
-  enter send · ctrl+j newline · ctrl+v attach · C-a r review · ? help                          shift+tab mode
+  shift+tab mode   ctrl+a more

@@ -1,34 +1,34 @@
-┌ amux ──────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                    1 agent │
-│                                                                                                            │
-│   hosts                                                                                                    │
-│                                                                                                            │
-│   desk                        ·offline · this machine is signed out                                        │
-│   laptop                      ·local · this machine is signed out                                          │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│ sign in to reach your agents from anywhere · amux login                                                    │
-│ ● connected · 2 hosts · 1 offline  esc close                                                               │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  amux                                                                   signed out · amux login · desk away
+
+  + New Agent
+
+
+  ▾ Running 1 ──────────────────────────────────────────────────────────────────────────────────────────────
+
+  › ○ guarded  work · desk    ╭─ Hosts ───────────────────────────────────────╮                        [x]
+      desk is away            │                                               │
+                              │ desk     offline · this machine is signed out │
+                              │ laptop   this machine                         │
+                              │                                               │
+                              │ Pair another machine with amux pair           │
+                              │ esc close                                     │
+                              ╰───────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

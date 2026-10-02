@@ -554,7 +554,12 @@ impl ReviewPage {
             } else {
                 theme.hairline()
             };
-            for (row, mut line) in list.into_iter().enumerate() {
+            // As many rows as the taller side: a short list leaves its
+            // column blank beside the rest of the stream.
+            let rows = list.len().max(stream.len());
+            let mut list = list.into_iter();
+            for row in 0..rows {
+                let mut line = list.next().unwrap_or_default();
                 text::pad_to(&mut line, list_width);
                 line.spans.push(Span::styled("│", rule));
                 if let Some(right) = stream.get(row) {

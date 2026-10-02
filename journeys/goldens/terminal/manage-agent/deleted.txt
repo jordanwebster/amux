@@ -1,34 +1,34 @@
-┌ amux ──────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                   5 agents │
-│                                                                                                            │
-│ ▎   decision-pty          claude      desk ·local        <a>  idle                                         │
-│     reviewer              claude sdk  desk ·local        <a>  idle                                         │
-│     keeper                claude sdk  desk ·local        <a>  idle       Remember this recovery turn.      │
-│     decision-codex        codex       desk ·local        <a>  idle                                         │
-│     decision-sdk          claude sdk  desk ·local        <a>  idle                                         │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│                                                                                                            │
-│ deleted                                                                                                    │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  amux
+
+  + New Agent
+
+
+  ▾ Running 5 ──────────────────────────────────────────────────────────────────────────────────────────────
+
+  › ○ decision-pty  work                                                                               [x]
+
+    ○ reviewer  work                                                                                   now
+
+    ○ keeper  work                                                                                     now
+
+    ○ decision-codex  work                                                                             now
+
+    ○ decision-sdk  work                                                                               now
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  deleted

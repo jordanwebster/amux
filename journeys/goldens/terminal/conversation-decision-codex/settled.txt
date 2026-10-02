@@ -1,4 +1,5 @@
-  decision-codex · codex @ desk                                                   gpt-fake · on-request · idle
+
+  decision-codex │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                       2 / 258K │ [Diff] │ [Home]
 
 
 
@@ -14,21 +15,20 @@
 
 
 
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+    Check the deployment once.                                                                       hh:mm
 
 
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Check the deployment once.
-
-  ✔ Ran /bin/zsh -lc 'deploy --check' · <t> · allowed
-    └ deploy check: ok
+  ▸ 1 command
 
     The deploy check passed.
 
     Worked <t>
 
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message decision-codex                                                                               │
+  ╰────────────────────────────────────────────────────────────────────────────────────── gpt-fake · auto ─╯
 
-▎ Message decision-codex
-  enter send · ctrl+j newline · ctrl+v attach · C-a r review · ? help                          shift+tab mode
+  shift+tab mode   ctrl+a more

@@ -1,34 +1,34 @@
-  keeper · claude sdk @ desk                                                    claude-fake-1 · default · idle
+
+  keeper │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                               1 │ [Diff] │ [Home]
+
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+    Remember this recovery turn.                                                                     hh:mm
 
-
-
-
-
-
-
-
-  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-▎   Remember this recovery turn.
 
     The recovery state is safely stored.
 
-    Worked <t> · $0.00
+    Worked <t>
 
-▎   Carry on.
+
+    Carry on.                                                                                        hh:mm
+
 
     A second turn arrived while you were away.
 
-    Worked <t> · $0.00
+    Worked <t>
 
-▎   Keep this draft through the outage.
+
+    Keep this draft through the outage.                                                              hh:mm
+
 
     Back after the restart.
 
-    Worked <t> · $0.00
+    Worked <t>
 
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message keeper                                                                                       │
+  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
 
-▎ Message keeper
-  enter send · ctrl+j newline · ctrl+v attach · C-a r review · ? help                          shift+tab mode
+  shift+tab mode   ctrl+a more
