@@ -1,3 +1,14 @@
+2026-10-02 — **Steering counts every pass that moved, and clears only its own handle.**
+The phone's steering loop re-runs while more was asked for and took
+the last pass's word on whether anything moved, so a catch-up pass
+with nothing to do skipped the account refresh the pass before had
+earned. And a steering task from a stopped launch, awaiting a pause
+the library finishes regardless, cleared the handle a new launch had
+installed, letting the next steer overlap a running pass. Moves now
+accumulate across passes, and a task clears the handle only when it is
+still its own. Third branch-wide Codex pass; the app's unit suites
+and the profile journeys.
+
 2026-10-02 — **A second entitlement refresh does not wait outside the timeout.**
 The request channel holds one entry, and a second asker waited on the
 send, before the 30 s timeout began, behind a first the connection had

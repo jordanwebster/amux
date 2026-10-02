@@ -100,6 +100,9 @@ public final class RuntimeCoordinator {
     @ObservationIgnored private var launch = 0
     /// The pauses and resumes under way, one run at a time.
     @ObservationIgnored private var steering: Task<Void, Never>?
+    /// Counts steering tasks, so one that outlives its launch, awaiting a
+    /// pause the library finishes regardless, clears only its own handle.
+    @ObservationIgnored private var steerings = 0
     /// Whether what is on screen changed while a run was under way.
     @ObservationIgnored private var steerAgain = false
 
@@ -266,13 +269,18 @@ public final class RuntimeCoordinator {
             steerAgain = true
             return
         }
+        steerings += 1
+        let mine = steerings
         steering = Task { [weak self] in
+            // Every pass that moved a link counts, not only the last: the
+            // catch-up pass a late steer asks for often has nothing left
+            // to do, and the account is refreshed for what came before.
             var moved = false
             repeat {
                 self?.steerAgain = false
-                moved = await self?.relink(runtime) ?? false
+                if await self?.relink(runtime) == true { moved = true }
             } while self?.steerAgain == true
-            self?.steering = nil
+            if self?.steerings == mine { self?.steering = nil }
             if moved { await self?.stores.refreshAccount() }
         }
     }
