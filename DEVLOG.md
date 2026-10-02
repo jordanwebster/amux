@@ -1,3 +1,13 @@
+2026-10-02 — **The runtime stops under one hold of its lock.**
+Stop took the open profiles under the lock, closed them outside it and
+marked the runtime stopped under it again; an open landing between
+registered a profile nobody closed, and a profile closing itself
+flipped its flag before calling the library, so stop skipped it and
+its own call found the runtime gone. Both leaked the Rust profile and
+the installation lock. Stop now closes and marks under one hold, and a
+profile's close flips its flag and calls the library under the
+runtime's lock. Second branch-wide Codex pass; the app's unit suites.
+
 2026-10-02 — **What the release key does and does not vouch for is written down.**
 The key keeps a compromised amux.sh, and a GitHub token stolen after a
 deploy, from putting code on machines. It does not vouch for the build:
