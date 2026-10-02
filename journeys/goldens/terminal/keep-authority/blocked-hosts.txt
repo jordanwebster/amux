@@ -6,7 +6,7 @@
 
   ▾ Running 1 ──────────────────────────────────────────────────────────────────────────────────────────────
 
-  › ○ guarded  work · desk    ╭─ Hosts ───────────────────────────────────────╮                        [x]
+  › ○ guarded  Claude · /tmp/a╭─ Hosts ───────────────────────────────────────╮                        [x]
       desk is away            │                                               │
                               │ desk     offline · this machine is signed out │
                               │ laptop   this machine                         │

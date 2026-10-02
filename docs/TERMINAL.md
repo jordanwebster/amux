@@ -57,8 +57,9 @@ listed newest first, so a row never moves while an agent streams. A family sits 
 `→`, `←` or Space shows and hides its members, indented under their parent.
 
 Each row is the agent's mark (`○` idle, starting, exited or on a host that is away; `●` working; `●` in the
-attention ink when it needs you), its name, its folder and its host when that is not this machine, faint, and its
-age at the right. A second line says what only words can: why it exited (`finished`, a crash in red), that its
+attention ink when it needs you), its name, then faint which agent it is (`Claude`, `Claude (terminal)` or
+`Codex`), its folder from `~` and its host when that is not this machine, and its age at the right. Short of room,
+the folder is cut from the left down to its last name, then the host goes, then the agent. A second line says what only words can: why it exited (`finished`, a crash in red), that its
 host is away. The highlighted row is tinted, with half a line of the tint above and below; under the pointer or the
 keys alike, and it shows `[x]` in place of its age to stop the agent, or delete it once it has exited, after asking.
 

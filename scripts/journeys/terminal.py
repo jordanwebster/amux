@@ -166,8 +166,9 @@ AGE = re.compile(r"\b(just now|\d+[smhd] ago)\b")
 
 
 # The served net's scratch directories carry random suffixes of fixed
-# length; masking them keeps every width.
-SCRATCH = re.compile(r"(aj-|testnet)([A-Za-z0-9_]{6,8})\b")
+# length; masking them keeps every width. A suffix may be cut short where a
+# window covers the rest of its line.
+SCRATCH = re.compile(r"(aj-|testnet)([A-Za-z0-9_]{1,8})(?![A-Za-z0-9_])")
 
 
 # The fleet's age cell is compact ("now", "2m", "3h") and sits between

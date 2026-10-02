@@ -6,17 +6,17 @@
 
   ▾ Running 6 ──────────────────────────────────────────────────────────────────────────────────────────────
 
-  › ○ helper  work                                                                                     [x]
+  › ○ helper  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                [x]
                                   ╭─ Stop ────────────────────────────────╮
-    ○ decision-pty  work          │                                       │                            now
+    ○ decision-pty  Claude (termin│                                       │/work                       now
                                   │ Stop helper? It can be resumed later. │
-    ○ reviewer  work              │                                       │                            now
+    ○ reviewer  Claude · /tmp/aj-x│                                       │                            now
                                   │ [Stop]  [Cancel]                      │
-    ○ keeper  work                │ enter stop   esc cancel               │                            now
+    ○ keeper  Claude · /tmp/aj-xxx│ enter stop   esc cancel               │                            now
                                   ╰───────────────────────────────────────╯
-    ○ decision-codex  work                                                                             now
+    ○ decision-codex  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                 now
 
-    ○ decision-sdk  work                                                                               now
+    ○ decision-sdk  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                  now
 
 
 

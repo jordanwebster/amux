@@ -1,3 +1,11 @@
+2026-10-02 — **Home says which agent and where.** Each row's faint
+words after the name now name the agent (Claude, Claude in its own
+terminal, or Codex) and its folder from `~`, then its host when it is
+not this machine; short of room the folder is cut from the left, then
+the host goes, then the agent. The filter matches the same words. The
+highlighted row keeps its lower tint edge when it is the list's last.
+The terminal journeys mask a scratch path cut short by a window over it.
+
 2026-10-02 — **New Codex agents start on GPT-6.1-Sol.** The shipped
 default was `gpt-5-codex`, which current Codex no longer offers; it is
 now Codex's own default model, `gpt-6.1-sol`, at medium effort.

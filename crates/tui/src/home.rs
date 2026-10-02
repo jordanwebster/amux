@@ -239,26 +239,64 @@ fn name_of(agent: &Agent) -> &str {
         .unwrap_or("unnamed")
 }
 
+/// The agent as a row names it: Claude chatted with here, Claude in its
+/// own terminal, or Codex.
 fn kind_word(kind: Kind) -> &'static str {
     match kind {
-        Kind::ClaudePty => "claude",
-        Kind::ClaudeSdk => "claude sdk",
-        Kind::Codex => "codex",
-        Kind::Unspecified => "agent",
+        Kind::ClaudeSdk => "Claude",
+        Kind::ClaudePty => "Claude (terminal)",
+        Kind::Codex => "Codex",
+        Kind::Unspecified => "",
     }
 }
 
-/// The last path component: the project an agent works in.
-fn project(cwd: &str) -> &str {
-    let trimmed = cwd.trim_end_matches('/');
-    if trimmed.is_empty() && cwd.starts_with('/') {
-        return "/";
+/// Which agent it is and where it works, as faint words after its name:
+/// "Claude · ~/src/amux · laptop", the host only when not this machine.
+/// Short of room, the folder gives way first, cut from the left down to
+/// its last name, then the host, then the agent; the name and the age
+/// beside them always stay.
+fn where_it_runs(agent: &Agent, elsewhere: Option<&str>, room: usize) -> String {
+    let who = kind_word(agent.kind());
+    let folder = text::tilde(agent.cwd.trim_end_matches('/'));
+    let folder = if folder.is_empty() {
+        agent.cwd.clone()
+    } else {
+        folder
+    };
+    // The folder from whole to its last name: "~/a/b/c", "…/b/c", "c".
+    let names: Vec<&str> = folder.split('/').collect();
+    let mut folders = vec![folder.clone()];
+    for from in 2..names.len() {
+        folders.push(format!("…/{}", names[from..].join("/")));
     }
-    trimmed
-        .rsplit('/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .unwrap_or(trimmed)
+    if let Some(last) = names
+        .last()
+        .filter(|last| !last.is_empty() && **last != folder)
+    {
+        folders.push((*last).to_owned());
+    }
+    let join = |parts: &[&str]| {
+        parts
+            .iter()
+            .filter(|part| !part.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+    for folder in &folders {
+        let line = join(&[who, folder, elsewhere.unwrap_or("")]);
+        if text::str_width(&line) <= room {
+            return line;
+        }
+    }
+    let last = folders.last().map_or("", String::as_str);
+    for parts in [[who, last], ["", last]] {
+        let line = join(&parts);
+        if text::str_width(&line) <= room {
+            return line;
+        }
+    }
+    text::ellipsize(last, room)
 }
 
 fn plain_key(code: KeyCode) -> KeyEvent {
@@ -1758,7 +1796,10 @@ pub fn help_rows() -> Vec<(&'static str, String)> {
             "a, ctrl+enter",
             "attach to the agent's own terminal (this machine)".into(),
         ),
-        ("/", "filter by name, project or host; esc clears".into()),
+        (
+            "/",
+            "filter by name, agent, folder or host; esc clears".into(),
+        ),
         (
             "n",
             "new agent: its first prompt, then enter (or its form, for its own terminal)".into(),
@@ -1830,7 +1871,7 @@ fn append_hints(
 /// blocks into the blank lines around the row, so the highlighted row reads
 /// as a card with room around its words. Where rows are packed with no
 /// blank line between them, the highlight stays flat.
-fn pad_highlight(laid: &mut [Laid], (start, end): (usize, usize), width: usize, theme: Theme) {
+fn pad_highlight(laid: &mut Vec<Laid>, (start, end): (usize, usize), width: usize, theme: Theme) {
     let Some(surface) = theme.row_surface().and_then(|style| style.bg) else {
         return;
     };
@@ -1858,10 +1899,11 @@ fn pad_highlight(laid: &mut [Laid], (start, end): (usize, usize), width: usize, 
     {
         above.line = edge("▄");
     }
-    if let Some(below) = laid.get_mut(end)
-        && is_blank(below)
-    {
-        below.line = edge("▀");
+    match laid.get_mut(end) {
+        Some(below) if is_blank(below) => below.line = edge("▀"),
+        // The list's last row: its lower edge is a line of its own.
+        None => laid.push(Laid::plain(edge("▀"))),
+        Some(_) => {}
     }
 }
 
@@ -1948,8 +1990,8 @@ fn mark(entry: &Entry, quiet: bool, theme: Theme) -> (&'static str, Style) {
     }
 }
 
-/// An agent's lines. The first: its mark, its name, and faint where it is
-/// (project, and host when not this machine), with its age at the right
+/// An agent's lines. The first: its mark, its name, and faint what runs it
+/// and where (see `where_it_runs`), with its age at the right
 /// or, on the highlighted row, `[x]`. A second only when there is something
 /// known to say: its host away, why it ended, a folded member that needs
 /// you, or what it asks or is doing where that is known (see the pending
@@ -2000,14 +2042,9 @@ fn agent_lines(
             entry.children
         )
     });
-    let meta = {
-        let mut parts = vec![project(&agent.cwd).to_owned()];
-        if let Some(host) = host.filter(|host| host.host_id != place.local_host) {
-            parts.push(host.name.clone());
-        }
-        parts.retain(|part| !part.is_empty());
-        parts.join(" · ")
-    };
+    let elsewhere = host
+        .filter(|host| host.host_id != place.local_host)
+        .map(|host| host.name.as_str());
     let room = right_at.saturating_sub(NAME_COL + indent + 2);
     let fold_width = fold.as_deref().map_or(0, text::str_width);
     // Renaming, the name is a field in its own place, underlined.
@@ -2039,7 +2076,7 @@ fn agent_lines(
     let used = text::line_width(&first) + 2;
     if right_at > used + 1 {
         pad_to(&mut first, used);
-        let meta = text::ellipsize(&meta, right_at - used - 1);
+        let meta = where_it_runs(agent, elsewhere, right_at - used - 1);
         first.spans.push(Span::styled(meta, theme.faint()));
     }
     pad_to(&mut first, right_at);

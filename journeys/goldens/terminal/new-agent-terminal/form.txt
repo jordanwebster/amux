@@ -6,23 +6,23 @@
 
   ▾ Running 9 ──────────────────────────────────────────────────────────────────────────────────────────────
 
-  › ○ backups  work╭─ New Agent ──────────────────────────────────────────────────────────╮            [x]
+  › ○ backups  Clau╭─ New Agent ──────────────────────────────────────────────────────────╮            [x]
                    │                                                                      │
-    ○ expired  work│  Name      release-notes                                             │            now
+    ○ expired  Clau│  Name      release-notes                                             │            now
                    │  Agent      Claude   Codex                                           │
-    ○ limited  work│  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work        │            now
+    ○ limited  Clau│  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work        │            now
                    │  Host       cabin   desk   laptop                                    │
-    ○ worker  work │                                                                      │            now
+    ○ worker  Claud│                                                                      │            now
                    │  [Start]  [Cancel]                                                   │
-    ○ linker  work │  enter next   esc done                                               │            now
+    ○ linker  Codex│  enter next   esc done                                               │            now
                    ╰──────────────────────────────────────────────────────────────────────╯
-    ○ filer  work · desk                                                                               now
+    ○ filer  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
 
-    ○ asker  work · desk                                                                               now
+    ○ asker  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
 
-    ○ planner-pty  work · desk                                                                         now
+    ○ planner-pty  Claude (terminal) · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                 now
 
-    ○ planner  work · desk                                                                             now
+    ○ planner  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                now
 
 
 

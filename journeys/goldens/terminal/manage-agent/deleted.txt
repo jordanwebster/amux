@@ -6,15 +6,15 @@
 
   ▾ Running 5 ──────────────────────────────────────────────────────────────────────────────────────────────
 
-  › ○ decision-pty  work                                                                               [x]
+  › ○ decision-pty  Claude (terminal) · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                       [x]
 
-    ○ reviewer  work                                                                                   now
+    ○ reviewer  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                      now
 
-    ○ keeper  work                                                                                     now
+    ○ keeper  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                        now
 
-    ○ decision-codex  work                                                                             now
+    ○ decision-codex  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                 now
 
-    ○ decision-sdk  work                                                                               now
+    ○ decision-sdk  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                  now
 
 
 
