@@ -152,10 +152,19 @@ impl Refresher {
             return Err(CloudError::Connection("cloud link is not connected".into()));
         }
         let (response, response_rx) = oneshot::channel();
+        // The channel holds one request. A second asker does not wait
+        // behind the first, which would wait outside the timeout: it is
+        // told, and the first's answer reaches the status both read.
         self.refresh_tx
-            .send(LinkConnectorRefreshRequest { response })
-            .await
-            .map_err(|_| CloudError::Connection("cloud link is not connected".into()))?;
+            .try_send(LinkConnectorRefreshRequest { response })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => {
+                    CloudError::Connection("a refresh is already under way".into())
+                }
+                mpsc::error::TrySendError::Closed(_) => {
+                    CloudError::Connection("cloud link is not connected".into())
+                }
+            })?;
         let answer = tokio::time::timeout(REFRESH_TIMEOUT, response_rx)
             .await
             .map_err(|_| {
@@ -795,6 +804,22 @@ mod tests {
         let (refresher, _rx) = refresher(Observed::Retrying);
         let error = refresher.refresh().await.unwrap_err();
         assert!(error.to_string().contains("not connected"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_second_refresh_behind_an_unanswered_one_is_told_at_once() {
+        let (refresher, _rx) = refresher(Observed::Connected {
+            tier: crate::Tier::Free,
+            carrier: RelayCarrier::Quic,
+        });
+        let first = tokio::spawn({
+            let refresher = refresher.clone();
+            async move { refresher.refresh().await }
+        });
+        tokio::task::yield_now().await;
+        let error = refresher.refresh().await.unwrap_err();
+        assert!(error.to_string().contains("already under way"), "{error}");
+        first.abort();
     }
 
     #[tokio::test(start_paused = true)]

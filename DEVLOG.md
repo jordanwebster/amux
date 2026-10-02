@@ -1,3 +1,10 @@
+2026-10-02 — **A second entitlement refresh does not wait outside the timeout.**
+The request channel holds one entry, and a second asker waited on the
+send, before the 30 s timeout began, behind a first the connection had
+not answered. It is told at once that a refresh is under way; the
+first's answer reaches the status both read. Third branch-wide Codex
+pass; unit test.
+
 2026-10-02 — **A profile that fails to come up is taken back.**
 Creating a profile wrote its registry entry and directory first; a
 failure opening its store, sweeping, starting its edge or binding its
