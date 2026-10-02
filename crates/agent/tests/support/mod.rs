@@ -2,7 +2,7 @@
 //! runs a fake provider, the agent on a hand-driven clock, a stand-in daemon
 //! on ctl.sock, and a reader of what the agent journaled.
 
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -27,7 +27,7 @@ pub const GRACE: i64 = 60_000;
 pub const DRAIN: i64 = 120_000;
 
 /// How long any one wait in a test may take before it is a hang.
-const PATIENCE: Duration = Duration::from_secs(30);
+pub use patience::{PATIENCE, holds_for, until};
 
 /// Stands for the agent's release file in a script: a `wait_for` on it
 /// holds the turn until the test calls [`Agent::release`].
@@ -361,16 +361,13 @@ impl Agent {
     /// Dials ctl.sock as the daemon does and reads the Hello.
     pub async fn dial(&self) -> Daemon {
         let path = self.dir.join(agent::CTL_SOCK);
-        let stream = tokio::time::timeout(PATIENCE, async {
-            loop {
-                if let Ok(stream) = local_socket::connect(&path).await {
-                    return stream;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+        let stream = until("ctl.sock to accept a connection", || async {
+            local_socket::connect(&path)
+                .await
+                .map_err(|error| error.to_string())
         })
         .await
-        .expect("ctl.sock accepts a connection");
+        .unwrap();
         let (mut reader, writer) = tokio::io::split(stream);
         let hello = match next_frame(&mut reader).await.of {
             Some(ctl_frame::Of::Hello(hello)) => hello,
@@ -394,34 +391,30 @@ impl Agent {
         .await;
     }
 
-    /// Waits until what the agent journaled satisfies `done`.
+    /// Waits until what the agent journaled satisfies `done`. A timeout
+    /// shows the journal, the provider's log and the terminal.
     pub async fn wait(&self, what: &str, done: impl Fn(&Log) -> bool) {
-        let waited = tokio::time::timeout(PATIENCE, async {
-            loop {
-                if done(&self.log()) {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+        let waited = until(what, || {
+            std::future::ready(done(&self.log()).then_some(()).ok_or("not yet"))
         })
         .await;
-        assert!(
-            waited.is_ok(),
-            "timed out waiting for {what}; journal: {:#?}\nprovider log:\n{}\nterminal:\n{:?}",
-            self.log().sequence(),
-            self.provider_log(),
-            self.terminal_bytes(),
-        );
+        if let Err(stuck) = waited {
+            panic!(
+                "{stuck}\njournal: {:#?}\nprovider log:\n{}\nterminal:\n{:?}",
+                self.log().sequence(),
+                self.provider_log(),
+                self.terminal_bytes(),
+            );
+        }
     }
 
+    /// Waits until `done` holds of something beside the journal.
     pub async fn until(&self, what: &str, done: impl Fn() -> bool) {
-        let waited = tokio::time::timeout(PATIENCE, async {
-            while !done() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+        until(what, || {
+            std::future::ready(done().then_some(()).ok_or("not yet"))
         })
-        .await;
-        assert!(waited.is_ok(), "timed out waiting until {what}");
+        .await
+        .unwrap();
     }
 
     /// The journal's length: where a daemon's reader would stand once it

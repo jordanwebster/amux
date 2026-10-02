@@ -20,7 +20,7 @@ use wire::{
     input, send_input_response, session_event,
 };
 
-use super::{Install, PATIENCE};
+use super::{Install, PATIENCE, until};
 
 /// What daemons in these tests start with: nothing is ever spawned.
 pub fn quiet_launch() -> Launch {
@@ -285,21 +285,19 @@ impl SyntheticAgent {
     /// Tells the daemon the journal grew. Waits for a connection first.
     pub async fn nudge(&self) {
         let live = self.live.as_ref().expect("a live agent");
-        let deadline = tokio::time::Instant::now() + PATIENCE;
-        loop {
-            if let Some(writer) = live.conn.lock().await.as_mut() {
-                let nudge = CtlFrame {
-                    of: Some(ctl_frame::Of::Nudge(Nudge {})),
-                };
-                agent_dir::write_frame(writer, &nudge).await.unwrap();
-                return;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "no daemon connected"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        until("a daemon to connect for the nudge", || async {
+            let mut conn = live.conn.lock().await;
+            let Some(writer) = conn.as_mut() else {
+                return Err("no daemon connected");
+            };
+            let nudge = CtlFrame {
+                of: Some(ctl_frame::Of::Nudge(Nudge {})),
+            };
+            agent_dir::write_frame(writer, &nudge).await.unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
     /// Closes the control connection with the process still alive: the

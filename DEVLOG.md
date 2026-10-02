@@ -1,3 +1,16 @@
+2026-10-02 — **The daemon's and the agent's suites wait through the one wait.**
+The daemon's seven suites and the agent's five: their `until` copies,
+the supervisor fixture's four poll loops, the agent fixture's `wait`,
+`until` and `dial`, and the synthetic agent's nudge are all `until`
+from the shared crate. Probes answer what they saw (the outbox's row
+count, a row's lifecycle, how many inputs a process was handed), and
+the fixtures that had a transcript keep it: the supervisor's events and
+log, the agent's journal, provider log and terminal, now shown under
+the wait's own report. Nine sleeps became windows, each with its reason
+beside it: a send or a resume blocked on a lane or a lock, a push or a
+hand-off that must not happen, an orphan that must live on. Three
+forced delays stay, since the race they force is the point.
+
 2026-10-02 — **The testnet suites wait on cursors, through the one wait.**
 Seven suites, about 220 wait sites: the two copies of `until` and the
 per-suite `wait_current`, `wait_replica_current` and `eventually` are

@@ -97,20 +97,21 @@ async fn start(install: &Install, boot: &str, launch: Launch) -> (Daemon, Arc<Pr
 async fn crash(daemon: Daemon, runtime: Arc<ProfileRuntime>) {
     drop(daemon);
     let mut runtime = Some(runtime);
-    until(
-        "the crashed daemon's tasks to release its store",
-        async || match Arc::try_unwrap(runtime.take().unwrap()) {
+    until("the crashed daemon's tasks to release its store", || {
+        std::future::ready(match Arc::try_unwrap(runtime.take().unwrap()) {
             Ok(last) => {
                 drop(last);
-                true
+                Ok(())
             }
             Err(shared) => {
+                let held = Arc::strong_count(&shared);
                 runtime = Some(shared);
-                false
+                Err(format!("{held} references held"))
             }
-        },
-    )
-    .await;
+        })
+    })
+    .await
+    .unwrap();
 }
 
 async fn write_and_ingest(
@@ -546,17 +547,20 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
 
     // The process dies after its marker: nothing more to announce.
     agent.die().await;
-    until("the row says exited", async || {
-        runtime
+    until("the row says exited", || async {
+        let lifecycle = runtime
             .store()
             .await
             .agent(&agent.key(&install))
             .unwrap()
             .unwrap()
-            .lifecycle
-            == Lifecycle::Exited as i32
+            .lifecycle;
+        (lifecycle == Lifecycle::Exited as i32)
+            .then_some(())
+            .ok_or_else(|| format!("lifecycle {lifecycle}"))
     })
-    .await;
+    .await
+    .unwrap();
     drain(&mut subscription, &mut seen, Duration::from_millis(100)).await;
     assert_eq!(
         caught_ups(&seen),
@@ -1511,15 +1515,23 @@ async fn retention_sweep() {
         ));
     }
     for &child in &children {
-        until("each one-shot child to finish and exit", async || {
-            runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
+        until("each one-shot child to finish and exit", || async {
+            let lifecycle = runtime.agent(child).await.unwrap().lifecycle;
+            (lifecycle == Lifecycle::Exited as i32)
+                .then_some(())
+                .ok_or_else(|| format!("lifecycle {lifecycle}"))
         })
-        .await;
+        .await
+        .unwrap();
     }
-    until("the parent to hear from both", async || {
-        runtime.store().await.deliveries().unwrap().is_empty()
+    until("the parent to hear from both", || async {
+        let rows = runtime.store().await.deliveries().unwrap().len();
+        (rows == 0)
+            .then_some(())
+            .ok_or_else(|| format!("{rows} delivery rows"))
     })
-    .await;
+    .await
+    .unwrap();
 
     let named = Named {
         names: old
@@ -1664,10 +1676,14 @@ async fn retention_sweep() {
         .expect("the parent's message resumes its kept child");
     let row = runtime.agent(child).await.unwrap();
     assert_eq!(row.incarnation, 2);
-    until("the resumed child to finish again", async || {
-        runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
+    until("the resumed child to finish again", || async {
+        let lifecycle = runtime.agent(child).await.unwrap().lifecycle;
+        (lifecycle == Lifecycle::Exited as i32)
+            .then_some(())
+            .ok_or_else(|| format!("lifecycle {lifecycle}"))
     })
-    .await;
+    .await
+    .unwrap();
     say(format!(
         "the parent sent child-1 a message: it resumed as incarnation {} and finished again",
         row.incarnation
@@ -1676,7 +1692,14 @@ async fn retention_sweep() {
     // The synthetic agent ignores Stop, and a stop's deadline runs on the
     // test's clock: it goes first, on its own.
     big.die().await;
-    until("big's exit", async || !runtime.live().contains(&big.id)).await;
+    until("big's exit", || async {
+        let live = runtime.live();
+        (!live.contains(&big.id))
+            .then_some(())
+            .ok_or_else(|| format!("live: {live:?}"))
+    })
+    .await
+    .unwrap();
     kill_all(&runtime).await;
     drop(runtime);
     daemon.shutdown().await.unwrap();

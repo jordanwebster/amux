@@ -86,9 +86,14 @@ async fn an_orphan_finishes_its_turn_before_it_exits() {
             log.boundaries().contains(&"DAEMON_LOST".to_owned())
         })
         .await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(!agent.finished(), "an orphan lives as long as its turn");
-    assert_eq!(agent.log().turn_ends(), 0);
+    // A window: an exit that must not happen leaves no mark to wait on.
+    holds_for(
+        "the orphan to live on",
+        Duration::from_millis(200),
+        || async { !agent.finished() && agent.log().turn_ends() == 0 },
+    )
+    .await
+    .expect("an orphan lives as long as its turn");
 
     agent.release();
     assert_eq!(agent.exit().await, ExitCause::DaemonLost);
@@ -124,8 +129,15 @@ async fn a_daemon_dialling_back_in_cancels_the_grace() {
         })
         .await;
     agent.clock.set(T0 + GRACE + 1);
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(!agent.finished());
+    // A window: with the grace unarmed the clock wakes nothing, and an exit
+    // that must not happen leaves no mark to wait on.
+    holds_for(
+        "the agent to live on",
+        Duration::from_millis(200),
+        || async { !agent.finished() },
+    )
+    .await
+    .unwrap();
     // Headless Claude reports its start with the first prompt; there has
     // been none, so any boundary here would be the drain's.
     assert_eq!(agent.log().boundaries(), Vec::<String>::new());
@@ -372,14 +384,9 @@ fn a_transcript_position_that_cannot_be_kept_ends_the_incarnation() {
         // The position is kept after every transcript row, once the row
         // has been read; the row's text reaches the journal first.
         let cursor = agent.dir.join(agent::PRIVATE).join("transcript-cursor");
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while !cursor.is_file() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the position is kept after a row"
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        agent
+            .until("the position to be kept after a row", || cursor.is_file())
+            .await;
         std::fs::set_permissions(&cursor, std::fs::Permissions::from_mode(0o400)).unwrap();
 
         agent.release();

@@ -1,13 +1,12 @@
 //! A daemon on a temporary installation, running real agent processes
 //! (`amux agent`) on the scripted fake providers.
 
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 pub mod synthetic;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use node::{Daemon, Launch, ProfileId, ProfileRuntime, StartOptions};
 use provider_fakes::script::{SCRIPT_ENV, Script, Step};
@@ -17,7 +16,7 @@ use wire::{
 };
 
 /// How long any wait in these tests may take before it is a failure.
-pub const PATIENCE: Duration = Duration::from_secs(30);
+pub use patience::{PATIENCE, Stuck, holds_for, until};
 
 /// The amux binary and the fake providers, built once per test run.
 pub fn binaries() -> &'static Path {
@@ -192,18 +191,6 @@ pub fn id_of(agent: &wire::Agent) -> uuid::Uuid {
 
 pub fn parent_of(agent: &wire::Agent) -> Option<AgentParent> {
     agent.parent.clone()
-}
-
-/// Waits until `done` holds, polling; fails the test after [`PATIENCE`].
-pub async fn until(what: &str, mut done: impl AsyncFnMut() -> bool) {
-    let deadline = tokio::time::Instant::now() + PATIENCE;
-    while !done().await {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 /// Whether something listens on the local socket named `path`. Dialled,

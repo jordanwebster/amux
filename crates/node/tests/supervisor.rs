@@ -25,7 +25,7 @@ const TEST_SEED: [u8; 32] = [
     0x28, 0x61, 0x70, 0x17, 0x17, 0xc9, 0x9b, 0x2a, 0xaa, 0x45, 0xe9, 0x43, 0xbb, 0xd6, 0x48, 0x12,
 ];
 const OTHER_SEED: [u8; 32] = [7; 32];
-const PATIENCE: Duration = Duration::from_secs(30);
+use patience::{PATIENCE, until};
 
 /// Tests in this binary write executables and start processes on parallel
 /// threads. A process forked while another thread holds a freshly written
@@ -291,27 +291,27 @@ impl Fixture {
             .count()
     }
 
-    /// Waits until `done` holds of the events so far.
+    /// Waits until `done` holds of the events so far, and returns them. A
+    /// timeout shows the events and the supervisor's log.
     async fn until(&self, what: &str, done: impl Fn(&[Event]) -> bool) -> Vec<Event> {
-        let deadline = Instant::now() + PATIENCE;
-        loop {
+        until(what, || {
             let events = self.events();
-            if done(&events) {
-                return events;
-            }
-            if Instant::now() > deadline {
-                panic!(
-                    "timed out waiting for {what}; events:\n{}\nsupervisor log:\n{}",
+            std::future::ready(if done(&events) {
+                Ok(events)
+            } else {
+                Err(format!(
+                    "events:\n{}\nsupervisor log:\n{}",
                     events
                         .iter()
                         .map(|event| format!("{} {} {}", event.what, event.version, event.pid))
                         .collect::<Vec<_>>()
                         .join("\n"),
                     std::fs::read_to_string(self.dir.join("supervisor.log")).unwrap_or_default()
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+                ))
+            })
+        })
+        .await
+        .unwrap()
     }
 
     /// Waits for the `n`-th event `what` of `version`, and returns it.
@@ -378,11 +378,16 @@ impl Fixture {
     /// Waits for the manifest to be read `more` more times: ticks passing.
     async fn ticks(&self, more: u32) {
         let target = self.server.reads() + more;
-        let deadline = Instant::now() + PATIENCE;
-        while self.server.reads() < target {
-            assert!(Instant::now() < deadline, "the supervisor stopped checking");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        until("the supervisor to keep checking", || {
+            let reads = self.server.reads();
+            std::future::ready(
+                (reads >= target)
+                    .then_some(())
+                    .ok_or_else(|| format!("{reads} manifest reads of {target}")),
+            )
+        })
+        .await
+        .unwrap();
     }
 
     fn supervisor_pid(&self) -> u32 {
@@ -396,14 +401,11 @@ impl Fixture {
     /// Waits for the supervisor process to exit.
     async fn supervisor_exit(&mut self) -> std::process::ExitStatus {
         let child = self.supervisor.as_mut().unwrap();
-        let deadline = Instant::now() + PATIENCE;
-        loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                return status;
-            }
-            assert!(Instant::now() < deadline, "the supervisor did not exit");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        until("the supervisor to exit", || {
+            std::future::ready(child.try_wait().unwrap().ok_or("still running"))
+        })
+        .await
+        .unwrap()
     }
 }
 
@@ -432,11 +434,11 @@ fn alive(pid: u32) -> bool {
 }
 
 async fn until_dead(pid: u32) {
-    let deadline = Instant::now() + PATIENCE;
-    while alive(pid) {
-        assert!(Instant::now() < deadline, "pid {pid} is still alive");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    until(&format!("pid {pid} to die"), || {
+        std::future::ready((!alive(pid)).then_some(()).ok_or("still alive"))
+    })
+    .await
+    .unwrap();
 }
 
 fn locked(path: &Path) -> bool {
