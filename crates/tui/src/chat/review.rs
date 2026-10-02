@@ -16,7 +16,7 @@ use wire::{Attachment, Diff, Review, ReviewComment, attachment};
 
 use super::composer::editor_lines;
 use crate::editor::Editor;
-use crate::text::{self, push, push_right};
+use crate::text::{self, push};
 use crate::theme::Theme;
 
 /// A place a comment can go: a file as a whole, or one line of a hunk.
@@ -63,6 +63,9 @@ pub struct ReviewPage {
     composing: Option<Composing>,
     /// The body's height at the last draw, for paging.
     height: usize,
+    /// Whose changes these are, for the header: the agent's name and where
+    /// it works, as the chat's header says them.
+    owner: (String, String),
 }
 
 impl ReviewPage {
@@ -87,6 +90,7 @@ impl ReviewPage {
             scroll: 0,
             composing: None,
             height: 0,
+            owner: (String::new(), String::new()),
         }
     }
 
@@ -297,6 +301,12 @@ impl ReviewPage {
             .collect()
     }
 
+    /// Whose changes these are: the agent's name and its place, for the
+    /// header.
+    pub fn set_owner(&mut self, name: &str, place: &str) {
+        self.owner = (name.to_owned(), place.to_owned());
+    }
+
     fn refresh(&mut self) {
         self.doc = review_doc(&self.diff, &self.patch, &self.comments);
     }
@@ -313,18 +323,37 @@ impl ReviewPage {
         let width = usize::from(area.width);
         let height = usize::from(area.height);
         let (body, selected, cursor) = self.body(width, theme);
-        let mut top = vec![self.title(width, theme)];
-        top.push(Line::from(Span::styled("─".repeat(width), theme.muted())));
+        // A blank above the header keeps it off the terminal's edge, as in
+        // the chat; hairlines set the file list apart.
+        let rule = || Line::from(Span::styled("─".repeat(width), theme.hairline()));
+        let mut top = vec![Line::default(), self.title(width, theme), Line::default()];
+        top.push(rule());
         top.extend(self.file_list(width, theme));
-        top.push(Line::from(Span::styled("─".repeat(width), theme.muted())));
+        top.push(rule());
         let hint = footer.unwrap_or_else(|| {
-            let words = if self.composing.is_some() {
-                "enter save · ctrl+j newline · esc cancel"
+            let keys: &[(&str, &str)] = if self.composing.is_some() {
+                &[("enter", "save"), ("ctrl+j", "newline"), ("esc", "cancel")]
             } else {
-                "j/k move · J/K hunk · ]/[ file · c comment · enter edit · d delete · q back to the chat"
+                &[
+                    ("j/k", "move"),
+                    ("J/K", "hunk"),
+                    ("]/[", "file"),
+                    ("c", "comment"),
+                    ("enter", "edit"),
+                    ("d", "delete"),
+                    ("q", "back"),
+                ]
             };
+            // The key reads first, its action recedes, as on every hint
+            // line.
             let mut line = Line::from(Span::raw("  "));
-            push(&mut line, words, theme.muted(), width);
+            for (i, (key, action)) in keys.iter().enumerate() {
+                if i > 0 {
+                    push(&mut line, "   ", theme.faint(), width);
+                }
+                push(&mut line, *key, theme.emphasis(), width);
+                push(&mut line, format!(" {action}"), theme.faint(), width);
+            }
             line
         });
         // The file list gives way to the diff on a short screen.
@@ -359,23 +388,23 @@ impl ReviewPage {
         }
     }
 
-    /// "Review · working tree at 3f2a1c9 · 2 files · +12 −4 · 1 comment"
+    /// Like the chat's header: whose changes at the left (`name │ path`),
+    /// what they are against and their counts at the right ("review ·
+    /// working tree at 3f2a1c9 │ 2 files · +12 −4 · 1 comment").
     fn title(&self, width: usize, theme: Theme) -> Line<'static> {
-        let mut line = Line::from(Span::raw("  "));
-        push(&mut line, "Review", theme.emphasis(), width);
+        let bar = || Span::styled(" │ ", theme.faint());
         let base = if self.doc.base.is_empty() {
             "working tree".to_owned()
         } else {
             format!("since {}", self.doc.base)
         };
         let head: String = self.doc.head.chars().take(7).collect();
-        let mut about = format!(" · {base}");
+        let mut about = format!("review · {base}");
         if !head.is_empty() {
             about.push_str(&format!(" at {head}"));
         }
-        push(&mut line, about, theme.muted(), width);
         let files = self.doc.files.len();
-        let mut right = format!(
+        let mut counts = format!(
             "{files} file{} · +{} −{}",
             if files == 1 { "" } else { "s" },
             self.doc.added,
@@ -383,10 +412,29 @@ impl ReviewPage {
         );
         match self.comments.len() {
             0 => {}
-            1 => right.push_str(" · 1 comment"),
-            n => right.push_str(&format!(" · {n} comments")),
+            1 => counts.push_str(" · 1 comment"),
+            n => counts.push_str(&format!(" · {n} comments")),
         }
-        push_right(&mut line, &right, theme.muted(), width);
+        let right = vec![
+            Span::styled(about, theme.faint()),
+            bar(),
+            Span::styled(counts, theme.muted()),
+        ];
+        let right_width: usize = right.iter().map(|s| text::str_width(&s.content)).sum();
+        let right_at = width.saturating_sub(2 + right_width);
+        let mut line = Line::from(Span::raw("  "));
+        let room = right_at.saturating_sub(2);
+        let (name, place) = &self.owner;
+        let name = if name.is_empty() { "Review" } else { name };
+        push(&mut line, name, theme.bright(), room);
+        if !place.is_empty() && text::line_width(&line) + 6 < room {
+            line.spans.push(bar());
+            push(&mut line, place.clone(), theme.faint(), room);
+        }
+        if text::line_width(&line) + 2 <= right_at {
+            text::pad_to(&mut line, right_at);
+            line.spans.extend(right);
+        }
         line
     }
 

@@ -167,9 +167,15 @@ struct ComposerSpot {
     wrap: usize,
 }
 
-/// A line of the which-key panel: the key, what it does, and the chord's
-/// letter.
-pub type PanelEntry = (String, String, char);
+/// A line of the which-key flyover: its group ("amux", "this chat"), the
+/// key, what it does, and the chord's key, for clicks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PanelEntry {
+    pub group: &'static str,
+    pub key: String,
+    pub label: String,
+    pub chord: char,
+}
 
 /// A control in the chat's header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1659,6 +1665,15 @@ impl ChatView {
         if self.review_open
             && let Some(page) = &mut self.review
         {
+            // Its header names the agent and where it works, as the chat's.
+            let name = state.agent().name.clone().unwrap_or_default();
+            let cwd = &state.agent().cwd;
+            let place = if self.local {
+                text::tilde(cwd)
+            } else {
+                cwd.clone()
+            };
+            page.set_owner(&name, &place);
             page.draw(paint, area, footer, theme);
             return None;
         }
@@ -2391,24 +2406,6 @@ impl ChatView {
                     (area.x + from as u16, area.x + (from + control_width) as u16),
                 ));
             }
-            if let Some(entries) = self.panel.clone() {
-                let panel = which_key_panel(&entries, self.leader, width, theme);
-                let first = feed.len().saturating_sub(panel.len());
-                for (i, (line, chord)) in panel.into_iter().enumerate() {
-                    let at = first + i;
-                    if let Some(slot) = feed.get_mut(at) {
-                        let line_width = text::line_width(&line);
-                        *slot = text::overlay(slot, 0, line, width);
-                        if let Some(chord) = chord {
-                            self.panel_spots.push((
-                                area.y + (feed_top + at) as u16,
-                                (area.x, area.x + line_width as u16),
-                                chord,
-                            ));
-                        }
-                    }
-                }
-            }
             lines.extend(feed);
             self.laid = laid;
         }
@@ -2520,6 +2517,31 @@ impl ChatView {
         }
         if let Some(at) = flyover_cursor {
             paint.set_cursor_position(at);
+        }
+        // The leader held: its keys rise from the hint line's `ctrl+a
+        // more`, in a flyover like the settings', over the feed.
+        if let Some(entries) = self.panel.clone() {
+            let leader = KeyEvent::new(KeyCode::Char(self.leader), KeyModifiers::CONTROL);
+            let (anchor, above) = self
+                .hint_spots
+                .iter()
+                .find(|(_, _, key)| *key == leader)
+                .map_or(
+                    (area.x + 2, area.y + area.height.saturating_sub(1)),
+                    |(y, (from, _), _)| (*from, *y),
+                );
+            let (lines, chords) = which_key_panel(&entries, self.leader, width, theme);
+            if let Some((rect, skip)) = crate::panel::rise(paint, lines, anchor, above, area) {
+                for (i, chord) in chords.into_iter().enumerate().skip(skip) {
+                    if let Some(chord) = chord {
+                        self.panel_spots.push((
+                            rect.y + (i - skip) as u16,
+                            (rect.x, rect.x + rect.width),
+                            chord,
+                        ));
+                    }
+                }
+            }
         }
         // While the pane has the keys, the composer shows no cursor.
         if let Some((row, col)) = cursor.filter(|_| !pane_keys && self.picker.is_none()) {
@@ -3418,61 +3440,64 @@ fn jump_control(state: &SessionState, width: usize, theme: Theme) -> (Line<'stat
     (line, from)
 }
 
-/// The leader's panel: every next key and what it does, on the tinted
-/// surface at the left margin, with a line of padding above and below.
-/// Each line comes with the chord it picks, for clicks.
+/// The leader's flyover: every next key and what it does, in groups (what
+/// is about amux, then what is about this chat), with each line's chord for
+/// clicks. A legend, not a list to move through: no pointer, no highlight;
+/// the key bright, its words faint with the key's letter picked out where
+/// the word holds it.
 fn which_key_panel(
     entries: &[PanelEntry],
     leader: char,
     width: usize,
     theme: Theme,
-) -> Vec<(Line<'static>, Option<char>)> {
-    const MARGIN: usize = 2;
-    const INSET: usize = 2;
-    let surface = ratatui::style::Style {
-        bg: theme.user_surface().bg,
-        ..Default::default()
-    };
+) -> (Vec<Line<'static>>, Vec<Option<char>>) {
     let key_width = entries
         .iter()
-        .map(|(key, _, _)| text::str_width(key))
+        .map(|entry| text::str_width(&entry.key))
         .max()
         .unwrap_or(1);
-    let title = format!("ctrl+{leader}");
-    let inner = entries
-        .iter()
-        .map(|(_, action, _)| key_width + 3 + text::str_width(action))
-        .max()
-        .unwrap_or(0)
-        .max(text::str_width(&title));
-    let panel_width = (inner + 2 * INSET).min(width.saturating_sub(2 * MARGIN));
-    let row = |spans: Vec<Span<'static>>| {
-        let mut line = Line::from(Span::raw(" ".repeat(MARGIN)));
-        line.spans.push(Span::styled(" ".repeat(INSET), surface));
-        for span in spans {
-            line.spans
-                .push(Span::styled(span.content, span.style.patch(surface)));
+    let mut rows = Vec::new();
+    let mut chords = Vec::new();
+    let mut group = "";
+    for entry in entries {
+        if entry.group != group {
+            if !group.is_empty() {
+                rows.push(Line::default());
+                chords.push(None);
+            }
+            group = entry.group;
+            rows.push(Line::from(Span::styled(group.to_owned(), theme.faint())));
+            chords.push(None);
         }
-        text::fill(&mut line, surface, MARGIN + panel_width);
-        line
-    };
-    let mut out = vec![
-        (row(Vec::new()), None),
-        (row(vec![Span::styled(title, theme.faint())]), None),
-    ];
-    for (key, action, chord) in entries {
-        let pad = key_width.saturating_sub(text::str_width(key));
-        out.push((
-            row(vec![
-                Span::styled(key.clone(), theme.emphasis()),
-                Span::raw(" ".repeat(pad + 3)),
-                Span::styled(action.clone(), theme.faint()),
-            ]),
-            Some(*chord),
-        ));
+        let pad = key_width.saturating_sub(text::str_width(&entry.key));
+        let mut line = Line::from(vec![
+            Span::raw("  "),
+            Span::styled(entry.key.clone(), theme.emphasis()),
+            Span::raw(" ".repeat(pad + 2)),
+        ]);
+        let letter = entry
+            .key
+            .chars()
+            .next()
+            .filter(|_| entry.key.chars().count() == 1);
+        match letter {
+            Some(letter) => line
+                .spans
+                .extend(crate::panel::mnemonic(&entry.label, letter, theme)),
+            None => line
+                .spans
+                .push(Span::styled(entry.label.clone(), theme.faint())),
+        }
+        rows.push(line);
+        chords.push(Some(entry.chord));
     }
-    out.push((row(Vec::new()), None));
-    out
+    let title = format!("ctrl+{leader}");
+    let inner = crate::panel::content_width(&rows)
+        .max(text::str_width(&title) + 3)
+        .min(width.saturating_sub(8).max(8));
+    let lines = crate::panel::bordered(&title, rows, inner, &[], None, theme);
+    let chords = std::iter::once(None).chain(chords).chain([None]).collect();
+    (lines, chords)
 }
 
 fn mime_of(name: &str) -> &'static str {

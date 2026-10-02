@@ -14,7 +14,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
 use ui_state::FleetState;
 use ui_view::ModeValue;
 use wire::{ClaudeCreateConfig, CodexCreateConfig, CreateAgentRequest, Input, Kind, Presence};
@@ -840,8 +839,8 @@ impl Picker {
     }
 
     /// The flyover in its hairline border, its title on the top edge, at
-    /// most `room` columns wide. Returns its lines and the cursor's (column,
-    /// line) within them.
+    /// most `room` columns wide. Returns its lines, which choice each line
+    /// shows, and the cursor's (column, line) within them.
     #[allow(clippy::type_complexity)]
     fn panel(
         &self,
@@ -853,42 +852,11 @@ impl Picker {
         Option<(usize, usize)>,
     ) {
         let (body, rows, cursor) = self.body(theme);
-        let inner = body
-            .iter()
-            .map(text::line_width)
-            .chain([text::str_width(&self.title) + 3])
-            .max()
-            .unwrap_or(0)
+        let inner = crate::panel::content_width(&body)
+            .max(text::str_width(&self.title) + 3)
             .max(FLYOVER_MIN)
             .min(room.saturating_sub(4).max(8));
-        let edge = theme.hairline();
-        let mut top = Line::from(Span::styled("╭─ ", edge));
-        push(&mut top, self.title.clone(), theme.muted(), inner + 4);
-        push(&mut top, " ", edge, inner + 4);
-        let used = text::line_width(&top);
-        push(
-            &mut top,
-            "─".repeat((inner + 3).saturating_sub(used)),
-            edge,
-            inner + 4,
-        );
-        push(&mut top, "╮", edge, inner + 4);
-        let mut lines = vec![top];
-        for line in body {
-            let mut row = Line::from(Span::styled("│ ", edge));
-            let mut clipped = Line::default();
-            for span in line.spans {
-                push(&mut clipped, &span.content, span.style, inner);
-            }
-            row.spans.extend(clipped.spans);
-            text::pad_to(&mut row, inner + 2);
-            push(&mut row, " │", edge, inner + 4);
-            lines.push(row);
-        }
-        let mut bottom = Line::from(Span::styled("╰", edge));
-        push(&mut bottom, "─".repeat(inner + 2), edge, inner + 4);
-        push(&mut bottom, "╯", edge, inner + 4);
-        lines.push(bottom);
+        let lines = crate::panel::bordered(&self.title, body, inner, &[], None, theme);
         let rows = std::iter::once(None).chain(rows).chain([None]).collect();
         (
             lines,
@@ -960,42 +928,20 @@ pub fn draw_flyover(
     // Two columns of margin either side, like everything else.
     let room = usize::from(area.width).saturating_sub(4);
     let (lines, rows, cursor) = picker.panel(room, theme);
-    let width = lines.iter().map(text::line_width).max().unwrap_or(0) as u16;
-    let height = (lines.len() as u16).min(above.saturating_sub(area.y));
-    if height == 0 || width == 0 {
+    let Some((rect, skip)) = crate::panel::rise(paint, lines, anchor, above, area) else {
         return Flyover::default();
-    }
-    let right = area.x + area.width.saturating_sub(2);
-    // The border sits two columns left of the setting's words, so the
-    // choices line up under them.
-    let x = anchor
-        .saturating_sub(2)
-        .min(right.saturating_sub(width))
-        .max(area.x + 2);
-    let y = above - height;
-    let skip = lines.len() - usize::from(height);
-    let rect = Rect {
-        x,
-        y,
-        width: width.min(right.saturating_sub(x)),
-        height,
     };
-    paint.render_widget(Clear, rect);
-    paint.render_widget(
-        Paragraph::new(lines.into_iter().skip(skip).collect::<Vec<_>>()),
-        rect,
-    );
     Flyover {
         rect,
         choices: rows
             .into_iter()
             .enumerate()
             .skip(skip)
-            .filter_map(|(line, at)| at.map(|at| (y + (line - skip) as u16, at)))
+            .filter_map(|(line, at)| at.map(|at| (rect.y + (line - skip) as u16, at)))
             .collect(),
         cursor: cursor
             .filter(|(_, line)| *line >= skip)
-            .map(|(col, line)| Position::new(x + col as u16, y + (line - skip) as u16)),
+            .map(|(col, line)| Position::new(rect.x + col as u16, rect.y + (line - skip) as u16)),
     }
 }
 

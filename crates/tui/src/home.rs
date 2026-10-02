@@ -196,6 +196,18 @@ pub struct Home {
     reveal: bool,
     /// Clickable places on the last frame, the most specific first.
     spots: Vec<Spot>,
+    /// A modal's buttons on the last frame: (row, columns, what it does).
+    overlay_spots: Vec<(u16, (u16, u16), Confirmed)>,
+    /// Renaming: the name field's cursor as (column, list line) on the last
+    /// frame, when its row is in view.
+    rename_at: Option<(usize, usize)>,
+}
+
+/// A modal's two answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Confirmed {
+    Yes,
+    No,
 }
 
 /// One block of the list.
@@ -304,6 +316,12 @@ impl Home {
         self.draft.form = None;
         self.draft.picker = None;
         self.draft.open = false;
+    }
+
+    /// The hosts modal, from a chat's `ctrl+a t`.
+    pub fn open_hosts(&mut self) {
+        self.draft.open = false;
+        self.overlay = Some(Overlay::Hosts);
     }
 
     pub fn start_failed(&mut self) {
@@ -651,7 +669,7 @@ impl Home {
             KeyCode::Down | KeyCode::Char('j') => self.step(&targets, 1),
             KeyCode::Home | KeyCode::Char('g') => self.step(&targets, isize::MIN),
             KeyCode::End | KeyCode::Char('G') => self.step(&targets, isize::MAX),
-            KeyCode::Enter | KeyCode::Char('o')
+            KeyCode::Enter | KeyCode::Char('a')
                 if attach && (ctrl || key.code != KeyCode::Enter) =>
             {
                 return agent.map(FleetEffect::Attach).into_iter().collect();
@@ -688,7 +706,9 @@ impl Home {
                     self.toggle(&agent);
                 }
             }
-            KeyCode::Char('h') => self.overlay = Some(Overlay::Hosts),
+            KeyCode::Char('t') => self.overlay = Some(Overlay::Hosts),
+            // Detach: leave to the shell; the agents keep running.
+            KeyCode::Char('d') => return vec![FleetEffect::Quit],
             KeyCode::Char('r') => {
                 if let Some(agent) = agent
                     && let Some(entry) = fleet.agent(&agent)
@@ -703,7 +723,7 @@ impl Home {
                     self.confirm_close(fleet, agent, false);
                 }
             }
-            KeyCode::Char('d') => {
+            KeyCode::Char('x') => {
                 if let Some(agent) = agent {
                     self.confirm_close(fleet, agent, true);
                 }
@@ -741,7 +761,7 @@ impl Home {
             Overlay::Hosts => {
                 if !matches!(
                     key.code,
-                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h')
+                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('t')
                 ) {
                     self.overlay = Some(Overlay::Hosts);
                 }
@@ -926,6 +946,30 @@ impl Home {
                 .map(|spot| spot.hit.clone())
         };
         let listing = self.overlay.is_none() && !self.draft.open;
+        // A modal asking before a stop or delete: its buttons act; the rest
+        // of home under it does nothing.
+        if let Some(Overlay::Confirm { agent, delete, .. }) = &self.overlay {
+            let answer = match event.kind {
+                MouseEventKind::Down(MouseButton::Left) => self
+                    .overlay_spots
+                    .iter()
+                    .find(|(row, (from, to), _)| *row == y && (*from..*to).contains(&x))
+                    .map(|(_, _, answer)| *answer),
+                _ => None,
+            };
+            let effect = match answer {
+                Some(Confirmed::Yes) if *delete => vec![FleetEffect::Delete(agent.clone())],
+                Some(Confirmed::Yes) => vec![FleetEffect::Stop(agent.clone())],
+                _ => vec![],
+            };
+            if answer.is_some() {
+                self.overlay = None;
+            }
+            return effect;
+        }
+        if matches!(self.overlay, Some(Overlay::Hosts)) {
+            return vec![];
+        }
         // The new agent's modal has the pointer: its places act, the rest
         // of home under it does nothing.
         if self.draft.open && self.draft.form.is_some() {
@@ -1090,19 +1134,11 @@ impl Home {
             // A blank, the top line and a blank above the list; a blank and
             // the hints below it.
             let room = height.saturating_sub(5);
-            if matches!(self.overlay, Some(Overlay::Hosts)) {
-                laid.extend(
-                    hosts::overlay_lines(fleet, place.local_host, width - MARGIN, theme)
-                        .into_iter()
-                        .take(room)
-                        .map(|line| {
-                            let mut indented = Line::from(Span::raw(" ".repeat(MARGIN - 1)));
-                            indented.spans.extend(line.spans);
-                            Laid::plain(indented)
-                        }),
-                );
-            } else {
-                laid.extend(self.list(fleet, now_ms, width, room, area.height, theme, place));
+            let list_top = laid.len();
+            laid.extend(self.list(fleet, now_ms, width, room, area.height, theme, place));
+            // Renaming: the name is a field on its own row.
+            if let Some((col, row)) = self.rename_at {
+                cursor = Some((col, list_top + row));
             }
         }
         laid.resize_with(height - 1, Laid::default);
@@ -1156,6 +1192,58 @@ impl Home {
             if let Some(at) = self.draft.flyover.cursor {
                 paint.set_cursor_position(at);
             }
+        }
+        // Hosts, and asking before a stop or delete: modals over home.
+        self.overlay_spots.clear();
+        match &self.overlay {
+            Some(Overlay::Hosts) => {
+                let rows = hosts::modal_rows(fleet, place.local_host, theme);
+                let inner = crate::panel::content_width(&rows)
+                    .max(40)
+                    .min(width.saturating_sub(8));
+                let lines = crate::panel::bordered("Hosts", rows, inner, &[], None, theme);
+                crate::panel::centre(paint, lines, area);
+            }
+            Some(Overlay::Confirm { name, delete, .. }) => {
+                let (sentence, verb) = if *delete {
+                    (format!("Delete {name} and its history?"), "Delete")
+                } else {
+                    (format!("Stop {name}? It can be resumed later."), "Stop")
+                };
+                let (buttons, spots) = crate::panel::buttons(
+                    &[(verb, Confirmed::Yes), ("Cancel", Confirmed::No)],
+                    theme,
+                );
+                let rows = vec![
+                    Line::default(),
+                    Line::from(Span::styled(sentence, theme.text())),
+                    Line::default(),
+                    buttons,
+                    crate::panel::legend(
+                        &[("enter", &verb.to_lowercase()), ("esc", "cancel")],
+                        theme,
+                    ),
+                ];
+                let inner = crate::panel::content_width(&rows)
+                    .max(36)
+                    .min(width.saturating_sub(8));
+                let title = if *delete { "Delete" } else { "Stop" };
+                let lines = crate::panel::bordered(title, rows, inner, &[], None, theme);
+                let rect = crate::panel::centre(paint, lines, area);
+                // The buttons' row: the border, a blank, the sentence, a
+                // blank, then the buttons; two columns of border and padding.
+                self.overlay_spots = spots
+                    .into_iter()
+                    .map(|(from, to, hit)| {
+                        (
+                            rect.y + 4,
+                            (rect.x + 2 + from as u16, rect.x + 2 + to as u16),
+                            hit,
+                        )
+                    })
+                    .collect();
+            }
+            _ => {}
         }
         // The new agent's modal, centred over home.
         self.draft.modal.clear();
@@ -1315,6 +1403,7 @@ impl Home {
         let mut highlight = (0, 0);
         let mut in_view = (0, 0);
         let mut section_open = false;
+        let mut rename_line = None;
         for item in &items {
             let start = laid.len();
             match item {
@@ -1383,8 +1472,20 @@ impl Home {
                 }
                 Item::Agent(entry) => {
                     let chosen = selected == Target::Agent(entry.key.clone());
+                    let renaming = match &self.overlay {
+                        Some(Overlay::Rename { agent, editor }) if *agent == entry.key => {
+                            Some(editor)
+                        }
+                        _ => None,
+                    };
+                    if let Some(editor) = renaming {
+                        rename_line = Some((
+                            laid.len(),
+                            NAME_COL + 2 * entry.depth + editor.cursor_chars(),
+                        ));
+                    }
                     laid.extend(agent_lines(
-                        fleet, entry, chosen, now_ms, width, theme, place,
+                        fleet, entry, chosen, renaming, now_ms, width, theme, place,
                     ));
                     if roomy {
                         blank(&mut laid);
@@ -1433,6 +1534,9 @@ impl Home {
             self.reveal = false;
         }
         self.top = self.top.min(laid.len().saturating_sub(room));
+        self.rename_at = rename_line
+            .filter(|(line, _)| (self.top..self.top + room).contains(line))
+            .map(|(line, col)| (col, line - self.top));
         let mut shown: Vec<Laid> = laid.into_iter().skip(self.top).take(room).collect();
         // A card's padding shows only with its card.
         if let Some(first) = shown.first_mut()
@@ -1583,40 +1687,14 @@ impl Home {
         let mut line = Line::from(Span::raw(" ".repeat(MARGIN)));
         let key = |code| Hit::Key(plain_key(code));
         let hints: Vec<(&str, &str, Hit)> = match &self.overlay {
-            Some(Overlay::Rename { editor, .. }) => {
-                push(&mut line, "rename to ", theme.muted(), width);
-                let cursor = text::line_width(&line) + editor.cursor_chars();
-                push(&mut line, editor.text(), theme.text(), width);
-                let mut right = Line::default();
-                append_hints(
-                    &mut right,
-                    &mut Vec::new(),
-                    0,
-                    &[
-                        ("enter", "rename", key(KeyCode::Enter)),
-                        ("esc", "keep", key(KeyCode::Esc)),
-                    ],
-                    width,
-                    theme,
-                );
-                place_right(&mut line, right, width);
-                return (Laid::plain(line), Some(cursor));
-            }
-            Some(Overlay::Confirm { name, delete, .. }) => {
-                let words = if *delete {
-                    format!("Delete {name} and its history?")
-                } else {
-                    format!("Stop {name}? It can be resumed later.")
-                };
-                push(&mut line, words, theme.warning(), width);
-                push(&mut line, "   ", theme.muted(), width);
-                let verb = if *delete { "delete" } else { "stop" };
-                vec![
-                    ("y", verb, key(KeyCode::Char('y'))),
-                    ("n", "keep", key(KeyCode::Char('n'))),
-                ]
-            }
-            Some(Overlay::Hosts) => vec![("esc", "close", key(KeyCode::Esc))],
+            // Renaming in place: only its keys.
+            Some(Overlay::Rename { .. }) => vec![
+                ("enter", "save", key(KeyCode::Enter)),
+                ("esc", "cancel", key(KeyCode::Esc)),
+            ],
+            // A modal carries its own keys.
+            Some(Overlay::Confirm { .. }) => return (Laid::plain(line), None),
+            Some(Overlay::Hosts) => return (Laid::plain(line), None),
             None if footer.is_some() => {
                 // The app's words start with their own margin.
                 let footer = footer.unwrap_or_default();
@@ -1688,7 +1766,7 @@ impl Home {
                     _ => vec![("enter", "open", key(KeyCode::Enter))],
                 };
                 if attach && matches!(self.selected, Some(Target::Agent(_))) {
-                    hints.push(("o", "terminal", key(KeyCode::Char('o'))));
+                    hints.push(("a", "attach", key(KeyCode::Char('a'))));
                 }
                 if self.needle().is_some() {
                     hints.push(("esc", "clear filter", key(KeyCode::Esc)));
@@ -1718,6 +1796,10 @@ pub fn help_rows() -> Vec<(&'static str, String)> {
             "move; the mouse highlights what it is over".into(),
         ),
         ("enter, click", "open the chat".into()),
+        (
+            "a, ctrl+enter",
+            "attach to the agent's own terminal (this machine)".into(),
+        ),
         ("/", "filter by name, project or host; esc clears".into()),
         (
             "n",
@@ -1728,9 +1810,14 @@ pub fn help_rows() -> Vec<(&'static str, String)> {
             "a new agent's name, model, effort, folder, host, worktree, agent".into(),
         ),
         ("→ / ←, space", "show or hide a family's agents".into()),
-        ("r / s / d, ×", "rename · stop · delete".into()),
-        ("h", "hosts: trusted and found nearby".into()),
-        ("q", "quit".into()),
+        ("r", "rename, in place".into()),
+        ("s", "stop; it can be resumed".into()),
+        ("x", "delete; it asks first".into()),
+        ("t", "hosts".into()),
+        (
+            "d, q",
+            "detach: leave to the shell; agents keep running".into(),
+        ),
     ]
 }
 
@@ -1903,10 +1990,12 @@ fn mark(entry: &Entry, quiet: bool, theme: Theme) -> (&'static str, Style) {
 /// doing or last said, or why it ended; blank when it has said nothing,
 /// never its state again in words. Ink follows importance: the name and an
 /// ask read brightest, the second line grey, where and when faint.
+#[allow(clippy::too_many_arguments)]
 fn agent_lines(
     fleet: &FleetState,
     entry: &Entry,
     chosen: bool,
+    renaming: Option<&Editor>,
     now_ms: i64,
     width: usize,
     theme: Theme,
@@ -1955,10 +2044,19 @@ fn agent_lines(
     };
     let room = right_at.saturating_sub(NAME_COL + indent + 2);
     let fold_width = fold.as_deref().map_or(0, text::str_width);
-    let name = text::ellipsize(name_of(agent), room.saturating_sub(fold_width).max(1));
-    first
-        .spans
-        .push(Span::styled(name, name_style(chosen, quiet, theme)));
+    // Renaming, the name is a field in its own place, underlined.
+    match renaming {
+        Some(editor) => first.spans.push(Span::styled(
+            text::ellipsize(editor.text(), room.max(1)),
+            theme.bright().add_modifier(Modifier::UNDERLINED),
+        )),
+        None => {
+            let name = text::ellipsize(name_of(agent), room.saturating_sub(fold_width).max(1));
+            first
+                .spans
+                .push(Span::styled(name, name_style(chosen, quiet, theme)));
+        }
+    }
     if let Some(fold) = fold {
         let from = text::line_width(&first);
         let style = if entry.loud.is_some() {

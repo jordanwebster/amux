@@ -88,6 +88,68 @@ pub fn listed(fleet: &FleetState) -> Vec<&HostEntry> {
     hosts
 }
 
+/// The hosts modal's rows: one line per host, its name (this machine said
+/// so), then how it is reached ("direct", "relay") or why not ("away · not
+/// signed in"); what discovery found, faint, with the command that pairs
+/// it; and a faint footer on pairing another.
+pub fn modal_rows(fleet: &FleetState, local_host: &[u8], theme: Theme) -> Vec<Line<'static>> {
+    let local = fleet.host(local_host);
+    let hosts = listed(fleet);
+    let names: Vec<String> = hosts
+        .iter()
+        .map(|entry| {
+            if entry.name.is_empty() {
+                "unnamed host".to_owned()
+            } else {
+                entry.name.clone()
+            }
+        })
+        .collect();
+    let column = names
+        .iter()
+        .map(|name| text::str_width(name))
+        .max()
+        .unwrap_or(0)
+        + 3;
+    let mut rows = vec![Line::default()];
+    if hosts.is_empty() {
+        rows.push(Line::from(Span::styled("No hosts known", theme.muted())));
+    }
+    for (entry, name) in hosts.iter().zip(names) {
+        let trusted = entry.trust() == Trust::Trusted;
+        let mut line = Line::default();
+        let ink = if trusted { theme.text() } else { theme.faint() };
+        line.spans.push(Span::styled(name.clone(), ink));
+        pad_to(&mut line, column);
+        let words = if entry.host_id == local_host {
+            "this machine".to_owned()
+        } else if trusted {
+            caption(entry, local).trim_start_matches('·').to_owned()
+        } else {
+            format!("found nearby · amux pair {}", shell_target(&name))
+        };
+        line.spans.push(Span::styled(
+            words,
+            if trusted {
+                theme.muted()
+            } else {
+                theme.faint()
+            },
+        ));
+        rows.push(line);
+    }
+    rows.push(Line::default());
+    rows.push(Line::from(vec![
+        Span::styled("Pair another machine with ", theme.faint()),
+        Span::styled("amux pair", theme.code()),
+    ]));
+    rows.push(Line::from(vec![
+        Span::styled("esc", theme.muted()),
+        Span::styled(" close", theme.faint()),
+    ]));
+    rows
+}
+
 /// The overlay's rows, `width` cells wide, for the fleet's frame to hold.
 pub fn overlay_lines(
     fleet: &FleetState,

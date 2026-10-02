@@ -1,3 +1,15 @@
+2026-10-02 — **One key philosophy, and the old screens swept.** Keys now
+follow three layers (amux, this chat, local), one letter per meaning across
+home and the leader, and a short list of ctrl chords. Home is `h` (here) or
+`ctrl+a h`; detach is `d`/`q` or `ctrl+a d`; hosts moved to `t`; delete to
+`x`; attaching to an agent's own terminal is `a` (`ctrl+a a`), since `t`
+now means hosts. The leader's keys rise as a flyover from the hint line's
+`ctrl+a more`, in two groups with each key's letter picked out. Hosts, stop
+and delete are modals like New Agent; rename edits the name in place on its
+row. The keys reference lists the current keys and scrolls; the old review
+page gets a chat-style header and hint line. A shared panel module draws
+every bordered panel.
+
 2026-10-01 — **A new agent shows what it will run, and its form is a
 modal.** The settings gain `new_agent.claude` and `new_agent.codex` (model,
 effort, mode), shipped as Opus, high, default and GPT-5 Codex, medium,

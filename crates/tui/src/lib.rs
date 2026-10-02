@@ -16,6 +16,7 @@ pub mod highlight;
 pub mod home;
 mod hosts;
 pub(crate) mod markdown;
+pub(crate) mod panel;
 pub mod run;
 pub mod setup;
 pub mod terminal;

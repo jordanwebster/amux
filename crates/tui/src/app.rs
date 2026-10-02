@@ -25,7 +25,7 @@ use crate::chat::layout::{CAP, PAGE};
 use crate::chat::{ChatEffect, ChatView};
 use crate::clipboard::read_clipboard;
 use crate::fleet::{FleetEffect, FleetView};
-use crate::text::push;
+use crate::text::{self, push};
 use crate::theme::Theme;
 
 /// How long a second Ctrl+C has to arrive to quit.
@@ -219,6 +219,8 @@ pub struct App {
     leader_since: Option<Instant>,
     quit_armed: Option<Instant>,
     help: bool,
+    /// The keys reference's first line on screen.
+    help_scroll: usize,
     notice: Option<(String, Tone, Instant)>,
     opening: Option<AgentKey>,
     layout: Layout,
@@ -273,6 +275,7 @@ impl App {
             leader_since: None,
             quit_armed: None,
             help: false,
+            help_scroll: 0,
             notice: None,
             opening: None,
             events,
@@ -585,7 +588,16 @@ impl App {
                 Flow::Continue
             }
             Event::Mouse(mouse) => {
+                // The keys reference scrolls with the wheel when it is
+                // taller than the screen.
                 if self.help {
+                    match mouse.kind {
+                        crossterm::event::MouseEventKind::ScrollUp => {
+                            self.help_scroll = self.help_scroll.saturating_sub(3)
+                        }
+                        crossterm::event::MouseEventKind::ScrollDown => self.help_scroll += 3,
+                        _ => {}
+                    }
                     return Flow::Continue;
                 }
                 let theme = self.theme();
@@ -620,7 +632,18 @@ impl App {
     pub fn key(&mut self, key: KeyEvent) -> Flow {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if self.help {
-            self.help = false;
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => self.help_scroll += 1,
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1)
+                }
+                KeyCode::PageDown | KeyCode::Char(' ') => self.help_scroll += 10,
+                KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(10),
+                _ => {
+                    self.help = false;
+                    self.help_scroll = 0;
+                }
+            }
             return Flow::Continue;
         }
         if key.code == KeyCode::Char('c') && ctrl {
@@ -665,9 +688,14 @@ impl App {
         let state = chat.session.state();
         match key.code {
             KeyCode::Char('?') => self.help = true,
-            KeyCode::Char('s') => {
+            KeyCode::Char('h') => {
                 drop(state);
                 self.close_chat();
+            }
+            KeyCode::Char('t') => {
+                drop(state);
+                self.close_chat();
+                self.fleet_view.home.open_hosts();
             }
             KeyCode::Char('d') => return Flow::Quit,
             KeyCode::Char('k') => chat.view.move_focus(&state, true, theme),
@@ -700,7 +728,7 @@ impl App {
                 drop(state);
                 self.review(None);
             }
-            KeyCode::Char('t') if self.config.attach => {
+            KeyCode::Char('a') if self.config.attach => {
                 let agent = chat.agent.clone();
                 drop(state);
                 return self.raw_attach(&agent).unwrap_or(Flow::Continue);
@@ -1156,7 +1184,7 @@ impl App {
         if self.leader_pending && !panel_chat {
             let mut line = Line::from(Span::raw("  "));
             let words = if self.chat.is_some() {
-                "s fleet · d leave to the shell · k/j focus · o open · y copy · r review · n new agent"
+                "h home · n new agent · t hosts · d detach · r review · k/j focus · o open · y copy"
             } else {
                 "leader: nothing here"
             };
@@ -1181,13 +1209,17 @@ impl App {
         let theme = self.theme();
         let width = usize::from(area.width);
         if self.help {
+            let lines = help_lines(
+                self.config.leader,
+                self.fleet_view.redesigned(),
+                width,
+                theme,
+            );
+            self.help_scroll = self
+                .help_scroll
+                .min(lines.len().saturating_sub(usize::from(area.height)));
             paint.render_widget(
-                Paragraph::new(help_lines(
-                    self.config.leader,
-                    self.fleet_view.redesigned(),
-                    width,
-                    theme,
-                )),
+                Paragraph::new(lines.into_iter().skip(self.help_scroll).collect::<Vec<_>>()),
                 area,
             );
             return;
@@ -1267,8 +1299,8 @@ fn sibling_setup(
     }
 }
 
-/// The chord the leader's panel names for the overview pane: Ctrl+O, which
-/// also works on its own.
+/// The overview's chord after the leader: Ctrl+O, which also works on its
+/// own; the leader's flyover leaves it out.
 const PANE_CHORD: char = '\u{f}';
 
 impl App {
@@ -1290,22 +1322,32 @@ impl App {
 
 /// The leader's panel in a chat: every chord and what it does.
 fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
-    let entry = |key: &str, action: &str, chord: char| (key.to_owned(), action.to_owned(), chord);
+    let entry =
+        |group: &'static str, key: &str, label: &str, chord: char| crate::chat::PanelEntry {
+            group,
+            key: key.to_owned(),
+            label: label.to_owned(),
+            chord,
+        };
+    // What is about amux first, then what is about this chat. One letter
+    // means one thing here and among home's bare keys.
     let mut entries = vec![
-        entry("s", "home", 's'),
-        entry("r", "review the working tree", 'r'),
-        entry("n", "new agent like this one", 'n'),
-        entry("k", "focus an older row", 'k'),
-        entry("j", "focus a newer row", 'j'),
-        entry("o", "open the focused row", 'o'),
-        entry("y", "copy the focused row", 'y'),
-        entry("ctrl+o", "overview", PANE_CHORD),
+        entry("amux", "h", "home", 'h'),
+        entry("amux", "n", "new agent", 'n'),
+        entry("amux", "t", "hosts", 't'),
+        entry("amux", "d", "detach", 'd'),
+        entry("amux", "?", "all keys", '?'),
+        entry("this chat", "r", "review changes", 'r'),
     ];
     if attach {
-        entries.push(entry("t", "the agent's own terminal", 't'));
+        entries.push(entry("this chat", "a", "attach to its own terminal", 'a'));
     }
-    entries.push(entry("d", "leave to the shell", 'd'));
-    entries.push(entry("?", "all keys", '?'));
+    entries.extend([
+        entry("this chat", "k", "focus an older row", 'k'),
+        entry("this chat", "j", "focus a newer row", 'j'),
+        entry("this chat", "o", "open the focused row", 'o'),
+        entry("this chat", "y", "copy the focused row", 'y'),
+    ]);
     entries
 }
 
@@ -1340,18 +1382,16 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
             "attach an image or file from the clipboard".into(),
         ),
         (
-            "↑ on the first line",
-            "queued and unconfirmed messages: send now, withdraw, resend, discard".into(),
+            "↑ in an empty composer",
+            "the queued messages: enter sends one now, backspace withdraws it".into(),
         ),
         ("ctrl+x", "stop the turn; the agent stays".into()),
+        ("ctrl+c", "clear the draft; twice on nothing quits".into()),
         (
             "ctrl+o",
-            "the overview: tasks, background jobs, changes; again to switch or close".into(),
+            "the overview: tasks, background jobs, changes".into(),
         ),
-        (
-            "shift+tab",
-            "the agent's next mode, where it has one to move to".into(),
-        ),
+        ("shift+tab", "the agent's next mode".into()),
         (
             "ctrl+s then m / e",
             "the agent's model or effort, where it can change from here".into(),
@@ -1370,46 +1410,76 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
         ),
         (
             "esc",
-            "close, clear focus, then follow; never answers".into(),
+            "back out one level: a flyover, a field, the pane; never stops the agent".into(),
         ),
+        ("", String::new()),
+        ("Asks", String::new()),
+        ("↑ / ↓, digits", "move, or pick at once".into()),
+        (
+            "enter",
+            "choose; on a text field, answer and move on".into(),
+        ),
+        (
+            "tab / shift+tab, ← / →",
+            "the next or previous question".into(),
+        ),
+        ("esc", "to the way out (No, Decline, Reply instead)".into()),
         ("", String::new()),
         ("Leader", String::new()),
-        ("s", format!("{leader} s  back to the fleet")),
-        (
-            "d",
-            format!("{leader} d  leave to the shell; agents keep running"),
-        ),
-        (
-            "k / j",
-            format!("{leader} k/j  focus an older or newer row"),
-        ),
-        ("o", format!("{leader} o  open the focused row or run")),
-        ("y", format!("{leader} y  copy the focused row")),
-        (
-            "r",
-            format!("{leader} r  review the working tree; comments go in the draft"),
-        ),
-        ("n", format!("{leader} n  new agent like this one")),
-        ("?", format!("{leader} ?  these keys")),
-        ("", String::new()),
-        ("ctrl+c", "clear the field; twice on nothing quits".into()),
     ]);
+    // The leader's chords, by their whole keys.
+    let chords: [(&str, &str); 10] = [
+        ("h", "home"),
+        ("n", "new agent, starting from this chat's settings"),
+        ("t", "hosts"),
+        ("d", "detach: leave to the shell; agents keep running"),
+        ("r", "review changes; comments go in the draft"),
+        ("a", "attach to the agent's own terminal (this machine)"),
+        ("k / j", "focus an older or newer row"),
+        ("o", "open the focused row or run"),
+        ("y", "copy the focused row"),
+        ("?", "these keys"),
+    ];
+    let mut rows: Vec<(String, String)> = rows
+        .into_iter()
+        .map(|(key, words)| (key.to_owned(), words))
+        .collect();
+    rows.extend(
+        chords
+            .iter()
+            .map(|(key, words)| (format!("{leader} {key}"), (*words).to_owned())),
+    );
     let mut lines = vec![
         Line::from(Span::styled("  Keys", theme.emphasis())),
         Line::default(),
     ];
+    // Headings like home's (bold, muted, a hairline to the edge); keys read
+    // first as on the hint line, their words faint.
     for (key, words) in rows {
         let mut line = Line::from(Span::raw("  "));
-        if words.is_empty() {
-            push(&mut line, key, theme.emphasis(), width);
-        } else {
-            push(&mut line, format!("{key:<22}"), theme.code(), width);
-            push(&mut line, words, theme.muted(), width);
+        if words.is_empty() && !key.is_empty() {
+            push(
+                &mut line,
+                &key,
+                theme.muted().add_modifier(ratatui::style::Modifier::BOLD),
+                width,
+            );
+            push(&mut line, " ", theme.muted(), width);
+            let rule = width.saturating_sub(text::line_width(&line) + 2);
+            push(&mut line, "─".repeat(rule), theme.hairline(), width);
+        } else if !words.is_empty() {
+            push(&mut line, format!("{key:<24}"), theme.emphasis(), width);
+            push(&mut line, words, theme.faint(), width);
         }
         lines.push(line);
     }
     lines.push(Line::default());
-    lines.push(Line::from(Span::styled("  any key closes", theme.muted())));
+    let mut closes = Line::from(Span::raw("  "));
+    push(&mut closes, "j/k", theme.emphasis(), width);
+    push(&mut closes, " scroll   ", theme.faint(), width);
+    push(&mut closes, "any other key", theme.emphasis(), width);
+    push(&mut closes, " closes", theme.faint(), width);
+    lines.push(closes);
     lines
 }
 
