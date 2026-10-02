@@ -15,6 +15,7 @@ use crate::claude_common::{
     offered_commands, offered_models, question_ask, result_images, scope_choices, split_tool_name,
     text, tool_class, without_image_bytes,
 };
+use crate::shared::json_as_written;
 use crate::{Channel, Effect, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
 const INTERRUPTED: &str = "[Request interrupted by user";
@@ -44,7 +45,7 @@ impl State {
             "assistant" => self.assistant(emit, &line),
             "user" => self.user(emit, &line),
             "result" => self.result(emit, &line),
-            "control_request" => self.control_request_in(emit, &line),
+            "control_request" => self.control_request_in(emit, &line, &fact.payload),
             "control_cancel_request" => self.request_cancelled(emit, text(&line, "request_id")),
             "control_response" => self.control_response_in(&line),
             "command_lifecycle" => {
@@ -865,7 +866,7 @@ impl State {
 
     // --- control ---------------------------------------------------------
 
-    fn control_request_in(&mut self, emit: &mut Emit, line: &Value) {
+    fn control_request_in(&mut self, emit: &mut Emit, line: &Value, payload: &[u8]) {
         let request_id = text(line, "request_id").to_owned();
         let request = line.get("request").unwrap_or(&Value::Null);
         match text(request, "subtype") {
@@ -887,9 +888,7 @@ impl State {
                         wire::ask::Body::Form(FormAsk {
                             server,
                             message,
-                            schema_json: request
-                                .get("requested_schema")
-                                .map(|schema| schema.to_string().into_bytes())
+                            schema_json: json_as_written(payload, &["request", "requested_schema"])
                                 .unwrap_or_default(),
                         }),
                         AskShape::Form,

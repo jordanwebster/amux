@@ -190,25 +190,16 @@ pub fn row_lines(
                 AskRow::Question {
                     questions,
                     answers,
-                    note,
                     resolution,
+                    ..
                 }
                 | AskRow::Questions {
                     questions,
                     answers,
-                    note,
                     resolution,
+                    ..
                 },
-            ) => questions_step(
-                &mut drawn,
-                row,
-                questions,
-                answers,
-                note.as_deref(),
-                *resolution,
-                width,
-                theme,
-            ),
+            ) => questions_step(&mut drawn, questions, answers, *resolution, width, theme),
             RowKind::Ask(AskRow::Form {
                 server,
                 fields,
@@ -768,20 +759,16 @@ fn plan_lines(
 }
 
 /// Questions the agent asked, once the box is done with them: a step that
-/// says what happened ("Answered 2 questions"), a faint line per question
-/// with its answer, and a reply sent instead as the person's own message.
-#[allow(clippy::too_many_arguments)]
+/// says what happened ("Answered 2 questions") and a faint line per
+/// question with its answer.
 fn questions_step(
     drawn: &mut Drawn,
-    row: &Row,
     questions: &[QuestionView],
     answers: &[AnswerView],
-    note: Option<&str>,
     resolution: Resolution,
     width: usize,
     theme: Theme,
 ) {
-    let reply = note.and_then(ui_view::reply_words);
     let count = if questions.len() == 1 {
         "a question".to_owned()
     } else {
@@ -791,16 +778,15 @@ fn questions_step(
         .iter()
         .filter(|answer| !answer_words(answer).is_empty())
         .count();
-    let words = match (resolution, reply) {
-        (_, Some(_)) => format!("Replied instead of answering {count}"),
-        (Resolution::Open, _) => format!("Asking {count}"),
-        (Resolution::Answered, _) if answered == 0 => format!("Skipped {count}"),
-        (Resolution::Answered, _) if answered < questions.len() => {
+    let words = match resolution {
+        Resolution::Open => format!("Asking {count}"),
+        Resolution::Answered if answered == 0 => format!("Skipped {count}"),
+        Resolution::Answered if answered < questions.len() => {
             format!("Answered {answered} of {} questions", questions.len())
         }
-        (Resolution::Answered, _) => format!("Answered {count}"),
-        (Resolution::Declined, _) => format!("Declined {count}"),
-        (Resolution::Cancelled | Resolution::Dismissed, _) => format!("Dismissed {count}"),
+        Resolution::Answered => format!("Answered {count}"),
+        Resolution::Declined => format!("Declined {count}"),
+        Resolution::Cancelled | Resolution::Dismissed => format!("Dismissed {count}"),
     };
     let railed = |words: String, style: Style| {
         let mut line = Line::default();
@@ -811,9 +797,7 @@ fn questions_step(
         line
     };
     drawn.line(railed(words, theme.muted()));
-    // A reply carries the answers so far to the agent in its own words, so
-    // the step lists answers only when they were sent as answers.
-    if matches!(resolution, Resolution::Answered) && reply.is_none() {
+    if matches!(resolution, Resolution::Answered) {
         // Each question as asked, faint, then "→ answer" under it.
         let room = width.saturating_sub(WORDS + 2).max(1);
         for (at, question) in questions.iter().enumerate() {
@@ -838,17 +822,6 @@ fn questions_step(
         }
     }
     drawn.blank();
-    if let Some(words) = reply {
-        prompt(
-            drawn,
-            row,
-            &[Segment::Text(words.to_owned())],
-            false,
-            false,
-            width,
-            theme,
-        );
-    }
 }
 
 /// A finished ask's step: its words in the step ink on the rail, then any

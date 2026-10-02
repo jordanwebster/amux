@@ -75,8 +75,6 @@ pub enum ChatEffect {
         attachments: Vec<Attachment>,
     },
     Answer(wire::Input),
-    /// Inputs sent one after another, in order.
-    Inputs(Vec<wire::Input>),
     /// Stop: ends the turn; the agent stays live.
     Interrupt,
     /// Takes a queued prompt back; its words return to the composer.
@@ -270,9 +268,6 @@ pub struct ChatView {
     asking: Option<Key>,
     /// The last plan the feed opened at, so it opens there only once.
     plan_seen: Option<Key>,
-    /// Plan decisions this client made of other inputs, by card key: the
-    /// card is done with once they are sent, whatever the agent says.
-    plans_done: HashSet<String>,
     /// The jump-to-bottom control.
     jump_spot: Option<(u16, (u16, u16))>,
     /// The mode on the composer's edge.
@@ -356,7 +351,6 @@ impl ChatView {
             ask_spots: Vec::new(),
             asking: None,
             plan_seen: None,
-            plans_done: HashSet::new(),
             jump_spot: None,
             mode_spot: None,
             composer_spot: None,
@@ -516,9 +510,6 @@ impl ChatView {
             return false;
         }
         if let Some(card) = self.card_takes_keys(state) {
-            if self.redesigned() && ask::boxed(&card) && self.ask.replying() {
-                return !self.editor.is_empty();
-            }
             if self.redesigned() && ask::boxed(&card) {
                 return self.ask.box_note_text(&card);
             }
@@ -545,9 +536,6 @@ impl ChatView {
             return self.review.as_mut().is_some_and(ReviewPage::kill_field);
         }
         if let Some(card) = self.card_takes_keys(state) {
-            if self.redesigned() && ask::boxed(&card) && self.ask.replying() {
-                return self.editor.kill_all();
-            }
             if self.redesigned() && ask::boxed(&card) {
                 return self.ask.in_box_note(&card) && self.ask.kill_box_note();
             }
@@ -567,9 +555,7 @@ impl ChatView {
         }
         if let Some(card) = self.card_takes_keys(state) {
             self.ask.sync(&card);
-            if self.redesigned() && ask::boxed(&card) && self.ask.replying() {
-                self.editor.paste(text);
-            } else if self.redesigned() && ask::boxed(&card) {
+            if self.redesigned() && ask::boxed(&card) {
                 self.ask.paste_box_note(&card, text);
             } else {
                 self.ask.paste(&card, text);
@@ -582,9 +568,9 @@ impl ChatView {
         }
     }
 
-    /// The head ask, less a plan decision this client already made.
+    /// The head ask.
     fn live_card(&self, state: &SessionState) -> Option<AskCard> {
-        ask_card(state).filter(|card| !self.plans_done.contains(&card.key))
+        ask_card(state)
     }
 
     fn card_takes_keys(&self, state: &SessionState) -> Option<AskCard> {
@@ -661,31 +647,6 @@ impl ChatView {
             // The permission kinds take over the composer's box, and Esc
             // there never leaves the ask.
             if self.redesigned() && ask::boxed(&card) {
-                // Replying instead of answering: the composer has the keys,
-                // Enter sends the reply and Esc goes back to the questions.
-                if self.ask.replying()
-                    && matches!(card.state, CardState::Open | CardState::Rejected(_))
-                {
-                    match key.code {
-                        KeyCode::Esc => {
-                            self.ask.stop_replying();
-                            return vec![];
-                        }
-                        KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
-                            let words = self.editor.text().trim().to_owned();
-                            if words.is_empty() {
-                                return vec![];
-                            }
-                            let Some(input) = self.ask.reply_input(&card, &words) else {
-                                return vec![];
-                            };
-                            self.editor = Editor::default();
-                            self.follow();
-                            return vec![ChatEffect::Answer(input)];
-                        }
-                        _ => return self.composer_key(state, key),
-                    }
-                }
                 let action = self.ask.box_key(&card, key);
                 return self.ask_effects(state, &card, action);
             }
@@ -717,14 +678,6 @@ impl ChatView {
             AskAction::None => vec![],
             AskAction::Attach => vec![ChatEffect::RawAttach],
             AskAction::OpenUrl(url) => vec![ChatEffect::OpenUrl(url)],
-            AskAction::Compose { key, inputs } => {
-                self.plans_done.insert(key);
-                // Decided, the plan folds, whatever the reader did with it
-                // while it waited.
-                self.expanded.remove(&card.item_key);
-                self.follow();
-                vec![ChatEffect::Inputs(inputs)]
-            }
             AskAction::Answer(input) => {
                 // The plan was read from its top; once it is answered, the
                 // feed follows the work it sets going.
@@ -908,7 +861,7 @@ impl ChatView {
                             disabled: false,
                         })
                         .collect();
-                    self.picker = Some(Picker::new(Item::Model, "Model", choices));
+                    self.picker = Some(Picker::new(Item::Model, "Model", choices, false));
                 }
                 KeyCode::Char('e') if effort => {
                     let choices = view
@@ -926,7 +879,7 @@ impl ChatView {
                             disabled: false,
                         })
                         .collect();
-                    self.picker = Some(Picker::new(Item::Effort, "Effort", choices));
+                    self.picker = Some(Picker::new(Item::Effort, "Effort", choices, false));
                 }
                 _ => {}
             }
@@ -1029,7 +982,7 @@ impl ChatView {
     /// The pane's items in its order, as this frame would draw them.
     fn pane_items(&self, state: &SessionState) -> Vec<pane::PaneItem> {
         let strip = session_strip(state);
-        let jobs = ui_view::background_jobs(state);
+        let jobs = crate::pending::background_jobs(state);
         pane::Contents {
             strip: &strip,
             jobs: &jobs,
@@ -1354,7 +1307,10 @@ impl ChatView {
     /// is current after opening, and again each time a turn ends, since
     /// that is when the agent's changes land. Never on every frame.
     pub fn wants_diff_stat(&mut self, state: &SessionState) -> bool {
-        if !self.redesigned() || !matches!(state.composer(), Composer::Send | Composer::Resume) {
+        if !crate::pending::diff_counts()
+            || !self.redesigned()
+            || !matches!(state.composer(), Composer::Send | Composer::Resume)
+        {
             return false;
         }
         let working = state.phase() == PhaseView::Working;
@@ -1876,7 +1832,7 @@ impl ChatView {
 
         let strip = session_strip(state);
         let jobs = if self.pane_open {
-            ui_view::background_jobs(state)
+            crate::pending::background_jobs(state)
         } else {
             Vec::new()
         };
@@ -2027,7 +1983,16 @@ impl ChatView {
         // The row rests on the composer's box; a blank line sets it apart
         // from whatever is above. It is the pane folded: while the pane is
         // open it takes the row's place.
-        if !side && let Some(line) = edge_row(&strip, !self.editor.is_empty(), now_ms, width, theme)
+        let running = crate::pending::background_jobs(state).len();
+        if !side
+            && let Some(line) = edge_row(
+                &strip,
+                running,
+                !self.editor.is_empty(),
+                now_ms,
+                width,
+                theme,
+            )
         {
             if !bottom.is_empty() {
                 bottom.push(Line::default());
@@ -2115,25 +2080,6 @@ impl ChatView {
         let mut ask_box: Option<(usize, Vec<ask::Spot>)> = None;
         let mut ask_mode: Option<(usize, (usize, usize))> = None;
         match &card {
-            // Replying instead of answering a question: the composer, marked
-            // on its top edge, holds what will go as the reply.
-            Some(card)
-                if ask::boxed(card)
-                    && self.ask.replying()
-                    && matches!(card.state, CardState::Open | CardState::Rejected(_)) =>
-            {
-                let at = bottom.len();
-                composer_box(&mut bottom, &mut cursor, &self.editor, true);
-                if let Some(top) = bottom.get_mut(at) {
-                    *top = marked_edge("replying about the questions", width, theme);
-                }
-                boxed = true;
-                if footer.is_none()
-                    && let Some(words) = self.ask.question_hint(card, self.leader)
-                {
-                    hint = Err(words);
-                }
-            }
             Some(card) if ask::boxed(card) => {
                 const MARGIN: usize = 2;
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
@@ -2574,7 +2520,7 @@ impl ChatView {
         paint: &mut Paint<'_>,
         rect: Rect,
         strip: &ui_view::Strip,
-        jobs: &[ui_view::JobView],
+        jobs: &[pane::Job],
         lit: Option<&pane::PaneItem>,
         now_ms: i64,
         theme: Theme,
@@ -2808,15 +2754,18 @@ impl ChatView {
         let mut line = Line::from(Span::raw("  "));
         let room = right_at.saturating_sub(2);
         push(&mut line, name, theme.bright(), room);
-        // Where it works: its path as the person would write it, and its
-        // host when that is not this machine. The branch goes before the
-        // path, as `main ~/source/amux`, once the inventory carries one.
+        // Where it works: its branch and its path as the person would write
+        // it (`main ~/source/amux`), and its host when that is not this
+        // machine.
         let cwd = &state.agent().cwd;
         let mut place = if self.local {
             text::tilde(cwd)
         } else {
             cwd.clone()
         };
+        if let Some(branch) = crate::pending::branch(state.agent()) {
+            place = format!("{branch} {place}");
+        }
         if !self.local && !host.is_empty() {
             place = format!("{place} · {host}");
         }
@@ -3118,13 +3067,8 @@ fn boxed_composer(
     }
 }
 
-/// The composer box's top edge with `words` on it, faint, after a short
-/// run of the edge: what the box is for while it holds a reply.
-fn marked_edge(words: &str, width: usize, theme: Theme) -> Line<'static> {
-    marked_edge_in(words, theme.faint(), width, theme)
-}
-
-/// The composer box's top edge with `words` on it in `ink`.
+/// The composer box's top edge with `words` on it in `ink`, after a short
+/// run of the edge.
 fn marked_edge_in(
     words: &str,
     ink: ratatui::style::Style,

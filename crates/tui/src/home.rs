@@ -10,7 +10,7 @@
 //! selection are one highlight: moving the mouse over a row selects it,
 //! and keys take over until the mouse moves again.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame as Paint;
@@ -127,14 +127,6 @@ impl Laid {
     }
 }
 
-/// When an agent's place in the order last moved: its activity time as of
-/// the last change of attention this client saw.
-#[derive(Clone, Copy, Debug)]
-struct Moment {
-    attention: Attention,
-    at_ms: i64,
-}
-
 /// A new agent before it exists: the first prompt and what will run it.
 #[derive(Debug, Default)]
 pub struct Draft {
@@ -188,7 +180,6 @@ pub struct Home {
     filtering: bool,
     overlay: Option<Overlay>,
     pub draft: Draft,
-    moments: HashMap<AgentKey, Moment>,
     /// The first list line drawn.
     top: usize,
     /// A key moved the highlight, so the list scrolls to keep it in view.
@@ -228,7 +219,6 @@ struct Entry {
     depth: usize,
     children: usize,
     expanded: bool,
-    moment: i64,
     /// A folded family's member that needs you, standing in on its head's
     /// second line: its name and what it is waiting on.
     loud: Option<(String, String)>,
@@ -238,7 +228,7 @@ struct Family {
     head: AgentKey,
     members: Vec<AgentKey>,
     attention: Attention,
-    moment: i64,
+    order: i64,
 }
 
 fn name_of(agent: &Agent) -> &str {
@@ -370,34 +360,6 @@ impl Home {
         }
     }
 
-    /// Keeps each agent's moment, which moves only when its attention does.
-    fn observe(&mut self, fleet: &FleetState) {
-        self.moments.retain(|key, _| fleet.agent(key).is_some());
-        for agent in fleet.agents() {
-            let attention = ui_state::attention(agent);
-            let key = ui_state::agent_key(agent);
-            if self
-                .moments
-                .get(&key)
-                .is_none_or(|moment| moment.attention != attention)
-            {
-                self.moments.insert(
-                    key,
-                    Moment {
-                        attention,
-                        at_ms: agent.last_activity_ms,
-                    },
-                );
-            }
-        }
-    }
-
-    fn moment(&self, agent: &Agent) -> i64 {
-        self.moments
-            .get(&ui_state::agent_key(agent))
-            .map_or(agent.last_activity_ms, |moment| moment.at_ms)
-    }
-
     fn needle(&self) -> Option<String> {
         self.filter
             .as_ref()
@@ -411,10 +373,6 @@ impl Home {
             Some(name_of(agent)),
             Some(agent.cwd.as_str()),
             host,
-            agent
-                .working_on
-                .as_ref()
-                .map(|working| working.text.as_str()),
             agent.exit_cause.as_deref(),
             Some(kind_word(agent.kind())),
         ]
@@ -423,7 +381,8 @@ impl Home {
         .any(|field| field.to_lowercase().contains(needle))
     }
 
-    /// Every family, newest first, each with its members in family order.
+    /// Every family, newest first (as the seam orders them), each with its
+    /// members in family order.
     fn families(&self, fleet: &FleetState) -> Vec<Family> {
         let mut families: Vec<Family> = fleet
             .roots()
@@ -437,21 +396,15 @@ impl Home {
                     members.extend(children);
                     at += 1;
                 }
-                let moment = members
-                    .iter()
-                    .filter_map(|member| fleet.agent(member))
-                    .map(|agent| self.moment(agent))
-                    .max()
-                    .unwrap_or(0);
                 Family {
                     attention: fleet.family_attention(&head).unwrap_or(Attention::Exited),
+                    order: crate::pending::home_order(root),
                     head,
                     members,
-                    moment,
                 }
             })
             .collect();
-        families.sort_by(|a, b| b.moment.cmp(&a.moment).then(a.head.cmp(&b.head)));
+        families.sort_by(|a, b| b.order.cmp(&a.order).then(a.head.cmp(&b.head)));
         families
     }
 
@@ -534,7 +487,7 @@ impl Home {
         };
         let mut children: Vec<AgentKey> = fleet.families().children(key).cloned().collect();
         children.sort_by_key(|child| {
-            std::cmp::Reverse(fleet.agent(child).map_or(0, |agent| self.moment(agent)))
+            std::cmp::Reverse(fleet.agent(child).map_or(0, crate::pending::home_order))
         });
         let expanded = self.expanded.contains(&key.agent) && !children.is_empty();
         let loud = if !expanded
@@ -548,12 +501,8 @@ impl Home {
                 .filter_map(|member| fleet.agent(member))
                 .find(|member| ui_state::attention(member) == Attention::NeedsYou)
                 .map(|member| {
-                    let waiting = member
-                        .working_on
-                        .as_ref()
-                        .map(|working| working.text.clone())
-                        .filter(|text| !text.is_empty())
-                        .unwrap_or_else(|| "needs you".into());
+                    let waiting =
+                        crate::pending::home_summary(member).unwrap_or_else(|| "needs you".into());
                     (name_of(member).to_owned(), waiting)
                 })
         } else {
@@ -565,7 +514,6 @@ impl Home {
             depth,
             children: children.len(),
             expanded,
-            moment: self.moment(agent),
             loud,
         })));
         if expanded {
@@ -643,7 +591,6 @@ impl Home {
     }
 
     pub fn key(&mut self, fleet: &FleetState, key: KeyEvent, attach: bool) -> Vec<FleetEffect> {
-        self.observe(fleet);
         if self.draft.open {
             return self.draft_key(fleet, key);
         }
@@ -860,7 +807,7 @@ impl Home {
                 KeyCode::Char('e') => Some(Setting::Effort),
                 KeyCode::Char('d') => Some(Setting::Folder),
                 KeyCode::Char('h') => Some(Setting::Host),
-                KeyCode::Char('w') => Some(Setting::Worktree),
+                KeyCode::Char('w') if crate::pending::offers_worktree() => Some(Setting::Worktree),
                 KeyCode::Char('a') => Some(Setting::Kind),
                 _ => None,
             };
@@ -925,7 +872,8 @@ impl Home {
             Setting::Worktree => "Worktree",
         };
         let choices = setup.choices(item, fleet);
-        self.draft.picker = Some(Picker::new(item, title, choices));
+        let typed = setup.takes_typed(item);
+        self.draft.picker = Some(Picker::new(item, title, choices, typed));
     }
 
     pub fn mouse(
@@ -1086,7 +1034,6 @@ impl Home {
         theme: Theme,
         place: &Place<'_>,
     ) {
-        self.observe(fleet);
         let width = usize::from(area.width);
         let height = usize::from(area.height);
         if height < 3 || width < 2 * MARGIN + 8 {
@@ -1730,7 +1677,7 @@ impl Home {
                         (keys, action, key(code))
                     })
                     .collect(),
-                (None, true) => vec![
+                (None, true) => [
                     ("n", "name", key(KeyCode::Char('n'))),
                     ("m", "model", key(KeyCode::Char('m'))),
                     ("e", "effort", key(KeyCode::Char('e'))),
@@ -1739,7 +1686,10 @@ impl Home {
                     ("w", "worktree", key(KeyCode::Char('w'))),
                     ("a", "agent", key(KeyCode::Char('a'))),
                     ("esc", "back", key(KeyCode::Esc)),
-                ],
+                ]
+                .into_iter()
+                .filter(|(letter, _, _)| *letter != "w" || crate::pending::offers_worktree())
+                .collect(),
                 (None, false) => vec![
                     ("enter", "start", key(KeyCode::Enter)),
                     (
@@ -1807,7 +1757,7 @@ pub fn help_rows() -> Vec<(&'static str, String)> {
         ),
         (
             "ctrl+s then a letter",
-            "a new agent's name, model, effort, folder, host, worktree, agent".into(),
+            "a new agent's name, model, effort, folder, host, agent".into(),
         ),
         ("→ / ←, space", "show or hide a family's agents".into()),
         ("r", "rename, in place".into()),
@@ -1984,12 +1934,13 @@ fn mark(entry: &Entry, quiet: bool, theme: Theme) -> (&'static str, Style) {
     }
 }
 
-/// An agent's two lines. The first: its mark, its name, and faint where it
-/// is (project, and host when not this machine), with its age at the right
-/// or, on the highlighted row, `[x]`. The second: what it asks, what it is
-/// doing or last said, or why it ended; blank when it has said nothing,
-/// never its state again in words. Ink follows importance: the name and an
-/// ask read brightest, the second line grey, where and when faint.
+/// An agent's lines. The first: its mark, its name, and faint where it is
+/// (project, and host when not this machine), with its age at the right
+/// or, on the highlighted row, `[x]`. A second only when there is something
+/// known to say: its host away, why it ended, a folded member that needs
+/// you, or what it asks or is doing where that is known (see the pending
+/// seam); never its state again in words. Ink follows importance: the name
+/// and an ask read brightest, the second line grey, where and when faint.
 #[allow(clippy::too_many_arguments)]
 fn agent_lines(
     fleet: &FleetState,
@@ -2025,7 +1976,7 @@ fn agent_lines(
     let right = if chosen {
         CLOSE.to_owned()
     } else {
-        text::age(now_ms, entry.moment)
+        text::age(now_ms, agent.last_activity_ms)
     };
     let right_at = end.saturating_sub(text::str_width(&right));
     let fold = (entry.children > 0).then(|| {
@@ -2084,13 +2035,15 @@ fn agent_lines(
         first.spans.push(Span::styled(right, theme.faint()));
     }
 
+    let first = Laid {
+        line: tint(first, chosen, width, theme),
+        spots,
+    };
     let mut second = Line::default();
     pad_to(&mut second, NAME_COL + indent);
     let room = end.saturating_sub(NAME_COL + indent);
-    let said = agent
-        .working_on
-        .as_ref()
-        .map(|working| text::first_line(&working.text).to_owned())
+    let said = crate::pending::home_summary(agent)
+        .map(|summary| text::first_line(&summary).to_owned())
         .filter(|text| !text.is_empty());
     if let Some((name, waiting)) = &entry.loud {
         let name = text::ellipsize(name, room / 2);
@@ -2117,19 +2070,18 @@ fn agent_lines(
                 None => ("exited".to_owned(), theme.faint()),
                 Some(cause) => (format!("exited · {cause}"), theme.error()),
             }
-        } else if attention == Attention::NeedsYou {
+        } else if let Some(said) = said {
             // What it asks is the most important line on home.
-            (said.unwrap_or_default(), theme.text())
+            let style = if attention == Attention::NeedsYou {
+                theme.text()
+            } else {
+                theme.muted()
+            };
+            (said, style)
         } else {
-            (said.unwrap_or_default(), theme.muted())
+            return vec![first];
         };
         push(&mut second, text::ellipsize(&detail, room), style, end);
     }
-    vec![
-        Laid {
-            line: tint(first, chosen, width, theme),
-            spots,
-        },
-        Laid::row(tint(second, chosen, width, theme), target),
-    ]
+    vec![first, Laid::row(tint(second, chosen, width, theme), target)]
 }

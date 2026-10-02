@@ -19,20 +19,18 @@ mod settings;
 mod stretch;
 
 pub use ask::{
-    Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, OptionView, Pick, PlanStep,
-    QuestionView, REPLY_CONTEXT, Scope, answer_input, ask_card, question_answer, question_reply,
-    reply_words, with_form_content,
+    Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, OptionView, Pick, QuestionView,
+    Scope, answer_input, ask_card, question_answer, with_form_content,
 };
 pub use composer::{
-    CONTEXT_STRIP_PERCENT, ComposerView, ContextView, JobView, OutboxRow, OutboxState, QueuedRow,
+    CONTEXT_STRIP_PERCENT, ComposerView, ContextView, OutboxRow, OutboxState, QueuedRow,
     ServerView, SignInView, Strip, TaskLine, TaskMark, TasksView, UsageView, UsageWindowView,
-    background_jobs, composer, composer_tokens, outbox_rows, queue_rows, session_strip, waiting,
+    composer, composer_tokens, outbox_rows, queue_rows, session_strip, waiting,
 };
 pub use fleet::{
     Away, FamilyHeader, FleetCard, FleetRow, away, family_header, fleet_card, fleet_list,
     signed_out,
 };
-pub use plan::{IMPLEMENT_PLAN, composed, plan_inputs};
 pub use review::{DiffLine, FileStatus, Hunk, LineKind, ReviewDoc, ReviewFile, review_doc};
 pub use rows::{
     AnswerView, AskRow, ChatOptions, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow,

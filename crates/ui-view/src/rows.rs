@@ -595,10 +595,7 @@ pub(crate) fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Dec
                 text: text(),
                 steered: true,
             }),
-            Codex::Message(m) => match crate::plan::codex_plan(&item.text) {
-                Some(plan) => plain(crate::plan::codex_plan_row(state, held, plan, m.complete)),
-                None => plain(prose(held, m.complete, false)),
-            },
+            Codex::Message(m) => plain(prose(held, m.complete, false)),
             Codex::WorkingNote(m) => plain(prose(held, m.complete, true)),
             Codex::Reasoning(r) => {
                 let text = if item.text.is_empty() {

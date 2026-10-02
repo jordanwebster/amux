@@ -237,7 +237,7 @@ fn now_ms() -> i64 {
 /// reads the agent's directory on this machine, and headless Claude has no
 /// terminal at all. Its chat is the way in either way.
 pub(crate) fn terminal_refusal(agent: &Agent, config: &TuiConfig) -> Option<&'static str> {
-    if agent.host_id != config.local_host {
+    if agent.host_id != config.local_host && !crate::pending::attaches_elsewhere() {
         Some("its terminal is on another machine; enter opens its chat")
     } else if agent.kind() == wire::Kind::ClaudeSdk {
         Some("headless Claude has no terminal; enter opens its chat")
@@ -830,14 +830,6 @@ impl App {
                 open,
             } => {
                 let attach = setup.chat_in == crate::setup::ChatIn::Terminal;
-                if let Some(branch) = crate::setup::worktree_stand_in(&setup, &text) {
-                    self.notice(
-                        format!(
-                            "started in the folder itself: amux cannot make a worktree yet (it would be on {branch})"
-                        ),
-                        Tone::Warn,
-                    );
-                }
                 self.spawn(async move {
                     // An agent used in its own terminal gets its first
                     // prompt there.
@@ -980,19 +972,6 @@ impl App {
                         // The card itself says it was rejected or not confirmed.
                         InputError::Rejected(_) | InputError::Uncertain => None,
                     })
-            }),
-            ChatEffect::Inputs(inputs) => self.spawn(async move {
-                for input in inputs {
-                    if let Err(error) = session.answer(input).await {
-                        return match error {
-                            InputError::Rejected(reason) => {
-                                Some(AppEvent::Notice(format!("not sent: {reason}"), Tone::Warn))
-                            }
-                            InputError::Uncertain => None,
-                        };
-                    }
-                }
-                None
             }),
             ChatEffect::Interrupt => self.spawn(async move {
                 session

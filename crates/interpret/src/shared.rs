@@ -4,7 +4,7 @@
 //! step assembly, so phase derivation and "a change forces a snapshot" are
 //! written once.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 use wire::{
@@ -986,6 +986,20 @@ pub fn human() -> Sender {
     }
 }
 
+/// The JSON at `path` inside `payload`, exactly as the provider wrote it;
+/// None when it is absent or null. A parsed `Value` keeps object keys
+/// sorted, so encoding one again loses the provider's order, and a form
+/// schema's order is the order its fields are asked in.
+pub(crate) fn json_as_written(payload: &[u8], path: &[&str]) -> Option<Vec<u8>> {
+    let mut at: Box<serde_json::value::RawValue> = serde_json::from_slice(payload).ok()?;
+    for key in path {
+        let mut members: HashMap<String, Box<serde_json::value::RawValue>> =
+            serde_json::from_str(at.get()).ok()?;
+        at = members.remove(*key)?;
+    }
+    (at.get() != "null").then(|| at.get().as_bytes().to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use wire::{Ask, EnvelopeKind};
@@ -1134,5 +1148,20 @@ mod tests {
         let json = serde_json::to_string(&shared).unwrap();
         let back: Shared<Ask> = serde_json::from_str(&json).unwrap();
         assert_eq!(back, shared);
+    }
+
+    #[test]
+    fn json_as_written_keeps_the_providers_key_order() {
+        let payload = br#"{"request":{"requested_schema":{"properties":{"title":{"type":"string"},"body":{"type":"string"},"assignee":{"type":"string"}}}}}"#;
+        let schema = json_as_written(payload, &["request", "requested_schema"]).unwrap();
+        assert_eq!(
+            String::from_utf8(schema).unwrap(),
+            r#"{"properties":{"title":{"type":"string"},"body":{"type":"string"},"assignee":{"type":"string"}}}"#
+        );
+        assert_eq!(json_as_written(br#"{"request":null}"#, &["request"]), None);
+        assert_eq!(
+            json_as_written(br#"{"request":{}}"#, &["request", "x"]),
+            None
+        );
     }
 }

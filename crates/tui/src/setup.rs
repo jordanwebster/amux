@@ -132,10 +132,6 @@ fn mode_value(agent: Agent, name: &str) -> ModeValue {
     }
 }
 
-/// Models offered before an agent exists to list its own: Claude's
-/// aliases, and Codex's current models.
-const CLAUDE_MODELS: [&str; 3] = ["opus", "sonnet", "haiku"];
-const CODEX_MODELS: [&str; 2] = ["gpt-5-codex", "gpt-5"];
 const CLAUDE_EFFORTS: [&str; 3] = ["low", "medium", "high"];
 const CODEX_EFFORTS: [&str; 4] = ["minimal", "low", "medium", "high"];
 
@@ -291,27 +287,20 @@ impl Setup {
                 })
                 .collect(),
             Item::Model => {
-                let models: &[&str] = if self.claude() {
-                    &CLAUDE_MODELS
-                } else {
-                    &CODEX_MODELS
-                };
-                let mut values: Vec<&str> = models.to_vec();
-                // A model from the settings or a chat that the list lacks
-                // is still offered, as the current one.
+                let configured = &self.defaults.of(self.agent).model;
+                let (mut models, _) = crate::pending::models_before_start(self.agent, configured);
+                // A model from a chat, or typed, that the list lacks is
+                // still offered, as the current one.
                 if let Some(current) = self.model.as_deref()
-                    && !values.contains(&current)
+                    && !models.iter().any(|model| model == current)
                 {
-                    values.insert(0, current);
+                    models.insert(0, current.to_owned());
                 }
-                values
+                models
                     .into_iter()
                     .map(|model| {
-                        choice(
-                            model_label(model),
-                            model.to_owned(),
-                            self.model.as_deref() == Some(model),
-                        )
+                        let current = self.model.as_deref() == Some(model.as_str());
+                        choice(model_label(&model), model, current)
                     })
                     .collect()
             }
@@ -353,6 +342,20 @@ impl Setup {
                 .collect(),
             Item::Host => hosts(fleet, &self.host, true),
             Item::Name | Item::Worktree => Vec::new(),
+        }
+    }
+
+    /// Whether the flyover for `item` takes a typed value as a choice of
+    /// its own: a folder's path, or a model by name where the list is not
+    /// the agent's own.
+    pub fn takes_typed(&self, item: Item) -> bool {
+        match item {
+            Item::Folder => true,
+            Item::Model => {
+                crate::pending::models_before_start(self.agent, &self.defaults.of(self.agent).model)
+                    .1
+            }
+            _ => false,
         }
     }
 
@@ -414,7 +417,9 @@ impl Setup {
                 }
             }
             Item::Host => self.host = value.as_bytes().to_vec(),
-            Item::Worktree => self.worktree = !self.worktree,
+            Item::Worktree => {
+                self.worktree = !self.worktree && crate::pending::offers_worktree();
+            }
         }
     }
 
@@ -464,28 +469,6 @@ impl Setup {
             ..CreateAgentRequest::default()
         }
     }
-}
-
-/// Stand-in until the wire can ask for one: the agent would start in a new
-/// worktree on this branch, named from its name or the first words of its
-/// prompt. The request cannot carry it yet, so the agent starts in the
-/// folder itself and the caller says so.
-pub fn worktree_stand_in(setup: &Setup, prompt: &str) -> Option<String> {
-    if !setup.worktree {
-        return None;
-    }
-    let source = setup.name.as_deref().unwrap_or(prompt);
-    let words: Vec<String> = source
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .take(4)
-        .map(str::to_lowercase)
-        .collect();
-    Some(if words.is_empty() {
-        "agent".to_owned()
-    } else {
-        words.join("-")
-    })
 }
 
 /// A model by the name a person reads: an alias capitalised, an id tidied.
@@ -587,12 +570,12 @@ pub enum Pick {
 }
 
 /// What a flyover holds: a list to pick from, which long lists filter as
-/// you type and a folder's also takes as a typed path; or a single text
-/// field, for a name.
+/// you type; a list that also takes what is typed as a choice (a folder's
+/// path, a model's name); or a single text field, for a name.
 #[derive(Debug, PartialEq, Eq)]
 enum Shape {
     List,
-    Folder,
+    Typed,
     Text,
 }
 
@@ -617,7 +600,8 @@ const SHOWN: usize = 8;
 const FLYOVER_MIN: usize = 24;
 
 impl Picker {
-    pub fn new(item: Item, title: &str, choices: Vec<Choice>) -> Picker {
+    /// A list of `choices`; `typed` also takes what is typed as a choice.
+    pub fn new(item: Item, title: &str, choices: Vec<Choice>, typed: bool) -> Picker {
         let selected = choices.iter().position(|c| c.current).unwrap_or(0);
         Picker {
             item,
@@ -625,11 +609,7 @@ impl Picker {
             choices,
             selected,
             field: Editor::default(),
-            shape: if item == Item::Folder {
-                Shape::Folder
-            } else {
-                Shape::List
-            },
+            shape: if typed { Shape::Typed } else { Shape::List },
         }
     }
 
@@ -651,7 +631,7 @@ impl Picker {
         self.shape != Shape::List || self.choices.len() >= FILTERS_FROM
     }
 
-    /// The choices the filter keeps, and a typed path as the last.
+    /// The choices the filter keeps, and what is typed as the last.
     fn shown(&self) -> Vec<Choice> {
         if self.shape == Shape::Text {
             return Vec::new();
@@ -663,7 +643,7 @@ impl Picker {
             .filter(|c| needle.is_empty() || c.label.to_lowercase().contains(&needle))
             .cloned()
             .collect();
-        if self.shape == Shape::Folder
+        if self.shape == Shape::Typed
             && !needle.is_empty()
             && !shown.iter().any(|c| c.label.to_lowercase() == needle)
         {
@@ -725,8 +705,8 @@ impl Picker {
                     return Pick::Value(choice.value.clone());
                 }
             }
-            // A folder: the best match fills the field, to go on typing.
-            KeyCode::Tab if self.shape == Shape::Folder => {
+            // The best match fills the field, to go on typing.
+            KeyCode::Tab if self.shape == Shape::Typed => {
                 if let Some(choice) = shown.get(selected).filter(|c| !c.label.starts_with("Use ")) {
                     let label = choice.label.clone();
                     self.field.set(&label, Vec::new());
@@ -775,7 +755,8 @@ impl Picker {
             if self.field.is_empty() {
                 let hint = match self.shape {
                     Shape::Text => "named automatically",
-                    Shape::Folder => "type a path or filter",
+                    Shape::Typed if self.item == Item::Folder => "type a path or filter",
+                    Shape::Typed => "type a name or filter",
                     Shape::List => "type to filter",
                 };
                 cursor = Some((at, 0));
@@ -869,7 +850,7 @@ impl Picker {
     pub fn hints(&self) -> Vec<(&'static str, &'static str)> {
         match self.shape {
             Shape::Text => vec![("enter", "save"), ("esc", "back")],
-            Shape::Folder => vec![
+            Shape::Typed => vec![
                 ("enter", "pick"),
                 ("tab", "fill"),
                 ("↑↓", "move"),
@@ -955,13 +936,14 @@ pub enum Field {
     Worktree,
 }
 
-const FIELDS: [Field; 5] = [
-    Field::Name,
-    Field::Kind,
-    Field::Folder,
-    Field::Host,
-    Field::Worktree,
-];
+/// The form's rows; the worktree only where a new one can be made.
+fn fields() -> Vec<Field> {
+    let mut fields = vec![Field::Name, Field::Kind, Field::Folder, Field::Host];
+    if crate::pending::offers_worktree() {
+        fields.push(Field::Worktree);
+    }
+    fields
+}
 
 /// What a click on the form lands on.
 #[derive(Clone, Debug, PartialEq)]
@@ -1037,9 +1019,10 @@ impl Form {
     }
 
     fn move_field(&mut self, step: isize) {
-        let at = FIELDS.iter().position(|f| *f == self.field).unwrap_or(0) as isize;
-        let next = (at + step).clamp(0, FIELDS.len() as isize - 1) as usize;
-        self.field = FIELDS[next];
+        let fields = fields();
+        let at = fields.iter().position(|f| *f == self.field).unwrap_or(0) as isize;
+        let next = (at + step).clamp(0, fields.len() as isize - 1) as usize;
+        self.field = fields[next];
     }
 
     /// The next choice on a choice row, or the worktree flipped.
@@ -1200,7 +1183,7 @@ impl Form {
         let mut rows: Vec<(Line<'static>, Vec<(usize, usize, FormHit)>, bool)> = Vec::new();
         let mut cursor = None;
         rows.push((Line::default(), Vec::new(), false));
-        for field in FIELDS {
+        for field in fields() {
             let current = self.field == field;
             let mut line = Line::from(Span::raw(" "));
             let label = match field {

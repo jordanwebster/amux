@@ -15,6 +15,7 @@ use super::{
     work_complete,
 };
 use crate::claude_common::{compact_json, text};
+use crate::shared::json_as_written;
 use crate::{
     AMUX_TOOL_SERVER, Channel, Effect, Emit, Fact, ItemDraft, SendOutcome, ask_item, is_send_tool,
     is_status_tool, sent_message, status_working_on,
@@ -200,7 +201,9 @@ impl State {
             message.get("method").and_then(Value::as_str),
             message.get("id"),
         ) {
-            (Some(method), Some(id)) => self.server_request(emit, method, id, &params),
+            (Some(method), Some(id)) => {
+                self.server_request(emit, method, id, &params, &fact.payload)
+            }
             (Some(method), None) => self.notification(emit, method, &params),
             (None, Some(id)) => self.response(emit, id, &message),
             (None, None) => self.unrecognized(emit, "message", "neither a request nor a response"),
@@ -485,7 +488,14 @@ impl State {
 
     // --- requests from the server ----------------------------------------
 
-    fn server_request(&mut self, emit: &mut Emit, method: &str, id: &Value, params: &Value) {
+    fn server_request(
+        &mut self,
+        emit: &mut Emit,
+        method: &str,
+        id: &Value,
+        params: &Value,
+        payload: &[u8],
+    ) {
         let key = ask_key(id);
         let item_id = text(params, "itemId").to_owned();
         let (item_key, body, decisions) = match method {
@@ -654,7 +664,7 @@ impl State {
                 );
             }
             "mcpServer/elicitation/request" => {
-                return self.elicitation(emit, key, method, params);
+                return self.elicitation(emit, key, method, params, payload);
             }
             "item/tool/call" => {
                 // Tools amux offers Codex are served by amux's tool server;
@@ -736,7 +746,14 @@ impl State {
             .map(|(_, key, server, tool)| (key.clone(), server, tool))
     }
 
-    fn elicitation(&mut self, emit: &mut Emit, key: String, method: &str, params: &Value) {
+    fn elicitation(
+        &mut self,
+        emit: &mut Emit,
+        key: String,
+        method: &str,
+        params: &Value,
+        payload: &[u8],
+    ) {
         let meta = params.get("_meta").unwrap_or(&Value::Null);
         let server = text(params, "serverName").to_owned();
         let approval = text(meta, "codex_approval_kind") == "mcp_tool_call";
@@ -801,10 +818,8 @@ impl State {
                 codex_ask::Body::McpForm(FormAsk {
                     server,
                     message,
-                    schema_json: compact_json(
-                        params.get("requestedSchema").unwrap_or(&Value::Null),
-                    )
-                    .into_bytes(),
+                    schema_json: json_as_written(payload, &["params", "requestedSchema"])
+                        .unwrap_or_default(),
                 }),
                 Vec::new(),
             )

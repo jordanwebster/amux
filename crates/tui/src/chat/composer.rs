@@ -113,12 +113,13 @@ const GROUP_GAP: usize = 4;
 /// The row that sits on the composer's box, starting on its border's
 /// column so it reads as the composer's and not the feed's: what is still
 /// in flight in this chat at the left (the task in progress and how many
-/// are done, failed tool servers, background jobs), set apart by space
-/// rather than dots, and at the right the usage limit, only near it and
-/// only while `typing`, since that is when it bears on a choice. None when
-/// there is nothing to say.
+/// are done, failed tool servers, how many `jobs` run in the background),
+/// set apart by space rather than dots, and at the right the usage limit,
+/// only near it and only while `typing`, since that is when it bears on a
+/// choice. None when there is nothing to say.
 pub fn edge_row(
     strip: &Strip,
+    jobs: usize,
     typing: bool,
     now_ms: i64,
     width: usize,
@@ -144,9 +145,9 @@ pub fn edge_row(
         };
         groups.push(vec![(words, theme.error())]);
     }
-    if let Some(count) = strip.background {
-        let s = if count == 1 { "" } else { "s" };
-        groups.push(vec![(format!("{count} background job{s}"), theme.faint())]);
+    if jobs > 0 {
+        let s = if jobs == 1 { "" } else { "s" };
+        groups.push(vec![(format!("{jobs} background job{s}"), theme.faint())]);
     }
     // The key that unfolds the row into the pane, named last.
     if !groups.is_empty() {

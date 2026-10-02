@@ -38,12 +38,6 @@ pub enum AskAction {
     Attach,
     /// Open a link in the person's browser; the ask stays.
     OpenUrl(String),
-    /// A plan decision made of other inputs, sent in order; the card is
-    /// done with once they go.
-    Compose {
-        key: String,
-        inputs: Vec<wire::Input>,
-    },
 }
 
 /// One entry of the card's menu.
@@ -126,9 +120,6 @@ pub struct AskUi {
     sent: Option<usize>,
     /// The boxed ask's deny note is open for typing.
     noting: bool,
-    /// A question ask's "Reply instead": the composer has the keys and what
-    /// is sent goes as the reply.
-    replying: bool,
     /// The terminal's rows, so a question's preview leaves the feed room.
     room: usize,
     /// The agent's own terminal can be attached, for what this client
@@ -235,14 +226,47 @@ pub fn headline(card: &AskCard) -> String {
     }
 }
 
+/// A JSON object's members in the order written. A parsed `Value` keeps
+/// its keys sorted, and a form asks its fields in its schema's order.
+struct Members(Vec<(String, Value)>);
+
+impl<'de> serde::Deserialize<'de> for Members {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Members, D::Error> {
+        struct Visit;
+        impl<'de> serde::de::Visitor<'de> for Visit {
+            type Value = Members;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Members, A::Error> {
+                let mut members = Vec::new();
+                while let Some(member) = map.next_entry()? {
+                    members.push(member);
+                }
+                Ok(Members(members))
+            }
+        }
+        deserializer.deserialize_map(Visit)
+    }
+}
+
+/// A form schema's fields, in the schema's own order.
 fn form_fields(schema_json: &str) -> Vec<Field> {
-    let schema: Value = serde_json::from_str(schema_json).unwrap_or(Value::Null);
-    let required: Vec<&str> = schema
-        .get("required")
-        .and_then(Value::as_array)
-        .map(|names| names.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
-    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+    #[derive(serde::Deserialize)]
+    struct Schema {
+        #[serde(default)]
+        properties: Option<Members>,
+        #[serde(default)]
+        required: Vec<String>,
+    }
+    let Ok(Schema {
+        properties: Some(Members(properties)),
+        required,
+    }) = serde_json::from_str::<Schema>(schema_json)
+    else {
         return Vec::new();
     };
     properties
@@ -296,7 +320,7 @@ fn form_fields(schema_json: &str) -> Vec<Field> {
                     .and_then(Value::as_str)
                     .unwrap_or(name)
                     .to_owned(),
-                required: required.contains(&name.as_str()),
+                required: required.contains(name),
                 name: name.clone(),
                 kind,
                 value,
@@ -357,9 +381,6 @@ impl AskUi {
             }
             AskBody::Form { schema_json, .. } => {
                 self.fields = form_fields(schema_json);
-                // The schema's own order does not survive the wire (its keys
-                // arrive sorted), so what must be given comes first.
-                self.fields.sort_by_key(|field| !field.required);
                 self.picks = vec![QuestionPick::default(); self.fields.len()];
                 self.noting = form_questions(&self.fields)
                     .first()
@@ -1511,7 +1532,7 @@ impl AskUi {
     pub fn in_box_note(&self, card: &AskCard) -> bool {
         matches!(card.state, CardState::Open | CardState::Rejected(_))
             && match &card.body {
-                AskBody::Question(questions) => !self.replying && self.on_something_else(questions),
+                AskBody::Question(questions) => self.on_something_else(questions),
                 AskBody::Form { .. } => self.on_something_else(&form_questions(&self.fields)),
                 _ => self.box_note(card),
             }
@@ -1528,13 +1549,6 @@ impl AskUi {
         } else {
             String::new()
         };
-        if let Some(step) = ui_view::composed(&choice.answer) {
-            self.sent = Some(index);
-            return AskAction::Compose {
-                key: card.key.clone(),
-                inputs: ui_view::plan_inputs(card, step, &note),
-            };
-        }
         match answer_input(card, &choice.answer, &note) {
             Some(input) => {
                 self.sent = Some(index);
@@ -2000,22 +2014,44 @@ fn text_tail(words: &str, max: usize) -> String {
 }
 
 /// A question's rows in the box: its options, "Something else" when it
-/// takes one, then "Reply instead".
+/// takes one, then the way out when the box has one.
 struct QuestionRows {
     options: usize,
     other: Option<usize>,
-    reply: usize,
+    out: Option<usize>,
 }
 
 impl QuestionRows {
-    fn of(question: &QuestionView) -> QuestionRows {
+    fn of(question: &QuestionView, way_out: bool) -> QuestionRows {
         let options = question.options.len();
         let other = question.allow_other.then_some(options);
+        let numbered = options + usize::from(question.allow_other);
         QuestionRows {
             options,
             other,
-            reply: options + usize::from(question.allow_other),
+            out: way_out.then_some(numbered),
         }
+    }
+
+    /// The rows digits reach: the options and "Something else".
+    fn numbered(&self) -> usize {
+        self.options + usize::from(self.other.is_some())
+    }
+
+    /// The last row the highlight can reach.
+    fn last(&self) -> usize {
+        self.out.unwrap_or(self.numbered().saturating_sub(1))
+    }
+}
+
+/// Whether a boxed question or form offers a way out besides answering: a
+/// tool server's form can be declined; an agent's questions only where its
+/// agent takes a decline.
+fn way_out(card: &AskCard) -> bool {
+    match card.body {
+        AskBody::Form { .. } => true,
+        AskBody::Question(_) => crate::pending::declines_questions(card.kind),
+        _ => false,
     }
 }
 
@@ -2047,23 +2083,6 @@ fn question_name(question: &QuestionView, at: usize) -> String {
 }
 
 impl AskUi {
-    /// Whether the composer has the keys to reply instead of answering.
-    pub fn replying(&self) -> bool {
-        self.replying
-    }
-
-    /// Back from the reply to the questions.
-    pub fn stop_replying(&mut self) {
-        self.replying = false;
-    }
-
-    /// The reply, sent as the question ask's refusal with what was answered.
-    pub fn reply_input(&mut self, card: &AskCard, words: &str) -> Option<wire::Input> {
-        let input = ui_view::question_reply(card, &self.question_picks(), words)?;
-        self.replying = false;
-        Some(input)
-    }
-
     fn in_review(&self, questions: &[QuestionView]) -> bool {
         questions.len() > 1 && self.step >= questions.len()
     }
@@ -2071,9 +2090,9 @@ impl AskUi {
     /// The highlight is on the current question's "Something else".
     fn on_other_row(&self, questions: &[QuestionView]) -> bool {
         !self.in_review(questions)
-            && questions
-                .get(self.step)
-                .is_some_and(|question| QuestionRows::of(question).other == Some(self.selected))
+            && questions.get(self.step).is_some_and(|question| {
+                QuestionRows::of(question, false).other == Some(self.selected)
+            })
     }
 
     /// "Something else" is open as a field and has the keys: opened by Tab,
@@ -2112,7 +2131,7 @@ impl AskUi {
         }
         self.step = step.min(count.saturating_sub(1));
         let pick = &self.picks[self.step];
-        let rows = QuestionRows::of(&questions[self.step]);
+        let rows = QuestionRows::of(&questions[self.step], false);
         let draft = self.drafts[self.step].clone();
         self.selected = match (&pick.other, pick.selected.first()) {
             (Some(other), _) if !other.is_empty() => rows.other.unwrap_or(0),
@@ -2146,17 +2165,31 @@ impl AskUi {
         AskAction::None
     }
 
-    /// Sends the answers, or submits the form; a form with a required field
-    /// still empty goes to that field instead.
+    /// Sends the answers, or submits the form; a question that must be
+    /// answered and is not (a form's required field, or any question where
+    /// the agent takes none unanswered) goes there instead.
     fn send_boxed(&mut self, card: &AskCard, questions: &[QuestionView]) -> AskAction {
+        if let Some(missing) = self.missing(card) {
+            self.question_goto(questions, missing);
+            return AskAction::None;
+        }
         if matches!(card.body, AskBody::Form { .. }) {
-            if let Some(missing) = self.missing_field() {
-                self.question_goto(questions, missing);
-                return AskAction::None;
-            }
             return self.submit_form(card);
         }
         self.send_boxed_questions(card)
+    }
+
+    /// The first question that must be answered before sending and is
+    /// not: a form's required field, or with an agent that takes no
+    /// question unanswered, any.
+    fn missing(&self, card: &AskCard) -> Option<usize> {
+        match card.body {
+            AskBody::Form { .. } => self.missing_field(),
+            AskBody::Question(_) if !crate::pending::skips_questions(card.kind) => {
+                self.picks.iter().position(|pick| !pick.answered())
+            }
+            _ => None,
+        }
     }
 
     /// Sends the answers, a skipped question with none.
@@ -2169,7 +2202,7 @@ impl AskUi {
     }
 
     /// Acts on row `at` of the current question: picks an option (toggles
-    /// one of several), opens "Something else", or turns to replying.
+    /// one of several), opens "Something else", or takes the way out.
     /// `confirm` is Enter, which also finishes a question of several picks.
     fn question_row(
         &mut self,
@@ -2179,7 +2212,7 @@ impl AskUi {
         confirm: bool,
     ) -> AskAction {
         let question = &questions[self.step];
-        let rows = QuestionRows::of(question);
+        let rows = QuestionRows::of(question, way_out(card));
         self.selected = at;
         if at < rows.options {
             let option = at as u32;
@@ -2229,11 +2262,8 @@ impl AskUi {
             }
             return AskAction::None;
         }
-        if at == rows.reply {
-            if matches!(card.body, AskBody::Form { .. }) {
-                return Self::choose(card, &ChoiceOutcome::Decline);
-            }
-            self.replying = true;
+        if rows.out == Some(at) {
+            return Self::choose(card, &ChoiceOutcome::Decline);
         }
         AskAction::None
     }
@@ -2279,8 +2309,8 @@ impl AskUi {
             return AskAction::None;
         }
         let question = &questions[self.step];
-        let rows = QuestionRows::of(question);
-        let last = rows.reply;
+        let rows = QuestionRows::of(question, way_out(card));
+        let last = rows.last();
         // A tab that is only a text field has it live; ↓ steps out to the
         // way out and ↑ back in.
         let text_only = question.options.is_empty() && rows.other.is_some();
@@ -2296,13 +2326,13 @@ impl AskUi {
                     self.invalid = false;
                     if !text_only {
                         self.noting = false;
-                    } else if empty {
+                    } else if empty && let Some(out) = rows.out {
                         // An empty live field: Esc points at the way out.
                         self.noting = false;
-                        self.selected = last;
+                        self.selected = out;
                     }
                 }
-                KeyCode::Down if text_only => {
+                KeyCode::Down if text_only && rows.out.is_some() => {
                     self.noting = false;
                     self.selected = last;
                 }
@@ -2333,12 +2363,16 @@ impl AskUi {
             // "Something else" only.
             KeyCode::Char(c @ '1'..='9') => {
                 let at = c as usize - '1' as usize;
-                if at < last {
+                if at < rows.numbered() {
                     return self.question_row(card, questions, at, false);
                 }
             }
             // Esc only points at the way out; Enter takes it.
-            KeyCode::Esc => self.selected = last,
+            KeyCode::Esc => {
+                if let Some(out) = rows.out {
+                    self.selected = out;
+                }
+            }
             KeyCode::Char('f')
                 if question
                     .options
@@ -2414,15 +2448,10 @@ impl AskUi {
         if !matches!(card.state, CardState::Open | CardState::Rejected(_)) {
             return None;
         }
-        if self.replying {
-            return Some("enter send reply · esc back to the questions · ctrl+x stop".into());
-        }
         let several = questions.len() > 1;
         let tabs = if several { " · ←/→ questions" } else { "" };
         if self.in_review(questions) {
-            if matches!(card.body, AskBody::Form { .. })
-                && let Some(at) = self.missing_field()
-            {
+            if let Some(at) = self.missing(card) {
                 let name = question_name(&questions[at], at);
                 return Some(format!("enter go to {name}{tabs} · ctrl+x stop"));
             }
@@ -2450,7 +2479,7 @@ impl AskUi {
             };
             return Some(format!("{enter}{tabs} · ctrl+x stop · ctrl+{leader} more"));
         }
-        if self.selected == QuestionRows::of(&questions[self.step]).reply {
+        if QuestionRows::of(&questions[self.step], way_out(card)).out == Some(self.selected) {
             let enter = if form { "enter decline" } else { "enter reply" };
             return Some(format!("{enter}{tabs} · ctrl+x stop · ctrl+{leader} more"));
         }
@@ -2645,9 +2674,10 @@ impl AskUi {
                 theme.accent(),
                 width,
             );
-            // A form cannot go with a required field empty: Submit says
-            // which, and Enter goes there.
-            let missing = form.and(self.missing_field());
+            // Nothing goes with a required field empty, nor, where the
+            // agent takes none unanswered, a question: the line says which,
+            // and Enter goes there.
+            let missing = self.missing(card);
             push(
                 &mut send,
                 if form.is_some() {
@@ -2667,7 +2697,15 @@ impl AskUi {
             if let Some(at) = missing {
                 push(
                     &mut send,
-                    format!(" · {} is required", question_name(&questions[at], at)),
+                    format!(
+                        " · {} {}",
+                        question_name(&questions[at], at),
+                        if form.is_some() {
+                            "is required"
+                        } else {
+                            "is not answered"
+                        }
+                    ),
                     theme.faint(),
                     width,
                 );
@@ -2679,7 +2717,7 @@ impl AskUi {
         }
 
         let question = &questions[self.step];
-        let rows = QuestionRows::of(question);
+        let rows = QuestionRows::of(question, way_out(card));
         for part in text::wrap(&question.question, width.max(1)) {
             let mut line = Line::default();
             push(&mut line, part, theme.text(), width);
@@ -2725,6 +2763,7 @@ impl AskUi {
         } else {
             "Reply instead"
         };
+        let footer = rows.out.map(|_| footer);
         let left = self.question_rows(question, &rows, left_width, !previews, footer, theme);
         let preview = question
             .options
@@ -2887,15 +2926,15 @@ impl AskUi {
     }
 
     /// A question's rows at `width`: its options (with their descriptions
-    /// when `descriptions`), "Something else", then the "Reply instead"
-    /// footer.
+    /// when `descriptions`), "Something else", then the way out as a
+    /// footer, when there is one.
     fn question_rows(
         &self,
         question: &QuestionView,
         rows: &QuestionRows,
         width: usize,
         descriptions: bool,
-        footer: &str,
+        footer: Option<&str>,
         theme: Theme,
     ) -> BoxLines {
         let mut out = BoxLines {
@@ -3043,10 +3082,13 @@ impl AskUi {
                 .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
             out.lines.push(row);
         }
-        // "Reply instead" is a footer, not an answer: apart, unnumbered,
-        // faint until highlighted.
+        // The way out is a footer, not an answer: apart, unnumbered, faint
+        // until highlighted.
+        let (Some(footer), Some(at)) = (footer, rows.out) else {
+            return out;
+        };
         out.lines.push(Line::default());
-        let lit = self.selected == rows.reply;
+        let lit = self.selected == at;
         let mut row = Line::default();
         push(
             &mut row,
@@ -3062,7 +3104,7 @@ impl AskUi {
         );
         push(&mut row, "  esc", theme.faint(), width);
         out.spots
-            .push((out.lines.len(), (0, width), BoxSpot::Choice(rows.reply)));
+            .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
         out.lines.push(row);
         out
     }

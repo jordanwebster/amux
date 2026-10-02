@@ -1,3 +1,25 @@
+2026-10-02 — **Nothing the protocol cannot carry is faked against a real
+agent.** Every feature the wire, daemon or shared views cannot back yet is
+now decided in one place, `crates/tui/src/pending.rs`, which the screens
+ask. Not offered: "Reply instead" on questions (no decline on the wire),
+the new-worktree toggle (the create request cannot ask for one), Codex's
+Plan mode and a decision on Codex plans (a Codex plan reads as an ordinary
+message). Claude needs every question answered before sending: the review's
+send line names the one missing and Enter goes there. Hidden until the
+facts exist: background jobs (row and Overview), home's "what it asks /
+last said" (a row's second line now appears only for a host away, an exit
+cause or a folded member that needs you), the branch in the header, and
+change counts (`[Diff]` is plain and the Overview has no Changes; nothing
+is fetched to count them). Home orders each section by creation time
+instead of a client-kept moment. Before an agent exists, Claude offers its
+aliases and Codex its configured model plus any name typed. The stand-ins
+behind these left ui-view (`question_reply`, the Codex plan card and its
+composed answers, `background_jobs`, the fake "plan" Codex preset). A form's
+fields now keep the schema's order: both interpreters keep the schema
+exactly as the provider wrote it instead of re-encoding a sorted map, and
+the TUI reads its properties in order, so the required-first workaround is
+gone.
+
 2026-10-02 — **The review page is a list beside one stream.** The changed
 files sit on the left, drawn by the same component as the Overview's
 Changes section (now `chat/changes.rs`), and every file's hunks run as one

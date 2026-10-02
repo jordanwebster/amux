@@ -1262,7 +1262,10 @@ impl World {
             // the question's refusal, Codex as a note on the answers): the
             // agent goes on from the person's words.
             let note = verdict.note();
-            if let Some(words) = ui_view::reply_words(&note) {
+            if let Some(words) = note
+                .split_once("\n\n— Sent instead")
+                .map(|(words, _)| words)
+            {
                 let first: String = words
                     .split_whitespace()
                     .take(12)
@@ -1754,7 +1757,7 @@ fn prompt_script(
     sim.turn_open = Some(now);
     let short: String = text.chars().take(60).collect();
     sim.working_on(Some(short), now);
-    let implement = (text.trim() == ui_view::IMPLEMENT_PLAN)
+    let implement = (text.trim() == "Implement the plan.")
         .then(|| sim.spec.implement.clone())
         .flatten();
     let reply = implement

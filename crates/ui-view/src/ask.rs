@@ -183,35 +183,13 @@ pub enum Answer {
     Claude(ClaudeAnswer),
     CodexDecision(CodexDecision),
     Codex(CodexAnswer),
-    /// Not an answer the agent takes: a plan decision made of other inputs,
-    /// which [`crate::plan_inputs`] builds.
-    Plan(PlanStep),
-}
-
-/// A plan decision the client makes of inputs the agent already takes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub enum PlanStep {
-    Implement,
-    KeepPlanning,
-}
-
-/// A plan choice made of inputs; keeping on planning takes a note.
-pub(crate) fn plan_choice(outcome: ChoiceOutcome, step: PlanStep) -> Choice {
-    Choice {
-        outcome,
-        primary: false,
-        takes_note: step == PlanStep::KeepPlanning,
-        answer: Answer::Plan(step),
-    }
 }
 
 /// The head ask, or None when nothing is open or, before CaughtUp, when the
 /// entry does not say needs_you.
 pub fn ask_card(state: &SessionState) -> Option<AskCard> {
     let asks = state.open_asks();
-    let Some(head) = asks.first() else {
-        return crate::plan::codex_plan_card(state);
-    };
+    let head = asks.first()?;
     let (body, choices) = match head {
         OpenAsk::Claude(ask) => claude(ask),
         OpenAsk::Codex(ask) => codex(ask),
@@ -845,55 +823,6 @@ pub fn question_answer(card: &AskCard, picks: &[Pick], note: &str) -> Answer {
             of: Some(claude_answer::Of::Question(answers)),
         }),
     }
-}
-
-/// Where the person's own words end in a reply sent instead of answering
-/// questions; what follows tells the agent what it had asked and what was
-/// answered so far.
-pub const REPLY_CONTEXT: &str = "\n\n— Sent instead of answering your questions.";
-
-/// A reply sent instead of answering a question ask: the person's words,
-/// then each question with its answer so far. Claude can only take it as
-/// the ask's refusal and Codex as a note with the answers, until either
-/// can decline a question with a message: stand-ins the lab understands.
-pub fn question_reply(card: &AskCard, picks: &[Pick], words: &str) -> Option<wire::Input> {
-    let AskBody::Question(questions) = &card.body else {
-        return None;
-    };
-    let mut message = format!("{}{REPLY_CONTEXT} Answers so far:", words.trim());
-    for (question, pick) in questions.iter().zip(picks) {
-        let answer = match pick {
-            // A secret is never repeated, not even to the agent that asked.
-            Pick::Other(_) if question.secret => "answered (hidden)".to_owned(),
-            Pick::Options(selected) if selected.is_empty() => "not answered".to_owned(),
-            Pick::Options(selected) => selected
-                .iter()
-                .filter_map(|i| question.options.get(*i as usize))
-                .map(|option| option.label.clone())
-                .collect::<Vec<_>>()
-                .join(", "),
-            Pick::Other(text) => format!("\"{text}\""),
-        };
-        message.push_str(&format!("\n- {}: {answer}", question.question));
-    }
-    let answer = match card.kind {
-        wire::Kind::Codex => question_answer(card, picks, &message),
-        _ => Answer::Claude(ClaudeAnswer {
-            of: Some(claude_answer::Of::Permission(wire::PermissionAnswer {
-                of: Some(wire::permission_answer::Of::Deny(wire::PermissionDeny {
-                    note: message.clone(),
-                    stop: false,
-                })),
-            })),
-        }),
-    };
-    answer_input(card, &answer, &message)
-}
-
-/// The person's own words in a reply sent instead of answering questions,
-/// or None when `note` is not such a reply.
-pub fn reply_words(note: &str) -> Option<&str> {
-    note.split_once(REPLY_CONTEXT).map(|(words, _)| words)
 }
 
 /// A form's Submit carrying the person's field values, as the JSON object

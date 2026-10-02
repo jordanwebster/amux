@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ui_state::Key;
-use ui_view::{JobView, Strip, TaskMark};
+use ui_view::{Strip, TaskMark};
 
 use crate::text::{self, pad_to, push};
 use crate::theme::Theme;
@@ -85,10 +85,19 @@ pub enum PaneItem {
 
 pub use super::changes::FileLine;
 
+/// A background job the agent started and that is still running.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Job {
+    /// The step that started it, to open from the list.
+    pub key: Key,
+    pub command: String,
+    pub started_at_ms: i64,
+}
+
 /// What the pane shows, read once a frame.
 pub struct Contents<'a> {
     pub strip: &'a Strip,
-    pub jobs: &'a [JobView],
+    pub jobs: &'a [Job],
     /// None until the working tree's diff is read.
     pub files: Option<&'a [FileLine]>,
     pub folded: &'a HashSet<Section>,
