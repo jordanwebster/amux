@@ -206,15 +206,22 @@ public final class Runtime: @unchecked Sendable {
     ) throws(RuntimeFailure) -> Profile {
         let waker = Unmanaged.passRetained(Waker(wake))
         var error: UnsafeMutablePointer<CChar>?
-        let opened = call(nil) { live in
-            profile.withCString { amux_profile_open(live, $0, Waker.call, waker.toOpaque(), &error) }
+        // Opened and registered under one hold of the lock: a stop that
+        // runs between the two would close the profiles it saw and miss
+        // this one, which would then outlive the runtime unclosed.
+        let open: Profile? = call(nil) { live in
+            let opened = profile.withCString {
+                amux_profile_open(live, $0, Waker.call, waker.toOpaque(), &error)
+            }
+            guard let opened else { return nil }
+            let open = Profile(id: profile, handle: opened, waker: waker, runtime: self)
+            self.opened.add(open)
+            return open
         }
-        guard let opened else {
+        guard let open else {
             waker.release()
             throw Bridge.failure(error, otherwise: "the profile did not open")
         }
-        let open = Profile(id: profile, handle: opened, waker: waker, runtime: self)
-        lock.withLock { self.opened.add(open) }
         return open
     }
 

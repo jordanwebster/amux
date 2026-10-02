@@ -1,3 +1,11 @@
+2026-10-02 — **A profile is opened and registered under one hold of the lock.**
+Opening a profile called into the library under the runtime's lock and
+registered the result after letting it go; a stop between the two
+closed the profiles it saw and missed this one, which then skipped its
+own close because the runtime had stopped, leaking the Rust profile and
+the installation lock. The registration now happens inside the same
+call. From the branch-wide Codex review; the app's unit suites pass.
+
 2026-10-02 — **An entitlement refresh answers in time and holds no lock.**
 The refresh request is read only by a live cloud connection; one made
 while the link was between connections sat in its one-slot buffer and
