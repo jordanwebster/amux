@@ -1,3 +1,7 @@
+2026-10-02 — **Hosts move to `p`.** Home `p`, `ctrl+a p` in a chat; `t` is
+kept for a future tasks feature. The screen stays "Hosts" until its name is
+settled.
+
 2026-10-02 — **One key philosophy, and the old screens swept.** Keys now
 follow three layers (amux, this chat, local), one letter per meaning across
 home and the leader, and a short list of ctrl chords. Home is `h` (here) or

@@ -692,7 +692,7 @@ impl App {
                 drop(state);
                 self.close_chat();
             }
-            KeyCode::Char('t') => {
+            KeyCode::Char('p') => {
                 drop(state);
                 self.close_chat();
                 self.fleet_view.home.open_hosts();
@@ -1184,7 +1184,7 @@ impl App {
         if self.leader_pending && !panel_chat {
             let mut line = Line::from(Span::raw("  "));
             let words = if self.chat.is_some() {
-                "h home · n new agent · t hosts · d detach · r review · k/j focus · o open · y copy"
+                "h home · n new agent · p hosts · d detach · r review · k/j focus · o open · y copy"
             } else {
                 "leader: nothing here"
             };
@@ -1334,7 +1334,7 @@ fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
     let mut entries = vec![
         entry("amux", "h", "home", 'h'),
         entry("amux", "n", "new agent", 'n'),
-        entry("amux", "t", "hosts", 't'),
+        entry("amux", "p", "hosts", 'p'),
         entry("amux", "d", "detach", 'd'),
         entry("amux", "?", "all keys", '?'),
         entry("this chat", "r", "review changes", 'r'),
@@ -1431,7 +1431,7 @@ fn help_lines(leader: char, redesigned: bool, width: usize, theme: Theme) -> Vec
     let chords: [(&str, &str); 10] = [
         ("h", "home"),
         ("n", "new agent, starting from this chat's settings"),
-        ("t", "hosts"),
+        ("p", "hosts"),
         ("d", "detach: leave to the shell; agents keep running"),
         ("r", "review changes; comments go in the draft"),
         ("a", "attach to the agent's own terminal (this machine)"),
