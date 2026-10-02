@@ -1,3 +1,8 @@
+2026-10-02 — **The proto baseline records the session-model breaks.**
+The tool class renumbered and lost its exploration value, and the task
+message lost its call key, both on purpose; the only-add check now
+measures from here.
+
 2026-10-02 — **The phone journeys are drawn flat and held to the goldens' thresholds.**
 The whole-screen goldens and the component snapshots turned reduce
 transparency on so no picture holds glass the render server finishes
