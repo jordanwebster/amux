@@ -1,3 +1,11 @@
+2026-10-02 — **The supervisor reads no more than a manifest or an artifact can be.**
+A manifest was buffered whole before it was parsed and an artifact
+written whole before its signature was checked, so a server without
+the release key could still exhaust memory or fill the disk. A manifest
+is now at most 1 MiB and an artifact 256 MiB, refused when declared or
+streamed longer. From the branch-wide Codex review; unit tests against
+a local server, parameters recorded.
+
 2026-10-02 — **A Windows swap and its rollback never leave the install path empty.**
 Windows cannot replace a running executable, so the swap moves the
 current binary aside before moving the staged one in; a failure between
