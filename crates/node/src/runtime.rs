@@ -298,7 +298,10 @@ pub struct ProfileRuntime {
     pub(crate) join_hook: Mutex<Option<JoinHook>>,
     /// Each own agent's message lane: one agent message at a time.
     pub(crate) lanes: Mutex<HashMap<AgentId, Arc<tokio::sync::Mutex<()>>>>,
-    /// Counts commits, so a message can wait for its acceptance item.
+    /// Counts the store's writes, own commits and absorbed replica rows
+    /// alike, so a waiter wakes on the write it is waiting for instead of
+    /// polling: a message waiting for its acceptance item, a test fencing
+    /// a host to an order.
     pub(crate) commits: watch::Sender<u64>,
     /// Journal frames committed since start: what ingest has done, so its
     /// cost per frame can be measured from outside.
@@ -562,6 +565,18 @@ impl ProfileRuntime {
     /// The installation's generation as of this run's start.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Wakes on every write to the store, own or replicated. A waiter
+    /// reads the store after each change; the count itself only orders
+    /// them.
+    pub fn committed(&self) -> watch::Receiver<u64> {
+        self.commits.subscribe()
+    }
+
+    /// Notes one write to the store for [`ProfileRuntime::committed`].
+    pub(crate) fn wrote(&self) {
+        self.commits.send_modify(|writes| *writes += 1);
     }
 
     /// How many journal frames ingest has committed since this runtime
@@ -1348,7 +1363,7 @@ impl ProfileRuntime {
                 notify_delay_ms: self.launch.lock().unwrap().notify_delay_ms,
             };
             let committed = store.commit(&key, &batch.frames, clock)?;
-            self.commits.send_modify(|commits| *commits += 1);
+            self.wrote();
             self.ingested_frames
                 .fetch_add(batch.frames.len() as u64, Ordering::Relaxed);
             if batch.frames.iter().any(|(_, step)| step.turn_end.is_some()) {

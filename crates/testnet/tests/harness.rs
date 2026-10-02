@@ -261,6 +261,72 @@ async fn a_stuck_observation_fails_at_its_deadline_and_a_closed_one_at_once() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_fence_holds_a_host_to_what_its_own_cursors_report() {
+    let topology = Topology::new()
+        .host("desk")
+        .host("laptop")
+        .link("desk", "laptop")
+        .agent(
+            AgentDecl::new("worker", "desk")
+                .steps(vec![
+                    text("one"),
+                    Step::TurnEnd,
+                    gate("second"),
+                    text("two"),
+                    Step::TurnEnd,
+                ])
+                .prompt("go"),
+        );
+    let net = Net::start(topology).await.unwrap();
+    let key = net.agent("worker").unwrap().key();
+
+    // The first turn ends on the origin; fenced to the row that ended it,
+    // the laptop holds everything before it.
+    let first = net.turn_ended("worker", 1).await.unwrap();
+    net.fence("laptop", "worker", first).await.unwrap();
+    let held = {
+        let runtime = net.runtime("laptop").unwrap();
+        let store = runtime.store().await;
+        store.cut(&key, u32::MAX).unwrap().held
+    };
+    assert!(held.iter().any(|item| item.text.contains("one")));
+    assert_eq!(
+        held.iter()
+            .filter(|item| item.key.starts_with("turn:"))
+            .count(),
+        1
+    );
+    assert!(
+        !held.iter().any(|item| item.text.contains("two")),
+        "the second turn waits on its gate"
+    );
+    net.current("laptop", "worker").await.unwrap();
+
+    // A sent input settles as the row that reflects it, and the second
+    // turn's end comes after it.
+    let input = b"second-go".to_vec();
+    net.input(
+        "worker",
+        testnet::prompt(net.agent("worker").unwrap().kind, &input, "again"),
+    )
+    .await
+    .unwrap();
+    let settled = net.input_settled("worker", &input).await.unwrap();
+    assert!(settled > first);
+    net.open_gate("second").unwrap();
+    let second = net.turn_ended("worker", 2).await.unwrap();
+    assert!(second > settled);
+    net.fence("laptop", "worker", second).await.unwrap();
+    let held = {
+        let runtime = net.runtime("laptop").unwrap();
+        let store = runtime.store().await;
+        store.cut(&key, u32::MAX).unwrap().held
+    };
+    assert!(held.iter().any(|item| item.text.contains("two")));
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_severed_link_goes_down_and_a_restored_one_comes_back() {
     let mut net = Net::start(Topology::new().host("a").host("b").host("c").link("a", "b"))
         .await

@@ -24,7 +24,7 @@ use node::{
 };
 use provider_fakes::script::{INPUT_LOG_ENV, SCRIPT_ENV, Script, Step};
 use serde::{Deserialize, Serialize};
-use store::AgentKey;
+use store::{AgentKey, Marker, Store as _};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use wire::client_service_server::ClientService as _;
@@ -1566,6 +1566,173 @@ impl Net {
         Ok(())
     }
 
+    // --- fences ------------------------------------------------------------
+    //
+    // A test asserts about a host only after the host's own cursors say
+    // the step it triggered has landed there. These waits name the
+    // condition in the runtime's terms and wake on the store write that
+    // satisfies it, so nothing is inferred from time or from a proxy.
+
+    /// Waits on `host`'s store, reading it again after every write, until
+    /// `probe` answers what it found. Each `Err` is what the probe saw
+    /// instead, and the last one is reported if [`PATIENCE`] passes.
+    async fn on_write<T>(
+        &self,
+        host: &str,
+        what: &str,
+        mut probe: impl FnMut(&store::Sqlite) -> Result<T, String>,
+    ) -> Result<T, NetError> {
+        let runtime = self.runtime(host)?;
+        let mut writes = runtime.committed();
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        loop {
+            // Marked seen before the read, so a write landing between the
+            // read and the wait is a change the wait returns on.
+            writes.borrow_and_update();
+            let seen = match tokio::time::timeout_at(deadline, runtime.store()).await {
+                Ok(store) => match probe(&store) {
+                    Ok(found) => return Ok(found),
+                    Err(seen) => seen,
+                },
+                Err(_) => {
+                    return Err(Stuck::Hung {
+                        what: what.to_owned(),
+                        waited: PATIENCE,
+                    }
+                    .into());
+                }
+            };
+            match tokio::time::timeout_at(deadline, writes.changed()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => {
+                    return Err(Stuck::Closed {
+                        what: what.to_owned(),
+                        seen,
+                    }
+                    .into());
+                }
+                Err(_) => {
+                    return Err(Stuck::Deadline {
+                        what: what.to_owned(),
+                        waited: PATIENCE,
+                        seen,
+                    }
+                    .into());
+                }
+            }
+        }
+    }
+
+    /// Waits until `host` holds `agent`'s row at `order`: its newest row
+    /// is that one or a later one. After it, what the host holds through
+    /// `order` is what its store reports, on the origin and on a replica
+    /// alike.
+    pub async fn fence(&self, host: &str, agent: &str, order: u64) -> Result<(), NetError> {
+        let key = self.agent(agent)?.key();
+        let what = format!("{host} to hold {agent}'s row at order {order}");
+        self.on_write(host, &what, |store| {
+            let newest = store
+                .last_n(&key, 1)
+                .map_err(|error| error.to_string())?
+                .pop()
+                .map(|item| item.order);
+            match newest {
+                Some(held) if held >= order => Ok(()),
+                Some(held) => Err(format!("newest order {held}")),
+                None => Err("no rows".to_owned()),
+            }
+        })
+        .await
+    }
+
+    /// Waits until the `k`th turn of `agent` (counting from one) has
+    /// ended on its own host, and returns the order of the row that ended
+    /// it, so another host can be fenced to it. Counts the turn-end rows
+    /// in the block the host holds.
+    pub async fn turn_ended(&self, agent: &str, k: usize) -> Result<u64, NetError> {
+        assert!(k >= 1, "turns count from one");
+        let at = self.agent(agent)?.clone();
+        let key = at.key();
+        let what = format!("{agent}'s turn {k} to end");
+        self.on_write(&at.host, &what, |store| {
+            let mut ends: Vec<u64> = store
+                .cut(&key, u32::MAX)
+                .map_err(|error| error.to_string())?
+                .held
+                .iter()
+                .filter(|item| item.key.starts_with("turn:"))
+                .map(|item| item.order)
+                .collect();
+            ends.sort_unstable();
+            ends.get(k - 1)
+                .copied()
+                .ok_or_else(|| format!("{} turns ended", ends.len()))
+        })
+        .await
+    }
+
+    /// Waits until the input `agent` accepted under `input_id` has
+    /// settled on its own host: the row that reflects it exists. Returns
+    /// that row's order. A rejected input never settles; rejection is
+    /// the answer `send` and `input` return.
+    pub async fn input_settled(&self, agent: &str, input_id: &[u8]) -> Result<u64, NetError> {
+        let at = self.agent(agent)?.clone();
+        let key = at.key();
+        let what = format!("{agent}'s input {} to settle", hex(input_id));
+        self.on_write(&at.host, &what, |store| {
+            store
+                .item_by_input(&key, input_id)
+                .map_err(|error| error.to_string())?
+                .map(|item| item.order)
+                .ok_or_else(|| "no row carries it".to_owned())
+        })
+        .await
+    }
+
+    /// Waits until `host` holds what the origin holds for `agent`: caught
+    /// up through the origin's newest revision, with the block intact.
+    /// Reads both hosts, so it looks again every poll rather than waking
+    /// on one host's writes.
+    pub async fn current(&self, host: &str, agent: &str) -> Result<(), NetError> {
+        let at = self.agent(agent)?.clone();
+        let key = at.key();
+        let what = format!("{agent}'s replica at {host} to be current");
+        observe::until(&what, || async {
+            let newest = {
+                let runtime = self.runtime(&at.host).map_err(|error| error.to_string())?;
+                let store = runtime.store().await;
+                store
+                    .agent(&key)
+                    .map_err(|error| error.to_string())?
+                    .map(|row| row.next_revision - 1)
+                    .ok_or_else(|| "no origin row".to_owned())?
+            };
+            let (cursor, marker) = {
+                let runtime = self.runtime(host).map_err(|error| error.to_string())?;
+                let store = runtime.store().await;
+                let row = store
+                    .agent(&key)
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("no replica row; origin newest {newest}"))?;
+                let marker = store
+                    .cut(&key, 0)
+                    .map_err(|error| error.to_string())?
+                    .marker;
+                (row.source_cursor, marker)
+            };
+            if cursor != newest || marker != Some(Marker::CaughtUp) {
+                return Err(format!(
+                    "replica cursor {cursor}, marker {marker:?}; origin newest {newest}"
+                ));
+            }
+            self.assert_block_invariant(host, agent)
+                .await
+                .map_err(|error| error.to_string())
+        })
+        .await?;
+        Ok(())
+    }
+
     // --- teardown ----------------------------------------------------------
 
     /// Stops every agent and shuts every daemon down cleanly. The explicit
@@ -1712,4 +1879,9 @@ fn agent_dirs(dir: &Path) -> Vec<PathBuf> {
         }
     }
     found
+}
+
+/// An input id as a failure message shows it.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

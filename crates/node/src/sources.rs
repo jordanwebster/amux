@@ -719,6 +719,7 @@ impl ProfileRuntime {
                     snapshot,
                 },
             )?;
+            self.wrote();
             let absorbed_rest = if rest.is_empty() {
                 Vec::new()
             } else {
@@ -758,11 +759,13 @@ impl ProfileRuntime {
                     live: false,
                 },
             )?;
+            self.wrote();
             for record in absorbed.stored {
                 self.fanout.publish(key, record_event(record));
             }
         }
         store.absorb(key, Absorb::CaughtUp(revision))?;
+        self.wrote();
         self.fanout.publish(
             key,
             event(session_event::Of::CaughtUp(wire::CaughtUp { revision })),
@@ -791,6 +794,7 @@ impl ProfileRuntime {
                 live: true,
             },
         )?;
+        self.wrote();
         for record in absorbed.stored {
             self.fanout.publish(key, record_event(record));
         }
@@ -848,8 +852,11 @@ impl ProfileRuntime {
                         exhausted: answer.exhausted,
                     },
                 );
-                if let Err(error) = absorbed {
-                    tracing::warn!(%error, "absorbing a page from the origin failed");
+                match absorbed {
+                    Ok(_) => self.wrote(),
+                    Err(error) => {
+                        tracing::warn!(%error, "absorbing a page from the origin failed");
+                    }
                 }
             }
         }

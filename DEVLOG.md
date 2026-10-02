@@ -1,3 +1,15 @@
+2026-10-02 — **Fences: a test waits on the host's own cursors.**
+The hand-rolled waits that flaked in CI each picked a proxy for "done"
+and asserted on a neighbour that landed a moment later. testnet now
+waits in the runtime's terms: `turn_ended` for the row that ends a
+turn, `input_settled` for the row that reflects an accepted input,
+`fence` for a host holding a row at an order, `current` for a replica
+caught up to its origin with the block intact. The first three wake on
+the daemon's store-write watch, now public as `committed()` and
+counting absorbed replica rows as well as own commits, so a wait
+returns on the write that satisfies it rather than on a poll, and a
+missed deadline says what the host last held.
+
 2026-10-02 — **One wait for every test crate: `patience`.**
 The suite had about thirty-five copies of the same poll loop, one per
 crate, with four different patiences and a timeout message that said

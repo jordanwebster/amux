@@ -127,6 +127,10 @@ The harness owns resources, verbs and observations, never scenarios. Scenarios l
 | `advance(by)` | Move policy time on every host (driven nets only). |
 | `spawn(decl)`, `resume(name, text)` | Start an agent; start an exited agent's next incarnation. |
 | `settle(name)` | Wait until the agent rests on its host: idle or needing the person, nothing queued, so a creation prompt's turn has run. The fleet lists agents of one standing most recently active first; settling each before starting the next fixes that order. |
+| `turn_ended(name, k)` | Wait until the agent's `k`th turn has ended on its own host; returns the order of the row that ended it. |
+| `input_settled(name, input_id)` | Wait until the input the agent accepted under that id has its reflecting row; returns its order. A rejected input never settles: rejection is the answer `send` and `input` return. |
+| `fence(host, name, order)` | Wait until the host holds the agent's row at that order, on the origin or a replica. After it, what the host holds through that order is what its store reports. |
+| `current(host, name)` | Wait until the host holds what the origin holds: caught up through the origin's newest revision, with the block intact. |
 | `send(name, text)`, `input(...)` | Send a prompt, or any input (an answer, a withdrawal, an interrupt), through the agent's own host. |
 | `delete(name)`, `delete_family(name)` | Delete an agent, or delete it with its children and report what the cascade reached. |
 | `spawn_child(parent, decl)` | Spawn through the parent's tool socket, naming the child's host. |
@@ -136,11 +140,18 @@ The harness owns resources, verbs and observations, never scenarios. Scenarios l
 | `block_udp(host, blocked)` | Drop every datagram on the host's way to the relay, or stop dropping them. |
 | `open_gate(name)` | Create a gate file, releasing every `wait_for` step waiting on it. |
 
+**Fences** wait on a host's own cursors. A test asserts about a host only after the step it triggered has landed
+there by the host's account: a turn's end, an input's reflecting row, a row at an order, the replica's catch-up.
+`turn_ended`, `input_settled` and `fence` wake on the host's store writes (`ProfileRuntime::committed`), so they
+return the moment the write lands and never infer from time; `current` reads two hosts and looks again every
+poll. A missed deadline reports what the host last held.
+
 **Observations** wait for consequences and return what they saw. `observe(host, agent, tail)` opens a Subscribe
 stream as a client would and records it; `observe_inventory(host)` does the same for the inventory. Their
 `observe_until(predicate, deadline)` passes only when the predicate holds: it fails with `Stuck::Deadline` when
-the deadline passes and with `Stuck::Closed` at once when the stream ends. `observe::eventually` and
-`observe::holds_for` poll with the same rule, and a check that never answers fails too. `PATIENCE`, 30 seconds, is
+the deadline passes and with `Stuck::Closed` at once when the stream ends. `until` (from the `patience` crate every test crate shares) and
+`holds_for` poll with the same rule, a missed deadline reports what the probe last saw, and a check that never
+answers fails too. `PATIENCE`, 30 seconds, is
 the usual deadline; real work on loopback settles well inside it. `assert_block_invariant(host, agent)` checks a
 replica's rows against its origin: empty, or one contiguous block ending at the origin's newest row at the
 origin's revisions.
