@@ -1,0 +1,34 @@
+
+  backups │ /tmp/aj-xxxxxxxx/testnetxxxxxx/cabin/work · cabin                            1 │ [Diff] │ [Home]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+    Check last night's backup.                                                                       hh:mm
+
+
+    Last night's backup finished with no errors.
+
+    Worked <t>
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message backups                                                                                      │
+  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
+
+  shift+tab mode   ctrl+a more

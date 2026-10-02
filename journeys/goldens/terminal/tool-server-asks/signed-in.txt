@@ -1,0 +1,34 @@
+
+  linker │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                        2 / 258K │ [Diff] │ [Home]
+
+
+
+
+
+
+
+
+
+
+
+
+
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+    Check the relay's error rate.                                                                    hh:mm
+
+
+  ▸ 1 call
+
+  │ Signed in to grafana
+
+    I'll read the dashboards another way.
+
+    Worked <t>
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message linker                                                                                       │
+  ╰────────────────────────────────────────────────────────────────────────────────────── gpt-fake · auto ─╯
+
+  shift+tab mode   ctrl+a more

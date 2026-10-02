@@ -1,3 +1,20 @@
+2026-10-02 — **Journeys for the new chat's flows.** Eight terminal stories
+on a new topology (`journeys/topologies/terminal-flows.json`): deciding a
+plan with headless Claude and with Claude in its own terminal (sent back
+with a note, then approved), answering questions with previews and a typed
+answer, a tool server's form and link, the queue (withdraw, send now),
+sending while the host is away, the composer at a usage limit and on a
+refused credential, and starting agents for people who chat in each
+agent's own terminal, here and on another machine. Each checks what the
+host or the provider received, with a wrong expectation that fails. They
+found two faults in starting an agent, now fixed: a host picked in the new
+agent's form or flyover was sent as mangled bytes, so starting an agent on
+another machine failed ("an agent id is 16 bytes, not 30"); and the host
+choices reordered from frame to frame, so the arrows did not step along the
+row shown. The fake `claude` now plays Claude's own terminal when it is not
+started headless, as the real one does, so a test network host can start
+either kind.
+
 2026-10-02 — **The terminal journeys walk the new home and chat.** The
 journey driver finds home by its title line, a selected row by its band or
 its › mark, an open chat by its header, and a turn at rest by the keys under

@@ -1,0 +1,34 @@
+
+  limited │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                              1 │ [Diff] │ [Home]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+    Rewrite the pricing page's FAQ.                                                                  hh:mm
+
+
+    The FAQ is rewritten.
+
+    Worked <t>
+
+  ╭─ 5-hour limit reached · resets hh:mm ──────────────────────────────────────────────────────────────────╮
+  │ › Message limited                                                                                      │
+  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
+
+  shift+tab mode   ctrl+a more

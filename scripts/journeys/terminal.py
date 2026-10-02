@@ -175,12 +175,15 @@ SCRATCH = re.compile(r"(aj-|testnet)([A-Za-z0-9_]{6,8})\b")
 FLEET_AGE = re.compile(r"(?<= )(now|\d{1,2}[mhd])(?=  )")
 
 
-# A prompt's time of day sits at its row's right edge.
+# A prompt's time of day sits at its row's right edge; a usage limit says
+# when it resets.
 CLOCK = re.compile(r"(?<= )\d{2}:\d{2}$", re.M)
+RESETS = re.compile(r"(?<=resets )\d{2}:\d{2}")
 
 
 def normalize(text: str) -> str:
     text = CLOCK.sub("hh:mm", text)
+    text = RESETS.sub("hh:mm", text)
     text = AGE.sub(lambda match: "<age>".ljust(len(match.group(0))), text)
     text = FLEET_AGE.sub(lambda match: "<a>" if len(match.group(0)) == 3 else "<>", text)
     return SCRATCH.sub(lambda match: match.group(1) + "x" * len(match.group(2)), text)
@@ -397,6 +400,13 @@ class TerminalJourney:
 
     def config(self, host: str) -> str:
         return next(item["config"] for item in self.ready["hosts"] if item["name"] == host)
+
+    def configure(self, host: str, yaml: str) -> None:
+        """Adds top-level settings to `host`'s installation config, before
+        a client starts there."""
+        with open(self.config(host), "a") as config:
+            config.write(yaml.rstrip("\n") + "\n")
+        self.actions.append(f"configure {host}: {yaml.strip()!r}")
 
     # --- the terminal -----------------------------------------------------
 

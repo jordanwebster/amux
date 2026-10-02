@@ -1,0 +1,34 @@
+
+  filer │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                1 │ [Diff] │ [Home]
+
+
+
+
+
+
+
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+    File the reconnect flake.                                                                        hh:mm
+
+
+  ▸ 1 call
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ● linear needs details                                                                                 │
+  │ Linear needs a few details before it can create the issue.                                             │
+  │                                                                                                        │
+  │ ‹  ✓ Title   ✓ Team   ✓ Estimate   Review  ›                                                           │
+  │                                                                                                        │
+  │   Title                                                                                                │
+  │     → Reconnect flake in e2e                                                                           │
+  │   Team                                                                                                 │
+  │     → FOX                                                                                              │
+  │   Estimate                                                                                             │
+  │     → 3                                                                                                │
+  │                                                                                                        │
+  │ › Submit                                                                                               │
+  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
+
+  enter send   ←/→ questions   ctrl+x stop   ctrl+a more

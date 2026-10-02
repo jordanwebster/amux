@@ -1,0 +1,118 @@
+{
+  "hosts": [
+    {"name": "desk"},
+    {"name": "laptop", "script": {"steps": [{"text": {"chunks": ["Ready to write the release notes."]}}, "turn_end"]}},
+    {"name": "cabin"}
+  ],
+  "links": [{"a": "desk", "b": "laptop"}, {"a": "cabin", "b": "laptop"}],
+  "settle": true,
+  "agents": [
+    {
+      "name": "planner",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"ask": {"plan": {"markdown": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Point the daemon at it.\n3. Delete the old journal."}}},
+        {"ask": {"plan": {"markdown": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Check the copy against the original.\n3. Point the daemon at it.\n4. Keep the old journal for a week."}}},
+        {"text": {"chunks": ["Moving the journal as planned."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "planner-pty",
+      "host": "desk",
+      "kind": "claude_pty",
+      "script": {"steps": [
+        {"ask": {"plan": {"markdown": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Point the daemon at it.\n3. Delete the old journal."}}},
+        {"ask": {"plan": {"markdown": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Check the copy against the original.\n3. Point the daemon at it.\n4. Keep the old journal for a week."}}},
+        {"text": {"chunks": ["Moving the journal as planned."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "asker",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"ask": {"question": {"questions": [
+          {"question": "How should the settings screen be laid out?", "header": "Layout", "options": [
+            {"label": "Sidebar", "description": "Sections on the left, the chosen one on the right.", "preview": "Relay    │ Address  relay.amux.dev\nTheme    │ Keepalive 30s\nKeys     │"},
+            {"label": "Stacked", "description": "One scrolling page, a heading per section.", "preview": "Relay ──────────\n  Address  relay.amux.dev\nTheme ──────────\n  Palette  terminal"}
+          ]},
+          {"question": "Where should the screen open from?", "header": "Entry", "options": [
+            {"label": "Home", "description": "A key on home."},
+            {"label": "The leader", "description": "A chord from anywhere."}
+          ]}
+        ]}}},
+        {"text": {"chunks": ["Thanks, I'll build it that way."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "filer",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"ask": {"form": {"server": "linear", "message": "Linear needs a few details before it can create the issue.", "schema": {"type": "object", "properties": {"title": {"type": "string", "title": "Title", "description": "One line, as it will read in the backlog."}, "team": {"type": "string", "title": "Team", "enum": ["FOX", "CORE"]}, "estimate": {"type": "integer", "title": "Estimate"}}, "required": ["title", "team"]}}}},
+        {"text": {"chunks": ["Filed it in Linear."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "linker",
+      "host": "desk",
+      "kind": "codex",
+      "script": {"steps": [
+        {"ask": {"link": {"server": "grafana", "message": "Grafana needs you to sign in before I can read its dashboards.", "url": "https://grafana.example.com/login"}}},
+        {"text": {"chunks": ["I'll read the dashboards another way."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "worker",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"text": {"chunks": ["Starting the long run."]}},
+        {"tool": {"name": "Bash", "class": "consequential", "input": {"command": "scripts/soak --for 1h", "description": "Soak"}, "outcome": {"output": "soak: ok"}, "wait_for": "run-done"}},
+        {"text": {"chunks": ["The run finished."]}},
+        "turn_end",
+        {"text": {"chunks": ["Noted the follow-up."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "limited",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "prompt": "Rewrite the pricing page's FAQ.",
+      "script": {"steps": [
+        {"text": {"chunks": ["The FAQ is rewritten."]}},
+        {"usage": {"status": "rejected", "windows": [{"name": "five_hour", "used_percent": 100.0, "resets_in_s": 7200}, {"name": "seven_day", "used_percent": 64.0, "resets_in_s": 259200}]}},
+        "turn_end",
+        {"text": {"chunks": ["Done after the limit."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "expired",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "prompt": "Tidy the pairing section.",
+      "script": {"steps": [
+        {"text": {"chunks": ["Tidied."]}},
+        "turn_end",
+        {"auth_failed": {"message": "Failed to authenticate. API Error: 401 OAuth token has expired. Please obtain a new token or refresh your existing token."}}
+      ]}
+    },
+    {
+      "name": "backups",
+      "host": "cabin",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"text": {"chunks": ["Last night's backup finished with no errors."]}},
+        "turn_end"
+      ]}
+    }
+  ]
+}

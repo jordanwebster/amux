@@ -1,0 +1,34 @@
+
+  amux
+
+  + New Agent
+
+
+  ▾ Running 10 ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  › ○ release-notes╭─ New Agent ──────────────────────────────────────────────────────────╮            [x]
+                   │                                                                      │
+    ○ backups  work│  Name      desk-notes                                                │            now
+                   │  Agent      Claude   Codex                                           │
+    ○ expired  work│  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work        │            now
+                   │  Host       cabin   desk   laptop                                    │
+    ○ limited  work│                                                                      │            now
+                   │  [Start]  [Cancel]                                                   │
+    ○ worker  work │  enter start   ←→ choose   ↑↓ move   esc cancel                      │            now
+                   ╰──────────────────────────────────────────────────────────────────────╯
+    ○ linker  work · desk                                                                              now
+
+    ○ filer  work · desk                                                                               now
+
+    ○ asker  work · desk                                                                               now
+
+    ○ planner-pty  work · desk                                                                         now
+
+    ○ planner  work · desk                                                                             now
+
+
+
+
+
+
+

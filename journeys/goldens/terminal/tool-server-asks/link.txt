@@ -1,0 +1,34 @@
+
+  linker │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                   [Diff] │ [Home]
+
+
+
+
+
+
+
+
+
+
+
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+    Check the relay's error rate.                                                                    hh:mm
+
+
+  ▸ 1 call
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ● grafana needs you to sign in                                                                         │
+  │                                                                                                        │
+  │ Grafana needs you to sign in before I can read its dashboards.                                         │
+  │ https://grafana.example.com/login                                                                      │
+  │                                                                                                        │
+  │ › 1. Open the link                                                                                     │
+  │   2. I'm signed in                                                                                     │
+  │                                                                                                        │
+  │   Decline  esc                                                                                         │
+  ╰────────────────────────────────────────────────────────────────────────────────────── gpt-fake · auto ─╯
+
+  enter choose   ctrl+x stop   ctrl+a more

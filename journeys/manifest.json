@@ -65,6 +65,62 @@
       "claim": "On the laptop a person writes to an agent on the desk: text, a twelve-line paste that stands in the sentence as one token, more text, and a review of the diff the desk computed of the agent's working tree, with a comment on one changed line. The desk receives one prompt holding those four in that order, the paste's exact text and the comment on that line, and the review names a patch whose bytes on the desk's disk hash to that name and hold the edit. Opening the chat again shows the tokens as they were sent."
     },
     {
+      "id": "decide-plan-claude-sdk",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "A person asks headless Claude for work it plans first. The plan shows in the chat with its decision in the composer's box; sent back with a note, a revised plan arrives, and approved, the work runs. Claude receives the plan sent back with that note, then one approval."
+    },
+    {
+      "id": "decide-plan-claude-pty",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "A person asks Claude in its own terminal for work it plans first. The plan shows in the chat while it waits; sent back with a note, a revised plan arrives, and approved, the work runs; the host holds both plans and the reply."
+    },
+    {
+      "id": "answer-questions",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "Headless Claude asks two questions. Each option's preview shows beside the options as the selection moves; one question is answered by picking and the other by typing under Something else, both are shown for review, and Claude receives one answer holding exactly those."
+    },
+    {
+      "id": "tool-server-asks",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "A tool server's form asks for its fields in the order the server wrote them and shows the answers for review before they go; Claude receives the form accepted with exactly those values. Codex asks to let a tool server's call run, then the server asks the person to sign in at a link it names; saying so answers it and Codex receives both answers."
+    },
+    {
+      "id": "queue-and-steer",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "Prompts sent while an agent works queue under the feed. The newest, withdrawn, returns to the composer as a draft and is cleared, and never reaches the host; the other, sent now, goes into the running turn, and the host holds it once."
+    },
+    {
+      "id": "send-while-away",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "With the agent's host out of reach, Enter keeps the prompt as a draft and the host never receives it; with the host back, Enter sends it and the host holds it once."
+    },
+    {
+      "id": "composer-limits",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "At a usage limit the composer names the window and when it resets, and a prompt still goes and is answered. Refused its credential, headless Claude's chat puts signing in on the composer's box, naming the host to sign in on; the host holds each prompt once."
+    },
+    {
+      "id": "new-agent-terminal",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "For someone who chats in each agent's own terminal, a new agent starts from a form. Started on this machine, the terminal is handed to the new Claude and what is typed there reaches it once, and the leader's s comes back home; started on another machine, the agent runs there and its chat opens, saying its terminal is elsewhere."
+    },
+    {
       "id": "account-sign-in",
       "stage": 16,
       "clients": ["phone"],

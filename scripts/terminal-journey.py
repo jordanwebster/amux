@@ -10,6 +10,7 @@ observations from the hosts. Results land in target/journeys/<story>.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -530,6 +531,350 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     ]
 
 
+
+def control_responses(journey: TerminalJourney, agent: str, label: str) -> list[dict]:
+    """What headless Claude was answered, in order."""
+    lines = [json.loads(line) for line in journey.provider_input(agent, label)]
+    return [line["response"]["response"] for line in lines if line.get("type") == "control_response"]
+
+
+def codex_results(journey: TerminalJourney, agent: str, label: str) -> list[dict]:
+    """What Codex was answered, in order."""
+    lines = [json.loads(line) for line in journey.provider_input(agent, label)]
+    return [line["result"] for line in lines if "result" in line and isinstance(line.get("id"), int)]
+
+
+PLAN_PROMPT = "Move the journal."
+PLAN_NOTE = "Check the copy before switching."
+PLAN_DONE = "Moving the journal as planned."
+
+
+def sent_back_then_approved(decisions: list[dict], note: str) -> None:
+    """The plan went back once with `note`, then was approved once."""
+    behaviors = [decision.get("behavior") for decision in decisions]
+    if behaviors != ["deny", "allow"] or not decisions[0].get("message", "").endswith(note):
+        raise RuntimeError(f"Claude was answered {decisions!r}")
+
+
+def two_plans(chat: dict) -> None:
+    """The host holds two plan calls before the reply."""
+    plans = [item for item in chat["items"] if item["key"].startswith("toolu_")]
+    if len(plans) != 2:
+        raise RuntimeError(f"the host holds {len(plans)} plan calls")
+
+
+def decide_plan(journey: TerminalJourney, agent: str, headless: bool) -> list[str]:
+    pane = journey.launch("terminal", "laptop")
+    journey.open_chat(pane, agent)
+    journey.type(pane, PLAN_PROMPT)
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Plan ready", "3. Delete the old journal.", "No, keep planning")
+    journey.frame(pane, "plan")
+    # Esc reaches the way out; Tab opens the note it carries.
+    journey.keys(pane, "Escape", "Tab")
+    journey.type(pane, PLAN_NOTE)
+    journey.wait_terms(pane, f"No, keep planning: {PLAN_NOTE}")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "sent back", PLAN_NOTE, "4. Keep the old journal for a week.", "Plan ready")
+    journey.frame(pane, "revised")
+    journey.keys(pane, "1")
+    journey.wait(pane, lambda frame: at_rest(frame, "approved", PLAN_DONE), "the approved plan's work")
+    settled = journey.wait_chat(
+        "desk",
+        agent,
+        lambda chat: chat["phase"] == "IDLE" and any(PLAN_DONE in item["text"] for item in chat["items"]),
+        "plan-settled",
+    )
+    reflected_once(settled, PLAN_PROMPT)
+    assertions = [
+        f"{PLAN_PROMPT!r} reflected once in the desk's chat",
+        "the plan showed in the feed with its decision in the composer's box",
+        "sent back with a note, the revised plan arrived; approved, the work ran",
+    ]
+    if headless:
+        decisions = control_responses(journey, agent, "plan-decisions")
+        sent_back_then_approved(decisions, PLAN_NOTE)
+        assertions.append("Claude received the plan sent back with the note, then one approval")
+        assertions.append(negative_control(sent_back_then_approved, decisions, "a note never written"))
+    else:
+        two_plans(settled)
+        assertions.append("the desk holds both plans and the reply")
+        assertions.append(negative_control(two_plans, {"items": settled["items"][:3]}))
+    journey.frame(pane, "approved")
+    journey.quit_client(pane)
+    assertions.append("the client exited 0")
+    return assertions
+
+
+OTHER = "From the help panel"
+ANSWERS = {
+    "How should the settings screen be laid out?": "Stacked",
+    "Where should the screen open from?": OTHER,
+}
+
+
+def answered(decisions: list[dict], answers: dict) -> None:
+    if len(decisions) != 1 or decisions[0].get("updatedInput", {}).get("answers") != answers:
+        raise RuntimeError(f"Claude was answered {decisions!r}")
+
+
+def answer_questions(journey: TerminalJourney) -> list[str]:
+    pane = journey.launch("terminal", "laptop")
+    journey.open_chat(pane, "asker")
+    journey.type(pane, "Add a settings screen.")
+    journey.keys(pane, "Enter")
+    # The first option's preview beside the options.
+    journey.wait_terms(pane, "How should the settings screen be laid out?", "1. Sidebar", "│ Address  relay.amux.dev")
+    journey.frame(pane, "first-question")
+    journey.keys(pane, "Down")
+    journey.wait_terms(pane, "Relay ──────────", "Palette  terminal")
+    journey.frame(pane, "other-preview")
+    journey.keys(pane, "2")
+    journey.wait_terms(pane, "Where should the screen open from?", "3. Something else")
+    journey.keys(pane, "3")
+    journey.type(pane, OTHER)
+    journey.wait_terms(pane, f"Something else: {OTHER}")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Send answers", "→ Stacked", f"→ {OTHER}")
+    journey.frame(pane, "review")
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: at_rest(frame, "Answered 2 questions", "Thanks, I'll build it that way."), "the reply")
+    journey.frame(pane, "answered")
+    decisions = control_responses(journey, "asker", "answers")
+    answered(decisions, ANSWERS)
+    control = negative_control(answered, decisions, {**ANSWERS, "Where should the screen open from?": "Home"})
+    journey.quit_client(pane)
+    return [
+        "each option's preview showed beside the options as the selection moved",
+        "a picked option and a typed answer under Something else showed together for review",
+        "Claude received one answer naming Stacked and the typed text",
+        control,
+        "the client exited 0",
+    ]
+
+
+FORM = {"title": "Reconnect flake in e2e", "team": "FOX", "estimate": 3}
+
+
+def form_sent(decisions: list[dict], content: dict) -> None:
+    if len(decisions) != 1 or decisions[0] != {"action": "accept", "content": content}:
+        raise RuntimeError(f"Claude was answered {decisions!r}")
+
+
+def tool_server_asks(journey: TerminalJourney) -> list[str]:
+    pane = journey.launch("terminal", "laptop")
+    # A tool server's form, field by field in the order the server wrote.
+    journey.open_chat(pane, "filer")
+    journey.type(pane, "File the reconnect flake.")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "linear needs details", "Title · required")
+    journey.frame(pane, "form")
+    journey.type(pane, FORM["title"])
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Team · required", "1. FOX")
+    journey.keys(pane, "1")
+    journey.wait_terms(pane, "Estimate")
+    journey.type(pane, str(FORM["estimate"]))
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Submit", f"→ {FORM['title']}", "→ FOX", "→ 3")
+    journey.frame(pane, "form-review")
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: at_rest(frame, "Sent the form to linear", "Filed it in Linear."), "the filed reply")
+    decisions = control_responses(journey, "filer", "form-answer")
+    form_sent(decisions, FORM)
+    control = negative_control(form_sent, decisions, {**FORM, "team": "CORE"})
+
+    # A link: Codex asks to let the server's tool run, then the server
+    # asks the person to sign in.
+    journey.home(pane)
+    journey.open_chat(pane, "linker")
+    journey.type(pane, "Check the relay's error rate.")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Wants to use", "grafana ask")
+    journey.keys(pane, "1")
+    journey.wait_terms(pane, "grafana needs you to sign in", "https://grafana.example.com/login", "I'm signed in")
+    journey.frame(pane, "link")
+    journey.keys(pane, "Down", "Enter")
+    journey.wait(pane, lambda frame: at_rest(frame, "Signed in to grafana", "I'll read the dashboards another way."), "the reply")
+    results = codex_results(journey, "linker", "link-answers")
+    if [result.get("action") for result in results] != ["accept", "accept"] or results[1].get("content") is not None:
+        raise RuntimeError(f"Codex was answered {results!r}")
+    journey.frame(pane, "signed-in")
+    journey.quit_client(pane)
+    return [
+        "the form asked for title, team and estimate in the server's order and showed them for review",
+        f"Claude received the form accepted with {FORM!r}",
+        control,
+        "Codex's ask to run the server's tool was allowed, then the link showed its message and address",
+        "'I'm signed in' answered the link: Codex received two accepts, the link's with no content",
+        "the client exited 0",
+    ]
+
+
+RUN = "Run the soak."
+STEER = "Also log the peak."
+WITHDRAWN = "And email me."
+
+
+def never_sent(chat: dict, text: str) -> None:
+    if prompts(chat, text):
+        raise RuntimeError(f"the desk received {text!r}")
+
+
+def queue_and_steer(journey: TerminalJourney) -> list[str]:
+    pane = journey.launch("terminal", "laptop")
+    journey.open_chat(pane, "worker")
+    journey.type(pane, RUN)
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Running scripts/soak --for 1h", "ctrl+x stop")
+    # While it works, prompts queue under the feed.
+    journey.type(pane, STEER)
+    journey.keys(pane, "Enter")
+    journey.type(pane, WITHDRAWN)
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: re.search(rf"{re.escape(WITHDRAWN)}\s+queued", frame) is not None, "two queued")
+    journey.frame(pane, "queued")
+    # ↑ reaches the newest; withdrawn, it is a draft again, and cleared.
+    journey.keys(pane, "Up")
+    journey.wait_terms(pane, "[Send Now] [Withdraw]", "backspace withdraw")
+    journey.keys(pane, "BSpace")
+    journey.wait_terms(pane, f"› {WITHDRAWN}")
+    journey.keys(pane, "C-c")
+    journey.wait(pane, lambda frame: WITHDRAWN not in frame, "the withdrawn prompt cleared")
+    # The other goes into the turn now.
+    journey.keys(pane, "Up")
+    journey.wait_terms(pane, "[Send Now] [Withdraw]")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "sending into this turn")
+    journey.request({"OpenGate": {"name": "run-done"}})
+    journey.wait(pane, lambda frame: at_rest(frame, "steered", "The run finished."), "the turn's end")
+    settled = journey.wait_chat("desk", "worker", lambda chat: chat["phase"] == "IDLE", "settled")
+    reflected_once(settled, RUN)
+    reflected_once(settled, STEER)
+    never_sent(settled, WITHDRAWN)
+    control = negative_control(never_sent, settled, STEER)
+    journey.frame(pane, "steered")
+    journey.quit_client(pane)
+    return [
+        "two prompts sent while the agent worked queued under the feed",
+        "withdrawn, the newest came back to the composer as a draft and was cleared; the desk never received it",
+        f"sent now, {STEER!r} went into the running turn and the desk holds it once",
+        control,
+        "the client exited 0",
+    ]
+
+
+BACKUP = "Check last night's backup."
+
+
+def send_while_away(journey: TerminalJourney) -> list[str]:
+    pane = journey.launch("terminal", "laptop")
+    journey.open_chat(pane, "backups")
+    journey.request({"Sever": {"a": "cabin", "b": "laptop"}})
+    journey.wait_terms(pane, "cabin away")
+    journey.type(pane, BACKUP)
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, f"› {BACKUP}", "Draft kept · sending waits")
+    journey.frame(pane, "away")
+    time.sleep(2)
+    away = journey.chat("cabin", "backups", "while-away")
+    never_sent(away, BACKUP)
+    journey.request({"Restore": {"a": "cabin", "b": "laptop"}})
+    journey.wait(pane, lambda frame: BACKUP in frame and "Draft kept" not in frame and "cabin away" not in frame, "the cabin back")
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: at_rest(frame, "Last night's backup finished with no errors."), "the reply")
+    heard = journey.wait_chat("cabin", "backups", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, BACKUP)) == 1, "sent")
+    reflected_once(heard, BACKUP)
+    control = negative_control(never_sent, heard, BACKUP)
+    journey.frame(pane, "sent")
+    journey.quit_client(pane)
+    return [
+        "with the cabin away, Enter kept the draft in the composer and the cabin never received it",
+        f"with the cabin back, Enter sent it and the cabin holds {BACKUP!r} once",
+        control,
+        "the client exited 0",
+    ]
+
+
+def composer_limits(journey: TerminalJourney) -> list[str]:
+    pane = journey.launch("terminal", "laptop")
+    # At a usage limit the composer says so, and sending still works.
+    journey.open_chat(pane, "limited")
+    journey.wait_terms(pane, "5-hour limit reached · resets")
+    journey.frame(pane, "limit")
+    journey.type(pane, "Try again.")
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: at_rest(frame, "Done after the limit."), "the reply past the limit")
+    reflected_once(journey.wait_chat("desk", "limited", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, "Try again.")) == 1, "limited-sent"), "Try again.")
+
+    # A refused credential takes the composer's box: Claude must be signed
+    # in again where it runs.
+    journey.home(pane)
+    journey.open_chat(pane, "expired")
+    journey.type(pane, "Check the links.")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Claude needs you to sign in", "Run claude and sign in with /login on desk.")
+    journey.frame(pane, "sign-in")
+    refused = journey.wait_chat("desk", "expired", lambda chat: chat["phase"] == "IDLE", "refused")
+    reflected_once(refused, "Check the links.")
+    journey.quit_client(pane)
+    return [
+        "at its usage limit the composer named the window and when it resets, and a prompt still went and was answered",
+        "refused its credential, Claude's chat put sign-in in the composer's box, naming the host to sign in on",
+        "the desk holds each prompt once",
+        "the client exited 0",
+    ]
+
+
+def new_agent_terminal(journey: TerminalJourney) -> list[str]:
+    journey.configure("laptop", "ui:\n  chat_in: terminal")
+    before = {agent["id"] for agent in journey.inventory("laptop", "inventory-before")}
+    pane = journey.launch("terminal", "laptop")
+    journey.wait(pane, at_home, "home")
+    # On this machine, Start hands the terminal to the new agent.
+    journey.keys(pane, "n")
+    journey.wait_terms(pane, "New Agent", "named automatically", "[Start]")
+    journey.type(pane, "release-notes")
+    journey.frame(pane, "form")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "enter start")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Claude Code (scripted)")
+    journey.type(pane, "Write the notes.")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Ready to write the release notes.")
+    journey.keys(pane, "C-a", "s")
+    journey.wait(pane, lambda frame: at_home(frame) and agent_row(frame, "release-notes") is not None, "home with release-notes")
+    made = journey.wait_inventory("laptop", lambda agents: any(a["name"] == "release-notes" for a in agents), "created-here")
+    (local,) = [agent for agent in made if agent["name"] == "release-notes"]
+    if local["id"] in before or local["host_id"] != journey.host_id("laptop"):
+        raise RuntimeError(f"the laptop lists {local!r}")
+    reflected_once(journey.wait_chat("laptop", local["id"], lambda chat: len(prompts(chat, "Write the notes.")) == 1, "typed-there"), "Write the notes.")
+
+    # On another machine there is no terminal to hand over: its chat opens.
+    journey.keys(pane, "n")
+    journey.wait_terms(pane, "New Agent")
+    journey.type(pane, "desk-notes")
+    journey.keys(pane, "Down", "Down", "Down")
+    journey.wait_terms(pane, "←→ choose")
+    journey.keys(pane, "Left")
+    journey.frame(pane, "remote-form")
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: chat_of(frame) == "desk-notes" and "its terminal is on another machine" in frame, "desk-notes' chat")
+    journey.frame(pane, "remote-chat")
+    remote = journey.wait_inventory("desk", lambda agents: any(a["name"] == "desk-notes" for a in agents), "created-there")
+    (there,) = [agent for agent in remote if agent["name"] == "desk-notes"]
+    if there["host_id"] != journey.host_id("desk"):
+        raise RuntimeError(f"desk-notes runs on {there['host_id']}, not the desk")
+    journey.quit_client(pane)
+    return [
+        "for someone who chats in each agent's own terminal, n opened the New Agent form",
+        "Start on this machine handed the terminal to the new Claude; what was typed there reached it once; leader s came back home",
+        "Start on the desk created the agent there and opened its chat, saying its terminal is on another machine",
+        "the client exited 0",
+    ]
+
+
 STORIES = {
     "conversation-decision-claude-pty": lambda j: conversation_decision(j, "decision-pty", False),
     "conversation-decision-claude-sdk": lambda j: conversation_decision(j, "decision-sdk", True),
@@ -539,6 +884,14 @@ STORIES = {
     "reach-host": reach_host,
     "attachment-or-review": attachment_or_review,
     "keep-authority": keep_authority,
+    "decide-plan-claude-sdk": lambda j: decide_plan(j, "planner", True),
+    "decide-plan-claude-pty": lambda j: decide_plan(j, "planner-pty", False),
+    "answer-questions": answer_questions,
+    "tool-server-asks": tool_server_asks,
+    "queue-and-steer": queue_and_steer,
+    "send-while-away": send_while_away,
+    "composer-limits": composer_limits,
+    "new-agent-terminal": new_agent_terminal,
 }
 
 

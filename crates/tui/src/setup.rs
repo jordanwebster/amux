@@ -416,7 +416,11 @@ impl Setup {
                     self.folder = expand_tilde(value.trim());
                 }
             }
-            Item::Host => self.host = value.as_bytes().to_vec(),
+            Item::Host => {
+                if let Some(host) = host_of_value(value) {
+                    self.host = host;
+                }
+            }
             Item::Worktree => {
                 self.worktree = !self.worktree && crate::pending::offers_worktree();
             }
@@ -499,6 +503,10 @@ fn hosts(fleet: &FleetState, chosen: &[u8], chosen_first: bool) -> Vec<Choice> {
         .hosts()
         .filter(|host| host.trust() == wire::Trust::Trusted || host.host_id == chosen)
         .collect();
+    // By name, so the row holds still while the arrows move along it.
+    hosts.sort_by(|a, b| {
+        (a.name.to_lowercase(), &a.host_id).cmp(&(b.name.to_lowercase(), &b.host_id))
+    });
     if chosen_first {
         hosts.sort_by_key(|host| host.host_id != chosen);
     }
@@ -513,11 +521,27 @@ fn hosts(fleet: &FleetState, chosen: &[u8], chosen_first: bool) -> Vec<Choice> {
             Choice {
                 label: host_name(fleet, &host.host_id),
                 detail,
-                value: String::from_utf8_lossy(&host.host_id).into_owned(),
+                value: host_value(&host.host_id),
                 current: host.host_id == chosen,
                 disabled: away && host.host_id != chosen,
             }
         })
+        .collect()
+}
+
+/// A host's id as a choice's value: hex, since an id is bytes, not text.
+fn host_value(host: &[u8]) -> String {
+    host.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The host id a choice's value names.
+fn host_of_value(value: &str) -> Option<Vec<u8>> {
+    if value.len() % 2 != 0 {
+        return None;
+    }
+    (0..value.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(value.get(at..at + 2)?, 16).ok())
         .collect()
 }
 
@@ -1368,5 +1392,23 @@ impl Form {
             hits,
             cursor.map(|(col, line)| ((2 + col).min(inner + 1), 1 + line)),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{host_of_value, host_value};
+
+    /// A host id survives a choice's value whatever its bytes: ids are
+    /// rarely valid text.
+    #[test]
+    fn a_host_id_round_trips_through_a_choice() {
+        let id = [
+            0x9f, 0x61, 0xc7, 0x4c, 0x13, 0xf4, 0x46, 0xbb, 0x97, 0x2d, 0x66, 0xb0, 0x8c, 0x84,
+            0x4f, 0x44,
+        ];
+        assert_eq!(host_of_value(&host_value(&id)), Some(id.to_vec()));
+        assert_eq!(host_of_value("zz"), None);
+        assert_eq!(host_of_value("abc"), None);
     }
 }
