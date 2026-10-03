@@ -8,7 +8,6 @@
 #![cfg(unix)]
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use app_embedded::{EdgeOverrides, EmbeddedRuntime, PairRequest, ProfileId, StartConfig};
 use app_runtime::values::{AccountBinding, Draft, RelayLink};
@@ -348,10 +347,14 @@ async fn a_phone_links_to_its_desk_again_once_its_browser_finds_the_desk_back() 
     net.stop_daemon("desk").await.unwrap();
     eventually(&app, "the desk out of reach again", || !desk_online(&app)).await;
     embedded.discovered(vec![found(desk, addrs.clone())]);
-    // Past the dial's QUIC handshake, so that dial has failed. A sleep: the
-    // embedded runtime reports no dial errors, so there is nothing to wait
-    // on but the handshake's own timeout.
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // The dial's outcome: its error on the desk's row, which the route
+    // coming up earlier had cleared.
+    eventually(&app, "the dial to the stopped desk to fail", || {
+        app.hosts()
+            .iter()
+            .any(|host| host.name == "desk" && host.last_dial_error.is_some())
+    })
+    .await;
     net.restart_daemon("desk").await.unwrap();
     eventually(&app, "the desk online after a failed dial", || {
         desk_online(&app)
