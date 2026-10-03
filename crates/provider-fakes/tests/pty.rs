@@ -594,17 +594,8 @@ async fn a_messaging_socket_message_runs_a_turn_and_hooks_get_its_credentials() 
         .await
         .unwrap();
     drop(stream);
-    // A window: a message that must be dropped leaves no mark to wait on.
-    holds_for(
-        "the wrong-token message dropped",
-        Duration::from_millis(100),
-        || {
-            let rows = contents(&terminal.rows());
-            async move { !rows.iter().any(|row| row.contains("dropped")) }
-        },
-    )
-    .await
-    .unwrap();
+    // Had the message been taken, its turn would be on the transcript
+    // before the tokened one's below.
     let mut stream = tokio::net::UnixStream::connect(&terminal.socket)
         .await
         .unwrap();
@@ -615,6 +606,11 @@ async fn a_messaging_socket_message_runs_a_turn_and_hooks_get_its_credentials() 
     drop(stream);
     terminal.hooks_of("Stop", 2).await;
     let rows = terminal.rows();
+    assert!(
+        !contents(&rows).iter().any(|row| row.contains("dropped")),
+        "the wrong-token message was dropped: {:?}",
+        contents(&rows)
+    );
     let user = rows
         .iter()
         .find(|row| row["type"] == "user" && row["origin"]["kind"] == "peer")

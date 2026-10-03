@@ -1,3 +1,11 @@
+2026-10-03 — **A dropped socket message is judged by the turn after it.**
+The terminal fake's wrong-token message was watched for a tenth of a
+second; had it been taken, its turn would be on the transcript before
+the tokened message's, so the test waits for that one's turn and then
+looks. The embedded client's three-second sleep past a failed dial is
+gone: the desk's row carries the dial's error, which the route coming
+up had cleared, so the phone waits for it.
+
 2026-10-03 — **Four network windows wait on the dial and the timer.**
 A refused dial stores its error, so the stranger, the rotated key and
 the other profile's listener are asserted offline once that error is
