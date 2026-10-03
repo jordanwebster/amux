@@ -1,3 +1,13 @@
+2026-10-03 — **A wake is delivered under the coalescer's lock.**
+The app runtime's send test failed once more under the full suite's
+load, and the race was in the product this time: the coalescer marked
+the host woken and then delivered the wake outside its lock, so a take
+on another thread could slip between the two and the host would hear
+of a batch it had already taken. The wake is delivered under the lock
+now, and the test asserts the contract on each turn (one wake, with
+something to take, and no second one queued before the take) instead
+of comparing a global count against a baseline no settle could pin.
+
 2026-10-03 — **A session stream opens with its origin's generation.**
 The third repeat round on main caught the rewind frame again, and this
 time the product: a remembered agent's session is subscribed in the

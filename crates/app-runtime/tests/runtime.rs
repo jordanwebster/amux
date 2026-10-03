@@ -4,10 +4,12 @@
 
 #![cfg(unix)]
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use app_runtime::values::{ActOutcome, Draft, PageOutcome, RowOptions, ToolRowsOption};
+use app_runtime::values::{
+    ActOutcome, ChatChanges, Draft, PageOutcome, RowOptions, ToolRowsOption,
+};
 use app_runtime::{AppRuntime, Chat, Wake};
 use client::{Client, InProcess, SystemClock};
 use model::{AgentKey, InputState, PhaseView};
@@ -69,31 +71,36 @@ fn topology() -> Topology {
 /// The host's side: wakes land on a channel, as a main thread's queue.
 struct Host {
     wakes: mpsc::UnboundedReceiver<Wake>,
-    count: Arc<Mutex<Vec<Wake>>>,
+    /// Wakes taken off the queue while looking for a chat's, still owed.
+    held: Vec<Wake>,
 }
 
 async fn open(net: &Net) -> (AppRuntime, Host) {
     let client: Arc<dyn Client> = Arc::new(InProcess::new(net.client("desk").unwrap()));
     let (sender, wakes) = mpsc::unbounded_channel();
-    let count = Arc::new(Mutex::new(Vec::new()));
-    let seen = count.clone();
-    // Counted and queued under one lock, so what is counted is always
-    // exactly what has been queued.
     let wake = Arc::new(move |wake: Wake| {
-        let mut seen = seen.lock().unwrap();
-        seen.push(wake);
         let _ = sender.send(wake);
     });
     let local = net.host("desk").unwrap().host_id.as_bytes().to_vec();
     let runtime = AppRuntime::open(client, Arc::new(SystemClock), local, wake)
         .await
         .unwrap();
-    (runtime, Host { wakes, count })
+    (
+        runtime,
+        Host {
+            wakes,
+            held: Vec::new(),
+        },
+    )
 }
 
 impl Host {
     /// Waits for the next wake naming `wanted`.
     async fn next(&mut self, wanted: Wake) {
+        if let Some(at) = self.held.iter().position(|wake| *wake == wanted) {
+            self.held.remove(at);
+            return;
+        }
         tokio::time::timeout(PATIENCE, async {
             loop {
                 if self.wakes.recv().await.expect("the runtime is open") == wanted {
@@ -105,25 +112,31 @@ impl Host {
         .unwrap_or_else(|_| panic!("never woken for {wanted:?}"))
     }
 
-    /// Consumes every wake queued so far and takes what they brought, then
-    /// counts the wakes that named `chat`: from here each new one is a turn.
-    /// No wake can land in between, so none counted is left unconsumed.
-    fn settle(&mut self, runtime: &AppRuntime, chat: &Chat) -> usize {
-        let count = self.count.lock().unwrap();
-        while self.wakes.try_recv().is_ok() {}
-        runtime.take_fleet_changes();
-        chat.take_changes();
+    /// One of the host's turns: the next wake naming `chat`, and what it
+    /// brought. The wake was owed something, and nothing else was queued
+    /// for the chat before this take: however many updates land between
+    /// turns, the host is woken once and takes them all together.
+    async fn turn(&mut self, chat: &Chat) -> ChatChanges {
         let wanted = Wake::Chat(chat.id());
-        count.iter().filter(|wake| **wake == wanted).count()
-    }
-
-    fn wakes_for(&self, wanted: Wake) -> usize {
-        self.count
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|wake| **wake == wanted)
-            .count()
+        self.next(wanted).await;
+        let mut queued = Vec::new();
+        while let Ok(wake) = self.wakes.try_recv() {
+            queued.push(wake);
+        }
+        assert!(
+            !queued.contains(&wanted),
+            "a second wake for the chat before its take: {queued:?}"
+        );
+        for wake in queued {
+            // Another wake's turn is still owed; keep it for its taker.
+            self.held.push(wake);
+        }
+        let changes = chat.take_changes();
+        assert!(
+            changes.session || changes.reloaded || !changes.keys.is_empty(),
+            "a wake that brought nothing"
+        );
+        changes
     }
 }
 
@@ -184,9 +197,7 @@ async fn changes_wait_for_the_hosts_turn_and_rows_are_read_by_key() {
 
     let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
     // The whole first turn, its end and the idle that follows it: a prompt
-    // sent before the turn ends queues behind it instead of being sent,
-    // and the idle snapshot landing after the settle below would be a
-    // wake the send did not cause.
+    // sent before the turn ends queues behind it instead of being sent.
     until(&mut host, &chat, "the first turn to end", |chat| {
         let frame = chat.frame();
         frame.caught_up
@@ -200,9 +211,6 @@ async fn changes_wait_for_the_hosts_turn_and_rows_are_read_by_key() {
     assert_eq!(chat.keys_above(&newest), Some(Vec::new()));
     assert_eq!(chat.keys_above("no such key"), None);
 
-    // No wake is owed while nothing moves: the host took everything.
-    let woken = host.settle(&runtime, &chat);
-
     let sent = chat
         .send(&Draft {
             text: "please run it".into(),
@@ -215,14 +223,10 @@ async fn changes_wait_for_the_hosts_turn_and_rows_are_read_by_key() {
     );
     // Many updates land between the host's turns; each turn is one wake,
     // and no wake is owed until the host takes what the last one brought.
-    let mut turns = 0;
     let mut session_moved = false;
     let card = tokio::time::timeout(PATIENCE, async {
         loop {
-            host.next(Wake::Chat(chat.id())).await;
-            turns += 1;
-            assert_eq!(host.wakes_for(Wake::Chat(chat.id())) - woken, turns);
-            session_moved |= chat.take_changes().session;
+            session_moved |= host.turn(&chat).await.session;
             if let Some(card) = chat.ask_card() {
                 return card;
             }
