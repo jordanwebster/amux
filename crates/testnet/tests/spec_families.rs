@@ -1053,9 +1053,19 @@ async fn cross_host_family_journey() {
     })
     .await
     .unwrap();
-    // Time for server's hand-off to reach desk, which waits on the frozen
-    // lead for its verdict.
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // Server's hand-off reaches desk, which holds it for the frozen lead's
+    // verdict.
+    let lead_id = net.agent("lead").unwrap().id;
+    until("server's hand-off to reach desk", || {
+        let desk = net.runtime("desk").unwrap();
+        async move {
+            desk.in_hand(lead_id)
+                .then_some(())
+                .ok_or("nothing in hand for lead at desk")
+        }
+    })
+    .await
+    .unwrap();
     // Both of server's links, or desk would reach it through the phone.
     net.sever_link("desk", "server").unwrap();
     net.sever_link("server", "phone").unwrap();

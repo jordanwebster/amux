@@ -1,3 +1,9 @@
+2026-10-03 — **The families journey waits for the hand-off in hand.**
+A one-second sleep stood for "server's hand-off has reached desk, which
+holds it for the frozen lead's verdict". The runtime now says whether
+an input to an agent is in hand (its lane is held), and the test waits
+on that before severing server's links.
+
 2026-10-03 — **A dropped socket message is judged by the turn after it.**
 The terminal fake's wrong-token message was watched for a tenth of a
 second; had it been taken, its turn would be on the transcript before

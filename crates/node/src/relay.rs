@@ -440,4 +440,10 @@ impl ProfileRuntime {
     fn lane(&self, id: AgentId) -> Arc<tokio::sync::Mutex<()>> {
         self.lanes.lock().unwrap().entry(id).or_default().clone()
     }
+
+    /// Whether an input to the agent is in hand: handed to its process and
+    /// awaiting the verdict, or waiting its turn behind one.
+    pub fn in_hand(&self, id: AgentId) -> bool {
+        self.lane(id).try_lock().is_err()
+    }
 }
