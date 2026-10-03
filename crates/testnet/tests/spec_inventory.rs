@@ -339,12 +339,12 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     out
 }
 
-/// A generation change drops that host's replicas and records the new
-/// generation, and touches nothing of another host's: the other host's
-/// chat sees no Reset and its rows stay. An agent the rewound host no
-/// longer has is dropped and its chat closes.
+/// A generation change resets that host's replicas, each on its own
+/// stream, and records the new generation, and touches nothing of another
+/// host's: the other host's chat sees no Reset and its rows stay. An agent
+/// the rewound host no longer has is dropped and its chat closes.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_generation_change_drops_one_hosts_replicas_and_nothing_else() {
+async fn a_generation_change_resets_one_hosts_replicas_and_nothing_else() {
     let topology = Topology::new()
         .host("desk")
         .host("lab")

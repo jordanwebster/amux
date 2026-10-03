@@ -360,7 +360,11 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
     drain(&mut subscription, &mut seen, Duration::from_millis(100)).await;
     assert_eq!(
         log(&seen),
-        vec!["snapshot r0 Starting queue=[]", "item a o1 r1 \"one\""],
+        vec![
+            "opening g1",
+            "snapshot r0 Starting queue=[]",
+            "item a o1 r1 \"one\""
+        ],
         "a torn frame is not read, and the journal has not ended while one is being written"
     );
     agent.journal().finish_partial().unwrap();
@@ -373,7 +377,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
     )
     .await;
     assert_eq!(
-        log(&seen[2..]),
+        log(&seen[3..]),
         vec!["item b o2 r2 \"two\"", "caught_up r2"]
     );
     agent.die().await;
@@ -400,6 +404,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r0 Starting queue=[]",
             "item a o1 r1 \"one\"",
             "caught_up r1"
@@ -463,6 +468,7 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r0 Starting queue=[]",
             "item a o1 r1 \"one\"",
             "item b o2 r3 \"two\"",
@@ -479,7 +485,7 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
         agent.nudge().await;
     }
     read_until(&mut subscription, &mut seen, "three live records", |seen| {
-        seen.len() == 7
+        seen.len() == 8
     })
     .await;
     for event in &seen[4..] {
@@ -498,7 +504,7 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
         }
     }
     assert_eq!(
-        log(&seen[4..]),
+        log(&seen[5..]),
         vec![
             "snapshot r4 Working queue=[\"q1\"]",
             "item c o3 r5 \"three\"",
@@ -522,7 +528,7 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
     .await;
     assert_eq!(agent.hellos(), 2);
     assert_eq!(
-        log(&seen[7..]),
+        log(&seen[8..]),
         vec![
             "snapshot r7 Idle queue=[]",
             "item d o4 r8 \"four\"",
@@ -536,12 +542,12 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
     agent.append(&append("e", "!"));
     agent.nudge().await;
     read_until(&mut subscription, &mut seen, "two more records", |seen| {
-        seen.len() == 12
+        seen.len() == 13
     })
     .await;
     drain(&mut subscription, &mut seen, Duration::from_millis(100)).await;
     assert_eq!(
-        log(&seen[10..]),
+        log(&seen[11..]),
         vec!["item e o5 r9 \"five\"", "append e r10 base r9 \"!\""]
     );
 
@@ -616,7 +622,12 @@ async fn a_lagging_subscriber_is_closed_with_lagged_and_ingest_never_waits() {
     }
     assert_eq!(
         log(&seen),
-        vec!["snapshot r0 Starting queue=[]", "caught_up r0", "lagged"],
+        vec![
+            "opening g1",
+            "snapshot r0 Starting queue=[]",
+            "caught_up r0",
+            "lagged"
+        ],
         "the opening, then one Lagged, then the stream ends"
     );
 
@@ -630,6 +641,7 @@ async fn a_lagging_subscriber_is_closed_with_lagged_and_ingest_never_waits() {
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r0 Starting queue=[]",
             "item k17 o18 r18 \"x\"",
             "item k18 o19 r19 \"x\"",
@@ -693,6 +705,7 @@ async fn a_snapshot_committed_between_join_and_cut_arrives_once() {
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r0 Starting queue=[]",
             "item a o1 r1 \"one\"",
             "caught_up r1",
@@ -751,7 +764,7 @@ async fn a_withdrawn_prompt_is_never_read_as_queued() {
     .await;
     assert_eq!(
         log(&seen),
-        vec!["snapshot r2 Working queue=[]", "caught_up r2"]
+        vec!["opening g1", "snapshot r2 Working queue=[]", "caught_up r2"]
     );
     assert_markers_describe_their_snapshot(&seen, &committed);
     crash(daemon, runtime).await;
@@ -770,13 +783,14 @@ async fn a_withdrawn_prompt_is_never_read_as_queued() {
     runtime.set_join_hook(None);
     let mut seen = Vec::new();
     read_until(&mut subscription, &mut seen, "the withdrawal", |seen| {
-        seen.len() == 3
+        seen.len() == 4
     })
     .await;
     drain(&mut subscription, &mut seen, Duration::from_millis(200)).await;
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r1 Working queue=[\"q1\"]",
             "caught_up r1",
             "snapshot r2 Working queue=[]",
@@ -1173,6 +1187,7 @@ async fn the_sweep_ingests_a_finished_childs_journal_before_marking_it_exited() 
     assert_eq!(
         log(&opening),
         vec![
+            "opening g1",
             "snapshot r3 Idle queue=[]",
             "item last o1 r2 \"the tests pass\"",
             "caught_up r3",

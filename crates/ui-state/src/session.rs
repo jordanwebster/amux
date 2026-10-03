@@ -661,6 +661,9 @@ impl SessionState {
                 self.detached = true;
                 outcome.session = true;
             }
+            // The origin's generation is a peer source's concern: it
+            // resumes by revision, a client re-tails.
+            Of::Opening(_) => {}
         }
     }
 

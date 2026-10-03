@@ -3,12 +3,9 @@
 //!
 //! Every trusted host has one follower. While the host is reachable it
 //! holds the host's SubscribeInventory stream: at the stream's CaughtUp it
-//! compares the host's generation with the one the store recorded (a
-//! change drops every replica of the host and records the new generation
-//! in one transaction), writes the rows the host lists and drops the ones
-//! it no longer lists, and only then marks the host ready. That is what
-//! "reachable" means for a source, so a drop always precedes a first
-//! absorb and a rewound origin never shows stale rows as current.
+//! records the host's generation, writes the rows the host lists and
+//! drops the ones it no longer lists, and only then marks the host ready.
+//! That is what "reachable" means for a source.
 //!
 //! Every replica agent of a ready host may have one source: one Subscribe
 //! to the origin. The agents the store remembers of a host get theirs as
@@ -16,15 +13,21 @@
 //! reconciles in one round trip to each host rather than two; the
 //! inventory's CaughtUp confirms them, and drops any for an agent the host
 //! no longer lists. With no block it asks for a tail of K, with one for what
-//! came after its cursor, capped at K; the origin answers a delta when it
-//! fits and a Reset and a fresh tail otherwise. The source holds a
-//! catch-up until the origin's CaughtUp and then absorbs it in one go, so
-//! the block is never left half-replaced by a stream that died midway;
-//! the cursor moves to the revision CaughtUp carries, then per live
-//! record. Records are absorbed before they are broadcast. A stream that
-//! ends is Detached to local subscribers and retried after the cursor with
-//! backoff on the policy clock while the host stays reachable. A source
-//! for an exited agent closes once its catch-up has landed.
+//! came after its cursor, capped at K, naming the origin generation the
+//! cursor was taken under; the origin answers a delta when it fits and the
+//! generation is the one it runs, and a Reset and a fresh tail otherwise.
+//! Every stream opens with the origin's generation, which the block takes
+//! at its Reset, so a rewound origin (an unclean reboot mints the same
+//! orders and revisions again for different content) resets each of its
+//! replicas on that replica's own stream, forgetting every row of the old
+//! generation. The source holds a catch-up until the origin's
+//! CaughtUp and then absorbs it in one go, so the block is never left
+//! half-replaced by a stream that died midway; the cursor moves to the
+//! revision CaughtUp carries, then per live record. Records are absorbed
+//! before they are broadcast. A stream that ends is Detached to local
+//! subscribers and retried after the cursor with backoff on the policy
+//! clock while the host stays reachable. A source for an exited agent
+//! closes once its catch-up has landed.
 //!
 //! Which agents get a source is the runtime's [`SourcePolicy`], read by
 //! one sweep after every inventory catch-up and change and once when the
@@ -147,30 +150,6 @@ impl Sources {
     /// caught up or still following.
     fn is_current(&self, host: &[u8], session: u64) -> bool {
         self.ready.get(host) == Some(&session) || self.following.get(host) == Some(&session)
-    }
-
-    /// `host` came back under a new generation: its sources, opened with
-    /// the inventory to tail the old one, stop, and whatever opens next
-    /// runs under a fresh session. The old session is then stale by
-    /// number, so a stopped source still finishing its last step can
-    /// neither absorb nor unregister what replaces it. Returns the tasks
-    /// to abort, which the caller does outside the lock, and the new
-    /// session.
-    fn generation_changed(&mut self, host: &[u8]) -> (Vec<JoinHandle<()>>, u64) {
-        self.settled.retain(|key| key.host != host);
-        self.settling.retain(|key| key.host != host);
-        let keys: Vec<AgentKey> = self
-            .open
-            .keys()
-            .filter(|key| key.host == host)
-            .cloned()
-            .collect();
-        let stopped = keys
-            .into_iter()
-            .filter_map(|key| self.open.remove(&key).map(|(_, task)| task))
-            .collect();
-        self.next_session += 1;
-        (stopped, self.next_session)
     }
 }
 
@@ -425,9 +404,6 @@ impl ProfileRuntime {
             .publish(key, event(session_event::Of::Detached(Detached {})));
     }
 
-    /// The host's inventory reached CaughtUp: compare its generation, write
-    /// what it lists and drop what it no longer does, all under one store
-    /// lock, then mark the host ready under a new session.
     /// Begins a host's inventory session: the number its sources are keyed
     /// by until its stream ends. Under the `Listed` policy this also opens
     /// a source for every agent the store remembers of the host, so their
@@ -461,6 +437,9 @@ impl ProfileRuntime {
         session
     }
 
+    /// The host's inventory reached CaughtUp: record its generation, write
+    /// what it lists and drop what it no longer does, all under one store
+    /// lock, then mark the host ready.
     async fn inventory_caught_up(
         &self,
         host: HostId,
@@ -468,7 +447,6 @@ impl ProfileRuntime {
         generation: Option<u64>,
         listed: Vec<Agent>,
     ) -> Result<u64, StoreError> {
-        let mut session = session;
         let host_bytes = host.as_bytes().to_vec();
         let mut store = self.store.lock().await;
         let listed_keys: HashSet<Vec<u8>> =
@@ -482,23 +460,17 @@ impl ProfileRuntime {
         if let Some(generation) = generation
             && store.host_generation(&host_bytes)? != Some(generation)
         {
-            // A new generation: everything held under the old one goes,
-            // and the new one is recorded in the same transaction. Chats
-            // on agents the host still lists stay open and see the fresh
-            // tail arrive as a Reset.
-            let dropped = store.rewind_host(&host_bytes, generation)?;
-            if dropped > 0 {
-                tracing::info!(%host, generation, dropped, "the host's generation changed; its replicas were dropped");
-            }
-            // The sources opened with the inventory followed the old
-            // generation's cursors; they stop here, under the store lock
-            // no absorb happens without, and the sweep below opens fresh
-            // ones under a fresh session that tail the new generation, so
-            // every open chat sees its Reset.
-            let (stopped, fresh) = self.sources.lock().unwrap().generation_changed(&host_bytes);
-            session = fresh;
-            for task in stopped {
-                task.abort();
+            // The replicas are not this stream's to reset: each source
+            // resumes after its cursor naming the generation it was taken
+            // under, and the origin answers the old one with a fresh tail.
+            // An exited agent's source had settled and would not look
+            // again; the sweep reopens it for that reset.
+            tracing::info!(%host, generation, "the host came back under a new generation");
+            store.record_host_generation(&host_bytes, generation)?;
+            {
+                let mut sources = self.sources.lock().unwrap();
+                sources.settled.retain(|key| key.host != host_bytes);
+                sources.settling.retain(|key| key.host != host_bytes);
             }
             self.host_generation_changed(&host_bytes, generation);
         }
@@ -694,14 +666,17 @@ impl ProfileRuntime {
     // --- absorbing -------------------------------------------------------------
 
     /// Absorbs a whole catch-up and the CaughtUp that ends it, then
-    /// broadcasts what the subscribers need, all under one store lock.
-    /// Returns whether the agent has exited.
+    /// broadcasts what the subscribers need, all under one store lock. A
+    /// Reset begins the block under `generation`, the origin's from the
+    /// stream's Opening; `revision` becomes the cursor. Returns whether the
+    /// agent has exited.
     async fn land_catch_up(
         &self,
         key: &AgentKey,
         session: u64,
         catch_up: CatchUp,
         revision: u64,
+        generation: u64,
     ) -> Result<Option<bool>, StoreError> {
         let mut store = self.store.lock().await;
         if !self.session_current(key, session) {
@@ -717,6 +692,7 @@ impl ProfileRuntime {
                 Absorb::Reset {
                     tail: tail.clone(),
                     snapshot,
+                    generation,
                 },
             )?;
             self.wrote();
@@ -1136,6 +1112,7 @@ async fn source_once(
             subscribe_request::From::After(wire::After {
                 revision: row.source_cursor,
                 cap: k,
+                generation: row.source_generation,
             })
         } else {
             subscribe_request::From::Tail(k)
@@ -1174,6 +1151,8 @@ async fn source_once(
         events: Vec::new(),
     });
     let mut caught_up = false;
+    // The origin's generation, from the stream's Opening.
+    let mut generation = None;
     loop {
         let message = match stream.message().await {
             Ok(Some(message)) => message,
@@ -1190,6 +1169,10 @@ async fn source_once(
             return Ended::Stale;
         };
         let record = match message.of {
+            Some(session_event::Of::Opening(opening)) => {
+                generation = Some(opening.generation);
+                continue;
+            }
             Some(session_event::Of::Reset(_)) => {
                 catch_up = Some(CatchUp {
                     reset: true,
@@ -1199,18 +1182,19 @@ async fn source_once(
             }
             Some(session_event::Of::CaughtUp(marker)) => {
                 tracing::debug!(%host, %agent_id, revision = marker.revision, "the session caught up");
-                let landed = match catch_up.take() {
-                    Some(held) => me.land_catch_up(key, session, held, marker.revision).await,
-                    None => {
-                        // Again, after a new Hello at the origin: nothing
-                        // to replay, the cursor is where it was.
-                        let held = CatchUp {
-                            reset: false,
-                            events: Vec::new(),
-                        };
-                        me.land_catch_up(key, session, held, marker.revision).await
-                    }
+                let Some(generation) = generation else {
+                    tracing::warn!(%host, %agent_id, "the origin's stream caught up without an Opening");
+                    return Ended::Lost { caught_up };
                 };
+                // Again, after a new Hello at the origin: nothing to
+                // replay, the cursor is where it was.
+                let held = catch_up.take().unwrap_or(CatchUp {
+                    reset: false,
+                    events: Vec::new(),
+                });
+                let landed = me
+                    .land_catch_up(key, session, held, marker.revision, generation)
+                    .await;
                 match landed {
                     Ok(Some(true)) => return Ended::Settled,
                     Ok(Some(false)) => caught_up = true,
@@ -1342,37 +1326,6 @@ mod tests {
         let task = tokio::spawn(std::future::pending::<()>());
         sources.open.insert(key.clone(), (session, task));
         key
-    }
-
-    #[tokio::test]
-    async fn a_generation_change_retires_the_session_its_sources_ran_under() {
-        let host = b"host";
-        let mut sources = Sources::default();
-        let session = following(&mut sources, host);
-        let key = open(&mut sources, host, 1, session);
-        sources.settled.insert(AgentKey {
-            host: host.to_vec(),
-            agent: vec![2],
-        });
-        let other = open(&mut sources, b"other", 1, 7);
-
-        let (stopped, fresh) = sources.generation_changed(host);
-
-        assert_eq!(stopped.len(), 1);
-        assert_ne!(fresh, session);
-        assert!(!sources.open.contains_key(&key));
-        assert!(sources.open.contains_key(&other));
-        assert!(sources.settled.is_empty());
-        sources.following.remove(host.as_slice());
-        sources.ready.insert(host.to_vec(), fresh);
-        assert!(
-            !sources.is_current(host, session),
-            "the old session must read stale"
-        );
-        assert!(sources.is_current(host, fresh));
-        for task in stopped {
-            task.abort();
-        }
     }
 
     #[tokio::test]

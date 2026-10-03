@@ -279,6 +279,7 @@ mod tests {
                 ("lagged", 6),
                 ("reset", 7),
                 ("detached", 8),
+                ("opening", 9),
             ],
         );
     }

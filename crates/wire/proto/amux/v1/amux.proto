@@ -456,10 +456,14 @@ message SubscribeRequest {
   }
 }
 
-// The delta if it is at most cap rows, else Reset and a tail of cap.
+// The delta if it is at most cap rows and the origin still runs the
+// generation the cursor was taken under; else Reset and a tail of cap. A
+// revision belongs to a generation: after an unclean reboot the origin
+// mints the same numbers again for different content.
 message After {
   uint64 revision = 1;
   uint32 cap = 2;
+  uint64 generation = 3;
 }
 
 message SessionEvent {
@@ -471,7 +475,15 @@ message SessionEvent {
     Lagged lagged = 6;
     Reset reset = 7;
     Detached detached = 8;
+    Opening opening = 9;
   }
+}
+
+// The first event of every stream: the origin generation its rows and
+// revisions belong to. A peer source stores it on the block it takes and
+// names it with its cursor when it resumes; clients ignore it.
+message Opening {
+  uint64 generation = 1;
 }
 
 // "You hold what the origin holds as of now", on every stream. On a session

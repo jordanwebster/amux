@@ -87,15 +87,6 @@ impl Tables for Data {
         Ok(())
     }
 
-    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentKey>, StoreError> {
-        Ok(self
-            .agents
-            .keys()
-            .filter(|agent| agent.host == host)
-            .cloned()
-            .collect())
-    }
-
     fn item(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError> {
         Ok(self
             .items

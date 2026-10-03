@@ -4776,13 +4776,18 @@ impl ::prost::Name for SubscribeRequest {
         "/amux.v1.SubscribeRequest".into()
     }
 }
-/// The delta if it is at most cap rows, else Reset and a tail of cap.
+/// The delta if it is at most cap rows and the origin still runs the
+/// generation the cursor was taken under; else Reset and a tail of cap. A
+/// revision belongs to a generation: after an unclean reboot the origin
+/// mints the same numbers again for different content.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct After {
     #[prost(uint64, tag = "1")]
     pub revision: u64,
     #[prost(uint32, tag = "2")]
     pub cap: u32,
+    #[prost(uint64, tag = "3")]
+    pub generation: u64,
 }
 impl ::prost::Name for After {
     const NAME: &'static str = "After";
@@ -4796,7 +4801,7 @@ impl ::prost::Name for After {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SessionEvent {
-    #[prost(oneof = "session_event::Of", tags = "1, 2, 3, 5, 6, 7, 8")]
+    #[prost(oneof = "session_event::Of", tags = "1, 2, 3, 5, 6, 7, 8, 9")]
     pub of: ::core::option::Option<session_event::Of>,
 }
 /// Nested message and enum types in `SessionEvent`.
@@ -4817,6 +4822,8 @@ pub mod session_event {
         Reset(super::Reset),
         #[prost(message, tag = "8")]
         Detached(super::Detached),
+        #[prost(message, tag = "9")]
+        Opening(super::Opening),
     }
 }
 impl ::prost::Name for SessionEvent {
@@ -4827,6 +4834,24 @@ impl ::prost::Name for SessionEvent {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.SessionEvent".into()
+    }
+}
+/// The first event of every stream: the origin generation its rows and
+/// revisions belong to. A peer source stores it on the block it takes and
+/// names it with its cursor when it resumes; clients ignore it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Opening {
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+}
+impl ::prost::Name for Opening {
+    const NAME: &'static str = "Opening";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.Opening".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.Opening".into()
     }
 }
 /// "You hold what the origin holds as of now", on every stream. On a session

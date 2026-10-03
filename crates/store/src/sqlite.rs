@@ -187,7 +187,7 @@ struct SqlTables<'a> {
 const AGENT_COLUMNS: &str = "origin_host, agent_id, kind, name, cwd, parent, parent_host, \
     lifecycle, exit_cause, phase, working_on, last_activity, snapshot, snapshot_revision, \
     ingest_cursor, next_revision, source_cursor, complete_from_order, exhausted, created_at, \
-    producer_version, incarnation, turn_open";
+    producer_version, incarnation, turn_open, source_generation";
 
 /// `crate::item_bytes`, in SQL: byte lengths, not character counts.
 const ITEM_BYTES: &str = "(length(CAST(key AS BLOB)) + length(CAST(text AS BLOB)) + length(body) \
@@ -224,6 +224,7 @@ fn agent_row(row: &Row<'_>) -> rusqlite::Result<(AgentRow, Option<Vec<u8>>)> {
             producer_version: row.get(20)?,
             incarnation: row.get(21)?,
             turn_open: row.get::<_, i64>(22)? != 0,
+            source_generation: row.get::<_, i64>(23)? as u64,
         },
         snapshot,
     ))
@@ -288,7 +289,7 @@ impl Tables for SqlTables<'_> {
     }
 
     fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError> {
-        let placeholders = (1..=23)
+        let placeholders = (1..=24)
             .map(|n| format!("?{n}"))
             .collect::<Vec<_>>()
             .join(", ");
@@ -320,6 +321,7 @@ impl Tables for SqlTables<'_> {
                 row.producer_version,
                 row.incarnation,
                 i64::from(row.turn_open),
+                row.source_generation as i64,
             ],
         )?;
         Ok(())
@@ -343,18 +345,6 @@ impl Tables for SqlTables<'_> {
             params![agent.agent],
         )?;
         Ok(())
-    }
-
-    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentKey>, StoreError> {
-        let mut statement = self
-            .conn
-            .prepare("SELECT agent_id FROM agents WHERE origin_host = ?1 ORDER BY agent_id")?;
-        let agents = statement
-            .query_map(params![host], |row| {
-                Ok(AgentKey::new(host.to_vec(), row.get::<_, Vec<u8>>(0)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(agents)
     }
 
     fn item(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError> {

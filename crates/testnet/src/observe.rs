@@ -140,6 +140,7 @@ impl<E> fmt::Debug for ObserverOf<E> {
 /// What a session event is, without its payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Mark {
+    Opening(u64),
     Snapshot,
     Item(String),
     Append(String),
@@ -152,6 +153,7 @@ pub enum Mark {
 
 pub fn mark(event: &SessionEvent) -> Mark {
     match &event.of {
+        Some(session_event::Of::Opening(opening)) => Mark::Opening(opening.generation),
         Some(session_event::Of::Snapshot(_)) => Mark::Snapshot,
         Some(session_event::Of::Item(item)) => Mark::Item(item.key.clone()),
         Some(session_event::Of::Append(append)) => Mark::Append(append.key.clone()),
@@ -230,6 +232,9 @@ pub fn inventory_hosts(events: &[InventoryEvent]) -> Vec<wire::HostEntry> {
 impl Describe for SessionEvent {
     fn describe(&self) -> String {
         match &self.of {
+            Some(session_event::Of::Opening(opening)) => {
+                format!("Opening generation={}", opening.generation)
+            }
             Some(session_event::Of::Snapshot(snapshot)) => format!(
                 "Snapshot revision={} kind={} phase={:?} queue={}",
                 snapshot.revision,

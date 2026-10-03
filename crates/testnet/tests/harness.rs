@@ -16,7 +16,7 @@ use provider_fakes::script::Step;
 use serde_json::{Value, json};
 use store::{Absorb, AgentRow, Store as _};
 use testnet::door::{CAPABILITIES, Control, ErrorKind, Readiness, Reply};
-use testnet::observe::{self, Mark};
+use testnet::observe::{self, Mark, marks};
 use testnet::{
     AgentDecl, FakeKind, JournalCut, Net, NetError, PATIENCE, Stuck, Topology, TopologyError,
     holds_for, until_within,
@@ -174,10 +174,9 @@ async fn a_real_agent_runs_on_each_fake_and_its_stream_opens_with_a_snapshot() {
             .observe_until(|events| says(events, &wanted), PATIENCE)
             .await
             .unwrap();
-        assert_eq!(
-            observe::mark(&events[0]),
-            Mark::Snapshot,
-            "{name}: a stream opens with the snapshot"
+        assert!(
+            matches!(marks(&events[..2])[..], [Mark::Opening(_), Mark::Snapshot]),
+            "{name}: a stream opens with its generation and the snapshot"
         );
         println!("{name}:\n{}", observer.transcript());
     }
@@ -580,6 +579,7 @@ async fn the_block_invariant_holds_at_the_origin_and_catches_a_replica_with_a_ho
                 Absorb::Reset {
                     tail: holed,
                     snapshot,
+                    generation: 1,
                 },
             )
             .unwrap();

@@ -245,12 +245,15 @@ cache. A daemon crash, an agent crash, an update and a clean reboot lose
 nothing committed, so none of them change the counter.
 
 The counter is the host's generation. It travels on the host's inventory entry
-(`HostEntry.generation`). A peer compares it when that host's inventory stream
-reaches `CaughtUp`, before any source for that host opens. On a change it
-drops every replica of the host and records the generation in one transaction
-(`Store::rewind_host`), and each agent's source starts again with a tail. That
-invalidation restores consistency between machines; it cannot recover work
-whose only copies were lost.
+(`HostEntry.generation`) and opens every session stream the host serves
+(`Opening.generation`). A peer source stores it on the block its Reset begins
+(`source_generation`) and names it when it resumes after its cursor; the
+origin answers a cursor of another generation with a Reset and a fresh tail,
+which forgets every row held under the old one, so each replica is reset on
+its own stream. The inventory's `CaughtUp` records the new
+generation (`Store::record_host_generation`) for the host entry this machine
+publishes. That invalidation restores consistency between machines; it cannot
+recover work whose only copies were lost.
 
 After power loss on the origin:
 
@@ -296,7 +299,7 @@ The runtime's interface is the `Store` trait in
 | `after(agent, revision, cap)` | What a peer holding everything through `revision` is missing, or `None` when that is more than `cap` rows |
 | `commit` | Journal frames into an own row |
 | `absorb` | Records from a peer into a replica row |
-| `rewind_cursor`, `rewind_host` | Power-loss recovery on this host and on a peer |
+| `rewind_cursor`, `record_host_generation` | Power-loss recovery on this host; the generation a peer last reported |
 | `sweep_own`, `sweep_replicas` | Retention |
 
 The logic is written once over a small `Tables` trait of row primitives.
@@ -327,6 +330,7 @@ The schema is the migrations in
 | `ingest_cursor` | Own rows: the journal offset committed through |
 | `next_revision` | Own rows: the revision the next record takes |
 | `source_cursor` | Replica rows: the origin revision this agent's source is complete through |
+| `source_generation` | Replica rows: the origin generation the block was taken under, from the `Opening` of the stream whose `Reset` began it |
 | `complete_from_order` | The order from which the held rows are known to be contiguous up to the newest (see below) |
 | `exhausted` | No older history exists: the origin said so, or retention trimmed it |
 | `created_at`, `producer_version`, `incarnation` | Creation time, the agent binary's version from its Hello, and the `spec.<n>` it is running |
@@ -360,7 +364,7 @@ The rest:
 | --- | --- |
 | `deliveries` | The daemon's outbox to parents: a child's `finished` (turn ended; body is its last message) or `failed` (the incarnation ended without one; body is the cause). Keyed by child, incarnation, kind and turn id. Holds a copy of the message, because retention may remove the child's transcript while a parent is offline. |
 | `notifications` | The push outbox: one row per turn into `needs_you`, keyed by agent and snapshot revision, with a due time and a body built from envelope fields only. Deleted unsent if the phase leaves `needs_you` first, and with the agent. |
-| `hosts` | One row per peer host: the generation last seen. Written in the transaction that drops that host's replicas. |
+| `hosts` | One row per peer host: the generation its inventory last reported, for the host entry this machine publishes. |
 | `schema_migrations` | Each applied migration's number and SHA-256 |
 
 There are no blob tables. A blob is a file in its agent's directory; its name,
@@ -399,8 +403,9 @@ Replica rows are a cache of a paired host's agent. Only `absorb` writes their
 records, copying the origin's revisions and orders as received. Each replica
 agent has one source in [`crates/node/src/sources.rs`](../crates/node/src/sources.rs):
 one `Subscribe` to the origin. With no block it asks for a tail of K rows; with
-one it asks for what came after its `source_cursor`, capped at K, and the
-origin answers either that delta or `Reset` and a fresh tail. The source holds
+one it asks for what came after its `source_cursor`, capped at K, under its
+`source_generation`, and the origin answers either that delta or `Reset` and a
+fresh tail. The source holds
 a catch-up until the origin's `CaughtUp` and then absorbs it in one go, so a
 stream that dies midway never leaves the block half-replaced.
 
@@ -416,7 +421,7 @@ it is fetched from the origin and extends the block.
 | `Absorb` | Effect |
 | --- | --- |
 | `Delta { events, live }` | Joins the block above its newest row. Items are upserted unless a newer revision is held; an append applies only when its base matches; a snapshot only when newer. Live records advance `source_cursor`; a catch-up does not. |
-| `Reset { tail, snapshot }` | Starts the block again from the tail: `complete_from_order` moves to the tail's oldest order. Rows below stay stored and are served by `Get`, but do not count as contiguous. |
+| `Reset { tail, snapshot, generation }` | Starts the block again from the tail under the origin's `generation`: `complete_from_order` moves to the tail's oldest order. Rows below stay stored and are served by `Get`, but do not count as contiguous. Under a generation other than the block's, every held row is forgotten first: the origin numbers orders and revisions afresh after an unclean reboot, so nothing held compares with the tail. |
 | `Page { before_order, items, exhausted }` | Extends the block downward, only when `before_order` is the block's boundary. A page that does not join is served to its requester and not stored, because only a source starts a block. |
 | `CaughtUp(revision)` | Sets `source_cursor` to the revision the origin's replay is complete through |
 
@@ -425,8 +430,8 @@ one, so pages and a live source need no coordination. The row's snapshot and
 `source_cursor` are written in the same transaction as the items they describe.
 
 A replica row is dropped when its origin's inventory, read to `CaughtUp`, does
-not list the agent, when the origin's generation changes, and when its host is
-untrusted.
+not list the agent, and when its host is untrusted. A change of the origin's
+generation resets the block instead, on the agent's own stream.
 
 ### Retention
 

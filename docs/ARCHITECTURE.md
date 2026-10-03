@@ -341,21 +341,20 @@ into the local store before it is broadcast to local subscribers
 ([`node::sources`](../crates/node/src/sources.rs)). So every client,
 including the terminal on the same machine, reads through its own local
 runtime: the calls on the local socket and on a peer link are one
-vocabulary. A host that bumps its generation (an unclean reboot) has every
-replica of it dropped at the next inventory catch-up; nothing else
-invalidates a replica. Untrusting a host drops its replicas and ends its
-followers.
+vocabulary. Untrusting a host drops its replicas and ends its followers;
+nothing else drops one.
 
 The remembered agents' subscriptions are opened in the same flight as the
 inventory's, before it has caught up, so a fleet reconciles in one round
-trip rather than two. The one edge is a host that came back under a new
-generation: a session catch-up landing a moment before the inventory's can
-merge records of the new generation onto rows of the old, since the cursor
-is a number the origin may have reused. The inventory's catch-up then drops
-the host's replicas, retires the session those sources ran under, and
-reopens them on a tail of the new generation, which every open chat sees as
-a Reset. Nothing of the mix outlives that catch-up, which left the host
-with the one it followed.
+trip rather than two. A revision cursor is only meaningful under the
+generation it was taken under: a host that came back from an unclean reboot
+mints the same numbers again for different content. So every session stream
+opens by naming the origin's generation, a source stores it on the block
+and names it when it resumes, and an origin answers a cursor of another
+generation with a fresh tail that replaces everything held, which the open
+chats see as a Reset.
+The reset happens on each replica's own stream, whichever of the two
+catch-ups lands first; the inventory's only records the new generation.
 
 **The relay** is the same binary run as `amux server start --cloud`
 ([`crates/amux/src/relay.rs`](../crates/amux/src/relay.rs)). A signed-in

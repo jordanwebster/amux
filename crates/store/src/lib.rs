@@ -71,6 +71,10 @@ pub struct AgentRow {
     pub next_revision: u64,
     /// Replica rows: the origin revision the source is complete through.
     pub source_cursor: u64,
+    /// Replica rows: the origin generation the block was taken under, from
+    /// the Opening of the stream whose Reset began it. The origin answers a
+    /// cursor of another generation with a Reset.
+    pub source_generation: u64,
     /// The block runs from this order to the newest held row. Replicas:
     /// none means no block; set by a Reset, moved down by joining pages.
     /// Own rows: none means all history is held; set only by retention.
@@ -107,6 +111,7 @@ impl AgentRow {
             ingest_cursor: 0,
             next_revision: 1,
             source_cursor: 0,
+            source_generation: 0,
             complete_from_order: None,
             exhausted: false,
             created_at: 0,
@@ -176,8 +181,15 @@ pub enum Absorb {
     },
     /// Forget the block: the tail replaces it and complete_from_order moves
     /// to the tail's oldest order. Rows below stay stored for Get but no
-    /// longer count.
-    Reset { tail: Vec<Item>, snapshot: Snapshot },
+    /// longer count, unless `generation` is not the one the block was
+    /// taken under: then every held row goes, because the origin numbers
+    /// orders and revisions afresh after an unclean reboot and nothing
+    /// held compares with the tail.
+    Reset {
+        tail: Vec<Item>,
+        snapshot: Snapshot,
+        generation: u64,
+    },
     /// An origin page for orders below `before_order`. Stored only when it
     /// joins the block, that is when `before_order` is the block's
     /// boundary; otherwise it is served to its requester and dropped,
@@ -291,7 +303,6 @@ pub trait Tables {
     fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError>;
     /// Removes the row, its items, its deliveries and its notifications.
     fn remove_agent(&mut self, agent: &AgentKey) -> Result<(), StoreError>;
-    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentKey>, StoreError>;
     fn item(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError>;
     /// An item whose input id is `input_id`, if the agent holds one.
     fn item_by_input(&self, agent: &AgentKey, input_id: &[u8]) -> Result<Option<Item>, StoreError>;
@@ -428,9 +439,8 @@ pub trait Store {
     /// revision: what the agent writes again is new to every reader.
     fn rewind_cursor(&mut self, agent: &AgentKey, cursor: u64) -> Result<(), StoreError>;
     fn absorb(&mut self, agent: &AgentKey, what: Absorb) -> Result<Absorbed, StoreError>;
-    /// Drops every replica of `host` and records its new generation in one
-    /// transaction. Returns how many agents were dropped.
-    fn rewind_host(&mut self, host: &[u8], generation: u64) -> Result<usize, StoreError>;
+    /// Records the generation `host`'s inventory last reported.
+    fn record_host_generation(&mut self, host: &[u8], generation: u64) -> Result<(), StoreError>;
     fn host_generation(&self, host: &[u8]) -> Result<Option<u64>, StoreError>;
 
     /// The bytes own rows (or replica rows) hold against their budget.
@@ -662,22 +672,11 @@ impl<B: Backend> Store for B {
         Ok(absorbed)
     }
 
-    fn rewind_host(&mut self, host: &[u8], generation: u64) -> Result<usize, StoreError> {
+    fn record_host_generation(&mut self, host: &[u8], generation: u64) -> Result<(), StoreError> {
         if host == Backend::own_host(self) {
             return Err(StoreError::OwnHost);
         }
-        let dropped = self.write(|tables| {
-            let agents = tables.agents_of_host(host)?;
-            for agent in &agents {
-                tables.remove_agent(agent)?;
-            }
-            tables.set_host_generation(host, generation)?;
-            Ok(agents)
-        })?;
-        for agent in &dropped {
-            self.markers_mut().remove(agent);
-        }
-        Ok(dropped.len())
+        self.write(|tables| tables.set_host_generation(host, generation))
     }
 
     fn host_generation(&self, host: &[u8]) -> Result<Option<u64>, StoreError> {
@@ -944,7 +943,19 @@ fn absorb(tables: &mut dyn Tables, agent: &AgentKey, what: Absorb) -> Result<Abs
                 }
             }
         }
-        Absorb::Reset { tail, snapshot } => {
+        Absorb::Reset {
+            tail,
+            snapshot,
+            generation,
+        } => {
+            if generation != row.source_generation {
+                if let Some(max) = tables.max_order(agent)? {
+                    tables.remove_items_below(agent, max + 1)?;
+                }
+                row.snapshot_revision = 0;
+                row.source_cursor = 0;
+                row.source_generation = generation;
+            }
             let floor = match tail.iter().map(|item| item.order).min() {
                 Some(order) => order,
                 None => tables.max_order(agent)?.map_or(0, |order| order + 1),

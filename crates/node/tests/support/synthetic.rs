@@ -468,6 +468,7 @@ pub fn describe(event: &SessionEvent) -> String {
         session_event::Of::Lagged(_) => "lagged".to_owned(),
         session_event::Of::Reset(_) => "reset".to_owned(),
         session_event::Of::Detached(_) => "detached".to_owned(),
+        session_event::Of::Opening(o) => format!("opening g{}", o.generation),
     }
 }
 

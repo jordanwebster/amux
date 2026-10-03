@@ -163,6 +163,7 @@ fn session_event(event: &SessionEvent) -> String {
         Some(Of::Lagged(_)) => "Lagged".into(),
         Some(Of::Reset(_)) => "Reset".into(),
         Some(Of::Detached(_)) => "Detached".into(),
+        Some(Of::Opening(opening)) => format!("Opening gen={}", opening.generation),
         None => "Event none".into(),
     }
 }

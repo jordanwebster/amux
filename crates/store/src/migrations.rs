@@ -84,6 +84,9 @@ CREATE INDEX items_by_input ON items (origin_host, agent_id, input_id) WHERE inp
     r#"
 ALTER TABLE agents ADD COLUMN turn_open INTEGER NOT NULL DEFAULT 0;
 "#,
+    r#"
+ALTER TABLE agents ADD COLUMN source_generation INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 /// The hex SHA-256 of a migration's text, as recorded when it is applied.

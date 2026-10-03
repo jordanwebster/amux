@@ -75,7 +75,8 @@ async fn the_in_process_and_socket_clients_answer_alike() {
         }
         assert!(listed, "{name}");
 
-        // A subscription opens with its snapshot and reaches the reply.
+        // A subscription opens with its generation and snapshot and
+        // reaches the reply.
         let mut stream = client
             .subscribe(SubscribeRequest {
                 agent_id: worker.clone(),
@@ -85,8 +86,13 @@ async fn the_in_process_and_socket_clients_answer_alike() {
             .unwrap();
         let first = stream.next().await.unwrap().unwrap();
         assert!(
-            matches!(first.of, Some(session_event::Of::Snapshot(_))),
-            "{name}"
+            matches!(first.of, Some(session_event::Of::Opening(_))),
+            "{name}: {first:?}"
+        );
+        let second = stream.next().await.unwrap().unwrap();
+        assert!(
+            matches!(second.of, Some(session_event::Of::Snapshot(_))),
+            "{name}: {second:?}"
         );
         let mut key = None;
         while key.is_none() {

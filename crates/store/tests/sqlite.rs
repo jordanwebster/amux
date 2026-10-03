@@ -19,6 +19,7 @@ const CLOCK: CommitClock = CommitClock {
 const SHIPPED: &[&str] = &[
     "c12ecbd4ad0f378ef242319c0f137863c19e1dc5ef5a7310deeb951276b15a04",
     "e7e1f74cead2bc6888769d611d8b6b898af1854422011a20ab6e021460b60a11",
+    "8cd1a05a538c061607a3b2d959d6aebe18e8ffbe6df773b733c8d4b733ff8b37",
 ];
 
 fn step(keys: &[&str]) -> Step {

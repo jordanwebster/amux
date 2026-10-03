@@ -231,7 +231,11 @@ async fn a_replica_takes_a_tail_live_records_a_delta_and_a_reset_with_markers_in
             .count();
         assert_eq!(held, K as usize, "{host}: {}", wide.transcript());
         assert!(origin_rows(&net, "worker").await.len() > K as usize);
-        assert_eq!(marks(opening)[0], Mark::Snapshot);
+        assert!(
+            matches!(marks(opening)[..], [Mark::Opening(_), Mark::Snapshot, ..]),
+            "{host}: {}",
+            wide.transcript()
+        );
     }
 
     // A break that fits the cap: Detached, then the delta and CaughtUp,
@@ -1043,13 +1047,15 @@ async fn switching_to_on_demand_closes_every_source_no_client_watches() {
     net.shutdown().await.unwrap();
 }
 
-/// A replica of a host that lost power holds rows the host no longer has.
-/// No source of that host opens before its generation is compared, not
-/// even for a chat a client opens while the host is away, so the laptop
-/// drops them and takes a fresh tail: every chat sees a Reset and never a
-/// row the origin lost.
+/// A replica of a host that lost power holds rows the host no longer has,
+/// under a cursor the host will mint again for other content. A source
+/// resumes naming the generation its cursor was taken under, and the
+/// rewound origin answers that with a fresh tail: every chat sees a Reset
+/// before its next CaughtUp and never a row the origin lost, and the
+/// replica's cursor ends up under the new generation. A cursor taken under
+/// the new generation is answered with a delta as usual.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_never_return() {
+async fn a_rewound_origin_resets_every_source_that_resumes_under_its_old_generation() {
     const K: u32 = 6;
     let topology = desk_and_laptop().agent(
         AgentDecl::new("worker", "desk")
@@ -1086,11 +1092,19 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
     chat.observe_until(observe::caught_up, PATIENCE)
         .await
         .unwrap();
+    let generation = net.generation("desk").unwrap();
+    let before = net
+        .runtime("laptop")
+        .unwrap()
+        .store()
+        .await
+        .agent(&key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(before.source_generation, generation);
 
     // The laptop loses desk before desk comes back rewound.
     sever(&mut net).await;
-    let laptop = net.runtime("laptop").unwrap();
-    let desk = net.host("desk").unwrap().host_id;
     until("the laptop to detach desk's agents", || async {
         let state = replica_state(&net, "laptop", "worker").await;
         (state.is_some_and(|(_, marker)| marker == Some(Marker::Detached)))
@@ -1099,8 +1113,6 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
     })
     .await
     .unwrap();
-    assert!(!laptop.host_ready(desk), "an away host is not ready");
-    let generation = net.generation("desk").unwrap();
     net.rewind_host(
         "desk",
         &[JournalCut {
@@ -1112,21 +1124,11 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
     .unwrap();
     assert_eq!(net.generation("desk").unwrap(), generation + 1);
 
-    // A client opening the chat while desk is away opens no source: none
-    // may open before desk's new inventory is in and compared.
+    // A chat opened while desk is away is served as it stands, detached.
     let mut away = net.observe("laptop", "worker", 10).await.unwrap();
-    holds_for(
-        "no source opens while desk is away",
-        Duration::from_millis(300),
-        || {
-            let open = laptop.open_sources();
-            let ready = laptop.host_ready(desk);
-            async move { open.is_empty() && !ready }
-        },
-    )
-    .await
-    .unwrap();
-    drop(laptop);
+    away.observe_until(|events| marks(events).contains(&Mark::Detached), PATIENCE)
+        .await
+        .unwrap();
     restore(&mut net).await;
     for chat in [&mut away, &mut chat] {
         let events = chat
@@ -1140,9 +1142,15 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
             )
             .await
             .unwrap();
+        let since = since_last_detached(events);
+        let reset = since.iter().position(|m| *m == Mark::Reset);
+        let caught_up = since
+            .iter()
+            .position(|m| matches!(m, Mark::CaughtUp(_)))
+            .unwrap();
         assert!(
-            since_last_detached(events).contains(&Mark::Reset),
-            "{}",
+            reset.is_some_and(|reset| reset < caught_up),
+            "a Reset before the first CaughtUp after the break: {}",
             chat.transcript()
         );
         let from = events
@@ -1159,27 +1167,138 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
         );
     }
     net.current("laptop", "worker").await.unwrap();
-    let held = net
-        .runtime("laptop")
-        .unwrap()
-        .store()
-        .await
-        .cut(&key, u32::MAX)
-        .unwrap()
-        .held;
+    let laptop = net.runtime("laptop").unwrap();
+    let (held, row, recorded) = {
+        let store = laptop.store().await;
+        (
+            store.cut(&key, u32::MAX).unwrap().held,
+            store.agent(&key).unwrap().unwrap(),
+            store
+                .host_generation(net.host("desk").unwrap().host_id.as_bytes())
+                .unwrap(),
+        )
+    };
     assert!(
         !held.iter().any(|item| item.text.contains("t1-0")),
         "a row the origin lost never returns: {held:#?}"
     );
+    assert_eq!(row.source_generation, generation + 1);
+    assert_eq!(recorded, Some(generation + 1));
+
+    // The origin itself: the same cursor is a fresh tail under the old
+    // generation and a delta under the new.
+    let desk = net.runtime("desk").unwrap();
+    let stale = desk
+        .subscribe_after(&key.agent, row.source_cursor, K, generation)
+        .await
+        .unwrap();
+    let stale = opening_of(stale).await;
     assert_eq!(
-        net.runtime("laptop")
-            .unwrap()
-            .store()
-            .await
-            .host_generation(net.host("desk").unwrap().host_id.as_bytes())
-            .unwrap(),
-        Some(generation + 1)
+        stale[..2],
+        [Mark::Opening(generation + 1), Mark::Reset],
+        "{stale:?}"
     );
+    let fresh = desk
+        .subscribe_after(&key.agent, row.source_cursor, K, generation + 1)
+        .await
+        .unwrap();
+    let fresh = opening_of(fresh).await;
+    assert_eq!(
+        fresh,
+        [
+            Mark::Opening(generation + 1),
+            Mark::Snapshot,
+            Mark::CaughtUp(row.source_cursor)
+        ],
+        "{fresh:?}"
+    );
+    drop(desk);
+    drop(laptop);
+    net.shutdown().await.unwrap();
+}
+
+/// The marks of a stream's opening, through its CaughtUp.
+async fn opening_of(mut subscription: node::Subscription) -> Vec<Mark> {
+    let mut seen = Vec::new();
+    tokio::time::timeout(PATIENCE, async {
+        while let Some(event) = subscription.next().await {
+            seen.push(observe::mark(&event));
+            if matches!(seen.last(), Some(Mark::CaughtUp(_))) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the opening reaches CaughtUp");
+    seen
+}
+
+/// An exited agent's replica has settled: its source closed for good once
+/// the exit landed. When its host comes back rewound the settled source
+/// looks again, and the origin resets it like any other, so the rows the
+/// origin lost go here too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rewound_origin_resets_a_settled_replica_too() {
+    let topology = desk_and_laptop().agent(
+        AgentDecl::new("brief", "desk")
+            .steps(turns(2, 1))
+            .prompt("go"),
+    );
+    let mut net = Net::start_with(topology, options(6, |_, _| {}))
+        .await
+        .unwrap();
+    let brief = net.agent("brief").unwrap().clone();
+    let key = brief.key();
+    wait_origin_says(&net, "brief", "t0-0").await;
+    net.current("laptop", "brief").await.unwrap();
+    let durable = net.journal_end("brief").unwrap();
+    net.checkpoint_host("desk").await.unwrap();
+    net.send("brief", "lost").await.unwrap();
+    wait_origin_says(&net, "brief", "t1-0").await;
+    net.runtime("desk")
+        .unwrap()
+        .stop(brief.id, StopMode::Graceful)
+        .await
+        .unwrap();
+    let laptop = net.runtime("laptop").unwrap();
+    until("the laptop to settle brief exited", || async {
+        let row = laptop.store().await.agent(&key).unwrap();
+        let exited = row.is_some_and(|row| row.lifecycle == wire::Lifecycle::Exited as i32);
+        let open = laptop.open_sources();
+        (exited && open.is_empty())
+            .then_some(())
+            .ok_or_else(|| format!("exited {exited}, open sources {open:?}"))
+    })
+    .await
+    .unwrap();
+    let generation = net.generation("desk").unwrap();
+
+    sever(&mut net).await;
+    net.rewind_host(
+        "desk",
+        &[JournalCut {
+            agent: "brief".to_owned(),
+            byte: durable,
+        }],
+    )
+    .await
+    .unwrap();
+    restore(&mut net).await;
+    net.current("laptop", "brief").await.unwrap();
+    let (held, row) = {
+        let store = laptop.store().await;
+        (
+            store.cut(&key, u32::MAX).unwrap().held,
+            store.agent(&key).unwrap().unwrap(),
+        )
+    };
+    assert!(
+        !held.iter().any(|item| item.text.contains("t1-0")),
+        "a row the origin lost never returns: {held:#?}"
+    );
+    assert_eq!(row.source_generation, generation + 1);
+    assert_eq!(row.lifecycle, wire::Lifecycle::Exited as i32);
+    drop(laptop);
     net.shutdown().await.unwrap();
 }
 

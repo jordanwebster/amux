@@ -1,3 +1,22 @@
+2026-10-03 — **A session stream opens with its origin's generation.**
+The third repeat round on main caught the rewind frame again, and this
+time the product: a remembered agent's session is subscribed in the
+same flight as the inventory, after a cursor that named no generation,
+so a desk back from power loss answered it with an empty delta and a
+CaughtUp, and the inventory's catch-up a moment later dropped the
+replicas and forced a Reset; which of the two the frame saw was the
+runner's luck, and the mix was written down as an accepted edge. Now
+every session stream opens with an `Opening` naming the origin's
+generation, a source stores it on the block its Reset begins and sends
+it back with its cursor, and the origin answers a cursor of another
+generation the way it answers one too far behind: a fresh tail. The
+store forgets every held row at a Reset under another generation,
+because the origin numbers orders and revisions afresh. The inventory's
+catch-up only records the generation and lets the host's settled
+sources (exited agents, closed for good) look again; the host-wide
+replica drop, the session retire and the accepted edge are gone. The
+deliberate proto break is recorded in the baseline.
+
 2026-10-02 — **A prompt is sent once the first turn has ended.**
 The second repeat round on main caught the app runtime's send test: it
 sent its prompt once the first turn's text was on screen, and on a slow

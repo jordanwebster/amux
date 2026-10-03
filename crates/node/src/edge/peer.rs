@@ -99,7 +99,12 @@ impl PeerService for PeerApi {
         let subscription = match request.from {
             Some(subscribe_request::From::After(after)) => {
                 runtime
-                    .subscribe_after(&request.agent_id, after.revision, after.cap)
+                    .subscribe_after(
+                        &request.agent_id,
+                        after.revision,
+                        after.cap,
+                        after.generation,
+                    )
                     .await
             }
             Some(subscribe_request::From::Tail(tail)) => {
