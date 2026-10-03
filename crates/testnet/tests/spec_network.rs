@@ -501,11 +501,12 @@ async fn a_key_that_does_not_match_the_pinned_one_is_refused() {
             && refused.contains("invalid peer certificate"),
         "{refused}"
     );
-    never(
-        "the laptop links to a stranger claiming the desk's id",
-        async || edge(&net, "laptop").via(desk).await != HostVia::Offline,
-    )
-    .await;
+    // The dial's outcome is in: the stranger's key never matches the pin.
+    assert_eq!(
+        edge(&net, "laptop").via(desk).await,
+        HostVia::Offline,
+        "the laptop never links to a stranger claiming the desk's id"
+    );
     let pinned = edge(&net, "laptop")
         .trusted()
         .into_iter()
@@ -528,11 +529,27 @@ async fn a_key_that_does_not_match_the_pinned_one_is_refused() {
     assert_eq!(host_id(&net, "desk"), desk);
     let rotated = edge(&net, "desk").public_key().to_vec();
     assert_ne!(rotated, desk_key, "a new key");
-    never("the old pinned key links to the rotated desk", async || {
-        edge(&net, "laptop").via(desk).await != HostVia::Offline
-            || edge(&net, "desk").via(laptop).await != HostVia::Offline
+    // Each side's dial fails on the other's key: the laptop stores a new
+    // error (the one from the stranger is still held), the rotated desk
+    // its first.
+    until("the laptop's dial to the rotated desk to fail", || async {
+        match edge(&net, "laptop").last_dial_error(desk).await {
+            Some(error) if error != refused => Ok(error),
+            other => Err(format!("{other:?}")),
+        }
     })
-    .await;
+    .await
+    .unwrap();
+    until("the rotated desk's dial to the laptop to fail", || async {
+        edge(&net, "desk")
+            .last_dial_error(laptop)
+            .await
+            .ok_or("no dial error stored")
+    })
+    .await
+    .unwrap();
+    assert_eq!(edge(&net, "laptop").via(desk).await, HostVia::Offline);
+    assert_eq!(edge(&net, "desk").via(laptop).await, HostVia::Offline);
     assert!(
         peer_inventory_hosts(&edge(&net, "laptop"), desk)
             .await
@@ -1010,14 +1027,23 @@ async fn profiles_and_accounts_share_no_keys_windows_presence_or_administration(
     // work profile's listener with it gets it nowhere.
     edge(&net, "laptop").trust(&work_edge).await.unwrap();
     edge(&net, "laptop").dial(work_edge.host_id(), work_edge.lan_addr().unwrap());
-    never(
-        "a key one profile pinned authenticates into another",
-        async || {
-            edge(&net, "laptop").via(work_edge.host_id()).await != HostVia::Offline
-                || work_edge.via(laptop).await != HostVia::Offline
+    until(
+        "the laptop's dial into the work profile to fail",
+        || async {
+            edge(&net, "laptop")
+                .last_dial_error(work_edge.host_id())
+                .await
+                .ok_or("no dial error stored")
         },
     )
-    .await;
+    .await
+    .unwrap();
+    assert_eq!(
+        edge(&net, "laptop").via(work_edge.host_id()).await,
+        HostVia::Offline,
+        "a key one profile pinned never authenticates into another"
+    );
+    assert_eq!(work_edge.via(laptop).await, HostVia::Offline);
     println!(
         "work profile {}: own key, own window, the desk's peers refused",
         work.id
@@ -1249,15 +1275,25 @@ async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pr
     })
     .await
     .unwrap();
-    // A refresh re-authenticates the link it rides; a window, since no
-    // outcome marks a reconnect that must not happen.
-    holds_for(
-        "the three links to stay three",
-        Duration::from_millis(300),
-        || async { net.relay().unwrap().links("ada").await.len() == 3 },
-    )
+    // A refresh re-authenticates the link it rides and then arms the next
+    // one, five minutes before the fresh credential expires: three timers
+    // at that deadline say every refresh is through.
+    let next_refresh =
+        net.now_ms() + (testnet::CREDENTIAL_TTL - Duration::from_secs(5 * 60)).as_millis() as i64;
+    until("every link to arm its next refresh", || async {
+        let sleeping = net.clock().unwrap().sleeping();
+        let armed = sleeping.iter().filter(|at| **at == next_refresh).count();
+        (armed >= 3)
+            .then_some(())
+            .ok_or_else(|| format!("{armed} armed at {next_refresh}; sleeping {sleeping:?}"))
+    })
     .await
     .unwrap();
+    assert_eq!(
+        net.relay().unwrap().links("ada").await.len(),
+        3,
+        "the three links stayed three"
+    );
     let spawned = net
         .spawn(testnet::AgentDecl::new("scout", "desk").prompt("Look around."))
         .await

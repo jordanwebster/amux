@@ -1,3 +1,12 @@
+2026-10-03 — **Four network windows wait on the dial and the timer.**
+A refused dial stores its error, so the stranger, the rotated key and
+the other profile's listener are asserted offline once that error is
+in, not watched for a second; the laptop's error toward the rotated
+desk has to differ from the stranger's it still holds. A credential
+refresh arms the next one five minutes before expiry, so three timers
+at that deadline say every refresh is through and the links are
+counted once.
+
 2026-10-03 — **Three windows the outcome already closed.**
 The push outbox's "nothing more sent" and "one push in all" and the
 parent hand-off's "nothing handed" were windows after a wait whose
