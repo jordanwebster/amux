@@ -727,6 +727,8 @@ async fn a_host_lists_where_its_agents_ran_and_its_repositories_for_trusted_host
             .await
             .unwrap(),
     );
+    // A forced delay: the listing orders repositories by the agents'
+    // creation times, which the clock stamps in milliseconds.
     tokio::time::sleep(Duration::from_millis(5)).await;
     let second = id_of(
         &desk_runtime

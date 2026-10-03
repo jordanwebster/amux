@@ -90,14 +90,19 @@ fn host_ref(host: Uuid) -> Option<PeerRef> {
 }
 
 /// Waits for the outcome of `host`'s dial to `to`: the error it stored,
-/// which a route coming up would clear. The dial has failed, and nothing
-/// about the link is still in flight.
-async fn dial_failed(net: &Net, host: &str, to: Uuid) -> String {
-    until(&format!("{host}'s dial to fail"), || async {
-        edge(net, host)
-            .last_dial_error(to)
-            .await
-            .ok_or("no dial error stored")
+/// which a route coming up would clear. `before` is what was stored when
+/// the dial was made, so an error from an earlier dial is not taken for
+/// this one's. The dial has failed, and nothing about the link is still
+/// in flight.
+async fn dial_failed(net: &Net, host: &str, to: Uuid, before: Option<String>) -> String {
+    until(&format!("{host}'s dial to fail"), || {
+        let before = &before;
+        async move {
+            match edge(net, host).last_dial_error(to).await {
+                Some(error) if Some(&error) != before.as_ref() => Ok(error),
+                other => Err(format!("stored {other:?}, as before the dial")),
+            }
+        }
     })
     .await
     .unwrap()
@@ -352,8 +357,9 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         .trust(&edge(&net, "desk"))
         .await
         .unwrap();
+    let before = edge(&net, "stranger").last_dial_error(desk_id).await;
     edge(&net, "stranger").dial(desk_id, edge(&net, "desk").lan_addr().unwrap());
-    let refused = dial_failed(&net, "stranger", desk_id).await;
+    let refused = dial_failed(&net, "stranger", desk_id, before).await;
     assert_eq!(edge(&net, "desk").via(stranger_id).await, HostVia::Offline);
     assert_eq!(edge(&net, "stranger").via(desk_id).await, HostVia::Offline);
     println!("the stranger's dial was refused: {refused}");
@@ -443,8 +449,9 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         .await
         .expect_err("an unpaired host is no peer");
     assert_eq!(gone.code(), tonic::Code::NotFound);
+    let before = edge(&net, "laptop").last_dial_error(desk_id).await;
     edge(&net, "laptop").dial(desk_id, edge(&net, "desk").lan_addr().unwrap());
-    let refused = dial_failed(&net, "laptop", desk_id).await;
+    let refused = dial_failed(&net, "laptop", desk_id, before).await;
     assert_eq!(edge(&net, "desk").via(laptop_id).await, HostVia::Offline);
     println!("desk unpaired the laptop; its redial is refused: {refused}");
 

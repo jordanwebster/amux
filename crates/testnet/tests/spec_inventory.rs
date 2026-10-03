@@ -199,6 +199,8 @@ async fn discovery_candidates_appear_only_from_the_same_scope() {
         net.host("stranger").unwrap().host_id,
         net.host("everyday").unwrap().host_id,
     ];
+    // A window: nothing the test controls gates an announcement that
+    // discovery must not deliver across scopes.
     holds_for("no host from another scope", Duration::from_secs(1), || {
         let hosts = inventory_hosts(fleet.events());
         let seen = outsiders
@@ -282,6 +284,8 @@ async fn a_replica_its_origin_no_longer_lists_is_dropped_and_its_chats_close() {
     net.sever_link("desk", "laptop").unwrap();
     net.wait_link("desk", "laptop", false).await.unwrap();
     net.delete("quiet").await.unwrap();
+    // A window: nothing the test controls gates a drop that must not
+    // happen while the host is away.
     holds_for(
         "the replica kept while its host is away",
         Duration::from_millis(300),

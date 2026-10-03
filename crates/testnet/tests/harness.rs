@@ -19,7 +19,7 @@ use testnet::door::{CAPABILITIES, Control, ErrorKind, Readiness, Reply};
 use testnet::observe::{self, Mark, marks};
 use testnet::{
     AgentDecl, FakeKind, JournalCut, Net, NetError, PATIENCE, Stuck, Topology, TopologyError,
-    holds_for, until_within,
+    holds_for, until, until_within,
 };
 use wire::{ClaudeSdkItem, SessionEvent, claude_sdk_item, session_event};
 
@@ -355,6 +355,8 @@ async fn a_severed_link_goes_down_and_a_restored_one_comes_back() {
     net.sever_link("a", "b").unwrap();
     net.restore_link("a", "b").await.unwrap();
     net.wait_link("a", "b", true).await.unwrap();
+    // A window: nothing the test controls gates a link that must not
+    // drop again.
     holds_for(
         "the restored link to stay up",
         Duration::from_millis(500),
@@ -800,16 +802,17 @@ async fn the_door_serves_a_topology_to_a_real_client_once_it_publishes_readiness
     })
     .await
     .unwrap();
-    let exited = tokio::time::timeout(PATIENCE, async {
-        loop {
-            if let Some(status) = served.0.try_wait().unwrap() {
-                return status;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+    let exited = until("testnet serve to exit after Shutdown", || {
+        std::future::ready(
+            served
+                .0
+                .try_wait()
+                .unwrap()
+                .ok_or_else(|| "still running".to_owned()),
+        )
     })
     .await
-    .expect("testnet serve exits after Shutdown");
+    .unwrap();
     assert!(exited.success(), "{exited:?}");
     assert!(
         TcpStream::connect(control).is_err(),

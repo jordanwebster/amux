@@ -11,7 +11,6 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::{Duration, Instant};
 
 use node::release::{self, Choice, Manifest, Release, Skip, VerifyError};
 use node::supervisor::SUPERVISOR_LOCK;
@@ -25,7 +24,7 @@ const TEST_SEED: [u8; 32] = [
     0x28, 0x61, 0x70, 0x17, 0x17, 0xc9, 0x9b, 0x2a, 0xaa, 0x45, 0xe9, 0x43, 0xbb, 0xd6, 0x48, 0x12,
 ];
 const OTHER_SEED: [u8; 32] = [7; 32];
-use patience::{PATIENCE, until};
+use patience::until;
 
 /// Tests in this binary write executables and start processes on parallel
 /// threads. A process forked while another thread holds a freshly written
@@ -745,28 +744,31 @@ async fn the_amux_daemon_exits_when_its_supervisor_dies() {
         .stdin(Stdio::null());
     let mut supervisor = start(|| command.spawn()).unwrap();
     let lock = data.join(node::INSTALLATION_LOCK);
-    let deadline = Instant::now() + PATIENCE;
-    while std::os::unix::net::UnixStream::connect(&socket).is_err() {
-        assert!(Instant::now() < deadline, "the daemon never answered");
-        assert!(
-            supervisor.try_wait().unwrap().is_none(),
-            "the supervisor exited"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    until("the daemon to answer on its socket", || {
+        let answered = std::os::unix::net::UnixStream::connect(&socket).is_ok();
+        let exited = supervisor.try_wait().unwrap();
+        std::future::ready(match (answered, exited) {
+            (true, _) => Ok(()),
+            (false, Some(status)) => panic!("the supervisor exited: {status}"),
+            (false, None) => Err("no answer on the socket yet".to_owned()),
+        })
+    })
+    .await
+    .unwrap();
     assert!(locked(&lock));
     assert!(locked(&data.join(SUPERVISOR_LOCK)));
 
     supervisor.kill().unwrap();
     supervisor.wait().unwrap();
-    let deadline = Instant::now() + PATIENCE;
-    while locked(&lock) {
-        assert!(
-            Instant::now() < deadline,
-            "the daemon outlived its supervisor"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    until("the daemon to release the installation lock", || {
+        std::future::ready(if locked(&lock) {
+            Err("still locked".to_owned())
+        } else {
+            Ok(())
+        })
+    })
+    .await
+    .expect("the daemon outlived its supervisor");
     let log = std::fs::read_to_string(data.join("daemon.log")).unwrap();
     assert!(log.contains("the supervisor went away"), "{log}");
     assert!(log.contains("stopped cleanly"), "{log}");

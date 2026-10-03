@@ -250,6 +250,8 @@ async fn a_replica_takes_a_tail_live_records_a_delta_and_a_reset_with_markers_in
     let caught_up_before = count_caught_up(chat.events());
     net.send("worker", "three").await.unwrap();
     wait_origin_says(&net, "worker", "t2-1").await;
+    // A window: nothing the test controls gates a marker the laptop must
+    // not mint while the host is away.
     holds_for(
         "no CaughtUp while the host is away",
         Duration::from_millis(300),
@@ -905,6 +907,8 @@ async fn on_demand_warms_one_chat_listed_sweeps_the_rest_and_exited_agents_close
     })
     .await
     .unwrap();
+    // A window: nothing the test controls gates a source that the policy
+    // must not open.
     holds_for(
         "no source opens by itself",
         Duration::from_millis(300),

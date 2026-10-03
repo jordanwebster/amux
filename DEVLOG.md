@@ -1,3 +1,14 @@
+2026-10-03 — **The last loose ends of the sweep.**
+The supervisor test's two poll loops and the harness's wait on
+`testnet serve` exiting go through the one wait; the two sleeps that
+remain in the node tests (a send wedged on purpose, a creation time a
+millisecond apart) say why; the six windows without a reason have one;
+the store-write watch's doc says what wakes it (item writes: commits
+and absorbs) and what does not; the families' "taken" probe requires a
+snapshot again rather than reading a missing one as an empty queue;
+and the edge spec's dial wait takes what was stored before the dial,
+so an earlier dial's error is never taken for this one's.
+
 2026-10-03 — **The scripted fakes fail loudly and die with their test.**
 Both scripted catch-ups ran out of time in silence: the stdio one
 returned, the terminal one discarded the deadline. Each panics now with

@@ -859,6 +859,9 @@ async fn an_agent_that_stops_reading_holds_up_neither_other_parents_nor_a_kill()
         };
         async move { runtime.send_input(&request).await }
     });
+    // A forced delay: the send must be under way (its write wedged in the
+    // agent's socket) when the kill arrives, and the wedge itself is what
+    // leaves nothing to wait on.
     tokio::time::sleep(Duration::from_millis(50)).await;
     let bound = Duration::from_millis((2 * WRITE_MS + STOP_MS) as u64 + 2_000);
     let stopped = tokio::time::timeout(bound, runtime.stop(wedged.id, StopMode::Kill))

@@ -145,10 +145,10 @@ async fn taken(net: &Net, agent: &str, text: &str) -> usize {
             let Some(row) = row(net, &net.agent(agent).unwrap().host, agent).await else {
                 return Err("no row".to_owned());
             };
-            let queued = row
-                .snapshot
-                .as_ref()
-                .map_or(0, |snapshot| snapshot.queue.len());
+            let Some(snapshot) = row.snapshot.as_ref() else {
+                return Err("no snapshot yet".to_owned());
+            };
+            let queued = snapshot.queue.len();
             let settled =
                 row.ingest_cursor >= end && row.phase == Phase::Idle as i32 && queued == 0;
             if !settled {
@@ -674,6 +674,8 @@ async fn an_away_parents_rows_wait_and_a_stale_incarnation_is_dropped() {
     .await
     .unwrap();
     net.advance(Duration::from_secs(120)).unwrap();
+    // A window: the retry runs on the policy clock and finds no parent
+    // row to hand to; nothing the test controls marks that attempt.
     holds_for(
         "the row to wait for its parent",
         Duration::from_secs(1),

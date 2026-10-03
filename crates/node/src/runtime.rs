@@ -567,7 +567,9 @@ impl ProfileRuntime {
         self.generation
     }
 
-    /// Wakes on every write to the store, own or replicated. A waiter
+    /// Wakes on every item write to the store: an own commit or a replica
+    /// absorb, catch-up or live. Markers, agent rows, deliveries,
+    /// notifications and the retention sweeps do not wake it. A waiter
     /// reads the store after each change; the count itself only orders
     /// them.
     pub fn committed(&self) -> watch::Receiver<u64> {
