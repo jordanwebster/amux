@@ -1,3 +1,9 @@
+2026-10-03 — **Questions: no empty step, a steady box.** While questions
+are open the feed draws no step for them (the box is the ask); streamed,
+Claude's question tool showed up before its questions and read "Asking 0
+questions". A question with previews keeps its box at the height of its
+tallest preview, so moving between options no longer resizes it.
+
 2026-10-03 — **Headless Claude streams its replies again.** It was started
 without `--include-partial-messages` since the daemon was rebuilt around
 agent processes, so each reply arrived whole; the flag is back. The fake

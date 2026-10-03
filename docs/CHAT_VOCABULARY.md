@@ -202,7 +202,7 @@ Once settled, an ask leaves one of two things behind, because rows are one per i
 The attention ink is reserved for what needs you and for failures: `Row.attention` is set when an open ask points at the
 row or the row failed.
 
-![Asks that became rows: a question answered, two questions answered, a plan approved and one sent back with its note, three fields sent to a tool server, a link declined, write access granted for the turn, a question still open, and a dialog this build could not read, dismissed twice.](figures/vocabulary/row_ask.light.png)
+![Asks that became rows: a question answered, two questions answered, a plan approved and one sent back with its note, three fields sent to a tool server, a link declined, write access granted for the turn, and a dialog this build could not read, dismissed twice.](figures/vocabulary/row_ask.light.png)
 
 ## The session strip
 

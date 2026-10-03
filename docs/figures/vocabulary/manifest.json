@@ -65,13 +65,13 @@
       "theme": "light",
       "viewport": [
         100,
-        28
+        26
       ],
       "pixels": [
         1000,
-        616
+        572
       ],
-      "sha256": "8247959814f185eb09582f2b2d2061048dc883b8ff468d92af4e11b9f1a014a4"
+      "sha256": "a768a6b134a14f47e0e2a26b0bc325ff7d5c57f811b1ff00383266b38da0f0b8"
     },
     {
       "fixture": "row_boundary",

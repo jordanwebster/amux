@@ -1750,6 +1750,20 @@ impl AskUi {
         } else {
             "[Show All]"
         };
+        // The preview's room is the tallest of this question's previews, so
+        // moving between options never changes the box's height.
+        let tallest = |width: usize| {
+            question
+                .options
+                .iter()
+                .filter(|option| !option.preview.is_empty())
+                .map(|option| {
+                    let (lines, more) = preview_lines(&option.preview, width, cap, theme);
+                    lines.len() + usize::from(more > 0)
+                })
+                .max()
+                .unwrap_or(0)
+        };
         let base = out.lines.len();
         if side {
             let right_width = width.saturating_sub(left_width + 3).max(1);
@@ -1757,7 +1771,7 @@ impl AskUi {
                 Some(preview) => preview_lines(preview, right_width, cap, theme),
                 None => (Vec::new(), 0),
             };
-            let height = left.lines.len().max(right.len() + usize::from(more > 0));
+            let height = left.lines.len().max(tallest(right_width));
             for i in 0..height {
                 let mut line = left.lines.get(i).cloned().unwrap_or_default();
                 text::pad_to(&mut line, left_width);
@@ -1774,6 +1788,7 @@ impl AskUi {
             }
         } else {
             out.lines.extend(left.lines.iter().cloned());
+            let preview_top = out.lines.len();
             if let Some(preview) = preview {
                 out.lines.push(Line::default());
                 let (lines, more) = preview_lines(preview, width, cap, theme);
@@ -1788,6 +1803,12 @@ impl AskUi {
                         BoxSpot::ShowAll,
                     ));
                     out.lines.push(line);
+                }
+            }
+            if previews {
+                let height = preview_top + 1 + tallest(width);
+                while out.lines.len() < height {
+                    out.lines.push(Line::default());
                 }
             }
         }

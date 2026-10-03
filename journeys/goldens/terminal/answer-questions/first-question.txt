@@ -14,7 +14,6 @@
 
 
 
-
   started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -29,6 +28,7 @@
   │ › 1. Sidebar           │ Relay    │ Address  relay.amux.dev                                            │
   │   2. Stacked           │ Theme    │ Keepalive 30s                                                      │
   │   3. Something else    │ Keys     │                                                                    │
+  │                        │                                                                               │
   ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
 
   enter choose   ←/→ questions   ctrl+x stop   ctrl+a more

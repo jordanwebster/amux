@@ -788,7 +788,8 @@ fn plan_lines(
 
 /// Questions the agent asked, once the box is done with them: a step that
 /// says what happened ("Answered 2 questions") and a faint line per
-/// question with its answer.
+/// question with its answer. While they are open the box is the ask, and
+/// the feed draws nothing for them.
 fn questions_step(
     drawn: &mut Drawn,
     questions: &[QuestionView],
@@ -797,6 +798,9 @@ fn questions_step(
     width: usize,
     theme: Theme,
 ) {
+    if matches!(resolution, Resolution::Open) {
+        return;
+    }
     let count = if questions.len() == 1 {
         "a question".to_owned()
     } else {
@@ -807,7 +811,7 @@ fn questions_step(
         .filter(|answer| !answer_words(answer).is_empty())
         .count();
     let words = match resolution {
-        Resolution::Open => format!("Asking {count}"),
+        Resolution::Open => return,
         Resolution::Answered if answered == 0 => format!("Skipped {count}"),
         Resolution::Answered if answered < questions.len() => {
             format!("Answered {answered} of {} questions", questions.len())
