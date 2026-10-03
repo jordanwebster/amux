@@ -1,3 +1,11 @@
+2026-10-03 — **The repeat lane retires.**
+With the session streams opening on their generation and the review's
+waits in, three rounds of the repeat lane ran clean on main at
+dba000f2 (thirty-six passes of the workspace tests across Linux and
+macOS, after CI itself was green). The lane existed to sample timing
+races a single run would miss; the suite now waits on what the runtime
+reports, so the workflow and its page in the CI doc go.
+
 2026-10-03 — **The last loose ends of the sweep.**
 The supervisor test's two poll loops and the harness's wait on
 `testnet serve` exiting go through the one wait; the two sleeps that
