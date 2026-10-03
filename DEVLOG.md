@@ -1,3 +1,11 @@
+2026-10-03 — **Three windows the outcome already closed.**
+The push outbox's "nothing more sent" and "one push in all" and the
+parent hand-off's "nothing handed" were windows after a wait whose
+outcome already ruled the thing out: a push comes only from a row, and
+the drain re-reads the rows under the store lock before sending; a
+hand-off would have removed the row as delivered, so a row gone
+undelivered left nothing to hand. Plain assertions now, with the reason.
+
 2026-10-03 — **A wake is delivered under the coalescer's lock.**
 The app runtime's send test failed once more under the full suite's
 load, and the race was in the product this time: the coalescer marked

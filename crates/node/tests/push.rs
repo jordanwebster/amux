@@ -195,14 +195,10 @@ async fn a_needs_you_push_is_sent_once_due_and_cancelled_by_an_answer_exit_or_de
     assert!(rig.rows().await.is_empty(), "cancelled unsent");
     rig.clock.set(T0 + 3 * DELAY);
     rig.note("the delay passes");
-    // A window: a push that must not be sent leaves no mark to wait on.
-    holds_for(
-        "nothing more sent",
-        std::time::Duration::from_millis(100),
-        || async { rig.pushes.sent().len() == 1 },
-    )
-    .await
-    .expect("nothing more was sent");
+    // Only a row is ever sent, and the drain reads the rows afresh under
+    // the store lock before sending: with the outbox empty there is
+    // nothing the delay could send.
+    assert_eq!(rig.pushes.sent().len(), 1, "nothing more was sent");
 
     // The agent exits while it needs you: the row goes with it.
     rig.turn(&mut agent, Phase::NeedsYou, "the agent asks a third time")
@@ -231,14 +227,7 @@ async fn a_needs_you_push_is_sent_once_due_and_cancelled_by_an_answer_exit_or_de
     assert!(rig.rows().await.is_empty());
     rig.note("it is deleted: outbox []");
     rig.clock.set(T0 + 10 * DELAY);
-    // A window, as above.
-    holds_for(
-        "one push in all",
-        std::time::Duration::from_millis(100),
-        || async { rig.pushes.sent().len() == 1 },
-    )
-    .await
-    .expect("one push in all");
+    assert_eq!(rig.pushes.sent().len(), 1, "one push in all");
     rig.note(format!("pushes sent in all: {}", rig.pushes.sent().len()));
 
     drop(rig.runtime);

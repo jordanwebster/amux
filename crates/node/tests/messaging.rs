@@ -685,14 +685,13 @@ async fn a_resumed_parent_receives_nothing() {
     until("the stale row to go", || rows(&runtime, 0))
         .await
         .unwrap();
-    // A window: a hand-off that must not happen leaves no mark to wait on.
-    holds_for(
-        "nothing handed to the parent",
-        Duration::from_millis(100),
-        || async { parent.inputs().is_empty() },
-    )
-    .await
-    .expect("the resumed parent was handed nothing");
+    // The row is the only thing a hand-off could come from, and a
+    // hand-off would have removed it as delivered: gone undelivered, it
+    // left nothing to hand.
+    assert!(
+        parent.inputs().is_empty(),
+        "the resumed parent was handed nothing"
+    );
     crash(daemon, runtime).await;
 }
 
