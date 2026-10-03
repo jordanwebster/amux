@@ -778,6 +778,7 @@ impl SessionState {
         let incarnation = self.agent.incarnation;
         let reflected =
             self.transcript.key_for_input(id).is_some() || self.arrivals.key_for_input(id);
+        let listed = self.state.queue.iter().any(|entry| entry.input_id == id);
         let Some(sent) = self.inputs.get_mut(id) else {
             // A late result for an input this open never sent.
             return false;
@@ -788,8 +789,11 @@ impl SessionState {
         sent.state = match result {
             InputOutcome::Lost => InputState::Uncertain,
             InputOutcome::Reply(reply) => match reply.of {
+                // Queued while the queue lists it, or until it first does;
+                // seen listed and gone again before this reply, it already
+                // left (withdrawn or submitted).
                 Some(Of::Accepted(accepted)) if accepted.queued => {
-                    if sent.seen_queued || !reflected {
+                    if listed || (!sent.seen_queued && !reflected) {
                         InputState::Queued
                     } else {
                         InputState::Settled
@@ -811,14 +815,15 @@ impl SessionState {
         true
     }
 
-    /// A new snapshot: queued inputs it lists were seen; one seen before and
-    /// gone now was submitted or withdrawn, and is settled either way.
+    /// A new snapshot: inputs it lists were seen queued, even before the
+    /// reply accepting them arrived; a queued one seen before and gone now
+    /// was submitted or withdrawn, and is settled either way.
     fn queue_moved(&mut self) {
         let queue = &self.state.queue;
         for sent in self.inputs.iter_mut() {
             let listed = queue.iter().any(|entry| entry.input_id == sent.id);
             match sent.state {
-                InputState::Queued if listed => sent.seen_queued = true,
+                InputState::Sent | InputState::Queued if listed => sent.seen_queued = true,
                 InputState::Queued if sent.seen_queued => sent.state = InputState::Settled,
                 _ => {}
             }

@@ -79,6 +79,43 @@ fn a_queued_prompt_is_queued_until_it_leaves_the_queue() {
     }
 }
 
+/// The snapshot that lists a queued prompt can beat the reply accepting it.
+/// Once the prompt has been seen listed, a snapshot without it means it
+/// left the queue (withdrawn or submitted), whichever arrived first.
+#[test]
+fn a_queued_prompt_listed_before_its_reply_settles_when_it_leaves() {
+    for kind in KINDS {
+        // Withdrawn after the reply.
+        let mut state = live(kind, Phase::Working, &[]);
+        apply_checked(&mut state, Msg::Send(prompt_input(kind, b"p1", "next")));
+        apply_checked(
+            &mut state,
+            ev_snapshot(snapshot(kind, 6, Phase::Working, &[], &[(b"p1", false)])),
+        );
+        apply_checked(&mut state, Msg::Sent(b"p1".to_vec(), accepted(true)));
+        assert_eq!(state.input_state(b"p1"), Some(InputState::Queued));
+        apply_checked(
+            &mut state,
+            ev_snapshot(snapshot(kind, 7, Phase::Working, &[], &[])),
+        );
+        assert_eq!(state.input_state(b"p1"), Some(InputState::Settled));
+
+        // Withdrawn before the reply arrived.
+        let mut state = live(kind, Phase::Working, &[]);
+        apply_checked(&mut state, Msg::Send(prompt_input(kind, b"p2", "next")));
+        apply_checked(
+            &mut state,
+            ev_snapshot(snapshot(kind, 6, Phase::Working, &[], &[(b"p2", false)])),
+        );
+        apply_checked(
+            &mut state,
+            ev_snapshot(snapshot(kind, 7, Phase::Working, &[], &[])),
+        );
+        apply_checked(&mut state, Msg::Sent(b"p2".to_vec(), accepted(true)));
+        assert_eq!(state.input_state(b"p2"), Some(InputState::Settled));
+    }
+}
+
 #[test]
 fn a_rejection_is_final_and_touches_no_row() {
     for kind in KINDS {

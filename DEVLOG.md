@@ -1,3 +1,11 @@
+2026-10-03 — **A withdrawn prompt no longer stays "queued".** The client
+noted that a prompt had been listed in the queue only once the reply
+accepting it had arrived; when the host's queue update listing it came
+first, nothing was noted, so after a withdraw the queue without it read as
+"not listed yet" and the prompt kept drawing as about to be queued. A
+listing now counts whichever arrives first, in the shared client state,
+so the phone has the fix too.
+
 2026-10-03 — **No cursor after streaming text.** A reply still arriving
 no longer ends in a faint `▍`; the working line already says the agent is
 writing.
