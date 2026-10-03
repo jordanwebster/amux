@@ -1,3 +1,11 @@
+2026-10-03 — **Headless Claude streams its replies again.** It was started
+without `--include-partial-messages` since the daemon was rebuilt around
+agent processes, so each reply arrived whole; the flag is back. The fake
+headless Claude now starts a new message after each tool's result and
+numbers each message's streamed blocks from zero, as Claude does; with
+one message for the whole turn, a reply streamed after a tool call was
+shown twice.
+
 2026-10-03 — **A withdrawn prompt no longer stays "queued".** The client
 noted that a prompt had been listed in the queue only once the reply
 accepting it had arrived; when the host's queue update listing it came

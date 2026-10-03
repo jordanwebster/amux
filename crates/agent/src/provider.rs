@@ -130,7 +130,8 @@ impl Provider {
     }
 
     /// Headless Claude: `claude -p` over stream-JSON, told to echo each
-    /// user message so its reflection carries the uuid it was sent with.
+    /// user message so its reflection carries the uuid it was sent with,
+    /// and to send its reply as it is written rather than whole.
     async fn spawn_sdk(
         spec: &AgentSpec,
         dir: &Path,
@@ -148,6 +149,7 @@ impl Provider {
                 "--output-format",
                 "stream-json",
                 "--verbose",
+                "--include-partial-messages",
                 "--permission-prompt-tool",
                 "stdio",
                 "--replay-user-messages",

@@ -130,6 +130,10 @@ struct Engine {
     answers: BTreeMap<String, Value>,
     turns: u32,
     last_text: String,
+    /// Content blocks the current model response has sent: Claude numbers
+    /// a response's streamed blocks from zero, in the order its assistant
+    /// frames carry them.
+    blocks: u32,
     /// The tool servers each turn's init reports.
     server_states: Vec<crate::script::ServerState>,
     /// The context in use each message reports, when scripted.
@@ -202,6 +206,7 @@ impl Engine {
             answers: BTreeMap::new(),
             turns: 0,
             last_text: String::new(),
+            blocks: 0,
             server_states: script.servers,
             context_tokens: script.context_tokens,
             edit_files: script.edit_files,
@@ -530,8 +535,11 @@ impl Engine {
         self.running = None;
         self.absorbed.clear();
         self.last_text.clear();
-        let request = self.ids.next("req_fake");
-        let message = self.ids.next("msg_fake");
+        // One model response per request: a new one after each tool's
+        // result, as Claude makes a new API call to continue.
+        let mut request = self.ids.next("req_fake");
+        let mut message = self.ids.next("msg_fake");
+        self.blocks = 0;
         if let Some(uuid) = first.uuid.clone() {
             self.lifecycle(&uuid, "started").await;
             self.running = Some(uuid);
@@ -563,6 +571,9 @@ impl Engine {
                     let outcome = self.outcome(&tool, &input).await;
                     self.tool_result(&id, &tool, &input, outcome).await;
                     self.fold().await;
+                    request = self.ids.next("req_fake");
+                    message = self.ids.next("msg_fake");
+                    self.blocks = 0;
                 }
                 Step::Ask(ask) => {
                     calls += 1;
@@ -570,6 +581,9 @@ impl Engine {
                     if self.cut.is_none() {
                         self.fold().await;
                     }
+                    request = self.ids.next("req_fake");
+                    message = self.ids.next("msg_fake");
+                    self.blocks = 0;
                 }
                 Step::WaitFor { path } => {
                     while !path.exists() && self.cut.is_none() {
@@ -697,6 +711,7 @@ impl Engine {
     }
 
     fn assistant(&mut self, request: &str, message: &str, block: Value) -> Value {
+        self.blocks += 1;
         json!({
             "type": "assistant",
             "message": {
@@ -724,6 +739,7 @@ impl Engine {
 
     async fn text(&mut self, request: &str, message: &str, chunks: &[String]) {
         let text: String = chunks.concat();
+        let index = self.blocks;
         if self.args.include_partial_messages {
             self.stream(json!({
                 "type": "message_start",
@@ -743,7 +759,7 @@ impl Engine {
             .await;
             self.stream(json!({
                 "type": "content_block_start",
-                "index": 0,
+                "index": index,
                 "content_block": { "type": "text", "text": "" },
             }))
             .await;
@@ -753,7 +769,7 @@ impl Engine {
                 }
                 self.stream(json!({
                     "type": "content_block_delta",
-                    "index": 0,
+                    "index": index,
                     "delta": { "type": "text_delta", "text": chunk },
                 }))
                 .await;
@@ -762,7 +778,7 @@ impl Engine {
         let frame = self.assistant(request, message, json!({ "type": "text", "text": text }));
         self.send(frame).await;
         if self.args.include_partial_messages {
-            self.stream(json!({ "type": "content_block_stop", "index": 0 }))
+            self.stream(json!({ "type": "content_block_stop", "index": index }))
                 .await;
         }
         self.last_text = text;
