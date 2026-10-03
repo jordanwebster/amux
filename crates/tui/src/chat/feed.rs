@@ -662,12 +662,9 @@ fn prose(drawn: &mut Drawn, words: &[Segment], streaming: bool, width: usize, th
         source.as_str()
     };
     // Tables may run the chat's full width.
-    let mut lines = markdown_linked(source, wrap, width.saturating_sub(2), theme);
+    let lines = markdown_linked(source, wrap, width.saturating_sub(2), theme);
     if lines.is_empty() {
         return;
-    }
-    if streaming && let Some((last, _)) = lines.last_mut() {
-        last.spans.push(Span::styled(" ▍", theme.faint()));
     }
     for (line, links) in lines {
         drawn.lines.push(line);

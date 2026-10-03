@@ -535,9 +535,7 @@ fn body(
             lines
         }
         RowKind::Prose {
-            text,
-            streaming,
-            working_note,
+            text, working_note, ..
         } => {
             let source: String = text
                 .iter()
@@ -546,11 +544,7 @@ fn body(
                     Segment::Attachment(view) => chip(view),
                 })
                 .collect();
-            let mut lines = markdown(&source, width, *working_note, theme);
-            if *streaming && let Some(last) = lines.last_mut() {
-                last.spans.push(Span::styled(" ▍", theme.muted()));
-            }
-            lines
+            markdown(&source, width, *working_note, theme)
         }
         RowKind::Thinking {
             text,

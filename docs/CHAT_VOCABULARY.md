@@ -48,7 +48,7 @@ kind is the [`ui_view::RowKind`](../crates/ui-view/src/rows.rs) variant the view
 | Thinking | `Thinking { text, open, duration_ms }` | A quiet "Thought for 8s" row that opens to the text when there is text. | partial | full | full: summary and full text |
 | Message between agents | `AgentMessage { from, kind, text, to, sent, rejection }` | Sender and first line, opening to the body; a sent message shows its recipient and how the send went. | full | full | full |
 
-![Chat prose rows in the terminal: a finished reply with markdown, a reply still streaming with its cursor, a working note, a focused row with its left bar, and a row flagged for attention.](figures/vocabulary/row_prose.light.png)
+![Chat prose rows in the terminal: a finished reply with markdown, a reply still streaming, a working note, a focused row with its left bar, and a row flagged for attention.](figures/vocabulary/row_prose.light.png)
 
 ![Messages between agents: one received, a child's finished report, one sent and delivered, and one the recipient refused.](figures/vocabulary/row_agent_message.light.png)
 

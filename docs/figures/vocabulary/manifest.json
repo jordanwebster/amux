@@ -15,7 +15,7 @@
         1000,
         330
       ],
-      "sha256": "62ed04d56fd5afe7f3c04fb5f8088d7f392cab943f4e9db3676da234c7b48131"
+      "sha256": "43e2bc2286910bb7d4fde78e39a850f308eb0021770e90ec00f0babd3c81f99c"
     },
     {
       "fixture": "row_tool_call",

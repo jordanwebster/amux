@@ -1,3 +1,7 @@
+2026-10-03 — **No cursor after streaming text.** A reply still arriving
+no longer ends in a faint `▍`; the working line already says the agent is
+writing.
+
 2026-10-02 — **Home says which agent and where.** Each row's faint
 words after the name now name the agent (Claude, Claude in its own
 terminal, or Codex) and its folder from `~`, then its host when it is
