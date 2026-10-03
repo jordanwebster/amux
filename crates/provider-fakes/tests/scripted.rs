@@ -291,14 +291,44 @@ async fn stdio(scenario: &Scenario) -> Result<(), String> {
         let until = Instant::now() + within;
         while fake.len() < count {
             let left = until.saturating_duration_since(Instant::now());
-            let Ok(Ok(Some(line))) = tokio::time::timeout(left, lines.next_line()).await else {
-                return;
+            let line = match tokio::time::timeout(left, lines.next_line()).await {
+                Ok(Ok(Some(line))) => line,
+                Ok(Ok(None)) => panic!(
+                    "the fake's stdout ended at {} of {count} compared frames",
+                    fake.len()
+                ),
+                Ok(Err(error)) => panic!("reading the fake's stdout failed: {error}"),
+                Err(_) => panic!(
+                    "the fake wrote {} of {count} compared frames within {within:?}",
+                    fake.len()
+                ),
             };
             let frame: Value = serde_json::from_str(&line).unwrap();
             if let Some(kind) = frame_kind(kind, &frame) {
                 fake.push((kind, frame));
             }
         }
+    }
+    // Reads the fake's frames to its end, once its stdin is closed.
+    async fn drain(
+        kind: Kind,
+        lines: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+        fake: &mut Vec<(String, Value)>,
+        within: Duration,
+    ) {
+        let read = tokio::time::timeout(within, async {
+            while let Some(line) = lines.next_line().await.unwrap() {
+                let frame: Value = serde_json::from_str(&line).unwrap();
+                if let Some(kind) = frame_kind(kind, &frame) {
+                    fake.push((kind, frame));
+                }
+            }
+        })
+        .await;
+        assert!(
+            read.is_ok(),
+            "the fake did not end within {within:?} of its stdin closing"
+        );
     }
     for event in &process.events {
         match event.channel {
@@ -325,7 +355,7 @@ async fn stdio(scenario: &Scenario) -> Result<(), String> {
         }
     }
     drop(stdin.take());
-    catch_up(scenario.kind, &mut lines, &mut fake, usize::MAX, END).await;
+    drain(scenario.kind, &mut lines, &mut fake, END).await;
     let _ = tokio::time::timeout(END, child.wait()).await;
     let fake: Vec<String> = fake.into_iter().map(|(kind, _)| kind).collect();
     let recorded: Vec<String> = recorded.into_iter().map(|(kind, _)| kind).collect();
@@ -415,7 +445,11 @@ async fn terminal(scenario: &Scenario) -> Result<(), String> {
         size: pty_host::PtySize::default(),
     })
     .unwrap();
-    let handle = spawned.handle;
+    // The fake dies with the test, whichever way it ends: the PTY's
+    // reader and waiter are blocking tasks the runtime waits for on its
+    // way down, and they only return once the child is gone.
+    let reaper = Reaper(spawned.handle);
+    let handle = &reaper.0;
     let mut output = handle.output();
     // Keys count once the terminal takes input: from its first screen, after
     // it resets its input.
@@ -451,13 +485,10 @@ async fn terminal(scenario: &Scenario) -> Result<(), String> {
             })
             .collect()
     };
-    // Gives the fake up to SYNC to reach the recording's row and hook
-    // counts before the next input. A recording may hold rows the fake
-    // never writes (a queued prompt's fold, say), so running out of time
-    // here is not the failure: the comparison at the end is the judge, and
-    // this only makes sure it is not comparing too early.
+    // Waits for the fake to reach the recording's row and hook counts
+    // before the next input.
     let catch_up = async |rows: usize, hooks: usize| {
-        let _ = until_within("the fake to catch up with the recording", SYNC, || {
+        until_within("the fake to catch up with the recording", SYNC, || {
             let (have_rows, have_hooks) = (fake_rows().len(), fake_hooks().len());
             std::future::ready(if have_rows >= rows && have_hooks >= hooks {
                 Ok(())
@@ -467,7 +498,8 @@ async fn terminal(scenario: &Scenario) -> Result<(), String> {
                 ))
             })
         })
-        .await;
+        .await
+        .unwrap();
     };
     let mut rows = Vec::new();
     let mut hooks = Vec::new();
@@ -507,7 +539,7 @@ async fn terminal(scenario: &Scenario) -> Result<(), String> {
     // them. A propagation sleep, so a mismatch report shows them.
     tokio::time::sleep(Duration::from_millis(300)).await;
     let (fake_rows, fake_hooks) = (fake_rows(), fake_hooks());
-    let _ = handle.signal_process_group(pty_host::ProcessGroupSignal::Kill);
+    drop(reaper);
     if !fake_rows.starts_with(&rows) {
         return Err(mismatch("transcript rows", &fake_rows, &rows));
     }
@@ -515,6 +547,18 @@ async fn terminal(scenario: &Scenario) -> Result<(), String> {
         return Err(mismatch("hook payloads", &fake_hooks, &hooks));
     }
     Ok(())
+}
+
+/// Kills the fake's process group when dropped, so the test's end, by
+/// return or by panic, is the fake's end too.
+struct Reaper(pty_host::PtyHandle);
+
+impl Drop for Reaper {
+    fn drop(&mut self) {
+        let _ = self
+            .0
+            .signal_process_group(pty_host::ProcessGroupSignal::Kill);
+    }
 }
 
 async fn conforms(scenario: Scenario) {

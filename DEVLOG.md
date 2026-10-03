@@ -1,3 +1,13 @@
+2026-10-03 — **The scripted fakes fail loudly and die with their test.**
+Both scripted catch-ups ran out of time in silence: the stdio one
+returned, the terminal one discarded the deadline. Each panics now with
+what the fake had written, and the end-of-run read to the fake's exit
+is its own step. A test that panicked mid-run used to hang, because the
+PTY's reader and waiter are blocking tasks the runtime waits for and
+the fake kept the PTY open; the fake's handle is held by a reaper that
+kills its process group on drop, so a panic ends the fake too (checked
+with a deliberate panic: the test fails in a second).
+
 2026-10-03 — **The families journey waits for the hand-off in hand.**
 A one-second sleep stood for "server's hand-off has reached desk, which
 holds it for the frozen lead's verdict". The runtime now says whether
