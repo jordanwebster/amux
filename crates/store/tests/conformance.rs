@@ -1001,6 +1001,29 @@ fn a_reset_under_another_generation_forgets_every_held_row<S: Store>(store: S) {
     );
     store.absorb(&agent, Absorb::CaughtUp(62)).unwrap();
     assert_eq!(store.agent(&agent).unwrap().unwrap().source_cursor, 62);
+
+    // The envelope too, even at revision 0: a rewound origin that has not
+    // committed a snapshot since serves the one it holds, and the old
+    // generation's phase must not outlive its rows.
+    let mut row = store.agent(&agent).unwrap().unwrap();
+    row.phase = Phase::Working as i32;
+    row.working_on = Some("old generation".into());
+    store.put_agent(&row).unwrap();
+    store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![],
+                snapshot: snapshot(Phase::Idle, None, 7),
+                generation: 3,
+            },
+        )
+        .unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.source_generation, 3);
+    assert_eq!(row.phase, Phase::Idle as i32);
+    assert_eq!(row.working_on, None);
+    assert_eq!(row.snapshot_revision, 0);
 }
 
 fn a_hosts_generation_is_recorded_as_its_inventory_reports_it<S: Store>(store: S) {

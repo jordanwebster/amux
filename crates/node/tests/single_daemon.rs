@@ -653,7 +653,11 @@ async fn a_lagging_subscriber_is_closed_with_lagged_and_ingest_never_waits() {
 }
 
 /// Installs a join hook that starts an ingest of `agent` and gives it time
-/// to reach the store before the subscribe reads its cut.
+/// to reach the store before the subscribe reads its cut. A forced delay:
+/// the subscribe holds the store lock through its opening, so the ingest
+/// cannot commit until the hook returns and nothing it writes can be
+/// waited on; the sleep only makes the contention real rather than
+/// absent, and the test's outcome is the same either way.
 fn ingest_between_join_and_cut(runtime: &Arc<ProfileRuntime>, agent: uuid::Uuid) {
     let target = Arc::downgrade(runtime);
     let hook: JoinHook = Arc::new(move || {

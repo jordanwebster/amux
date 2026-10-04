@@ -948,7 +948,8 @@ fn absorb(tables: &mut dyn Tables, agent: &AgentKey, what: Absorb) -> Result<Abs
             snapshot,
             generation,
         } => {
-            if generation != row.source_generation {
+            let fresh = generation != row.source_generation;
+            if fresh {
                 if let Some(max) = tables.max_order(agent)? {
                     tables.remove_items_below(agent, max + 1)?;
                 }
@@ -967,7 +968,9 @@ fn absorb(tables: &mut dyn Tables, agent: &AgentKey, what: Absorb) -> Result<Abs
             }
             row.complete_from_order = Some(floor);
             row.exhausted = false;
-            if snapshot.revision > row.snapshot_revision {
+            // Under a new generation the envelope is the origin's whatever
+            // its revision: a snapshot numbered 0 is still the one it holds.
+            if fresh || snapshot.revision > row.snapshot_revision {
                 copy_envelope(&mut row, &snapshot);
                 absorbed.stored.push(Record::Snapshot(snapshot));
             }

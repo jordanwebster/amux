@@ -1,3 +1,15 @@
+2026-10-04 — **A rewound origin's envelope replaces the old one whatever its number.**
+The handoff review found that a Reset under a new generation copied the
+fresh snapshot only when its revision beat the row's, which, zeroed, still
+refused a snapshot numbered 0: a rewound origin that had not committed a
+snapshot since its checkpoint left the old generation's phase and
+working-on text on the replica until it did. The envelope is copied
+whenever the generation changed, with a conformance case. The generation
+file's doc stops saying peers drop replicas, and the single-daemon test's
+hundred-millisecond hook says why it is a forced delay (the subscribe
+holds the store lock through its opening, so nothing the ingest writes
+can be waited on).
+
 2026-10-03 — **The repeat lane retires.**
 With the session streams opening on their generation and the review's
 waits in, three rounds of the repeat lane ran clean on main at
