@@ -454,6 +454,9 @@ impl Engine {
                 if !model.efforts.is_empty() {
                     offered["supportedEffortLevels"] = json!(model.efforts);
                 }
+                if let Some(resolved) = &model.resolved_model {
+                    offered["resolvedModel"] = json!(resolved);
+                }
                 offered
             }).collect::<Vec<_>>(),
             "output_style": "default",

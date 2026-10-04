@@ -113,6 +113,10 @@ pub struct OfferedModel {
     pub efforts: Vec<String>,
     #[serde(default)]
     pub default_effort: Option<String>,
+    /// The model id an alias stands for, as headless Claude reports it
+    /// ("default" stands for "claude-opus-5[1m]").
+    #[serde(default)]
+    pub resolved_model: Option<String>,
 }
 
 impl OfferedModel {
@@ -124,6 +128,7 @@ impl OfferedModel {
             description: "The scripted model".into(),
             efforts: ["low", "medium", "high"].map(str::to_owned).to_vec(),
             default_effort: Some("medium".into()),
+            resolved_model: None,
         }
     }
 

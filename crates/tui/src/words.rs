@@ -4,11 +4,25 @@
 use ui_state::SessionState;
 use ui_view::{ModeValue, settings};
 
-/// The current model by the name a person reads: the display name the
-/// agent offers for it, else a bare alias capitalised (`opus` reads
-/// "Opus"), else its id as the agent reports it. None when unknown.
+/// The model running, by the name a person reads: the display name the
+/// agent offers for exactly that model, else its id tidied into a name.
+/// An alias that stands for it ("Default (recommended)", "opus") names a
+/// choice, not the model, so the id wins over it. Before the agent reports
+/// a model, the offer's current choice by its display name or alias.
+/// None when unknown.
 pub(crate) fn model_words(state: &SessionState) -> Option<String> {
     let view = settings(state);
+    let running = state.agent_state().model.as_deref().unwrap_or_default();
+    if !running.is_empty() {
+        let named = view
+            .models
+            .iter()
+            .find(|model| model.value == running && !model.display_name.is_empty());
+        return Some(match named {
+            Some(model) => model.display_name.clone(),
+            None => model_name(running),
+        });
+    }
     let current = view.models.iter().find(|model| model.current)?;
     if !current.display_name.is_empty() {
         return Some(current.display_name.clone());
@@ -34,10 +48,15 @@ fn capitalised(word: &str) -> String {
 
 /// A model id read as a name when the agent offers none: "gpt-5-codex"
 /// reads "GPT-5 Codex", "claude-opus-4-1-20250805" reads "Opus 4.1". The
-/// provider's family prefix goes, a trailing date goes, version numbers
+/// provider's family prefix goes, a trailing date goes, a bracketed
+/// variant goes ("claude-opus-5[1m]" reads "Opus 5"), version numbers
 /// join with dots and words are capitalised. Anything else keeps its id.
 pub(crate) fn model_name(id: &str) -> String {
-    let mut parts: Vec<&str> = id.split('-').filter(|part| !part.is_empty()).collect();
+    let base = match id.split_once('[') {
+        Some((base, _)) if id.ends_with(']') && !base.is_empty() => base,
+        _ => id,
+    };
+    let mut parts: Vec<&str> = base.split('-').filter(|part| !part.is_empty()).collect();
     if parts
         .last()
         .is_some_and(|last| last.len() == 8 && last.chars().all(|c| c.is_ascii_digit()))

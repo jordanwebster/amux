@@ -815,6 +815,11 @@ impl Picker {
                 theme.text()
             };
             push(&mut row, choice.label.clone(), ink, wide);
+            // The mark before the detail, so a long detail cut at the
+            // edge never takes it.
+            if choice.current {
+                push(&mut row, " ✓", theme.faint(), wide);
+            }
             if !choice.detail.is_empty() {
                 push(
                     &mut row,
@@ -822,9 +827,6 @@ impl Picker {
                     theme.faint(),
                     wide,
                 );
-            }
-            if choice.current {
-                push(&mut row, " ✓", theme.faint(), wide);
             }
             lines.push(row);
             rows.push(Some(at));

@@ -1,5 +1,5 @@
 {
-  "description": "One long headless-Claude chat with every common row kind: thinking (not drawn), reads and searches, a subagent, edits across thirty files, commands that pass and fail, a web search, a task list and usage near its limit. Its edits are real, in a git repository, so [Diff] opens the review page on a real working-tree diff. Send anything for a scripted reply.",
+  "description": "One long headless-Claude chat with every common row kind: thinking (not drawn), reads and searches, a subagent, edits across thirty files, commands that pass and fail, a web search, a task list, usage near its limit, two tool servers that need signing in and one that failed. Its model is Claude's Default, which stands for Opus 5. Its edits are real, in a git repository, so [Diff] opens the review page on a real working-tree diff. Send anything for a scripted reply.",
   "client": "laptop",
   "open": "blob cache eviction",
   "topology": {
@@ -63,17 +63,66 @@
         "repository": "amux",
         "prompt": "The phone's memory climbs when a chat has lots of screenshots. Can you cap the blob cache in the session driver?",
         "script": {
-          "model": "claude-opus-4-1-20250805",
+          "model": "claude-opus-5[1m]",
           "models": [
             {
-              "value": "claude-opus-4-1-20250805",
-              "display_name": "Opus 4.1",
+              "value": "default",
+              "display_name": "Default (recommended)",
+              "description": "Opus 5 with 1M context · Best for everyday, complex tasks",
               "efforts": [
                 "low",
                 "medium",
-                "high"
+                "high",
+                "max"
               ],
-              "default_effort": "high"
+              "default_effort": "high",
+              "resolved_model": "claude-opus-5[1m]"
+            },
+            {
+              "value": "opus[1m]",
+              "display_name": "Opus (1M context)",
+              "description": "Opus 5 with 1M context · Best for everyday, complex tasks",
+              "efforts": [
+                "low",
+                "medium",
+                "high",
+                "max"
+              ],
+              "default_effort": "high",
+              "resolved_model": "claude-opus-5[1m]"
+            },
+            {
+              "value": "sonnet",
+              "display_name": "Sonnet",
+              "description": "Sonnet 5 · Efficient for routine tasks",
+              "efforts": [
+                "low",
+                "medium",
+                "high",
+                "max"
+              ],
+              "default_effort": "high",
+              "resolved_model": "claude-sonnet-5"
+            },
+            {
+              "value": "haiku",
+              "display_name": "Haiku",
+              "description": "Haiku 4.5 · Fastest for quick answers",
+              "resolved_model": "claude-haiku-4-5-20251001"
+            }
+          ],
+          "servers": [
+            {
+              "name": "linear",
+              "status": "needs-auth"
+            },
+            {
+              "name": "figma",
+              "status": "needs-auth"
+            },
+            {
+              "name": "sentry",
+              "status": "failed"
             }
           ],
           "context_tokens": 142000,

@@ -1,3 +1,16 @@
+2026-10-04 — **The running model by name; tool servers counted once.**
+The composer's edge names the model running rather than the choice that
+picked it: Claude's "Default (recommended)" reads "Opus 5". The model
+list in a chat carries each model's own line from the agent, which says
+what an alias stands for, with the current mark ahead of it so a long
+line never cuts it off. The row above the composer counts tool servers
+instead of naming each one: how many need signing in, in the warning
+ink, and how many failed to start, in red. They show when the chat
+opens, go once you send or open the overview, and come back only when
+another one fails; the overview keeps each by name. The fake headless
+Claude reports what an alias resolves to, and the rich-chat set offers
+Claude's models with two tool servers to sign in and one failed.
+
 2026-10-04 — **Coming home from an agent's own terminal no longer exits
 amux.** Leaving raw attach with `<leader> h` failed with "The cursor
 position could not be read within a normal duration" and dropped to the

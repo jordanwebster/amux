@@ -255,6 +255,12 @@ pub struct ChatView {
     pane_spots: Vec<(u16, (u16, u16), pane::PaneHit)>,
     /// The row above the composer, which opens the pane.
     row_spot: Option<(u16, (u16, u16))>,
+    /// Tool servers the row has told about. It counts the failing ones
+    /// when the chat opens, until a send or the pane opening, and again
+    /// only once another one fails; the pane keeps the full list.
+    servers_told: HashSet<String>,
+    /// The tool servers failing on the last frame.
+    servers_failing: Vec<String>,
     /// A boxed ask's choices and controls.
     ask_spots: Vec<(u16, (u16, u16), ask::BoxSpot)>,
     /// The step the boxed ask points at, which the feed leaves out.
@@ -340,6 +346,8 @@ impl ChatView {
             revealed: false,
             pane_spots: Vec::new(),
             row_spot: None,
+            servers_told: HashSet::new(),
+            servers_failing: Vec::new(),
             ask_spots: Vec::new(),
             asking: None,
             plan_seen: None,
@@ -785,6 +793,7 @@ impl ChatView {
                 let (text, attachments) = self.editor.take_prompt();
                 self.not_sent = None;
                 self.follow();
+                self.servers_seen();
                 vec![ChatEffect::Prompt { text, attachments }]
             }
             Composer::Resume => {
@@ -820,7 +829,9 @@ impl ChatView {
                             } else {
                                 model.display_name.clone()
                             },
-                            detail: String::new(),
+                            // The provider's own line on it, which also
+                            // says what an alias such as Default stands for.
+                            detail: model.description.clone(),
                             value: model.value.clone(),
                             current: model.current,
                             disabled: false,
@@ -928,7 +939,14 @@ impl ChatView {
     /// Opens the pane with the keys.
     pub fn open_pane(&mut self) {
         self.pane_open = true;
+        self.servers_seen();
         self.focus_pane();
+    }
+
+    /// The failing tool servers on screen have been seen: the row stops
+    /// counting them.
+    fn servers_seen(&mut self) {
+        self.servers_told.extend(self.servers_failing.drain(..));
     }
 
     pub fn close_pane(&mut self) {
@@ -1791,9 +1809,19 @@ impl ChatView {
         // from whatever is above. It is the pane folded: while the pane is
         // open it takes the row's place.
         let running = crate::pending::background_jobs(state).len();
+        self.servers_failing = strip
+            .failed_servers
+            .iter()
+            .map(|server| server.name.clone())
+            .collect();
+        let servers_new = self
+            .servers_failing
+            .iter()
+            .any(|name| !self.servers_told.contains(name));
         if !side
             && let Some(line) = edge_row(
                 &strip,
+                servers_new,
                 running,
                 !self.editor.is_empty(),
                 now_ms,

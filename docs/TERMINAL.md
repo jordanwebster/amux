@@ -136,10 +136,13 @@ Enter on a row opens its chat. From top to bottom:
 - **The queue**, just above the composer: prompts waiting behind the running turn, one line each, faint on your
   message's surface, saying how each waits (`queued`, `queued from relay` from another agent, `sending into this
   turn`, `waiting for desk…`, `may not have arrived`).
-- **The row above the composer**, when there is something to say: tool servers that need signing in (in red), the
-  task in progress and `3 of 4 tasks`, and `ctrl+o` for the overview.
+- **The row above the composer**, when there is something to say: the task in progress and `3 of 4 tasks`, how
+  many tool servers need signing in (`2 tool servers need sign-in`, in the warning ink) or failed to start (in
+  red), and `ctrl+o` for the overview. The tool servers are counted when the chat opens and again only when
+  another one fails; a send or opening the overview puts them away, and the overview keeps each by name.
 - **The composer**, boxed, with `Model (effort) · mode` on its bottom edge in the words a person reads (`Opus
-  (high) · accept edits`). Its top edge says what stands in the way of sending, most pressing first: a prompt the
+  (high) · accept edits`). The model is the one running: Claude's `Default (recommended)` reads as the model it
+  stands for (`Opus 5`). Its top edge says what stands in the way of sending, most pressing first: a prompt the
   agent refused (`not sent: it is shutting down`, in red), the host away (`desk is away`), an exited agent (`Enter
   resumes`), a usage limit reached (`5-hour limit reached · resets 23:24`, in the warning ink; sending stays
   open). One blank line below it, the key line: `shift+tab mode · ctrl+a more` at rest, `enter queue · ctrl+x
@@ -235,7 +238,8 @@ lists what the report holds.
 
 The terminal client has no settings screen. Shift+Tab moves the agent to its next mode where it has one, and
 `ctrl+s` then `m` or `e` changes a running agent's model or effort where it lets a client change them (terminal
-Claude's change by typing its own `/model` or `/effort`). The phone's settings sheet offers every model, effort and
+Claude's change by typing its own `/model` or `/effort`); each model in the list carries the agent's own line on
+it, which says what an alias such as Claude's Default stands for. The phone's settings sheet offers every model, effort and
 mode the agent reports.
 
 The terminal's appearance, its leader key and how new agents start come from the installation config file

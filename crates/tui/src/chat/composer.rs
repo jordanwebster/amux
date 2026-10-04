@@ -19,12 +19,14 @@ const GROUP_GAP: usize = 4;
 /// The row that sits on the composer's box, starting on its border's
 /// column so it reads as the composer's and not the feed's: what is still
 /// in flight in this chat at the left (the task in progress and how many
-/// are done, failed tool servers, how many `jobs` run in the background),
+/// are done, how many tool servers need signing in or failed, while
+/// `servers` says some are news, how many `jobs` run in the background),
 /// set apart by space rather than dots, and at the right the usage limit,
 /// only near it and only while `typing`, since that is when it bears on a
 /// choice. None when there is nothing to say.
 pub fn edge_row(
     strip: &Strip,
+    servers: bool,
     jobs: usize,
     typing: bool,
     now_ms: i64,
@@ -43,13 +45,25 @@ pub fn edge_row(
         }
         groups.push(vec![(count, theme.faint())]);
     }
-    for server in &strip.failed_servers {
-        let words = if server.needs_auth {
-            format!("{} needs sign-in", server.name)
-        } else {
-            format!("{} failed to start", server.name)
-        };
-        groups.push(vec![(words, theme.error())]);
+    if servers {
+        let sign_in = strip
+            .failed_servers
+            .iter()
+            .filter(|server| server.needs_auth)
+            .count();
+        let failed = strip.failed_servers.len() - sign_in;
+        if sign_in > 0 {
+            let words = match sign_in {
+                1 => "1 tool server needs sign-in".to_owned(),
+                n => format!("{n} tool servers need sign-in"),
+            };
+            groups.push(vec![(words, theme.warning())]);
+        }
+        if failed > 0 {
+            let s = if failed == 1 { "" } else { "s" };
+            let words = format!("{failed} tool server{s} failed to start");
+            groups.push(vec![(words, theme.error())]);
+        }
     }
     if jobs > 0 {
         let s = if jobs == 1 { "" } else { "s" };
