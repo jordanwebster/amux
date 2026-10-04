@@ -1,3 +1,8 @@
+2026-10-04 — **`ctrl+s m` and `ctrl+s e` say why when they can't.** Where
+the agent can't change its model or effort from here, the keys put the
+reason in the notice line, as terminal Claude's "type /model <name> or
+/effort <level> in the composer", instead of doing nothing.
+
 2026-10-04 — **Permission modes in plain words; the normal one goes
 unsaid.** The composer's edge leaves the mode out while the agent is in
 its normal mode, the one that asks before acting, and otherwise names it

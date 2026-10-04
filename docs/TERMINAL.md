@@ -240,8 +240,8 @@ lists what the report holds.
 ### Settings
 
 The terminal client has no settings screen. Shift+Tab moves the agent to its next mode where it has one, and
-`ctrl+s` then `m` or `e` changes a running agent's model or effort where it lets a client change them (terminal
-Claude's change by typing its own `/model` or `/effort`); each model in the list carries the agent's own line on
+`ctrl+s` then `m` or `e` changes a running agent's model or effort where it lets a client change them, and
+otherwise says how (terminal Claude's change by typing its own `/model` or `/effort`); each model in the list carries the agent's own line on
 it, which says what an alias such as Claude's Default stands for. The phone's settings sheet offers every model, effort and
 mode the agent reports.
 

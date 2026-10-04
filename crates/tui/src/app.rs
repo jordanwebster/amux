@@ -1079,6 +1079,7 @@ impl App {
                 let agent = chat.agent.clone();
                 return self.raw_attach(&agent);
             }
+            ChatEffect::Notice(words) => self.notice(words, Tone::Info),
         }
         None
     }

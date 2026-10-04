@@ -114,6 +114,8 @@ pub enum ChatEffect {
     Press(KeyEvent),
     /// A leader chord picked from the which-key panel.
     Chord(char),
+    /// Say this in the notice line.
+    Notice(String),
 }
 
 /// Takes a queued prompt back; its words return to the composer (after any
@@ -818,7 +820,24 @@ impl ChatView {
         if std::mem::take(&mut self.setting_prefix) {
             let (model, effort) = changeable(state);
             let view = ui_view::settings(state);
+            // A setting this agent can't change from here says why rather
+            // than doing nothing.
+            let why = |refusal: &Option<String>, what: &str| {
+                refusal
+                    .clone()
+                    .or_else(|| view.change_by_typing.clone())
+                    .unwrap_or_else(|| format!("the agent has not offered its {what} yet"))
+            };
             match key.code {
+                KeyCode::Char('m') if !model => {
+                    return Some(vec![ChatEffect::Notice(why(&view.model_refusal, "models"))]);
+                }
+                KeyCode::Char('e') if !effort => {
+                    return Some(vec![ChatEffect::Notice(why(
+                        &view.effort_refusal,
+                        "efforts",
+                    ))]);
+                }
                 KeyCode::Char('m') if model => {
                     let choices = view
                         .models
