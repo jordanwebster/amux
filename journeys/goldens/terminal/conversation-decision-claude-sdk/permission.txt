@@ -29,6 +29,6 @@
   │ › 1. Yes                                                                                               │
   │   2. Yes, and always allow Bash in this project                                                        │
   │   3. No  esc · tab to add a note                                                                       │
-  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
+  ╰───────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · default ─╯
 
   enter choose   ctrl+x stop   ctrl+a more

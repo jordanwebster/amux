@@ -1,0 +1,1 @@
+{"argv":["--output-format","stream-json","--input-format","stream-json","--verbose","--permission-prompt-tool","stdio","--session-id","7245897e-cef9-4a31-aa39-6ae064e0bb2e","--model","claude-sonnet-5","--permission-mode","default","--settings","{\"sandbox\":{\"enabled\":false}}"],"transport_id":"41796-1791138765218286000","us":0}

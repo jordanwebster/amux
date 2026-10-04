@@ -1,6 +1,7 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? effort=? mode=? models=[] commands=0 context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
 ## 2 recorded 1: fact Stream type=control_response
+effect write "{\"request\":{\"subtype\":\"get_settings\"},\"request_id\":\"amux-1\",\"type\":\"control_request\"}"
 snapshot IDLE queue=[] working_on=- at=1787961155660 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=64 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 4 recorded 3: input stdin-2
 effect reply stdin-2 accepted
@@ -17,7 +18,7 @@ snapshot WORKING queue=[] working_on=- at=1787961156462 asks=[] session=82044520
 item msg_011CeW3dDkhxHSkTccVzTNHw:0 thinking final at=1787961157949 text="The user is asking me to count from 1 to 200, one number per line. This is a straightforward request and I should just do it.\n\nLet me count:\n1\n2\n3\n... and so on up to 200\n\nI'll format this clearly with one number per line."
 snapshot WORKING queue=[] working_on=- at=1787961157949 asks=[] session=82044520-de4a-469b-aab1-7874aa383634 model=claude-haiku-4-5-20251001 effort=? mode=default models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=64 context=27909/? tasks=? active=[] usage=USAGE_STATE_NEAR_LIMIT 5h:19% 7d:83% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 29 recorded 28: input stdin-3
-effect write "{\"request\":{\"subtype\":\"interrupt\"},\"request_id\":\"amux-1\",\"type\":\"control_request\"}"
+effect write "{\"request\":{\"subtype\":\"interrupt\"},\"request_id\":\"amux-2\",\"type\":\"control_request\"}"
 effect reply stdin-3 accepted
 ## 33 recorded 32: fact Stream type=assistant uuid=c6dd151a-23e8-4401-a662-02960268d9e6
 item msg_011CeW3dDkhxHSkTccVzTNHw:1 message final at=1787961157965 text="1\n2\n3\n4\n5\n6"

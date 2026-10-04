@@ -19,7 +19,7 @@
 
   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
   │ › Message worker                                                                                       │
-  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
+  ╰───────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · default ─╯
 
   shift+tab mode   ctrl+a more
 --- styles
@@ -44,6 +44,6 @@
 ..............................................................................................................
 ..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..
 ..mmmmmmmmmmmmmmmmmm.......................................................................................m..
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm????????????????.......mmm..
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm?????????????????????????.......mmm..
 ..............................................................................................................
 ..eeeeeeeee????????eeeeee?????................................................................................

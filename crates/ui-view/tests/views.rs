@@ -1028,10 +1028,7 @@ fn settings_mark_the_current_model_effort_and_mode() {
         "a terminal-only command is dropped"
     );
     assert_eq!(view.model_refusal, None);
-    assert!(
-        view.effort_refusal.is_some(),
-        "headless Claude refuses effort"
-    );
+    assert_eq!(view.effort_refusal, None, "headless Claude takes effort");
     assert_eq!(view.mode_refusal, None);
 }
 
@@ -1102,8 +1099,8 @@ fn codex_modes_are_presets_and_a_pair_outside_them_is_reported() {
             .iter()
             .map(|effort| (effort.value.as_str(), effort.default, effort.current))
             .collect::<Vec<_>>(),
-        [("low", false, false), ("medium", true, false)],
-        "no effort reported: the default is marked, none is current"
+        [("low", false, false), ("medium", true, true)],
+        "no effort reported: the model's default is the one in force"
     );
     assert_eq!(view.commands.len(), 1, "a Codex skill is never filtered");
     assert_eq!(

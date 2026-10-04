@@ -1,6 +1,7 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? effort=? mode=? models=[] commands=0 context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
 ## 2 recorded 1: fact Stream type=control_response
+effect write "{\"request\":{\"subtype\":\"get_settings\"},\"request_id\":\"amux-1\",\"type\":\"control_request\"}"
 snapshot IDLE queue=[] working_on=- at=1788651266802 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5-1[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=68 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 4 recorded 3: input stdin-2
 effect reply stdin-2 accepted
@@ -87,7 +88,7 @@ item turn:1 turn final at=1788651286238 text="" #1 TURN_OUTCOME_COMPLETED starte
 snapshot IDLE queue=[] working_on=- at=1788651286238 asks=[] session=020256dc-b7d7-471b-b395-b83ccb943d79 model=claude-haiku-4-5-20251001 effort=? mode=acceptEdits models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5-1[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=68 context=28749/200000 tasks=? active=[] usage=USAGE_STATE_OK 5h:19% 7d:23% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 turn_end 1 last=msg_011CemAjYTPDxNdYUo5EdGBq:1
 ## 87 recorded 86: input stdin-5
-effect write "{\"request\":{\"mode\":\"plan\",\"subtype\":\"set_permission_mode\"},\"request_id\":\"amux-1\",\"type\":\"control_request\"}"
+effect write "{\"request\":{\"mode\":\"plan\",\"subtype\":\"set_permission_mode\"},\"request_id\":\"amux-2\",\"type\":\"control_request\"}"
 effect reply stdin-5 accepted
 ## 89 recorded 88: fact Stream type=system subtype=status uuid=0718068e-e90c-4673-b2f7-1bc78a6aa946
 snapshot IDLE queue=[] working_on=- at=1788651286239 asks=[] session=020256dc-b7d7-471b-b395-b83ccb943d79 model=claude-haiku-4-5-20251001 effort=? mode=plan models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5-1[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=68 context=28749/200000 tasks=? active=[] usage=USAGE_STATE_OK 5h:19% 7d:23% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
@@ -129,7 +130,7 @@ item turn:2 turn final at=1788651294269 text="" #2 TURN_OUTCOME_COMPLETED starte
 snapshot IDLE queue=[] working_on=- at=1788651294269 asks=[] session=020256dc-b7d7-471b-b395-b83ccb943d79 model=claude-haiku-4-5-20251001 effort=? mode=default models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5-1[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=68 context=31149/200000 tasks=? active=[] usage=USAGE_STATE_OK 5h:19% 7d:23% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 turn_end 2 last=msg_011CemAk91mkTNq5nAMMETcX:1
 ## 123 recorded 122: input stdin-8
-effect write "{\"request\":{\"mode\":\"plan\",\"subtype\":\"set_permission_mode\"},\"request_id\":\"amux-2\",\"type\":\"control_request\"}"
+effect write "{\"request\":{\"mode\":\"plan\",\"subtype\":\"set_permission_mode\"},\"request_id\":\"amux-3\",\"type\":\"control_request\"}"
 effect reply stdin-8 accepted
 ## 126 recorded 125: fact Stream type=system subtype=status uuid=e87ee3a7-1b50-44cd-ba8e-cad362f75847
 snapshot IDLE queue=[] working_on=- at=1788651294270 asks=[] session=020256dc-b7d7-471b-b395-b83ccb943d79 model=claude-haiku-4-5-20251001 effort=? mode=plan models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5-1[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=68 context=31149/200000 tasks=? active=[] usage=USAGE_STATE_OK 5h:19% 7d:23% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?

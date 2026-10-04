@@ -36,6 +36,7 @@ mod sdk_replays {
         control_permission_mode_and_model => "control/permission_mode_and_model",
         control_session_introspection => "control/session_introspection",
         control_session_maintenance => "control/session_maintenance",
+        control_effort => "control/effort",
         control_connected_mcp_servers => "control/connected_mcp_servers",
         tools_permission_callback => "tools/permission_callback",
         tools_question_asked => "tools/question_asked",
@@ -373,6 +374,7 @@ fn sdk_corpus_is_inventoried_current_and_unorphaned() {
                         Version::new(2, 1, 260),
                         Version::new(2, 1, 261),
                         Version::new(2, 1, 283),
+                        Version::new(2, 1, 289),
                     ]
                     .contains(&recording.manifest.recorded.version),
                     "{} was captured against an unreviewed Claude version {}",

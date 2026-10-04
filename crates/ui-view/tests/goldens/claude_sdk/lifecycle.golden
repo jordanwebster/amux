@@ -33,4 +33,3 @@
   mode  Claude("plan")
   mode  Claude("auto")
   mode  Claude("bypassPermissions") stops_asking
-  refused effort: Claude takes its effort when the agent starts and keeps it until it restarts.

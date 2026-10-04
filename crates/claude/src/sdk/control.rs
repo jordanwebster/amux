@@ -109,6 +109,7 @@ pub enum ControlRequestBody {
     },
     McpStatus,
     GetContextUsage,
+    GetSettings,
     ReloadPlugins,
     ReloadSkills,
     RewindFiles {

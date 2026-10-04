@@ -29,6 +29,6 @@
   │ › 1. Yes                                                                                               │
   │   2. Yes, and don't ask again this session                                                             │
   │   3. No  esc                                                                                           │
-  ╰────────────────────────────────────────────────────────────────────────────────────── gpt-fake · auto ─╯
+  ╰───────────────────────────────────────────────────────────────────────────── gpt-fake (medium) · auto ─╯
 
   enter choose   ctrl+x stop   ctrl+a more

@@ -1,6 +1,7 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? effort=? mode=? models=[] commands=0 context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
 ## 2 recorded 1: fact Stream type=control_response
+effect write "{\"request\":{\"subtype\":\"get_settings\"},\"request_id\":\"amux-1\",\"type\":\"control_request\"}"
 snapshot IDLE queue=[] working_on=- at=1788049043451 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=65 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 4 recorded 3: input stdin-2
 effect reply stdin-2 accepted
@@ -36,6 +37,8 @@ item msg_011CeXyKyX1t4RuCoVfW18S9:1 message final at=1788049047701 text="REMEMBE
 item turn:2 turn final at=1788049047717 text="" #2 TURN_OUTCOME_COMPLETED started=1788049046206 cost=0.025828
 snapshot IDLE queue=[] working_on=- at=1788049047717 asks=[] session=efc457f2-80e8-4f87-b4f3-ccb9ea3c8927 model=claude-haiku-4-5-20251001 effort=? mode=default models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=65 context=24601/200000 tasks=? active=[] usage=USAGE_STATE_OK 5h:4% 7d:12% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 turn_end 2 last=msg_011CeXyKyX1t4RuCoVfW18S9:1
+## 131 recorded 130: fact Stream type=control_response
+effect write "{\"request\":{\"subtype\":\"get_settings\"},\"request_id\":\"amux-2\",\"type\":\"control_request\"}"
 ## 132 recorded 131: input stdin-5
 effect reply stdin-5 accepted
 effect user 73746469-6e2d-4500-8000-000000000000 "List every word I asked you to remember, and nothing else."

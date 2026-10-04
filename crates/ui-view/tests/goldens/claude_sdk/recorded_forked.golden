@@ -103,4 +103,3 @@
   command /design-revoke source="" hint="" "Revoke Claude agent access to your Design projects"
   command /list-agents source="" hint="" "List subagents, teammates, and other Claude sessions you can message"
   command /team-onboarding source="" hint="" "Help teammates ramp on Claude Code with a guide from your usage"
-  refused effort: Claude takes its effort when the agent starts and keeps it until it restarts.

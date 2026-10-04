@@ -29,6 +29,6 @@
   │ ›                                                                                                      │
   │                                                                                                        │
   │   Decline  esc                                                                                         │
-  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
+  ╰───────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · default ─╯
 
   enter answer   tab next   esc clear   ctrl+x stop

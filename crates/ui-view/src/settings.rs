@@ -162,13 +162,24 @@ fn refusals(kind: Kind) -> [Option<&'static str>; 3] {
             None,
             Some("Terminal Claude changes mode only by cycling through its modes."),
         ],
-        Kind::ClaudeSdk => [
-            None,
-            Some("Claude takes its effort when the agent starts and keeps it until it restarts."),
-            None,
-        ],
-        Kind::Codex | Kind::Unspecified => [None, None, None],
+        Kind::ClaudeSdk | Kind::Codex | Kind::Unspecified => [None, None, None],
     }
+}
+
+/// The effort the agent runs at: the one it reports, else its current
+/// model's default. Codex reports none until one is chosen, which means
+/// the model's default, and its model list says what that is.
+pub(crate) fn effort_in_force(agent: &ui_state::AgentState) -> Option<String> {
+    if agent.effort.is_some() {
+        return agent.effort.clone();
+    }
+    let current = agent.model.as_deref()?;
+    let offered = &agent.models;
+    offered
+        .iter()
+        .find(|model| model.value == current)
+        .or_else(|| offered.iter().find(|model| model.resolved_model == current))
+        .and_then(|model| model.default_effort.clone())
 }
 
 pub fn settings(state: &SessionState) -> SettingsView {
@@ -221,7 +232,8 @@ pub fn settings(state: &SessionState) -> SettingsView {
         .find(|model| model.current)
         .map(|model| (model.efforts.as_slice(), model.default_effort.as_deref()))
         .unwrap_or_default();
-    let current_effort = agent.effort.as_deref();
+    let in_force = effort_in_force(agent);
+    let current_effort = in_force.as_deref();
     let mut efforts: Vec<EffortChoice> = offered
         .iter()
         .map(|effort| EffortChoice {
@@ -288,6 +300,11 @@ pub fn setting_input(kind: Kind, change: &SettingChange) -> Option<wire::Input> 
         }),
         (Kind::ClaudeSdk, SettingChange::Model(name)) => input::Of::ClaudeSdk(ClaudeSdkInput {
             of: Some(claude_sdk_input::Of::Model(model(name))),
+        }),
+        (Kind::ClaudeSdk, SettingChange::Effort(effort)) => input::Of::ClaudeSdk(ClaudeSdkInput {
+            of: Some(claude_sdk_input::Of::Effort(SetEffort {
+                effort: Some(effort.clone()),
+            })),
         }),
         (Kind::ClaudeSdk, SettingChange::Mode(ModeValue::Claude(mode))) => {
             input::Of::ClaudeSdk(ClaudeSdkInput {

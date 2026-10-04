@@ -361,8 +361,11 @@ nothing is inferred.
 - **Inputs.** Prompt, withdraw, send now (a message at default priority,
   which joins the running turn at its next tool boundary), interrupt (a
   control request), clear (sent as `/clear`), permission mode and model
-  (control requests), and answer. Effort is refused: headless Claude takes
-  it at launch only.
+  (control requests), effort (`apply_flag_settings` with `effortLevel`), and
+  answer. The effort Claude runs at comes from `get_settings`, asked once
+  Claude answers `initialize` and again after a model change: its
+  `applied.effort` is what Claude applied from every settings source and
+  the session's own change.
 - **Turns.** A turn starts with a submission or a `message_start`, and ends on
   the `result` line: completed, interrupted, or failed (with an error item
   for a non-success subtype), with its duration and cost on the turn item.

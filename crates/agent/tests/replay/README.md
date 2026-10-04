@@ -11,7 +11,7 @@ from the recording host:
 
 | Fixture | From | Rewritten |
 | --- | --- | --- |
-| `sdk_question` | `claude-specs/fixtures/sdk/question_asked` | the initialize request and its response's `request_id` (`agent-initialize`); the prompt line in the agent's key order with `uuid` |
+| `sdk_question` | `claude-specs/fixtures/sdk/question_asked` | the initialize request and its response's `request_id` (`agent-initialize`); after its answer, the interpreter's `get_settings` request and an answer in the shape `claude-specs/fixtures/sdk/effort` records (Haiku takes no effort, so none is applied); the prompt line in the agent's key order with `uuid` |
 | `sdk_lost` | `sdk_question` | cut after the permission request, then an exit |
 | `codex_approval` | `codex-specs/fixtures/runtime/approval_allow` | the agent's handshake ids (`agent-initialize`, `agent-thread`) and `thread/start` params; `turn/start` as the interpreter writes it (`amux-1`, `text_elements`); after the thread answer, the interpreter's `model/list` and `skills/list` requests and their answers, in the shape codex-cli 0.157.0 answers them (no recording holds them yet) |
 | `codex_lost` | `codex_approval` | cut after the approval request, then an exit |

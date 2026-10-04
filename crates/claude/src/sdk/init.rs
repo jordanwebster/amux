@@ -99,6 +99,19 @@ pub struct ContextUsageCategory {
     pub extensions: Extensions,
 }
 
+/// What `get_settings` says the session runs with now: the model and
+/// effort Claude applied from every settings source and the session's own
+/// changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppliedSettings {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(flatten)]
+    pub extensions: Extensions,
+}
+
 /// Lossless typed top-level response from `Query::get_context_usage`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -196,7 +196,7 @@ pub fn session_strip(state: &SessionState) -> Strip {
         tasks,
         context,
         model: agent.model.clone(),
-        effort: agent.effort.clone(),
+        effort: crate::settings::effort_in_force(agent),
         mode: agent.mode.clone(),
         usage,
         failed_servers,

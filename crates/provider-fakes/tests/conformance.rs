@@ -66,6 +66,7 @@ mod claude_sdk {
         configured_turn => "configured_turn",
         connected_mcp_servers => "connected_mcp_servers",
         controls => "controls",
+        effort => "effort",
         effortful_turn => "effortful_turn",
         elicitation_accepted => "elicitation_accepted",
         elicitation_cancelled => "elicitation_cancelled",

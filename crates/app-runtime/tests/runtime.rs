@@ -418,8 +418,8 @@ async fn a_settings_pick_reaches_the_agent_and_the_strip_shows_it() {
         "the offered model is marked current: {view:?}"
     );
     assert!(
-        view.effort_refusal.is_some(),
-        "headless Claude refuses effort"
+        view.effort_refusal.is_none(),
+        "headless Claude takes an effort pick"
     );
     let plan = view
         .modes
@@ -439,10 +439,17 @@ async fn a_settings_pick_reaches_the_agent_and_the_strip_shows_it() {
             .iter()
             .any(|mode| mode.current && SettingChange::Mode(mode.value.clone()) == pick)
     );
-    assert!(matches!(
+    assert_eq!(
         chat.change_setting(&SettingChange::Effort("high".into()))
             .await,
-        ActOutcome::Rejected(_)
-    ));
+        ActOutcome::Done
+    );
+    until(&mut host, &chat, "the high effort", |chat| {
+        chat.settings()
+            .efforts
+            .iter()
+            .any(|effort| effort.current && effort.value == "high")
+    })
+    .await;
     net.shutdown().await.unwrap();
 }

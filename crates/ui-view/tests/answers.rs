@@ -349,7 +349,7 @@ fn settings_picks_reach_the_interpreter() {
     );
     assert_eq!(
         pick_all::<ClaudeSdk>(Kind::ClaudeSdk, "claude_sdk"),
-        BTreeSet::from(["mode", "model"]),
+        BTreeSet::from(["effort", "mode", "model"]),
         "headless Claude's picks"
     );
     assert_eq!(

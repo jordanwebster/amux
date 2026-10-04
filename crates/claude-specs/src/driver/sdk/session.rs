@@ -17,7 +17,8 @@ use crate::driver::sdk::control::{
 use crate::driver::sdk::dispatch::{IncomingRequestKind, QueryInner};
 use crate::driver::sdk::error::Error;
 use crate::driver::sdk::init::{
-    AccountInfo, AgentInfo, ContextUsage, InitializationResult, ModelInfo, SlashCommand,
+    AccountInfo, AgentInfo, AppliedSettings, ContextUsage, InitializationResult, ModelInfo,
+    SlashCommand,
 };
 use crate::driver::sdk::message::Message;
 use crate::driver::sdk::options::{
@@ -286,6 +287,22 @@ impl Control {
             .await?;
         serde_json::from_value(response.response)
             .map_err(|error| Error::Control(format!("failed to parse context usage: {error}")))
+    }
+
+    /// The model and effort the session runs with now, as Claude applied
+    /// them from every settings source and the session's own changes.
+    pub async fn applied_settings(&self) -> Result<AppliedSettings, Error> {
+        let response = self
+            .inner
+            .send_control(ControlRequestBody::GetSettings)
+            .await?;
+        let applied = response
+            .response
+            .get("applied")
+            .cloned()
+            .unwrap_or_default();
+        serde_json::from_value(applied)
+            .map_err(|error| Error::Control(format!("failed to parse applied settings: {error}")))
     }
 
     pub async fn reload_plugins(&self) -> Result<ReloadPluginsResult, Error> {

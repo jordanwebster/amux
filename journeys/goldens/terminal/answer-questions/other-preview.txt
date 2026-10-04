@@ -29,6 +29,6 @@
   │ › 2. Stacked           │   Address  relay.amux.dev                                                     │
   │   3. Something else    │ Theme ──────────                                                              │
   │                        │   Palette  terminal                                                           │
-  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
+  ╰───────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · default ─╯
 
   enter choose   ←/→ questions   ctrl+x stop   ctrl+a more

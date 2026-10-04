@@ -47,7 +47,7 @@ impl State {
             "result" => self.result(emit, &line),
             "control_request" => self.control_request_in(emit, &line, &fact.payload),
             "control_cancel_request" => self.request_cancelled(emit, text(&line, "request_id")),
-            "control_response" => self.control_response_in(&line),
+            "control_response" => self.control_response_in(emit, &line),
             "command_lifecycle" => {
                 if text(&line, "state") == "started" {
                     self.taken(text(&line, "command_uuid"));
@@ -1017,17 +1017,44 @@ impl State {
         });
     }
 
+    /// Asks Claude what it applied from its settings and this session's
+    /// changes; the answer carries the effort it runs at.
+    fn ask_settings(&mut self, emit: &mut Emit) {
+        self.control_request(
+            emit,
+            Request::Settings,
+            json!({ "subtype": "get_settings" }),
+        );
+    }
+
     /// Responses to requests: the interpreter's own, matched by id, and
     /// the agent process's initialize, mcp_status and get_context_usage,
     /// recognised by their shape.
-    fn control_response_in(&mut self, line: &Value) {
+    fn control_response_in(&mut self, emit: &mut Emit, line: &Value) {
         let response = line.get("response").unwrap_or(&Value::Null);
         let request_id = text(response, "request_id");
         let ok = text(response, "subtype") == "success";
         let body = response.get("response").unwrap_or(&Value::Null);
         match self.requests.remove(request_id) {
-            Some(Request::Model(model)) if ok => self.model = model.or(self.model.take()),
+            Some(Request::Model(model)) if ok => {
+                self.model = model.or(self.model.take());
+                self.ask_settings(emit);
+            }
             Some(Request::Mode(mode)) if ok => self.permission_mode = Some(mode),
+            Some(Request::Effort(Some(effort))) if ok => self.effort = Some(effort),
+            Some(Request::Effort(None)) if ok => self.ask_settings(emit),
+            Some(Request::Settings) if ok => {
+                if let Some(effort) = body.pointer("/applied/effort").and_then(Value::as_str) {
+                    self.effort = Some(effort.to_owned());
+                }
+                // Claude names its model in its init only once a turn
+                // starts; until then the applied settings say which it is.
+                if self.model.is_none()
+                    && let Some(model) = body.pointer("/applied/model").and_then(Value::as_str)
+                {
+                    self.model = Some(model.to_owned());
+                }
+            }
             Some(_) => {}
             None => {
                 // Claude reports its init only once the first message
@@ -1036,6 +1063,7 @@ impl State {
                 // for an init that only a prompt can bring.
                 if ok && body.get("commands").is_some() {
                     self.shared.provider_started();
+                    self.ask_settings(emit);
                 }
                 if let Some(models) = body.get("models").and_then(Value::as_array) {
                     self.models = offered_models(models);

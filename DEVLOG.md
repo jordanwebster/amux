@@ -1,3 +1,20 @@
+2026-10-04 — **Headless Claude's effort changes mid-session; the edge
+shows the effort in force.** Claude takes an effort change at any time
+through its flag settings control (`effortLevel`) and says what it
+applied through `get_settings`; a new recorded specification proves both
+against Claude Code 2.1.289, now a reviewed version, and the recorder
+keeps only the applied model and effort of a settings answer, never the
+machine's settings. The interpreter sends the change and asks which
+effort Claude applied once Claude answers `initialize` and after each
+model change, taking the model from the same answer until Claude's init
+names it, so `ctrl+s e` works for headless Claude and the composer's edge
+reads `Opus 5 (high)` from the start. Codex reports no effort until one
+is chosen, which means its model's default; the shared views now show
+that default as the effort in force, for Codex on the phone too. The fake
+headless Claude takes `--effort`, answers both controls and times its
+results as 2.1.289 does; the two agent replays carry the settings
+request.
+
 2026-10-04 — **`<leader> s` goes home; `h` opens hosts.** Home is
 `<leader> s` again, from a chat and from an agent's own terminal, where
 `<leader> h` now reaches the agent like any other key. Hosts move from

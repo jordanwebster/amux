@@ -13,15 +13,15 @@
 ## 7 fact {"channel":"stream","json":{"duration_ms":1000,"is_error":true,"subtype":"error_during_execution","terminal_reason":"aborted_streaming","total_cost_usd":0.01,"type":"result","uuid":"r1"}}
   row    3 turn:1 Stopped
   composer Send activity=None queue=[] outbox=[]
-## 14 input {"clear":{},"id":"c1"}
+## 16 input {"clear":{},"id":"c1"}
   row    4 63310000-0000-4000-8000-000000000000 Prompt { text: [Text("/clear")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
-## 15 fact {"channel":"stream","json":{"new_conversation_id":"s2","type":"conversation_reset","uuid":"cr"}}
+## 17 fact {"channel":"stream","json":{"new_conversation_id":"s2","type":"conversation_reset","uuid":"cr"}}
   row    5 boundary:2 Boundary { kind: Cleared, cause: "" }
-## 16 fact {"channel":"stream","json":{"duration_ms":1000,"is_error":false,"subtype":"success","total_cost_usd":0.01,"type":"result","uuid":"r2"}}
+## 18 fact {"channel":"stream","json":{"duration_ms":1000,"is_error":false,"subtype":"success","total_cost_usd":0.01,"type":"result","uuid":"r2"}}
   row    6 turn:2 TurnEnd { duration_ms: Some(1000), cost_usd: Some(0.01), failed: false }
   composer Send activity=None queue=[] outbox=[]
-## 17 input {"agent_message":{"envelope":"env-1","from":"reviewer","text":"please look at the diff"},"id":"a1"}
+## 19 input {"agent_message":{"envelope":"env-1","from":"reviewer","text":"please look at the diff"},"id":"a1"}
   row    7 agent-message:656e762d31 AgentMessage { from: "reviewer", kind: Message, text: "please look at the diff", to: "", sent: Unspecified, rejection: "" }
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
@@ -31,12 +31,12 @@
      5 boundary:2 Boundary { kind: Cleared, cause: "" }
      6 turn:2 TurnEnd { duration_ms: Some(1000), cost_usd: Some(0.01), failed: false }
      7 agent-message:656e762d31 AgentMessage { from: "reviewer", kind: Message, text: "please look at the diff", to: "", sent: Unspecified, rejection: "" }
-== strip Strip { tasks: None, context: None, model: Some("claude-sonnet-5"), effort: None, mode: Some("plan"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== strip Strip { tasks: None, context: None, model: Some("claude-sonnet-5"), effort: Some("high"), mode: Some("plan"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
 == settings
   model* reported claude-sonnet-5 "" efforts=[]
+  effort* reported high
   mode  Claude("default")
   mode  Claude("acceptEdits")
   mode* Claude("plan")
   mode  Claude("auto")
   mode  Claude("bypassPermissions") stops_asking
-  refused effort: Claude takes its effort when the agent starts and keeps it until it restarts.

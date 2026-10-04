@@ -29,6 +29,6 @@
 
   ╭─ desk is away · this machine is signed out ────────────────────────────────────────────────────────────╮
   │ › Still there?                                                                                         │
-  ╰────────────────────────────────────────────────────────────────────────────── claude-fake-1 · default ─╯
+  ╰───────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · default ─╯
 
   Draft kept · sending waits until this machine signs in

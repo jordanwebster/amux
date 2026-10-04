@@ -449,6 +449,31 @@ fn scrub_personal_context(events: &mut [replay_support::IoEvent]) -> io::Result<
     Ok(())
 }
 
+/// A `get_settings` answer repeats the recording machine's whole settings
+/// (its environment, plugins, notes about its owner); only what Claude
+/// applied, the model and effort, is kept.
+fn scrub_settings(events: &mut [replay_support::IoEvent]) -> io::Result<()> {
+    for event in events {
+        if event.direction != replay_support::IoDirection::Read
+            || !event.line.contains("\"applied\"")
+        {
+            continue;
+        }
+        let mut frame: serde_json::Value =
+            serde_json::from_str(&event.line).map_err(io::Error::other)?;
+        let Some(body) = frame.pointer_mut("/response/response") else {
+            continue;
+        };
+        if body.get("applied").is_none() || body.get("effective").is_none() {
+            continue;
+        }
+        let applied = body["applied"].take();
+        *body = serde_json::json!({ "applied": applied });
+        event.line = serde_json::to_string(&frame).map_err(io::Error::other)?;
+    }
+    Ok(())
+}
+
 fn stabilize_pty_transcript_paths(events: &mut [replay_support::IoEvent]) -> io::Result<()> {
     let mut labels = BTreeMap::<String, String>::new();
     for event in events {
@@ -695,6 +720,7 @@ async fn capture_direct(entry: SpecEntry) -> Result<Capture, Box<dyn std::error:
 
 async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut capture = capture(entry).await?;
+    scrub_settings(&mut capture.events)?;
     let redaction = sanitize(
         &mut capture.events,
         &Redaction {

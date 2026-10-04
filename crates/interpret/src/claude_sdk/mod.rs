@@ -144,6 +144,11 @@ enum Request {
     Interrupt,
     Model(Option<String>),
     Mode(String),
+    /// None clears the session's own effort, back to the settings'.
+    Effort(Option<String>),
+    /// What Claude applied: the effort it runs at, which a model change
+    /// can also move.
+    Settings,
 }
 
 /// A subagent or background task Claude reports.
@@ -250,8 +255,7 @@ impl State {
             session: None,
             version: (!spec.provider_version.is_empty()).then(|| spec.provider_version.clone()),
             model: None,
-            // Claude reports its effort nowhere; the launch argument is the
-            // effort it runs at.
+            // The launch argument until Claude says what it applied.
             effort: launch_arg(&spec.provider_args, "--effort"),
             permission_mode: None,
             models: Vec::new(),
@@ -456,8 +460,17 @@ impl State {
                 self.control_request(emit, Request::Model(model.model), body);
                 self.shared.accept(emit, &id, false);
             }
-            // Headless Claude takes its effort at launch only.
-            claude_sdk_input::Of::Effort(_) => self.shared.reject(emit, &id, reason::UNSUPPORTED),
+            claude_sdk_input::Of::Effort(effort) => {
+                self.control_request(
+                    emit,
+                    Request::Effort(effort.effort.clone()),
+                    json!({
+                        "subtype": "apply_flag_settings",
+                        "settings": { "effortLevel": effort.effort },
+                    }),
+                );
+                self.shared.accept(emit, &id, false);
+            }
             claude_sdk_input::Of::Answer(answer) => self.answer(emit, &id, answer),
         }
     }

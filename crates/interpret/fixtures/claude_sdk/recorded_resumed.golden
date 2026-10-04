@@ -1,6 +1,7 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? effort=? mode=? models=[] commands=0 context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
 ## 2 recorded 1: fact Stream type=control_response
+effect write "{\"request\":{\"subtype\":\"get_settings\"},\"request_id\":\"amux-1\",\"type\":\"control_request\"}"
 snapshot IDLE queue=[] working_on=- at=1787961092544 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=64 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 4 recorded 3: input stdin-2
 effect reply stdin-2 accepted
@@ -22,6 +23,8 @@ item msg_011CeW3YaVFN1fZVnGSUSfbb:1 message final at=1787961094678 text="REMEMBE
 item turn:1 turn final at=1787961094684 text="" #1 TURN_OUTCOME_COMPLETED started=1787961093266 cost=0.022579
 snapshot IDLE queue=[] working_on=- at=1787961094684 asks=[] session=a84747ff-4807-4576-be5c-725eee57c14e model=claude-haiku-4-5-20251001 effort=? mode=default models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=64 context=27907/200000 tasks=? active=[] usage=USAGE_STATE_NEAR_LIMIT 5h:19% 7d:83% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 turn_end 1 last=msg_011CeW3YaVFN1fZVnGSUSfbb:1
+## 23 recorded 22: fact Stream type=control_response
+effect write "{\"request\":{\"subtype\":\"get_settings\"},\"request_id\":\"amux-2\",\"type\":\"control_request\"}"
 ## 24 recorded 23: input stdin-4
 effect reply stdin-4 accepted
 effect user 73746469-6e2d-4400-8000-000000000000 "What word did I ask you to remember? Reply with just that word."

@@ -55,6 +55,53 @@ async fn permission_mode_and_model(session: &mut SpecSession) {
     );
 }
 
+pub(super) static EFFORT: SpecDef = SpecDef {
+    name: "control/effort",
+    fixture: "effort",
+    setup: effort_setup,
+    run: |session| Box::pin(effort(session)),
+};
+
+fn effort_setup() -> SessionSetup {
+    // Haiku takes no effort levels; Sonnet does.
+    let mut setup = SessionSetup::new(SONNET, "Reply with exactly EFFORT_OK and nothing else.");
+    setup.options.permission_mode = Some(PermissionMode::Default);
+    setup
+}
+
+/// A running session changes its effort through the flag settings control,
+/// and the settings Claude reports applied name the new effort straight
+/// away, whatever the user's settings files chose for the model.
+async fn effort(session: &mut SpecSession) {
+    let turn = session.turn().await;
+    expect!(turn.succeeded(), "the session's first turn completes");
+    for level in ["low", "high"] {
+        session
+            .apply_flag_settings(serde_json::json!({ "effortLevel": level }))
+            .await
+            .expect("the flag settings control is acknowledged");
+        let applied = session
+            .applied_settings()
+            .await
+            .expect("the settings control is answered");
+        expect!(
+            applied.effort.as_deref() == Some(level),
+            "the applied effort is the one just set: {:?}",
+            applied.effort
+        );
+    }
+    session
+        .say("Reply with exactly EFFORT_AGAIN and nothing else.")
+        .await
+        .expect("a later prompt is accepted");
+    let turn = session.turn().await;
+    expect!(
+        turn.succeeded() && turn.text() == "EFFORT_AGAIN",
+        "a turn after the change runs as usual: {:?}",
+        turn.text()
+    );
+}
+
 pub(super) static SESSION_INTROSPECTION: SpecDef = SpecDef {
     name: "control/session_introspection",
     fixture: "introspection",

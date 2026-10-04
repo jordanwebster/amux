@@ -107,6 +107,9 @@ struct Engine {
     servers: crate::mcp::ToolServers,
     session: String,
     model: String,
+    /// The effort this session chose, at launch or since; the model's
+    /// default otherwise.
+    effort: Option<String>,
     /// What the initialize answer offers.
     models: Vec<OfferedModel>,
     commands: Vec<OfferedCommand>,
@@ -175,6 +178,7 @@ impl Engine {
             .clone()
             .or_else(|| script.model.clone())
             .unwrap_or_else(|| "claude-fake-1".into());
+        let args_effort = args.effort.clone();
         let mode = args
             .permission_mode
             .clone()
@@ -192,6 +196,7 @@ impl Engine {
             session,
             models: OfferedModel::offered(&script.models, &model),
             commands: script.commands,
+            effort: args_effort,
             model,
             mode,
             cwd,
@@ -342,6 +347,15 @@ impl Engine {
                 }
                 None
             }
+            "apply_flag_settings" => {
+                if let Some(effort) = request["settings"].get("effortLevel") {
+                    self.effort = effort.as_str().map(str::to_owned);
+                }
+                None
+            }
+            "get_settings" => Some(json!({
+                "applied": { "model": self.model, "effort": self.applied_effort() },
+            })),
             "set_permission_mode" => {
                 if let Some(mode) = request["mode"].as_str() {
                     self.mode = mode.to_owned();
@@ -378,6 +392,20 @@ impl Engine {
         }
         self.send(json!({ "type": "control_response", "response": response }))
             .await;
+    }
+
+    /// The effort the session runs at: its own choice, else the current
+    /// model's default.
+    fn applied_effort(&self) -> Option<String> {
+        self.effort.clone().or_else(|| {
+            self.models
+                .iter()
+                .find(|model| {
+                    model.value == self.model
+                        || model.resolved_model.as_deref() == Some(&self.model)
+                })
+                .and_then(|model| model.default_effort.clone())
+        })
     }
 
     fn still_queued(&self) -> Vec<String> {
@@ -883,6 +911,11 @@ impl Engine {
             "duration_ms": 1,
             "fast_mode_disabled_reason": "sdk_opt_in_required",
             "fast_mode_state": "off",
+            // Claude 2.1.289 also times each response.
+            "first_content_frame_ms": 1,
+            "time_to_request_ms": 1,
+            "ttft_ms": 1,
+            "ttft_stream_ms": 1,
             "is_error": true,
             "modelUsage": {},
             "result_index": 0,
@@ -895,7 +928,7 @@ impl Engine {
             "stop_reason": "stop_sequence",
             "terminal_reason": "completed",
             "total_cost_usd": 0.0,
-            "usage": turn_usage(),
+            "usage": result_usage(),
             "uuid": uuid(),
         });
         self.send(frame).await;
@@ -1236,6 +1269,11 @@ impl Engine {
             "duration_ms": 1,
             "fast_mode_disabled_reason": "sdk_opt_in_required",
             "fast_mode_state": "off",
+            // Claude 2.1.289 also times each response.
+            "first_content_frame_ms": 1,
+            "time_to_request_ms": 1,
+            "ttft_ms": 1,
+            "ttft_stream_ms": 1,
             "is_error": false,
             "modelUsage": self.model_usage(),
             "result_index": 0,
@@ -1248,7 +1286,7 @@ impl Engine {
             "stop_reason": "end_turn",
             "terminal_reason": "completed",
             "total_cost_usd": 0.0,
-            "usage": turn_usage(),
+            "usage": result_usage(),
             "uuid": uuid(),
         });
         self.send(frame).await;
@@ -1296,6 +1334,11 @@ impl Engine {
             "duration_ms": 1,
             "fast_mode_disabled_reason": "sdk_opt_in_required",
             "fast_mode_state": "off",
+            // Claude 2.1.289 also times each response.
+            "first_content_frame_ms": 1,
+            "time_to_request_ms": 1,
+            "ttft_ms": 1,
+            "ttft_stream_ms": 1,
             "is_error": false,
             "modelUsage": {},
             "result_index": 0,
@@ -1308,7 +1351,7 @@ impl Engine {
             "stop_reason": "tool_use",
             "terminal_reason": if calls > 0 { "aborted_tools" } else { "aborted_streaming" },
             "total_cost_usd": 0.0,
-            "usage": turn_usage(),
+            "usage": result_usage(),
             "uuid": uuid(),
         });
         self.send(frame).await;
@@ -1379,6 +1422,14 @@ pub(crate) fn turn_usage() -> Value {
     usage["output_tokens_details"] = json!({ "thinking_tokens": 0 });
     usage["server_tool_use"] = json!({ "web_fetch_requests": 0, "web_search_requests": 0 });
     usage["speed"] = json!("standard");
+    usage
+}
+
+/// A turn result's usage: the turn's, and the fallback credit Claude
+/// 2.1.289 reports on results alone.
+fn result_usage() -> Value {
+    let mut usage = turn_usage();
+    usage["fallback_credit"] = Value::Null;
     usage
 }
 

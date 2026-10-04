@@ -390,6 +390,10 @@ impl SpecSession {
             .expect("an opened session has been initialized")
     }
 
+    pub async fn applied_settings(&self) -> Result<claude::sdk::init::AppliedSettings, Error> {
+        self.control().applied_settings().await
+    }
+
     pub async fn context_usage(&self) -> Result<ContextUsage, Error> {
         self.control().get_context_usage().await
     }
@@ -1040,6 +1044,7 @@ static DEFINITIONS: &[&SpecDef] = &[
     &control::PERMISSION_MODE_AND_MODEL,
     &control::SESSION_INTROSPECTION,
     &control::SESSION_MAINTENANCE,
+    &control::EFFORT,
     &control::CONNECTED_MCP_SERVERS,
     &tools::PERMISSION_CALLBACK,
     &tools::QUESTION_ASKED,
@@ -1092,6 +1097,7 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("control/permission_mode_and_model", "controls"),
     entry("control/session_introspection", "introspection"),
     entry("control/session_maintenance", "session_maintenance"),
+    entry("control/effort", "effort"),
     entry("control/connected_mcp_servers", "connected_mcp_servers"),
     entry("tools/permission_callback", "permission_callback"),
     entry("tools/question_asked", "question_asked"),

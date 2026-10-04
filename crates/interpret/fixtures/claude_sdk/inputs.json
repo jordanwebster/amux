@@ -1,5 +1,5 @@
 {
-  "about": "Inputs become stream-JSON writes: prompts wait for the provider and a running turn, carrying their input id as the message uuid; model and mode changes are control requests whose success reaches the snapshot; effort cannot change after launch; clear is a /clear message; interrupt is a control request only while something runs. An agent message goes to Claude's own queue on stdin at once and is its own row.",
+  "about": "Inputs become stream-JSON writes: prompts wait for the provider and a running turn, carrying their input id as the message uuid; model, mode and effort changes are control requests whose success reaches the snapshot, and after a model change Claude is asked which effort it applied; clear is a /clear message; interrupt is a control request only while something runs. An agent message goes to Claude's own queue on stdin at once and is its own row.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -152,6 +152,24 @@
       }
     },
     {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "control_response",
+          "response": {
+            "subtype": "success",
+            "request_id": "amux-3",
+            "response": {
+              "applied": {
+                "model": "claude-sonnet-5",
+                "effort": "medium"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "input": {
         "id": "m2",
         "mode": {
@@ -169,7 +187,7 @@
           "type": "control_response",
           "response": {
             "subtype": "success",
-            "request_id": "amux-3",
+            "request_id": "amux-4",
             "response": {
               "mode": "plan"
             }
@@ -185,8 +203,20 @@
         }
       },
       "expect": {
-        "reply": "rejected:unsupported",
-        "silent": true
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "control_response",
+          "response": {
+            "subtype": "success",
+            "request_id": "amux-5",
+            "response": {}
+          }
+        }
       }
     },
     {
