@@ -61,7 +61,17 @@ function Install-Amux {
             throw "The download is $actualSize bytes; the manifest says $($entry.size)."
         }
 
-        $actualChecksum = (Get-FileHash -Path $binaryPath -Algorithm SHA256).Hash.ToLower()
+        # Hashed with .NET rather than Get-FileHash: that cmdlet is a script
+        # function Windows PowerShell cannot find when it is started from
+        # PowerShell 7, whose module path it inherits.
+        $stream = [System.IO.File]::OpenRead($binaryPath)
+        try {
+            $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($stream)
+        }
+        finally {
+            $stream.Dispose()
+        }
+        $actualChecksum = -join ($hash | ForEach-Object { $_.ToString("x2") })
         if ($actualChecksum -ne $entry.sha256) {
             throw @"
 Checksum verification failed.

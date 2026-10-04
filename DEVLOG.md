@@ -1,3 +1,9 @@
+2026-10-04 — **The PowerShell installer hashes without a module.**
+Its first run on Windows CI failed at `Get-FileHash`: a script function
+that Windows PowerShell cannot find when it is started from PowerShell
+7, whose module path it inherits. The download is hashed with .NET's
+SHA256 directly, which needs nothing loaded.
+
 2026-10-04 — **The installer reads the stable manifest and lives beside its format.**
 `amux.sh/install` asked GitHub's API for the latest release and lived in
 the account service's repository, so a release cut but never deployed
