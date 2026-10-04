@@ -15,7 +15,7 @@ chat.title | keeper | keeper | 51,72,156,38
 chat.more | More |  | 344,69,44,44
 chat.field | Message keeper |  | 28,750,346,24
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
  | Back |  | 16,68,42,46

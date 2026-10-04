@@ -1271,7 +1271,7 @@
       {"literal": "\"auto\"", "context": "case \"auto\": String(localized: \"Auto\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"bypassPermissions\"", "context": "case \"bypassPermissions\": String(localized: \"Bypass permissions\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"read-only\"", "context": "case \"read-only\"?: String(localized: \"Read only\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"auto\"", "context": "case \"auto\"?: String(localized: \"Auto\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"default\"", "context": "case \"default\"?: String(localized: \"Default\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"full-access\"", "context": "case \"full-access\"?: String(localized: \"Full access\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"default\"", "context": "case \"default\": String(localized: \"Asks before edits and commands\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"acceptEdits\"", "context": "case \"acceptEdits\": String(localized: \"Edits files without asking, asks before commands\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
@@ -1279,7 +1279,7 @@
       {"literal": "\"auto\"", "context": "case \"auto\": String(localized: \"Decides for itself when to ask\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"bypassPermissions\"", "context": "case \"bypassPermissions\": String(localized: \"Never asks\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"read-only\"", "context": "case \"read-only\"?: String(localized: \"Reads files, asks before any change\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"auto\"", "context": "case \"auto\"?: String(localized: \"Works in its folder, asks to go further\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"default\"", "context": "case \"default\"?: String(localized: \"Works in its folder, asks to go further\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"full-access\"", "context": "case \"full-access\"?: String(localized: \"Never asks, with full access\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"acceptEdits\"", "context": "} else if mode == \"acceptEdits\" {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
     ],

@@ -16,7 +16,7 @@ chat.more | More |  | 344,69,44,44
 chat.exited | Exited · while the daemon was away | desk | 28,720,346,20
 chat.field | keeper has exited · a message resumes it |  | 28,750,346,24
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 228,779,44,44
 chat.resume | Resume |  | 276,779,103,44 (disabled)
  | Back |  | 16,68,42,46

@@ -1,3 +1,9 @@
+2026-10-04 — **The phone's pictures and copy lint catch up with the
+mode and effort words.** The copy lint's exemptions name Codex's `default`
+preset instead of the old `auto`; the chat goldens read the effort in
+force (`medium`) where they read "Default", and the Codex settings
+snapshot shows the preset as Default.
+
 2026-10-04 — **Main merged into the redesigned terminal client.** Main
 now says how a call looks on its tool class (read, search, list, fetch, web
 search) and folds a headless task into the call that started it; the
