@@ -104,7 +104,7 @@ release VERSION:
 # choose who takes it.
 # Put a cut release in front of a channel.
 deploy VERSION *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 3600 cargo run --locked -q -p xtask -- release deploy {{VERSION}} "$@"
+    shift; if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 3600 cargo run --locked -q -p xtask -- release deploy {{VERSION}} "$@"
 
 # `just release-key generate` makes one in the login keychain and prints its
 # public half; `just release-key public` prints it again.

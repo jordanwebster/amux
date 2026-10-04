@@ -1,3 +1,10 @@
+2026-10-04 — **`just deploy` passes its version once.**
+The first real deploy failed with "unknown argument 0.8.0": recipes take
+positional arguments, so the version was both named in the command and
+still first in the arguments passed after it. The recipe drops it from
+the positional list before forwarding the rest, as `test-crate` already
+did.
+
 2026-10-04 — **A deploy publishes its manifest to amux.sh through the operator's script.**
 Machines read `https://amux.sh/releases/<channel>.json`, and the plan had
 been a route in the account service polling GitHub for the newest
