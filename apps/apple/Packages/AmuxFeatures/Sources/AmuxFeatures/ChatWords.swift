@@ -486,12 +486,12 @@ public enum ChatWords {
             case "bypassPermissions": String(localized: "Bypass permissions")
             default: mode
             }
-        case .codex(let approval, let sandbox, let preset):
+        case .codex(_, _, let preset):
             switch preset {
             case "read-only"?: String(localized: "Read only")
-            case "auto"?: String(localized: "Auto")
+            case "default"?: String(localized: "Default")
             case "full-access"?: String(localized: "Full access")
-            default: "\(approval) · \(sandbox)"
+            default: String(localized: "Custom")
             }
         }
     }
@@ -511,7 +511,7 @@ public enum ChatWords {
         case .codex(_, _, let preset):
             switch preset {
             case "read-only"?: String(localized: "Reads files, asks before any change")
-            case "auto"?: String(localized: "Works in its folder, asks to go further")
+            case "default"?: String(localized: "Works in its folder, asks to go further")
             case "full-access"?: String(localized: "Never asks, with full access")
             default: String(localized: "Reported by the agent")
             }

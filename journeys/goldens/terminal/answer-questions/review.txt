@@ -29,6 +29,6 @@
   │     → From the help panel                                                                              │
   │                                                                                                        │
   │ › Send answers                                                                                         │
-  ╰───────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · default ─╯
+  ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯
 
   enter send   ←/→ questions   ctrl+x stop   ctrl+a more

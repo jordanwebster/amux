@@ -142,7 +142,10 @@ Enter on a row opens its chat. From top to bottom:
   another one fails; a send or opening the overview puts them away, and the overview keeps each by name.
 - **The composer**, boxed, with `Model (effort) · mode` on its bottom edge in the words a person reads (`Opus
   (high) · accept edits`). The model is the one running: Claude's `Default (recommended)` reads as the model it
-  stands for (`Opus 5`). Its top edge says what stands in the way of sending, most pressing first: a prompt the
+  stands for (`Opus 5`). The mode is left out while it is the agent's normal one, which asks before acting
+  (Claude's and Codex's `default`); otherwise it reads `auto`, `accept edits`, `plan`, `bypass permissions`
+  (Claude) or `read only`, `full access`, `plan` (Codex), and `custom` for a Codex pair outside its presets. Its
+  top edge says what stands in the way of sending, most pressing first: a prompt the
   agent refused (`not sent: it is shutting down`, in red), the host away (`desk is away`), an exited agent (`Enter
   resumes`), a usage limit reached (`5-hour limit reached · resets 23:24`, in the warning ink; sending stays
   open). One blank line below it, the key line: `shift+tab mode · ctrl+a more` at rest, `enter queue · ctrl+x
@@ -255,7 +258,7 @@ ui:
   chat_in: amux       # amux, or terminal: chat in each agent's own terminal
 new_agent:
   claude: { model: opus, effort: high, mode: default }
-  codex: { model: gpt-6.1-sol, effort: medium, mode: auto }
+  codex: { model: gpt-6.1-sol, effort: medium, mode: default }
 ```
 
 `theme: terminal` asks the terminal for its own colours at startup and derives the palette from them, falling back

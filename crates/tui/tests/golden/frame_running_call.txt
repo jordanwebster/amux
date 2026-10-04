@@ -19,7 +19,7 @@
 
   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
   │ › Message runner                                                                                       │
-  ╰───────────────────────────────────────────────────────────────────────────────────── Fake 1 · default ─╯
+  ╰─────────────────────────────────────────────────────────────────────────────────────────────── Fake 1 ─╯
 
   enter queue   ctrl+x stop   shift+tab mode   ctrl+a more
 --- styles
@@ -44,6 +44,6 @@
 ..............................................................................................................
 ..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..
 ..mmmmmmmmmmmmmmmmmm.......................................................................................m..
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm?????????.......mmm..
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm??????mmm..
 ..............................................................................................................
 ..eeeee?????????eeeeee????????eeeeeeeee????????eeeeee?????....................................................

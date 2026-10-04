@@ -26,7 +26,7 @@ const CLAUDE_STOPS_ASKING: &str = "bypassPermissions";
 /// Codex's presets: name, approval policy, sandbox.
 const CODEX_PRESETS: &[(&str, &str, &str)] = &[
     ("read-only", "on-request", "read-only"),
-    ("auto", "on-request", "workspace-write"),
+    ("default", "on-request", "workspace-write"),
     ("full-access", "never", "danger-full-access"),
 ];
 

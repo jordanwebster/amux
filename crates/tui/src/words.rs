@@ -97,41 +97,51 @@ pub(crate) fn model_name(id: &str) -> String {
     }
 }
 
-/// The current mode by the name a person reads ("Accept edits"). None when
-/// the agent has not said.
+/// The current mode as the composer's edge names it: nothing while it is
+/// the agent's normal mode, which asks before acting, so the edge speaks
+/// only when the agent asks less or only plans. None too when the agent
+/// has not said.
 pub(crate) fn mode_words(state: &SessionState) -> Option<String> {
     let view = settings(state);
     view.modes
         .iter()
         .find(|mode| mode.current)
+        .filter(|mode| !is_normal(&mode.value))
         .map(|mode| mode_name(&mode.value))
 }
 
-/// A mode by the name a person reads, never the provider's identifier:
-/// Claude's `acceptEdits` reads "Accept edits", Codex's `full-access`
-/// preset "Full access". A mode outside the known set keeps the provider's
-/// words.
+/// The mode an agent asks before acting in: Claude's `default`, Codex's
+/// on-request preset inside its folder.
+fn is_normal(value: &ModeValue) -> bool {
+    match value {
+        ModeValue::Claude(mode) => mode == "default",
+        ModeValue::Codex { preset, .. } => preset.as_deref() == Some("default"),
+    }
+}
+
+/// A mode by the name a person reads, lowercase as the terminal's own
+/// words are, never the provider's identifier: Claude's `acceptEdits`
+/// reads "accept edits", Codex's `full-access` preset "full access". A
+/// Claude mode outside the known set keeps Claude's word; a Codex pair
+/// outside the presets reads "custom".
 pub(crate) fn mode_name(value: &ModeValue) -> String {
     match value {
         ModeValue::Claude(mode) => match mode.as_str() {
-            "default" => "Default",
-            "acceptEdits" => "Accept edits",
-            "plan" => "Plan",
-            "auto" => "Auto",
-            "bypassPermissions" => "Bypass permissions",
+            "default" => "default",
+            "acceptEdits" => "accept edits",
+            "plan" => "plan",
+            "auto" => "auto",
+            "bypassPermissions" => "bypass permissions",
             other => other,
         }
         .to_owned(),
-        ModeValue::Codex {
-            preset,
-            approval_policy,
-            sandbox,
-        } => match preset.as_deref() {
-            Some("read-only") => "Read only".to_owned(),
-            Some("auto") => "Auto".to_owned(),
-            Some("full-access") => "Full access".to_owned(),
-            Some("plan") => "Plan".to_owned(),
-            _ => format!("{approval_policy} · {sandbox}"),
-        },
+        ModeValue::Codex { preset, .. } => match preset.as_deref() {
+            Some("read-only") => "read only",
+            Some("default") => "default",
+            Some("full-access") => "full access",
+            Some("plan") => "plan",
+            _ => "custom",
+        }
+        .to_owned(),
     }
 }

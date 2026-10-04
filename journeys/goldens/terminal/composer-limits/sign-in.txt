@@ -29,6 +29,6 @@
   │ your existing token.                                                                                   │
   │                                                                                                        │
   │ Run claude and sign in with /login on desk.                                                            │
-  ╰───────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · default ─╯
+  ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯
 
   ctrl+a more

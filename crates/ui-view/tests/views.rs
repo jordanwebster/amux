@@ -1090,7 +1090,7 @@ fn codex_modes_are_presets_and_a_pair_outside_them_is_reported() {
         presets,
         [
             (Some("read-only".into()), false, false),
-            (Some("auto".into()), false, false),
+            (Some("default".into()), false, false),
             (Some("full-access".into()), true, true),
         ]
     );

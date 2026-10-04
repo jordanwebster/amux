@@ -2975,8 +2975,7 @@ fn framed(
     }
     // "Opus (high) · accept edits": the model faint by its name, its
     // effort beside it, and the mode, which Shift+Tab (or a click) changes,
-    // in the reading ink. The edge is a status line, so the mode is
-    // lowercase.
+    // in the reading ink; the agent's normal mode is left unsaid.
     let known = |fact: &Option<String>| fact.clone().filter(|fact| !fact.is_empty());
     let mut label: Vec<Span<'static>> = Vec::new();
     match (known(&edge_words.model), known(&edge_words.effort)) {
@@ -2987,7 +2986,7 @@ fn framed(
         (None, Some(effort)) => label.push(Span::styled(format!("({effort})"), theme.faint())),
         (None, None) => {}
     }
-    let mode_words = known(&edge_words.mode).map(|mode| mode.to_lowercase());
+    let mode_words = known(&edge_words.mode);
     if let Some(mode) = &mode_words {
         if !label.is_empty() {
             label.push(Span::styled(" · ", theme.faint()));

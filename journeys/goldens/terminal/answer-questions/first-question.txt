@@ -29,6 +29,6 @@
   │   2. Stacked           │ Theme    │ Keepalive 30s                                                      │
   │   3. Something else    │ Keys     │                                                                    │
   │                        │                                                                               │
-  ╰───────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · default ─╯
+  ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯
 
   enter choose   ←/→ questions   ctrl+x stop   ctrl+a more

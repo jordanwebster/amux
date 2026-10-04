@@ -633,7 +633,7 @@ enum CatalogFixtures {
         let efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
         let presets: [(String, String, String)] = [
             ("read-only", "on-request", "read-only"),
-            ("auto", "on-request", "workspace-write"),
+            ("default", "on-request", "workspace-write"),
             ("full-access", "never", "danger-full-access"),
         ]
         return SettingsView(
@@ -645,7 +645,7 @@ enum CatalogFixtures {
             modes: presets.map { preset, approval, sandbox in
                 ModeChoice(
                     value: .codex(approvalPolicy: approval, sandbox: sandbox, preset: preset),
-                    current: preset == "auto", reported: false, stopsAsking: approval == "never")
+                    current: preset == "default", reported: false, stopsAsking: approval == "never")
             },
             cycleMode: false, commands: [], changeByTyping: nil, effortRefusal: nil, modeRefusal: nil,
             modelRefusal: nil)

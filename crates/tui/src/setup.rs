@@ -75,7 +75,7 @@ impl Agent {
 pub struct AgentDefaults {
     pub model: String,
     pub effort: String,
-    /// Claude's permission mode, or Codex's preset ("auto").
+    /// Claude's permission mode, or Codex's preset ("default").
     pub mode: String,
 }
 
@@ -97,7 +97,7 @@ impl Default for Defaults {
             codex: AgentDefaults {
                 model: "gpt-6.1-sol".into(),
                 effort: "medium".into(),
-                mode: "auto".into(),
+                mode: "default".into(),
             },
         }
     }
@@ -138,7 +138,7 @@ const CODEX_EFFORTS: [&str; 4] = ["minimal", "low", "medium", "high"];
 /// The modes shift+tab moves through: those that still ask before acting.
 const CLAUDE_MODES: [&str; 3] = ["default", "acceptEdits", "plan"];
 const CODEX_MODES: [(&str, &str, &str); 3] = [
-    ("auto", "on-request", "workspace-write"),
+    ("default", "on-request", "workspace-write"),
     ("read-only", "on-request", "read-only"),
     ("full-access", "never", "danger-full-access"),
 ];
@@ -237,8 +237,8 @@ impl Setup {
     /// on which machine. Without a name the first item invites one; "new
     /// worktree" shows only when it is on.
     pub fn edge(&self, fleet: &FleetState) -> Vec<Vec<(Item, String)>> {
-        // Always the values it will start with; the edge is a status line,
-        // so the mode reads lowercase, as on a chat's edge.
+        // Always the values it will start with, the mode too: here it is a
+        // setting to pick, so even the normal mode is named.
         let mut model = self.model.as_deref().map(model_label).unwrap_or_default();
         if let Some(effort) = &self.effort {
             model.push_str(&format!(" ({effort})"));
@@ -246,7 +246,7 @@ impl Setup {
         let mode = self
             .mode
             .as_ref()
-            .map(|mode| crate::words::mode_name(mode).to_lowercase())
+            .map(crate::words::mode_name)
             .unwrap_or_default();
         let mut place = vec![(Item::Folder, text::tilde(&self.folder))];
         if self.worktree {

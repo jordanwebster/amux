@@ -388,7 +388,7 @@ impl Default for NewAgentSettings {
             codex: NewAgentDefaults {
                 model: "gpt-6.1-sol".into(),
                 effort: "medium".into(),
-                mode: "auto".into(),
+                mode: "default".into(),
             },
         }
     }

@@ -387,7 +387,7 @@ fn box_label(choice: &Choice) -> String {
         ChoiceOutcome::AllowForSession => "Yes, and don't ask again this session".to_owned(),
         ChoiceOutcome::AllowAlways { mode, .. } if !mode.is_empty() => format!(
             "Yes, and switch to {}",
-            crate::words::mode_name(&ui_view::ModeValue::Claude(mode.clone())).to_lowercase()
+            crate::words::mode_name(&ui_view::ModeValue::Claude(mode.clone()))
         ),
         ChoiceOutcome::Deny { stops: true } | ChoiceOutcome::DenyAndStop => {
             "No, and stop".to_owned()

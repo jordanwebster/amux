@@ -19,7 +19,7 @@
   │                                                                                                        │
   │ Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to      │
   │ answer it, or stop the agent.                                                                          │
-  ╰───────────────────────────────────────────────────────────────────────────────────── Fake 1 · default ─╯
+  ╰─────────────────────────────────────────────────────────────────────────────────────────────── Fake 1 ─╯
 
   ctrl+x stop
 --- styles
@@ -44,6 +44,6 @@
 ..aa.......................................................................................................a..
 ..aammmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm......a..
 ..aammmmmmmmmmmmmmmmmmmmmmmmmmmmm..........................................................................a..
-..aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?????????.......aaa..
+..aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa??????aaa..
 ..............................................................................................................
 ..eeeeee?????.................................................................................................

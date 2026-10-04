@@ -1,3 +1,15 @@
+2026-10-04 — **Permission modes in plain words; the normal one goes
+unsaid.** The composer's edge leaves the mode out while the agent is in
+its normal mode, the one that asks before acting, and otherwise names it
+in lowercase: `auto`, `accept edits`, `plan`, `bypass permissions` for
+Claude; `read only`, `full access`, `plan` for Codex, and `custom` for a
+Codex approval and sandbox pair outside its presets instead of the raw
+pair. Pickers and the new agent's edge, where the mode is a setting to
+choose, name the normal mode `default`. Codex's on-request preset inside
+its folder was called "auto", which is the name of Codex's own reviewer
+mode; it is `default` now, in the shared views, the config's
+`codex.mode` and the phone's words.
+
 2026-10-04 — **Headless Claude's effort changes mid-session; the edge
 shows the effort in force.** Claude takes an effort change at any time
 through its flag settings control (`effortLevel`) and says what it

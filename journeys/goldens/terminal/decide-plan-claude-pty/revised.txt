@@ -29,6 +29,6 @@
   │ › 1. Yes, start building                                                                               │
   │   2. Yes, and accept edits without asking                                                              │
   │   3. No, keep planning  esc · tab to add a note                                                        │
-  ╰───────────────────────────────────────────────────────────────────────────────────── Fake 1 · default ─╯
+  ╰─────────────────────────────────────────────────────────────────────────────────────────────── Fake 1 ─╯
 
   enter choose   ctrl+x stop   ctrl+a more

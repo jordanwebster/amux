@@ -19,7 +19,7 @@
 
   ╭─ desk is away ─────────────────────────────────────────────────────────────────────────────────────────╮
   │ › Message worker                                                                                       │
-  ╰───────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · default ─╯
+  ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯
 
   Draft kept · sending waits
 --- styles
@@ -44,6 +44,6 @@
 ..............................................................................................................
 ..mmm????????????mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..
 ..mmmmmmmmmmmmmmmmmm.......................................................................................m..
-..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm?????????????????????????.......mmm..
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm??????????????????????mmm..
 ..............................................................................................................
 ..??????????????????????????..................................................................................
