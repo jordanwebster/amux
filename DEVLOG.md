@@ -1,3 +1,12 @@
+2026-10-04 — **The restart story sees the outage before it sends.**
+The terminal's leave-and-recover journey timed out once on macOS CI with
+the draft still in the composer. It restarted the laptop's daemon and
+waited for a screen that could send, which is also the screen from before
+the client noticed the restart, so the send could land while the client
+was reconnecting, where it is not taken. The journey now stops the
+daemon, waits for the client to say it is reconnecting with the draft
+kept, and only then starts it again.
+
 2026-10-04 — **The PowerShell installer hashes without a module.**
 Its first run on Windows CI failed at `Get-FileHash`: a script function
 that Windows PowerShell cannot find when it is started from PowerShell
