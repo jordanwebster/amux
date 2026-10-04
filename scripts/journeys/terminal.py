@@ -519,7 +519,7 @@ class TerminalJourney:
     def home(self, pane: str) -> str:
         """Back to home from a chat."""
         if not at_home(self.capture(pane)):
-            self.keys(pane, "C-a", "h")
+            self.keys(pane, "C-a", "s")
         return self.wait(pane, at_home, "home")
 
     def frame(self, pane: str, label: str) -> Frame:

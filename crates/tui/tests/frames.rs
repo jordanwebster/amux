@@ -639,7 +639,7 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
     );
     view.key(
         &fleet,
-        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('p')),
+        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('h')),
     );
     frame("hosts", &draw_fleet_view(&mut view, &fleet, now, 110, 30));
 

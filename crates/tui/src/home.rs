@@ -333,7 +333,7 @@ impl Home {
         self.draft.open = true;
     }
 
-    /// The hosts modal, from a chat's `ctrl+a p`.
+    /// The hosts modal, from a chat's `<leader> h`.
     pub fn open_hosts(&mut self) {
         self.draft.open = false;
         self.overlay = Some(Overlay::Hosts);
@@ -679,7 +679,7 @@ impl Home {
                     self.toggle(&agent);
                 }
             }
-            KeyCode::Char('p') => self.overlay = Some(Overlay::Hosts),
+            KeyCode::Char('h') => self.overlay = Some(Overlay::Hosts),
             // Detach: leave to the shell; the agents keep running.
             KeyCode::Char('d') => return vec![FleetEffect::Quit],
             KeyCode::Char('r') => {
@@ -734,7 +734,7 @@ impl Home {
             Overlay::Hosts => {
                 if !matches!(
                     key.code,
-                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('p')
+                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h')
                 ) {
                     self.overlay = Some(Overlay::Hosts);
                 }
@@ -1812,7 +1812,7 @@ pub fn help_rows() -> Vec<(&'static str, String)> {
         ("r", "rename, in place".into()),
         ("s", "stop; it can be resumed".into()),
         ("x", "delete; it asks first".into()),
-        ("p", "hosts".into()),
+        ("h", "hosts".into()),
         (
             "b",
             "report a problem: mark the screen, write a note".into(),

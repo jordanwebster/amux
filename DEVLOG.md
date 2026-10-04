@@ -1,3 +1,10 @@
+2026-10-04 — **`<leader> s` goes home; `h` opens hosts.** Home is
+`<leader> s` again, from a chat and from an agent's own terminal, where
+`<leader> h` now reaches the agent like any other key. Hosts move from
+`p` to `h`, on home and under the leader, leaving `p` for projects. A
+leader letter no longer has to match home's bare letter: `s` on home
+still stops an agent, asking first.
+
 2026-10-04 — **The running model by name; tool servers counted once.**
 The composer's edge names the model running rather than the choice that
 picked it: Claude's "Default (recommended)" reads "Opus 5". The model

@@ -704,11 +704,11 @@ impl App {
         let state = chat.session.state();
         match key.code {
             KeyCode::Char('?') => self.help = true,
-            KeyCode::Char('h') => {
+            KeyCode::Char('s') => {
                 drop(state);
                 self.close_chat();
             }
-            KeyCode::Char('p') => {
+            KeyCode::Char('h') => {
                 drop(state);
                 self.close_chat();
                 self.fleet_view.home.open_hosts();
@@ -1355,12 +1355,11 @@ fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
             label: label.to_owned(),
             chord,
         };
-    // What is about amux first, then what is about this chat. One letter
-    // means one thing here and among home's bare keys.
+    // What is about amux first, then what is about this chat.
     let mut entries = vec![
-        entry("amux", "h", "home", 'h'),
+        entry("amux", "s", "home", 's'),
         entry("amux", "n", "new agent", 'n'),
-        entry("amux", "p", "hosts", 'p'),
+        entry("amux", "h", "hosts", 'h'),
         entry("amux", "d", "detach", 'd'),
         entry("amux", "b", "bug report", 'b'),
         entry("amux", "?", "all keys", '?'),
@@ -1441,9 +1440,9 @@ fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
     ]);
     // The leader's chords, by their whole keys.
     let chords: [(&str, &str); 11] = [
-        ("h", "home"),
+        ("s", "home"),
         ("n", "new agent, starting from this chat's settings"),
-        ("p", "hosts"),
+        ("h", "hosts"),
         ("d", "detach: leave to the shell; agents keep running"),
         ("b", "report a problem: mark the screen, write a note"),
         ("r", "review changes; comments go in the draft"),

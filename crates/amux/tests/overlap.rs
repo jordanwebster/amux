@@ -197,7 +197,7 @@ async fn a_tui_of_the_previous_build_works_on_after_an_update() {
     ));
 
     // Back at the fleet it names the newer daemon.
-    term.type_keys(b"\x01h").await;
+    term.type_keys(b"\x01s").await;
     term.shows(&format!("amux {running} running · restart to update"))
         .await;
     term.shows("? keys").await;

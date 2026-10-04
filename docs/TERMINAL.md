@@ -92,11 +92,11 @@ chat's agent, folder and host instead.
 
 ### Hosts
 
-`p`, or the leader then `p` from a chat, opens the hosts window over home: every trusted host whatever its
+`h`, or the leader then `h` from a chat, opens the hosts window over home: every trusted host whatever its
 presence, with `this machine`, how it is reached (`direct`, `relay`) or why not (`offline · not signed in`, `away ·
 this machine is signed out`, `no longer trusts this machine`). Hosts that local-network discovery sees and that are
 not yet trusted are listed faint, with the command that pairs them (`found nearby · amux pair desk`); a faint line
-says to pair another with `amux pair`. Esc, `q` or `p` closes it. Pairing, unpairing and signing in happen from the
+says to pair another with `amux pair`. Esc, `q` or `h` closes it. Pairing, unpairing and signing in happen from the
 command line ([`amux pair`](#command-line-verbs) and friends); [HOW_IT_WORKS.md](HOW_IT_WORKS.md) explains hosts,
 pairing and the relay.
 
@@ -266,10 +266,10 @@ and `TERM` to choose truecolor or ANSI, and `NO_COLOR` turns colour off.
 ## Keys
 
 Keys come in three layers. **amux** keys are about amux itself (home, a new agent, hosts, reporting, leaving): on
-home they are bare letters, and in a chat the leader then the same letter. **This chat** keys act on the open chat
-(review, attach, focus rows), also under the leader. **Local** keys belong to whatever has focus (an ask, a panel,
-the overview, home's list, a window) and never leak out of it. One letter means one thing across home and the
-leader. Control chords are kept for speed and habit only: Ctrl+X stops the turn, Shift+Tab steps the mode, Ctrl+C
+home they are bare letters, and in a chat the leader then a letter, mostly the same one (`<leader> s` goes home,
+while `s` on home stops an agent). **This chat** keys act on the open chat (review, attach, focus rows), also under
+the leader. **Local** keys belong to whatever has focus (an ask, a panel, the overview, home's list, a window) and
+never leak out of it. Control chords are kept for speed and habit only: Ctrl+X stops the turn, Shift+Tab steps the mode, Ctrl+C
 clears the field, Ctrl+O opens the overview, Ctrl+S opens the settings letters. Esc backs out one level and never
 stops the agent or answers an ask; clearing a field and stopping the agent are never the same key.
 
@@ -295,7 +295,7 @@ stops the agent or answers an ask; clearing a field and stopping the agent are n
 | `n` | A new agent |
 | `r` | Rename, in place |
 | `s`, `x` | Stop, or delete, asking first |
-| `p` | Hosts |
+| `h` | Hosts |
 | `b` | Report a problem |
 | `d`, `q` | Leave for the shell; agents keep running |
 | `?` | Every key |
@@ -365,9 +365,9 @@ clicked.
 
 | Chord | Action |
 |---|---|
-| `<leader> h` | Home |
+| `<leader> s` | Home |
 | `<leader> n` | A new agent, starting from this chat's agent, folder and host |
-| `<leader> p` | Hosts |
+| `<leader> h` | Hosts |
 | `<leader> b` | Report a problem |
 | `<leader> d` | Leave for the shell; agents keep running |
 | `<leader> ?` | Every key |
@@ -377,7 +377,7 @@ clicked.
 | `<leader> o` | Open or close the focused row or stretch |
 | `<leader> y` | Copy the focused row (through the terminal's OSC 52 clipboard) |
 
-During raw attach the leader is read out of the bytes you type: `<leader> d` detaches to the shell, `<leader> h`
+During raw attach the leader is read out of the bytes you type: `<leader> d` detaches to the shell, `<leader> s`
 returns home over the attached agent, and a leader followed by any other key goes to the agent exactly as typed.
 The leader is recognised both as its control byte and in the form terminals send when an agent has switched on the
 kitty keyboard protocol.
@@ -404,10 +404,10 @@ While attached, typing and resizes go to the agent. How it ends:
 | Ending | `amux attach` | From the terminal client |
 |---|---|---|
 | `<leader> d` | Prints `[detached from <name>]` and returns to the shell | Leaves the client for the shell |
-| `<leader> h` | Opens home over the attached agent | Returns home |
+| `<leader> s` | Opens home over the attached agent | Returns home |
 | The agent ends the connection | Prints `[<name>: <why>]` or `[<name> ended]` and returns to the shell | Leaves the client for the shell |
 
-Only `<leader> h` comes back home. Leaving for home keeps the connection and a model of the agent's screen, so
+Only `<leader> s` comes back home. Leaving for home keeps the connection and a model of the agent's screen, so
 attaching to the same agent again repaints it where it was rather than starting over; picking another agent opens
 a second connection. The terminal is restored whichever way attach ends, including the modes the agent's interface
 switched on.

@@ -304,7 +304,7 @@ def reach_host(journey: TerminalJourney) -> list[str]:
     # Unpaired: the laptop finds the desk and says how to pair with it.
     pane = journey.launch("terminal", "laptop")
     journey.wait(pane, at_home, "home")
-    journey.keys(pane, "p")
+    journey.keys(pane, "h")
     journey.wait_terms(pane, "desk", "found nearby · amux pair desk")
     journey.frame(pane, "found-not-paired")
     peers = journey.launch("peers", "laptop", "peers")
@@ -475,7 +475,7 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     journey.wait_terms(created, "Created profile work", "AMUX_EXIT_0")
     other = journey.launch("other", "laptop", "--profile", "work")
     journey.wait_terms(other, "no agents yet")
-    journey.keys(other, "p")
+    journey.keys(other, "h")
     journey.wait(other, lambda frame: re.search(r"laptop\s+this machine", frame) is not None and "desk" not in frame, "hosts without the desk")
     journey.frame(other, "other-profile")
     journey.keys(other, "Escape")
@@ -497,7 +497,7 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     # desk, and the hosts overlay says the same.
     journey.wait_terms(pane, "desk away · this machine is signed out", "until this machine signs in")
     journey.home(pane)
-    journey.keys(pane, "p")
+    journey.keys(pane, "h")
     journey.wait_terms(pane, "signed out · amux login", "offline · this machine is signed out")
     journey.frame(pane, "blocked-hosts")
     journey.keys(pane, "Escape")
@@ -844,7 +844,7 @@ def new_agent_terminal(journey: TerminalJourney) -> list[str]:
     journey.type(pane, "Write the notes.")
     journey.keys(pane, "Enter")
     journey.wait_terms(pane, "Ready to write the release notes.")
-    journey.keys(pane, "C-a", "h")
+    journey.keys(pane, "C-a", "s")
     journey.wait(pane, lambda frame: at_home(frame) and agent_row(frame, "release-notes") is not None, "home with release-notes")
     made = journey.wait_inventory("laptop", lambda agents: any(a["name"] == "release-notes" for a in agents), "created-here")
     (local,) = [agent for agent in made if agent["name"] == "release-notes"]
@@ -870,7 +870,7 @@ def new_agent_terminal(journey: TerminalJourney) -> list[str]:
     journey.quit_client(pane)
     return [
         "for someone who chats in each agent's own terminal, n opened the New Agent form",
-        "Start on this machine handed the terminal to the new Claude; what was typed there reached it once; leader h came back home",
+        "Start on this machine handed the terminal to the new Claude; what was typed there reached it once; leader s came back home",
         "Start on the desk created the agent there and opened its chat, saying its terminal is on another machine",
         "the client exited 0",
     ]

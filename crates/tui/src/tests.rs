@@ -1972,7 +1972,7 @@ fn q_and_question_mark_reach_an_open_fleet_overlay_first() {
     assert_eq!(view.key(&fleet, help), vec![FleetEffect::Help]);
 
     // The hosts overlay: q closes it, and the next q quits.
-    view.key(&fleet, key(KeyCode::Char('p')));
+    view.key(&fleet, key(KeyCode::Char('h')));
     assert!(fleet_screen(&mut view, &fleet).contains("studio"));
     assert_eq!(view.key(&fleet, q), vec![]);
     assert_eq!(view.key(&fleet, q), vec![FleetEffect::Quit]);
