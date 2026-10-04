@@ -20,7 +20,7 @@ use node::RelayCarrier;
 use node::harness::{Advertisement, HostVia};
 use store::Store as _;
 use support::*;
-use testnet::{Net, RELAY_HOST, Topology};
+use testnet::{Net, RELAY_HOST, Topology, holds_for, until};
 use wire::begin_pair_request;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -70,9 +70,13 @@ async fn hosts_on_one_account_reach_each_other_through_the_relay_over_quic_or_tc
     // The phone remembers the blocked network, and dials TCP alone until
     // the memory expires on the policy clock, even once UDP is back.
     until("the phone to remember UDP is blocked", || async {
-        edge(&net, "phone").remembers_udp_blocked(RELAY_HOST)
+        edge(&net, "phone")
+            .remembers_udp_blocked(RELAY_HOST)
+            .then_some(())
+            .ok_or("not remembered")
     })
-    .await;
+    .await
+    .unwrap();
     net.block_udp("phone", false).unwrap();
     net.advance(node::UDP_BLOCKED_MEMORY - Duration::from_millis(1))
         .unwrap();
@@ -105,13 +109,18 @@ async fn a_relay_link_whose_credential_lapses_at_the_relay_first_comes_back_on_a
     net.advance(testnet::CREDENTIAL_TTL - ahead + Duration::from_secs(1))
         .unwrap();
     until("the desk to fetch a fresh credential", || async {
-        net.relay().unwrap().connects().len() > connects
+        let now = net.relay().unwrap().connects().len();
+        (now > connects)
+            .then_some(())
+            .ok_or_else(|| format!("{now} connects, {connects} before"))
     })
-    .await;
+    .await
+    .unwrap();
     until("the desk's relay link to come back", || async {
-        carrier(&net, "desk").is_some()
+        carrier(&net, "desk").map(|_| ()).ok_or("no carrier")
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         net.relay().unwrap().links("ada").await,
         vec![(host_id(&net, "desk"), 1)]
@@ -129,16 +138,21 @@ async fn reconnect(net: &Net, host: &str) {
         .await
         .expect("the profile pauses");
     until(&format!("{host}'s relay link to close"), || async {
-        carrier(net, host).is_none()
+        match carrier(net, host) {
+            None => Ok(()),
+            Some(carrier) => Err(format!("still on {carrier:?}")),
+        }
     })
-    .await;
+    .await
+    .unwrap();
     door.resume_profile(operation(profile(net, host)))
         .await
         .expect("the profile resumes");
     until(&format!("{host}'s relay link to come back"), || async {
-        carrier(net, host).is_some()
+        carrier(net, host).map(|_| ()).ok_or("no carrier")
     })
-    .await;
+    .await
+    .unwrap();
 }
 
 /// The refusal every failed secret reads as, so a guesser learns nothing
@@ -268,9 +282,13 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
     .unwrap();
     confirm_pair(&net, "laptop", pending.token).await.unwrap();
     until("the desk to trust the laptop", || async {
-        edge(&net, "desk").is_trusted(host_id(&net, "laptop"))
+        edge(&net, "desk")
+            .is_trusted(host_id(&net, "laptop"))
+            .then_some(())
+            .ok_or("not trusted")
     })
-    .await;
+    .await
+    .unwrap();
 
     // The first success consumes the PIN: the window closes and a second
     // machine cannot race in on it. A host with no window open refuses the
@@ -334,9 +352,12 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
     .unwrap();
     assert_eq!(started.ttl_seconds, 1);
     until("the window to expire", || async {
-        !edge(&net, "attic").pairing_active()
+        (!edge(&net, "attic").pairing_active())
+            .then_some(())
+            .ok_or("pairing still active")
     })
-    .await;
+    .await
+    .unwrap();
     let expired = begin_pair(
         &net,
         "intruder",
@@ -409,13 +430,15 @@ fn advert(net: &Net, host: &str, addr: std::net::SocketAddr, scope: &str) -> Adv
     }
 }
 
-/// Holds for a second that `check` never becomes true.
-async fn never(what: &str, mut check: impl AsyncFnMut() -> bool) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
-    while tokio::time::Instant::now() < deadline {
-        assert!(!check().await, "{what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+/// Holds for a second that `check` stays false: a window, kept because
+/// nothing the test controls gates the dial that must not succeed.
+async fn never(what: &str, check: impl AsyncFn() -> bool) {
+    holds_for(what, Duration::from_secs(1), || {
+        let check = &check;
+        async move { !check().await }
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -460,13 +483,16 @@ async fn a_key_that_does_not_match_the_pinned_one_is_refused() {
     until(
         "the laptop to dial the claimed address and fail",
         || async {
-            edge(&net, "laptop")
-                .last_dial_error(desk)
-                .await
+            let error = edge(&net, "laptop").last_dial_error(desk).await;
+            error
+                .as_ref()
                 .is_some_and(|error| error.contains(&impostor_addr.to_string()))
+                .then_some(())
+                .ok_or_else(|| format!("last dial error: {error:?}"))
         },
     )
-    .await;
+    .await
+    .unwrap();
     // The dialer checks the answering key before it presents its own, so
     // the stranger never sees the laptop's certificate.
     let refused = edge(&net, "laptop").last_dial_error(desk).await.unwrap();
@@ -475,11 +501,12 @@ async fn a_key_that_does_not_match_the_pinned_one_is_refused() {
             && refused.contains("invalid peer certificate"),
         "{refused}"
     );
-    never(
-        "the laptop links to a stranger claiming the desk's id",
-        async || edge(&net, "laptop").via(desk).await != HostVia::Offline,
-    )
-    .await;
+    // The dial's outcome is in: the stranger's key never matches the pin.
+    assert_eq!(
+        edge(&net, "laptop").via(desk).await,
+        HostVia::Offline,
+        "the laptop never links to a stranger claiming the desk's id"
+    );
     let pinned = edge(&net, "laptop")
         .trusted()
         .into_iter()
@@ -502,11 +529,27 @@ async fn a_key_that_does_not_match_the_pinned_one_is_refused() {
     assert_eq!(host_id(&net, "desk"), desk);
     let rotated = edge(&net, "desk").public_key().to_vec();
     assert_ne!(rotated, desk_key, "a new key");
-    never("the old pinned key links to the rotated desk", async || {
-        edge(&net, "laptop").via(desk).await != HostVia::Offline
-            || edge(&net, "desk").via(laptop).await != HostVia::Offline
+    // Each side's dial fails on the other's key: the laptop stores a new
+    // error (the one from the stranger is still held), the rotated desk
+    // its first.
+    until("the laptop's dial to the rotated desk to fail", || async {
+        match edge(&net, "laptop").last_dial_error(desk).await {
+            Some(error) if error != refused => Ok(error),
+            other => Err(format!("{other:?}")),
+        }
     })
-    .await;
+    .await
+    .unwrap();
+    until("the rotated desk's dial to the laptop to fail", || async {
+        edge(&net, "desk")
+            .last_dial_error(laptop)
+            .await
+            .ok_or("no dial error stored")
+    })
+    .await
+    .unwrap();
+    assert_eq!(edge(&net, "laptop").via(desk).await, HostVia::Offline);
+    assert_eq!(edge(&net, "desk").via(laptop).await, HostVia::Offline);
     assert!(
         peer_inventory_hosts(&edge(&net, "laptop"), desk)
             .await
@@ -591,12 +634,15 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
 
     // Only a profile that listens advertises.
     until("the phone to find the desk", || async {
-        edge(&net, "phone")
-            .candidates()
+        let candidates = edge(&net, "phone").candidates();
+        candidates
             .iter()
             .any(|advert| advert.host_id == desk)
+            .then_some(())
+            .ok_or_else(|| format!("candidates: {candidates:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     let advertised = |host| {
         edge(&net, "desk")
             .candidates()
@@ -623,9 +669,13 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
     // The dialler stores an address once its link is established, just
     // after routing already names the link.
     until("the phone to store the desk's address", || async {
-        stored_addrs(&net, "phone", "desk") == vec![first.to_string()]
+        let stored = stored_addrs(&net, "phone", "desk");
+        (stored == vec![first.to_string()])
+            .then_some(())
+            .ok_or_else(|| format!("stored: {stored:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     println!("the desk found at {first}: the phone dialled it at once and stored the address");
 
     // The desk stops and withdraws, and comes back on another port while
@@ -633,12 +683,13 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
     // before the stale one the phone stored, and replaces it.
     net.stop_daemon("desk").await.unwrap();
     until("the desk's advertisement to go", || async {
-        !edge(&net, "phone")
-            .candidates()
-            .iter()
-            .any(|advert| advert.host_id == desk)
+        let candidates = edge(&net, "phone").candidates();
+        (!candidates.iter().any(|advert| advert.host_id == desk))
+            .then_some(())
+            .ok_or_else(|| format!("candidates: {candidates:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     net.restart_daemon("desk").await.unwrap();
     let second = edge(&net, "desk").lan_addr().unwrap();
     assert_ne!(second, first);
@@ -649,9 +700,13 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
         "the found address was dialled before the stale one timed out"
     );
     until("the phone to store the desk's new address", || async {
-        stored_addrs(&net, "phone", "desk") == vec![second.to_string()]
+        let stored = stored_addrs(&net, "phone", "desk");
+        (stored == vec![second.to_string()])
+            .then_some(())
+            .ok_or_else(|| format!("stored: {stored:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     peer_inventory_hosts(&edge(&net, "phone"), desk)
         .await
         .expect("the phone calls the desk at its new address");
@@ -782,9 +837,11 @@ async fn revoking_a_host_closes_what_it_holds_open_over_a_direct_link_and_over_t
     until("the tablet's calls to go through again", || async {
         peer_inventory_hosts(&edge(&net, "tablet"), desk)
             .await
-            .is_ok()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(net.relay().unwrap().links("ada").await, links_before);
     println!("the tablet paired again through the relay with a QR secret, on the same links");
 
@@ -970,14 +1027,23 @@ async fn profiles_and_accounts_share_no_keys_windows_presence_or_administration(
     // work profile's listener with it gets it nowhere.
     edge(&net, "laptop").trust(&work_edge).await.unwrap();
     edge(&net, "laptop").dial(work_edge.host_id(), work_edge.lan_addr().unwrap());
-    never(
-        "a key one profile pinned authenticates into another",
-        async || {
-            edge(&net, "laptop").via(work_edge.host_id()).await != HostVia::Offline
-                || work_edge.via(laptop).await != HostVia::Offline
+    until(
+        "the laptop's dial into the work profile to fail",
+        || async {
+            edge(&net, "laptop")
+                .last_dial_error(work_edge.host_id())
+                .await
+                .ok_or("no dial error stored")
         },
     )
-    .await;
+    .await
+    .unwrap();
+    assert_eq!(
+        edge(&net, "laptop").via(work_edge.host_id()).await,
+        HostVia::Offline,
+        "a key one profile pinned never authenticates into another"
+    );
+    assert_eq!(work_edge.via(laptop).await, HostVia::Offline);
     println!(
         "work profile {}: own key, own window, the desk's peers refused",
         work.id
@@ -1145,9 +1211,13 @@ async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pr
         node::Tier::Pro
     );
     until("the desk's link to carry Pro", || async {
-        tier(&net, "desk") == Some(node::Tier::Pro)
+        let tier = tier(&net, "desk");
+        (tier == Some(node::Tier::Pro))
+            .then_some(())
+            .ok_or_else(|| format!("tier {tier:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(tier(&net, "phone"), Some(node::Tier::Free));
     peer_inventory_hosts(&edge(&net, "desk"), phone)
         .await
@@ -1158,10 +1228,13 @@ async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pr
     // links.
     net.advance(node::FREE_TIER_REFRESH_INTERVAL).unwrap();
     until("the others' links to carry Pro", || async {
-        tier(&net, "phone") == Some(node::Tier::Pro)
-            && tier(&net, "tablet") == Some(node::Tier::Pro)
+        let tiers = (tier(&net, "phone"), tier(&net, "tablet"));
+        (tiers == (Some(node::Tier::Pro), Some(node::Tier::Pro)))
+            .then_some(())
+            .ok_or_else(|| format!("phone, tablet tiers {tiers:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         net.relay().unwrap().connects().len(),
         connects + 3,
@@ -1195,11 +1268,32 @@ async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pr
     net.advance(testnet::CREDENTIAL_TTL - Duration::from_secs(4 * 60))
         .unwrap();
     until("every link to present a fresh credential", || async {
-        net.relay().unwrap().presented().len() >= presented + 3
+        let now = net.relay().unwrap().presented().len();
+        (now >= presented + 3)
+            .then_some(())
+            .ok_or_else(|| format!("{now} presented, {presented} before"))
     })
-    .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(net.relay().unwrap().links("ada").await.len(), 3);
+    .await
+    .unwrap();
+    // A refresh re-authenticates the link it rides and then arms the next
+    // one, five minutes before the fresh credential expires: three timers
+    // at that deadline say every refresh is through.
+    let next_refresh =
+        net.now_ms() + (testnet::CREDENTIAL_TTL - Duration::from_secs(5 * 60)).as_millis() as i64;
+    until("every link to arm its next refresh", || async {
+        let sleeping = net.clock().unwrap().sleeping();
+        let armed = sleeping.iter().filter(|at| **at == next_refresh).count();
+        (armed >= 3)
+            .then_some(())
+            .ok_or_else(|| format!("{armed} armed at {next_refresh}; sleeping {sleeping:?}"))
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        net.relay().unwrap().links("ada").await.len(),
+        3,
+        "the three links stayed three"
+    );
     let spawned = net
         .spawn(testnet::AgentDecl::new("scout", "desk").prompt("Look around."))
         .await
@@ -1565,9 +1659,13 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
         .await
         .expect("an empty profile is adopted without asking");
     until("both relay links", || async {
-        net.relay().unwrap().links("bob").await == vec![(work_edge.host_id(), 1)]
+        let links = net.relay().unwrap().links("bob").await;
+        (links == vec![(work_edge.host_id(), 1)])
+            .then_some(())
+            .ok_or_else(|| format!("bob's links: {links:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(net.relay().unwrap().links("ada").await, vec![(desk, 1)]);
 
     // A login that belongs elsewhere is refused and moves nothing: another
@@ -1627,10 +1725,13 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
         .await
         .unwrap();
     until("the work profile to need a sign-in", || async {
-        profile_info(&net, "desk", &work).await.observed
-            == wire::Observed::AuthenticationRequired as i32
+        let observed = profile_info(&net, "desk", &work).await.observed;
+        (observed == wire::Observed::AuthenticationRequired as i32)
+            .then_some(())
+            .ok_or_else(|| format!("observed {observed}"))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         profile_info(&net, "desk", &main).await.observed,
         wire::Observed::Connected as i32
@@ -1645,9 +1746,14 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
         .await
         .unwrap();
     until("Ada's relay link to close", || async {
-        net.relay().unwrap().links("ada").await.is_empty()
+        let links = net.relay().unwrap().links("ada").await;
+        links
+            .is_empty()
+            .then_some(())
+            .ok_or_else(|| format!("ada's links: {links:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(edge(&net, "desk").via(laptop).await, HostVia::Direct);
     for _ in 0..2 {
         door(&net, "desk")
@@ -1657,11 +1763,22 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
             .unwrap();
     }
     until("Ada's relay link to come back", || async {
-        net.relay().unwrap().links("ada").await == vec![(desk, 1)]
+        let links = net.relay().unwrap().links("ada").await;
+        (links == vec![(desk, 1)])
+            .then_some(())
+            .ok_or_else(|| format!("ada's links: {links:?}"))
     })
-    .await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(net.relay().unwrap().links("ada").await, vec![(desk, 1)]);
+    .await
+    .unwrap();
+    // Two resumes, one link; a window, since no outcome marks the second
+    // link that must not open.
+    holds_for(
+        "Ada's one relay link",
+        Duration::from_millis(500),
+        || async { net.relay().unwrap().links("ada").await == vec![(desk, 1)] },
+    )
+    .await
+    .unwrap();
 
     // Signing out forgets the cloud and keeps everything local: the agent,
     // the identity and the paired laptop. Signing in again finds the same
@@ -1673,9 +1790,14 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
         .await
         .unwrap();
     until("Ada's relay link to close", || async {
-        net.relay().unwrap().links("ada").await.is_empty()
+        let links = net.relay().unwrap().links("ada").await;
+        links
+            .is_empty()
+            .then_some(())
+            .ok_or_else(|| format!("ada's links: {links:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         profile_info(&net, "desk", &main).await.intent,
         wire::Intent::LoggedOut as i32
@@ -1716,14 +1838,22 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
         .into_inner();
     assert_eq!(again.id, main);
     until("Ada's relay link after the restart", || async {
-        net.relay().unwrap().links("ada").await == vec![(desk, 1)]
+        let links = net.relay().unwrap().links("ada").await;
+        (links == vec![(desk, 1)])
+            .then_some(())
+            .ok_or_else(|| format!("ada's links: {links:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(host_id(&net, "desk"), desk);
     until("the laptop linked again", || async {
-        edge(&net, "desk").via(laptop).await == HostVia::Direct
+        let via = edge(&net, "desk").via(laptop).await;
+        (via == HostVia::Direct)
+            .then_some(())
+            .ok_or_else(|| format!("via {via:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     println!("signed out and in again: same host, same key, laptop still paired, worker kept");
 
     // Two logins for one account at once land on one profile, with one
@@ -1750,11 +1880,22 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
     let (first, second) = (first.unwrap(), second.unwrap());
     assert_eq!(first.id, second.id, "one profile for one account");
     until("Dan's one relay link", || async {
-        net.relay().unwrap().links("dan").await.len() == 1
+        let links = net.relay().unwrap().links("dan").await;
+        (links.len() == 1)
+            .then_some(())
+            .ok_or_else(|| format!("dan's links: {links:?}"))
     })
-    .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(net.relay().unwrap().links("dan").await.len(), 1);
+    .await
+    .unwrap();
+    // Two sign-ins, one link; a window, since no outcome marks the second
+    // link that must not open.
+    holds_for(
+        "Dan's one relay link to stay one",
+        Duration::from_millis(300),
+        || async { net.relay().unwrap().links("dan").await.len() == 1 },
+    )
+    .await
+    .unwrap();
 
     // A profile deleted is gone for every caller: its relay link, its
     // listener, its place in the list.
@@ -1763,9 +1904,13 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
         .await
         .unwrap();
     until("Cara's relay link", || async {
-        net.relay().unwrap().links("cara").await == vec![(old_edge.host_id(), 1)]
+        let links = net.relay().unwrap().links("cara").await;
+        (links == vec![(old_edge.host_id(), 1)])
+            .then_some(())
+            .ok_or_else(|| format!("cara's links: {links:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     let old_addr = old_edge.lan_addr().unwrap();
     let revision = profile_info(&net, "desk", &old).await.revision;
     drop(old_edge);
@@ -1779,9 +1924,14 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
         .await
         .unwrap();
     until("Cara's relay link to close", || async {
-        net.relay().unwrap().links("cara").await.is_empty()
+        let links = net.relay().unwrap().links("cara").await;
+        links
+            .is_empty()
+            .then_some(())
+            .ok_or_else(|| format!("cara's links: {links:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     let reached = tokio::time::timeout(
         Duration::from_secs(1),
         edge(&net, "laptop").unpinned_channel(old_addr),
@@ -1907,9 +2057,13 @@ async fn a_host_is_seen_going_and_coming_with_its_identity_and_its_sign_in() {
     // A host on the account that nobody paired is seen through the relay,
     // and no call is made to it.
     until("the desk to see the tablet through the relay", || async {
-        edge(&net, "desk").via(tablet).await == HostVia::Relay
+        let via = edge(&net, "desk").via(tablet).await;
+        (via == HostVia::Relay)
+            .then_some(())
+            .ok_or_else(|| format!("via {via:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     peer_inventory_hosts(&edge(&net, "desk"), tablet)
         .await
         .expect_err("no call to a host nobody paired");
@@ -1931,14 +2085,20 @@ async fn a_host_is_seen_going_and_coming_with_its_identity_and_its_sign_in() {
     until("the tablet's calls to go through", || async {
         peer_inventory_hosts(&edge(&net, "tablet"), desk)
             .await
-            .is_ok()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     })
-    .await;
+    .await
+    .unwrap();
     net.stop_daemon("tablet").await.unwrap();
     until("the desk to see the tablet go", || async {
-        edge(&net, "desk").via(tablet).await == HostVia::Offline
+        let via = edge(&net, "desk").via(tablet).await;
+        (via == HostVia::Offline)
+            .then_some(())
+            .ok_or_else(|| format!("via {via:?}"))
     })
-    .await;
+    .await
+    .unwrap();
 
     // The desk goes down: still listed, as trusted and offline, keeping
     // the last word on its sign-in, and calls to it fail. It comes back

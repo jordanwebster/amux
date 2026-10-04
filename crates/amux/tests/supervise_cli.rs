@@ -10,14 +10,13 @@ mod support;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use node::release;
 use node::supervisor::SUPERVISOR_LOCK;
 use node::supervisor::login::LoginItem;
-use support::{Channel, amux_binary};
-
-const PATIENCE: Duration = Duration::from_secs(60);
+use patience::{holds_for, until_within};
+use support::{Channel, PATIENCE, amux_binary};
 
 fn goldens() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/goldens/login")
@@ -178,12 +177,13 @@ fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+/// The shared wait at this crate's patience, over a plain check.
 async fn until(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + PATIENCE;
-    while !done() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    until_within(what, PATIENCE, || {
+        std::future::ready(done().then_some(()).ok_or("not yet"))
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -209,9 +209,15 @@ async fn stop_goes_to_the_supervisor_first_where_the_install_has_one() {
     assert!(install.supervisor_pid().is_none());
     assert!(!install.daemon_running());
     until("the supervisor to exit", || !alive(supervisor)).await;
-    // Stopped for good: nothing brings the daemon back.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(!install.answers() && !install.daemon_running());
+    // Stopped for good: nothing brings the daemon back. A window, since a
+    // restart that must not happen leaves no mark to wait on.
+    holds_for(
+        "the daemon to stay down",
+        Duration::from_secs(2),
+        || async { !install.answers() && !install.daemon_running() },
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -256,11 +262,13 @@ async fn a_client_starts_the_supervisor_only_where_the_install_has_one() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(
-        waiting.try_wait().unwrap().is_none(),
-        "the client waits for the service manager"
-    );
+    // A window: a client that must keep waiting leaves no mark to wait on.
+    holds_for("the client to keep waiting", Duration::from_secs(2), || {
+        let running = waiting.try_wait().unwrap().is_none();
+        async move { running }
+    })
+    .await
+    .expect("the client waits for the service manager");
     waiting.kill().unwrap();
     let output = waiting.wait_with_output().unwrap();
     assert!(

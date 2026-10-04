@@ -297,18 +297,27 @@ async fn link_through_relay(quic: bool) -> RelayCarrier {
         .await
         .expect("the profile signs in");
 
-    until("the daemon's cloud link to reach the relay", async || {
-        let listed = profiles
-            .list_profiles(ListProfilesRequest {})
-            .await
-            .unwrap()
-            .into_inner()
-            .profiles;
-        listed
-            .iter()
-            .any(|p| p.id == profile.id && p.observed() == Observed::Connected)
+    until("the daemon's cloud link to reach the relay", || {
+        let mut profiles = profiles.clone();
+        let profile = &profile;
+        async move {
+            let listed = profiles
+                .list_profiles(ListProfilesRequest {})
+                .await
+                .unwrap()
+                .into_inner()
+                .profiles;
+            let observed = listed
+                .iter()
+                .find(|p| p.id == profile.id)
+                .map(|p| p.observed());
+            (observed == Some(Observed::Connected))
+                .then_some(())
+                .ok_or_else(|| format!("observed {observed:?}"))
+        }
     })
-    .await;
+    .await
+    .unwrap();
     let linked = profiles
         .list_profiles(ListProfilesRequest {})
         .await

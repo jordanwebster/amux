@@ -148,7 +148,7 @@ provider's process group at once and writes nothing.
 | `Draining` after the daemon was lost | An ask is open (phase needs you) | A drain deadline is armed; when it passes, `exit` with "orphaned while waiting for you" |
 | `Running`, the agent has a parent | A turn ends with nothing running, nothing queued and no accepted agent message still unconsumed | `exit` with "finished" (the one-shot rule) |
 | Any | The interpreter asks to exit (`Effect::Exit`) | `exit` with the interpreter's cause |
-| Any | A write to the directory fails (in practice, a full disk) | `exit` with "could not write to its directory: …"; if even that cannot be written, the provider is killed |
+| Any | A write to the directory fails (in practice, a full disk): a journal frame, a blob, or the provider's own state in `private/` that the next incarnation resumes from (Codex's thread id, the transcript position) | `exit` with "could not write to its directory: …"; if even that cannot be written, the provider is killed |
 | Any | The provider exits | The loop ends |
 | Any | `Stop(Kill)` arrives | The provider's process group is killed; "killed" |
 | `Exiting` | Ten seconds pass | The provider's process group is killed |

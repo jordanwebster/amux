@@ -104,7 +104,8 @@ conformance!(
     pages_extend_the_block_downwards_only_when_they_join,
     a_replica_without_a_block_serves_nothing,
     cut_reads_snapshot_rows_and_marker_together,
-    rewind_host_drops_that_hosts_replicas_and_records_the_generation,
+    a_reset_under_another_generation_forgets_every_held_row,
+    a_hosts_generation_is_recorded_as_its_inventory_reports_it,
     absorb_refuses_own_rows,
     item_by_input_finds_the_item_an_input_produced,
     remove_notification_removes_only_that_one,
@@ -638,6 +639,7 @@ fn a_reset_replaces_the_block_and_keeps_older_rows_for_get<S: Store>(store: S) {
                     revision: 12,
                     ..snapshot(Phase::Idle, None, 50)
                 },
+                generation: 1,
             },
         )
         .unwrap();
@@ -661,6 +663,7 @@ fn a_reset_replaces_the_block_and_keeps_older_rows_for_get<S: Store>(store: S) {
                     revision: 42,
                     ..snapshot(Phase::Working, Some("more"), 60)
                 },
+                generation: 1,
             },
         )
         .unwrap();
@@ -688,6 +691,7 @@ fn a_delta_joins_above_and_only_live_records_move_the_cursor<S: Store>(store: S)
                     revision: 11,
                     ..snapshot(Phase::Idle, None, 1)
                 },
+                generation: 1,
             },
         )
         .unwrap();
@@ -759,6 +763,7 @@ fn older_revisions_never_overwrite_newer<S: Store>(store: S) {
                     revision: 30,
                     ..snapshot(Phase::Idle, Some("newer"), 1)
                 },
+                generation: 1,
             },
         )
         .unwrap();
@@ -796,6 +801,7 @@ fn pages_extend_the_block_downwards_only_when_they_join<S: Store>(store: S) {
                     revision: 61,
                     ..Default::default()
                 },
+                generation: 1,
             },
         )
         .unwrap();
@@ -856,6 +862,7 @@ fn pages_extend_the_block_downwards_only_when_they_join<S: Store>(store: S) {
             Absorb::Reset {
                 tail: vec![origin_item("k7", 7, 70, "")],
                 snapshot: Snapshot::default(),
+                generation: 1,
             },
         )
         .unwrap();
@@ -929,6 +936,7 @@ fn cut_reads_snapshot_rows_and_marker_together<S: Store>(store: S) {
             Absorb::Reset {
                 tail: vec![],
                 snapshot: Snapshot::default(),
+                generation: 1,
             },
         )
         .unwrap();
@@ -936,36 +944,111 @@ fn cut_reads_snapshot_rows_and_marker_together<S: Store>(store: S) {
     assert!(store.cut(&own("ghost"), 1).is_err());
 }
 
-fn rewind_host_drops_that_hosts_replicas_and_records_the_generation<S: Store>(store: S) {
-    let mine = own("a");
-    let theirs = [peer("r1"), peer("r2")];
-    let other = AgentKey::new(b"third-host".to_vec(), b"x".to_vec());
-    let mut store = with_agent(
-        with_agent(with_agent(with_agent(store, &mine), &theirs[0]), &theirs[1]),
-        &other,
-    );
-    for agent in &theirs {
-        store
-            .absorb(
-                agent,
-                Absorb::Reset {
-                    tail: vec![origin_item("k", 1, 1, "")],
-                    snapshot: Snapshot::default(),
+/// A block belongs to the generation its Reset was taken under. A Reset
+/// under the same generation keeps the older rows for Get; one under
+/// another forgets everything held, because the origin numbers orders and
+/// revisions afresh: a lower order and a lower revision land where higher
+/// ones were, and a snapshot older by number is the newer one.
+fn a_reset_under_another_generation_forgets_every_held_row<S: Store>(store: S) {
+    let agent = peer("r");
+    let mut store = with_agent(store, &agent);
+    store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![
+                    origin_item("k5", 5, 50, "five"),
+                    origin_item("k6", 6, 60, "six"),
+                    origin_item("k7", 7, 70, "seven"),
+                ],
+                snapshot: Snapshot {
+                    revision: 71,
+                    ..Default::default()
                 },
-            )
-            .unwrap();
-    }
+                generation: 1,
+            },
+        )
+        .unwrap();
+    store.absorb(&agent, Absorb::CaughtUp(71)).unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!((row.source_cursor, row.source_generation), (71, 1));
+
+    store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![
+                    origin_item("k5", 5, 50, "five again"),
+                    origin_item("k6", 6, 61, ""),
+                ],
+                snapshot: Snapshot {
+                    revision: 62,
+                    ..Default::default()
+                },
+                generation: 2,
+            },
+        )
+        .unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.source_generation, 2);
+    assert_eq!(row.snapshot_revision, 62);
+    assert_eq!(row.complete_from_order, Some(5));
+    assert_eq!(keys(&store.cut(&agent, 10).unwrap().held), ["k5", "k6"]);
+    assert_eq!(store.get(&agent, "k7").unwrap(), None);
+    assert_eq!(
+        store.get(&agent, "k5").unwrap().map(|item| item.text),
+        Some("five again".to_owned())
+    );
+    store.absorb(&agent, Absorb::CaughtUp(62)).unwrap();
+    assert_eq!(store.agent(&agent).unwrap().unwrap().source_cursor, 62);
+
+    // The envelope too, even at revision 0: a rewound origin that has not
+    // committed a snapshot since serves the one it holds, and the old
+    // generation's phase must not outlive its rows.
+    let mut row = store.agent(&agent).unwrap().unwrap();
+    row.phase = Phase::Working as i32;
+    row.working_on = Some("old generation".into());
+    store.put_agent(&row).unwrap();
+    store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![],
+                snapshot: snapshot(Phase::Idle, None, 7),
+                generation: 3,
+            },
+        )
+        .unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.source_generation, 3);
+    assert_eq!(row.phase, Phase::Idle as i32);
+    assert_eq!(row.working_on, None);
+    assert_eq!(row.snapshot_revision, 0);
+}
+
+fn a_hosts_generation_is_recorded_as_its_inventory_reports_it<S: Store>(store: S) {
+    let theirs = peer("r1");
+    let mut store = with_agent(store, &theirs);
+    store
+        .absorb(
+            &theirs,
+            Absorb::Reset {
+                tail: vec![origin_item("k", 1, 1, "")],
+                snapshot: Snapshot::default(),
+                generation: 1,
+            },
+        )
+        .unwrap();
     assert_eq!(store.host_generation(PEER).unwrap(), None);
-    assert_eq!(store.rewind_host(PEER, 4).unwrap(), 2);
+    store.record_host_generation(PEER, 4).unwrap();
     assert_eq!(store.host_generation(PEER).unwrap(), Some(4));
-    for agent in &theirs {
-        assert!(store.agent(agent).unwrap().is_none());
-        assert!(store.get(agent, "k").unwrap().is_none());
-    }
-    assert!(store.agent(&mine).unwrap().is_some());
-    assert!(store.agent(&other).unwrap().is_some());
+    store.record_host_generation(PEER, 5).unwrap();
+    assert_eq!(store.host_generation(PEER).unwrap(), Some(5));
+    // The replicas are the sources' to reset, stream by stream.
+    assert!(store.agent(&theirs).unwrap().is_some());
+    assert!(store.get(&theirs, "k").unwrap().is_some());
     assert!(matches!(
-        store.rewind_host(OWN, 1),
+        store.record_host_generation(OWN, 1),
         Err(StoreError::OwnHost)
     ));
 }
@@ -1016,6 +1099,7 @@ fn both_implementations_answer_a_mixed_history_identically() {
                 Absorb::Reset {
                     tail: vec![origin_item("z", 3, 3, "z")],
                     snapshot: Snapshot::default(),
+                    generation: 1,
                 },
             )
             .unwrap();

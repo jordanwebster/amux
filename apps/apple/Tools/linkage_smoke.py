@@ -97,9 +97,9 @@ def main() -> None:
         version = run("xcrun", "simctl", "spawn", device_id, str(executable), timeout=120)
         # The process performs its own assertions; require its success markers
         # too so an empty or misdirected spawn cannot pass the build recipe.
-        if (not version.startswith("amux_app_version=")
-                or "System configuration accepted" not in version
-                or "PlainLoopback rejected" not in version):
+        if (not version.startswith("amux_version=")
+                or "installation started" not in version
+                or "pairing offer refused" not in version):
             raise RuntimeError(f"Unexpected simulator output: {version!r}")
         text = f"{name}: iPhone 17 Pro, iOS 26.5 ({device_id})\n{version}\n"
         result.write_text(text)

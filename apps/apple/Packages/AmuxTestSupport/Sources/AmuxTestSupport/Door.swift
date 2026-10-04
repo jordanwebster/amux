@@ -104,6 +104,9 @@ public enum DoorRequest: Sendable, Equatable {
     /// Every moment this launch has marked, in order. A driver reads them to
     /// tell a screen that was drawn from a frame that was shown, and to see
     /// when the fleet stopped being a memory.
+    /// Watch the display, the main thread and the footprint for this long
+    /// and answer what they did; the driver runs the workload meanwhile.
+    case measure(seconds: Double)
     case signposts
     case appearance(Appearance)
     case dynamicType(String)
@@ -115,6 +118,11 @@ public enum DoorRequest: Sendable, Equatable {
     /// it says — so a state that wants to be photographed with them on has to
     /// declare them, exactly as it declares a text size.
     case assist(motion: Bool, transparency: Bool)
+    /// Whether every identified element reports where it is drawn. A driver
+    /// needs the frames to tap; a measurement does not, and producing them
+    /// is a real share of a launch's main thread, so a benchmark launches
+    /// without them and turns them on only for as long as it taps.
+    case geometry(on: Bool)
     /// Every state this build draws, as screen-and-state pairs. What lets a
     /// sweep over the whole app — the accessibility audit is one — cover
     /// whatever has been built today without a second list of it to keep in
@@ -320,6 +328,7 @@ public enum DoorReply: Sendable, Equatable {
     case runtimeLog(String)
     case conversation(ConversationReading)
     case signposts([SignpostMark])
+    case measurement(Measurement)
     case captured(path: String, width: Int, height: Int, scale: Int)
     /// A bundle was written at this path, holding these files.
     case bundle(path: String, parts: [String], reportJSON: String? = nil)
@@ -587,7 +596,7 @@ extension DoorRequest: Codable {
         case identifier, text, seconds, qr, agent, base, prose, from, to
         case attachment, name, mime, base64, host, pin
         case note, marks
-        case motion, transparency
+        case motion, transparency, on
         case permission, tier
         case bytes, label, action, direction
     }
@@ -639,6 +648,8 @@ extension DoorRequest: Codable {
             self = .runtimeLog(
                 bytes: try fields.decodeIfPresent(Int.self, forKey: .bytes) ?? 64_000)
         case "signposts": self = .signposts
+        case "measure":
+            self = .measure(seconds: try fields.decode(Double.self, forKey: .seconds))
         case "appearance":
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
         case "dynamicType":
@@ -648,6 +659,8 @@ extension DoorRequest: Codable {
             self = .assist(
                 motion: try fields.decode(Bool.self, forKey: .motion),
                 transparency: try fields.decode(Bool.self, forKey: .transparency))
+        case "geometry":
+            self = .geometry(on: try fields.decode(Bool.self, forKey: .on))
         case "perturb":
             self = .perturb(token: try fields.decodeIfPresent(String.self, forKey: .token))
         case "designVariant":
@@ -802,6 +815,9 @@ extension DoorRequest: Codable {
             try fields.encode(bytes, forKey: .bytes)
         case .signposts:
             try fields.encode("signposts", forKey: .kind)
+        case .measure(let seconds):
+            try fields.encode("measure", forKey: .kind)
+            try fields.encode(seconds, forKey: .seconds)
         case .appearance(let appearance):
             try fields.encode("appearance", forKey: .kind)
             try fields.encode(appearance, forKey: .appearance)
@@ -814,6 +830,9 @@ extension DoorRequest: Codable {
             try fields.encode("assist", forKey: .kind)
             try fields.encode(motion, forKey: .motion)
             try fields.encode(transparency, forKey: .transparency)
+        case .geometry(let on):
+            try fields.encode("geometry", forKey: .kind)
+            try fields.encode(on, forKey: .on)
         case .perturb(let token):
             try fields.encode("perturb", forKey: .kind)
             try fields.encodeIfPresent(token, forKey: .token)
@@ -927,7 +946,7 @@ extension DoorRequest: Codable {
 
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
-        case kind, state, bridge, path, width, height, scale, message, parts, marks
+        case kind, state, bridge, path, width, height, scale, message, parts, marks, measurement
         case host, delivered, reason, cloud, store, known, states, conversation, reportJSON
         case log
     }
@@ -947,6 +966,8 @@ extension DoorReply: Codable {
             self = .runtimeLog(try fields.decode(String.self, forKey: .log))
         case "signposts":
             self = .signposts(try fields.decode([SignpostMark].self, forKey: .marks))
+        case "measurement":
+            self = .measurement(try fields.decode(Measurement.self, forKey: .measurement))
         case "captured":
             self = .captured(
                 path: try fields.decode(String.self, forKey: .path),
@@ -1000,6 +1021,9 @@ extension DoorReply: Codable {
         case .signposts(let marks):
             try fields.encode("signposts", forKey: .kind)
             try fields.encode(marks, forKey: .marks)
+        case .measurement(let measurement):
+            try fields.encode("measurement", forKey: .kind)
+            try fields.encode(measurement, forKey: .measurement)
         case .captured(let path, let width, let height, let scale):
             try fields.encode("captured", forKey: .kind)
             try fields.encode(path, forKey: .path)
@@ -1116,6 +1140,13 @@ public enum Door {
     /// launch dials instead of where the test account service names it.
     public static let relayTCPArgument = "amux-relay-tcp"
 
+    /// A served test relay's QUIC carrier, as `ip:port`, and its certificate
+    /// as hex, which a driven launch dials and trusts instead of where the
+    /// test account service names it: the carrier a phone away from home
+    /// uses.
+    public static let relayQUICArgument = "amux-relay-quic"
+    public static let relayRootArgument = "amux-relay-root"
+
     /// What the ready file holds.
     public struct Ready: Codable, Sendable, Equatable {
         public let port: UInt16
@@ -1161,16 +1192,12 @@ public struct ConversationReading: Codable, Sendable, Equatable {
     /// The rows the chat holds, oldest first.
     public let rows: [Row]
     public let ask: AskCard?
-    /// For the chat on screen, the keys of the rows its list draws: a
-    /// contiguous run of `rows`. Absent for a chat no page shows.
-    public let drawn: [String]?
 
-    public init(agent: String, frame: ChatFrame?, rows: [Row], ask: AskCard?, drawn: [String]? = nil) {
+    public init(agent: String, frame: ChatFrame?, rows: [Row], ask: AskCard?) {
         self.agent = agent
         self.frame = frame
         self.rows = rows
         self.ask = ask
-        self.drawn = drawn
     }
 }
 

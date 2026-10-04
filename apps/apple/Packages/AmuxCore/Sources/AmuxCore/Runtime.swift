@@ -58,9 +58,12 @@ public final class Runtime: @unchecked Sendable {
     /// profile opened from it first. Close their chats before that; any read
     /// after this answers nothing.
     public func stop() {
-        let profiles = lock.withLock { opened.allObjects }
-        for profile in profiles { profile.close() }
+        // One hold of the lock from the first close to the stop: no open
+        // can register a profile this misses, and a profile closing itself
+        // meanwhile does so before or after, never between. The lock is
+        // recursive, so each close's call back in is admitted.
         let wasRunning = lock.withLock {
+            for profile in opened.allObjects { profile.close() }
             defer { running = false }
             return running
         }
@@ -206,15 +209,22 @@ public final class Runtime: @unchecked Sendable {
     ) throws(RuntimeFailure) -> Profile {
         let waker = Unmanaged.passRetained(Waker(wake))
         var error: UnsafeMutablePointer<CChar>?
-        let opened = call(nil) { live in
-            profile.withCString { amux_profile_open(live, $0, Waker.call, waker.toOpaque(), &error) }
+        // Opened and registered under one hold of the lock: a stop that
+        // runs between the two would close the profiles it saw and miss
+        // this one, which would then outlive the runtime unclosed.
+        let open: Profile? = call(nil) { live in
+            let opened = profile.withCString {
+                amux_profile_open(live, $0, Waker.call, waker.toOpaque(), &error)
+            }
+            guard let opened else { return nil }
+            let open = Profile(id: profile, handle: opened, waker: waker, runtime: self)
+            self.opened.add(open)
+            return open
         }
-        guard let opened else {
+        guard let open else {
             waker.release()
             throw Bridge.failure(error, otherwise: "the profile did not open")
         }
-        let open = Profile(id: profile, handle: opened, waker: waker, runtime: self)
-        lock.withLock { self.opened.add(open) }
         return open
     }
 
@@ -258,13 +268,17 @@ public final class Profile: @unchecked Sendable {
 
     /// Closes the profile's fleet; its wake stops. Close its chats first.
     public func close() {
-        let wasOpen = lock.withLock {
-            defer { open = false }
-            return open
+        // The flag turns and the library is told under the runtime's lock,
+        // so a stop sees this profile either still open, and closes it, or
+        // already closed in the library, never closed in name only.
+        let wasOpen = runtime.call(false) { _ in
+            lock.withLock {
+                defer { open = false }
+                if open { amux_profile_close(handle) }
+                return open
+            }
         }
-        guard wasOpen else { return }
-        runtime.call(()) { _ in amux_profile_close(handle) }
-        waker.release()
+        if wasOpen { waker.release() }
     }
 
     deinit { close() }

@@ -11,8 +11,7 @@ recipes; [Testing](TESTING.md) describes the suites they run.
 
 | Workflow | File | When | What |
 | --- | --- | --- | --- |
-| CI | [`ci.yml`](../.github/workflows/ci.yml) | Pushes to `main`, `testing` and `rearchitect`; pull requests into `main` | Every check a change is held to, on Linux, macOS and Windows, plus the iOS gate |
-| Test repeat | [`test-repeat.yml`](../.github/workflows/test-repeat.yml) | Pushes to `rearchitect`, and by hand | The workspace tests six times on Linux and six on macOS; gates nothing ([below](#test-repeat)) |
+| CI | [`ci.yml`](../.github/workflows/ci.yml) | Pushes to `main`; pull requests into `main` | Every check a change is held to, on Linux, macOS and Windows, plus the iOS gate |
 | Weekly offline tests | [`offline.yml`](../.github/workflows/offline.yml) | Sundays 04:00 UTC, and by hand | The workspace tests with no external network |
 | iOS captures | [`ios-captures.yml`](../.github/workflows/ios-captures.yml) | Nightly 03:00 UTC, and by hand | The phone's photographed suites |
 | Release | [`release.yml`](../.github/workflows/release.yml) | A pushed `v*` tag | The `amux` release binaries; see [Release](RELEASE.md) |
@@ -92,6 +91,14 @@ Linux's and does not move the bound. A cold cache, after a `Cargo.lock`
 change, compiles the whole dependency graph and can take longer than these
 numbers.
 
+Tests that build `amux` or the fake providers mid-run start cargo through
+`provider_fakes::cargo::command()`, which drops the variables cargo set for
+the package under test. Started with them, every test crate's build reran
+`ring`'s build script and recompiled everything above it, about a minute a
+crate on the macOS runner; that pushed the macOS run from 449 s to past its
+1000 s bound in
+[36616922626](https://github.com/jordanwebster/amux/actions/runs/36616922626).
+
 ### The iOS gate
 
 The iOS gate job selects Xcode 26.6, asserts that the iOS 26.5 simulator
@@ -129,25 +136,20 @@ accessibility sweep. It uploads the golden comparisons, the journey evidence
 and the component snapshots. [The iPhone app](IOS.md) explains what those
 compare.
 
-### Test repeat
+### Waiting
 
-`test-repeat.yml` samples the workspace tests for timing races. Three jobs on
-`ubuntu-latest` and three on `macos-latest` each set up exactly as the CI
-test job does, compile once with `just test -- --no-run`, then run `just test
--- --no-fail-fast` twice; the second pass runs whether or not the first
-failed, and a job is red if either pass was. A race that shows up once in
-dozens of runs gets six chances per platform per push instead of the CI
-run's one, so a round surfaces several such failures together rather than
-one per round.
-
-It never gates: nothing waits for it, `just ci-remote` watches `ci.yml` only,
-and a green repeat run never stands in for the CI run a commit is held to. A
-red job is a race to root-cause like any other failure. To read it:
-
-```sh
-gh run list --workflow test-repeat.yml --commit <sha>
-gh run view <run-id> --log-failed
-```
+A timing race in a test is a wait on a proxy for "done": a row visible, an
+agent idle, text present, asserted on a neighbour that lands a moment
+later. Tests wait instead on what the runtime reports in its own terms,
+through one shared wait (the `patience` crate: `until`, a probe that
+answers what it found or what it saw instead, and a missed deadline that
+reports the last answer) and, across daemons, testnet's fences on a host's
+cursors ([testnet](TESTNET.md), "Fences"). Fixtures that know more show it
+under the wait's report: a terminal's screen, an agent's journal, a
+supervisor's log. The exception is `holds_for`, a window of real time for
+asserting that something does not happen when nothing the test controls
+gates it; every window carries a comment saying why time is the only
+witness, and a new one is a design question, not a default.
 
 ## Lanes
 
@@ -162,7 +164,7 @@ journey or baseline that does not exist.
 | `system` | Real processes and transports with bounded deadlines: the built `amux` binary and its supervisor, the phone bridge on a simulator, the store on iOS | The desktop suites in `just test` on every push (Unix runners); `ios loopback-smoke` in the iOS gate; `test-store-ios` in `just ios captures` |
 | `tool` | The repository's own machinery: script contracts, source and dependency policy, the CI tooling, the shipping scope audit | The Rust side in `just test`; `ios script-tests` and `ios lint` in the iOS gate; `ios scope-audit` before every app release |
 | `journey` | Complete client stories through the shared manifest, and the phone's whole-screen goldens | The terminal journeys job and the system journey inside `just test` on every push; phone goldens nightly; phone journeys and the accessibility sweep in iOS captures run by hand |
-| `qualification` | Real providers, real cloud accounts and measured performance | Never on an ordinary push: `just live`, `just perf` and the `just ios qa-*` recipes by hand, on machines that have the credentials or hardware; the phone's measured run in iOS captures run by hand |
+| `qualification` | Real providers, real cloud accounts and measured performance | Never on an ordinary push: `just live`, `just perf` and the `just ios qa-*` recipes by hand, on machines that have the credentials or hardware; `just ios perf` by hand on the enrolled Mac, last in `just ios verify` |
 
 [Testing](TESTING.md) defines the lanes and boundaries fully.
 
@@ -191,25 +193,6 @@ stopping at the first failure:
 | `mobile-check` | The provider-free graph for iOS devices and simulators |
 
 The terminal journeys and the iOS gate are in `ci.yml` but not in `just ci`.
-
-## `just ci-remote`
-
-`just ci-remote` runs the whole CI workflow on GitHub for the checked-out
-commit ([`scripts/ci-remote.sh`](../scripts/ci-remote.sh)). It refuses to
-start on any branch but `rearchitect` or with uncommitted changes, then:
-
-1. pushes `HEAD` to `rearchitect` on `origin`, never forced: if the remote
-   branch has moved on, the push fails and the divergence is left for a
-   person to reconcile;
-2. finds the push run of `ci.yml` for that exact commit with
-   `gh run list --commit`, waiting up to five minutes for GitHub to register
-   it;
-3. waits for the run with `gh run watch --exit-status`;
-4. on success prints the run's URL; on any other conclusion prints
-   `gh run view --log-failed` and exits non-zero.
-
-It needs the `gh` CLI signed in to an account that can push to the
-repository and read its Actions runs.
 
 ## Checking Windows from a Mac
 

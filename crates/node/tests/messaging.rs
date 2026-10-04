@@ -38,10 +38,14 @@ async fn crash(daemon: Daemon, runtime: Arc<ProfileRuntime>) {
     let gone = Arc::downgrade(&runtime);
     drop(runtime);
     drop(daemon);
-    until("the crashed daemon's tasks to end", async || {
-        gone.upgrade().is_none()
+    until("the crashed daemon's tasks to end", || async {
+        match gone.upgrade() {
+            None => Ok(()),
+            Some(live) => Err(format!("{} references live", Arc::strong_count(&live))),
+        }
     })
-    .await;
+    .await
+    .unwrap();
 }
 
 fn prompt(id: &[u8], text: &str) -> Input {
@@ -87,6 +91,38 @@ fn messages(agent: &SyntheticAgent) -> Vec<(EnvelopeKind, String)> {
             _ => None,
         })
         .collect()
+}
+
+/// The outbox holds `n` rows, or what it holds instead.
+async fn rows(runtime: &ProfileRuntime, n: usize) -> Result<(), String> {
+    let rows = deliveries(runtime).await;
+    (rows == n)
+        .then_some(())
+        .ok_or_else(|| format!("{rows} delivery rows"))
+}
+
+/// The agent's row says exited, or what it says instead.
+async fn exited(runtime: &ProfileRuntime, id: uuid::Uuid) -> Result<(), String> {
+    let lifecycle = runtime.agent(id).await.unwrap().lifecycle;
+    (lifecycle == Lifecycle::Exited as i32)
+        .then_some(())
+        .ok_or_else(|| format!("lifecycle {lifecycle}"))
+}
+
+/// The process has been handed `n` inputs, or how many it has.
+fn handed(agent: &SyntheticAgent, n: usize) -> Result<(), String> {
+    let inputs = agent.inputs().len();
+    (inputs == n)
+        .then_some(())
+        .ok_or_else(|| format!("{inputs} inputs handed"))
+}
+
+/// The parent has heard `n` messages, or what it has heard.
+fn heard(agent: &SyntheticAgent, n: usize) -> Result<(), String> {
+    let heard = messages(agent);
+    (heard.len() == n)
+        .then_some(())
+        .ok_or_else(|| format!("heard {heard:?}"))
 }
 
 async fn deliveries(runtime: &ProfileRuntime) -> usize {
@@ -146,7 +182,9 @@ async fn send_input_returns_the_interpreters_verdict_or_answers_for_an_exited_ag
         let request = send(&live, b"i4");
         async move { runtime.send_input(&request).await }
     });
-    until("the input to arrive", async || live.inputs().len() == 3).await;
+    until("the input to arrive", || async { handed(&live, 3) })
+        .await
+        .unwrap();
     live.die().await;
     assert!(matches!(pending.await.unwrap(), Err(RelayError::Lost)));
     crash(daemon, runtime).await;
@@ -287,10 +325,9 @@ async fn a_message_is_accepted_once_its_item_commits_and_a_retry_is_deduped() {
 
     // An exited recipient, and a sender that is not its parent.
     recipient.die().await;
-    until("the recipient's exit", async || {
-        runtime.agent(recipient.id).await.unwrap().lifecycle == Lifecycle::Exited as i32
-    })
-    .await;
+    until("the recipient's exit", || exited(&runtime, recipient.id))
+        .await
+        .unwrap();
     let refused = runtime
         .send_message(
             Envelope {
@@ -330,20 +367,19 @@ async fn a_message_waits_for_its_item_to_commit_and_one_envelope_is_handed_over_
     };
 
     let first = send();
-    until("the hand-off", async || recipient.inputs().len() == 1).await;
+    until("the hand-off", || async { handed(&recipient, 1) })
+        .await
+        .unwrap();
     // The same envelope again, as a sender retrying after a lost answer.
+    // A window: a send blocked in the lane leaves no mark to wait on.
     let second = send();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(
-        !first.is_finished(),
-        "the recipient said accepted, but its item has not committed"
-    );
-    assert!(!second.is_finished(), "the retry waits in the lane");
-    assert_eq!(
-        recipient.inputs().len(),
-        1,
-        "the retry is not handed over while the first is in the lane"
-    );
+    holds_for(
+        "the retry to wait in the lane",
+        Duration::from_millis(300),
+        || async { !first.is_finished() && !second.is_finished() && recipient.inputs().len() == 1 },
+    )
+    .await
+    .expect("the first send waits for its item, the retry waits in the lane, and one hand-off");
 
     recipient.nudge().await;
     first
@@ -401,7 +437,9 @@ async fn a_child_answering_exiting_to_its_parents_message_is_resumed_with_it() {
         let runtime = runtime.clone();
         async move { runtime.send_message(envelope, Some(parent.id)).await }
     });
-    until("the hand-off", async || child.inputs().len() == 1).await;
+    until("the hand-off", || async { handed(&child, 1) })
+        .await
+        .unwrap();
     // The child was on its way out; its process ends.
     child.die().await;
     sent.await
@@ -458,11 +496,12 @@ async fn an_input_answered_exiting_lets_a_resume_wait_for_the_lock() {
         let id = agent.id;
         async move { runtime.resume(id, None).await }
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(
-        !resumed.is_finished(),
-        "the resume waits for the leaving process instead of refusing a live agent"
-    );
+    // A window: a resume blocked on the lock leaves no mark to wait on.
+    holds_for("the resume to wait", Duration::from_millis(300), || async {
+        !resumed.is_finished()
+    })
+    .await
+    .expect("the resume waits for the leaving process instead of refusing a live agent");
     agent.die().await;
     let resumed = resumed
         .await
@@ -498,7 +537,9 @@ async fn a_delivery_waiting_on_its_parents_lane_is_dropped_when_the_parent_resum
         };
         async move { runtime.send_message(envelope, None).await }
     });
-    until("the hand-off", async || parent.inputs().len() == 1).await;
+    until("the hand-off", || async { handed(&parent, 1) })
+        .await
+        .unwrap();
     parent.answer_with(Answer::Accept);
 
     // The child finishes a turn for the parent's first incarnation, and the
@@ -507,16 +548,19 @@ async fn a_delivery_waiting_on_its_parents_lane_is_dropped_when_the_parent_resum
     child.append(&item("last", "the tests pass"));
     child.append(&turn_end(1, "last"));
     child.nudge().await;
-    until("the delivery row", async || deliveries(&runtime).await == 1).await;
+    until("the delivery row", || rows(&runtime, 1))
+        .await
+        .unwrap();
     let drained = tokio::spawn({
         let runtime = runtime.clone();
         async move { runtime.drain_deliveries().await }
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(
-        !drained.is_finished(),
-        "the drain waits for the parent's lane"
-    );
+    // A window: a drain blocked on the lane leaves no mark to wait on.
+    holds_for("the drain to wait", Duration::from_millis(300), || async {
+        !drained.is_finished()
+    })
+    .await
+    .expect("the drain waits for the parent's lane");
 
     // While it waits, the parent becomes its second incarnation.
     {
@@ -533,10 +577,9 @@ async fn a_delivery_waiting_on_its_parents_lane_is_dropped_when_the_parent_resum
         (0, 1),
         "the row was for an incarnation that is gone"
     );
-    until("the outbox to empty", async || {
-        deliveries(&runtime).await == 0
-    })
-    .await;
+    until("the outbox to empty", || rows(&runtime, 0))
+        .await
+        .unwrap();
     assert_eq!(
         messages(&parent),
         vec![(EnvelopeKind::Message, "a word".to_owned())],
@@ -564,7 +607,7 @@ async fn a_child_finishing_while_the_daemon_is_down_reaches_its_parent_once() {
     let child = finished_child(&install, &parent);
     // The child finished and exited while no daemon ran.
     let (daemon, runtime) = start(&install, "boot-1").await;
-    until("the delivery", async || deliveries(&runtime).await == 0).await;
+    until("the delivery", || rows(&runtime, 0)).await.unwrap();
     assert_eq!(
         messages(&parent),
         vec![(EnvelopeKind::Finished, "the tests pass".to_owned())],
@@ -589,13 +632,14 @@ async fn a_crash_between_hand_off_and_delete_yields_one_item() {
     parent.go_live();
     finished_child(&install, &parent);
     let (daemon, runtime) = start(&install, "boot-1").await;
-    until("the parent's acceptance item to commit", async || {
-        items_with_input(&runtime, &parent.key(&install))
-            .await
-            .len()
-            == 1
+    until("the parent's acceptance item to commit", || async {
+        let items = items_with_input(&runtime, &parent.key(&install)).await;
+        (items.len() == 1)
+            .then_some(())
+            .ok_or_else(|| format!("{} items carry an input", items.len()))
     })
-    .await;
+    .await
+    .unwrap();
     assert_eq!(deliveries(&runtime).await, 1, "the row is still there");
     crash(daemon, runtime).await;
 
@@ -604,10 +648,9 @@ async fn a_crash_between_hand_off_and_delete_yields_one_item() {
     // over a second time.
     parent.answer_with(Answer::Accept);
     let (daemon, runtime) = start(&install, "boot-1").await;
-    until("the row to be settled", async || {
-        deliveries(&runtime).await == 0
-    })
-    .await;
+    until("the row to be settled", || rows(&runtime, 0))
+        .await
+        .unwrap();
     assert_eq!(parent.inputs().len(), 1, "handed to the parent once");
     assert_eq!(
         items_with_input(&runtime, &parent.key(&install))
@@ -639,11 +682,12 @@ async fn a_resumed_parent_receives_nothing() {
     parent.register_offline(&install);
     parent.go_live();
     let (daemon, runtime) = start(&install, "boot-1").await;
-    until("the stale row to go", async || {
-        deliveries(&runtime).await == 0
-    })
-    .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    until("the stale row to go", || rows(&runtime, 0))
+        .await
+        .unwrap();
+    // The row is the only thing a hand-off could come from, and a
+    // hand-off would have removed it as delivered: gone undelivered, it
+    // left nothing to hand.
     assert!(
         parent.inputs().is_empty(),
         "the resumed parent was handed nothing"
@@ -675,7 +719,7 @@ async fn a_child_whose_parent_row_is_missing_keeps_its_row_until_the_parent_is_k
     parent.register_offline(&install);
     parent.go_live();
     let (daemon, runtime) = start(&install, "boot-1").await;
-    until("the delivery", async || deliveries(&runtime).await == 0).await;
+    until("the delivery", || rows(&runtime, 0)).await.unwrap();
     assert_eq!(
         messages(&parent),
         vec![(EnvelopeKind::Finished, "the tests pass".to_owned())],
@@ -702,23 +746,22 @@ async fn a_child_gone_without_a_turn_end_tells_its_parent_it_failed() {
     finished.append(&turn_end(1, "last"));
     finished.go_live();
     let (daemon, runtime) = start(&install, "boot-1").await;
-    until("the finished message", async || {
-        messages(&parent).len() == 1
-    })
-    .await;
+    until("the finished message", || async { heard(&parent, 1) })
+        .await
+        .unwrap();
 
     // One dies mid-turn; the other exits after its finished turn.
     crashed.die().await;
     finished.die().await;
-    until("both exits", async || {
-        runtime.agent(crashed.id).await.unwrap().lifecycle == Lifecycle::Exited as i32
-            && runtime.agent(finished.id).await.unwrap().lifecycle == Lifecycle::Exited as i32
+    until("both exits", || async {
+        exited(&runtime, crashed.id).await?;
+        exited(&runtime, finished.id).await
     })
-    .await;
-    until("the outbox to drain", async || {
-        deliveries(&runtime).await == 0
-    })
-    .await;
+    .await
+    .unwrap();
+    until("the outbox to drain", || rows(&runtime, 0))
+        .await
+        .unwrap();
     let mut heard = messages(&parent);
     heard.sort();
     assert_eq!(
@@ -788,10 +831,9 @@ async fn an_agent_that_stops_reading_holds_up_neither_other_parents_nor_a_kill()
     let daemon = install.start("boot-1", launch).await;
     let runtime = runtime(&daemon, &install);
 
-    until("the other parent's delivery", async || {
-        !messages(&other).is_empty()
-    })
-    .await;
+    until("the other parent's delivery", || async { heard(&other, 1) })
+        .await
+        .unwrap();
     let waited = started.elapsed();
     assert!(
         waited < Duration::from_millis(2 * REPLY_MS as u64),
@@ -803,10 +845,9 @@ async fn an_agent_that_stops_reading_holds_up_neither_other_parents_nor_a_kill()
     );
     // The other parent's row goes once its item commits; the wedged
     // parent's rows wait.
-    until("only the wedged parent's rows", async || {
-        deliveries(&runtime).await == 3
-    })
-    .await;
+    until("only the wedged parent's rows", || rows(&runtime, 3))
+        .await
+        .unwrap();
 
     // An input too large for the socket's buffer blocks its write, and a
     // kill arrives while it is stuck.
@@ -818,6 +859,9 @@ async fn an_agent_that_stops_reading_holds_up_neither_other_parents_nor_a_kill()
         };
         async move { runtime.send_input(&request).await }
     });
+    // A forced delay: the send must be under way (its write wedged in the
+    // agent's socket) when the kill arrives, and the wedge itself is what
+    // leaves nothing to wait on.
     tokio::time::sleep(Duration::from_millis(50)).await;
     let bound = Duration::from_millis((2 * WRITE_MS + STOP_MS) as u64 + 2_000);
     let stopped = tokio::time::timeout(bound, runtime.stop(wedged.id, StopMode::Kill))
@@ -864,16 +908,19 @@ async fn a_parents_message_resumes_its_exited_child_and_the_child_finishes_again
     let finished = |n: usize| {
         let runtime = runtime.clone();
         let parent_key = parent_key.clone();
-        async move { items_with_input(&runtime, &parent_key).await.len() >= n }
+        async move {
+            let items = items_with_input(&runtime, &parent_key).await;
+            (items.len() >= n)
+                .then_some(())
+                .ok_or_else(|| format!("{} of {n} finished messages", items.len()))
+        }
     };
-    until("the child's first finished message", async || {
-        finished(1).await
-    })
-    .await;
-    until("the one-shot child to exit", async || {
-        runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
-    })
-    .await;
+    until("the child's first finished message", || finished(1))
+        .await
+        .unwrap();
+    until("the one-shot child to exit", || exited(&runtime, child))
+        .await
+        .unwrap();
 
     let envelope = Envelope {
         id: b"follow-up".to_vec(),
@@ -903,18 +950,15 @@ async fn a_parents_message_resumes_its_exited_child_and_the_child_finishes_again
             .is_some(),
         "accepted once the child's item for the message committed"
     );
-    until("the child's second finished message", async || {
-        finished(2).await
-    })
-    .await;
-    until("the child to exit again", async || {
-        runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
-    })
-    .await;
-    until("the outbox to drain", async || {
-        deliveries(&runtime).await == 0
-    })
-    .await;
+    until("the child's second finished message", || finished(2))
+        .await
+        .unwrap();
+    until("the child to exit again", || exited(&runtime, child))
+        .await
+        .unwrap();
+    until("the outbox to drain", || rows(&runtime, 0))
+        .await
+        .unwrap();
 
     // Anyone but the parent is told the child has exited.
     let refused = runtime

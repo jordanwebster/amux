@@ -1,3 +1,12 @@
+2026-10-04 — **Main merged into the redesigned terminal client.** Main
+now says how a call looks on its tool class (read, search, list, fetch, web
+search) and folds a headless task into the call that started it; the
+client's rows take both, keeping its own additions (plan rows, a
+background command's duration, a command's last output lines). The
+restart story in the leave-and-recover journey waits for the new client's
+"Draft kept · sending waits". View goldens re-recorded for the combined
+rows.
+
 2026-10-04 — **`ctrl+s m` and `ctrl+s e` say why when they can't.** Where
 the agent can't change its model or effort from here, the keys put the
 reason in the notice line, as terminal Claude's "type /model <name> or
@@ -856,6 +865,914 @@ live. The lab takes no daemon into its graph and the client needed no new
 seam beyond the variant number; scenarios are authored rather than cut
 from the recorded provider fixtures, which would pull the interpreters
 in and slow the relink.
+2026-10-04 — **Compared phone pictures forgive a few faint stray pixels.**
+A component snapshot failed on CI over eight pixels: the four corners of
+a card's rounded border, off by up to four levels, in a picture that had
+been still for a second. The comparison allowed one level per channel and
+no pixel past it. It now also allows up to 64 pixels of a picture to move
+further, none by more than 8 levels: noise is small in area and distance
+at once, while a missing mark moves far and a drifted colour moves
+thousands of pixels. The same allowance holds for the component
+snapshots, the whole-screen goldens and the journeys' screens; the screen
+comparison's numbers moved from the journey driver into `xtask golden
+diff`, which the driver no longer overrides. A match that spends some of
+the allowance prints how much.
+
+2026-10-04 — **The restart story sees the outage before it sends.**
+The terminal's leave-and-recover journey timed out once on macOS CI with
+the draft still in the composer. It restarted the laptop's daemon and
+waited for a screen that could send, which is also the screen from before
+the client noticed the restart, so the send could land while the client
+was reconnecting, where it is not taken. The journey now stops the
+daemon, waits for the client to say it is reconnecting with the draft
+kept, and only then starts it again.
+
+2026-10-04 — **The PowerShell installer hashes without a module.**
+Its first run on Windows CI failed at `Get-FileHash`: a script function
+that Windows PowerShell cannot find when it is started from PowerShell
+7, whose module path it inherits. The download is hashed with .NET's
+SHA256 directly, which needs nothing loaded.
+
+2026-10-04 — **The installer reads the stable manifest and lives beside its format.**
+`amux.sh/install` asked GitHub's API for the latest release and lived in
+the account service's repository, so a release cut but never deployed
+was installed, and the scripts parsed nothing this repository tested.
+They are `scripts/install/install.sh` and `install.ps1` here now: each
+takes its machine's entry from the stable manifest and installs the
+binary it names only when the size and sha256 match, ignoring the
+rollout percentage, and without a signature check that would only trust
+the server it came from. A test runs them against a manifest the release
+crate serialized, served from loopback. A stable deploy hands them to
+the publish script beside the manifest (renamed `amux-publish-release`,
+since it publishes more than a manifest now).
+
+2026-10-04 — **`just deploy` passes its version once.**
+The first real deploy failed with "unknown argument 0.8.0": recipes take
+positional arguments, so the version was both named in the command and
+still first in the arguments passed after it. The recipe drops it from
+the positional list before forwarding the rest, as `test-crate` already
+did.
+
+2026-10-04 — **A deploy publishes its manifest to amux.sh through the operator's script.**
+Machines read `https://amux.sh/releases/<channel>.json`, and the plan had
+been a route in the account service polling GitHub for the newest
+release carrying the file. The manifest is a signed static file and the
+server is untrusted either way, so the dumb thing is right: nginx serves
+a directory on the host, and the deploy's last step runs
+`~/scripts/amux-publish-manifest`, which the operator keeps with the host
+configuration and which copies the file over, renames it into place and
+reads it back over the public address. A deploy without the script fails
+rather than silently stopping at the GitHub upload, which no machine
+reads.
+
+2026-10-04 — **A rewound origin's envelope replaces the old one whatever its number.**
+The handoff review found that a Reset under a new generation copied the
+fresh snapshot only when its revision beat the row's, which, zeroed, still
+refused a snapshot numbered 0: a rewound origin that had not committed a
+snapshot since its checkpoint left the old generation's phase and
+working-on text on the replica until it did. The envelope is copied
+whenever the generation changed, with a conformance case. The generation
+file's doc stops saying peers drop replicas, and the single-daemon test's
+hundred-millisecond hook says why it is a forced delay (the subscribe
+holds the store lock through its opening, so nothing the ingest writes
+can be waited on).
+
+2026-10-03 — **The repeat lane retires.**
+With the session streams opening on their generation and the review's
+waits in, three rounds of the repeat lane ran clean on main at
+dba000f2 (thirty-six passes of the workspace tests across Linux and
+macOS, after CI itself was green). The lane existed to sample timing
+races a single run would miss; the suite now waits on what the runtime
+reports, so the workflow and its page in the CI doc go.
+
+2026-10-03 — **The last loose ends of the sweep.**
+The supervisor test's two poll loops and the harness's wait on
+`testnet serve` exiting go through the one wait; the two sleeps that
+remain in the node tests (a send wedged on purpose, a creation time a
+millisecond apart) say why; the six windows without a reason have one;
+the store-write watch's doc says what wakes it (item writes: commits
+and absorbs) and what does not; the families' "taken" probe requires a
+snapshot again rather than reading a missing one as an empty queue;
+and the edge spec's dial wait takes what was stored before the dial,
+so an earlier dial's error is never taken for this one's.
+
+2026-10-03 — **The scripted fakes fail loudly and die with their test.**
+Both scripted catch-ups ran out of time in silence: the stdio one
+returned, the terminal one discarded the deadline. Each panics now with
+what the fake had written, and the end-of-run read to the fake's exit
+is its own step. A test that panicked mid-run used to hang, because the
+PTY's reader and waiter are blocking tasks the runtime waits for and
+the fake kept the PTY open; the fake's handle is held by a reaper that
+kills its process group on drop, so a panic ends the fake too (checked
+with a deliberate panic: the test fails in a second).
+
+2026-10-03 — **The families journey waits for the hand-off in hand.**
+A one-second sleep stood for "server's hand-off has reached desk, which
+holds it for the frozen lead's verdict". The runtime now says whether
+an input to an agent is in hand (its lane is held), and the test waits
+on that before severing server's links.
+
+2026-10-03 — **A dropped socket message is judged by the turn after it.**
+The terminal fake's wrong-token message was watched for a tenth of a
+second; had it been taken, its turn would be on the transcript before
+the tokened message's, so the test waits for that one's turn and then
+looks. The embedded client's three-second sleep past a failed dial is
+gone: the desk's row carries the dial's error, which the route coming
+up had cleared, so the phone waits for it.
+
+2026-10-03 — **Four network windows wait on the dial and the timer.**
+A refused dial stores its error, so the stranger, the rotated key and
+the other profile's listener are asserted offline once that error is
+in, not watched for a second; the laptop's error toward the rotated
+desk has to differ from the stranger's it still holds. A credential
+refresh arms the next one five minutes before expiry, so three timers
+at that deadline say every refresh is through and the links are
+counted once.
+
+2026-10-03 — **Three windows the outcome already closed.**
+The push outbox's "nothing more sent" and "one push in all" and the
+parent hand-off's "nothing handed" were windows after a wait whose
+outcome already ruled the thing out: a push comes only from a row, and
+the drain re-reads the rows under the store lock before sending; a
+hand-off would have removed the row as delivered, so a row gone
+undelivered left nothing to hand. Plain assertions now, with the reason.
+
+2026-10-03 — **A wake is delivered under the coalescer's lock.**
+The app runtime's send test failed once more under the full suite's
+load, and the race was in the product this time: the coalescer marked
+the host woken and then delivered the wake outside its lock, so a take
+on another thread could slip between the two and the host would hear
+of a batch it had already taken. The wake is delivered under the lock
+now, and the test asserts the contract on each turn (one wake, with
+something to take, and no second one queued before the take) instead
+of comparing a global count against a baseline no settle could pin.
+
+2026-10-03 — **A session stream opens with its origin's generation.**
+The third repeat round on main caught the rewind frame again, and this
+time the product: a remembered agent's session is subscribed in the
+same flight as the inventory, after a cursor that named no generation,
+so a desk back from power loss answered it with an empty delta and a
+CaughtUp, and the inventory's catch-up a moment later dropped the
+replicas and forced a Reset; which of the two the frame saw was the
+runner's luck, and the mix was written down as an accepted edge. Now
+every session stream opens with an `Opening` naming the origin's
+generation, a source stores it on the block its Reset begins and sends
+it back with its cursor, and the origin answers a cursor of another
+generation the way it answers one too far behind: a fresh tail. The
+store forgets every held row at a Reset under another generation,
+because the origin numbers orders and revisions afresh. The inventory's
+catch-up only records the generation and lets the host's settled
+sources (exited agents, closed for good) look again; the host-wide
+replica drop, the session retire and the accepted edge are gone. The
+deliberate proto break is recorded in the baseline.
+
+2026-10-02 — **A prompt is sent once the first turn has ended.**
+The second repeat round on main caught the app runtime's send test: it
+sent its prompt once the first turn's text was on screen, and on a slow
+runner the turn had not ended, so the prompt queued behind it and the
+test, expecting it sent, failed. It waits for the turn-end row now, as
+the suite's other test already did, and for the idle that follows it,
+since the idle snapshot landing after the test's settle point would be
+a wake the send did not cause (the first fix, 59d83b82, missed that and
+was pushed on a local run that had not been checked).
+
+2026-10-02 — **The rewind frame waits for the detach it draws.**
+The first repeat round on main caught the terminal client's served
+frames: the frame before a rewind's swap is composed from the session
+events up to the Reset, and whether the desk's detach had reached the
+laptop by then was the runner's luck. The runtime orders them (the old
+source ends before the new one opens), so the test now waits for the
+Detached before the Reset and the frame is the same on every machine.
+
+2026-10-02 — **The rest of the suites wait through the one wait.**
+The binary's seven suites (their three `until` copies gone; the
+fixture that spawns the built binary keeps a longer patience and says
+why), the provider fakes' hook and row waits, the embedded client's
+`eventually` and relay-link waits, the client seam's redial, and the
+UI runtime's watch-driven wait (now one, naming its caller on failure
+instead of "the state never got there"). The scripted-fake test's
+catch-up says why running out of time there is tolerated. Nine more
+sleeps became windows with their reason beside them; two propagation
+sleeps stay, in the embedded client (a failed dial leaves nothing to
+wait on) and the scripted-fake comparison (extras past the recording
+are allowed, so nothing is asserted on them). The in-source test loops
+that already carry a deadline (a channel filling, a marker file, a
+pairing retry) are left as they are.
+
+2026-10-02 — **The daemon's and the agent's suites wait through the one wait.**
+The daemon's seven suites and the agent's five: their `until` copies,
+the supervisor fixture's four poll loops, the agent fixture's `wait`,
+`until` and `dial`, and the synthetic agent's nudge are all `until`
+from the shared crate. Probes answer what they saw (the outbox's row
+count, a row's lifecycle, how many inputs a process was handed), and
+the fixtures that had a transcript keep it: the supervisor's events and
+log, the agent's journal, provider log and terminal, now shown under
+the wait's own report. Nine sleeps became windows, each with its reason
+beside it: a send or a resume blocked on a lane or a lock, a push or a
+hand-off that must not happen, an orphan that must live on. Three
+forced delays stay, since the race they force is the point.
+
+2026-10-02 — **The testnet suites wait on cursors, through the one wait.**
+Seven suites, about 220 wait sites: the two copies of `until` and the
+per-suite `wait_current`, `wait_replica_current` and `eventually` are
+gone. Replica waits are `Net::current`; every other wait is `until`
+with a probe that answers what it saw, so a timeout names the state
+instead of the wish. The sleeps went three ways: a dial that must be
+refused waits on its stored error; a timer that must not have fired
+(a source's backoff, a credential refresh) waits on its deadline armed
+on the policy clock; and the rest are `holds_for` windows with a
+comment saying why time is the only witness (a second link that must
+not open). One propagation sleep remains in the families spec, where
+a hand-off in flight to a frozen agent leaves no mark to wait on.
+
+2026-10-02 — **Fences: a test waits on the host's own cursors.**
+The hand-rolled waits that flaked in CI each picked a proxy for "done"
+and asserted on a neighbour that landed a moment later. testnet now
+waits in the runtime's terms: `turn_ended` for the row that ends a
+turn, `input_settled` for the row that reflects an accepted input,
+`fence` for a host holding a row at an order, `current` for a replica
+caught up to its origin with the block intact. The first three wake on
+the daemon's store-write watch, now public as `committed()` and
+counting absorbed replica rows as well as own commits, so a wait
+returns on the write that satisfies it rather than on a poll, and a
+missed deadline says what the host last held.
+
+2026-10-02 — **One wait for every test crate: `patience`.**
+The suite had about thirty-five copies of the same poll loop, one per
+crate, with four different patiences and a timeout message that said
+only what never happened. The new crate holds the one wait: a probe
+answers what it found or what it saw instead, the last answer is what
+a missed deadline reports, a probe that never answers is a hang, and
+`holds_for` is the one wait that measures time, for asserting that
+nothing happens when nothing the test controls gates it. testnet's
+`Stuck` and `PATIENCE` moved there and are re-exported; the daemon
+crates' tests can use it because it depends on nothing of theirs. The
+sweep of the copies onto it follows crate by crate.
+
+2026-10-02 — **The rearchitect branch's CI scaffolding is gone.**
+The branch is on main, so `just ci-remote` (push the branch and wait
+for its run) and the `testing` and `rearchitect` push triggers in the
+CI workflow had nothing left to serve. The repeat lane stays, started
+by hand only: the deterministic-waits work is judged by it running
+clean three rounds in a row, and it retires once that lands.
+
+2026-10-02 — **The discovery wake monitor is desktop-only code.**
+The phone's build of the daemon uses the stub browser, so the clock
+trait and the sleep detector behind the mDNS browser were dead there
+and the mobile check in `just ci` warned four times. They sit in a
+desktop-only module now; nothing changes on the desktop.
+
+2026-10-02 — **The release manifest is its own crate.**
+Signing releases from xtask reached the manifest, its signature and the
+choice of build through the daemon, so the release tool built the
+whole daemon and the dependency policy, which says the tool shares the
+version stamp without doing that, failed in `just ci`. The manifest,
+signing, verification, rollout placement and the choice are now the
+`release` crate, shared by the daemon and the tool like the version
+stamp; the daemon keeps what a build knows about itself (its target,
+its version and its key) and re-exports the rest. Policy and
+architecture tables updated. Found by the first full `just ci` since
+the signing landed.
+
+2026-10-02 — **The proto baseline records the session-model breaks.**
+The tool class renumbered and lost its exploration value, and the task
+message lost its call key, both on purpose; the only-add check now
+measures from here.
+
+2026-10-02 — **The phone journeys are drawn flat and held to the goldens' thresholds.**
+The whole-screen goldens and the component snapshots turned reduce
+transparency on so no picture holds glass the render server finishes
+on its own schedule; the journeys still drew glass and compared their
+live pages at 12 per channel and 600 pixels of slack. The journey
+driver now turns the flag on at every launch, including the reopens a
+story makes, so every compared phone picture is flat, and the
+goldens' tolerance of 1 per channel with no pixel past it is the
+driver's default; the goldens script no longer overrides it and the
+performance run opts out, measured as the app ships. The tight
+comparison caught one thing the slack had hidden: the turn footer
+named its surface after pulling its text up four points, so the
+volatile mask for a duration sat below the glyphs' tops. The surface
+is now the text. Journey goldens re-recorded once (the pixels of glass
+and two toolbar labels a point wider under the flat backdrop), the
+whole-screen goldens for the footer's frame, and both suites run twice
+over clean.
+
+2026-10-02 — **A headless subagent's task is progress on the call that started it.**
+Headless Claude reports a subagent or a background shell as task
+events naming the call. The interpreter wrote them as a task item of
+their own, the transcript kept a referrer index so the call's row could
+find it, and the view hid the task item and read the call's progress
+through that index; the call itself closed on its launch result, so a
+background subagent's row showed "launched" while it worked. The task
+now lands on the call: steps on an Agent row, the call open across the
+turn that launched it until the task's notification ends it with the
+task's answer, a background shell running until it finishes. The
+referrer index and the task's call key are gone; a task whose call
+was never shown is still an item of its own. Interpreter and view
+goldens re-recorded.
+
+2026-10-02 — **The tool class carries the verb a look is drawn with.**
+The interpreters marked a call exploration or consequential, and both
+views then re-derived read, search, list, fetch and web search from
+the tool's name (Claude) or the command's action kinds (Codex): a
+second classification from text, which the records say the interpreter
+owns. The class is now read, search, list, fetch, web search, look (a
+look drawn its own way: a read-only tool-server call, an image) or
+consequential, set once from native kinds; the views map it to the
+row's verb and the run's counts, and the name tables are gone.
+Interpreter goldens re-recorded for the class names; the view goldens
+did not move.
+
+2026-10-02 — **The ingest-cost baseline's move is accepted and written down.**
+The flood's ingest cost per frame moved from 21.0 to 23.8 µs with the
+measurement change that priced a fixed backlog over shares. The plan was
+to build the old commit under the new measurement and tell a real
+regression from the measurement's own effect; the difference is under
+3 ms of daemon time per thousand frames, so the figure is adopted
+as is and the performance page says so. Jordan's call.
+
+2026-10-02 — **Steering counts every pass that moved, and clears only its own handle.**
+The phone's steering loop re-runs while more was asked for and took
+the last pass's word on whether anything moved, so a catch-up pass
+with nothing to do skipped the account refresh the pass before had
+earned. And a steering task from a stopped launch, awaiting a pause
+the library finishes regardless, cleared the handle a new launch had
+installed, letting the next steer overlap a running pass. Moves now
+accumulate across passes, and a task clears the handle only when it is
+still its own. Third branch-wide Codex pass; the app's unit suites
+and the profile journeys.
+
+2026-10-02 — **A second entitlement refresh does not wait outside the timeout.**
+The request channel holds one entry, and a second asker waited on the
+send, before the 30 s timeout began, behind a first the connection had
+not answered. It is told at once that a refresh is under way; the
+first's answer reaches the status both read. Third branch-wide Codex
+pass; unit test.
+
+2026-10-02 — **A profile that fails to come up is taken back.**
+Creating a profile wrote its registry entry and directory first; a
+failure opening its store, sweeping, starting its edge or binding its
+socket left both behind, so the daemon hosted a profile nobody was told
+of at its next start while a retry made another. The entry and the
+directory are taken back on failure. Second branch-wide Codex pass;
+unit test on the registry.
+
+2026-10-02 — **An act dropped by the runtime's stop still answers.**
+The stop shuts the pool down and drops the acts still running, so an
+act in flight at a stop never called back and the app task awaiting it
+hung, holding its continuation. The callback is owed from the moment
+an act is spawned: its drop now answers that the runtime has stopped,
+the same error the app's own stopped path reports. Second branch-wide
+Codex pass; unit tests on the spawner.
+
+2026-10-02 — **The runtime stops under one hold of its lock.**
+Stop took the open profiles under the lock, closed them outside it and
+marked the runtime stopped under it again; an open landing between
+registered a profile nobody closed, and a profile closing itself
+flipped its flag before calling the library, so stop skipped it and
+its own call found the runtime gone. Both leaked the Rust profile and
+the installation lock. Stop now closes and marks under one hold, and a
+profile's close flips its flag and calls the library under the
+runtime's lock. Second branch-wide Codex pass; the app's unit suites.
+
+2026-10-02 — **What the release key does and does not vouch for is written down.**
+The key keeps a compromised amux.sh, and a GitHub token stolen after a
+deploy, from putting code on machines. It does not vouch for the build:
+the Release workflow builds on GitHub's runners and deploy signs the
+digests it published, so a runner compromised between build and deploy
+gets its binary signed. Jordan keeps that trust deliberately; the
+release page now says so, with attestations named as the tightening if
+the window ever needs closing, and the deploy tool's own doc no longer
+overstates what the key does.
+
+2026-10-02 — **A profile is opened and registered under one hold of the lock.**
+Opening a profile called into the library under the runtime's lock and
+registered the result after letting it go; a stop between the two
+closed the profiles it saw and missed this one, which then skipped its
+own close because the runtime had stopped, leaking the Rust profile and
+the installation lock. The registration now happens inside the same
+call. From the branch-wide Codex review; the app's unit suites pass.
+
+2026-10-02 — **An entitlement refresh answers in time and holds no lock.**
+The refresh request is read only by a live cloud connection; one made
+while the link was between connections sat in its one-slot buffer and
+the asker waited for an answer that might never come, holding the
+edge's cloud lock, behind which pause, sign-out and shutdown wait. The
+phone asks right after a purchase. The refresher is now taken out from
+under the lock and answers within 30 s or says the link is not
+connected. From the branch-wide Codex review; unit tests with paused
+time, parameter recorded.
+
+2026-10-02 — **The channel manifest is signed whole.**
+Each entry carried its own signature over target, version and hash,
+and nothing signed the channel or the rollout: whoever held the
+manifest's URL could serve a signed preview build on the stable channel
+or widen a tenth to everyone, with nothing refusing it. One signature
+now covers the channel, the rollout and every entry, with each
+artifact's size added so a download is bounded by what was signed. A
+supervisor verifies the manifest for its own channel before it reads
+anything from it. Deploy signs the manifest it writes and verifies it
+against the workflow's key; the test servers sign theirs. From the
+branch-wide Codex review; the signature test covers every field.
+
+2026-10-02 — **The supervisor reads no more than a manifest or an artifact can be.**
+A manifest was buffered whole before it was parsed and an artifact
+written whole before its signature was checked, so a server without
+the release key could still exhaust memory or fill the disk. A manifest
+is now at most 1 MiB and an artifact 256 MiB, refused when declared or
+streamed longer. From the branch-wide Codex review; unit tests against
+a local server, parameters recorded.
+
+2026-10-02 — **A Windows swap and its rollback never leave the install path empty.**
+Windows cannot replace a running executable, so the swap moves the
+current binary aside before moving the staged one in; a failure between
+the two left the path, which Task Scheduler starts the supervisor by,
+with nothing at it, and the daemon already stopped. The current binary
+now goes back before the failure is reported. And a supervisor that
+restarted after a swap, before activation, runs the new build itself;
+rolling back renamed prev over its own running image, which Windows
+refuses on every try. The image moves aside first, as the forward swap
+already did for prev. From the branch-wide Codex review; unit tests,
+cross-checked for Windows from the Mac.
+
+2026-10-01 — **A type size change measures the chat's rows again.**
+The list forgot its cached heights when the design or an accessibility
+setting it carries changed, but not when the type size did: the rows
+redrew at the new size inside frames cached for the old one. The size
+is carried in with the rest now, so the change compares unequal and
+every row is measured again. A third Codex pass raised it, holding
+also that the driving door's size never reached the hosted rows; the
+accessibility journey's goldens, which predate the list, pass against
+it, so that part was not so. List test.
+
+2026-10-01 — **A stopped browser's state is ignored like its sightings.**
+The browse token the sightings carry now guards what a browser says of
+its state too, so a cancelled browser's late report cannot lift or
+set the local-network refusal the current one stands by. Third Codex
+pass; unit test.
+
+2026-10-01 — **A report from a browser that was stopped is ignored.**
+The browser reports off the main thread since the cold-launch work and
+its reports hop to the main actor; one in flight when browsing stops
+landed after, repopulating what was seen from a cancelled browser and
+resolving it. Each report now carries the browse it was made under and
+only the current one's are taken. Second Codex pass; unit test.
+
+2026-10-01 — **The top of a chat past collapsed rows is pinned.**
+A second Codex pass held that a window beginning with twenty collapsed
+rows, which stand at no height, could never page older history, the
+list judging the top by row index and such cells never coming on
+screen. A list test laid out that window: the collection view displays
+a cell at no height like any other, the oldest rows come on screen
+first, and the page is asked for. The index rule stays; the test, the
+first on the list's coordinator, pins it.
+
+2026-10-01 — **The early sessions' generation edge is written down.**
+A session catch-up that lands before the inventory's can merge new-
+generation records onto old rows when the origin reused the cursor's
+number; the inventory's catch-up drops the host's replicas, retires
+the session and reopens the sources on a tail, which an open chat sees
+as a Reset. Accepted when the subscriptions moved into the inventory's
+flight; a second Codex pass raised it, so the replication paragraph
+now says so.
+
+2026-10-01 — **A row read twice before the list looks is measured again.**
+The chat model named the rows it read on each wake in a list the
+transcript list consumed with the revision; two wakes in one run-loop
+turn, which a stream's end produces, left the first wake's rows at
+stale heights. The model now stamps each cell with the revision it was
+read at, and the list measures again every row stamped since it last
+laid out: a comparison of state, nothing handed over or cleared. Codex
+review finding; unit test on the model.
+
+2026-10-01 — **Opener locks go with the link, route or host they belong to.**
+The single-flight lock a shared channel opens under was never pruned,
+and its key holds the link's id, fresh on every reconnect: a long-lived
+daemon would hold one lock per link it ever had. The three drop paths
+now share one helper that forgets the channel, its opener lock and its
+lifetimes together. Codex review finding; unit test.
+
+2026-10-01 — **A stopped session reads stale by number.**
+Two gaps in what counts as the current session, both from the early
+sources this branch opens with the inventory. A generation change
+aborted a host's sources and reopened them under the same session, so
+an old task finishing its last step could unregister its replacement or
+absorb under it; the change now assigns a fresh session, so the old one
+is stale by construction. And stopping replication cleared the ready
+map but not the following one, so a source caught between awaits still
+read as current; both are cleared. The bookkeeping moved onto the
+replication state so it is unit-tested without a runtime. Codex review
+findings.
+
+2026-10-01 — **The phone's baseline is re-recorded after the handshake change.**
+Every budget met; reconciliation through the relay at 100 ms now
+baselines near 1,000 ms, the rest within noise.
+
+2026-10-01 — **A stream's handshake leaves with its preface on every route.**
+Through the relay each stream waited a full round trip to be accepted
+before the phone sent its handshake's first flight. No opener waits now:
+the ClientHello goes behind the preface, and a refusal, the same reset
+it always was, is read under the handshake and turned back into the
+channel error with its reason, so cloud pairing's "payment required"
+reads as it did. Pairing itself still waits, its handshake being
+pre-trust. The relay is untouched: it waits for the host to accept
+before it copies, so what it forwards and refuses is unchanged, and the
+opener's bytes sit in its stream for that moment. Reconciliation through
+the relay at 100 ms: 991 ms median, 1,012 worst, from 1,203; direct and
+loopback unchanged.
+
+2026-10-01 — **The relay launch arguments are catalogued; one chase log line goes.**
+`just ios lint` wanted the two new launch argument names in the
+non-copy catalogue beside the TCP one. The "subscribing to the session"
+line, added to see when each source asked, says nothing the
+"subscribed" line a round trip later does not; it is gone.
+
+2026-10-01 — **Four phone budgets tightened to what a person accepts.**
+A budget set at today's number is a drift check, which the baseline
+already is; these four were looser than the requirement. Reconciliation
+over loopback 1,000 → 250 ms: on the same network the fleet should be
+current within a few frames, and a second was the slow-network figure
+copied across. Cold store read 100 → 50 and fleet render 150 → 100: parts
+of the first frame, each now bounded by what a person would feel in the
+whole. Streaming footprint 250 → 120 MB: what keeps the app resident
+when put away, not what the system allows it in front. Measured 82, 27,
+82 and 70 against them.
+
+2026-10-01 — **The phone's baseline carries the relay.**
+`just ios perf -- --baseline` with every budget met, the relay sample
+included: reconciliation through the relay at 100 ms 1,203 ms median,
+the rest within noise of the earlier baseline.
+
+2026-10-01 — **The run's summary prints a ceiling-only metric with a baseline.**
+`just ios perf -- --baseline` judged every metric and then failed
+printing the streaming hitch: it has a recorded baseline but no drift,
+and the summary formatted the drift anyway. The line is its own function
+now, tested, and says "ceiling only" where the report does.
+
+2026-10-01 — **Reconciliation is measured through the relay, the way mobile data goes.**
+`just ios perf` reconciled only over direct links through the LAN gates;
+away from home a phone reaches its machines through the cloud relay,
+every stream handshaking end to end inside. The served relay now says
+where its QUIC carrier answers and what certificate it presents
+(`relay_quic`, `relay_root` in the ready block), a driven launch can be
+told to dial and trust it (`-amux-relay-quic`, `-amux-relay-root`), and
+the net puts a gate in front of it (`RelayGate`, `RelayFaults`). The
+suite signs the phone in to the machines' account, loses every direct
+dial, and launches five times with that gate holding each packet 100 ms:
+"reconciliation through the relay at 100 ms", budget 1,500. The journeys
+gain the same carrier: a phone against a served relay had always fallen
+back to the plaintext TCP carrier, since its QUIC dial went to the
+account service's port with the public roots.
+Three things the measurement found. The sources opened their channel
+only after the inventory's had fully opened; they open together now.
+Every agent's source opened its own session stream at a launch, since
+callers asking for a shared channel while it was being opened each
+opened their own; a shared channel is opened once and the rest wait for
+it. And forty opening answers left the hosts within eleven milliseconds
+but reached the phone in waves a round trip apart: through the relay
+they all ride one fresh QUIC connection, whose ten-packet initial
+congestion window held a third of them. Every QUIC endpoint of ours now
+starts with thirty-two packets, Chromium's figure. Through the relay:
+1,205 ms median, 1,224 worst, from 1,376 with the first two fixes and
+1,174 before them; direct and loopback unchanged. HTTP/2 window sizes
+were tried for the waves, moved nothing, and were reverted.
+
+2026-10-01 — **The shipping audit admits the notification centre.**
+`just ios scope-audit` refused every Release build since the chat
+rebuild made the app the notification centre's delegate, so a "needs
+you" push can wake it and bring one chat current. The forbidden list
+named the framework, written when the app had no notifications; it now
+names only the permission prompt, which the app never shows on its own,
+so a build that grew one would still be caught.
+
+2026-10-01 — **Hitch time is held to its ceiling alone.**
+The phone's baseline recorded a streaming hitch of nothing, and the
+judge read drift as a share of the baseline, so the next run with a
+millisecond of hitch would have failed on infinite drift; between runs
+of the same build the metric rests at nothing or shows a millisecond or
+two, which is noise against its 5 ms/s budget. It is now judged on its
+ceiling only, the way the desktop's noisy timings are, and the report
+says so in the drift column.
+
+2026-10-01 — **The phone's baseline on the pinned Mac is recorded.**
+`just ios perf -- --baseline` with every budget met: cold first frame
+638 ms median and 649 worst, store read 30, fleet render 84,
+reconciliation 84 over loopback and 767 over 100 ms each way, streaming
+hitch 0.0 ms/s with the main thread at 50% and 69 MB, idle 0 and 0.
+perf/baselines/phone/pinned-mac.json is listed in the catalog; later
+runs on this Mac are judged on drift from it as well as on the budgets.
+
+2026-10-01 — **A source opened with the inventory is current from the start.**
+`just ios verify`'s replication spec that drops a stream after its
+Snapshot found the replica caught up where it expected it waiting out
+its backoff: a source opened with the inventory, lost before the
+inventory confirmed its session, ended instead of backing off, and the
+sweep after the catch-up opened a fresh one at once. The host's session
+now counts as current from the moment its inventory is subscribed, so
+such a source waits out its backoff like any other.
+
+2026-10-01 — **The cold first frame's budget is set from the profile.**
+632 ms median on the pinned Mac against 500: an Instruments profile of the
+launch puts the main thread's heavy leaves in the loader (270 ms, 85 of
+it dyld_sim re-pointing the shared cache at the host, which a device
+does not do) and in the Swift runtime's metadata work, with no function
+of ours among them, and every experiment on our side measured no gain.
+The simulator's budget is now 650 ms median and 700 worst, with the
+reasoning beside the constant and on the performance page; a device is
+budgeted apart once one is enrolled.
+
+2026-10-01 — **The `geometry` door verb answers once the frames are there.**
+`just ios perf`'s streaming and idle groups failed to tap the agents tab:
+the runner turns element geometry on only to tap, and the verb acked
+before SwiftUI had rendered the frames, so the tap found none to hit.
+The verb now waits up to three frames for a declared element to report
+one. Streaming after the reconciliation fix: hitch 1.7 ms/s, main thread
+50%, footprint 70 MB; idle 0 commits and 0 ticks.
+
+2026-10-01 — **How a budget is worked, written down.**
+docs/PERFORMANCE.md opens with the rules the phone's performance work
+ran by: the budget is the requirement and meeting it ends the work;
+every change starts from a measurement that names the cause; remove
+work before adding machinery; a sentence of design, a test or the
+suite's number per fix; measure what somebody holding the phone sees;
+and when the profile points at nothing of ours, stop and set the budget
+again from the profile.
+
+2026-10-01 — **Reconciliation over a slow network takes four round trips.**
+`just ios perf`'s reconciliation at 100 ms each way: 1,986 ms against
+1,000. The links' logs, with the served machines' side, read as nine
+round trips a host: QUIC with a Retry, Hello, a stream opened and waited
+on, a TLS handshake inside it, the inventory, then a stream, a wait and a
+handshake per agent before each session. A stream to a paired host over
+a direct QUIC link of our own is now plain (`StreamPreface.plain`): the
+link authenticated both ends, so the stream carries no handshake and the
+opener does not wait to be accepted; its first bytes leave with the
+preface, and a refusal is read, as `UNAVAILABLE`, instead of answered
+at the open. The acceptor honours it only on a direct link from a host in
+its trust store; a relay forwards every stream with it cleared and still
+waits for acceptance, so a refusal keeps its reason. One Session channel
+per host carries every agent's subscription, and the agents the store
+remembers of a host are subscribed in the same flight as its inventory,
+confirmed by the inventory's CaughtUp; a generation change stops them
+under the store lock so every chat sees its Reset. The test gate now
+passes datagrams in the order they came: held each on its own timer,
+two sent in the same millisecond swapped places, and a packet that
+overtook the handshake it followed was dropped and counted lost, which
+the new path statistics in the Hello logs showed as one extra round
+trip on one host of three. Reconciliation at 100 ms: 760 ms median,
+762 worst, from 1,986.
+
+2026-10-01 — **A cold launch builds what it shows.**
+`just ios perf`'s cold group: first frame 896 ms against 500, with the
+store read reported at 265. Marks now cut the launch where it bends
+(`appEntered`, `compositionBuilt`, `shellPresented`, `nodeStarted`,
+`fleetOpenBegan`): 300 ms loading images, 100 ms of UIKit building the
+scene, the composition in 2, and the rest the main thread building the
+shell's first frame. The store read is now the store's own two spans,
+the node's start and the fleet's open (28 ms, from 265 that was mostly
+the main thread's wait), and a fleet-render budget of 150 ms covers
+building the home from the store's rows. The browser starts on its own
+queue (75 ms off the main thread at launch). The shell builds the tab
+on screen and keeps a tab from the first time it is reached for; the
+home's row groups build rows as they come near the screen: first frame
+632 ms, fleet render 83, from 896 and 217. What is left is SwiftUI's
+first build of a navigation stack, a tab bar and a home; the sampler
+attributes it to nothing removable and Instruments would not record a
+launch on this simulator from the command line, so the first-frame
+budget stays missed by 130 ms, written up in docs/PERFORMANCE.md.
+The runner now launches without element geometry and turns it on only
+to tap (the `geometry` door verb), probes a launch's door with
+`signposts` rather than `settle`, and hands the phone the served
+hosts' log filter; `ios rust` no longer calls a shipping library the
+package left in the development slice's place current (the package
+unit tests had been linking the shipping Rust after `ios package`).
+Goldens and journey goldens re-recorded: a tab never reached for
+reports no elements.
+
+2026-10-01 — **The packaged bridge's linkage smoke speaks the current bridge.**
+`just ios scope-audit` built the shipping framework and then failed to
+compile the smoke that links it: it still called the bridge the phone had
+before the runtime rewrite (`amux_app_version`, `amux_app_start` with an
+account configuration and a plaintext relay to refuse). It now proves the
+same three things against the bridge as it is: the version carries no
+driving marker, an installation starts from the shipping library with
+nothing listening, and the entry only a driving build answers, offering
+a pairing code, is refused.
+
+2026-10-01 — **The chat's rows are a UIKit leaf that owns their heights, and the stream is back under budget.**
+`just ios perf`'s streaming group had the main thread at 99.9% and the
+chat at eighteen frames a second (hitch 694 ms/s against 5): the feed
+was a SwiftUI `VStack` over a drawn run of 240 rows, and every arrival
+placed all 240 again, about 60 ms a frame, with the app's own code under
+2% of the samples. A lazy stack measured fine but could not hold the
+reader's place when rows landed above them. The feed is now the
+`transcriptList` leaf: a `UICollectionView` whose cells host the same
+SwiftUI rows under the app's environment, with the model's whole held
+sequence as its data and no drawn-run window (`drawn`, `drawnStart`,
+`growOlder`, `reachedBottom`, the scroll anchor leaf and the per-row
+geometry callbacks are gone; `ChatModel` watches its sequence by an
+edition counter so no cell observes the whole list, and assigns the
+frame, card and strip only when they differ). UIKit's self-sizing was
+measured out on the way: it re-measured and animated every visible cell
+whenever one moved, which at the window's cap is every arrival, about
+10 ms each, and three times drew a row in another row's frame after rows
+landed above. The leaf measures rows itself with one hidden hosting view
+(as if photographed, so markdown parsed on a task is measured at its
+final shape) and stacks them in its own layout; a height is forgotten
+only when the model says that row was read again. The reader's place is
+held in every layout pass from the drawn cells and carried across passes
+that measure or move the list; a follower's bottom is set before cells
+are placed, so the top rows are never displayed on the way down and
+never taken for the reader reaching them. Hosted cells report their
+identified elements to the leaf, which turns them into window frames
+for the door. Streaming now: hitch 1.7 ms/s, main thread 56.5%, sixty
+frames a second (the simulator's cap), 91 MB; `ChatFeedTests` holds rows
+still to the pixel under a landing page and under arrivals, shows a
+streamed chat exactly as the same rows opened, and grows a row in place.
+One component snapshot pair and one golden pair re-recorded for a
+sub-point placement. The door's accessibility walk now skips hidden
+views, as VoiceOver does: the leaf's hidden measurer was reporting the
+last row it measured, and the retained tabs behind the shown one had
+been reported all along; every golden's element list loses those.
+
+2026-09-30 — **A release is cut and then deployed, as two recipes.**
+`make_release.sh` predated `just` and bundled the whole release into one
+script: bump, tag, push, and now also waiting for the workflow and
+signing. From first principles a release is two acts at two times. `just
+release 0.8.0` cuts: the version goes into the two manifests and the
+lock, the release build is checked, one commit is tagged and pushed, and
+the tag's workflow builds the binaries; it refuses a dirty tree, a
+version not above the current one, and a Mac without the signing key.
+`just deploy 0.8.0 [--channel preview] [--rollout N]` puts that release in
+front of machines: it waits for the workflow if it is still building,
+signs the checksums, verifies the signatures against the workflow's key
+and uploads the channel manifest. Deploying repeats against the same
+release, so the channel is a deployment's choice and not a version's:
+preview is `deploy --channel preview`, promotion is `deploy` again, and
+there are no prerelease version strings. Both live in the xtask.
+
+2026-09-30 — **The phone has its performance suite back, and the first numbers are findings.**
+`just ios perf` drives the optimised `Measured` app (Release-preset
+Swift with the door kept in) on the pinned simulator against a served
+network made for it: three machines behind delayable gates, forty
+agents, one conversation a thousand rows long that streams five cued
+bursts of fifty rows a second. Every number is the app's own: launch
+marks (process start, images loaded, store read, first remembered
+frame, reconciled) and a `measure` door verb that watches the display,
+the main thread and the footprint. Budgets, drift and enrolment follow
+the desktop suite's rules; the page's tables are held to the runner's
+by a script test. The verifier runs it last, as `just ios measured`,
+never in the hosted captures. The first runs on the pinned Mac, five
+samples each, fail three budgets and that is what the suite is for:
+the cold first frame is about 910 ms against 500 (300 ms of linker,
+then 100 ms to the node starting, 270 ms of node start and store
+catch-up, 220 ms from the fleet's read to the presented frame);
+reconciling over 100 ms of latency takes about 2.3 s against 1,000 ms;
+and the transcript under the stream holds the main thread at 100% and
+presents about eighteen frames a second (hitch 650 ms/s against 5),
+with glass off as well as on, so the cost is the row pipeline, not the
+material. The store read, footprint (130 MB) and idle (zero commits,
+zero ticks) are inside their budgets. No baseline is recorded: a run
+over budget cannot become one. Two things the runs taught about the
+daemons: ten handshakes a minute from one address is the limit, so the
+runner spaces launches ten seconds apart; and a remembered direct
+address that fails its startup dial is not dialled again unless
+discovery lists the host.
+
+2026-09-30 — **A host's entry says whether its agents are current; a served host can sit behind a slow gate.**
+The fleet told a client whether a trusted host was online, but not
+whether this machine's copy of its agents had caught up with it since:
+after a launch the remembered rows and the fresh ones look the same.
+Each host entry now carries `current`, set when the host's inventory
+stream reaches CaughtUp and cleared when the host is lost, published
+under the store lock with the agents it describes; a client that reads
+every trusted host current has reconciled with its fleet, which is the
+mark the phone's cold-start measurement needs. The served test network
+gains `LanGate` and `LanFaults`: a UDP gate in front of a host's LAN
+listener that a client dials in the host's place, with delay and loss
+set from the door, so a phone can be measured over a household
+network's latency without leaving loopback.
+
+2026-09-30 — **A provider state write that fails ends the incarnation too.**
+A journal write that failed already ended the incarnation with "could
+not write to its directory", but the provider's own state in private/
+was written with the result thrown away: the Codex thread id the next
+incarnation resumes, and the transcript position a resumed terminal
+Claude reads on from. On a full disk the agent would have run on and
+the next incarnation would have started a thread nobody could find or
+re-read rows it had already journaled. Those writes now report their
+failure to the host as a provider event, and the host ends the
+incarnation the same way it does for the journal, naming the file. Two
+tests force each failure with a read-only file and check the exit cause.
+Writes that only help a dump keep ignoring their result.
+
+2026-09-30 — **The fan-out ring is sized from the batch, not the batch from the ring.**
+When a caught-up subscriber lagged at a backlog's end (e2f6a8b2), the
+fix halved the ingest batch to fit two of them in the unchanged ring.
+That got the batch's size from the wrong place: the batch bounds how
+long a backlog drain holds the store lock, which at the measured 23 µs a
+frame is about 6 ms for 256 frames, the most a subscribe, an input or a
+spawn waits behind a draining agent. It stays at 256 for that reason and
+no other. The ring is now its own constant, four batches (1,024
+events), so a reader whose task woke late is absorbed by design rather
+than by the accident of a short batch following a full one within the
+ring's slack. The backlog drain test with its paused reader passes as
+before; the parameters, journal and store pages give the two rationales
+separately.
+
+2026-09-30 — **Releases are signed from the release Mac's keychain.**
+The daemon has verified release manifests against a compiled-in Ed25519
+key since the supervisor landed, but no key existed, the Release
+workflow set none, and nothing wrote a manifest. Now a 32-byte seed
+lives in the login keychain of the Mac that cuts releases, as the
+generic password item `amux-release-key`, and nowhere else: not in the
+repository, not on GitHub, not on amux.sh. Machines verify a release
+against the key in the binary they already run, so neither the build
+runner nor the manifest server can make them install anything; that is
+what end-to-end signing is for, and it is why the private half is kept
+off every hosted machine. `just release-key generate` makes the seed
+(refusing when one is there, so rotation is deliberate), the workflow
+compiles the public half into every published binary, and
+`just release-manifest <version> [--channel] [--rollout] --publish`
+signs the tagged release's `checksums.txt`, verifies each signature
+against the workflow's key, and uploads `<channel>.json` to that
+release. `make_release.sh` waits for the workflow and runs it, so a
+release is still one command. A dry run against v0.7.0 produced a
+verifying manifest. The one piece left is amux.sh serving
+`/releases/<channel>.json` from the newest release that carries one,
+which lives in the cloud repository.
+
+2026-09-29 — **The clipboard crate is back; the agent memory baseline records it.**
+Loading AppKit lazily on macOS (a6f0c3fc) replaced the clipboard crate
+with hand-written dlopen and Objective-C pasteboard code so that each
+agent process, which is the same binary as the terminal client, stayed
+under the 10% memory drift limit: 3.50 MiB against a 3.02 MiB baseline.
+That traded a user-facing paste path for half a megabyte per agent, most
+of it shared framework pages that resident size counts but the machine
+does not pay per process, against a 48 MiB budget. The gate was wrong,
+not the code: the change is reverted, arboard is linked again, and the
+flood agent process memory baseline is re-recorded at 3.485 MiB (peak
+3.500) on the enrolled Mac in the reference state; the ingest-cost median
+recorded earlier today is kept. If per-agent size ever matters, a
+separate agent binary is the honest fix.
+
+2026-09-29 — **The cross-host stop test waits for the child's turn to run.**
+The test that a parent's stop reaches its child on another host sent the
+interrupt as soon as the parent's host held the child's row, and once in
+the macOS repeat lane the child never exited. The row appears while
+headless Claude is still starting; the creation prompt waits in the queue
+until Claude answers `initialize`, and an interrupt then has no turn to
+cancel. It is accepted, the prompt's turn runs afterwards and waits on its
+gate for good. Delaying the fake's `initialize` answer by 3 s reproduced
+the exact failure every run and showed the interrupt arriving with the
+provider not yet started. Stop cancelling only a running turn is the
+specified behaviour, so the test now waits until the child's row shows it
+working; it passes under the same delay. An interpreter test pins the rule
+the old test missed: an interrupt before Claude starts leaves the queued
+prompt to run.
+
+2026-09-29 — **A call whose direct link closes under it tries the relay.**
+A direct link leaves the link registry a moment before it leaves routing,
+so a call made in between chose the closed link and failed with "no live
+link"; the one retry asked routing again and got the same link. The retry
+now takes the next route routing holds that is not the failed one: the
+link that replaced it, or the relay. A host the desk had just revoked saw
+the anonymous "no live link" instead of the desk's refusal by name (seen
+once in the macOS repeat lane); holding the gap open for 500 ms reproduced
+that exactly every run, and with this change the reopen reaches the desk
+through the relay and is refused as no longer trusted.
+
+2026-09-29 — **Tests that build binaries mid-run share one build.** The
+macOS test job ran out its 1000 s bound with every test passing: it spent
+about ten of its sixteen minutes rebuilding `amux`, once for each test
+crate that started a nested `cargo build`. Cargo reruns a build script
+when a variable it declared with `rerun-if-env-changed` differs from
+cargo's own environment, and `ring` declares `CARGO_MANIFEST_DIR` and
+`CARGO_PKG_*`; a test process carries its own package's values, so each
+crate's nested build reran `ring` and recompiled rustls, quinn, node and
+amux. Every nested build now starts through `provider_fakes::cargo::command()`,
+which drops the package's variables; across three crates the nested build
+went from recompiling to 0.2 s. The bound stays at 1000 s.
+
+2026-09-29 — **The flood's ingest-cost baseline is re-recorded with the
+measurement it is compared with.** The desktop baseline's ingest cost,
+21.002 µs a frame, was recorded before the flood's capacity phase changed
+how it measures, and was never recorded again, so every later run compared
+a new measurement with an old one; the same code reads about 20% higher by
+the new method. The afternoon's reading of +47% stacked a second cause on
+that: the startup disk was 99.4% full (5.3 GiB free), and since ingest cost
+is file writes, the baseline commit's own build then read 8 to 25% above
+its own recorded value. With this worktree's compiler cache deleted (176
+GiB free, later 349 GiB), the baseline commit's build reproduced its value
+(medians of three: 19.520 µs before the head runs, 20.961 µs after the
+recording run), and the head read 24.240, 22.969, 24.569, 22.580, 22.913,
+23.153 µs. The recording run read 23.778 µs, within 5% of the head's
+median, and is the new median; an earlier recording run at 20.917 µs, 9%
+under that median, was discarded as noise. Only the ingest cost changes:
+the agent's memory measurement did not change, so its baseline stands.
+docs/PERFORMANCE.md now says when a baseline must be re-recorded and how to
+show the machine is in the reference state before a baseline or a
+qualifying run counts.
 
 2026-09-29 — **A chat's window is bounded while the reader follows.** A
 chat left open under a flood (about 40 rows a second) held every row it had

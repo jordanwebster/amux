@@ -31,14 +31,16 @@ ALLOWED_LOCAL = {
     # provider in its graph.
     # interpret only for the dump path's per-kind redactor: the one stated
     # exception to "the daemon interprets nothing".
-    "node": {"agent-dir", "interpret", "journal", "settings", "store", "version-stamp", "wire"},
+    "node": {"agent-dir", "interpret", "journal", "release", "settings", "store", "version-stamp", "wire"},
     "amux": {"agent", "agent-dir", "claude", "client", "node", "settings", "store", "tui", "wire"},
-    # The version stamp a release tool can rewrite in a built binary; the
-    # xtask shares it without building the daemon.
+    # The version stamp a release tool can rewrite in a built binary, and the
+    # release manifest the tool signs and the daemon verifies; the xtask
+    # shares both without building the daemon.
     "version-stamp": set(),
+    "release": set(),
     # The Swift mirrors of the view values are generated from their
     # definitions, so the generator reads them.
-    "xtask": {"app-runtime", "model", "ui-view", "version-stamp"},
+    "xtask": {"app-runtime", "model", "release", "ui-view", "version-stamp"},
     # The seam both clients call the local runtime through: the local socket
     # and the shared clock trait come from the agent directory contract.
     "client": {"agent-dir", "wire"},
@@ -68,6 +70,7 @@ ALLOWED_LOCAL = {
 UI_CRATES = {"model", "client", "ui-state", "ui-view", "ui-runtime", "tui", "app-runtime"}
 FORBIDDEN_FOR_UI = {"node", "store", "interpret", "agent", "claude", "codex", "pty-host"}
 TEST_SUPPORT = {
+    "patience",
     "testnet",
     "qualification",
     "claude-specs",
@@ -80,7 +83,10 @@ TEST_SUPPORT = {
 SUPPORT_ALLOWED_LOCAL = {
     # The many-daemons harness: real daemons in process, real agents on the
     # fake providers, synthetic journals, and the production boundaries.
-    "testnet": {"agent-dir", "journal", "node", "provider-fakes", "store", "wire"},
+    # The one wait and its failure, shared by every test crate; the harness
+    # builds its stream and cursor waits on it.
+    "patience": set(),
+    "testnet": {"agent-dir", "journal", "node", "patience", "provider-fakes", "store", "wire"},
     # Qualification owns environment-dependent provider and performance
     # checks while reusing the network harness rather than shipping it.
     "qualification": {"node", "provider-fakes", "store", "testnet", "wire"},

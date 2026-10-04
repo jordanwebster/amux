@@ -16,9 +16,10 @@ use provider_fakes::script::Step;
 use serde_json::{Value, json};
 use store::{Absorb, AgentRow, Store as _};
 use testnet::door::{CAPABILITIES, Control, ErrorKind, Readiness, Reply};
-use testnet::observe::{self, Mark, holds_for};
+use testnet::observe::{self, Mark, marks};
 use testnet::{
     AgentDecl, FakeKind, JournalCut, Net, NetError, PATIENCE, Stuck, Topology, TopologyError,
+    holds_for, until, until_within,
 };
 use wire::{ClaudeSdkItem, SessionEvent, claude_sdk_item, session_event};
 
@@ -128,11 +129,14 @@ fn a_topology_rejects_unknown_and_duplicate_names_before_anything_starts() {
 #[tokio::test(start_paused = true)]
 async fn the_polling_waiters_fail_on_a_false_a_broken_or_a_hung_check() {
     let deadline = Duration::from_secs(1);
-    let never = observe::eventually("never", deadline, || async { false }).await;
-    assert!(matches!(never, Err(Stuck::Deadline { .. })), "{never:?}");
-    let hung = observe::eventually("hung", deadline, std::future::pending::<bool>).await;
+    let never = until_within("never", deadline, || async { Err::<(), _>("still no") }).await;
+    match &never {
+        Err(Stuck::Deadline { seen, .. }) => assert_eq!(seen, "still no"),
+        other => panic!("{other:?}"),
+    }
+    let hung = until_within("hung", deadline, std::future::pending::<Result<(), String>>).await;
     assert!(matches!(hung, Err(Stuck::Hung { .. })), "{hung:?}");
-    observe::eventually("at once", deadline, || async { true })
+    until_within("at once", deadline, || async { Ok::<_, String>(()) })
         .await
         .unwrap();
 
@@ -170,14 +174,28 @@ async fn a_real_agent_runs_on_each_fake_and_its_stream_opens_with_a_snapshot() {
             .observe_until(|events| says(events, &wanted), PATIENCE)
             .await
             .unwrap();
-        assert_eq!(
-            observe::mark(&events[0]),
-            Mark::Snapshot,
-            "{name}: a stream opens with the snapshot"
+        assert!(
+            matches!(marks(&events[..2])[..], [Mark::Opening(_), Mark::Snapshot]),
+            "{name}: a stream opens with its generation and the snapshot"
         );
         println!("{name}:\n{}", observer.transcript());
     }
     net.shutdown().await.unwrap();
+}
+
+/// Waits until both daemons' retention sweeps sleep until `at`.
+async fn sweeps_asleep(clock: &testnet::DrivenClock, at: i64) {
+    testnet::until(&format!("both retention sweeps asleep until {at}"), || {
+        let sleeping = clock.sleeping();
+        async move {
+            let asleep = sleeping.iter().filter(|until| **until == at).count();
+            (asleep == 2)
+                .then_some(())
+                .ok_or_else(|| format!("{asleep} asleep until {at}; sleeping: {sleeping:?}"))
+        }
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -190,30 +208,19 @@ async fn every_daemon_sleeps_its_policy_timers_on_the_driven_clock() {
     let interval = node::Launch::default().retention_interval_ms;
     // Each daemon's retention sweep ran at start and sleeps one interval on
     // the driven clock; wall time passing wakes neither.
-    observe::eventually("both retention sweeps asleep", PATIENCE, || {
-        let asleep = clock
-            .sleeping()
-            .iter()
-            .filter(|at| **at == start + interval)
-            .count();
-        async move { asleep == 2 }
-    })
+    sweeps_asleep(&clock, start + interval).await;
+    // A window: nothing gates the wall, so the only proof policy time
+    // ignores it is that it stays put while the wall moves.
+    holds_for(
+        "policy time to ignore the wall",
+        Duration::from_millis(200),
+        || async { net.now_ms() == start },
+    )
     .await
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(net.now_ms(), start, "policy time does not follow the wall");
 
     net.advance(Duration::from_millis(interval as u64)).unwrap();
-    observe::eventually("both sweeps ran and sleep again", PATIENCE, || {
-        let again = clock
-            .sleeping()
-            .iter()
-            .filter(|at| **at == start + 2 * interval)
-            .count();
-        async move { again == 2 }
-    })
-    .await
-    .unwrap();
+    sweeps_asleep(&clock, start + 2 * interval).await;
     net.shutdown().await.unwrap();
 }
 
@@ -261,6 +268,72 @@ async fn a_stuck_observation_fails_at_its_deadline_and_a_closed_one_at_once() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_fence_holds_a_host_to_what_its_own_cursors_report() {
+    let topology = Topology::new()
+        .host("desk")
+        .host("laptop")
+        .link("desk", "laptop")
+        .agent(
+            AgentDecl::new("worker", "desk")
+                .steps(vec![
+                    text("one"),
+                    Step::TurnEnd,
+                    gate("second"),
+                    text("two"),
+                    Step::TurnEnd,
+                ])
+                .prompt("go"),
+        );
+    let net = Net::start(topology).await.unwrap();
+    let key = net.agent("worker").unwrap().key();
+
+    // The first turn ends on the origin; fenced to the row that ended it,
+    // the laptop holds everything before it.
+    let first = net.turn_ended("worker", 1).await.unwrap();
+    net.fence("laptop", "worker", first).await.unwrap();
+    let held = {
+        let runtime = net.runtime("laptop").unwrap();
+        let store = runtime.store().await;
+        store.cut(&key, u32::MAX).unwrap().held
+    };
+    assert!(held.iter().any(|item| item.text.contains("one")));
+    assert_eq!(
+        held.iter()
+            .filter(|item| item.key.starts_with("turn:"))
+            .count(),
+        1
+    );
+    assert!(
+        !held.iter().any(|item| item.text.contains("two")),
+        "the second turn waits on its gate"
+    );
+    net.current("laptop", "worker").await.unwrap();
+
+    // A sent input settles as the row that reflects it, and the second
+    // turn's end comes after it.
+    let input = b"second-go".to_vec();
+    net.input(
+        "worker",
+        testnet::prompt(net.agent("worker").unwrap().kind, &input, "again"),
+    )
+    .await
+    .unwrap();
+    let settled = net.input_settled("worker", &input).await.unwrap();
+    assert!(settled > first);
+    net.open_gate("second").unwrap();
+    let second = net.turn_ended("worker", 2).await.unwrap();
+    assert!(second > settled);
+    net.fence("laptop", "worker", second).await.unwrap();
+    let held = {
+        let runtime = net.runtime("laptop").unwrap();
+        let store = runtime.store().await;
+        store.cut(&key, u32::MAX).unwrap().held
+    };
+    assert!(held.iter().any(|item| item.text.contains("two")));
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_severed_link_goes_down_and_a_restored_one_comes_back() {
     let mut net = Net::start(Topology::new().host("a").host("b").host("c").link("a", "b"))
         .await
@@ -282,6 +355,8 @@ async fn a_severed_link_goes_down_and_a_restored_one_comes_back() {
     net.sever_link("a", "b").unwrap();
     net.restore_link("a", "b").await.unwrap();
     net.wait_link("a", "b", true).await.unwrap();
+    // A window: nothing the test controls gates a link that must not
+    // drop again.
     holds_for(
         "the restored link to stay up",
         Duration::from_millis(500),
@@ -328,9 +403,13 @@ async fn a_killed_daemon_leaves_its_agents_running_and_its_restart_reads_what_th
     // With no daemon, the agent goes on and writes its journal.
     let written = net.journal_end("worker").unwrap();
     net.open_gate("release").unwrap();
-    observe::eventually("the agent to write on", PATIENCE, || {
+    testnet::until("the agent to write on", || {
         let end = net.journal_end("worker").unwrap();
-        async move { end > written }
+        async move {
+            (end > written)
+                .then_some(())
+                .ok_or_else(|| format!("journal end {end}, was {written}"))
+        }
     })
     .await
     .unwrap();
@@ -380,7 +459,7 @@ async fn a_rewound_host_loses_what_the_drive_never_got_under_a_new_generation() 
         .unwrap();
     // Everything the agent wrote so far is committed, then reaches the
     // drive.
-    observe::eventually("the journal read to its end", PATIENCE, || async {
+    testnet::until("the journal read to its end", || async {
         let end = net.journal_end("worker").unwrap();
         let cursor = net
             .runtime("desk")
@@ -389,7 +468,9 @@ async fn a_rewound_host_loses_what_the_drive_never_got_under_a_new_generation() 
             .await
             .cursor(&key)
             .unwrap();
-        cursor == end
+        (cursor == end)
+            .then_some(())
+            .ok_or_else(|| format!("cursor {cursor} of {end}"))
     })
     .await
     .unwrap();
@@ -500,6 +581,7 @@ async fn the_block_invariant_holds_at_the_origin_and_catches_a_replica_with_a_ho
                 Absorb::Reset {
                     tail: holed,
                     snapshot,
+                    generation: 1,
                 },
             )
             .unwrap();
@@ -720,16 +802,17 @@ async fn the_door_serves_a_topology_to_a_real_client_once_it_publishes_readiness
     })
     .await
     .unwrap();
-    let exited = tokio::time::timeout(PATIENCE, async {
-        loop {
-            if let Some(status) = served.0.try_wait().unwrap() {
-                return status;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+    let exited = until("testnet serve to exit after Shutdown", || {
+        std::future::ready(
+            served
+                .0
+                .try_wait()
+                .unwrap()
+                .ok_or_else(|| "still running".to_owned()),
+        )
     })
     .await
-    .expect("testnet serve exits after Shutdown");
+    .unwrap();
     assert!(exited.success(), "{exited:?}");
     assert!(
         TcpStream::connect(control).is_err(),
@@ -795,6 +878,17 @@ fn every_door_verb_maps_to_one_capability_and_the_crate_docs_list_the_same_map()
         Control::Freeze { agent: "x".into() },
         Control::Thaw { agent: "x".into() },
         Control::OpenGate { name: "g".into() },
+        Control::LanGate { host: "a".into() },
+        Control::LanFaults {
+            host: "a".into(),
+            delay_ms: 100,
+            loss_percent: 0,
+        },
+        Control::RelayGate {},
+        Control::RelayFaults {
+            delay_ms: 100,
+            loss_percent: 0,
+        },
         Control::Inventory { host: "a".into() },
         Control::Block {
             host: "a".into(),

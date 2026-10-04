@@ -21,6 +21,7 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 journal = { workspace = true, features = ["synthetic"] }
 node = { workspace = true }
+patience = { workspace = true }
 provider-fakes = { workspace = true }
 quinn = { workspace = true }
 rcgen = { workspace = true }

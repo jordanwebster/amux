@@ -5,8 +5,9 @@ import UIKit
 import XCTest
 @testable import Amux
 
-/// The chat's list on screen while the run of rows it draws changes at
-/// either end: the rows the reader is looking at stay exactly where they are.
+/// The chat's list on screen while rows land above or below the reader:
+/// the rows the reader is looking at stay exactly where they are, and a
+/// reader following the newest row is kept at the bottom.
 @MainActor
 final class ChatFeedTests: XCTestCase {
     private var window: UIWindow?
@@ -119,46 +120,30 @@ final class ChatFeedTests: XCTestCase {
         await spin()
     }
 
-    func testRowsTakenInOrLetGoAtEitherEndMoveNothingOnScreen() async throws {
+    /// Where the bottom of the list's space is, in its content.
+    private func bottom(of list: UIScrollView) -> CGFloat {
+        list.contentOffset.y + list.bounds.height - list.adjustedContentInset.bottom
+    }
+
+    func testRowsArrivingBelowAReaderInHistoryAreHeldAndMoveNothingOnScreen() async throws {
         let source = ScriptedChat(rows: Self.messages(1...600), frame: ScriptedChat.frame(hasOlder: false))
         let model = ChatModel(source: source)
         try show(model)
         await spin(1)
-        XCTAssertEqual(model.drawn.count, ChatModel.drawnRows)
         let list = try list()
-        // Where a reader scrolling up stands just before the top of the
-        // drawn run comes near: about thirty rows below it.
-        model.reading(atNewest: false)
-        list.setContentOffset(CGPoint(x: 0, y: list.contentSize.height * 30 / 240), animated: false)
-        await spin()
+        XCTAssertEqual(bottom(of: list), list.contentSize.height, accuracy: 1, "a chat opens at its newest row")
+        await scrollUp(list, model, screens: 2)
         XCTAssertFalse(model.following)
-        XCTAssertEqual(model.drawn.first, "m\(601 - ChatModel.drawnRows)", "nothing is taken in yet")
+        XCTAssertGreaterThan(try onScreen().count, 3, "prose rows report where they are")
 
-        // Held rows taken in above, then rows past the cap let go below.
-        var before = try onScreen()
-        model.reachedTop()
-        await spin()
-        try assertStill(before, "taking in rows above")
-        XCTAssertEqual(model.drawn.count, ChatModel.drawnRows, "rows past the cap left at the bottom")
-        XCTAssertEqual(model.drawn.first, "m\(601 - ChatModel.drawnRows - ChatModel.drawnStep)")
-
-        // Rows arriving below a reader in history are held, not drawn.
-        let drawn = model.drawn
-        before = try onScreen()
+        let before = try onScreen()
+        let sequence = model.sequence
         source.append(Self.messages(601...640))
         model.woke()
         await spin()
         try assertStill(before, "rows arriving")
-        XCTAssertEqual(model.drawn, drawn)
+        XCTAssertEqual(model.sequence, sequence, "the session holds them apart")
         XCTAssertTrue(model.newActivity)
-
-        // Held rows taken in below, then rows past the cap let go above.
-        before = try onScreen()
-        model.reachedBottom()
-        await spin()
-        try assertStill(before, "taking in rows below")
-        XCTAssertEqual(model.drawn.count, ChatModel.drawnRows, "rows past the cap left at the top")
-        XCTAssertEqual(model.drawn.last, "m600")
     }
 
     func testAPageLandingAboveAReaderAtTheTopMovesNothingOnScreen() async throws {
@@ -173,32 +158,22 @@ final class ChatFeedTests: XCTestCase {
         await spin(1)
         let list = try list()
         await scrollUp(list, model, screens: 40)
-        XCTAssertTrue(model.drawsOldestHeld)
-
         XCTAssertEqual(model.paging, .fetching)
 
-        // The anchor moves the list inside SwiftUI's layout pass, and until
-        // something else changes SwiftUI goes on reporting the rows where they
-        // were before that move: the loading notice coming was taken back on
-        // screen, but the rows' reported frames still stand a notice lower.
-        // So the screen itself is compared, over the rows between the header
-        // and the composer.
         let before = try onScreen()
         let photographed = try rowsBand()
         source.prepend(Self.messages(921...960))
         model.woke()
         await spin(1)
         XCTAssertEqual(model.paging, .idle)
-        let after = try onScreen()
-        XCTAssertGreaterThan(
-            before.keys.filter { after[$0] != nil }.count, 3, "a page landing: the rows on screen went")
+        try assertStill(before, "a page landing")
         let now = try rowsBand()
         XCTAssertEqual(now, photographed, "a page landing moved the rows on screen")
-        XCTAssertEqual(model.drawn.first, "m921", "the page the reader waited at the top for is drawn")
+        XCTAssertEqual(model.ids.first, "m921", "the page the reader waited at the top for is held above")
         XCTAssertEqual(model.ids.count, 80)
     }
 
-    func testAFollowingListKeepsItsNewestRowAtTheBottomAsOldRowsLeave() async throws {
+    func testAFollowingListKeepsItsNewestRowAtTheBottomAsRowsArrive() async throws {
         let source = ScriptedChat(rows: Self.messages(1...300), frame: ScriptedChat.frame())
         let model = ChatModel(source: source)
         try show(model)
@@ -210,11 +185,78 @@ final class ChatFeedTests: XCTestCase {
             await spin(0.05)
         }
         await spin()
-        XCTAssertEqual(model.drawn.count, ChatModel.drawnRows)
         XCTAssertTrue(model.following)
         let newest = try XCTUnwrap(probe.elements.last)
         XCTAssertTrue(newest.label?.hasPrefix("message 340:") == true)
-        let bottom = list.contentOffset.y + list.bounds.height - list.adjustedContentInset.bottom
-        XCTAssertEqual(bottom, list.contentSize.height, accuracy: 1, "the list is at its newest row")
+        XCTAssertEqual(bottom(of: list), list.contentSize.height, accuracy: 1, "the list is at its newest row")
+    }
+
+    /// Under a stream the window drops its oldest row for every one that
+    /// arrives: what the screen shows at the end is exactly what it shows
+    /// for a chat opened on those same rows.
+    func testAFollowingListStaysRightAsTheWindowDropsItsOldestRows() async throws {
+        let source = ScriptedChat(rows: Self.messages(1...200), frame: ScriptedChat.frame(hasOlder: true))
+        source.cap = 200
+        let model = ChatModel(source: source)
+        try show(model)
+        await spin(1)
+        let list = try list()
+        for n in 201...260 {
+            source.append(Self.messages(n...n))
+            model.woke()
+            await spin(0.03)
+        }
+        await spin()
+        XCTAssertEqual(model.ids.first, "m61")
+        XCTAssertEqual(bottom(of: list), list.contentSize.height, accuracy: 1, "the list is at its newest row")
+        let streamed = try rowsBand()
+
+        let opened = ChatModel(source: ScriptedChat(rows: Self.messages(61...260), frame: ScriptedChat.frame(hasOlder: true)))
+        try show(opened)
+        await spin(1)
+        XCTAssertEqual(try rowsBand(), streamed, "the streamed rows are not drawn as the same rows opened")
+    }
+
+    /// A row on screen whose content grows takes its new height, as a
+    /// streaming reply does, with the rows below moved down and the bottom
+    /// kept for a follower.
+    func testARowThatGrowsTakesItsNewHeight() async throws {
+        let source = ScriptedChat(rows: Self.messages(1...40), frame: ScriptedChat.frame())
+        let model = ChatModel(source: source)
+        try show(model)
+        await spin(1)
+        let list = try XCTUnwrap(try list() as? UICollectionView)
+        let path = IndexPath(item: 37, section: 0)
+        let before = try XCTUnwrap(list.cellForItem(at: path)).bounds.height
+        let longer = "message 38: " + String(repeating: "a much longer reply that runs on ", count: 12)
+        source.revise([ScriptedChat.row("m38", 38, .prose(text: [.text(longer)], streaming: true, workingNote: false))])
+        model.woke()
+        await spin()
+        let cell = try XCTUnwrap(list.cellForItem(at: path))
+        XCTAssertGreaterThan(cell.bounds.height, before + 40, "the row did not grow")
+        let next = try XCTUnwrap(list.cellForItem(at: IndexPath(item: 38, section: 0)))
+        XCTAssertEqual(next.frame.minY, cell.frame.maxY, accuracy: 0.5, "the row below did not move down")
+        XCTAssertEqual(bottom(of: list), list.contentSize.height, accuracy: 1, "the list is at its newest row")
+    }
+
+    func testNewActivityFromHistoryLandsAtTheNewestRow() async throws {
+        let source = ScriptedChat(rows: Self.messages(1...600), frame: ScriptedChat.frame())
+        let model = ChatModel(source: source)
+        try show(model)
+        await spin(1)
+        let list = try list()
+        await scrollUp(list, model, screens: 3)
+        source.append(Self.messages(601...620))
+        model.woke()
+        await spin()
+        XCTAssertTrue(model.newActivity)
+        model.jumpToNewest()
+        model.woke()
+        await spin(1)
+        XCTAssertTrue(model.following)
+        XCTAssertEqual(model.ids.last, "m620")
+        XCTAssertEqual(bottom(of: list), list.contentSize.height, accuracy: 1, "the list is at its newest row")
+        let newest = try XCTUnwrap(probe.elements.last)
+        XCTAssertTrue(newest.label?.hasPrefix("message 620:") == true)
     }
 }

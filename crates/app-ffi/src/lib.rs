@@ -170,14 +170,46 @@ fn spawn_on<T, F>(
     T: Serialize,
     F: Future<Output = T> + Send + 'static,
 {
-    let context = Context(context);
+    let answering = Answering {
+        context: Context(context),
+        callback,
+        answered: false,
+    };
     handle.spawn(async move {
         let result = act.await;
         let text = json(&result).unwrap_or_else(|| CString::new("null").unwrap());
-        let context = context;
-        callback(context.0, text.as_ptr());
+        answering.answer(&text);
     });
 }
+
+/// An act's one callback, owed from the moment the act is spawned. A stop
+/// shuts the pool down and drops the acts still running; the drop answers
+/// for them, so whoever waits on the host side hears that the runtime has
+/// stopped rather than nothing, ever.
+struct Answering {
+    context: Context,
+    callback: AmuxCallback,
+    answered: bool,
+}
+
+impl Answering {
+    fn answer(mut self, text: &CStr) {
+        self.answered = true;
+        (self.callback)(self.context.0, text.as_ptr());
+    }
+}
+
+impl Drop for Answering {
+    fn drop(&mut self) {
+        if !self.answered {
+            (self.callback)(self.context.0, STOPPED.as_ptr());
+        }
+    }
+}
+
+/// What an act dropped unanswered answers: the error the host's own
+/// stopped-runtime path reports.
+const STOPPED: &CStr = c"{\"Err\":\"the runtime has stopped\"}";
 
 /// Starts the installation with a pool of its own; blocks until every
 /// profile's store is open. `wake` is called with 0 whenever the profile
@@ -269,11 +301,24 @@ fn overrides(config: &StartConfig) -> EdgeOverrides {
     {
         overrides.lan_bind = bind;
     }
-    // And may dial a served test relay's plaintext carrier.
+    // And may dial a served test relay's carriers: TCP in plaintext, QUIC
+    // trusting the relay's own certificate.
     if cfg!(feature = "debug-tools") {
         overrides.cloud.relay_tcp = config.relay_tcp;
+        if let (Some(addr), Some(root)) = (config.relay_quic, &config.relay_root)
+            && let Some(der) = from_hex(root)
+        {
+            overrides.cloud.relay_quic = node::RelayQuic::trusting(addr, der).ok();
+        }
     }
     overrides
+}
+
+fn from_hex(hex: &str) -> Option<Vec<u8>> {
+    (0..hex.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
+        .collect()
 }
 
 // --- strings and JSON ------------------------------------------------------

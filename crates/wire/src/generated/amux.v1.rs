@@ -541,7 +541,6 @@ pub struct ToolCall {
     pub outcome_json: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, repeated, tag = "6")]
     pub attachments: ::prost::alloc::vec::Vec<Attachment>,
-    /// Set by the interpreter from native tool kinds, never from text.
     #[prost(enumeration = "ToolClass", tag = "7")]
     pub class: i32,
     /// A permission decision is meta on the tool call's own row.
@@ -1786,13 +1785,22 @@ impl ToolState {
         }
     }
 }
+/// What a call does to the world, set by the interpreter from native tool
+/// kinds, never from text. Every class but CONSEQUENTIAL only looks: the views
+/// fold runs of those together and name each by its verb. LOOK is a look with
+/// no verb of its own, drawn its own way: a read-only tool-server call, an
+/// image viewed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ToolClass {
     Unspecified = 0,
-    /// Reads, searches, listings, fetches: collapsed into runs by the views.
-    Exploration = 1,
-    Consequential = 2,
+    Consequential = 1,
+    Read = 2,
+    Search = 3,
+    List = 4,
+    Fetch = 5,
+    WebSearch = 6,
+    Look = 7,
 }
 impl ToolClass {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1802,16 +1810,26 @@ impl ToolClass {
     pub fn as_str_name(&self) -> &'static str {
         match self {
             Self::Unspecified => "TOOL_CLASS_UNSPECIFIED",
-            Self::Exploration => "TOOL_CLASS_EXPLORATION",
             Self::Consequential => "TOOL_CLASS_CONSEQUENTIAL",
+            Self::Read => "TOOL_CLASS_READ",
+            Self::Search => "TOOL_CLASS_SEARCH",
+            Self::List => "TOOL_CLASS_LIST",
+            Self::Fetch => "TOOL_CLASS_FETCH",
+            Self::WebSearch => "TOOL_CLASS_WEB_SEARCH",
+            Self::Look => "TOOL_CLASS_LOOK",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
             "TOOL_CLASS_UNSPECIFIED" => Some(Self::Unspecified),
-            "TOOL_CLASS_EXPLORATION" => Some(Self::Exploration),
             "TOOL_CLASS_CONSEQUENTIAL" => Some(Self::Consequential),
+            "TOOL_CLASS_READ" => Some(Self::Read),
+            "TOOL_CLASS_SEARCH" => Some(Self::Search),
+            "TOOL_CLASS_LIST" => Some(Self::List),
+            "TOOL_CLASS_FETCH" => Some(Self::Fetch),
+            "TOOL_CLASS_WEB_SEARCH" => Some(Self::WebSearch),
+            "TOOL_CLASS_LOOK" => Some(Self::Look),
             _ => None,
         }
     }
@@ -2500,7 +2518,8 @@ impl ::prost::Name for ClaudeSdkItem {
         "/amux.v1.ClaudeSdkItem".into()
     }
 }
-/// A subagent or background task the SDK reports with its own progress.
+/// A task the SDK reports whose starting call it never showed; a task of a
+/// known call is progress on that call instead.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Task {
     #[prost(string, tag = "1")]
@@ -2513,9 +2532,6 @@ pub struct Task {
     pub tool_count: u32,
     #[prost(string, tag = "5")]
     pub last_tool: ::prost::alloc::string::String,
-    /// The key of the tool call that started it.
-    #[prost(string, tag = "6")]
-    pub tool_key: ::prost::alloc::string::String,
     #[prost(uint64, tag = "7")]
     pub tokens: u64,
 }
@@ -4275,11 +4291,17 @@ impl ::prost::Name for NeighborDown {
 }
 /// Written by the opener as the first bytes of every non-control stream. The
 /// destination is routing information only; the pinned handshake inside the
-/// stream establishes the caller's authority.
+/// stream establishes the caller's authority, unless the stream is `plain`.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StreamPreface {
     #[prost(bytes = "vec", tag = "1")]
     pub dst: ::prost::alloc::vec::Vec<u8>,
+    /// The stream carries no handshake of its own: the opener is the host at
+    /// the near end of the link it arrived on, already authenticated by that
+    /// link, and the stream's bytes start at once. Honoured only on a direct
+    /// link to a paired host; a relay never forwards a plain stream as plain.
+    #[prost(bool, tag = "2")]
+    pub plain: bool,
 }
 impl ::prost::Name for StreamPreface {
     const NAME: &'static str = "StreamPreface";
@@ -4598,6 +4620,12 @@ pub struct HostEntry {
     /// machine; cleared when it links to this machine again.
     #[prost(bool, optional, tag = "15")]
     pub revoked: ::core::option::Option<bool>,
+    /// Whether this machine's copy of the host's inventory has caught up on a
+    /// live stream from it: its agents are as the host lists them now, not as
+    /// they were remembered. Cleared when the host is lost; a client that
+    /// reads every trusted host current has reconciled with its fleet.
+    #[prost(bool, optional, tag = "16")]
+    pub current: ::core::option::Option<bool>,
 }
 impl ::prost::Name for HostEntry {
     const NAME: &'static str = "HostEntry";
@@ -4748,13 +4776,18 @@ impl ::prost::Name for SubscribeRequest {
         "/amux.v1.SubscribeRequest".into()
     }
 }
-/// The delta if it is at most cap rows, else Reset and a tail of cap.
+/// The delta if it is at most cap rows and the origin still runs the
+/// generation the cursor was taken under; else Reset and a tail of cap. A
+/// revision belongs to a generation: after an unclean reboot the origin
+/// mints the same numbers again for different content.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct After {
     #[prost(uint64, tag = "1")]
     pub revision: u64,
     #[prost(uint32, tag = "2")]
     pub cap: u32,
+    #[prost(uint64, tag = "3")]
+    pub generation: u64,
 }
 impl ::prost::Name for After {
     const NAME: &'static str = "After";
@@ -4768,7 +4801,7 @@ impl ::prost::Name for After {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SessionEvent {
-    #[prost(oneof = "session_event::Of", tags = "1, 2, 3, 5, 6, 7, 8")]
+    #[prost(oneof = "session_event::Of", tags = "1, 2, 3, 5, 6, 7, 8, 9")]
     pub of: ::core::option::Option<session_event::Of>,
 }
 /// Nested message and enum types in `SessionEvent`.
@@ -4789,6 +4822,8 @@ pub mod session_event {
         Reset(super::Reset),
         #[prost(message, tag = "8")]
         Detached(super::Detached),
+        #[prost(message, tag = "9")]
+        Opening(super::Opening),
     }
 }
 impl ::prost::Name for SessionEvent {
@@ -4799,6 +4834,24 @@ impl ::prost::Name for SessionEvent {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.SessionEvent".into()
+    }
+}
+/// The first event of every stream: the origin generation its rows and
+/// revisions belong to. A peer source stores it on the block it takes and
+/// names it with its cursor when it resumes; clients ignore it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Opening {
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+}
+impl ::prost::Name for Opening {
+    const NAME: &'static str = "Opening";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.Opening".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.Opening".into()
     }
 }
 /// "You hold what the origin holds as of now", on every stream. On a session

@@ -66,19 +66,24 @@ const HELLO_PATIENCE: Duration = Duration::from_secs(5);
 const KILL_PATIENCE: Duration = Duration::from_secs(5);
 /// Fully ingested journal segments kept below the cursor, for dumps.
 pub const KEPT_SEGMENTS: usize = 2;
-/// The most journal frames one ingest transaction commits. At tens of
-/// microseconds a frame this holds the store for several milliseconds,
-/// which is what a subscribe, an input or a spawn waits behind at worst
-/// while a backlog drains.
-///
-/// A batch's records are published in one burst, at memory speed, and a
-/// short batch can follow a full one within a millisecond, so the fan-out
-/// ring holds two batches (about a record a frame): a subscriber that has
-/// read everything when a batch lands is closed with Lagged only if it
-/// reads nothing of it for the whole of a full batch's commit. With a
-/// ring of one batch, a caught-up reader would lag whenever its wakeup
-/// came later than a short batch's commit.
+/// The most journal frames one ingest transaction commits. This is a bound
+/// on how long a backlog drain holds the store lock: at the measured ingest
+/// cost of about 23 µs a frame, a full batch holds it for about 6 ms, which
+/// is the most a subscribe, an input or a spawn waits behind a draining
+/// agent. Larger batches commit a backlog slightly faster per frame and
+/// hold everything else off for longer; smaller ones pay a transaction per
+/// fewer frames. The size is not derived from any ring or reader: the
+/// fan-out ring is sized from it, not the other way round.
 pub const INGEST_BATCH: usize = 256;
+/// Events the per-agent fan-out ring holds. A batch's records are
+/// published in one burst at memory speed while the store lock is still
+/// held, so a reader's slack is counted in batches: a subscriber that has
+/// read everything when a batch lands is closed with Lagged only after
+/// four whole batches (a second or so of a busy agent) arrive without it
+/// reading any, which absorbs a late wakeup by design rather than by luck.
+/// A ring of one batch would close a caught-up reader whenever a short
+/// batch followed a full one before its task was scheduled.
+pub const FANOUT_CAPACITY: usize = 4 * INGEST_BATCH;
 /// The tail size K: the rows a replica keeps and asks for, and the newest
 /// rows own retention never trims. About an hour of a busy agent and
 /// several screens of scroll-back.
@@ -170,7 +175,7 @@ impl Default for Launch {
             ctl_write_ms: 5_000,
             reply_patience_ms: 30_000,
             notify_delay_ms: 30_000,
-            fanout_capacity: 2 * INGEST_BATCH,
+            fanout_capacity: FANOUT_CAPACITY,
             inventory_capacity: 1024,
             delivery_retry_ms: 30_000,
             push_retry_ms: 60_000,
@@ -293,7 +298,10 @@ pub struct ProfileRuntime {
     pub(crate) join_hook: Mutex<Option<JoinHook>>,
     /// Each own agent's message lane: one agent message at a time.
     pub(crate) lanes: Mutex<HashMap<AgentId, Arc<tokio::sync::Mutex<()>>>>,
-    /// Counts commits, so a message can wait for its acceptance item.
+    /// Counts the store's writes, own commits and absorbed replica rows
+    /// alike, so a waiter wakes on the write it is waiting for instead of
+    /// polling: a message waiting for its acceptance item, a test fencing
+    /// a host to an order.
     pub(crate) commits: watch::Sender<u64>,
     /// Journal frames committed since start: what ingest has done, so its
     /// cost per frame can be measured from outside.
@@ -557,6 +565,20 @@ impl ProfileRuntime {
     /// The installation's generation as of this run's start.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Wakes on every item write to the store: an own commit or a replica
+    /// absorb, catch-up or live. Markers, agent rows, deliveries,
+    /// notifications and the retention sweeps do not wake it. A waiter
+    /// reads the store after each change; the count itself only orders
+    /// them.
+    pub fn committed(&self) -> watch::Receiver<u64> {
+        self.commits.subscribe()
+    }
+
+    /// Notes one write to the store for [`ProfileRuntime::committed`].
+    pub(crate) fn wrote(&self) {
+        self.commits.send_modify(|writes| *writes += 1);
     }
 
     /// How many journal frames ingest has committed since this runtime
@@ -1343,7 +1365,7 @@ impl ProfileRuntime {
                 notify_delay_ms: self.launch.lock().unwrap().notify_delay_ms,
             };
             let committed = store.commit(&key, &batch.frames, clock)?;
-            self.commits.send_modify(|commits| *commits += 1);
+            self.wrote();
             self.ingested_frames
                 .fetch_add(batch.frames.len() as u64, Ordering::Relaxed);
             if batch.frames.iter().any(|(_, step)| step.turn_end.is_some()) {

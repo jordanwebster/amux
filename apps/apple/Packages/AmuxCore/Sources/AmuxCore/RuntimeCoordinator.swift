@@ -26,11 +26,21 @@ public final class RuntimeCoordinator {
         /// A served test relay's plaintext carrier, as `ip:port`. Only a
         /// driving build's library reads it.
         public var relayTCP: String?
+        /// A served test relay's QUIC carrier, as `ip:port`, trusted by
+        /// `relayRoot`, its certificate as hex. Only a driving build's
+        /// library reads them.
+        public var relayQUIC: String?
+        public var relayRoot: String?
 
-        public init(discoveryScope: String = "", lanBind: String? = nil, relayTCP: String? = nil) {
+        public init(
+            discoveryScope: String = "", lanBind: String? = nil, relayTCP: String? = nil,
+            relayQUIC: String? = nil, relayRoot: String? = nil
+        ) {
             self.discoveryScope = discoveryScope
             self.lanBind = lanBind
             self.relayTCP = relayTCP
+            self.relayQUIC = relayQUIC
+            self.relayRoot = relayRoot
         }
     }
 
@@ -82,12 +92,17 @@ public final class RuntimeCoordinator {
     @ObservationIgnored private var shown: StoreBundle?
     /// Which opening of a profile the wakes belong to.
     @ObservationIgnored private var opening = 0
+    /// The launch's store read is marked once, however many profiles open.
+    @ObservationIgnored private var markedStoreRead = false
     @ObservationIgnored private var waiting: [CheckedContinuation<Runtime?, Never>] = []
     @ObservationIgnored private var starting: Task<Void, Never>?
     /// Which start a started runtime answers; one a stop overtook is stopped.
     @ObservationIgnored private var launch = 0
     /// The pauses and resumes under way, one run at a time.
     @ObservationIgnored private var steering: Task<Void, Never>?
+    /// Counts steering tasks, so one that outlives its launch, awaiting a
+    /// pause the library finishes regardless, clears only its own handle.
+    @ObservationIgnored private var steerings = 0
     /// Whether what is on screen changed while a run was under way.
     @ObservationIgnored private var steerAgain = false
 
@@ -137,6 +152,7 @@ public final class RuntimeCoordinator {
             dataDir: directory.path, deviceName: deviceName,
             discoveryScope: options.discoveryScope, lan: true, lanBind: options.lanBind,
             logPath: directory.appendingPathComponent("runtime.log").path,
+            relayQuic: options.relayQUIC, relayRoot: options.relayRoot,
             relayTcp: options.relayTCP, tail: nil)
         let starter = starter
         launch += 1
@@ -146,9 +162,11 @@ public final class RuntimeCoordinator {
             do {
                 try FileManager.default.createDirectory(
                     at: directory, withIntermediateDirectories: true)
+                Signposts.emit(.storeReadBegan)
                 started = .success(try starter(config) { _ in
                     Task { @MainActor [weak self] in self?.profilesMoved() }
                 })
+                Signposts.emit(.nodeStarted)
             } catch let failure as RuntimeFailure {
                 started = .failure(failure)
             } catch {
@@ -171,7 +189,6 @@ public final class RuntimeCoordinator {
             storeFailure = nil
             if !found.isEmpty { runtime.discovered(found.map(\.found)) }
             profilesMoved()
-            Signposts.emit(.reconciled)
             answer(runtime)
         case .failure(let reason):
             failure = reason.description
@@ -215,6 +232,7 @@ public final class RuntimeCoordinator {
             close()
             opening += 1
             let expected = opening
+            if !markedStoreRead { Signposts.emit(.fleetOpenBegan) }
             do {
                 let opened = try runtime.open(id) { chat in
                     Task { @MainActor [weak self] in
@@ -224,6 +242,10 @@ public final class RuntimeCoordinator {
                 }
                 profile = opened
                 fed = stores
+                if !markedStoreRead {
+                    markedStoreRead = true
+                    Signposts.emit(.storeReadEnded)
+                }
                 stores.hosts.sawLocalNetwork(permission)
                 stores.attach(opened)
             } catch {
@@ -247,13 +269,18 @@ public final class RuntimeCoordinator {
             steerAgain = true
             return
         }
+        steerings += 1
+        let mine = steerings
         steering = Task { [weak self] in
+            // Every pass that moved a link counts, not only the last: the
+            // catch-up pass a late steer asks for often has nothing left
+            // to do, and the account is refreshed for what came before.
             var moved = false
             repeat {
                 self?.steerAgain = false
-                moved = await self?.relink(runtime) ?? false
+                if await self?.relink(runtime) == true { moved = true }
             } while self?.steerAgain == true
-            self?.steering = nil
+            if self?.steerings == mine { self?.steering = nil }
             if moved { await self?.stores.refreshAccount() }
         }
     }

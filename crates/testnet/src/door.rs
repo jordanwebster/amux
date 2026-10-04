@@ -104,6 +104,29 @@ pub enum Control {
     OpenGate {
         name: String,
     },
+    /// A gate in front of the host's LAN listener, for a client to dial in
+    /// place of the host; answers its address.
+    LanGate {
+        host: String,
+    },
+    /// What that gate does to every datagram from now on.
+    LanFaults {
+        host: String,
+        #[serde(default)]
+        delay_ms: u64,
+        #[serde(default)]
+        loss_percent: u32,
+    },
+    /// A gate in front of the relay's QUIC carrier, for a client outside
+    /// the net to dial in the relay's place; answers its address.
+    RelayGate {},
+    /// What that gate does to every datagram from now on.
+    RelayFaults {
+        #[serde(default)]
+        delay_ms: u64,
+        #[serde(default)]
+        loss_percent: u32,
+    },
     Inventory {
         host: String,
     },
@@ -147,6 +170,10 @@ pub const CAPABILITIES: &[(&str, &str)] = &[
     ("Freeze", "Net::freeze"),
     ("Thaw", "Net::thaw"),
     ("OpenGate", "Net::open_gate"),
+    ("LanGate", "Net::lan_gate"),
+    ("LanFaults", "Net::set_lan_faults"),
+    ("RelayGate", "Net::relay_gate"),
+    ("RelayFaults", "Net::set_relay_faults"),
     (
         "Inventory",
         "Net::observe_inventory + observe_until(CaughtUp)",
@@ -184,6 +211,10 @@ impl Control {
             Self::Freeze { .. } => "Freeze",
             Self::Thaw { .. } => "Thaw",
             Self::OpenGate { .. } => "OpenGate",
+            Self::LanGate { .. } => "LanGate",
+            Self::LanFaults { .. } => "LanFaults",
+            Self::RelayGate {} => "RelayGate",
+            Self::RelayFaults { .. } => "RelayFaults",
             Self::Inventory { .. } => "Inventory",
             Self::Block { .. } => "Block",
             Self::Chat { .. } => "Chat",
@@ -233,6 +264,13 @@ pub struct Readiness {
     /// The relay's plaintext TCP carrier, for a client outside the net.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_tcp: Option<SocketAddr>,
+    /// The relay's QUIC carrier, for a client outside the net, which trusts
+    /// it by `relay_root`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_quic: Option<SocketAddr>,
+    /// The relay's self-signed certificate, DER as hex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_root: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -362,6 +400,14 @@ fn readiness(net: &Net, control: SocketAddr) -> Result<Readiness, NetError> {
             .collect(),
         cloud_url: net.relay().ok().map(|relay| relay.url().to_owned()),
         relay_tcp: net.relay().ok().map(|relay| relay.tcp()),
+        relay_quic: net.relay().ok().map(|relay| relay.quic()),
+        relay_root: net.relay().ok().map(|relay| {
+            relay
+                .quic_root()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }),
     })
 }
 
@@ -486,6 +532,26 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
         Control::Freeze { agent } => value(net.freeze(&agent)?),
         Control::Thaw { agent } => value(net.thaw(&agent)?),
         Control::OpenGate { name } => value(net.open_gate(&name)?),
+        Control::LanGate { host } => json!({ "addr": net.lan_gate(&host).await?.to_string() }),
+        Control::LanFaults {
+            host,
+            delay_ms,
+            loss_percent,
+        } => value(net.set_lan_faults(
+            &host,
+            crate::Faults {
+                loss_percent,
+                delay: Duration::from_millis(delay_ms),
+            },
+        )?),
+        Control::RelayGate {} => json!({ "addr": net.relay_gate().await?.to_string() }),
+        Control::RelayFaults {
+            delay_ms,
+            loss_percent,
+        } => value(net.set_relay_faults(crate::Faults {
+            loss_percent,
+            delay: Duration::from_millis(delay_ms),
+        })?),
         Control::Inventory { host } => {
             let mut inventory = net.observe_inventory(&host).await?;
             let events = inventory

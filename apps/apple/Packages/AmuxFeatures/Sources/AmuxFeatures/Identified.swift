@@ -44,7 +44,10 @@ private struct ReportsIdentifiedElementGeometryKey: EnvironmentKey {
     static let defaultValue = true
 }
 
-private extension EnvironmentValues {
+/// Internal rather than private: a UIKit leaf that hosts SwiftUI cells
+/// carries these into each cell, which no longer sits under the screen's
+/// environment.
+extension EnvironmentValues {
     var reportsIdentifiedElements: Bool {
         get { self[ReportsIdentifiedElementsKey.self] }
         set { self[ReportsIdentifiedElementsKey.self] = newValue }

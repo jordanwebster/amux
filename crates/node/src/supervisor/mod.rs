@@ -112,6 +112,8 @@ pub type UpdatesFn = Arc<dyn Fn() -> UpdatePolicy + Send + Sync>;
 /// Where releases come from.
 #[derive(Clone, Debug)]
 pub struct UpdateSource {
+    /// The channel followed, which the manifest must be signed for.
+    pub channel: String,
     /// The channel's manifest.
     pub manifest_url: String,
     /// The key release signatures must verify against.
@@ -489,7 +491,7 @@ impl Supervisor {
 
     fn put_prev_back(&mut self) -> Result<(), SuperviseError> {
         self.files
-            .restore_prev(&self.binary)
+            .restore_prev(&self.binary, &self.mine)
             .map_err(files_error("putting prev back"))?;
         tracing::info!("put prev back over the binary");
         self.failed = 0;
@@ -613,10 +615,62 @@ impl Supervisor {
     }
 }
 
+/// The most a channel manifest may be: a few entries of a few hundred
+/// bytes each, with room to spare. A server that answers with more is not
+/// serving a manifest, whatever it says, and is not buffered.
+const MANIFEST_LIMIT: u64 = 1 << 20;
+/// The most an artifact may be: the binary is tens of megabytes. The
+/// manifest's signed size bounds what is downloaded; this bounds what a
+/// manifest may ask for, against a mistake of our own.
+const ARTIFACT_LIMIT: u64 = 256 << 20;
+
+/// Reads a body of at most `limit` bytes; one declared or streamed longer
+/// is refused before it is held whole.
+async fn read_bounded(
+    mut response: reqwest::Response,
+    limit: u64,
+    what: &'static str,
+    url: &str,
+) -> Result<Vec<u8>, CheckError> {
+    let too_large = || CheckError::TooLarge {
+        what,
+        url: url.to_owned(),
+        limit,
+    };
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit)
+    {
+        return Err(too_large());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| CheckError::Fetch {
+        url: url.to_owned(),
+        error,
+    })? {
+        if body.len() as u64 + chunk.len() as u64 > limit {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 #[derive(Debug, thiserror::Error)]
 enum CheckError {
     #[error("fetching {url}: {error}")]
     Fetch { url: String, error: reqwest::Error },
+    #[error("reading {url}: {error}")]
+    Manifest {
+        url: String,
+        error: serde_json::Error,
+    },
+    #[error("{what} at {url} is over {limit} bytes")]
+    TooLarge {
+        what: &'static str,
+        url: String,
+        limit: u64,
+    },
     #[error("staging: {0}")]
     Stage(io::Error),
     #[error(transparent)]
@@ -643,15 +697,25 @@ async fn fetch(
         let url = url.to_owned();
         move |error| CheckError::Fetch { url, error }
     };
-    let manifest: Manifest = client
+    let response = client
         .get(&source.manifest_url)
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
-        .map_err(fetch_error(&source.manifest_url))?
-        .json()
-        .await
         .map_err(fetch_error(&source.manifest_url))?;
+    let body = read_bounded(
+        response,
+        MANIFEST_LIMIT,
+        "the manifest",
+        &source.manifest_url,
+    )
+    .await?;
+    let manifest: Manifest =
+        serde_json::from_slice(&body).map_err(|error| CheckError::Manifest {
+            url: source.manifest_url.clone(),
+            error,
+        })?;
+    release::verify_manifest(&manifest, &source.channel, &source.key)?;
     let (release, version) =
         match release::choose(&manifest, target, running, rejected, host.as_ref()) {
             Choice::Install { release, version } => (release, version),
@@ -660,6 +724,13 @@ async fn fetch(
                 return Ok(Checked::Nothing(skipped(skip, target, running)));
             }
         };
+    if release.size > ARTIFACT_LIMIT {
+        return Err(CheckError::TooLarge {
+            what: "the artifact",
+            url: release.url.clone(),
+            limit: ARTIFACT_LIMIT,
+        });
+    }
     let mut response = client
         .get(&release.url)
         .send()
@@ -670,18 +741,24 @@ async fn fetch(
         .await
         .map_err(CheckError::Stage)?;
     let mut hash = Sha256::new();
+    let mut written: u64 = 0;
     while let Some(chunk) = response.chunk().await.map_err(fetch_error(&release.url))? {
+        written += chunk.len() as u64;
+        // The signed size is the most that is written: a server serving
+        // more than the manifest promised is not serving the artifact.
+        if written > release.size {
+            return Err(release::VerifyError::Size {
+                expected: release.size,
+                actual: written,
+            }
+            .into());
+        }
         hash.update(&chunk);
         file.write_all(&chunk).await.map_err(CheckError::Stage)?;
     }
     file.sync_all().await.map_err(CheckError::Stage)?;
     drop(file);
-    release::verify(
-        &release,
-        target,
-        &release::sha256_hex(&hash.finalize()),
-        &source.key,
-    )?;
+    release::verify_artifact(&release, &release::sha256_hex(&hash.finalize()), written)?;
     files::make_executable(staged).map_err(CheckError::Stage)?;
     Ok(Checked::Staged(version))
 }
@@ -831,5 +908,82 @@ fn skipped(skip: Skip, target: &str, running: &Version) -> String {
         Skip::OutsideRollout => {
             "the channel's release is rolling out and has not reached this host yet".into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Serves one response to one connection.
+    async fn serve(head: &'static str, body: Vec<u8>) -> String {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
+            socket.write_all(head.as_bytes()).await.unwrap();
+            socket.write_all(&body).await.unwrap();
+            let _ = socket.shutdown().await;
+        });
+        url
+    }
+
+    async fn get(url: &str) -> reqwest::Response {
+        reqwest::Client::new().get(url).send().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_body_declared_over_the_limit_is_refused_unread() {
+        let url = serve(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2048\r\n\r\n",
+            vec![b'x'; 2048],
+        )
+        .await;
+        let error = read_bounded(get(&url).await, 1024, "the manifest", &url)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, CheckError::TooLarge { limit: 1024, .. }),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_body_streamed_past_the_limit_is_refused() {
+        let chunk = |bytes: &[u8]| {
+            let mut out = format!("{:x}\r\n", bytes.len()).into_bytes();
+            out.extend_from_slice(bytes);
+            out.extend_from_slice(b"\r\n");
+            out
+        };
+        let mut body = chunk(&[b'x'; 700]);
+        body.extend(chunk(&[b'x'; 700]));
+        body.extend(b"0\r\n\r\n");
+        let url = serve(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            body,
+        )
+        .await;
+        let error = read_bounded(get(&url).await, 1024, "the manifest", &url)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CheckError::TooLarge { .. }), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_body_within_the_limit_is_read_whole() {
+        let url = serve(
+            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n",
+            b"hello".to_vec(),
+        )
+        .await;
+        let body = read_bounded(get(&url).await, 1024, "the manifest", &url)
+            .await
+            .unwrap();
+        assert_eq!(body, b"hello");
     }
 }

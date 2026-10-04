@@ -23,11 +23,11 @@ snapshot WORKING queue=[] working_on=- at=1800000003000 asks=[] session=s1 model
 item t1 tool final at=1800000000900 text="" Bash TOOL_STATE_SUCCEEDED ended=1800000003001 input="{\"command\":\"cargo test\"}" out="ok"
 ## 12 tick 1800000004000
 ## 13 fact {"channel":"transcript","json":{"message":{"content":[{"id":"t2","input":{"file_path":"src/lib.rs"},"name":"Read","type":"tool_use"}],"id":"m2","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:03.900Z","type":"assistant","uuid":"a3"}}
-item t2 tool final at=1800000003900 text="" Read TOOL_STATE_RUNNING exploration input="{\"file_path\":\"src/lib.rs\"}"
+item t2 tool final at=1800000003900 text="" Read TOOL_STATE_RUNNING read input="{\"file_path\":\"src/lib.rs\"}"
 ## 14 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"file_path":"src/lib.rs"},"tool_name":"Read","tool_use_id":"t2"}}
 snapshot WORKING queue=[] working_on=- at=1800000004000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=? running=t2 Read since=1800000004000
 ## 15 fact {"channel":"transcript","json":{"message":{"content":[{"content":"1\tfn main() {}","is_error":false,"tool_use_id":"t2","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":"2027-01-15T08:00:04.010Z","toolUseResult":{"type":"text"},"type":"user","uuid":"r2"}}
-item t2 tool final at=1800000003900 text="" Read TOOL_STATE_SUCCEEDED exploration ended=1800000004010 input="{\"file_path\":\"src/lib.rs\"}" out="1\tfn main() {}"
+item t2 tool final at=1800000003900 text="" Read TOOL_STATE_SUCCEEDED read ended=1800000004010 input="{\"file_path\":\"src/lib.rs\"}" out="1\tfn main() {}"
 snapshot WORKING queue=[] working_on=- at=1800000004000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
 ## 16 fact {"channel":"hook","json":{"duration_ms":3,"hook_event_name":"PostToolUse","tool_input":{"file_path":"src/lib.rs"},"tool_name":"Read","tool_response":{"type":"text"},"tool_use_id":"t2"}}
 ## 17 tick 1800000005000

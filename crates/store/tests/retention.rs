@@ -89,6 +89,7 @@ fn replica<S: Store>(store: &mut S, agent: &AgentKey, rows: u64, at_ms: i64) {
                     at_ms,
                     ..Default::default()
                 },
+                generation: 1,
             },
         )
         .unwrap();
@@ -177,6 +178,7 @@ fn retention_of_a_replica_block_under_the_floor_takes_only_the_stale_rows_below_
                     at_ms: 200,
                     ..Default::default()
                 },
+                generation: 1,
             },
         )
         .unwrap();
@@ -249,6 +251,7 @@ fn retention_of_a_replica_drops_rows_a_reset_left_below_the_block_before_trimmin
                     at_ms: 200,
                     ..Default::default()
                 },
+                generation: 1,
             },
         )
         .unwrap();

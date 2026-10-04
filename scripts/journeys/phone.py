@@ -42,19 +42,6 @@ SCRATCH_DIR = Path("/tmp/amux-phone-journey")
 SCRATCH_LOCK = Path("/tmp/amux-phone-journey.lock")
 # The pinned simulator whose system-chrome masks every comparison uses.
 SIMULATOR = "golden"
-# How far one channel may move before a pixel counts as different. A journey
-# photographs a live presentation, and the render server resolves glass up to
-# ten levels apart from one presentation of the same page to the next; a
-# changed word, place or colour moves pixels far further. Colour precision is
-# the whole-screen goldens' job: scripts/ios-goldens.py compares its fixed
-# screens with thresholds of its own.
-TOLERANCE = 12
-# How many pixels may differ beyond that: the glass header now and then
-# resolves some two hundred pixels of its edge and shadow further apart. The
-# element geometry beside each screen compares every word and frame exactly,
-# so the pixels are there for what geometry cannot say (colour, clipping,
-# overlap), and any of those moves thousands.
-MAX_DIFFERING = 600
 # The golden simulator draws three pixels to the point.
 SCALE = 3
 # A surface a view reports under a name ending here holds text that moves with
@@ -83,23 +70,39 @@ def normalize(text: str) -> str:
     return SCRATCH.sub(lambda match: match.group(1) + "x" * len(match.group(2)), text)
 
 
-def launch_arguments(ready: dict, scope: str, found: list[str], door_port: int) -> list[str]:
+def launch_arguments(
+    ready: dict,
+    scope: str,
+    found: list[str],
+    door_port: int,
+    geometry: bool = True,
+    relay_quic: str | None = None,
+) -> list[str]:
     """What a driven launch is told: its door, the net's discovery scope and
     the machines its browser may report, loopback direct links and, when the
-    net has one, the served relay."""
-    arguments = [
-        "-amux-door-port", str(door_port),
-        "-amux-element-geometry",
+    net has one, the served relay by both its carriers. Element geometry is
+    asked for unless the caller measures the app and turns it on itself only
+    to tap. A `relay_quic` address stands in for the relay's own, a gate in
+    front of it, and leaves the plaintext TCP carrier out: a measurement
+    wants the carrier a phone away from home uses, and the fallback, dialled
+    a moment later on loopback, would win the race against a gated dial."""
+    arguments = ["-amux-door-port", str(door_port)]
+    if geometry:
+        arguments.append("-amux-element-geometry")
+    arguments += [
         "-amux-discovery-scope", scope,
         "-amux-discover-only", ",".join(found),
         "-amux-lan-bind", "127.0.0.1:0",
     ]
-    if ready.get("relay_tcp") and ready.get("cloud_url"):
-        arguments += [
-            "-amux-scripted-cloud",
-            "-amux-relay", ready["cloud_url"],
-            "-amux-relay-tcp", ready["relay_tcp"],
-        ]
+    if ready.get("cloud_url") and (ready.get("relay_tcp") or ready.get("relay_quic")):
+        arguments += ["-amux-scripted-cloud", "-amux-relay", ready["cloud_url"]]
+        if ready.get("relay_tcp") and relay_quic is None:
+            arguments += ["-amux-relay-tcp", ready["relay_tcp"]]
+        if ready.get("relay_quic") and ready.get("relay_root"):
+            arguments += [
+                "-amux-relay-quic", relay_quic or ready["relay_quic"],
+                "-amux-relay-root", ready["relay_root"],
+            ]
     return arguments
 
 
@@ -107,8 +110,10 @@ def is_volatile(identifier: str, named: tuple[str, ...] = ()) -> bool:
     return identifier.endswith(VOLATILE) or identifier in named
 
 
-# The tabs' roots by the name the door gives the tab on screen. A tab not on
-# screen still reports its elements, where a page pushed over it draws.
+# The tabs' roots by the name the door gives the tab on screen. A tab
+# somebody has been to is kept and still reports its elements while another
+# tab, or a page pushed over it, is on screen; one never reached for is not
+# built and reports nothing.
 TAB_ROOTS = {"agents": "home.", "hosts": "hosts.", "you": "you."}
 
 
@@ -196,17 +201,27 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-def simctl(*arguments: str, timeout: float = 120) -> str:
+def simctl(*arguments: str, timeout: float = 120, env: dict[str, str] | None = None) -> str:
     return subprocess.run(
-        ["xcrun", "simctl", *arguments], check=True, text=True, capture_output=True, timeout=timeout
+        ["xcrun", "simctl", *arguments],
+        check=True, text=True, capture_output=True, timeout=timeout, env=env,
     ).stdout
 
 
 class PhoneJourney:
     def __init__(
-        self, story: dict, topology: Path, udid: str, output: Path | None = None, goldens: Path | None = None
+        self,
+        story: dict,
+        topology: Path,
+        udid: str,
+        output: Path | None = None,
+        goldens: Path | None = None,
+        app: Path = APP,
     ):
         self.story = story
+        # The build driven: the debug app, or the optimised one the
+        # performance suite measures.
+        self.build = app
         self.name = story["id"]
         self.udid = udid
         self.output = output or OUTPUT / self.name
@@ -216,9 +231,14 @@ class PhoneJourney:
         self.update = os.environ.get("UPDATE_JOURNEY_GOLDENS") == "1"
         # Whether a screen leaves out the tab roots a pushed page covers.
         self.covered_hidden = False
-        # How far a pixel may move, and how many may, before a screen differs.
-        self.tolerance = TOLERANCE
-        self.max_differing = MAX_DIFFERING
+        # Whether every launch turns the app's reduce-transparency setting on,
+        # so each frosted surface is drawn flat. The render server finishes
+        # glass after the app has drawn, on its own schedule, and a photograph
+        # at any fixed moment shows one stage or another of that work; drawn
+        # flat, the same screens repeat pixel for pixel. A run that measures
+        # the app as it ships, or photographs glass for a person to look at,
+        # turns this off before it launches.
+        self.flat = True
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
@@ -240,6 +260,10 @@ class PhoneJourney:
         self.env = {k: v for k, v in os.environ.items() if k not in ("AMUX_LOG", "AMUX_CONFIG")}
         self.env.update({key: str(self.scratch) for key in ("TMPDIR", "TMP", "TEMP")})
         self.env["AMUX_TEST_DISCOVERY_MODE"] = "disabled"
+        # The served machines say what they did with each link and stream, so
+        # a reconciliation that took longer than its round trips can be read
+        # from their side too; a caller's own filter wins.
+        self.env.setdefault("RUST_LOG", "info,node::link=debug,node::services::reachability=debug,node::routing=debug,node::sources=debug,node::dispatcher=debug,node::edge::peer=debug")
         self.process = subprocess.Popen(
             [str(TESTNET), "serve", str(topology), "--root-in", str(self.scratch)],
             cwd=ROOT,
@@ -331,33 +355,55 @@ class PhoneJourney:
 
     # --- the phone --------------------------------------------------------
 
-    def launch(self, *extra: str, found: list[str] | None = None) -> None:
+    def launch(self, *extra: str, found: list[str] | None = None, geometry: bool = True) -> None:
         """The debug app, installed fresh so no earlier run's identity or
         trust is on the phone, launched against this net."""
         simctl("terminate", self.udid, BUNDLE_ID, timeout=60) if self._running() else None
         subprocess.run(["xcrun", "simctl", "uninstall", self.udid, BUNDLE_ID], capture_output=True, timeout=120)
-        simctl("install", self.udid, str(APP), timeout=300)
-        self.relaunch(*extra, found=found)
+        simctl("install", self.udid, str(self.build), timeout=300)
+        self.relaunch(*extra, found=found, geometry=geometry)
 
-    def relaunch(self, *extra: str, found: list[str] | None = None) -> None:
+    def relaunch(
+        self,
+        *extra: str,
+        found: list[str] | None = None,
+        geometry: bool = True,
+        relay_quic: str | None = None,
+    ) -> None:
         """The same installation launched again, as a person reopens it. Its
         browser reports the machines named in `found`, every one of the net's
-        when nothing is said."""
+        when nothing is said. Without `geometry` the app reports what is
+        drawn but not where, which a measurement wants: see `geometry()`. A
+        `relay_quic` address is dialled in the relay's place, QUIC only."""
         scope = self.topology.get("scope", "")
         if found is None:
             found = [host["host_id"] for host in self.ready["hosts"]]
         self.port = free_port()
-        arguments = launch_arguments(self.ready, scope, found, self.port) + list(extra)
-        simctl("launch", "--terminate-running-process", self.udid, BUNDLE_ID, *arguments)
+        arguments = launch_arguments(self.ready, scope, found, self.port, geometry, relay_quic) + list(extra)
+        # The phone's runtime logs under the same filter as the served hosts,
+        # so one run's two logs can be read side by side.
+        simctl(
+            "launch", "--terminate-running-process", self.udid, BUNDLE_ID, *arguments,
+            env={**os.environ, "SIMCTL_CHILD_RUST_LOG": self.env["RUST_LOG"]},
+        )
         self.actions.append("launch the app")
+        # The door answering is the launch; what a capture needs settled it
+        # settles itself. Settling here drew the window to an image over and
+        # over on the main thread while the app was still building its first
+        # frame, which a cold-launch measurement then counted.
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             try:
-                self.app({"kind": "settle"})
-                return
+                self.app({"kind": "signposts"})
+                break
             except (OSError, DoorError):
                 time.sleep(0.5)
-        raise RuntimeError("the app's door did not open within a minute")
+        else:
+            raise RuntimeError("the app's door did not open within a minute")
+        if self.flat:
+            # Motion stays as the run has it: the door's own default, off.
+            self.app({"kind": "assist", "motion": False, "transparency": True})
+            self.actions.append("reduce transparency on")
 
     def quit(self) -> None:
         """The app closed, as a person swipes it away."""
@@ -411,6 +457,13 @@ class PhoneJourney:
     def tap(self, identifier: str) -> None:
         self.app({"kind": "tap", "identifier": identifier})
         self.actions.append(f"tap {identifier}")
+
+    def geometry(self, on: bool) -> None:
+        """Whether every identified element reports its frame. A tap needs
+        the frames; producing them costs a real share of the main thread,
+        so a measurement launches without them and asks only to tap."""
+        self.app({"kind": "geometry", "on": on})
+        self.actions.append(f"element geometry {'on' if on else 'off'}")
 
     def choose(self, label: str) -> None:
         """The item a person reads as `label` in a menu the app presented,
@@ -515,8 +568,6 @@ class PhoneJourney:
                 "--actual", str(png),
                 "--out", str(self.output / "diff" / label),
                 "--simulator", SIMULATOR,
-                "--tolerance", str(self.tolerance),
-                "--max-differing", str(self.max_differing),
                 *[argument for mask in masks for argument in ("--mask", mask)],
             ],
             cwd=ROOT, text=True, capture_output=True, timeout=600,
@@ -526,6 +577,12 @@ class PhoneJourney:
                 f"screen {label} differs: {compared.stdout}{compared.stderr}"
                 f"; expected, actual and diff are under {self.output / 'diff' / label}"
             )
+        # A match that spent some of the comparison's allowance for stray
+        # pixels says how much, so the allowance can be judged from the runs.
+        verdict = compared.stdout.strip()
+        if verdict != "same":
+            print(f"AMUX_PICTURE_STRAYS screen={label} {verdict}", flush=True)
+            self.actions.append(f"compared {label}: {verdict}")
         return None
 
     def steady_display(self, png: Path) -> None:

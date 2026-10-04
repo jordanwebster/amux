@@ -47,29 +47,3 @@ tab.you | You | not selected | 253,777,99,57
  | Identity, amux-iphone-1 · <key> |  | 18,325,366,46
  | Paired Devices, 1 |  | 18,371,366,46
  | Revoking a device ends its access immediately. |  | 18,425,320,18
- | Agents, switch account |  | 60,65,104,46
- | ada · nothing needs you |  | 60,105,166,16
- | desk offline |  | 18,137,366,44
- | AGENTS |  | 20,199,42,14
- | guarded, hello, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread |  | 18,221,366,91
- | You |  | 18,70,46,32
- | ACCOUNTS |  | 20,120,56,14
- | ada, Signed out |  | 32,142,338,58
- | bob, bob@example.com |  | 32,201,338,59
- | Add Account |  | 18,260,366,46
- | ADA |  | 20,324,21,14
- | Relay, Included with this account |  | 18,346,366,46
- | Sign Out |  | 18,392,366,46
- | Remove from This Phone |  | 18,438,366,46
- | Delete Account |  | 18,485,366,46
- | THIS PHONE |  | 20,548,70,14
- | Appearance |  | 32,586,90,20
- | Light |  | 200,573,56,45
- | Dark |  | 256,573,49,45
- | System |  | 305,573,63,45
- | Identity, <key> |  | 18,621,366,46
- | HELP |  | 20,684,28,14
- | Contact Support |  | 18,707,366,46
- | Report a Problem |  | 18,753,366,45
- | Export Diagnostics |  | 18,799,366,46
- | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,853,346,31

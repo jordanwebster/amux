@@ -31,6 +31,14 @@ fn journal_end(dir: &std::path::Path) -> u64 {
     reader.cursor()
 }
 
+/// The agent's row says a turn is running, or what it says instead.
+async fn working(runtime: &node::ProfileRuntime, id: uuid::Uuid) -> Result<(), String> {
+    let phase = runtime.agent(id).await.unwrap().phase;
+    (phase == Phase::Working as i32)
+        .then_some(())
+        .ok_or_else(|| format!("phase {phase}"))
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_installation_lock_admits_one_daemon() {
     let install = Install::new();
@@ -299,17 +307,20 @@ async fn spawn_writes_spec_one_and_starts_the_agent_process() {
 
     // The journal is ingested as the agent writes it: the prompt runs to
     // the end of its turn and the row follows the snapshot to idle.
-    until("the reply to be committed", async || {
+    until("the reply to be committed", || async {
         let store = runtime.store().await;
         let row = store.agent(&key(&runtime, id)).unwrap().unwrap();
-        row.phase == Phase::Idle as i32
-            && store
-                .last_n(&key(&runtime, id), 50)
-                .unwrap()
-                .iter()
-                .any(|item| item.text.contains("hello"))
+        let said = store
+            .last_n(&key(&runtime, id), 50)
+            .unwrap()
+            .iter()
+            .any(|item| item.text.contains("hello"));
+        (row.phase == Phase::Idle as i32 && said)
+            .then_some(())
+            .ok_or_else(|| format!("phase {}, said hello {said}", row.phase))
     })
-    .await;
+    .await
+    .unwrap();
 
     let again = runtime
         .spawn(
@@ -357,10 +368,9 @@ async fn stop_modes_end_the_process_and_record_why() {
         let id = id_of(&agent);
         let dir = install.agent_dir(id);
         if prompt.is_some() {
-            until("the turn to start", async || {
-                runtime.agent(id).await.unwrap().phase == Phase::Working as i32
-            })
-            .await;
+            until("the turn to start", || working(&runtime, id))
+                .await
+                .unwrap();
         }
         let stopped = runtime.stop(id, mode).await.expect("the stop completes");
         assert_eq!(stopped.lifecycle, Lifecycle::Exited as i32, "{mode:?}");
@@ -428,12 +438,14 @@ async fn resume_writes_the_next_spec_and_waits_for_a_dying_process() {
                 .await
         })
     };
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(!resuming.is_finished(), "the resume waits for the lock");
-    assert!(
-        !dir.join("spec.2").exists(),
-        "no spec is written under a live lock"
-    );
+    // A window: a resume blocked on the lock leaves no mark to wait on.
+    holds_for(
+        "the resume to wait for the lock",
+        Duration::from_millis(500),
+        || async { !resuming.is_finished() && !dir.join("spec.2").exists() },
+    )
+    .await
+    .expect("the resume waits for the lock, and no spec is written under a live one");
 
     std::fs::write(&gate, "").unwrap();
     let resumed = tokio::time::timeout(PATIENCE, resuming)
@@ -500,10 +512,9 @@ async fn delete_aborts_first_and_cascades_to_children() {
         runtime.store().await.put_agent(&row).unwrap();
     }
     for id in [parent, child] {
-        until("the turn to start", async || {
-            runtime.agent(id).await.unwrap().phase == Phase::Working as i32
-        })
-        .await;
+        until("the turn to start", || working(&runtime, id))
+            .await
+            .unwrap();
     }
 
     let response = runtime.delete(parent).await.expect("the delete completes");
@@ -596,10 +607,9 @@ async fn a_restarted_daemon_adopts_live_agents_and_sweeps_exited_ones() {
             .await
             .unwrap(),
     );
-    until("the turn to start", async || {
-        runtime.agent(leaves).await.unwrap().phase == Phase::Working as i32
-    })
-    .await;
+    until("the turn to start", || working(&runtime, leaves))
+        .await
+        .unwrap();
 
     // The daemon dies without shutting down; one agent finishes its turn
     // and exits while it is away, the other keeps running.
@@ -607,10 +617,13 @@ async fn a_restarted_daemon_adopts_live_agents_and_sweeps_exited_ones() {
     drop(daemon);
     std::fs::write(&gate, "").unwrap();
     let leaves_dir = install.agent_dir(leaves);
-    until("the agent to exit while the daemon is away", async || {
-        !node::locked(&leaves_dir)
+    until("the agent to exit while the daemon is away", || async {
+        (!node::locked(&leaves_dir))
+            .then_some(())
+            .ok_or("the directory is still locked")
     })
-    .await;
+    .await
+    .unwrap();
     assert!(node::locked(&install.agent_dir(stays)));
 
     let daemon = install.start("boot-1", launch).await;
@@ -714,6 +727,8 @@ async fn a_host_lists_where_its_agents_ran_and_its_repositories_for_trusted_host
             .await
             .unwrap(),
     );
+    // A forced delay: the listing orders repositories by the agents'
+    // creation times, which the clock stamps in milliseconds.
     tokio::time::sleep(Duration::from_millis(5)).await;
     let second = id_of(
         &desk_runtime

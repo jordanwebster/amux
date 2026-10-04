@@ -55,6 +55,7 @@ fn ios_verify_fixture() -> tempfile::TempDir {
         "accessibility",
         "package",
         "scope-audit",
+        "perf",
     ];
     let declare = |names: &[&str]| -> String {
         names
@@ -92,7 +93,7 @@ fn ios_verify_command(dir: &Path) -> Command {
 fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey() {
     let dir = ios_verify_fixture();
     for (fail, skip, success, last) in [
-        ("", "", true, "ios scope-audit"),
+        ("", "", true, "ios perf"),
         ("fmt-check", "", false, "fmt-check"),
         ("mobile-check", "", false, "mobile-check"),
         ("ios accessibility", "", false, "ios accessibility"),
@@ -121,7 +122,7 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
         if success {
             assert_eq!(
                 calls,
-                "fmt-check\nlint\ntest\nspec\nmobile-check\nios lint\nios script-tests\nios graph-check\nios rust\nios simulator golden\nios build\nios component-snapshots\nios loopback-smoke\nios unit\nios goldens\nios goldens-perturb\ntest-store-ios\nios journey\nios accessibility\nios package\nios scope-audit\n"
+                "fmt-check\nlint\ntest\nspec\nmobile-check\nios lint\nios script-tests\nios graph-check\nios rust\nios simulator golden\nios build\nios component-snapshots\nios loopback-smoke\nios unit\nios goldens\nios goldens-perturb\ntest-store-ios\nios journey\nios accessibility\nios package\nios scope-audit\nios perf\n"
             );
         }
         if !skip.is_empty() {

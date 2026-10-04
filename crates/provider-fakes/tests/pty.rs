@@ -12,8 +12,9 @@ mod support;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use patience::{holds_for, until_within};
 use provider_fakes::Kind;
 use provider_fakes::shape::Classifier;
 use serde_json::{Value, json};
@@ -150,39 +151,44 @@ impl Terminal {
 
     /// Wait until `count` payloads of `event` have reached the hook command.
     async fn hooks_of(&self, event: &str, count: usize) -> Vec<Value> {
-        let started = Instant::now();
-        loop {
-            let found: Vec<Value> = self
-                .hooks()
-                .into_iter()
+        until_within(&format!("{count} {event} hooks"), DEADLINE, || {
+            let hooks = self.hooks();
+            let found: Vec<Value> = hooks
+                .iter()
                 .filter(|hook| hook["hook_event_name"] == event)
+                .cloned()
                 .collect();
-            if found.len() >= count {
-                return found;
-            }
-            assert!(
-                started.elapsed() < DEADLINE,
-                "no {count} {event} hooks: {:?}",
-                self.hooks()
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+            std::future::ready(if found.len() >= count {
+                Ok(found)
+            } else {
+                Err(format!("hooks: {hooks:?}"))
+            })
+        })
+        .await
+        .unwrap()
     }
 
     /// Wait for a row the predicate matches.
     async fn row(&self, matches: impl Fn(&Value) -> bool) -> Value {
-        let started = Instant::now();
-        loop {
-            if let Some(row) = self.rows().into_iter().find(|row| matches(row)) {
-                return row;
-            }
-            assert!(
-                started.elapsed() < DEADLINE,
-                "no such row: {:?}",
-                self.rows()
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        until_within("a matching row", DEADLINE, || {
+            let rows = self.rows();
+            std::future::ready(
+                rows.iter()
+                    .find(|row| matches(row))
+                    .cloned()
+                    .ok_or_else(|| format!("rows: {rows:?}")),
+            )
+        })
+        .await
+        .unwrap()
+    }
+
+    /// How many payloads of `event` have reached the hook command so far.
+    fn hooks_seen(&self, event: &str) -> usize {
+        self.hooks()
+            .into_iter()
+            .filter(|hook| hook["hook_event_name"] == event)
+            .count()
     }
 
     async fn hook(&self, event: &str) -> Value {
@@ -476,15 +482,7 @@ async fn a_prompt_typed_mid_turn_folds_at_the_next_tool_and_escape_interrupts() 
     .await;
     terminal.prompt("First").await;
     terminal.prompt("Also this").await;
-    let started = Instant::now();
-    while !terminal
-        .rows()
-        .iter()
-        .any(|row| row["type"] == "queue-operation")
-    {
-        assert!(started.elapsed() < DEADLINE);
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    terminal.row(|row| row["type"] == "queue-operation").await;
     std::fs::write(&gate, "").unwrap();
     terminal.hook("Stop").await;
     let rows = terminal.rows();
@@ -494,14 +492,25 @@ async fn a_prompt_typed_mid_turn_folds_at_the_next_tool_and_escape_interrupts() 
         .unwrap();
     assert_eq!(folded["attachment"]["prompt"], "Also this");
     terminal.prompt("Wait forever").await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    terminal
+        .row(|row| row.to_string().contains("Wait forever"))
+        .await;
     terminal.keys(b"\x1b").await;
     terminal
         .row(|row| row["message"]["content"][0]["text"] == "[Request interrupted by user]")
         .await;
-    // Claude runs no Stop hook for a turn the user interrupted.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(terminal.hooks_of("Stop", 1).await.len(), 1);
+    // Claude runs no Stop hook for a turn the user interrupted. A window: a
+    // hook that must not run leaves no mark to wait on.
+    holds_for(
+        "no Stop hook for the interrupted turn",
+        Duration::from_millis(100),
+        || {
+            let stops = terminal.hooks_seen("Stop");
+            async move { stops == 1 }
+        },
+    )
+    .await
+    .unwrap();
     terminal.check_shapes();
     assert_eq!(terminal.exit_code().await, 0);
 }
@@ -524,9 +533,14 @@ async fn a_tool_server_dialog_is_announced_by_notification_and_held_until_escape
     assert_eq!(form["notification_type"], "elicitation_dialog");
     assert_eq!(form["message"], "Claude Code needs your input");
     assert_eq!(form["session_id"], SESSION);
-    // Held open: the call has no result until the dialog ends.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(terminal.hooks_of("PostToolUse", 0).await.is_empty());
+    // Held open: the call has no result until the dialog ends. A window: a
+    // result that must not come leaves no mark to wait on.
+    holds_for("the call held open", Duration::from_millis(200), || {
+        let posts = terminal.hooks_seen("PostToolUse");
+        async move { posts == 0 }
+    })
+    .await
+    .unwrap();
     std::fs::write(&answered, "").unwrap();
     let post = terminal.hook("PostToolUse").await;
     assert_eq!(post["tool_name"], "mcp__github__create_issue");
@@ -580,12 +594,8 @@ async fn a_messaging_socket_message_runs_a_turn_and_hooks_get_its_credentials() 
         .await
         .unwrap();
     drop(stream);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        !contents(&terminal.rows())
-            .iter()
-            .any(|row| row.contains("dropped"))
-    );
+    // Had the message been taken, its turn would be on the transcript
+    // before the tokened one's below.
     let mut stream = tokio::net::UnixStream::connect(&terminal.socket)
         .await
         .unwrap();
@@ -596,6 +606,11 @@ async fn a_messaging_socket_message_runs_a_turn_and_hooks_get_its_credentials() 
     drop(stream);
     terminal.hooks_of("Stop", 2).await;
     let rows = terminal.rows();
+    assert!(
+        !contents(&rows).iter().any(|row| row.contains("dropped")),
+        "the wrong-token message was dropped: {:?}",
+        contents(&rows)
+    );
     let user = rows
         .iter()
         .find(|row| row["type"] == "user" && row["origin"]["kind"] == "peer")

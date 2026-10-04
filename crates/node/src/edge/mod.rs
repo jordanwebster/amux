@@ -173,6 +173,19 @@ pub struct RelayQuic {
     pub client: quinn::ClientConfig,
 }
 
+impl RelayQuic {
+    /// A relay at `addr` whose certificate is `der`, and nothing else's.
+    pub fn trusting(addr: SocketAddr, der: Vec<u8>) -> Result<Self, String> {
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(rustls::pki_types::CertificateDer::from(der))
+            .map_err(|error| error.to_string())?;
+        let client = crate::transport::relay_quic_client_config_with_roots(roots)
+            .map_err(|error| error.to_string())?;
+        Ok(Self { addr, client })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EdgeError {
     #[error(transparent)]
@@ -198,7 +211,7 @@ pub struct Edge {
     routing: Arc<RoutingCore>,
     channels: Arc<ChannelPool>,
     connections: Arc<ConnectionManager>,
-    incoming_streams_tx: mpsc::Sender<(HostId, crate::link::ByteStream)>,
+    incoming_streams_tx: mpsc::Sender<crate::link::InboundStream>,
     pair_mode: Arc<PairMode>,
     pending: admin::PendingPairs,
     reachability: ReachabilityLinkConnector,
@@ -549,15 +562,14 @@ impl Edge {
         self.connections.channel_to(host).await
     }
 
-    /// A PeerService client for one of a host's agents, on a channel of its
-    /// own so that agent's subscription neither waits behind nor holds up
-    /// the host's other calls.
+    /// A PeerService client for a host's sessions, on a channel of their
+    /// own so that their subscriptions neither wait behind nor hold up the
+    /// host's other calls.
     pub async fn session_peer(
         &self,
         host: HostId,
-        agent: crate::AgentId,
     ) -> Result<crate::PeerClient, crate::link::ChannelError> {
-        let channel = self.connections.session_channel_to(host, agent).await?;
+        let channel = self.connections.session_channel_to(host).await?;
         Ok(crate::link::peer_client(channel))
     }
 
@@ -693,11 +705,17 @@ impl Edge {
 
     /// Asks the cloud what the account buys now, over the live cloud link.
     pub async fn refresh_entitlement(&self) -> Result<crate::Tier, String> {
-        match self.cloud.lock().await.as_ref() {
-            Some(link) => link
-                .refresh_entitlement()
-                .await
-                .map_err(|error| error.to_string()),
+        // The link's lock is held only to take the refresher: pausing,
+        // signing out and shutting down take it too, and must not wait
+        // behind the relay's answer.
+        let refresher = self
+            .cloud
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|link| link.refresher());
+        match refresher {
+            Some(refresher) => refresher.refresh().await.map_err(|error| error.to_string()),
             None => Err("the profile has no cloud link".to_owned()),
         }
     }

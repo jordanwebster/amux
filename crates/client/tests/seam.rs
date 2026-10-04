@@ -75,7 +75,8 @@ async fn the_in_process_and_socket_clients_answer_alike() {
         }
         assert!(listed, "{name}");
 
-        // A subscription opens with its snapshot and reaches the reply.
+        // A subscription opens with its generation and snapshot and
+        // reaches the reply.
         let mut stream = client
             .subscribe(SubscribeRequest {
                 agent_id: worker.clone(),
@@ -85,8 +86,13 @@ async fn the_in_process_and_socket_clients_answer_alike() {
             .unwrap();
         let first = stream.next().await.unwrap().unwrap();
         assert!(
-            matches!(first.of, Some(session_event::Of::Snapshot(_))),
-            "{name}"
+            matches!(first.of, Some(session_event::Of::Opening(_))),
+            "{name}: {first:?}"
+        );
+        let second = stream.next().await.unwrap().unwrap();
+        assert!(
+            matches!(second.of, Some(session_event::Of::Snapshot(_))),
+            "{name}: {second:?}"
         );
         let mut key = None;
         while key.is_none() {
@@ -179,15 +185,14 @@ async fn a_socket_client_says_transport_while_its_daemon_is_down_and_redials_aft
         Ok(_) => panic!("nothing answers while the daemon is down"),
     }
     net.restart_daemon("desk").await.unwrap();
-    tokio::time::timeout(PATIENCE, async {
-        loop {
-            if client.subscribe_inventory().await.is_ok() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+    patience::until("the same client to redial the restarted daemon", || async {
+        client
+            .subscribe_inventory()
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     })
     .await
-    .expect("the same client redials the restarted daemon");
+    .unwrap();
     net.shutdown().await.unwrap();
 }

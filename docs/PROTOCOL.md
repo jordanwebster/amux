@@ -236,11 +236,13 @@ silence and failure is a close.
 
 ### Stream preface and refusal
 
-Every non-control stream starts with one length-prefixed `StreamPreface` whose
-only field is `dst`, the destination host id. There is no source, stream id,
-payload, data message or close message in the control vocabulary. The pinned
-channel handshake proves the caller. Graceful stream finish is close. A reset
-before acceptance is a refused open and carries one `StreamRefusal` code:
+Every non-control stream starts with one length-prefixed `StreamPreface`:
+`dst`, the destination host id, and `plain`, described under channel
+authority below. There is no source, stream id, payload, data message or
+close message in the control vocabulary. The pinned channel handshake, or
+the link itself for a plain stream, proves the caller. Graceful stream finish
+is close. A reset before acceptance is a refused open and carries one
+`StreamRefusal` code:
 
 - `NO_ROUTE`: the destination has no adjacent live link, or the route vanished
   while opening it.
@@ -255,8 +257,31 @@ before acceptance is a refused open and carries one `StreamRefusal` code:
 
 After the preface is accepted, the endpoints run TLS 1.3 inside the stream.
 The server reads the live trust store and the client pins the expected peer.
-This is the single authority decision for calls on direct QUIC, relay QUIC,
-relay TCP and SSH alike. Relays only copy its ciphertext.
+This is the authority decision for calls on relay QUIC, relay TCP and SSH,
+and for any stream whose opener is not the host at the other end of the
+link. Relays only copy its ciphertext.
+
+No opener waits to be accepted before it sends. On every route the
+handshake's first flight leaves in the same flight as the preface, and a
+refusal comes back as the reset it always was, read under the handshake
+instead of before it: the channel fails with the refusal's reason, exactly
+as it did when the open was answered first. Only pairing, whose opener asks
+for the pinned handshake outright, waits for the answer. A relay still waits
+for the host to accept before it copies anything, so what it forwards and
+refuses is unchanged; the opener's first bytes sit in the relay's stream
+for that moment. Across a 100 ms path this takes one round trip off every
+stream through the relay.
+
+A stream from a paired host over a direct QUIC link of its own is `plain`:
+the link's mutual TLS already authenticated both ends, so the stream carries
+no handshake at all; the first channel bytes leave with the preface, and a
+refusal comes back out of the opener's first read as `UNAVAILABLE` ("stream
+refused"). The acceptor honours `plain` only on a direct QUIC link from a
+host in its trust store, and attributes the stream to that host. A relay
+forwards every stream with `plain` cleared, since it vouches for nobody. On
+a phone reaching a host across a 100 ms path this takes two round trips and
+a handshake's worth of CPU off every stream, which is what brings
+reconciliation at launch inside its budget.
 
 A server that does not hold the client's pin refuses its certificate with the
 TLS `certificate_revoked` alert. Only a host that pins the server presents a
@@ -275,8 +300,9 @@ to tonic as one HTTP/2 channel. It has three channel classes:
   forwarded calls, `Fetch`, `GetBlob`, `Diff` and every other one-shot call
   ride it. A cached channel whose connection ended is dropped, and the next
   call opens a fresh stream.
-- `Session`: a fresh channel for each replica agent's `Subscribe`, so one
-  agent's stream neither waits behind nor holds up the host's other calls.
+- `Session`: one cached channel per peer and route for the replica agents'
+  `Subscribe` streams, so they neither wait behind nor hold up the host's
+  calls, and a host with many agents costs one stream, not one per agent.
 - `Bulk`: a fresh channel per transfer, for a caller that wants a large read
   kept apart from calls. The daemon's own paths do not use it; blob and diff
   reads ride `Calls`.
@@ -288,7 +314,8 @@ queue behind calls at the amux layer. Channel payloads are bounded by
 ## Chapter 6: Relay forwarding and entitlement
 
 A relay receives a non-control stream, validates its preface, looks up a direct
-link to `dst`, opens a stream there with the same preface, and copies bytes in
+link to `dst`, opens a stream there with the same `dst` and `plain` cleared,
+waits for its acceptance so a refusal keeps its reason, and copies bytes in
 both directions until each side ends (`crates/node/src/link/piper.rs`). It does
 not parse channel bytes or keep protocol-level stream ids, sources, payload
 buffers or close state. Either end may open, so a host reached through a relay

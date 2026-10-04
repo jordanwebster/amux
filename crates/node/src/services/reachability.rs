@@ -68,7 +68,7 @@ struct ReachabilityLinkContext {
     routing: Arc<RoutingCore>,
     channels: Arc<ChannelPool>,
     connections: Arc<ConnectionManager>,
-    incoming_streams_tx: tokio::sync::mpsc::Sender<(HostId, crate::link::ByteStream)>,
+    incoming_streams_tx: tokio::sync::mpsc::Sender<crate::link::InboundStream>,
     runtime: Arc<Mutex<Option<ReachabilityRuntime>>>,
     quic_endpoint: Arc<Mutex<Option<quinn::Endpoint>>>,
     quic_transport: Arc<Mutex<Option<Arc<quinn::TransportConfig>>>>,
@@ -100,7 +100,7 @@ impl ReachabilityLinkConnector {
         routing: Arc<RoutingCore>,
         channels: Arc<ChannelPool>,
         connections: Arc<ConnectionManager>,
-        incoming_streams_tx: tokio::sync::mpsc::Sender<(HostId, crate::link::ByteStream)>,
+        incoming_streams_tx: tokio::sync::mpsc::Sender<crate::link::InboundStream>,
     ) -> Self {
         Self {
             mode: ReachabilityLinkConnectorMode::Enabled(Arc::new(

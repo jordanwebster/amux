@@ -117,14 +117,14 @@ tests = [
 id = "power-loss-on-the-origin"
 source = "worked failure"
 section = "Durability"
-claim = "After a power cut the origin's store opens at its last checkpoint, the daemon bumps and syncs the generation before serving, re-ingests from the durable cursor, and every peer drops that host's replicas at its next reconciliation; a clean reboot, a daemon crash and an agent crash change nothing."
+claim = "After a power cut the origin's store opens at its last checkpoint, the daemon bumps and syncs the generation before serving, re-ingests from the durable cursor, and every peer resets that host's replicas as their sources resume under the new generation; a clean reboot, a daemon crash and an agent crash change nothing."
 tests = [
   "node/single_daemon::power_loss_bumps_the_generation_and_re_ingests_from_the_durable_cursor",
   "node/single_daemon::a_clean_reboot_bumps_nothing",
   "node/single_daemon::a_daemon_crash_under_the_same_boot_id_bumps_nothing",
   "node/single_daemon::a_journal_cut_below_a_durable_cursor_rewinds_it_and_re_derived_steps_commit_anew",
   "testnet/harness::a_rewound_host_loses_what_the_drive_never_got_under_a_new_generation",
-  "testnet/spec_inventory::a_generation_change_drops_one_hosts_replicas_and_nothing_else",
+  "testnet/spec_inventory::a_generation_change_resets_one_hosts_replicas_and_nothing_else",
   "testnet/spec_inventory::origin_rewind",
 ]
 
@@ -388,17 +388,19 @@ claim = "CaughtUp, Reset and Detached ride the broadcast in sequence with the ro
 tests = [
   "testnet/spec_replication::a_replica_takes_a_tail_live_records_a_delta_and_a_reset_with_markers_in_sequence",
   "testnet/spec_replication::a_stream_lost_with_the_link_up_detaches_through_the_backoff",
-  "testnet/spec_replication::a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_never_return",
+  "testnet/spec_replication::a_rewound_origin_resets_every_source_that_resumes_under_its_old_generation",
 ]
 
 [[contract]]
-id = "generation-drops-one-hosts-replicas"
+id = "generation-resets-one-hosts-replicas"
 source = "invariant"
 section = "Runtime"
-claim = "A generation change drops one host's replicas and nothing else."
+claim = "A generation change resets each of one host's replicas on its own stream, forgetting the rows of the old generation, and touches nothing of another host's."
 tests = [
-  "testnet/spec_inventory::a_generation_change_drops_one_hosts_replicas_and_nothing_else",
-  "store/conformance::sqlite::rewind_host_drops_that_hosts_replicas_and_records_the_generation",
+  "testnet/spec_inventory::a_generation_change_resets_one_hosts_replicas_and_nothing_else",
+  "testnet/spec_replication::a_rewound_origin_resets_every_source_that_resumes_under_its_old_generation",
+  "testnet/spec_replication::a_rewound_origin_resets_a_settled_replica_too",
+  "store/conformance::sqlite::a_reset_under_another_generation_forgets_every_held_row",
 ]
 
 [[contract]]

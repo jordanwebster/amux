@@ -11,7 +11,6 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::{Duration, Instant};
 
 use node::release::{self, Choice, Manifest, Release, Skip, VerifyError};
 use node::supervisor::SUPERVISOR_LOCK;
@@ -25,7 +24,7 @@ const TEST_SEED: [u8; 32] = [
     0x28, 0x61, 0x70, 0x17, 0x17, 0xc9, 0x9b, 0x2a, 0xaa, 0x45, 0xe9, 0x43, 0xbb, 0xd6, 0x48, 0x12,
 ];
 const OTHER_SEED: [u8; 32] = [7; 32];
-const PATIENCE: Duration = Duration::from_secs(30);
+use patience::until;
 
 /// Tests in this binary write executables and start processes on parallel
 /// threads. A process forked while another thread holds a freshly written
@@ -56,8 +55,7 @@ fn start<T>(start: impl FnOnce() -> T) -> T {
 fn binaries() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let mut cargo = Command::new(cargo);
+        let mut cargo = provider_fakes::cargo::command();
         cargo
             .args([
                 "build",
@@ -161,18 +159,20 @@ impl Server {
     /// Serves `bytes` as `version`, signed with `seed`, to `rollout`.
     fn publish(&self, version: &str, bytes: Vec<u8>, seed: &[u8; 32], rollout: Option<u8>) {
         let name = format!("amux-{version}");
-        let sha256 = release::sha256_of(&bytes);
         let release = Release {
             version: version.to_owned(),
             url: self.url(&format!("/artifacts/{name}")),
-            signature: release::sign(seed, release::TARGET, version, &sha256),
-            sha256,
+            sha256: release::sha256_of(&bytes),
+            size: bytes.len() as u64,
         };
         self.artifacts.lock().unwrap().insert(name, bytes);
-        let manifest = Manifest {
+        let mut manifest = Manifest {
+            channel: "stable".into(),
             rollout,
             targets: [(release::TARGET.to_owned(), release)].into(),
+            signature: String::new(),
         };
+        manifest.signature = release::sign(seed, &manifest);
         *self.manifest.lock().unwrap() = serde_json::to_string(&manifest).unwrap();
     }
 }
@@ -290,27 +290,27 @@ impl Fixture {
             .count()
     }
 
-    /// Waits until `done` holds of the events so far.
+    /// Waits until `done` holds of the events so far, and returns them. A
+    /// timeout shows the events and the supervisor's log.
     async fn until(&self, what: &str, done: impl Fn(&[Event]) -> bool) -> Vec<Event> {
-        let deadline = Instant::now() + PATIENCE;
-        loop {
+        until(what, || {
             let events = self.events();
-            if done(&events) {
-                return events;
-            }
-            if Instant::now() > deadline {
-                panic!(
-                    "timed out waiting for {what}; events:\n{}\nsupervisor log:\n{}",
+            std::future::ready(if done(&events) {
+                Ok(events)
+            } else {
+                Err(format!(
+                    "events:\n{}\nsupervisor log:\n{}",
                     events
                         .iter()
                         .map(|event| format!("{} {} {}", event.what, event.version, event.pid))
                         .collect::<Vec<_>>()
                         .join("\n"),
                     std::fs::read_to_string(self.dir.join("supervisor.log")).unwrap_or_default()
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+                ))
+            })
+        })
+        .await
+        .unwrap()
     }
 
     /// Waits for the `n`-th event `what` of `version`, and returns it.
@@ -377,11 +377,16 @@ impl Fixture {
     /// Waits for the manifest to be read `more` more times: ticks passing.
     async fn ticks(&self, more: u32) {
         let target = self.server.reads() + more;
-        let deadline = Instant::now() + PATIENCE;
-        while self.server.reads() < target {
-            assert!(Instant::now() < deadline, "the supervisor stopped checking");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        until("the supervisor to keep checking", || {
+            let reads = self.server.reads();
+            std::future::ready(
+                (reads >= target)
+                    .then_some(())
+                    .ok_or_else(|| format!("{reads} manifest reads of {target}")),
+            )
+        })
+        .await
+        .unwrap();
     }
 
     fn supervisor_pid(&self) -> u32 {
@@ -395,14 +400,11 @@ impl Fixture {
     /// Waits for the supervisor process to exit.
     async fn supervisor_exit(&mut self) -> std::process::ExitStatus {
         let child = self.supervisor.as_mut().unwrap();
-        let deadline = Instant::now() + PATIENCE;
-        loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                return status;
-            }
-            assert!(Instant::now() < deadline, "the supervisor did not exit");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        until("the supervisor to exit", || {
+            std::future::ready(child.try_wait().unwrap().ok_or("still running"))
+        })
+        .await
+        .unwrap()
     }
 }
 
@@ -431,11 +433,11 @@ fn alive(pid: u32) -> bool {
 }
 
 async fn until_dead(pid: u32) {
-    let deadline = Instant::now() + PATIENCE;
-    while alive(pid) {
-        assert!(Instant::now() < deadline, "pid {pid} is still alive");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    until(&format!("pid {pid} to die"), || {
+        std::future::ready((!alive(pid)).then_some(()).ok_or("still alive"))
+    })
+    .await
+    .unwrap();
 }
 
 fn locked(path: &Path) -> bool {
@@ -742,28 +744,31 @@ async fn the_amux_daemon_exits_when_its_supervisor_dies() {
         .stdin(Stdio::null());
     let mut supervisor = start(|| command.spawn()).unwrap();
     let lock = data.join(node::INSTALLATION_LOCK);
-    let deadline = Instant::now() + PATIENCE;
-    while std::os::unix::net::UnixStream::connect(&socket).is_err() {
-        assert!(Instant::now() < deadline, "the daemon never answered");
-        assert!(
-            supervisor.try_wait().unwrap().is_none(),
-            "the supervisor exited"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    until("the daemon to answer on its socket", || {
+        let answered = std::os::unix::net::UnixStream::connect(&socket).is_ok();
+        let exited = supervisor.try_wait().unwrap();
+        std::future::ready(match (answered, exited) {
+            (true, _) => Ok(()),
+            (false, Some(status)) => panic!("the supervisor exited: {status}"),
+            (false, None) => Err("no answer on the socket yet".to_owned()),
+        })
+    })
+    .await
+    .unwrap();
     assert!(locked(&lock));
     assert!(locked(&data.join(SUPERVISOR_LOCK)));
 
     supervisor.kill().unwrap();
     supervisor.wait().unwrap();
-    let deadline = Instant::now() + PATIENCE;
-    while locked(&lock) {
-        assert!(
-            Instant::now() < deadline,
-            "the daemon outlived its supervisor"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    until("the daemon to release the installation lock", || {
+        std::future::ready(if locked(&lock) {
+            Err("still locked".to_owned())
+        } else {
+            Ok(())
+        })
+    })
+    .await
+    .expect("the daemon outlived its supervisor");
     let log = std::fs::read_to_string(data.join("daemon.log")).unwrap();
     assert!(log.contains("the supervisor went away"), "{log}");
     assert!(log.contains("stopped cleanly"), "{log}");
@@ -773,6 +778,7 @@ async fn the_amux_daemon_exits_when_its_supervisor_dies() {
 fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
     let running = Version::new(1, 0, 0);
     let manifest = |version: &str, rollout| Manifest {
+        channel: "stable".into(),
         rollout,
         targets: [(
             release::TARGET.to_owned(),
@@ -780,10 +786,11 @@ fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
                 version: version.to_owned(),
                 url: "http://example/amux".into(),
                 sha256: "00".into(),
-                signature: String::new(),
+                size: 1,
             },
         )]
         .into(),
+        signature: String::new(),
     };
     let host = Uuid::new_v4();
     let choose = |manifest: &Manifest, rejected: Option<&Version>, host: Option<&Uuid>| {
@@ -816,7 +823,6 @@ fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
         Choice::Install { .. }
     ));
     let other_target = Manifest {
-        rollout: None,
         targets: [(
             "another-triple".to_owned(),
             manifest("2.0.0", None)
@@ -826,6 +832,7 @@ fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
                 .unwrap(),
         )]
         .into(),
+        ..manifest("2.0.0", None)
     };
     assert_eq!(
         choose(&other_target, None, None),
@@ -868,52 +875,98 @@ fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
 }
 
 #[test]
-fn verify_checks_the_hash_and_the_signature_over_version_and_hash() {
+fn the_manifest_is_verified_whole_and_the_artifact_against_its_entry() {
     let key = release::TEST_RELEASE_KEY;
     let bytes = b"a build".to_vec();
-    let sha256 = release::sha256_of(&bytes);
-    let signed = |seed: &[u8; 32], version: &str| Release {
-        version: version.to_owned(),
+    let entry = Release {
+        version: "2.0.0".into(),
         url: String::new(),
-        sha256: sha256.clone(),
-        signature: release::sign(seed, release::TARGET, version, &sha256),
+        sha256: release::sha256_of(&bytes),
+        size: bytes.len() as u64,
     };
-    let good = signed(&TEST_SEED, "2.0.0");
+    let signed = |seed: &[u8; 32], channel: &str, rollout| {
+        let mut manifest = Manifest {
+            channel: channel.into(),
+            rollout,
+            targets: [(release::TARGET.to_owned(), entry.clone())].into(),
+            signature: String::new(),
+        };
+        manifest.signature = release::sign(seed, &manifest);
+        manifest
+    };
+    let good = signed(&TEST_SEED, "stable", Some(10));
+    assert_eq!(release::verify_manifest(&good, "stable", &key), Ok(()));
     assert_eq!(
-        release::verify(&good, release::TARGET, &sha256, &key),
+        release::verify_manifest(&signed(&OTHER_SEED, "stable", Some(10)), "stable", &key),
+        Err(VerifyError::Signature)
+    );
+    // A build deployed to preview does not pass as stable.
+    assert_eq!(
+        release::verify_manifest(&signed(&TEST_SEED, "preview", None), "stable", &key),
+        Err(VerifyError::Channel {
+            expected: "stable".into(),
+            actual: "preview".into()
+        })
+    );
+    // The rollout, a version, the hash and the size are all under the
+    // signature: changing any after signing breaks it.
+    for tampered in [
+        Manifest {
+            rollout: Some(100),
+            ..good.clone()
+        },
+        Manifest {
+            targets: [(
+                release::TARGET.to_owned(),
+                Release {
+                    version: "9.0.0".into(),
+                    ..entry.clone()
+                },
+            )]
+            .into(),
+            ..good.clone()
+        },
+        Manifest {
+            targets: [(
+                release::TARGET.to_owned(),
+                Release {
+                    sha256: release::sha256_of(b"other"),
+                    ..entry.clone()
+                },
+            )]
+            .into(),
+            ..good.clone()
+        },
+        Manifest {
+            targets: [(
+                release::TARGET.to_owned(),
+                Release {
+                    size: entry.size + 1,
+                    ..entry.clone()
+                },
+            )]
+            .into(),
+            ..good.clone()
+        },
+    ] {
+        assert_eq!(
+            release::verify_manifest(&tampered, "stable", &key),
+            Err(VerifyError::Signature)
+        );
+    }
+
+    assert_eq!(
+        release::verify_artifact(&entry, &release::sha256_of(&bytes), bytes.len() as u64),
         Ok(())
     );
     assert!(matches!(
-        release::verify(&good, release::TARGET, &release::sha256_of(b"other"), &key),
+        release::verify_artifact(&entry, &release::sha256_of(b"other"), bytes.len() as u64),
         Err(VerifyError::Hash { .. })
     ));
-    assert_eq!(
-        release::verify(
-            &signed(&OTHER_SEED, "2.0.0"),
-            release::TARGET,
-            &sha256,
-            &key
-        ),
-        Err(VerifyError::Signature)
-    );
-    // Relabelling a signed build as a newer version breaks the signature.
-    let relabelled = Release {
-        version: "9.0.0".into(),
-        ..good.clone()
-    };
-    assert_eq!(
-        release::verify(&relabelled, release::TARGET, &sha256, &key),
-        Err(VerifyError::Signature)
-    );
-    assert_eq!(
-        release::verify(&good, "another-triple", &sha256, &key),
-        Err(VerifyError::Signature)
-    );
-    assert_eq!(
-        release::release_key(),
-        Some(key),
-        "debug builds trust the test key"
-    );
+    assert!(matches!(
+        release::verify_artifact(&entry, &release::sha256_of(&bytes), 3),
+        Err(VerifyError::Size { .. })
+    ));
 }
 
 #[test]

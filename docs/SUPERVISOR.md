@@ -213,9 +213,11 @@ Because semver orders a prerelease below its release, a machine that moves
 from `preview` to `stable` lands on the stable build of the same release as
 soon as stable names a version above the one running.
 
-**The swap.** A build to install is downloaded to `amux.staged` beside the
-binary, its SHA-256 compared with the manifest's, and its signature verified
-against the key compiled into the running binary. On Unix the current binary
+**The swap.** The manifest's signature is verified against the key compiled
+into the running binary, and its channel against the one followed, before
+anything in it is read. A build to install is then downloaded to
+`amux.staged` beside the binary, no more than its signed size, and its
+length and SHA-256 compared with the manifest's. On Unix the current binary
 is then hard-linked to `amux.prev`, so the install path is never missing, and
 the staged file is renamed over the install path. Running processes keep the
 file they started from: agents, tool servers and terminal clients are

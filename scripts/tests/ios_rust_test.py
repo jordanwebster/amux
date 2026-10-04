@@ -85,6 +85,7 @@ class DevelopmentBuildTests(unittest.TestCase):
             shipping = output / bridge.FRAMEWORK / bridge.DRIVING_SLICE
             shipping.mkdir(parents=True)
             (shipping / bridge.LIBRARY).write_bytes(b"a")
+            bridge.stand_in_marker(output / bridge.FRAMEWORK).write_text("same:release:debug-tools\n")
             stamp = output / "rust-stamp.json"
             stamp.write_text("same:release:debug-tools\n")
             with mock.patch.object(bridge, "OUTPUT", output), \
@@ -234,6 +235,50 @@ class DevelopmentBuildTests(unittest.TestCase):
             self.assertEqual(library.read_bytes(), b"new")
             self.assertEqual(bridge.stand_in_marker(shipping).read_text().strip(),
                              "new:release:debug-tools")
+
+
+    def test_a_shipping_build_in_the_stand_in_place_is_replaced_although_the_stamp_is_current(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "ios"
+            output.mkdir()
+            driving = output / bridge.DRIVING_FRAMEWORK
+            (driving / bridge.DRIVING_SLICE).mkdir(parents=True)
+            (driving / bridge.DRIVING_SLICE / bridge.LIBRARY).write_bytes(b"dev")
+            shipping = output / bridge.FRAMEWORK
+            shipping_slice = shipping / bridge.DRIVING_SLICE
+            shipping_slice.mkdir(parents=True)
+            library = shipping_slice / bridge.LIBRARY
+            library.write_bytes(b"shipping")
+            # `ios package` removed the marker when it put its library here.
+            self.assertFalse(bridge.stand_in_marker(shipping).is_file())
+            stamp = output / "rust-stamp.json"
+            stamp.write_text("v1:release:debug-tools\n")
+            built = bridge.Slice("t", output / "lib.a", output / "h.h")
+            built.library.write_bytes(b"dev")
+            built.header.write_text("void dev_symbol(void);")
+            packaged = []
+
+            def package(framework, _slices):
+                packaged.append(framework.name)
+                (framework / bridge.DRIVING_SLICE).mkdir(parents=True, exist_ok=True)
+                (framework / bridge.DRIVING_SLICE / bridge.LIBRARY).write_bytes(b"dev")
+
+            with mock.patch.object(bridge, "OUTPUT", output), \
+                    mock.patch.object(ios_rust, "STAMP", stamp), \
+                    mock.patch.object(bridge, "SIZE_REPORT", output / "size.txt"), \
+                    mock.patch.object(bridge, "source_fingerprint", return_value="v1"), \
+                    mock.patch.object(bridge, "cargo_build", return_value=built), \
+                    mock.patch.object(bridge, "package", side_effect=package), \
+                    mock.patch.object(
+                        ios_rust.Path, "read_text",
+                        return_value="[profile.release]\npanic = 'abort'\n"), \
+                    mock.patch("builtins.print"):
+                ios_rust.main()
+
+            self.assertIn(bridge.FRAMEWORK, packaged)
+            self.assertEqual(library.read_bytes(), b"dev")
+            self.assertEqual(bridge.stand_in_marker(shipping).read_text().strip(),
+                             "v1:release:debug-tools")
 
 
 class ShippingBuildTests(unittest.TestCase):

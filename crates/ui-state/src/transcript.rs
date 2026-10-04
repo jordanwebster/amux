@@ -14,8 +14,6 @@ pub struct Held {
     pub item: Item,
     pub body: ItemBody,
     pub class: ItemClass,
-    /// Another item whose row this one's content is drawn on.
-    pub refers: Option<Key>,
 }
 
 impl Held {
@@ -23,13 +21,7 @@ impl Held {
         let kind = wire::kind_from_tag(&item.kind).unwrap_or(kind);
         let body = ItemBody::decode(kind, &item.body);
         let class = body.class();
-        let refers = body.refers();
-        Held {
-            item,
-            body,
-            class,
-            refers,
-        }
+        Held { item, body, class }
     }
 }
 
@@ -47,8 +39,6 @@ pub struct Transcript {
     items: BTreeMap<u64, Held>,
     by_key: HashMap<Key, u64>,
     by_input: HashMap<Vec<u8>, Key>,
-    /// Referred key to the item that refers to it.
-    referrers: HashMap<Key, Key>,
     exhausted: bool,
     runs: RunIndex,
 }
@@ -70,7 +60,6 @@ impl Transcript {
             items: BTreeMap::new(),
             by_key: HashMap::new(),
             by_input: HashMap::new(),
-            referrers: HashMap::new(),
             exhausted: false,
             runs: RunIndex::default(),
         }
@@ -124,13 +113,6 @@ impl Transcript {
 
     pub fn keys(&self) -> impl Iterator<Item = &Key> {
         self.items.values().map(|held| &held.item.key)
-    }
-
-    /// The item drawn on this key's row, if one refers to it.
-    pub fn referrer(&self, key: &str) -> Option<&Held> {
-        self.referrers
-            .get(key)
-            .and_then(|referrer| self.get(referrer))
     }
 
     pub fn runs(&self) -> &RunIndex {
@@ -245,15 +227,6 @@ impl Transcript {
             if self.by_input.get(&held.item.input_id) == Some(key) {
                 self.by_input.remove(&held.item.input_id);
             }
-            if let Some(target) = &held.refers
-                && self.referrers.get(target) == Some(key)
-            {
-                self.referrers.remove(target);
-                if self.by_key.contains_key(target) {
-                    changed.key(target);
-                }
-            }
-            self.referrers.remove(key);
             changed.key(key);
         }
         self.exhausted = false;
@@ -305,25 +278,10 @@ impl Transcript {
                 return Err(format!("input id indexes {key}, which is not held"));
             }
         }
-        for referrer in self.referrers.values() {
-            if !self.by_key.contains_key(referrer) {
-                return Err(format!("referrer {referrer} is not held"));
-            }
-        }
         if self.runs != RunIndex::rebuild(self) {
             return Err("run index drifted from a rebuild".into());
         }
         Ok(())
-    }
-
-    /// Records what `held` refers to; the referred row redraws with it.
-    fn refer(&mut self, held: &Held, changed: &mut Changed) {
-        if let Some(target) = &held.refers {
-            self.referrers.insert(target.clone(), held.item.key.clone());
-            if self.by_key.contains_key(target) {
-                changed.key(target);
-            }
-        }
     }
 
     fn reindex(&mut self, order: u64, inserted: bool) {
@@ -342,10 +300,6 @@ impl Transcript {
                 .insert(held.item.input_id.clone(), held.item.key.clone());
         }
         changed.key(&held.item.key);
-        self.refer(&held, changed);
-        if let Some(referrer) = self.referrers.get(&held.item.key) {
-            changed.key(referrer);
-        }
         self.items.insert(order, held);
         self.reindex(order, true);
         self.runs.compare(before, self, changed);
@@ -362,14 +316,7 @@ impl Transcript {
                 .insert(held.item.input_id.clone(), held.item.key.clone());
         }
         let explore_moved = old.class.explore() != held.class.explore();
-        if old.refers != held.refers
-            && let Some(target) = &old.refers
-        {
-            self.referrers.remove(target);
-            changed.key(target);
-        }
         changed.key(&held.item.key);
-        self.refer(&held, changed);
         if explore_moved {
             let before = self.runs.capture(order, self);
             self.items.insert(order, held);

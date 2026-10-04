@@ -246,6 +246,7 @@ fn evict_replica(tables: &mut dyn Tables, row: &AgentRow) -> Result<(), StoreErr
     row.complete_from_order = None;
     row.exhausted = false;
     row.source_cursor = 0;
+    row.source_generation = 0;
     tables.put_agent(&row)
 }
 

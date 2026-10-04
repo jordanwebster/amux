@@ -1147,9 +1147,7 @@ fn describe_work(work: &Work) -> String {
         " {}",
         wire::ToolState::try_from(work.state).map_or("?", |state| state.as_str_name())
     ));
-    if work.class == wire::ToolClass::Exploration as i32 {
-        text.push_str(" exploration");
-    }
+    text.push_str(crate::claude_common::describe_class(work.class));
     if let Some(decision) = &work.decision {
         text.push_str(&format!(
             " decision={}{}{}",

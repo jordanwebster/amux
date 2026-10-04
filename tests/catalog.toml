@@ -419,8 +419,8 @@ cargo = [
 [[suite]]
 name = "daemon-library-units"
 contract = "Daemon-side libraries preserve their local parsing, state, routing, lifecycle, persistence, agent-directory and wire invariants."
-paths = ["crates/agent-dir/src", "crates/client/src", "crates/node/src", "crates/settings/src", "crates/version-stamp/src", "crates/wire/src"]
-recipe = "just test -- --lib -p agent-dir -p client -p node -p settings -p version-stamp -p wire"
+paths = ["crates/agent-dir/src", "crates/client/src", "crates/node/src", "crates/release/src", "crates/settings/src", "crates/version-stamp/src", "crates/wire/src"]
+recipe = "just test -- --lib -p agent-dir -p client -p node -p release -p settings -p version-stamp -p wire"
 boundary = "Single daemon"
 oracle = "Value assertions, explicit state transitions, wire round trips, and owned-resource observations."
 real = ["temporary files and local sockets in integration-shaped unit cases"]
@@ -434,6 +434,7 @@ cargo = [
   { package = "agent-dir", kind = "lib", targets = ["agent_dir"], features = [] },
   { package = "client", kind = "lib", targets = ["client"], features = [] },
   { package = "node", kind = "lib", targets = ["node"], features = [] },
+  { package = "release", kind = "lib", targets = ["release"], features = [] },
   { package = "settings", kind = "lib", targets = ["settings"], features = [] },
   { package = "version-stamp", kind = "lib", targets = ["version_stamp"], features = [] },
   { package = "wire", kind = "lib", targets = ["wire"], features = [] },
@@ -497,7 +498,7 @@ cargo = [
 [[suite]]
 name = "testnet-harness"
 contract = "The test network harness validates topologies, runs real agents on each fake provider, sleeps every daemon's policy timers on its driven clock, installs each fault, fails stuck observations, catches a broken replica, and serves a topology through its door."
-paths = ["crates/testnet/src", "crates/testnet/tests/harness.rs"]
+paths = ["crates/patience/src", "crates/testnet/src", "crates/testnet/tests/harness.rs"]
 recipe = "just test -- --test harness"
 boundary = "Many daemons"
 oracle = "Harness values, event observations, observation deadlines, door replies and the capability map the crate docs list."
@@ -509,6 +510,7 @@ lane = "fast"
 evidence = ""
 update = ""
 cargo = [
+  { package = "patience", kind = "lib", targets = ["patience"], features = [] },
   { package = "testnet", kind = "lib", targets = ["testnet"], features = [] },
   { package = "testnet", kind = "bin", targets = ["testnet"], features = [] },
   { package = "testnet", targets = ["harness"], features = [] },
@@ -593,6 +595,43 @@ lane = "fast"
 evidence = ""
 update = "FLOOD_TOPOLOGY_UPDATE=1 just test-crate qualification -- --test flood"
 cargo = [{ package = "qualification", targets = ["flood"], features = ["bundled"] }]
+
+[[suite]]
+name = "phone-workload-topology"
+contract = "The phone's performance topology loads as testnet serves it and holds the workload the suite describes: three machines, forty agents, and a conversation a thousand rows long that streams five cued bursts."
+paths = ["crates/qualification/tests/phone.rs", "crates/qualification/src/perf/phone.rs", "crates/qualification/src/bin/phone_topology.rs"]
+recipe = "just test-crate qualification -- --test phone"
+boundary = "System composition"
+oracle = "The generated topology round-trips through the served form and its counts are the suite's constants."
+real = ["topology generator"]
+substituted = []
+time = "none"
+capabilities = []
+lane = "fast"
+evidence = ""
+update = "Change the constants in crates/qualification/src/perf/phone.rs and this test together."
+cargo = [
+  { package = "qualification", targets = ["phone"], features = ["bundled"] },
+  { package = "qualification", kind = "bin", targets = ["phone-topology"], features = ["bundled"] },
+]
+
+[[suite]]
+name = "phone-performance-qualification"
+contract = "The optimised iPhone app on the enrolled Mac's simulator, against the served performance network, stays within its budgets for cold launch, store read, reconciliation over none and over 100 ms of latency, streaming and idle, and within reviewed drift of the machine's baseline."
+paths = ["scripts/ios-perf.py", "crates/qualification/src/perf/phone.rs", "perf/baselines/phone"]
+recipe = "just ios perf"
+boundary = "System composition"
+oracle = "Marks and measurements the app takes itself, read through its door, judged against the budgets in docs/PERFORMANCE.md and the machine's baseline."
+real = ["Measured app on the pinned simulator", "served daemons", "agent processes", "SQLite store", "gated loopback network"]
+substituted = ["providers by the scripted fakes", "cloud account"]
+time = "real"
+capabilities = ["enrolled Mac14,6", "quiet machine", "iPhone simulator"]
+lane = "qualification"
+evidence = "target/ios/perf"
+update = "just ios perf -- --baseline, once every budget passes"
+baselines = ["perf/baselines/phone/pinned-mac.json"]
+cases = ["scripts/ios-perf.py"]
+cargo = []
 
 [[suite]]
 name = "terminal-native-presentation"
@@ -705,6 +744,24 @@ update = "Rerun with UI_VIEW_UPDATE_GOLDENS=1 and review the golden diff."
 cargo = [
   { package = "ui-view", kind = "lib", targets = ["ui_view"], features = [] },
   { package = "ui-view", targets = ["answers", "goldens", "stretches", "views"], features = [] },
+]
+
+[[suite]]
+name = "install-scripts"
+contract = "The install scripts take the stable manifest's entry for the machine and install the binary it names only when the download's size and sha256 are the entry's; a machine the channel has no build for is told so."
+paths = ["crates/xtask/tests/install_scripts.rs", "scripts/install"]
+recipe = "just test-crate xtask"
+boundary = "System composition"
+oracle = "Exact script exits and the installed file's bytes, against a manifest the release crate serialized."
+real = ["child processes", "temporary files", "loopback HTTP"]
+substituted = ["amux.sh", "the release's assets"]
+time = "real"
+capabilities = ["Unix"]
+lane = "tool"
+evidence = ""
+update = ""
+cargo = [
+  { package = "xtask", targets = ["install_scripts"], features = [] },
 ]
 
 [[suite]]

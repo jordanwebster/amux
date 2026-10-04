@@ -7,12 +7,8 @@ Three things ship from this repository, each on its own schedule:
 | What | How it is cut | Tags |
 | --- | --- | --- |
 | The iPhone app | `just ios release`, from a Mac with the signing setup below | `ios-v<version>-b<build>` |
-| The `amux` binary | `./make_release.sh`, then the Release workflow on the pushed tag | `v<version>` |
-| The daemon's release feed | One signed manifest per channel, read by `amux supervise` | none |
-
-The first two are working procedures. The third is built into the daemon and
-tested, but nothing publishes a manifest yet; see
-[What is not set up yet](#what-is-not-set-up-yet).
+| The `amux` binary | `just release <version>`, then the Release workflow on the pushed tag | `v<version>` |
+| The daemon's release feed | `just deploy <version>` signs the release's binaries with the release Mac's key and publishes the channel manifest to amux.sh | none |
 
 ## The iPhone app
 
@@ -553,17 +549,35 @@ appear in any committed file, and none of them should be pasted into one.
 The desktop binary is versioned by the `version` of `crates/amux` and
 `crates/node`, which move together: the daemon reports its own crate's
 version, and a release that moved only the CLI would have `amux --version`
-and the fleet disagree. [`make_release.sh`](../make_release.sh) cuts a
-release from a Mac (it edits the manifests with BSD `sed -i ''`):
+and the fleet disagree. A release is two acts, at two times, each one
+recipe (both implemented by `xtask release` in
+[`crates/xtask/src/release.rs`](../crates/xtask/src/release.rs)):
 
 ```
-./make_release.sh          # bump the minor version: 0.7.0 -> 0.8.0
-./make_release.sh 0.7.1    # or name the version
+just release 0.8.0                 # cut: the version exists and its binaries are built
+just deploy 0.8.0 --channel preview   # machines on preview take it
+just deploy 0.8.0 --rollout 10        # a tenth of the machines on stable take it
+just deploy 0.8.0                     # all of stable
 ```
 
-It writes the version into both `Cargo.toml` files, updates `Cargo.lock`
-offline, runs `just release-check`, commits `v<version>`, tags
-`v<version>`, and pushes the branch and the tag.
+**Cutting** makes the version exist. `just release <version>` refuses a
+tree with other changes in it, a version not above the current one, and a
+Mac without the release signing key (a cut nobody could deploy is a tag
+for nothing); then it writes the version into both `Cargo.toml` files,
+updates `Cargo.lock` offline, runs `just release-check`, commits
+`v<version>`, tags `v<version>` and pushes the branch and the tag. The tag
+starts the Release workflow, and the cut is done. It does not wait for the
+workflow.
+
+**Deploying** puts a cut release in front of machines, and is the act that
+chooses who: a channel, and how much of it. `just deploy <version>` waits
+for the tag's workflow to have published the binaries if it has not yet,
+then signs and publishes the channel manifest (below,
+[Deploying a release](#deploying-a-release)). It repeats against the same
+release: a wider rollout, or preview promoted to stable, is another deploy
+of the same version. Versions are plain; there is no preview version,
+only a preview deployment, and a bad preview is fixed by cutting the next
+version.
 
 `just release-check` builds the shipping binary —
 `cargo build --release -p amux --bins --no-default-features --features bundled`
@@ -610,26 +624,33 @@ another server.
 
 ### The manifest
 
-A manifest is JSON: an optional rollout percentage and one entry per target
-triple.
+A manifest is JSON: the channel it is for, an optional rollout percentage,
+one entry per target triple, and one signature over all of it.
 
 ```json
 {
+  "channel": "stable",
   "rollout": 10,
   "targets": {
     "aarch64-apple-darwin": {
       "version": "0.8.0",
       "url": "https://example.com/amux-macos-arm64",
       "sha256": "<hex SHA-256 of the file at url>",
-      "signature": "<base64 Ed25519 signature>"
+      "size": 31457280
     }
-  }
+  },
+  "signature": "<base64 Ed25519 signature>"
 }
 ```
 
+- A supervisor on the stable channel refuses a manifest whose `channel` is
+  `preview`, however well it is signed: a build deployed to preview cannot
+  be served to stable by whoever holds the manifest's URL.
 - A binary looks itself up by the triple it was built for, which
   `crates/node/build.rs` compiles in as `AMUX_TARGET`.
-- `url` is fetched as-is; the file there is the whole `amux` binary.
+- `url` is fetched as-is; the file there is the whole `amux` binary, and
+  `size` is its length. The supervisor writes no more than `size` bytes
+  of it, and installs it only when its length and hash are the entry's.
 - `rollout`, when present and below 100, admits a host when SHA-256 of its
   host id, mod 100, is under the number. A host's place is fixed across every
   rollout and nothing is stored. Publishing at 10, watching, then raising to
@@ -639,27 +660,38 @@ triple.
   that has already activated is fixed by publishing a higher version — the
   previous code under a new number when the bad release changed no data
   shape, a forward fix otherwise.
-- Promoting a preview build to stable is putting the same entry in the
-  stable manifest. Semver orders `0.8.0-preview.3` below `0.8.0`, so a machine
-  on preview moves to the stable build of the same release when it switches.
+- Promoting a preview build to stable is deploying the same version to
+  stable: the same binary, the same entry, in the other manifest.
 
 ### Signing and verification
 
-The signature is Ed25519 over exactly these bytes, with the hash in
-lowercase hex:
+The signature is Ed25519 over the whole manifest, as exactly these bytes:
+the channel, the rollout (`100` when absent), then for each target in name
+order its version, url, hash in lowercase hex, and size:
 
 ```
-amux release
+amux manifest
+<channel>
+<rollout>
 <target>
 <version>
+<url>
 <sha256>
+<size>
+...
 ```
 
-It binds the version to the binary's hash, so a tampered manifest cannot
-relabel an old signed binary as a newer release. The supervisor downloads to
-`amux.staged` beside the installed binary, computes the SHA-256 while
-downloading, and installs only if the hash matches the manifest and the
-signature verifies. `release::sign` is the publishing half of that check.
+One signature covers everything the server could otherwise change: which
+channel a build is on, how many hosts take it, and what each build is. A
+tampered manifest cannot relabel an old signed binary as a newer release,
+move a preview build onto stable, or widen a staged rollout. The
+supervisor verifies the manifest before reading anything from it, then
+downloads to `amux.staged` beside the installed binary, writing no more
+than the entry's size and computing the SHA-256 as it goes, and installs
+only if the length and the hash are the entry's. `release::sign` is the
+publishing half of that check. A manifest is at most 1 MiB and an
+artifact's signed size at most 256 MiB
+([Parameters](PARAMETERS.md)); more is refused unread.
 
 The public key is compiled into the binary from `AMUX_RELEASE_PUBLIC_KEY`, 64
 hex digits, set in the environment at build time:
@@ -670,24 +702,128 @@ hex digits, set in the environment at build time:
 | Debug build without it | `TEST_RELEASE_KEY`, whose private half lives in the test suites |
 | Release build without it | None. It restarts its daemon but installs nothing, and `amux update` says so. |
 
+The Release workflow sets it, so every published binary trusts the release
+key; a release build made by hand trusts nothing and is replaced the way it
+was installed.
+
 The supervisor tests sign releases with the test key and serve manifests
 from a local server
 ([`crates/node/tests/supervisor.rs`](../crates/node/tests/supervisor.rs),
 [`crates/amux/tests/supervise_cli.rs`](../crates/amux/tests/supervise_cli.rs)).
 
-### What is not set up yet
+### The release key
 
-The installing side is complete; the publishing side does not exist yet.
+The private key is a 32-byte seed that exists in one place: the login
+keychain of the Mac that cuts releases, as the generic password item with
+service `amux-release-key`. It is never in this repository, never on GitHub
+and never on amux.sh. That is the point of signing at all: the machines
+that install a release verify it against a key compiled into the binary
+they already run, so the server that hands out manifests cannot make
+them install something else. A compromised amux.sh can serve a stale
+manifest or none, and nothing worse. A GitHub token stolen after a deploy
+can tag and build what it likes and re-upload any asset, and none of it
+reaches a machine either: a manifest needs the key, and a swapped asset
+fails the hash the key signed.
 
-- No manifest is published. Both default addresses answer 404, so a
-  supervised machine's hourly check finds nothing and `amux update` reports
-  the failed fetch.
-- No release key exists. The Release workflow does not set
-  `AMUX_RELEASE_PUBLIC_KEY`, so the binaries it publishes trust no key and
-  never install an update.
-- Nothing in this repository signs a build or writes a manifest outside the
-  tests. The GitHub Release's binaries and `checksums.txt` carry what a
-  manifest entry needs except the signature.
+What the key does not vouch for is the build itself. The binaries are
+built by the Release workflow on GitHub's runners, and `just deploy`
+signs the digests that workflow published, so a runner or release
+storage compromised between the build and the deploy gets its binary
+signed. That is the trust kept deliberately: the window is the one
+release being cut, the deploy is an act someone runs by hand, and the
+alternative is building every target on the release Mac. Should that
+window ever need closing, GitHub's artifact attestations would let the
+deploy prove each asset came from the workflow at the tagged commit
+before signing it, leaving only a compromised runner.
 
-Until those exist, an install moves to a new version the way it was
-installed: by replacing the binary.
+`just release-key generate` makes a seed from the system's randomness,
+stores it in the keychain and prints the public half; it refuses when an
+item is already there, so a key is rotated deliberately by deleting the
+old item first (`security delete-generic-password -s amux-release-key`).
+`just release-key public` prints the public half again. The public half
+is committed as `AMUX_RELEASE_PUBLIC_KEY` in
+[`.github/workflows/release.yml`](../.github/workflows/release.yml), and
+the manifest tool refuses to sign when the keychain's key is not the one
+the workflow compiles in, because the binaries would refuse the result.
+
+Rotating the key means every installed binary stops trusting new
+manifests until it has been replaced by hand with one built under the new
+key: publish the last release under the old key with the new public key
+compiled in, then switch.
+
+### Deploying a release
+
+```
+just deploy 0.8.0                       # stable, every machine
+just deploy 0.8.0 --channel preview     # the preview channel
+just deploy 0.8.0 --rollout 10          # stable, a tenth of the machines; later --rollout 100
+```
+
+`xtask release deploy` waits until the tagged GitHub Release holds
+`checksums.txt` (the workflow may still be building after a cut; it gives
+up after 45 minutes), reads the checksums, signs each target's hash with
+the keychain's seed, verifies the signature against the key the workflow
+compiles in, writes the channel's manifest with each entry's URL pointing
+at the release's own asset (a copy stays in `target/release-manifests/`),
+and uploads `<channel>.json` to that same release, replacing one already
+there. So:
+
+- A staged rollout is the same command with a higher `--rollout`, which
+  replaces the manifest on the release.
+- Promoting a preview build to stable is `--channel stable` for the version
+  the preview manifest names.
+- Every manifest ever deployed stays on the release that carried it, and a
+  channel's current manifest is the newest release that carries a manifest
+  for that channel.
+
+Because the key is local, deploying is done on the release Mac. Nothing in
+the workflow can sign.
+
+### What amux.sh serves
+
+A machine reads `https://amux.sh/releases/<channel>.json`. That is a static
+file: the deploy's last step runs the operator's publish script,
+`~/scripts/amux-publish-release <channel> <version> <manifest> [<file>...]`,
+which puts the signed manifest, and any files named after it, where amux.sh
+serves them and reads each back over the public address to confirm. The
+script is not in this repository; which host holds the files, where, and how
+the Mac reaches it belong with the rest of the host configuration, and this
+repository only says that the step happens and refuses to finish a deploy
+without it, since a manifest uploaded to the release alone reaches no
+machine. amux.sh never holds the key and cannot alter a manifest without the
+signature failing; the worst it can do is serve a stale one or none, in
+which case a supervised machine's hourly check finds nothing and
+`amux update` reports it.
+
+### Installing
+
+`https://amux.sh/install` is the same arrangement. The scripts are
+[`scripts/install/install.sh`](../scripts/install/install.sh) and
+[`install.ps1`](../scripts/install/install.ps1); every stable deploy hands
+them to the publish script beside the manifest, from the checkout the deploy
+runs in, and amux.sh answers `/install` with the one for the caller's shell:
+
+```sh
+curl -fsSL https://amux.sh/install | sh      # macOS, Linux
+irm https://amux.sh/install | iex            # Windows PowerShell
+```
+
+A script reads the stable manifest, takes the entry for the machine's target,
+downloads the binary the entry names, and installs it to `~/.amux/bin` only
+when the download's size and sha256 are the entry's. So the manifest is the
+one statement of what a new machine runs, as it is for a running one: a
+release that was cut but never deployed to stable is not installed, and a
+release pulled from stable stops being installed at once. The rollout
+percentage is ignored: it protects machines that already run something, and
+a new machine has nothing to protect.
+
+A script does not check the manifest's signature. It and the manifest come
+from the same server, so a check there would trust the server it was
+checking; the first install trusts amux.sh over TLS, and every update after
+it is verified by the installed binary with the key it was built with.
+
+The scripts parse the manifest by hand, so
+[`crates/xtask/tests/install_scripts.rs`](../crates/xtask/tests/install_scripts.rs)
+runs them against a manifest the release crate serialized, served from a
+loopback stand-in for amux.sh: a change to the manifest's shape that would
+break an installer breaks that test first.

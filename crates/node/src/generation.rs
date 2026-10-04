@@ -12,9 +12,11 @@
 //! a running daemon, and the counter is bumped; the file is then rewritten
 //! with the current boot id and the flag cleared. At clean shutdown the
 //! flag is set last, after every store has been flushed to the drive.
-//! Peers compare the counter per host and drop that host's replicas when
-//! it changes. Both writes are durable (temp, fsync, rename, fsync of the
-//! directory): an unsynced flag or counter could itself be rolled back.
+//! The counter opens every session stream the host serves; a peer resuming
+//! after a cursor of another generation is answered with a fresh tail that
+//! replaces its replica. Both writes are durable (temp, fsync, rename,
+//! fsync of the directory): an unsynced flag or counter could itself be
+//! rolled back.
 
 use std::io;
 use std::path::Path;

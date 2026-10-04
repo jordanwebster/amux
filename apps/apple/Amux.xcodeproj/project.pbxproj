@@ -129,6 +129,7 @@
 		7CDD1B62E1EDC527F504AF6C /* components.row-command-elsewhere-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 6922E0C57B8D0107F142EFED /* components.row-command-elsewhere-light.png */; };
 		7D31A5DC183CDE7595F5B47A /* components.chat-detached-light.png in Resources */ = {isa = PBXBuildFile; fileRef = B351A86A8655E09F54A6EF7F /* components.chat-detached-light.png */; };
 		8128660971A5C9B80E058FD9 /* components.chat-asking-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = AE009EE95BD902CA978349EB /* components.chat-asking-dark.png */; };
+		81316F8788C3CE4719D72EB7 /* Instrumentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F6B63077F05D267C35ED8B7 /* Instrumentation.swift */; };
 		82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */; };
 		829F13B3D1B38B0389AC4523 /* components.row-ask-question-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 76F5FF4BBADA211560A4F526 /* components.row-ask-question-dark.png */; };
 		843411FA11BF291F487C1A85 /* components.composer-usage-blocked-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 92263008F1BDF54984079DB3 /* components.composer-usage-blocked-light.png */; };
@@ -337,6 +338,7 @@
 		1D8E7757A9910BB730D7C7C4 /* components.row-command-failed-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-command-failed-light.png"; sourceTree = "<group>"; };
 		1E66BD0F085353353B013CB1 /* AmuxCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxCore; path = Packages/AmuxCore; sourceTree = SOURCE_ROOT; };
 		1E80E1564DC79475C2BFD322 /* components.ask-link-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-link-dark.png"; sourceTree = "<group>"; };
+		1F6B63077F05D267C35ED8B7 /* Instrumentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Instrumentation.swift; sourceTree = "<group>"; };
 		21A4FC885DCA537FD2ABD0FD /* Trace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trace.swift; sourceTree = "<group>"; };
 		227A8F28C25854DBC7946FAF /* components.composer-strip-codex-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-strip-codex-light.png"; sourceTree = "<group>"; };
 		22E6B7DDC057921A403490AE /* components.composer-strip-claude-pty-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-strip-claude-pty-light.png"; sourceTree = "<group>"; };
@@ -985,6 +987,7 @@
 			isa = PBXGroup;
 			children = (
 				2DA38C20C8560FEE2BB88D9F /* Door.swift */,
+				1F6B63077F05D267C35ED8B7 /* Instrumentation.swift */,
 				8653CA7820599C23895CAB29 /* ScriptedChat.swift */,
 				C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */,
 				CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */,
@@ -1445,6 +1448,7 @@
 				AEE5ABB7E7D74D75A3DF45A5 /* DoorHost.swift in Sources */,
 				546E08243B4B5BE2BDFDAB84 /* DoorServer.swift in Sources */,
 				82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */,
+				81316F8788C3CE4719D72EB7 /* Instrumentation.swift in Sources */,
 				2AB9F9F887627829BEBBB09D /* MenuSource.swift in Sources */,
 				DDDED99192D1F649C8282E0A /* Perturbation.swift in Sources */,
 				B6D27C4537AD3B1E7AC14846 /* ReportFreeze.swift in Sources */,
@@ -1583,6 +1587,32 @@
 			};
 			name = Debug;
 		};
+		2244784CDFC88C6A4DEA3688 /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 36;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				INFOPLIST_FILE = Amux/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.32;
+				OTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/../../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a";
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = AMUX_DEBUG_TOOLS;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Measured;
+		};
 		304A2DC4DD64B8229FE6D67C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1648,6 +1678,26 @@
 			};
 			name = Debug;
 		};
+		60F93BDDC6AD920EECD5BE21 /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxComponentSnapshotTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Measured;
+		};
 		62CBA0674792A649E6E61464 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1668,6 +1718,26 @@
 			};
 			name = Debug;
 		};
+		7D44E6B517687482E46CF54B /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxUITests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Amux;
+			};
+			name = Measured;
+		};
 		7EA0143F3EF99114A4D5DB7E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1687,6 +1757,88 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
 			};
 			name = Release;
+		};
+		9E74B7CC23B1363A40BF1044 /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxAppTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Measured;
+		};
+		B49E27100A3872C1F96C1D05 /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = YES;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Measured;
 		};
 		B9B730C37BC23724695BE5B8 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -1797,6 +1949,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1C6A74E2A949CE5DA9BC6C59 /* Debug */,
+				2244784CDFC88C6A4DEA3688 /* Measured */,
 				43EAF82C28C6FB2A3DB797AE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1806,6 +1959,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				553ECCECE82F6F452BAE186A /* Debug */,
+				9E74B7CC23B1363A40BF1044 /* Measured */,
 				7EA0143F3EF99114A4D5DB7E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1815,6 +1969,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				E48EEA25C2561146FBE6AA10 /* Debug */,
+				60F93BDDC6AD920EECD5BE21 /* Measured */,
 				CE4B6025D0B6F9CDD5826A8A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1824,6 +1979,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				62CBA0674792A649E6E61464 /* Debug */,
+				7D44E6B517687482E46CF54B /* Measured */,
 				304A2DC4DD64B8229FE6D67C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1833,6 +1989,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				18AF2EFCFA6E6DA9D324BAEE /* Debug */,
+				B49E27100A3872C1F96C1D05 /* Measured */,
 				B9B730C37BC23724695BE5B8 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;

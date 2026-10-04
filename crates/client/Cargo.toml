@@ -19,5 +19,6 @@ tower = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
+patience = { workspace = true }
 provider-fakes = { workspace = true }
 testnet = { workspace = true }

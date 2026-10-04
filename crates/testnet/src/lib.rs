@@ -50,6 +50,10 @@
 //! | `Freeze` | `Net::freeze` |
 //! | `Thaw` | `Net::thaw` |
 //! | `OpenGate` | `Net::open_gate` |
+//! | `LanGate` | `Net::lan_gate` |
+//! | `LanFaults` | `Net::set_lan_faults` |
+//! | `RelayGate` | `Net::relay_gate` |
+//! | `RelayFaults` | `Net::set_relay_faults` |
 //! | `Inventory` | `Net::observe_inventory + observe_until(CaughtUp)` |
 //! | `Block` | `Net::assert_block_invariant` |
 //! | `Chat` | `Net::observe or Net::observe_id + observe_until(CaughtUp)` |
@@ -76,7 +80,9 @@ pub use net::{
     Ack, ClockMode, EdgeHook, HostInfo, JournalCut, LaunchHook, Net, NetAgent, NetError,
     NetOptions, local_channel, prompt, withdraw,
 };
-pub use observe::{InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
+pub use observe::{
+    InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck, holds_for, until, until_within,
+};
 pub use relay::{CREDENTIAL_TTL, RELAY_HOST, Relay};
 pub use topology::{
     AccountDecl, AgentDecl, FakeKind, HostDecl, LinkDecl, RelayDecl, TierDecl, Topology,

@@ -176,6 +176,7 @@ fn supervise(inherited: Option<Inherited>) {
     let source = std::env::var(MANIFEST_ENV)
         .ok()
         .map(|manifest_url| UpdateSource {
+            channel: "stable".to_owned(),
             manifest_url,
             key: node::release::release_key().expect("debug builds trust the test key"),
         });

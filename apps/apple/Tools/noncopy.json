@@ -246,6 +246,7 @@
       {"literal": "\"yyyy-MM-dd'T'HH:mm:ss'Z'\"", "context": "formatter.dateFormat = \"yyyy-MM-dd'T'HH:mm:ss'Z'\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Discovery.swift": [
+      {"literal": "\"sh.amux.discovery\"", "context": "nonisolated private static let browsing = DispatchQueue(label: \"sh.amux.discovery\", qos: .utility)", "reason": "Dispatch queue label, not interface copy.", "count": 1},
       {"literal": "\"_amux._udp\"", "context": "public nonisolated static let service = \"_amux._udp\"", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
       {"literal": "\"hid\"", "context": "guard let hid = record[\"hid\"], let host = HostId(hid),", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
       {"literal": "\"v\"", "context": "let claimed = record[\"v\"], let version = UInt32(claimed)", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
@@ -758,6 +759,10 @@
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Door.swift": [
       {"literal": "\"scroll\"", "context": "case \"scroll\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"scroll\"", "context": "try fields.encode(\"scroll\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"measure\"", "context": "case \"measure\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"measure\"", "context": "try fields.encode(\"measure\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"measurement\"", "context": "case \"measurement\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"measurement\"", "context": "try fields.encode(\"measurement\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"amux-element-geometry\"", "context": "public static let elementGeometryArgument = \"amux-element-geometry\"", "reason": "Debug launch protocol spelling shared by the app and its UI-test driver, not displayed copy.", "count": 1},
       {"literal": "\"open\"", "context": "case \"open\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"cloud\"", "context": "case \"cloud\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -824,6 +829,8 @@
       {"literal": "\"dynamicType\"", "context": "try fields.encode(\"dynamicType\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"states\"", "context": "try fields.encode(\"states\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 2},
       {"literal": "\"assist\"", "context": "try fields.encode(\"assist\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"geometry\"", "context": "case \"geometry\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"geometry\"", "context": "try fields.encode(\"geometry\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"perturb\"", "context": "try fields.encode(\"perturb\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"settle\"", "context": "try fields.encode(\"settle\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"query\"", "context": "try fields.encode(\"query\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -903,6 +910,8 @@
       {"literal": "\"amux-discovery-scope\"", "context": "public static let discoveryScopeArgument = \"amux-discovery-scope\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
       {"literal": "\"amux-lan-bind\"", "context": "public static let lanBindArgument = \"amux-lan-bind\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
       {"literal": "\"amux-relay-tcp\"", "context": "public static let relayTCPArgument = \"amux-relay-tcp\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
+      {"literal": "\"amux-relay-quic\"", "context": "public static let relayQUICArgument = \"amux-relay-quic\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
+      {"literal": "\"amux-relay-root\"", "context": "public static let relayRootArgument = \"amux-relay-root\"", "reason": "Launch argument name a driver passes, not interface copy.", "count": 1},
       {"literal": "\"holdBackground\"", "context": "case \"holdBackground\": self = .holdBackground", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"push\"", "context": "case \"push\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"holdBackground\"", "context": "try fields.encode(\"holdBackground\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -1222,14 +1231,14 @@
       {"literal": "\"stop.circle\"", "context": "items.append(MenuItem(title: String(localized: \"Stop Agent\"), systemImage: \"stop.circle\") {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"chat.more\"", "context": "name: String(localized: \"More\"), identifier: \"chat.more\", items: items,", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"ellipsis\"", "context": "GlassIcon(glyph: \"ellipsis\", size: 36)", "reason": "SF Symbol name, not interface copy.", "count": 1},
-      {"literal": "\"chat.paging\"", "context": "notice(String(localized: \"Loading older messages…\"), id: \"chat.paging\", value: \"fetching\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"fetching\"", "context": "notice(String(localized: \"Loading older messages…\"), id: \"chat.paging\", value: \"fetching\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.paging\"", "context": "id: \"chat.paging\", value: \"unreachable\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.paging\"", "context": "notice(reason, id: \"chat.paging\", value: \"failed\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.away\"", "context": "notice(awayNotice, id: \"chat.away\", value: subject.away.map { \"\\($0)\" } ?? \"plain\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"\\($0)\"", "context": "notice(awayNotice, id: \"chat.away\", value: subject.away.map { \"\\($0)\" } ?? \"plain\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.loading\"", "context": "notice(String(localized: \"Loading this chat from \\(subject.host)…\"), id: \"chat.loading\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"shown\"", "context": "private func notice(_ text: String, id: String, value: String = \"shown\") -> some View {", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.paging\"", "context": "notices.append(FeedNotice(id: \"chat.paging\", text: String(localized: \"Loading older messages…\"), value: \"fetching\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"fetching\"", "context": "notices.append(FeedNotice(id: \"chat.paging\", text: String(localized: \"Loading older messages…\"), value: \"fetching\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.paging\"", "context": "id: \"chat.paging\", text: String(localized: \"Can’t reach \\(subject.host) for older messages\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.paging\"", "context": "notices.append(FeedNotice(id: \"chat.paging\", text: reason, value: \"failed\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.away\"", "context": "notices.append(FeedNotice(id: \"chat.away\", text: awayNotice, value: subject.away.map { \"\\($0)\" } ?? \"plain\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"\\($0)\"", "context": "notices.append(FeedNotice(id: \"chat.away\", text: awayNotice, value: subject.away.map { \"\\($0)\" } ?? \"plain\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.loading\"", "context": "id: \"chat.loading\", text: String(localized: \"Loading this chat from \\(subject.host)…\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"shown\"", "context": "value: \"shown\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.notice\"", "context": ".identified(\"chat.notice\", label: notice)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"sign-in\"", "context": "FootCard(kind: \"sign-in\", title: ChatWords.signIn(signIn), detail: signIn.message)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"usage\"", "context": "kind: \"usage\", title: String(localized: \"Usage limit reached\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
@@ -1398,9 +1407,6 @@
       {"literal": "\"question\"", "context": "kind: \"question\", glyph: \"questionmark.circle\", accented: resolution == .open,", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"questionmark.circle\"", "context": "kind: \"question\", glyph: \"questionmark.circle\", accented: resolution == .open,", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"#\"", "context": "ChatWords.firstLine(plan).drop { $0 == \"#\" }.trimmingCharacters(in: .whitespaces)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
-    ],
-    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Leaves/ScrollAnchor.swift": [
-      {"literal": "\"chat.rows\"", "context": "static let rows = \"chat.rows\"", "reason": "Coordinate space name, not interface copy.", "count": 1}
     ]
   }
 }

@@ -29,7 +29,11 @@ DEBUG_SYMBOLS = (
 REPORT_SYMBOLS = ("ReportStore", "ReportScreen", "ReportFreeze", "amux_profile_dump")
 REPORT_COPY = ("Report a Problem", "What went wrong?")
 FORBIDDEN_APIS = (
-    "UNUserNotificationCenter", "requestAuthorizationWithOptions",
+    # The app receives "needs you" pushes: it is the notification centre's
+    # delegate, so a push can wake it and bring one chat current. What it
+    # never does on its own is ask the person for permission; a build that
+    # grew that prompt would be asking for scope nobody agreed to.
+    "requestAuthorizationWithOptions",
     "ActivityKit", "ActivityAuthorizationInfo",
     # The app browses the local network through Network.framework and nothing
     # else. The two legacy Bonjour entry points stay refused: they reach the

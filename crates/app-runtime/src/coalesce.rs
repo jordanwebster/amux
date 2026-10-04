@@ -7,7 +7,8 @@ use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
 /// A wake the host schedules onto its main thread. Called from a worker
-/// thread; it must only schedule, never do the work.
+/// thread under the coalescer's lock, so it must only schedule, never do
+/// the work, and never take the batch itself.
 pub type WakeFn = Arc<dyn Fn() + Send + Sync>;
 
 /// Changed keys and flags, each key once, until the host takes them.
@@ -58,25 +59,25 @@ impl<K: Clone + Eq + Hash> Coalescer<K> {
     }
 
     /// Adds changes; wakes the host unless it already has a wake coming.
+    /// The wake is delivered under the lock: a take on another thread
+    /// cannot slip between the batch being marked woken and the host
+    /// hearing of it, so a wake the host receives always has its batch
+    /// still pending, and no second wake arrives before that take.
     pub fn push(&self, keys: impl IntoIterator<Item = K>, reloaded: bool, other: bool) {
-        let wake = {
-            let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
-            let Pending {
-                keys: held, seen, ..
-            } = &mut *pending;
-            for key in keys {
-                if seen.insert(key.clone()) {
-                    held.push(key);
-                }
+        let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+        let Pending {
+            keys: held, seen, ..
+        } = &mut *pending;
+        for key in keys {
+            if seen.insert(key.clone()) {
+                held.push(key);
             }
-            pending.reloaded |= reloaded;
-            pending.other |= other;
-            let moved = !pending.keys.is_empty() || pending.reloaded || pending.other;
-            let wake = moved && !pending.woken;
-            pending.woken |= wake;
-            wake
-        };
-        if wake {
+        }
+        pending.reloaded |= reloaded;
+        pending.other |= other;
+        let moved = !pending.keys.is_empty() || pending.reloaded || pending.other;
+        if moved && !pending.woken {
+            pending.woken = true;
             (self.wake)();
         }
     }

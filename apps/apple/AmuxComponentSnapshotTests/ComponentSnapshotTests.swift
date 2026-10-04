@@ -155,7 +155,7 @@ final class ComponentSnapshotTests: XCTestCase {
                 size: example.canvas,
                 traits: Self.traits(appearance)
             )
-            strategy.diffing = RoundingImageDiff.allowingChannelRounding(strategy.diffing)
+            strategy.diffing = RoundingImageDiff.allowingRasterNoise(strategy.diffing, named: name)
             strategy.snapshot = { _ in Async(value: settled) }
             let failure = verifySnapshot(
                 of: controller,

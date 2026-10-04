@@ -142,15 +142,14 @@ message ClaudeSdkItem {
   }
 }
 
-// A subagent or background task the SDK reports with its own progress.
+// A task the SDK reports whose starting call it never showed; a task of a
+// known call is progress on that call instead.
 message Task {
   string task_id = 1;
   string description = 2;
   TaskState state = 3;
   uint32 tool_count = 4;
   string last_tool = 5;
-  // The key of the tool call that started it.
-  string tool_key = 6;
   uint64 tokens = 7;
 }
 

@@ -29,24 +29,37 @@ public enum Signpost: String, Sendable, CaseIterable, Codable {
     /// is starting up and getting as far as building the scene that asks for
     /// the app's first view.
     case appEntered
-    /// Opening the account's store and reading its remembered fleet began.
+    /// The app's composition is built: its stores, router and services
+    /// exist and the runtime has been told to start. What the main thread
+    /// did between entering and here is the app's own setup.
+    case compositionBuilt
+    /// The first frame the display showed of the shell: the tabs and the
+    /// home, before the remembered fleet's rows were read. From
+    /// `compositionBuilt`, how long the shell's first build took.
+    case shellPresented
+    /// The embedded node started opening the installation: every profile's
+    /// store, the listener, the identity.
     case storeReadBegan
-    /// The remembered fleet is read and the store closed again. With
-    /// `storeReadBegan`, the store's share of a launch before its first frame.
+    /// The embedded node is up. The main thread hears of it a turn later,
+    /// however busy it is meanwhile, which is not the store's time.
+    case nodeStarted
+    /// The profile on screen started opening its fleet from the store.
+    case fleetOpenBegan
+    /// The fleet on screen has caught up with its own store, before any
+    /// host has been reached. The store's share of a launch is the node's
+    /// start (`storeReadBegan` to `nodeStarted`) plus this open
+    /// (`fleetOpenBegan` to here); marked once, for the launch.
     case storeReadEnded
-    /// The first frame the display has actually shown carrying cached rows.
+    /// The first frame the display has actually shown carrying the
+    /// remembered fleet's rows.
     case firstCachedFrame
-    case streamConnected
+    /// The first frame shown after every trusted host's agents were current
+    /// with the host, as the host lists them now rather than as they were
+    /// remembered. From `storeReadEnded`, how long reaching and catching up
+    /// with the fleet took after a launch.
     case reconciled
-    /// The instant a send is handled, before anything has been drawn or has
-    /// left the phone.
-    case sendTapped
-    /// The first frame the display has actually shown carrying the row the
-    /// person just sent. Drawn from what was typed rather than from anything
-    /// the host said, so the interval from `sendTapped` is this app's own
-    /// work and never the network's.
-    case echoCommitted
-    case streamRow
+    /// A chat on screen took rows from the runtime: new, changed or reloaded.
+    /// An idle chat takes none.
     case transcriptCommit
     /// One display refresh the app asked for. An idle app asks for none.
     case idleTick

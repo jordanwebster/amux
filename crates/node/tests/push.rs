@@ -94,17 +94,21 @@ impl Rig {
         agent.append(&snapshot(phase, &[], self.clock.now_ms()));
         agent.nudge().await;
         let revision = agent.journal().offset();
-        until("the snapshot to commit", async || {
-            self.runtime
+        until("the snapshot to commit", || async {
+            let cursor = self
+                .runtime
                 .store()
                 .await
                 .agent(&agent.key(&self.install))
                 .unwrap()
                 .unwrap()
-                .ingest_cursor
-                == revision
+                .ingest_cursor;
+            (cursor == revision)
+                .then_some(())
+                .ok_or_else(|| format!("ingest cursor {cursor} of {revision}"))
         })
-        .await;
+        .await
+        .unwrap();
         let rows = self.rows().await;
         self.note(format!("{what}: phase {phase:?}; outbox {rows:?}"));
     }
@@ -137,7 +141,14 @@ async fn a_needs_you_push_is_sent_once_due_and_cancelled_by_an_answer_exit_or_de
         "one row, keyed by the snapshot's revision"
     );
     rig.advance_to(DELAY).await;
-    until("the push", async || rig.pushes.sent().len() == 1).await;
+    until("the push", || async {
+        let sent = rig.pushes.sent().len();
+        (sent == 1)
+            .then_some(())
+            .ok_or_else(|| format!("{sent} sent"))
+    })
+    .await
+    .unwrap();
     let push = rig.pushes.sent().remove(0);
     assert_eq!(
         (
@@ -155,7 +166,14 @@ async fn a_needs_you_push_is_sent_once_due_and_cancelled_by_an_answer_exit_or_de
         "envelope fields only"
     );
     assert_eq!(push.agent_id, agent.id.as_bytes().to_vec());
-    until("the sent row to go", async || rig.rows().await.is_empty()).await;
+    until("the sent row to go", || async {
+        let rows = rig.rows().await;
+        rows.is_empty()
+            .then_some(())
+            .ok_or_else(|| format!("rows {rows:?}"))
+    })
+    .await
+    .unwrap();
     rig.note(format!(
         "due: handed to the no-op sender ({:?}, working on {:?}: {:?}); outbox {:?}",
         push.name.as_deref().unwrap_or_default(),
@@ -177,7 +195,9 @@ async fn a_needs_you_push_is_sent_once_due_and_cancelled_by_an_answer_exit_or_de
     assert!(rig.rows().await.is_empty(), "cancelled unsent");
     rig.clock.set(T0 + 3 * DELAY);
     rig.note("the delay passes");
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Only a row is ever sent, and the drain reads the rows afresh under
+    // the store lock before sending: with the outbox empty there is
+    // nothing the delay could send.
     assert_eq!(rig.pushes.sent().len(), 1, "nothing more was sent");
 
     // The agent exits while it needs you: the row goes with it.
@@ -185,10 +205,14 @@ async fn a_needs_you_push_is_sent_once_due_and_cancelled_by_an_answer_exit_or_de
         .await;
     assert_eq!(rig.rows().await.len(), 1);
     agent.die().await;
-    until("the exit to remove the row", async || {
-        rig.rows().await.is_empty()
+    until("the exit to remove the row", || async {
+        let rows = rig.rows().await;
+        rows.is_empty()
+            .then_some(())
+            .ok_or_else(|| format!("rows {rows:?}"))
     })
-    .await;
+    .await
+    .unwrap();
     rig.note(format!("the agent exits: outbox {:?}", rig.rows().await));
 
     // Delete removes it too.
@@ -203,7 +227,6 @@ async fn a_needs_you_push_is_sent_once_due_and_cancelled_by_an_answer_exit_or_de
     assert!(rig.rows().await.is_empty());
     rig.note("it is deleted: outbox []");
     rig.clock.set(T0 + 10 * DELAY);
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert_eq!(rig.pushes.sent().len(), 1, "one push in all");
     rig.note(format!("pushes sent in all: {}", rig.pushes.sent().len()));
 

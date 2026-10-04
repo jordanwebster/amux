@@ -1,24 +1,11 @@
 //! What a build knows about releases: its own version, the target it was
-//! built for, the key releases are signed with, and how a channel's
-//! manifest names the build to install.
-//!
-//! A channel is one manifest, keyed by target triple, naming a version, an
-//! artifact URL, the artifact's SHA-256 and an Ed25519 signature over
-//! [`signed_message`]. The signature binds the version to the hash, so a
-//! tampered manifest cannot relabel an old signed artifact as a newer
-//! release. The stable manifest may carry a rollout percentage; a host is
-//! inside it when hash(host id) mod 100 is under the number, so a host's
-//! place in every rollout is fixed and nothing is stored.
+//! built for and the key releases are signed with. The manifest itself,
+//! its signature and the choice of build to install are the [`release`]
+//! crate, shared with the release tool.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::sync::OnceLock;
 
-use ring::signature::{ED25519, Ed25519KeyPair, UnparsedPublicKey};
-use semver::Version;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use uuid::Uuid;
+pub use release::*;
 
 /// The target triple this binary was built for; manifests are keyed by it.
 pub const TARGET: &str = env!("AMUX_TARGET");
@@ -37,9 +24,9 @@ pub const TEST_RELEASE_KEY: [u8; 32] = [
 /// [`TEST_RELEASE_KEY`].
 pub fn release_key() -> Option<[u8; 32]> {
     match option_env!("AMUX_RELEASE_PUBLIC_KEY") {
-        Some(hex) => Some(
-            parse_hex::<32>(hex).expect("AMUX_RELEASE_PUBLIC_KEY is 64 hex digits at build time"),
-        ),
+        Some(hex) => {
+            Some(parse_key(hex).expect("AMUX_RELEASE_PUBLIC_KEY is 64 hex digits at build time"))
+        }
         None if cfg!(debug_assertions) => Some(TEST_RELEASE_KEY),
         None => None,
     }
@@ -62,180 +49,3 @@ pub fn version() -> &'static str {
 }
 
 pub use version_stamp::restamp;
-
-/// A channel's manifest.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Manifest {
-    /// The share of hosts, out of 100, that take this release; absent is
-    /// every host.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rollout: Option<u8>,
-    pub targets: BTreeMap<String, Release>,
-}
-
-/// One target's build in a manifest.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Release {
-    pub version: String,
-    pub url: String,
-    /// The artifact's SHA-256, hex.
-    pub sha256: String,
-    /// Ed25519 over [`signed_message`], base64.
-    pub signature: String,
-}
-
-/// What a release's signature covers: the target, the version and the
-/// artifact's hash.
-pub fn signed_message(target: &str, version: &str, sha256_hex: &str) -> Vec<u8> {
-    format!(
-        "amux release\n{target}\n{version}\n{}\n",
-        sha256_hex.to_ascii_lowercase()
-    )
-    .into_bytes()
-}
-
-/// Signs a release with the private key's 32-byte seed; the publishing side
-/// of [`verify`].
-pub fn sign(seed: &[u8; 32], target: &str, version: &str, sha256_hex: &str) -> String {
-    use base64::Engine as _;
-    let pair = Ed25519KeyPair::from_seed_unchecked(seed).expect("an Ed25519 seed is any 32 bytes");
-    let signature = pair.sign(&signed_message(target, version, sha256_hex));
-    base64::engine::general_purpose::STANDARD.encode(signature.as_ref())
-}
-
-pub fn sha256_hex(digest: &[u8]) -> String {
-    digest.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
-}
-
-pub fn sha256_of(bytes: &[u8]) -> String {
-    sha256_hex(&Sha256::digest(bytes))
-}
-
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum VerifyError {
-    #[error("the artifact's hash {actual} is not the manifest's {expected}")]
-    Hash { expected: String, actual: String },
-    #[error("the release signature does not verify against this build's key")]
-    Signature,
-}
-
-/// Checks a downloaded artifact's hash against the manifest and the
-/// manifest's signature against `key`.
-pub fn verify(
-    release: &Release,
-    target: &str,
-    actual_sha256_hex: &str,
-    key: &[u8; 32],
-) -> Result<(), VerifyError> {
-    use base64::Engine as _;
-    if !release.sha256.eq_ignore_ascii_case(actual_sha256_hex) {
-        return Err(VerifyError::Hash {
-            expected: release.sha256.clone(),
-            actual: actual_sha256_hex.to_owned(),
-        });
-    }
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(release.signature.trim())
-        .map_err(|_| VerifyError::Signature)?;
-    UnparsedPublicKey::new(&ED25519, key)
-        .verify(
-            &signed_message(target, &release.version, &release.sha256),
-            &signature,
-        )
-        .map_err(|_| VerifyError::Signature)
-}
-
-/// Whether a host takes a release published to `percent` of hosts.
-pub fn inside_rollout(host: Option<&Uuid>, percent: Option<u8>) -> bool {
-    let Some(percent) = percent.filter(|percent| *percent < 100) else {
-        return true;
-    };
-    // A host with no id yet has no fixed place, so it waits for a full
-    // rollout rather than take a place at random.
-    let Some(host) = host else {
-        return false;
-    };
-    rollout_slot(host) < u64::from(percent)
-}
-
-/// hash(host id) mod 100: the host's fixed place in every rollout.
-pub fn rollout_slot(host: &Uuid) -> u64 {
-    let digest = Sha256::digest(host.hyphenated().to_string().as_bytes());
-    let mut head = [0u8; 8];
-    head.copy_from_slice(&digest[..8]);
-    u64::from_be_bytes(head) % 100
-}
-
-/// What a manifest means for this host.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Choice {
-    Install {
-        release: Release,
-        version: Version,
-    },
-    /// Nothing to do, and why.
-    Skip(Skip),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Skip {
-    NoBuildForTarget,
-    UnreadableVersion(String),
-    NotNewer(Version),
-    Rejected(Version),
-    OutsideRollout,
-}
-
-/// Picks the build to install: only one newer than the running version, not
-/// the build that was rolled back, and only inside the rollout.
-pub fn choose(
-    manifest: &Manifest,
-    target: &str,
-    running: &Version,
-    rejected: Option<&Version>,
-    host: Option<&Uuid>,
-) -> Choice {
-    let Some(release) = manifest.targets.get(target) else {
-        return Choice::Skip(Skip::NoBuildForTarget);
-    };
-    let Ok(version) = Version::parse(&release.version) else {
-        return Choice::Skip(Skip::UnreadableVersion(release.version.clone()));
-    };
-    if version <= *running {
-        return Choice::Skip(Skip::NotNewer(version));
-    }
-    if rejected == Some(&version) {
-        return Choice::Skip(Skip::Rejected(version));
-    }
-    if !inside_rollout(host, manifest.rollout) {
-        return Choice::Skip(Skip::OutsideRollout);
-    }
-    Choice::Install {
-        release: release.clone(),
-        version,
-    }
-}
-
-const fn hex_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn parse_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
-    let bytes = text.trim().as_bytes();
-    if bytes.len() != N * 2 {
-        return None;
-    }
-    let mut out = [0u8; N];
-    for (i, pair) in bytes.chunks(2).enumerate() {
-        out[i] = hex_digit(pair[0])? << 4 | hex_digit(pair[1])?;
-    }
-    Some(out)
-}

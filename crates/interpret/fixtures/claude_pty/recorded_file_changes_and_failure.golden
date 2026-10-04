@@ -25,9 +25,9 @@ snapshot WORKING queue=[] working_on=- at=1790386591133 asks=[] session=25684f7a
 item b0b4f4f4-706e-43ad-b644-230ec57ba06b thinking final at=1790386591270 text=""
 snapshot WORKING queue=[] working_on=- at=1790386591276 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=36582 tasks=? background=?
 ## 60 recorded 58: fact Transcript type=assistant uuid=6dfd4dba-af2c-431e-a225-a29a7037f907
-item toolu_01FJjmDBCY6HDDDbVQ3CHCss tool final at=1790386591633 text="" Read TOOL_STATE_RUNNING exploration input="{\"file_path\":\"<MACHINE_PATH>\"}"
+item toolu_01FJjmDBCY6HDDDbVQ3CHCss tool final at=1790386591633 text="" Read TOOL_STATE_RUNNING read input="{\"file_path\":\"<MACHINE_PATH>\"}"
 ## 61 recorded 59: fact Transcript type=user uuid=042a6a79-cbbe-4c50-aa97-7eb7ad9c6fc7
-item toolu_01FJjmDBCY6HDDDbVQ3CHCss tool final at=1790386591633 text="" Read TOOL_STATE_SUCCEEDED exploration ended=1790386591685 input="{\"file_path\":\"<MACHINE_PATH>\"}" out="1\tCURRENT\n2\t"
+item toolu_01FJjmDBCY6HDDDbVQ3CHCss tool final at=1790386591633 text="" Read TOOL_STATE_SUCCEEDED read ended=1790386591685 input="{\"file_path\":\"<MACHINE_PATH>\"}" out="1\tCURRENT\n2\t"
 ## 65 recorded 63: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_012R6FqWBi8NJXv2M4XPgTYu
 snapshot WORKING queue=[] working_on=- at=1790386592660 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=36582 tasks=? background=? running=toolu_012R6FqWBi8NJXv2M4XPgTYu Write since=1790386592660
 ## 67 recorded 65: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_012R6FqWBi8NJXv2M4XPgTYu

@@ -2,7 +2,7 @@
 //! debug builds trust, and reading an agent's chat back over its profile's
 //! client socket.
 
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 pub mod desk;
 pub mod term;
@@ -25,7 +25,10 @@ use wire::{ListProfilesRequest, SubscribeRequest, session_event, subscribe_reque
 /// rebuilt test binary.
 pub const NO_DISCOVERY: (&str, &str) = ("AMUX_TEST_DISCOVERY_MODE", "disabled");
 
-/// How long any one wait may take before it is a hang.
+/// How long any one wait may take before it is a hang: twice the shared
+/// default, since these tests spawn the built binary and real agent
+/// processes under the supervisor, and a cold start under a loaded runner
+/// takes longer than loopback traffic.
 pub const PATIENCE: Duration = Duration::from_secs(60);
 
 /// The private half of the test release key debug builds trust.
@@ -43,8 +46,7 @@ pub fn amux_binary() -> &'static Path {
 pub fn binaries() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let status = std::process::Command::new(cargo)
+        let status = provider_fakes::cargo::command()
             .args(["build", "--locked", "-p", "provider-fakes", "--bins"])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .status()
@@ -116,20 +118,22 @@ impl Channel {
 
     /// Names `bytes` as `version` for this target, signed with the test key.
     pub fn publish(&self, version: &str, bytes: Vec<u8>) {
-        let sha256 = release::sha256_of(&bytes);
-        let manifest = Manifest {
+        let mut manifest = Manifest {
+            channel: "stable".into(),
             rollout: None,
             targets: [(
                 release::TARGET.to_owned(),
                 Release {
                     version: version.to_owned(),
                     url: format!("{}/amux-{version}", self.url()),
-                    signature: release::sign(&TEST_SEED, release::TARGET, version, &sha256),
-                    sha256,
+                    sha256: release::sha256_of(&bytes),
+                    size: bytes.len() as u64,
                 },
             )]
             .into(),
+            signature: String::new(),
         };
+        manifest.signature = release::sign(&TEST_SEED, &manifest);
         *self.manifest.lock().unwrap() = serde_json::to_string(&manifest).unwrap();
         *self.artifact.lock().unwrap() = bytes;
     }
@@ -165,20 +169,31 @@ pub async fn client(socket: &Path) -> ClientServiceClient<GrpcChannel> {
     wire::client_service_client(grpc_channel(Path::new(&profile.socket_path)).await.unwrap())
 }
 
-/// Waits until `done` holds; fails the test after `patience`.
-pub async fn until_within(what: &str, patience: Duration, mut done: impl AsyncFnMut() -> bool) {
-    let deadline = tokio::time::Instant::now() + patience;
-    while !done().await {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+pub use patience::{Stuck, holds_for, until_within};
+
+/// The shared wait, with this crate's [`PATIENCE`].
+pub async fn until<T, E, F>(what: &str, probe: impl FnMut() -> F) -> Result<T, Stuck>
+where
+    E: std::fmt::Display,
+    F: std::future::Future<Output = Result<T, E>>,
+{
+    until_within(what, PATIENCE, probe).await
 }
 
-pub async fn until(what: &str, done: impl AsyncFnMut() -> bool) {
-    until_within(what, PATIENCE, done).await;
+/// The agent's journal holds `n` ended turns, or how many it holds.
+pub fn turns_ended(dir: &Path, n: usize) -> Result<(), String> {
+    let turns = turns_journaled(dir);
+    (turns == n)
+        .then_some(())
+        .ok_or_else(|| format!("{turns} turns journaled"))
+}
+
+/// The chat holds `n` items saying `text`, or what it holds.
+pub fn says(chat: &[(String, String)], text: &str, n: usize) -> Result<(), String> {
+    let found = count(chat, text);
+    (found == n)
+        .then_some(())
+        .ok_or_else(|| format!("{found} items say {text:?}; chat: {chat:?}"))
 }
 
 /// An agent's chat as a client opening it reads it: every item's key and

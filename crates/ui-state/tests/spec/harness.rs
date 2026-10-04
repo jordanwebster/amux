@@ -68,17 +68,17 @@ pub enum Body {
 
 pub fn encode(kind: Kind, body: &Body) -> Vec<u8> {
     use wire::{claude_pty_item as pty, claude_sdk_item as sdk, codex_item as codex};
-    let class = |explore: bool| {
-        (if explore {
-            ToolClass::Exploration
-        } else {
-            ToolClass::Consequential
+    let class = |name: &str, explore: bool| {
+        (match (explore, name) {
+            (false, _) => ToolClass::Consequential,
+            (true, "Read") => ToolClass::Read,
+            (true, _) => ToolClass::Search,
         }) as i32
     };
     let tool = |name: &str, state: ToolState, explore: bool, subagent: bool| wire::ToolCall {
         name: name.into(),
         state: state as i32,
-        class: class(explore),
+        class: class(name, explore),
         subagent: subagent.then(|| wire::SubagentProgress {
             tool_count: 1,
             last_tool: "Read".into(),
@@ -163,7 +163,7 @@ pub fn encode(kind: Kind, body: &Body) -> Vec<u8> {
                     codex::Kind::Work(wire::Work {
                         of: Some(of),
                         state: state as i32,
-                        class: class(explore),
+                        class: class(name, explore),
                         ..wire::Work::default()
                     })
                 }
@@ -485,12 +485,7 @@ pub fn projection(transcript: &Transcript) -> Vec<(String, String)> {
     transcript
         .iter()
         .map(|held| {
-            let row = format!(
-                "{:?}|{:?}|{:?}",
-                held,
-                transcript.run_at(held.item.order),
-                transcript.referrer(&held.item.key)
-            );
+            let row = format!("{:?}|{:?}", held, transcript.run_at(held.item.order));
             (held.item.key.clone(), row)
         })
         .collect()

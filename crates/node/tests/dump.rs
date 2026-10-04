@@ -100,10 +100,14 @@ async fn a_dump_bundles_the_redacted_slice_parts_journal_tails_and_log() {
             .unwrap(),
     );
     for id in [live, stopped] {
-        until("the first turn to end", async || {
-            runtime.agent(id).await.unwrap().phase == Phase::Idle as i32
+        until("the first turn to end", || async {
+            let phase = runtime.agent(id).await.unwrap().phase;
+            (phase == Phase::Idle as i32)
+                .then_some(())
+                .ok_or_else(|| format!("phase {phase}"))
         })
-        .await;
+        .await
+        .unwrap();
     }
     runtime.stop(stopped, StopMode::Graceful).await.unwrap();
     assert_eq!(
@@ -129,15 +133,17 @@ async fn a_dump_bundles_the_redacted_slice_parts_journal_tails_and_log() {
     );
     let live_key =
         store::AgentKey::new(runtime.host().as_bytes().to_vec(), live.as_bytes().to_vec());
-    until("the later input's reflection", async || {
+    until("the later input's reflection", || async {
         runtime
             .store()
             .await
             .item_by_input(&live_key, b"later")
             .unwrap()
-            .is_some()
+            .map(|_| ())
+            .ok_or("no row carries it")
     })
-    .await;
+    .await
+    .unwrap();
 
     let bundle = runtime
         .dump(DumpRequest {

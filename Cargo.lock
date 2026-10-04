@@ -20,6 +20,7 @@ dependencies = [
  "interpret",
  "journal",
  "libc",
+ "patience",
  "prost",
  "provider-fakes",
  "pty-host",
@@ -63,7 +64,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "amux"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "agent",
  "agent-dir",
@@ -83,6 +84,7 @@ dependencies = [
  "jsonwebtoken",
  "libc",
  "node",
+ "patience",
  "prost",
  "provider-fakes",
  "pty-host",
@@ -181,6 +183,7 @@ dependencies = [
  "futures-util",
  "model",
  "node",
+ "patience",
  "provider-fakes",
  "sha2",
  "tempfile",
@@ -684,6 +687,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "hyper-util",
+ "patience",
  "prost",
  "provider-fakes",
  "testnet",
@@ -2292,7 +2296,7 @@ dependencies = [
 
 [[package]]
 name = "node"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "agent-dir",
  "async-trait",
@@ -2312,10 +2316,12 @@ dependencies = [
  "libc",
  "mdns-sd",
  "oauth2",
+ "patience",
  "prost",
  "provider-fakes",
  "quinn",
  "rcgen",
+ "release",
  "reqwest",
  "ring",
  "rustls",
@@ -2656,6 +2662,14 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link",
+]
+
+[[package]]
+name = "patience"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -3079,6 +3093,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "libc",
+ "patience",
  "pty-host",
  "serde",
  "serde_json",
@@ -3481,6 +3496,19 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "release"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ring",
+ "semver",
+ "serde",
+ "sha2",
+ "thiserror 2.0.20",
+ "uuid",
+]
 
 [[package]]
 name = "replay-support"
@@ -4337,6 +4365,7 @@ dependencies = [
  "interpret",
  "journal",
  "node",
+ "patience",
  "prost",
  "provider-fakes",
  "quinn",
@@ -5546,7 +5575,9 @@ dependencies = [
  "prost",
  "prost-types",
  "protoc-bin-vendored",
+ "release",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

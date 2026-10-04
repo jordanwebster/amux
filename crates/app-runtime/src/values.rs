@@ -37,6 +37,14 @@ pub struct StartConfig {
     /// served test relay.
     #[serde(default)]
     pub relay_tcp: Option<SocketAddr>,
+    /// Dial the relay's QUIC carrier here, instead of where the account
+    /// service names it, trusting `relay_root`. Only a driving build reads
+    /// it, to reach a served test relay the way a phone reaches the cloud.
+    #[serde(default)]
+    pub relay_quic: Option<SocketAddr>,
+    /// The served relay's self-signed certificate, DER as hex.
+    #[serde(default)]
+    pub relay_root: Option<String>,
     /// How many rows a chat opens with.
     #[serde(default = "default_tail")]
     pub tail: u32,
@@ -275,6 +283,10 @@ pub struct HostView {
     /// For this device: whether it is signed in to the account its profile
     /// is bound to; None while it was never bound.
     pub signed_in: Option<bool>,
+    /// This device's copy of the host's agents has caught up with the host
+    /// on a live stream: what the fleet shows for it is what it lists now.
+    /// Always true for this device.
+    pub current: bool,
 }
 
 /// What changed in the fleet since the host last took its changes.

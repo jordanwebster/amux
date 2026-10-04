@@ -307,7 +307,7 @@ impl Session {
         inner.note(DriverEvent::Subscribed { tail });
         inner.apply(Msg::Connection(Connection::Live));
         let mut ended = None;
-        // The Snapshot leads the opening.
+        // The Opening and the Snapshot lead the opening.
         loop {
             match stream.next().await {
                 Some(Ok(event)) => {

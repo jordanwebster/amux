@@ -5,11 +5,10 @@
 #![allow(dead_code)]
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use node::harness::HostVia;
 use node::{Edge, Observed, RelayCarrier};
-use testnet::{HostDecl, Net, PATIENCE};
+use testnet::{HostDecl, Net, PATIENCE, until};
 use tonic::transport::Channel;
 use uuid::Uuid;
 use wire::profile_service_client::ProfileServiceClient;
@@ -61,32 +60,21 @@ pub fn operation(profile: String) -> ProfileOperation {
     }
 }
 
-/// Polls `check` until it holds, failing the test after the patience runs
-/// out with `what` it was waiting for.
-pub async fn until<F, Fut>(what: &str, mut check: F)
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    let deadline = tokio::time::Instant::now() + PATIENCE;
-    while !check().await {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
 /// Waits until each host reaches the other over `via`.
 pub async fn until_via(net: &Net, a: &str, b: &str, via: HostVia) {
     let (a_id, b_id) = (host_id(net, a), host_id(net, b));
     let (near, far) = (edge(net, a), edge(net, b));
     until(&format!("{a} and {b} to reach each other {via:?}"), || {
         let (near, far) = (near.clone(), far.clone());
-        async move { near.via(b_id).await == via && far.via(a_id).await == via }
+        async move {
+            let seen = (near.via(b_id).await, far.via(a_id).await);
+            (seen == (via, via))
+                .then_some(())
+                .ok_or_else(|| format!("{a} -> {b} {:?}, {b} -> {a} {:?}", seen.0, seen.1))
+        }
     })
-    .await;
+    .await
+    .unwrap();
 }
 
 /// The carrier the host's relay link rides, once it is connected.
@@ -226,7 +214,7 @@ pub async fn open_session(
     agent: Uuid,
 ) -> Result<tonic::Streaming<wire::SessionEvent>, tonic::Status> {
     let mut client = from
-        .session_peer(host, agent)
+        .session_peer(host)
         .await
         .map_err(|error| tonic::Status::unavailable(error.to_string()))?;
     let mut events = client

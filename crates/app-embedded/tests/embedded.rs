@@ -8,7 +8,6 @@
 #![cfg(unix)]
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use app_embedded::{EdgeOverrides, EmbeddedRuntime, PairRequest, ProfileId, StartConfig};
 use app_runtime::values::{AccountBinding, Draft, RelayLink};
@@ -16,11 +15,10 @@ use app_runtime::{AppRuntime, Wake};
 use client::SystemClock;
 use model::AgentKey;
 use node::SourcePolicy;
+use patience::{PATIENCE, until};
 use provider_fakes::script::Step;
 use testnet::{AgentDecl, FakeKind, HostDecl, Net, Relay, Topology};
 use wire::{ProfileStartPairingRequest, StartPairingRequest, start_pairing_request};
-
-const PATIENCE: Duration = Duration::from_secs(30);
 
 fn text(text: &str) -> Step {
     Step::Text {
@@ -49,6 +47,8 @@ fn config(dir: &std::path::Path) -> StartConfig {
         lan: true,
         lan_bind: None,
         relay_tcp: None,
+        relay_quic: None,
+        relay_root: None,
         tail: 50,
     }
 }
@@ -79,14 +79,18 @@ async fn only_profile(embedded: &EmbeddedRuntime) -> ProfileId {
     profiles[0].id.parse().unwrap()
 }
 
-async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
-    tokio::time::timeout(PATIENCE, async {
-        while !check() {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+/// Waits until `check` holds of the app's state; the failure names the
+/// hosts the app lists then.
+async fn eventually(app: &AppRuntime, what: &str, mut check: impl FnMut() -> bool) {
+    until(what, || {
+        std::future::ready(
+            check()
+                .then_some(())
+                .ok_or_else(|| format!("hosts: {:?}", app.hosts())),
+        )
     })
     .await
-    .unwrap_or_else(|_| panic!("never saw {what}"));
+    .unwrap();
 }
 
 fn worker_key(net: &Net) -> AgentKey {
@@ -101,7 +105,7 @@ fn worker_key(net: &Net) -> AgentKey {
 /// prompt the desk's agent answers.
 async fn converse(app: &AppRuntime, net: &Net) {
     let agent = worker_key(net);
-    eventually("the desk's agent in the fleet", || {
+    eventually(app, "the desk's agent in the fleet", || {
         app.fleet_card(&agent).is_some()
     })
     .await;
@@ -112,7 +116,7 @@ async fn converse(app: &AppRuntime, net: &Net) {
             .iter()
             .any(|row| format!("{:?}", row.kind).contains(wanted))
     };
-    eventually("the first turn from the desk", || {
+    eventually(app, "the first turn from the desk", || {
         chat.frame().caught_up && says("turn one")
     })
     .await;
@@ -121,7 +125,7 @@ async fn converse(app: &AppRuntime, net: &Net) {
         attachments: Vec::new(),
     })
     .await;
-    eventually("the desk's answer", || says("answered from the phone")).await;
+    eventually(app, "the desk's answer", || says("answered from the phone")).await;
 }
 
 /// Opens pairing mode on the desk: the PIN it shows and where it listens.
@@ -260,7 +264,7 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
         .unpair(phone, desk.host_id.as_bytes())
         .await
         .unwrap();
-    eventually("the desk to leave the trusted hosts", || {
+    eventually(&app, "the desk to leave the trusted hosts", || {
         !app.hosts()
             .iter()
             .any(|host| host.name == "desk" && host.trusted)
@@ -326,33 +330,45 @@ async fn a_phone_links_to_its_desk_again_once_its_browser_finds_the_desk_back() 
         .await
         .unwrap();
     let app = app(&embedded, phone).await;
-    eventually("the desk online", || desk_online(&app)).await;
+    eventually(&app, "the desk online", || desk_online(&app)).await;
 
     net.stop_daemon("desk").await.unwrap();
-    eventually("the desk out of reach", || !desk_online(&app)).await;
+    eventually(&app, "the desk out of reach", || !desk_online(&app)).await;
     net.restart_daemon("desk").await.unwrap();
     // The phone's own browser sees the desk advertise again and hands it
     // over; nothing else tells the phone the desk is back.
     let (_, addrs) = pairing_pin(&net).await;
     embedded.discovered(vec![found(desk, addrs.clone())]);
-    eventually("the desk online again", || desk_online(&app)).await;
+    eventually(&app, "the desk online again", || desk_online(&app)).await;
 
     // Handed over while the desk is still down, the dial fails; the phone
     // tries again while its browser lists the desk, and links once the
     // desk answers.
     net.stop_daemon("desk").await.unwrap();
-    eventually("the desk out of reach again", || !desk_online(&app)).await;
+    eventually(&app, "the desk out of reach again", || !desk_online(&app)).await;
     embedded.discovered(vec![found(desk, addrs.clone())]);
-    // Past the dial's QUIC handshake, so that dial has failed.
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // The dial's outcome: its error on the desk's row, which the route
+    // coming up earlier had cleared.
+    eventually(&app, "the dial to the stopped desk to fail", || {
+        app.hosts()
+            .iter()
+            .any(|host| host.name == "desk" && host.last_dial_error.is_some())
+    })
+    .await;
     net.restart_daemon("desk").await.unwrap();
-    eventually("the desk online after a failed dial", || desk_online(&app)).await;
+    eventually(&app, "the desk online after a failed dial", || {
+        desk_online(&app)
+    })
+    .await;
 
     // The desk loses power and comes back where it listened before: the
     // address the browser handed over still reaches it.
     net.checkpoint_host("desk").await.unwrap();
     net.rewind_host("desk", &[]).await.unwrap();
-    eventually("the desk online after losing power", || desk_online(&app)).await;
+    eventually(&app, "the desk online after losing power", || {
+        desk_online(&app)
+    })
+    .await;
 
     drop(app);
     embedded.shutdown().await.unwrap();
@@ -361,13 +377,14 @@ async fn a_phone_links_to_its_desk_again_once_its_browser_finds_the_desk_back() 
 
 /// Waits until a profile's relay link says `wanted`.
 async fn relay_link(embedded: &EmbeddedRuntime, profile: ProfileId, wanted: RelayLink) {
-    tokio::time::timeout(PATIENCE, async {
-        while embedded.account(profile).await.unwrap().relay != wanted {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+    until(&format!("the relay link to say {wanted:?}"), || async {
+        let relay = embedded.account(profile).await.unwrap().relay;
+        (relay == wanted)
+            .then_some(())
+            .ok_or_else(|| format!("relay link {relay:?}"))
     })
     .await
-    .unwrap_or_else(|_| panic!("the relay link never said {wanted:?}"));
+    .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -376,6 +376,43 @@ impl State {
         let wire = task.to_wire(&id);
         let at_ms = task.at_ms;
         let summary = str_field(line, "summary");
+        let key = task.tool_key.clone();
+        // A task of a call this interpreter showed is progress on that call,
+        // which stays open until the task ends: its own result only said the
+        // task was launched. The notification carries the task's answer.
+        if let Some(tool) = self.tools.get_mut(&key) {
+            let finished = wire.state != WireTaskState::Running as i32;
+            let subagent = tool
+                .task
+                .as_ref()
+                .map_or(text(line, "task_type") == "local_agent", |task| {
+                    task.subagent
+                });
+            tool.task = Some(super::TaskProgress {
+                subagent,
+                tool_count: wire.tool_count,
+                last_tool: wire.last_tool.clone(),
+                finished,
+            });
+            if line.get("is_backgrounded") == Some(&Value::Bool(true)) {
+                tool.background = true;
+            }
+            if !finished {
+                tool.state = ToolState::Running as i32;
+                tool.ended_at_ms = None;
+            } else if tool.background {
+                tool.state = match WireTaskState::try_from(wire.state) {
+                    Ok(WireTaskState::Completed) => ToolState::Succeeded,
+                    Ok(WireTaskState::Failed) => ToolState::Failed,
+                    _ => ToolState::Cancelled,
+                } as i32;
+                tool.ended_at_ms.get_or_insert(now);
+                if let Some(summary) = summary {
+                    tool.outcome_text = summary;
+                }
+            }
+            return self.emit_tool(emit, &key);
+        }
         self.shared.item(
             emit,
             ItemDraft {
@@ -634,6 +671,7 @@ impl State {
             decision: None,
             ended_at_ms: None,
             parent_key: text(line, "parent_tool_use_id").to_owned(),
+            task: None,
             images: Vec::new(),
             emitted: Vec::new(),
         });
@@ -723,6 +761,14 @@ impl State {
             .decision
             .as_ref()
             .is_some_and(|decision| decision.outcome == DecisionOutcome::Denied as i32);
+        if tool.background && tool.task.as_ref().is_some_and(|task| !task.finished) {
+            // The result says the task was launched, for the model; the
+            // call is open until the task's notification.
+            if let Some(result) = result {
+                tool.outcome_json = compact_json(&without_image_bytes(result));
+            }
+            return self.emit_tool(emit, &id);
+        }
         tool.state = if denied {
             ToolState::Denied
         } else if is_error {
@@ -860,7 +906,10 @@ impl State {
                 ..Default::default()
             },
         );
-        self.tools.clear();
+        // A call whose task outlives the turn is still open: its task's
+        // events are progress on it until the notification ends it.
+        self.tools
+            .retain(|_, tool| tool.task.as_ref().is_some_and(|task| !task.finished));
         self.blocks.clear();
     }
 

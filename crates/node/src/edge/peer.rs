@@ -64,7 +64,7 @@ struct PeerApi {
 fn caller<T>(request: &Request<T>) -> Result<HostId, Status> {
     match request.extensions().get::<BoxedGrpcConnectInfo>() {
         Some(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::TlsTrusted { peer },
+            auth: BoxedGrpcAuth::Trusted { peer },
         }) => Ok(*peer),
         _ => Err(Status::unauthenticated("the caller is not a trusted host")),
     }
@@ -91,6 +91,7 @@ impl PeerService for PeerApi {
     ) -> Result<Response<Self::SubscribeStream>, Status> {
         caller(&request)?;
         let request = request.into_inner();
+        let asked = std::time::Instant::now();
         let runtime = self
             .runtime
             .upgrade()
@@ -98,7 +99,12 @@ impl PeerService for PeerApi {
         let subscription = match request.from {
             Some(subscribe_request::From::After(after)) => {
                 runtime
-                    .subscribe_after(&request.agent_id, after.revision, after.cap)
+                    .subscribe_after(
+                        &request.agent_id,
+                        after.revision,
+                        after.cap,
+                        after.generation,
+                    )
                     .await
             }
             Some(subscribe_request::From::Tail(tail)) => {
@@ -108,6 +114,11 @@ impl PeerService for PeerApi {
         }
         .map_err(|error| status(error.to_wire()))?;
         drop(runtime);
+        tracing::debug!(
+            agent = %uuid::Uuid::from_slice(&request.agent_id).map(|id| id.to_string()).unwrap_or_default(),
+            opened_ms = asked.elapsed().as_millis(),
+            "opened a session subscription"
+        );
         let stream = futures_util::stream::unfold(subscription, |mut subscription| async move {
             let event = subscription.next().await?;
             Some((Ok(SessionEvent::clone(&event)), subscription))

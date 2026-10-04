@@ -104,6 +104,11 @@ struct Tool {
     ended_at_ms: Option<i64>,
     parent_key: String,
     hidden: bool,
+    /// The task this call started and Claude reports on: a subagent, or a
+    /// shell in the background. The call stays open until the task ends,
+    /// since its own result only says the task was launched.
+    #[serde(default)]
+    task: Option<TaskProgress>,
     /// Images the tool read, by the blobs that hold them.
     #[serde(with = "serde_pb::msgs")]
     images: Vec<Attachment>,
@@ -149,6 +154,16 @@ enum Request {
     /// What Claude applied: the effort it runs at, which a model change
     /// can also move.
     Settings,
+}
+
+/// What a call's task has done so far, and whether it ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct TaskProgress {
+    /// A subagent's steps; a shell in the background counts none.
+    subagent: bool,
+    tool_count: u32,
+    last_tool: String,
+    finished: bool,
 }
 
 /// A subagent or background task Claude reports.
@@ -674,7 +689,13 @@ impl State {
             }),
             background: tool.background,
             parent_key: tool.parent_key.clone(),
-            subagent: None,
+            subagent: tool.task.as_ref().filter(|task| task.subagent).map(|task| {
+                wire::SubagentProgress {
+                    tool_count: task.tool_count,
+                    last_tool: task.last_tool.clone(),
+                    finished: task.finished,
+                }
+            }),
             server: tool.server.clone(),
             exit_code: None,
             ended_at_ms: tool.ended_at_ms,
@@ -753,7 +774,6 @@ impl TaskState {
             state: self.state,
             tool_count: self.tool_count,
             last_tool: self.last_tool.clone(),
-            tool_key: self.tool_key.clone(),
             tokens: self.tokens,
         }
     }
@@ -1003,14 +1023,13 @@ fn describe_item(body: &[u8]) -> ItemView {
             "task",
             true,
             format!(
-                "{} {} {} tools={} last={} tokens={} call={}",
+                "{} {} {} tools={} last={} tokens={}",
                 task.task_id,
                 wire::TaskState::try_from(task.state).map_or("?", |state| state.as_str_name()),
                 Value::String(task.description),
                 task.tool_count,
                 or_dash(&task.last_tool),
                 task.tokens,
-                or_dash(&task.tool_key)
             ),
         ),
         Some(Kind::Turn(turn)) => (

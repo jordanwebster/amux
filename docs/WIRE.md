@@ -73,7 +73,7 @@ failed and whether the call took effect is unknown. Codes a client meets often:
 | --- | --- | --- |
 | `SubscribeInventory(Empty)` | stream of `InventoryEvent` | Hosts and agent rows: the current set, `CaughtUp`, then changes |
 | `ResolveAgent(ResolveAgentRequest)` | `Agent` | Fleet-wide name to row. Every other call takes an agent id. |
-| `Subscribe(SubscribeRequest)` | stream of `SessionEvent` | One agent: snapshot, tail, then live |
+| `Subscribe(SubscribeRequest)` | stream of `SessionEvent` | One agent: opening, snapshot, tail, then live |
 | `Fetch(FetchRequest)` | `FetchResponse` | A page of older items |
 | `Get(GetRequest)` | `Item` | One item in full |
 | `SendInput(SendInputRequest)` | `SendInputResponse` | The interpreter's verdict on one input |
@@ -106,14 +106,16 @@ A client sends one integer, `tail`: how many of the newest rows it wants. It
 never sends a revision. The runtime caps the tail at K, the rows a replica
 keeps (200, `TAIL_ROWS` in [`crates/node/src/runtime.rs`](../crates/node/src/runtime.rs)).
 The tail is a minimum: a client that cannot fill its screen pages older at once
-with `Fetch`. `after` is how a peer's source resumes toward an origin; a
-client that sends it on `ClientService` gets `UNIMPLEMENTED`.
+with `Fetch`. `after` is how a peer's source resumes toward an origin: the
+revision it holds, a cap, and the origin generation that revision was taken
+under. A client that sends it on `ClientService` gets `UNIMPLEMENTED`.
 
 A stream is `SessionEvent`s:
 
 | Event | Meaning |
 | --- | --- |
-| `Snapshot` | Everything needed to draw the agent without items. Always first. |
+| `Opening` | The origin generation the stream's rows belong to. Always first; clients ignore it. |
+| `Snapshot` | Everything needed to draw the agent without items. Second. |
 | `Item` | One item, full state at its revision |
 | `Append` | Text added to an item the client holds |
 | `CaughtUp` | You hold what the origin holds as of now |
@@ -123,10 +125,11 @@ A stream is `SessionEvent`s:
 
 ### What a stream carries
 
-1. **The opening**, read from the runtime's store in one cut: the snapshot,
-   then the newest `tail` rows of the agent's block by order, oldest first,
-   each once in its latest state, then the agent's marker if one is set
-   (`CaughtUp`, or `Detached` for a replica nobody is following).
+1. **The opening**, read from the runtime's store in one cut: `Opening`,
+   the snapshot, then the newest `tail` rows of the agent's block by order,
+   oldest first, each once in its latest state, then the agent's marker if
+   one is set (`CaughtUp`, or `Detached` for a replica nobody is
+   following).
 2. **Live events**, forwarded verbatim in commit order: every `Snapshot`,
    `Item` and `Append` committed after the cut, and the markers as they come.
 
@@ -167,8 +170,16 @@ are served as they stand, stale and honestly, until the source reconnects and
 `CaughtUp` arrives.
 
 `Reset` comes from a replica's source when the origin answered with a fresh
-tail rather than a delta. The client keeps drawing what it has, builds the
-fresh transcript beside it, and swaps it in at the next `CaughtUp`.
+tail rather than a delta: the source's cursor was too far behind for the
+cap, or was taken under a generation the origin no longer runs (an unclean
+reboot mints the same revisions again for different content). The client
+keeps drawing what it has, builds the fresh transcript beside it, and swaps
+it in at the next `CaughtUp`.
+
+`Opening` carries the origin's generation: its own for an agent the host
+runs, and for a replica the one its source last caught up under. A peer
+source stores it beside its cursor and sends both back in `after`; a client
+never needs it, because a client resumes with a tail.
 
 `Lagged` means the stream fell more than the fan-out ring's capacity behind
 the agent's broadcast. The stream closes; the client subscribes again with a

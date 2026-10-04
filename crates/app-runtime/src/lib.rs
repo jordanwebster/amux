@@ -183,6 +183,7 @@ impl AppRuntime {
                 addrs: host.addrs.clone(),
                 via: host.via(),
                 signed_in: host.signed_in,
+                current: host.current.unwrap_or(false),
             })
             .collect();
         hosts.sort_by(|a, b| (!a.local, &a.name).cmp(&(!b.local, &b.name)));

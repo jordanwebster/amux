@@ -21,8 +21,8 @@ use node::{Launch, SourcePolicy, SourceVerdict};
 use prost::Message as _;
 use provider_fakes::script::{Ask, Question, Step};
 use store::{AgentKey, CommitClock, Marker, PageEnd, Store as _};
-use testnet::observe::{self, Mark, holds_for, marks};
-use testnet::{AgentDecl, JournalCut, Net, NetOptions, PATIENCE, Topology};
+use testnet::observe::{self, Mark, marks};
+use testnet::{AgentDecl, JournalCut, Net, NetOptions, PATIENCE, Topology, holds_for, until};
 use wire::client_service_server::ClientService as _;
 use wire::{
     FetchRequest, InventoryEvent, Item, SessionEvent, StopMode, inventory_event, session_event,
@@ -99,34 +99,21 @@ async fn replica_state(net: &Net, host: &str, agent: &str) -> Option<(u64, Optio
     Some((row.source_cursor, store.cut(&key, 0).unwrap().marker))
 }
 
-/// Waits until `host` holds what the origin holds for `agent`: caught up
-/// through the origin's newest revision, with the block intact.
-async fn wait_current(net: &Net, host: &str, agent: &str) {
-    let what = format!("{agent}'s replica at {host} to be current");
-    let waited = observe::eventually(&what, PATIENCE, || async {
-        let newest = origin_revision(net, agent).await;
-        replica_state(net, host, agent).await == Some((newest, Some(Marker::CaughtUp)))
-            && net.assert_block_invariant(host, agent).await.is_ok()
-    })
-    .await;
-    if let Err(stuck) = waited {
-        let state = replica_state(net, host, agent).await;
-        let newest = origin_revision(net, agent).await;
-        let block = net.assert_block_invariant(host, agent).await;
-        panic!(
-            "{stuck}\n  replica (cursor, marker): {state:?}\n  origin newest: {newest}\n  block: {block:?}"
-        );
-    }
-}
-
 /// Waits until the origin's journal for `agent` holds a message saying
 /// `wanted`.
 async fn wait_origin_says(net: &Net, agent: &str, wanted: &str) {
-    observe::eventually(&format!("{agent} to say {wanted}"), PATIENCE, || async {
-        origin_rows(net, agent)
-            .await
-            .iter()
-            .any(|item| item.text.contains(wanted))
+    until(&format!("{agent} to say {wanted}"), || async {
+        let rows = origin_rows(net, agent).await;
+        if rows.iter().any(|item| item.text.contains(wanted)) {
+            Ok(())
+        } else {
+            Err(format!(
+                "origin rows: {:?}",
+                rows.iter()
+                    .map(|item| item.text.as_str())
+                    .collect::<Vec<_>>()
+            ))
+        }
     })
     .await
     .unwrap();
@@ -177,6 +164,21 @@ async fn restore(net: &mut Net) {
     net.wait_link("desk", "laptop", true).await.unwrap();
 }
 
+/// Waits until a source's first retry is armed on the policy clock, one
+/// backoff from now. Policy time stands still, so the deadline is exact;
+/// with it armed and unfired, nothing has reconnected early.
+async fn backoff_armed(net: &Net) {
+    let at = net.now_ms() + Launch::default().source_backoff_ms;
+    tokio::time::timeout(PATIENCE, net.clock().unwrap().armed(at))
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "no source retry armed at {at}; sleeping: {:?}",
+                net.clock().unwrap().sleeping()
+            )
+        });
+}
+
 /// A replica starts from a tail of K, follows live records, takes a delta
 /// after a break that fits the cap and a Reset with a fresh tail after one
 /// that does not; its markers arrive in sequence with the rows they cover,
@@ -194,7 +196,7 @@ async fn a_replica_takes_a_tail_live_records_a_delta_and_a_reset_with_markers_in
         .await
         .unwrap();
     wait_origin_says(&net, "worker", "t0-1").await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
 
     let mut chat = net.observe("laptop", "worker", 50).await.unwrap();
     chat.observe_until(observe::caught_up, PATIENCE)
@@ -214,7 +216,7 @@ async fn a_replica_takes_a_tail_live_records_a_delta_and_a_reset_with_markers_in
     )
     .await
     .unwrap();
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
 
     // N is clamped to K, at the replica and at the origin alike.
     for host in ["laptop", "desk"] {
@@ -229,7 +231,11 @@ async fn a_replica_takes_a_tail_live_records_a_delta_and_a_reset_with_markers_in
             .count();
         assert_eq!(held, K as usize, "{host}: {}", wide.transcript());
         assert!(origin_rows(&net, "worker").await.len() > K as usize);
-        assert_eq!(marks(opening)[0], Mark::Snapshot);
+        assert!(
+            matches!(marks(opening)[..], [Mark::Opening(_), Mark::Snapshot, ..]),
+            "{host}: {}",
+            wide.transcript()
+        );
     }
 
     // A break that fits the cap: Detached, then the delta and CaughtUp,
@@ -244,6 +250,8 @@ async fn a_replica_takes_a_tail_live_records_a_delta_and_a_reset_with_markers_in
     let caught_up_before = count_caught_up(chat.events());
     net.send("worker", "three").await.unwrap();
     wait_origin_says(&net, "worker", "t2-1").await;
+    // A window: nothing the test controls gates a marker the laptop must
+    // not mint while the host is away.
     holds_for(
         "no CaughtUp while the host is away",
         Duration::from_millis(300),
@@ -276,7 +284,7 @@ async fn a_replica_takes_a_tail_live_records_a_delta_and_a_reset_with_markers_in
         "the missed rows arrive before CaughtUp: {delta:?}"
     );
     assert!(matches!(delta.last(), Some(Mark::CaughtUp(_))), "{delta:?}");
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
 
     // A break beyond the cap: Reset, the Snapshot, a fresh tail of K, then
     // CaughtUp.
@@ -312,7 +320,7 @@ async fn a_replica_takes_a_tail_live_records_a_delta_and_a_reset_with_markers_in
         .count();
     assert_eq!(tail, K as usize, "{reset:?}");
     assert!(matches!(reset.last(), Some(Mark::CaughtUp(_))), "{reset:?}");
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     println!(
         "the laptop's chat on the desk's worker, K = {K}:\n{}",
         chat.transcript()
@@ -338,14 +346,14 @@ async fn a_stream_dying_after_its_snapshot_replays_after_the_cursor_while_a_page
         .unwrap();
     let worker = net.agent("worker").unwrap().clone();
     let key = worker.key();
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     // The first turn happens while the laptop is away, so it comes back to
     // a Reset: its block is the newest K rows and the oldest lie below it.
     sever(&mut net).await;
     net.send("worker", "go").await.unwrap();
     wait_origin_says(&net, "worker", "first-9").await;
     restore(&mut net).await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let (cursor, _) = replica_state(&net, "laptop", "worker").await.unwrap();
     let mut chat = net.observe("laptop", "worker", 50).await.unwrap();
     chat.observe_until(observe::caught_up, PATIENCE)
@@ -414,9 +422,9 @@ async fn a_stream_dying_after_its_snapshot_replays_after_the_cursor_while_a_page
     assert!(revised.revision > cursor);
 
     restore(&mut net).await;
-    observe::eventually("the stream to drop after its Snapshot", PATIENCE, || {
+    until("the stream to drop after its Snapshot", || {
         let dropped = dropped.load(Ordering::SeqCst);
-        async move { dropped }
+        async move { dropped.then_some(()).ok_or("not dropped") }
     })
     .await
     .unwrap();
@@ -469,18 +477,11 @@ async fn a_stream_dying_after_its_snapshot_replays_after_the_cursor_while_a_page
         );
     }
 
-    // Nothing reconnects before the backoff is up; then the source asks
-    // after its old cursor and the delta carries the missing rows.
-    holds_for(
-        "the source waits out its backoff",
-        Duration::from_millis(200),
-        || {
-            let caught_up = count_caught_up(chat.events());
-            async move { caught_up == 1 }
-        },
-    )
-    .await
-    .unwrap();
+    // Nothing reconnects before the backoff is up: the retry is armed on
+    // the policy clock and has not fired. Then the source asks after its
+    // old cursor and the delta carries the missing rows.
+    backoff_armed(&net).await;
+    assert_eq!(count_caught_up(chat.events()), 1);
     net.advance(Duration::from_secs(1)).unwrap();
     let events = chat
         .observe_until(
@@ -495,7 +496,7 @@ async fn a_stream_dying_after_its_snapshot_replays_after_the_cursor_while_a_page
         .unwrap();
     let replay = since_last_detached(events);
     assert!(!replay.contains(&Mark::Reset), "{replay:?}");
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     println!(
         "the laptop's chat through a stream dropped after its Snapshot:\n{}",
         chat.transcript()
@@ -550,7 +551,7 @@ async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
     .await
     .unwrap();
     wait_origin_says(&net, "worker", "t0-2").await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let mut chat = net.observe("laptop", "worker", 10).await.unwrap();
     chat.observe_until(observe::caught_up, PATIENCE)
         .await
@@ -568,15 +569,12 @@ async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
     assert!(dropped.load(Ordering::SeqCst));
     let desk = net.host("desk").unwrap().host_id;
     assert!(laptop.host_ready(desk), "the host was never lost");
-    holds_for(
-        "the marker to read Detached through the backoff",
-        Duration::from_millis(200),
-        || async {
-            replica_state(&net, "laptop", "worker").await.unwrap().1 == Some(Marker::Detached)
-        },
-    )
-    .await
-    .unwrap();
+    backoff_armed(&net).await;
+    assert_eq!(
+        replica_state(&net, "laptop", "worker").await.unwrap().1,
+        Some(Marker::Detached),
+        "the marker reads Detached through the backoff"
+    );
 
     net.advance(Duration::from_secs(1)).unwrap();
     chat.observe_until(
@@ -589,7 +587,7 @@ async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
     )
     .await
     .unwrap();
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     println!(
         "the laptop's chat through a stream lost with the link up:\n{}",
         chat.transcript()
@@ -614,11 +612,11 @@ async fn a_link_back_before_the_follower_looks_is_followed_without_its_backoff()
         .await
         .unwrap();
     wait_origin_says(&net, "worker", "t0-1").await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     for _ in 0..3 {
         sever(&mut net).await;
         restore(&mut net).await;
-        wait_current(&net, "laptop", "worker").await;
+        net.current("laptop", "worker").await.unwrap();
     }
 
     // The follower is busy with a change to the worker while the link is
@@ -647,7 +645,7 @@ async fn a_link_back_before_the_follower_looks_is_followed_without_its_backoff()
     sever(&mut net).await;
     restore(&mut net).await;
     release.send(true).unwrap();
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     net.shutdown().await.unwrap();
 }
 
@@ -673,7 +671,7 @@ async fn fetch_serves_the_block_locally_extends_it_from_the_origin_and_errors_wh
         .unwrap();
     for agent in ["worker", "other"] {
         wait_origin_says(&net, agent, "t0-1").await;
-        wait_current(&net, "laptop", agent).await;
+        net.current("laptop", agent).await.unwrap();
     }
     // A break past the cap leaves each replica a block of the newest K.
     sever(&mut net).await;
@@ -685,7 +683,7 @@ async fn fetch_serves_the_block_locally_extends_it_from_the_origin_and_errors_wh
     }
     restore(&mut net).await;
     for agent in ["worker", "other"] {
-        wait_current(&net, "laptop", agent).await;
+        net.current("laptop", agent).await.unwrap();
     }
 
     // Inside the block: the replica's own rows.
@@ -759,10 +757,10 @@ async fn trimming_after_a_reset_keeps_the_block_whole_and_runs_on_the_retention_
     .unwrap();
     let key = net.agent("worker").unwrap().key();
     wait_origin_says(&net, "worker", "t0-1").await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     net.send("worker", "two").await.unwrap();
     wait_origin_says(&net, "worker", "t1-1").await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     // The whole history, paged down from the origin into the block.
     let all = fetch(&net, "laptop", "worker", None, 100).await.unwrap();
     assert!(all.exhausted);
@@ -775,7 +773,7 @@ async fn trimming_after_a_reset_keeps_the_block_whole_and_runs_on_the_retention_
         wait_origin_says(&net, "worker", &format!("t{turn}-1")).await;
     }
     restore(&mut net).await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let (floor, stored) = {
         let runtime = net.runtime("laptop").unwrap();
         let store = runtime.store().await;
@@ -882,7 +880,7 @@ async fn on_demand_warms_one_chat_listed_sweeps_the_rest_and_exited_agents_close
     let quiet = net.agent("quiet").unwrap().key();
     for agent in ["named", "quiet"] {
         wait_origin_says(&net, agent, "t0-0").await;
-        wait_current(&net, "laptop", agent).await;
+        net.current("laptop", agent).await.unwrap();
     }
     let laptop = net.runtime("laptop").unwrap();
     assert_eq!(laptop.open_sources(), {
@@ -901,11 +899,16 @@ async fn on_demand_warms_one_chat_listed_sweeps_the_rest_and_exited_agents_close
     }
     restore(&mut net).await;
     let laptop = net.runtime("laptop").unwrap();
-    observe::eventually("the laptop's inventory to catch up", PATIENCE, || async {
-        laptop.host_ready(net.host("desk").unwrap().host_id)
+    until("the laptop's inventory to catch up", || async {
+        laptop
+            .host_ready(net.host("desk").unwrap().host_id)
+            .then_some(())
+            .ok_or("desk not ready at the laptop")
     })
     .await
     .unwrap();
+    // A window: nothing the test controls gates a source that the policy
+    // must not open.
     holds_for(
         "no source opens by itself",
         Duration::from_millis(300),
@@ -929,7 +932,7 @@ async fn on_demand_warms_one_chat_listed_sweeps_the_rest_and_exited_agents_close
     )
     .await
     .unwrap();
-    wait_current(&net, "laptop", "named").await;
+    net.current("laptop", "named").await.unwrap();
     assert_eq!(laptop.open_sources(), vec![named.clone()]);
     let stale = replica_state(&net, "laptop", "quiet").await.unwrap();
     assert!(
@@ -939,7 +942,7 @@ async fn on_demand_warms_one_chat_listed_sweeps_the_rest_and_exited_agents_close
 
     // Foreground: every listed agent gets a source.
     laptop.set_source_policy(SourcePolicy::Listed);
-    wait_current(&net, "laptop", "quiet").await;
+    net.current("laptop", "quiet").await.unwrap();
 
     // An agent that exits: its source closes once its catch-up has landed.
     let quiet_id = net.agent("quiet").unwrap().id;
@@ -948,25 +951,31 @@ async fn on_demand_warms_one_chat_listed_sweeps_the_rest_and_exited_agents_close
         .stop(quiet_id, StopMode::Graceful)
         .await
         .unwrap();
-    observe::eventually("quiet's source to close", PATIENCE, || async {
-        !laptop.open_sources().contains(&quiet)
+    until("quiet's source to close", || async {
+        let open = laptop.open_sources();
+        (!open.contains(&quiet))
+            .then_some(())
+            .ok_or_else(|| format!("open sources: {open:?}"))
     })
     .await
     .unwrap();
-    wait_current(&net, "laptop", "quiet").await;
+    net.current("laptop", "quiet").await.unwrap();
     let row = laptop.store().await.agent(&quiet).unwrap().unwrap();
     assert_eq!(row.lifecycle, wire::Lifecycle::Exited as i32);
     assert_eq!(laptop.open_sources(), vec![named]);
 
     // Resumed by its origin, it is followed again.
     net.resume("quiet", Some("again")).await.unwrap();
-    observe::eventually("quiet's source to reopen", PATIENCE, || async {
-        laptop.open_sources().contains(&quiet)
+    until("quiet's source to reopen", || async {
+        let open = laptop.open_sources();
+        open.contains(&quiet)
+            .then_some(())
+            .ok_or_else(|| format!("open sources: {open:?}"))
     })
     .await
     .unwrap();
     wait_origin_says(&net, "quiet", "t0-0").await;
-    wait_current(&net, "laptop", "quiet").await;
+    net.current("laptop", "quiet").await.unwrap();
     let row = laptop.store().await.agent(&quiet).unwrap().unwrap();
     assert_eq!(
         (row.lifecycle, row.incarnation),
@@ -1002,15 +1011,18 @@ async fn switching_to_on_demand_closes_every_source_no_client_watches() {
     let named = net.agent("named").unwrap().key();
     for agent in ["named", "quiet"] {
         wait_origin_says(&net, agent, "t0-0").await;
-        wait_current(&net, "laptop", agent).await;
+        net.current("laptop", agent).await.unwrap();
     }
     let laptop = net.runtime("laptop").unwrap();
     assert_eq!(laptop.open_sources().len(), 2);
 
     let chat = net.observe("laptop", "named", 10).await.unwrap();
     laptop.set_source_policy(SourcePolicy::OnDemand);
-    observe::eventually("the unwatched source to close", PATIENCE, || async {
-        laptop.open_sources() == vec![named.clone()]
+    until("the unwatched source to close", || async {
+        let open = laptop.open_sources();
+        (open == vec![named.clone()])
+            .then_some(())
+            .ok_or_else(|| format!("open sources: {open:?}"))
     })
     .await
     .unwrap();
@@ -1018,7 +1030,7 @@ async fn switching_to_on_demand_closes_every_source_no_client_watches() {
         net.send(agent, "two").await.unwrap();
         wait_origin_says(&net, agent, "t1-0").await;
     }
-    wait_current(&net, "laptop", "named").await;
+    net.current("laptop", "named").await.unwrap();
     let stale = replica_state(&net, "laptop", "quiet").await.unwrap();
     assert!(
         stale.0 < origin_revision(&net, "quiet").await,
@@ -1029,23 +1041,25 @@ async fn switching_to_on_demand_closes_every_source_no_client_watches() {
     net.send("named", "three").await.unwrap();
     wait_origin_says(&net, "named", "t2-0").await;
     restore(&mut net).await;
-    wait_current(&net, "laptop", "named").await;
+    net.current("laptop", "named").await.unwrap();
     assert_eq!(laptop.open_sources(), vec![named.clone()]);
 
     laptop.set_source_policy(SourcePolicy::Listed);
-    wait_current(&net, "laptop", "quiet").await;
+    net.current("laptop", "quiet").await.unwrap();
     drop(chat);
     drop(laptop);
     net.shutdown().await.unwrap();
 }
 
-/// A replica of a host that lost power holds rows the host no longer has.
-/// No source of that host opens before its generation is compared, not
-/// even for a chat a client opens while the host is away, so the laptop
-/// drops them and takes a fresh tail: every chat sees a Reset and never a
-/// row the origin lost.
+/// A replica of a host that lost power holds rows the host no longer has,
+/// under a cursor the host will mint again for other content. A source
+/// resumes naming the generation its cursor was taken under, and the
+/// rewound origin answers that with a fresh tail: every chat sees a Reset
+/// before its next CaughtUp and never a row the origin lost, and the
+/// replica's cursor ends up under the new generation. A cursor taken under
+/// the new generation is answered with a delta as usual.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_never_return() {
+async fn a_rewound_origin_resets_every_source_that_resumes_under_its_old_generation() {
     const K: u32 = 6;
     let topology = desk_and_laptop().agent(
         AgentDecl::new("worker", "desk")
@@ -1057,16 +1071,19 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
         .unwrap();
     let key = net.agent("worker").unwrap().key();
     wait_origin_says(&net, "worker", "t0-0").await;
-    wait_current(&net, "laptop", "worker").await;
-    observe::eventually("the journal read to its end", PATIENCE, || async {
+    net.current("laptop", "worker").await.unwrap();
+    until("the journal read to its end", || async {
         let end = net.journal_end("worker").unwrap();
-        net.runtime("desk")
+        let cursor = net
+            .runtime("desk")
             .unwrap()
             .store()
             .await
             .cursor(&key)
-            .unwrap()
-            == end
+            .unwrap();
+        (cursor == end)
+            .then_some(())
+            .ok_or_else(|| format!("cursor {cursor} of {end}"))
     })
     .await
     .unwrap();
@@ -1074,23 +1091,32 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
     net.checkpoint_host("desk").await.unwrap();
     net.send("worker", "lost").await.unwrap();
     wait_origin_says(&net, "worker", "t1-0").await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let mut chat = net.observe("laptop", "worker", 10).await.unwrap();
     chat.observe_until(observe::caught_up, PATIENCE)
         .await
         .unwrap();
+    let generation = net.generation("desk").unwrap();
+    let before = net
+        .runtime("laptop")
+        .unwrap()
+        .store()
+        .await
+        .agent(&key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(before.source_generation, generation);
 
     // The laptop loses desk before desk comes back rewound.
     sever(&mut net).await;
-    let laptop = net.runtime("laptop").unwrap();
-    let desk = net.host("desk").unwrap().host_id;
-    observe::eventually("the laptop to detach desk's agents", PATIENCE, || async {
-        replica_state(&net, "laptop", "worker").await.unwrap().1 == Some(Marker::Detached)
+    until("the laptop to detach desk's agents", || async {
+        let state = replica_state(&net, "laptop", "worker").await;
+        (state.is_some_and(|(_, marker)| marker == Some(Marker::Detached)))
+            .then_some(())
+            .ok_or_else(|| format!("replica (cursor, marker): {state:?}"))
     })
     .await
     .unwrap();
-    assert!(!laptop.host_ready(desk), "an away host is not ready");
-    let generation = net.generation("desk").unwrap();
     net.rewind_host(
         "desk",
         &[JournalCut {
@@ -1102,21 +1128,11 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
     .unwrap();
     assert_eq!(net.generation("desk").unwrap(), generation + 1);
 
-    // A client opening the chat while desk is away opens no source: none
-    // may open before desk's new inventory is in and compared.
+    // A chat opened while desk is away is served as it stands, detached.
     let mut away = net.observe("laptop", "worker", 10).await.unwrap();
-    holds_for(
-        "no source opens while desk is away",
-        Duration::from_millis(300),
-        || {
-            let open = laptop.open_sources();
-            let ready = laptop.host_ready(desk);
-            async move { open.is_empty() && !ready }
-        },
-    )
-    .await
-    .unwrap();
-    drop(laptop);
+    away.observe_until(|events| marks(events).contains(&Mark::Detached), PATIENCE)
+        .await
+        .unwrap();
     restore(&mut net).await;
     for chat in [&mut away, &mut chat] {
         let events = chat
@@ -1130,9 +1146,15 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
             )
             .await
             .unwrap();
+        let since = since_last_detached(events);
+        let reset = since.iter().position(|m| *m == Mark::Reset);
+        let caught_up = since
+            .iter()
+            .position(|m| matches!(m, Mark::CaughtUp(_)))
+            .unwrap();
         assert!(
-            since_last_detached(events).contains(&Mark::Reset),
-            "{}",
+            reset.is_some_and(|reset| reset < caught_up),
+            "a Reset before the first CaughtUp after the break: {}",
             chat.transcript()
         );
         let from = events
@@ -1148,28 +1170,139 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
             chat.transcript()
         );
     }
-    wait_current(&net, "laptop", "worker").await;
-    let held = net
-        .runtime("laptop")
-        .unwrap()
-        .store()
-        .await
-        .cut(&key, u32::MAX)
-        .unwrap()
-        .held;
+    net.current("laptop", "worker").await.unwrap();
+    let laptop = net.runtime("laptop").unwrap();
+    let (held, row, recorded) = {
+        let store = laptop.store().await;
+        (
+            store.cut(&key, u32::MAX).unwrap().held,
+            store.agent(&key).unwrap().unwrap(),
+            store
+                .host_generation(net.host("desk").unwrap().host_id.as_bytes())
+                .unwrap(),
+        )
+    };
     assert!(
         !held.iter().any(|item| item.text.contains("t1-0")),
         "a row the origin lost never returns: {held:#?}"
     );
+    assert_eq!(row.source_generation, generation + 1);
+    assert_eq!(recorded, Some(generation + 1));
+
+    // The origin itself: the same cursor is a fresh tail under the old
+    // generation and a delta under the new.
+    let desk = net.runtime("desk").unwrap();
+    let stale = desk
+        .subscribe_after(&key.agent, row.source_cursor, K, generation)
+        .await
+        .unwrap();
+    let stale = opening_of(stale).await;
     assert_eq!(
-        net.runtime("laptop")
-            .unwrap()
-            .store()
-            .await
-            .host_generation(net.host("desk").unwrap().host_id.as_bytes())
-            .unwrap(),
-        Some(generation + 1)
+        stale[..2],
+        [Mark::Opening(generation + 1), Mark::Reset],
+        "{stale:?}"
     );
+    let fresh = desk
+        .subscribe_after(&key.agent, row.source_cursor, K, generation + 1)
+        .await
+        .unwrap();
+    let fresh = opening_of(fresh).await;
+    assert_eq!(
+        fresh,
+        [
+            Mark::Opening(generation + 1),
+            Mark::Snapshot,
+            Mark::CaughtUp(row.source_cursor)
+        ],
+        "{fresh:?}"
+    );
+    drop(desk);
+    drop(laptop);
+    net.shutdown().await.unwrap();
+}
+
+/// The marks of a stream's opening, through its CaughtUp.
+async fn opening_of(mut subscription: node::Subscription) -> Vec<Mark> {
+    let mut seen = Vec::new();
+    tokio::time::timeout(PATIENCE, async {
+        while let Some(event) = subscription.next().await {
+            seen.push(observe::mark(&event));
+            if matches!(seen.last(), Some(Mark::CaughtUp(_))) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the opening reaches CaughtUp");
+    seen
+}
+
+/// An exited agent's replica has settled: its source closed for good once
+/// the exit landed. When its host comes back rewound the settled source
+/// looks again, and the origin resets it like any other, so the rows the
+/// origin lost go here too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rewound_origin_resets_a_settled_replica_too() {
+    let topology = desk_and_laptop().agent(
+        AgentDecl::new("brief", "desk")
+            .steps(turns(2, 1))
+            .prompt("go"),
+    );
+    let mut net = Net::start_with(topology, options(6, |_, _| {}))
+        .await
+        .unwrap();
+    let brief = net.agent("brief").unwrap().clone();
+    let key = brief.key();
+    wait_origin_says(&net, "brief", "t0-0").await;
+    net.current("laptop", "brief").await.unwrap();
+    let durable = net.journal_end("brief").unwrap();
+    net.checkpoint_host("desk").await.unwrap();
+    net.send("brief", "lost").await.unwrap();
+    wait_origin_says(&net, "brief", "t1-0").await;
+    net.runtime("desk")
+        .unwrap()
+        .stop(brief.id, StopMode::Graceful)
+        .await
+        .unwrap();
+    let laptop = net.runtime("laptop").unwrap();
+    until("the laptop to settle brief exited", || async {
+        let row = laptop.store().await.agent(&key).unwrap();
+        let exited = row.is_some_and(|row| row.lifecycle == wire::Lifecycle::Exited as i32);
+        let open = laptop.open_sources();
+        (exited && open.is_empty())
+            .then_some(())
+            .ok_or_else(|| format!("exited {exited}, open sources {open:?}"))
+    })
+    .await
+    .unwrap();
+    let generation = net.generation("desk").unwrap();
+
+    sever(&mut net).await;
+    net.rewind_host(
+        "desk",
+        &[JournalCut {
+            agent: "brief".to_owned(),
+            byte: durable,
+        }],
+    )
+    .await
+    .unwrap();
+    restore(&mut net).await;
+    net.current("laptop", "brief").await.unwrap();
+    let (held, row) = {
+        let store = laptop.store().await;
+        (
+            store.cut(&key, u32::MAX).unwrap().held,
+            store.agent(&key).unwrap().unwrap(),
+        )
+    };
+    assert!(
+        !held.iter().any(|item| item.text.contains("t1-0")),
+        "a row the origin lost never returns: {held:#?}"
+    );
+    assert_eq!(row.source_generation, generation + 1);
+    assert_eq!(row.lifecycle, wire::Lifecycle::Exited as i32);
+    drop(laptop);
     net.shutdown().await.unwrap();
 }
 
@@ -1228,24 +1361,26 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
     let brief = net.agent("brief").unwrap().clone();
     let key = brief.key();
     wait_origin_says(&net, "brief", "t0-1").await;
-    wait_current(&net, "laptop", "brief").await;
+    net.current("laptop", "brief").await.unwrap();
     armed.store(true, Ordering::SeqCst);
     net.runtime("desk")
         .unwrap()
         .stop(brief.id, StopMode::Graceful)
         .await
         .unwrap();
-    observe::eventually(
+    until(
         "the laptop to list brief exited while holding an exit record",
-        PATIENCE,
         || async {
-            holding.load(Ordering::SeqCst)
-                && laptop
-                    .store()
-                    .await
-                    .agent(&key)
-                    .unwrap()
-                    .is_some_and(|row| row.lifecycle == wire::Lifecycle::Exited as i32)
+            let holding = holding.load(Ordering::SeqCst);
+            let lifecycle = laptop
+                .store()
+                .await
+                .agent(&key)
+                .unwrap()
+                .map(|row| row.lifecycle);
+            (holding && lifecycle == Some(wire::Lifecycle::Exited as i32))
+                .then_some(())
+                .ok_or_else(|| format!("holding {holding}, lifecycle {lifecycle:?}"))
         },
     )
     .await
@@ -1257,7 +1392,7 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
     );
     gate.send_replace(true);
 
-    wait_current(&net, "laptop", "brief").await;
+    net.current("laptop", "brief").await.unwrap();
     let origin = origin_rows(&net, "brief").await;
     let mut replica = laptop.store().await.cut(&key, u32::MAX).unwrap().held;
     replica.sort_by_key(|item| item.order);
@@ -1266,8 +1401,11 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
         origin.last().map(|item| (&item.key, item.revision)),
         "the replica ends with the origin's newest row"
     );
-    observe::eventually("brief's source to close", PATIENCE, || async {
-        !laptop.open_sources().contains(&key)
+    until("brief's source to close", || async {
+        let open = laptop.open_sources();
+        (!open.contains(&key))
+            .then_some(())
+            .ok_or_else(|| format!("open sources: {open:?}"))
     })
     .await
     .unwrap();
@@ -1292,7 +1430,7 @@ async fn blobs_and_diffs_of_a_peers_agent_are_made_at_its_origin_and_kept_by_the
         .await
         .unwrap();
     wait_origin_says(&net, "worker", "t0-0").await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let worker = net.agent("worker").unwrap().clone();
     let agent_id = worker.id.as_bytes().to_vec();
     let own = net.host("desk").unwrap().data_dir.clone();
@@ -1413,7 +1551,7 @@ async fn a_dump_gathers_the_host_side_of_a_peers_agents() {
         .await
         .unwrap();
     wait_origin_says(&net, "worker", "pushed with").await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let worker = net.agent("worker").unwrap().clone();
     let request = wire::DumpRequest {
         agent_ids: Vec::new(),
@@ -1549,12 +1687,16 @@ async fn an_ask_open_across_a_daemon_restart_is_the_same_ask_and_is_answered_aft
     );
     let mut net = Net::start(topology).await.unwrap();
     let worker = net.agent("worker").unwrap().clone();
-    observe::eventually("the laptop to hold worker's open ask", PATIENCE, || async {
-        held_ask(&net, "laptop", "worker").await.0.is_some()
+    until("the laptop to hold worker's open ask", || async {
+        let held = held_ask(&net, "laptop", "worker").await;
+        held.0
+            .is_some()
+            .then_some(())
+            .ok_or_else(|| format!("held ask: {held:?}"))
     })
     .await
     .unwrap();
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     let before = held_ask(&net, "laptop", "worker").await;
     assert_eq!(before.1, Some(wire::Phase::NeedsYou));
 
@@ -1562,7 +1704,7 @@ async fn an_ask_open_across_a_daemon_restart_is_the_same_ask_and_is_answered_aft
     net.wait_link("desk", "laptop", false).await.unwrap();
     net.restart_daemon("desk").await.unwrap();
     net.wait_link("desk", "laptop", true).await.unwrap();
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     assert_eq!(
         held_ask(&net, "desk", "worker").await,
         before,
@@ -1597,7 +1739,7 @@ async fn an_ask_open_across_a_daemon_restart_is_the_same_ask_and_is_answered_aft
         "{verdict:?}"
     );
     wait_origin_says(&net, "worker", "running unit").await;
-    wait_current(&net, "laptop", "worker").await;
+    net.current("laptop", "worker").await.unwrap();
     assert_eq!(held_ask(&net, "laptop", "worker").await.0, None);
     let row = net.runtime("desk").unwrap().agent(worker.id).await.unwrap();
     assert_eq!(

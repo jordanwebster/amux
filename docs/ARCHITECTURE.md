@@ -326,10 +326,12 @@ daemon.
 Each profile holds links to the hosts it trusts: direct QUIC on the local
 network, SSH (`amux relay` joining the SSH session to the profile's
 `link.sock`), or through a relay. Every link carries a control stream and
-application streams; inside each stream the two hosts run a TLS handshake
-pinned to the keys they exchanged when they paired, so the carrier never
-grants authority. Pairing, the handshake, routing and the relay's
-forwarding rule are on [the link protocol](PROTOCOL.md) page.
+application streams. A direct QUIC link is itself the pinned handshake,
+and the streams on it between the two paired hosts are plain; inside every
+other stream the two hosts run a TLS handshake pinned to the keys they
+exchanged when they paired, so a relay never grants authority. Pairing, the
+handshake, routing and the relay's forwarding rule are on
+[the link protocol](PROTOCOL.md) page.
 
 **Paired daemons are replicas of each other.** A daemon follows each trusted
 host's inventory, keeps replica rows for the agents it lists, and for each
@@ -339,10 +341,20 @@ into the local store before it is broadcast to local subscribers
 ([`node::sources`](../crates/node/src/sources.rs)). So every client,
 including the terminal on the same machine, reads through its own local
 runtime: the calls on the local socket and on a peer link are one
-vocabulary. A host that bumps its generation (an unclean reboot) has every
-replica of it dropped at the next inventory catch-up; nothing else
-invalidates a replica. Untrusting a host drops its replicas and ends its
-followers.
+vocabulary. Untrusting a host drops its replicas and ends its followers;
+nothing else drops one.
+
+The remembered agents' subscriptions are opened in the same flight as the
+inventory's, before it has caught up, so a fleet reconciles in one round
+trip rather than two. A revision cursor is only meaningful under the
+generation it was taken under: a host that came back from an unclean reboot
+mints the same numbers again for different content. So every session stream
+opens by naming the origin's generation, a source stores it on the block
+and names it when it resumes, and an origin answers a cursor of another
+generation with a fresh tail that replaces everything held, which the open
+chats see as a Reset.
+The reset happens on each replica's own stream, whichever of the two
+catch-ups lands first; the inventory's only records the new generation.
 
 **The relay** is the same binary run as `amux server start --cloud`
 ([`crates/amux/src/relay.rs`](../crates/amux/src/relay.rs)). A signed-in
@@ -420,6 +432,7 @@ checks.
 | [`attachments`](../crates/attachments/src/lib.rs) | Attachments as positioned text, and the `<amux-attachment>` element the model sees. |
 | [`settings`](../crates/settings/src/lib.rs) | Installation, profile and UI settings, and where their files live. |
 | [`redaction`](../crates/redaction/src/lib.rs) | The structural redactor for free text and JSON in reports, logs and captures. |
+| [`release`](../crates/release/src/lib.rs) | A release channel's signed manifest: signing, verification and the build a host installs, shared by the daemon and the release tool. |
 | [`version-stamp`](../crates/version-stamp/src/lib.rs) | The version stamp in a built binary, and re-stamping a copy. |
 
 **The agent side** — everything that reads a provider.
@@ -464,6 +477,7 @@ checks.
 
 | Crate | What it is |
 |---|---|
+| [`patience`](../crates/patience/src/lib.rs) | Waiting in tests: one deadline, one way to fail, and what was last seen. Every test crate waits through it; the harness builds its stream and cursor waits on it. |
 | [`testnet`](../crates/testnet/src/lib.rs) | The many-daemons harness: topologies of production runtimes in one process, faults and observations. See [testnet](TESTNET.md). |
 | [`provider-fakes`](../crates/provider-fakes/src/lib.rs) | Scripted stand-ins for the Claude and Codex binaries, playing authored scripts or recordings. |
 | [`qualification`](../crates/qualification/src/lib.rs) | Environment-dependent checks: live providers and performance baselines on enrolled machines. |
@@ -485,7 +499,7 @@ workspace crates, and ignores dev-dependencies. Its rules:
    check fails when the actual set differs in either direction, so adding
    an edge, or dropping one, is a deliberate edit to the policy. A crate
    missing from the policy fails too.
-2. **Production never depends on test support.** `testnet`,
+2. **Production never depends on test support.** `patience`, `testnet`,
    `qualification`, `claude-specs`, `codex-specs`, `provider-fakes`,
    `fake-amux` and `shot` may be depended on only by each other.
 3. **The UI never reaches the daemon or a provider.** `model`, `client`,
@@ -497,12 +511,12 @@ The allowed sets encode the layering above:
 
 | Crate | May depend on | Why |
 |---|---|---|
-| `wire`, `model`, `settings`, `redaction`, `version-stamp`, `codex`, `pty-host` | nothing in the workspace | leaves everything else builds on |
+| `wire`, `model`, `settings`, `redaction`, `release`, `version-stamp`, `codex`, `pty-host` | nothing in the workspace | leaves everything else builds on |
 | `journal`, `store`, `agent-dir`, `attachments` | `wire` | |
 | `interpret` | `wire`, `redaction` | the pure step and its body redactor |
 | `claude` | `pty-host` | |
 | `agent` | `agent-dir`, `attachments`, `claude`, `interpret`, `journal`, `pty-host`, `wire` | the agent process is the only production crate that reads a provider |
-| `node` | `agent-dir`, `interpret`, `journal`, `settings`, `store`, `version-stamp`, `wire` | reaches agents only through the directory contract, never the `agent` crate, so the phone can host a runtime with no provider in its graph; `interpret` only for the debug bundle's per-kind redactor |
+| `node` | `agent-dir`, `interpret`, `journal`, `release`, `settings`, `store`, `version-stamp`, `wire` | reaches agents only through the directory contract, never the `agent` crate, so the phone can host a runtime with no provider in its graph; `interpret` only for the debug bundle's per-kind redactor |
 | `client` | `agent-dir`, `wire` | the local socket and the clock come from the contract crate |
 | `ui-state` → `model`, `wire`; `ui-view` → `attachments`, `ui-state`, `wire`; `ui-runtime` → `client`, `ui-state`, `wire` | | the view library |
 | `tui` | `attachments`, `client`, `ui-runtime`, `ui-state`, `ui-view`, `wire` | |
@@ -511,7 +525,7 @@ The allowed sets encode the layering above:
 | `app-ffi` | `app-embedded`, `app-runtime`, `client`, `model`, `node`, `ui-view` | the C ABI over both |
 | `amux` | `agent`, `agent-dir`, `claude`, `client`, `node`, `settings`, `store`, `tui`, `wire` | the one binary |
 | `replay-support` | `interpret`, `journal`, `redaction`, `ui-state`, `ui-view`, `wire` | replays the three pure stages |
-| `xtask` | `app-runtime`, `model`, `ui-view`, `version-stamp` | generates the Swift mirrors |
+| `xtask` | `app-runtime`, `model`, `release`, `ui-view`, `version-stamp` | generates the Swift mirrors; signs releases |
 
 The phone bridge (`app-embedded`, `app-ffi`) links `node` on purpose: it
 hosts the runtime in process. `just embedded-check` and `just mobile-check`

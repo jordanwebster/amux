@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Generate the Xcode project and build the app for the simulator."""
+"""Generate the Xcode project and build the app for the simulator.
+
+`--configuration Measured` builds the optimised app the performance suite
+drives; the default is the Debug app every other recipe drives.
+"""
 
 from pathlib import Path
+import argparse
 import subprocess
 import sys
 
@@ -11,12 +16,12 @@ import ios_project
 DERIVED_DATA = Path("target/ios/DerivedData")
 
 
-def build() -> None:
+def build(configuration: str) -> None:
     subprocess.run([
         "xcodebuild", "build",
         "-project", "apps/apple/Amux.xcodeproj",
         "-scheme", "Amux",
-        "-configuration", "Debug",
+        "-configuration", configuration,
         # Any simulator: a build needs no device, so it holds no lease and
         # never waits for one.
         "-destination", "generic/platform=iOS Simulator",
@@ -25,13 +30,20 @@ def build() -> None:
     ], check=True, timeout=1500)
 
 
+def application(configuration: str) -> Path:
+    return DERIVED_DATA / f"Build/Products/{configuration}-iphonesimulator/Amux.app"
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--configuration", choices=["Debug", "Measured"], default="Debug")
+    arguments = parser.parse_args()
     ios_project.generate()
-    build()
-    application = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
-    if not application.is_dir():
-        raise RuntimeError(f"{application} was not produced")
-    print(f"built {application}", flush=True)
+    build(arguments.configuration)
+    built = application(arguments.configuration)
+    if not built.is_dir():
+        raise RuntimeError(f"{built} was not produced")
+    print(f"built {built}", flush=True)
 
 
 if __name__ == "__main__":

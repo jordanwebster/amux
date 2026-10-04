@@ -229,6 +229,28 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(model.ids, ["a", "b", "c", "d"])
     }
 
+    func testEveryCellReadSinceTheListLastLookedCarriesALaterRevision() {
+        let source = FakeChat(rows: [row("a", 1), row("b", 2), row("c", 3)], frame: frame())
+        let model = ChatModel(source: source)
+        for id in ["a", "b", "c"] { _ = model.cell(for: id) }
+        let laidOut = model.revision
+
+        // Two wakes land before the list looks again, each reading a
+        // different drawn cell.
+        source.ordered = [row("a", 1, "a, longer"), row("b", 2), row("c", 3)]
+        source.pending = ChatChanges(keys: ["a"], reloaded: false, session: false)
+        model.woke()
+        source.ordered = [row("a", 1, "a, longer"), row("b", 2), row("c", 3, "c, longer")]
+        source.pending = ChatChanges(keys: ["c"], reloaded: false, session: false)
+        model.woke()
+
+        XCTAssertGreaterThan(model.revision, laidOut)
+        XCTAssertGreaterThan(model.revision(of: "a"), laidOut, "the first wake's row is still to measure")
+        XCTAssertGreaterThan(model.revision(of: "c"), laidOut)
+        XCTAssertEqual(model.revision(of: "b"), laidOut, "an unread cell keeps its revision")
+        XCTAssertEqual(model.revision(of: "zz"), 0, "a row never drawn has nothing to measure")
+    }
+
     func testAResetSwapsTheWholeSequenceInAtOnceAndFollowsTheNewestRow() {
         let source = FakeChat(rows: [row("a", 1), row("b", 2)], frame: frame())
         let model = ChatModel(source: source)
@@ -243,20 +265,37 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(model.cell(for: "b").row?.order, 20, "and the cell holds the new row")
         XCTAssertEqual(model.toNewest, before + 1)
         XCTAssertFalse(model.newActivity)
-        XCTAssertEqual(model.drawn, ["b", "x", "y"])
     }
 
-    func testAResetInHistoryDrawsTheNewestRowsAndFollowsThem() {
+    func testAResetInHistoryFollowsTheNewestRowAgain() {
         let source = FakeChat(rows: numbered(1...600), frame: frame())
         let model = ChatModel(source: source)
         model.reading(atNewest: false)
-        model.reachedTop()
+        let sequence = model.sequence
         source.ordered = numbered(1...700)
         source.pending = ChatChanges(keys: [], reloaded: true, session: true)
         model.woke()
         XCTAssertTrue(model.following)
-        XCTAssertEqual(model.drawn.first, "m\(701 - ChatModel.drawnRows)")
-        XCTAssertEqual(model.drawn.last, "m700")
+        XCTAssertGreaterThan(model.sequence, sequence)
+        XCTAssertEqual(model.ids.last, "m700")
+    }
+
+    /// The list watches the sequence's edition, not the keys: an arrival
+    /// bumps it once, a wake that moved nothing leaves it alone, and the
+    /// frame, card and strip are assigned only when they differ.
+    func testTheSequenceEditionMovesOncePerChangeAndUnchangedViewsAreNotAssigned() {
+        let source = FakeChat(rows: numbered(1...3), frame: frame())
+        let model = ChatModel(source: source)
+        let sequence = model.sequence
+        let frameBefore = model.frame
+        source.arrive([row("m4", 4)])
+        model.woke()
+        XCTAssertEqual(model.sequence, sequence + 1)
+        XCTAssertEqual(model.ids.count, 4)
+        XCTAssertFalse(model.empty)
+        model.woke()
+        XCTAssertEqual(model.sequence, sequence + 1, "a wake with nothing new moves nothing")
+        XCTAssertEqual(model.frame, frameBefore)
     }
 
     func testRowsArrivingBelowAReaderWhoScrolledUpAreOfferedRatherThanFollowed() {
@@ -274,7 +313,6 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(model.toNewest, before + 1)
         model.woke()
         XCTAssertEqual(model.ids, ["a", "b"], "the return releases it")
-        XCTAssertEqual(model.drawn.last, "b")
     }
 
     /// The model tells its session once when the reader leaves the newest
@@ -309,101 +347,53 @@ final class ChatModelTests: XCTestCase {
         for n in 1_001...1_300 {
             source.arrive([row("m\(n)", UInt64(n))])
             model.woke()
-            // The screen's top row, a screen above the newest.
-            model.reading(at: model.drawn[model.drawn.count - 12])
             model.reading(atNewest: true)
         }
         await settle()
         XCTAssertTrue(source.paged.isEmpty, "a following chat pages nothing")
         XCTAssertEqual(model.ids, (1_101...1_300).map { "m\($0)" })
-        XCTAssertEqual(model.drawn, model.ids)
         XCTAssertEqual(source.follows, [])
     }
 
-    // MARK: - The drawn run
 
-    /// While the reader follows, the list draws the newest rows up to the
-    /// cap; everything else stays held.
-    func testFollowingDrawsAtMostTheCapThroughFiveThousandArrivals() {
-        let source = FakeChat(rows: [], frame: frame())
-        let model = ChatModel(source: source)
-        var widest = 0
-        for n in 1...5_000 {
-            source.ordered.append(row("m\(n)", UInt64(n)))
-            source.pending = ChatChanges(keys: ["m\(n)"], reloaded: false, session: false)
-            model.woke()
-            widest = max(widest, model.drawn.count)
-        }
-        XCTAssertEqual(widest, ChatModel.drawnRows)
-        XCTAssertEqual(model.ids.count, 5_000, "every row stays held")
-        XCTAssertEqual(model.drawn, (5_001 - ChatModel.drawnRows...5_000).map { "m\($0)" })
+    // MARK: - History and paging
 
-        // Scrolling up draws the held rows again without asking for them.
-        model.reading(atNewest: false)
-        model.reachedTop()
-        XCTAssertEqual(model.drawn.first, "m\(5_001 - ChatModel.drawnRows - ChatModel.drawnStep)")
-        XCTAssertTrue(source.paged.isEmpty)
-    }
-
-    /// In history, arrivals are held but not drawn and New activity shows;
-    /// dragging down takes in held rows until the head, where following
-    /// resumes, all without a fetch.
+    /// In history, arrivals are held and New activity shows; returning to
+    /// the bottom resumes following and the session releases what it held,
+    /// trimmed back to its cap, all without a fetch.
     func testArrivalsWhileReadingAreHeldAndReturningDownLandsOnTheHead() {
-        // Six hundred rows paged in while reading, over a window of 200.
         let source = FakeChat(rows: numbered(1...600), frame: frame(hasOlder: true))
         source.cap = 200
         let model = ChatModel(source: source)
         model.reading(atNewest: false)
-        for _ in 0..<3 {
-            model.reachedTop()
-        }
-        let reading = model.drawn
-        XCTAssertEqual(reading.count, ChatModel.drawnRows)
-        XCTAssertEqual(reading.first, "m\(601 - ChatModel.drawnRows - 3 * ChatModel.drawnStep)")
+        let sequence = model.sequence
         let toNewest = model.toNewest
 
         for n in 601...650 {
             source.arrive([row("m\(n)", UInt64(n))])
             model.woke()
         }
-        XCTAssertEqual(model.drawn, reading, "arrivals leave the drawn run alone")
+        XCTAssertEqual(model.sequence, sequence, "arrivals leave the sequence alone")
         XCTAssertTrue(model.newActivity)
         XCTAssertEqual(model.toNewest, toNewest, "the list is not moved under the reader")
         XCTAssertEqual(model.ids.count, 600, "the session holds them apart")
 
-        // The reader drags down: each time the bottom of the drawn run is
-        // reached, held rows below are taken in, and past the cap rows leave
-        // at the top.
-        var steps = 0
-        while model.drawn.last != "m600" {
-            let top = model.drawn.first
-            model.reading(atNewest: true)
-            XCTAssertFalse(model.following, "the bottom of the drawn run is not the head")
-            XCTAssertEqual(model.drawn.count, ChatModel.drawnRows)
-            XCTAssertNotEqual(model.drawn.first, top)
-            steps += 1
-            XCTAssertLessThan(steps, 10)
-        }
-        // At the newest row the session releases what it held and trims
-        // the window back to its cap.
         model.reading(atNewest: true)
         XCTAssertTrue(model.following)
         XCTAssertFalse(model.newActivity)
         model.woke()
-        XCTAssertEqual(model.drawn.last, "m650")
         XCTAssertEqual(model.ids, (451...650).map { "m\($0)" })
-        XCTAssertEqual(model.drawn, model.ids)
+        XCTAssertEqual(model.toNewest, toNewest, "the list keeps the bottom itself while following")
         XCTAssertTrue(source.paged.isEmpty, "coming back down asks for nothing")
     }
 
-    /// New activity draws the newest run at the live head, however far up
-    /// the reader was.
+    /// New activity takes the reader to the live head, however far up they
+    /// were.
     func testNewActivityTakesTheReaderToTheNewestRun() {
         let source = FakeChat(rows: numbered(1...600), frame: frame())
         let model = ChatModel(source: source)
         source.cap = 200
         model.reading(atNewest: false)
-        model.reachedTop()
         source.arrive(numbered(601...1_000))
         model.woke()
         XCTAssertTrue(model.newActivity)
@@ -415,39 +405,11 @@ final class ChatModelTests: XCTestCase {
         // More arrived than the window holds: the head is reloaded.
         model.woke()
         XCTAssertEqual(model.ids, (801...1_000).map { "m\($0)" })
-        XCTAssertEqual(model.drawn, model.ids)
-    }
-
-    /// The top of the drawn run takes in held rows first, and a page is
-    /// asked for only once fewer than a page of held rows are left above it.
-    func testTheTopTakesInHeldRowsBeforeAnyPageIsAsked() async {
-        let source = FakeChat(rows: numbered(1...600), frame: frame(hasOlder: true))
-        let model = ChatModel(source: source)
-        model.reading(atNewest: false)
-        XCTAssertEqual(model.drawn.first, "m\(601 - ChatModel.drawnRows)")
-        XCTAssertFalse(model.drawsOldestHeld)
-        var arrivals = 0
-        while !model.drawsOldestHeld {
-            let bottom = model.drawn.last
-            model.reachedTop()
-            arrivals += 1
-            await settle()
-            if !model.drawsOldestHeld {
-                XCTAssertTrue(source.paged.isEmpty, "held rows are drawn before any page is asked")
-            }
-            XCTAssertEqual(model.drawn.count, ChatModel.drawnRows, "rows past the cap leave at the bottom")
-            XCTAssertNotEqual(model.drawn.last, bottom)
-        }
-        XCTAssertEqual(arrivals, 5)
-        XCTAssertEqual(model.drawn.first, "m1")
-        XCTAssertEqual(model.drawn.count, ChatModel.drawnRows)
-        XCTAssertEqual(source.paged, [ChatModel.pageRows], "one page, asked as the last held rows were taken in")
-        XCTAssertEqual(model.ids.count, 600, "every row stays held")
     }
 
     /// A reader resting at the top pages ahead once per arrival there, and a
-    /// page landing while the reader waits at the oldest row is drawn,
-    /// never cascading into the next page.
+    /// page landing while the reader waits at the oldest row never cascades
+    /// into the next page.
     func testOnePageIsAskedPerArrivalAtTheTop() async {
         let source = FakeChat(rows: numbered(1_001...1_020), frame: frame(hasOlder: true))
         source.earlier = numbered(1...1_000)
@@ -455,30 +417,31 @@ final class ChatModelTests: XCTestCase {
         model.reading(atNewest: false)
 
         model.reachedTop()
+        XCTAssertEqual(model.paging, .fetching)
+        model.reachedTop()
         await settle()
-        XCTAssertEqual(source.paged.count, 1)
-        XCTAssertEqual(model.drawn.first, "m961", "the page the reader waited for is drawn")
+        XCTAssertEqual(source.paged.count, 1, "a page on its way is not asked for twice")
+        XCTAssertEqual(model.paging, .idle)
+        XCTAssertEqual(model.ids.first, "m961", "the page the reader waited for lands above")
         for _ in 0..<5 { await settle() }
         XCTAssertEqual(source.paged.count, 1, "a page landing asks for no other")
 
         model.reachedTop()
         await settle()
         XCTAssertEqual(source.paged.count, 2)
-        XCTAssertEqual(model.drawn.first, "m921")
+        XCTAssertEqual(model.ids.first, "m921")
         XCTAssertEqual(model.ids.count, 100)
     }
 
-    /// The last drawn row's rail reads the row held below it, drawn or not.
-    func testTheRowBelowTheDrawnRunIsReadFromTheHeldRows() {
+    /// The newest row's rail reads the row below it as soon as one is held.
+    func testTheRowBelowTheNewestIsReadWhenItArrives() {
         let source = FakeChat(rows: numbered(1...300), frame: frame())
         let model = ChatModel(source: source)
-        model.reading(atNewest: false)
-        XCTAssertNil(model.drawnRow(below: "m300"))
+        XCTAssertNil(model.row(below: "m300"))
         source.ordered.append(row("m301", 301))
         source.pending = ChatChanges(keys: ["m301"], reloaded: false, session: false)
         model.woke()
-        XCTAssertEqual(model.drawn.last, "m300")
-        XCTAssertEqual(model.drawnRow(below: "m300")?.id, "m301")
+        XCTAssertEqual(model.row(below: "m300")?.id, "m301")
     }
 
     func testAPageIsTheUsualSizeExceptAtACollapsedRunThatContinuesBelow() async {
@@ -518,8 +481,8 @@ final class ChatModelTests: XCTestCase {
         let source = FakeChat(
             rows: [row("a", 1), folded, empty, row("d", 4)], frame: frame())
         let model = ChatModel(source: source)
-        XCTAssertEqual(model.drawnRow(below: "a")?.id, "d")
-        XCTAssertNil(model.drawnRow(below: "d"))
+        XCTAssertEqual(model.row(below: "a")?.id, "d")
+        XCTAssertNil(model.row(below: "d"))
     }
 
     func testNothingIsAskedForWhenNoOlderHistoryExists() async {

@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -418,21 +419,36 @@ pub fn inventory_caught_up() -> InventoryEvent {
     }
 }
 
-/// Waits until `check` holds for the state, re-checking on every change.
-pub async fn until<T>(
+/// Waits until `check` holds for the state, looking again on every change
+/// the driver announces: no polling, and a failure names the call site.
+#[track_caller]
+pub fn until<T>(
+    changed: tokio::sync::watch::Receiver<()>,
+    check: impl FnMut() -> Option<T>,
+) -> impl Future<Output = T> {
+    until_within(PATIENCE, changed, check)
+}
+
+/// [`until`] with its own patience, for a state that real processes feed.
+#[track_caller]
+pub fn until_within<T>(
+    patience: Duration,
     mut changed: tokio::sync::watch::Receiver<()>,
     mut check: impl FnMut() -> Option<T>,
-) -> T {
-    tokio::time::timeout(PATIENCE, async {
-        loop {
-            if let Some(found) = check() {
-                return found;
+) -> impl Future<Output = T> {
+    let caller = std::panic::Location::caller();
+    async move {
+        tokio::time::timeout(patience, async {
+            loop {
+                if let Some(found) = check() {
+                    return found;
+                }
+                changed.changed().await.expect("the driver is open");
             }
-            changed.changed().await.expect("the driver is open");
-        }
-    })
-    .await
-    .expect("the state never got there")
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the state never got there within {patience:?} ({caller})"))
+    }
 }
 
 /// The secret anywhere in a dump part's files: as text, hex-encoded (the

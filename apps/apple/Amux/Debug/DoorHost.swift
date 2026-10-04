@@ -38,6 +38,10 @@ final class DoorHost {
     private(set) var typeSize: DynamicTypeSize = .large
     private(set) var reduceMotion = false
     private(set) var reduceTransparency = false
+    /// Whether identified elements report their frames: as the launch asked,
+    /// until the `geometry` verb says otherwise.
+    private(set) var elementGeometry = ProcessInfo.processInfo.arguments.contains(
+        "-\(Door.elementGeometryArgument)")
     /// Every element the screens declared, with where it is drawn.
     @ObservationIgnored var declared: [IdentifiedElement] = []
     let store = ScriptedStoreFront()
@@ -110,6 +114,7 @@ final class DoorHost {
             return .runtimeLog(composition?.runtime.logTail(bytes: bytes) ?? "")
         case .conversation(let agent): return reading(agent)
         case .signposts: return .signposts(Signposts.marks)
+        case .measure(let seconds): return await measure(seconds)
         case .appearance(let appearance):
             await wear(appearance)
             events.append(.appearance(appearance))
@@ -146,6 +151,14 @@ final class DoorHost {
         case .assist(let motion, let transparency):
             reduceMotion = motion
             reduceTransparency = transparency
+            return .ack
+        case .geometry(let on):
+            elementGeometry = on
+            // The frames arrive with the next render; a tap asked for on the
+            // ack's heels would otherwise find none to hit.
+            for _ in 0..<3 where on && !declared.contains(where: { $0.frame != .zero }) {
+                await DoorFrames.next()
+            }
             return .ack
         case .screenshot:
             NotificationCenter.default.post(
@@ -333,6 +346,26 @@ final class DoorHost {
         return .ack
     }
 
+    /// Watches the display, the main thread and the footprint for `seconds`
+    /// while the driver runs its workload, and answers what they did. Taken
+    /// on the main actor so the CPU reading is the main thread's own; the
+    /// watch's display link is not one the app asked for, so the idle count
+    /// reads only the app's ticks.
+    private func measure(_ seconds: Double) async -> DoorReply {
+        let watch = FrameWatch()
+        let cpu = CPUWatch()
+        let idleTicks = Signposts.count(.idleTick)
+        let commits = Signposts.count(.transcriptCommit)
+        watch.start()
+        try? await Task.sleep(for: .seconds(seconds))
+        let hitch = watch.stop()
+        return .measurement(Measurement(
+            seconds: seconds, frames: watch.frames, hitchMsPerS: hitch,
+            mainThreadCpuPercent: cpu.percent(), footprintMB: Footprint.megabytes(),
+            idleTicks: Signposts.count(.idleTick) - idleTicks,
+            transcriptCommits: Signposts.count(.transcriptCommit) - commits))
+    }
+
     /// The chat a page holds for the agent a driver names, opened as the page
     /// would open it.
     private func chat(_ agent: String) -> ChatModel? {
@@ -366,8 +399,7 @@ final class DoorHost {
             let model = shown.model
             return .conversation(ConversationReading(
                 agent: agent, frame: model.frame,
-                rows: model.ids.compactMap { model.cell(for: $0).row }, ask: model.ask,
-                drawn: model.drawn))
+                rows: model.ids.compactMap { model.cell(for: $0).row }, ask: model.ask))
         }
         do {
             let chat = try stores.openChat(row.id) {}
@@ -752,7 +784,9 @@ enum Launch {
         RuntimeCoordinator.Options(
             discoveryScope: DoorHost.said(Door.discoveryScopeArgument) ?? "",
             lanBind: DoorHost.said(Door.lanBindArgument),
-            relayTCP: DoorHost.said(Door.relayTCPArgument))
+            relayTCP: DoorHost.said(Door.relayTCPArgument),
+            relayQUIC: DoorHost.said(Door.relayQUICArgument),
+            relayRoot: DoorHost.said(Door.relayRootArgument))
     }
 
     static var discoverable: Set<HostId>? {
@@ -766,8 +800,6 @@ enum Launch {
 struct DrivenRoot<Content: View>: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State private var host = DoorHost.shared
-    private let elementGeometry = ProcessInfo.processInfo.arguments.contains(
-        "-\(Door.elementGeometryArgument)")
     private let content: Content
 
     init(@ViewBuilder content: () -> Content) {
@@ -783,7 +815,7 @@ struct DrivenRoot<Content: View>: View {
             .dynamicTypeSize(host.typeSize)
             .transformEnvironment(\.reducesMotion) { $0 = $0 || host.reduceMotion }
             .transformEnvironment(\.reducesTransparency) { $0 = $0 || host.reduceTransparency }
-            .reportingIdentifiedElements(includeGeometry: !voiceOver && elementGeometry)
+            .reportingIdentifiedElements(includeGeometry: !voiceOver && host.elementGeometry)
             .onPreferenceChange(IdentifiedElements.self) { declared in
                 Task { @MainActor in DoorHost.shared.declared = declared }
             }

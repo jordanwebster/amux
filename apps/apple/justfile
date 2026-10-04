@@ -27,7 +27,7 @@ default:
 # client, and the served test network the journeys connect a simulator to.
 # Build the Rust tools the phone recipes drive.
 tools:
-    {{bounded}} 900 cargo build --locked -p xtask -p testnet --bins --features store/bundled
+    {{bounded}} 900 cargo build --locked -p xtask -p testnet -p qualification --bins --features store/bundled
 
 # The rules the screens package is written to: SwiftUI only outside a
 # registered leaf, no platform conditionals, no spinners. Pure text, so it runs
@@ -141,6 +141,16 @@ accessibility: build
 loopback-smoke: tools
     scripts/with iphone -- {{bounded}} 1800 {{python}} -B apps/apple/Tools/loopback_smoke.py
 
+# The optimised app on the enrolled Mac's simulator against the served
+# performance network: cold launch, store read, reconciliation at 0 and
+# 100 ms, streaming and idle; budgets and drift per docs/PERFORMANCE.md.
+# `--baseline` records this machine's medians; `--only GROUP` takes one
+# group; `--describe` says what would run without running it.
+# Measure the phone.
+perf *ARGS: rust tools
+    {{bounded}} 1800 {{python}} -B scripts/ios-build.py --configuration Measured
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 3600 {{python}} -B scripts/ios-perf.py "$@"
+
 # Inspect the release bundle for excluded platforms and debug-only surfaces.
 # Release links the shipping library, so the package is its input.
 # Inspect the release bundle for debug surfaces and excluded platforms.
@@ -175,6 +185,12 @@ captures:
 # Build the shipping bundle and audit what it contains.
 shipping:
     {{bounded}} 12600 cargo run --locked -q -p xtask -- ios-verify --shipping
+
+# `just ios perf` under the verifier, so the whole run and this stage report
+# the same way.
+# The phone measured on this Mac.
+measured:
+    {{bounded}} 12600 cargo run --locked -q -p xtask -- ios-verify --measured
 
 # The unit tests of the recipe scripts themselves. Pure Python; nothing is
 # built or booted.

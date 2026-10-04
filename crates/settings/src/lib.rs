@@ -580,13 +580,21 @@ impl InstallationConfig {
         validate_host_name(&self.host_name)
     }
 
-    /// The manifest the supervisor follows for the configured channel.
-    pub fn manifest_url(&self) -> String {
-        let channel = match self.channel {
+    /// The configured channel as the manifests name it.
+    pub fn channel_name(&self) -> &'static str {
+        match self.channel {
             Channel::Stable => "stable",
             Channel::Preview => "preview",
-        };
-        format!("{}/{channel}.json", self.releases_url.trim_end_matches('/'))
+        }
+    }
+
+    /// The manifest the supervisor follows for the configured channel.
+    pub fn manifest_url(&self) -> String {
+        format!(
+            "{}/{}.json",
+            self.releases_url.trim_end_matches('/'),
+            self.channel_name()
+        )
     }
 
     pub fn file_path(&self) -> PathBuf {

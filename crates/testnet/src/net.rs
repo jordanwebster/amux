@@ -11,6 +11,7 @@
 //! reached the drive and the machine up under a new boot id.
 
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -23,7 +24,7 @@ use node::{
 };
 use provider_fakes::script::{INPUT_LOG_ENV, SCRIPT_ENV, Script, Step};
 use serde::{Deserialize, Serialize};
-use store::AgentKey;
+use store::{AgentKey, Marker, Store as _};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use wire::client_service_server::ClientService as _;
@@ -36,7 +37,7 @@ use wire::{
 
 use crate::binaries::Binaries;
 use crate::clock::DrivenClock;
-use crate::gate::UdpGate;
+use crate::gate::{Faults, UdpGate};
 use crate::invariant::{self, BlockViolation};
 use crate::observe::{self, InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
 use crate::relay::Relay;
@@ -222,6 +223,13 @@ pub struct Net {
     relay: Option<Relay>,
     /// Each host's way to the relay's QUIC carrier, kept across restarts.
     udp: BTreeMap<String, UdpGate>,
+    /// A gate in front of a host's LAN listener, started on request: what a
+    /// client dials instead of the host so its packets can be delayed or
+    /// lost, the way a household network treats them.
+    lan_gates: BTreeMap<String, UdpGate>,
+    /// A gate in front of the relay's QUIC carrier, for a client outside
+    /// the net, once one has asked for it.
+    relay_gate: Option<UdpGate>,
 }
 
 impl Net {
@@ -267,6 +275,8 @@ impl Net {
             agents: BTreeMap::new(),
             relay: None,
             udp: BTreeMap::new(),
+            lan_gates: BTreeMap::new(),
+            relay_gate: None,
         };
         if let Some(relay) = &topology.relay {
             net.relay = Some(Relay::start(relay, net.clock.clone()).await?);
@@ -1136,9 +1146,13 @@ impl Net {
             .await
             .map_err(|status| NetError::Refused(Box::new(status)))?;
         let edge = self.edge(host)?;
-        observe::eventually(&format!("{host}'s relay link"), PATIENCE, || {
-            let connected = matches!(edge.observed(), node::Observed::Connected { .. });
-            async move { connected }
+        observe::until(&format!("{host}'s relay link"), || {
+            let observed = edge.observed();
+            async move {
+                matches!(observed, node::Observed::Connected { .. })
+                    .then_some(())
+                    .ok_or_else(|| format!("observed {observed:?}"))
+            }
         })
         .await?;
         Ok(self.ack(format!("{host} signed in to {account}")))
@@ -1166,6 +1180,75 @@ impl Net {
                 })?;
         }
         Ok(self.ack(format!("{account} is on {tier:?}")))
+    }
+
+    /// The address of a gate in front of `host`'s LAN listener, started
+    /// the first time it is asked for. A client that dials it instead of
+    /// the host reaches the host through a network the net can slow down
+    /// or make lossy with [`Net::set_lan_faults`]; the host's own address
+    /// stays as it was, so a pairing link has to be rewritten to name the
+    /// gate. Only a running host with a LAN listener has one.
+    pub async fn lan_gate(&mut self, host: &str) -> Result<SocketAddr, NetError> {
+        if let Some(gate) = self.lan_gates.get(host) {
+            return Ok(gate.addr());
+        }
+        let info = self.host(host)?;
+        let port = std::fs::read_to_string(
+            node::profile_dir(&info.data_dir, info.profile).join(node::LAN_PORT_FILE),
+        )
+        .ok()
+        .and_then(|text| text.trim().parse::<u16>().ok())
+        .ok_or_else(|| NetError::Host {
+            host: host.to_owned(),
+            error: "has no LAN listener to gate".to_owned(),
+        })?;
+        let gate = UdpGate::start(SocketAddr::from(([127, 0, 0, 1], port))).await?;
+        let addr = gate.addr();
+        self.lan_gates.insert(host.to_owned(), gate);
+        Ok(addr)
+    }
+
+    /// What the gate in front of `host`'s LAN listener does to each
+    /// datagram from now on: delay, loss, or neither.
+    pub fn set_lan_faults(&self, host: &str, faults: Faults) -> Result<Ack, NetError> {
+        let gate = self.lan_gates.get(host).ok_or_else(|| NetError::Host {
+            host: host.to_owned(),
+            error: "has no LAN gate; ask for one first".to_owned(),
+        })?;
+        gate.set_faults(faults);
+        Ok(self.ack(format!(
+            "{host}'s LAN gate delays {} ms and loses {}%",
+            faults.delay.as_millis(),
+            faults.loss_percent
+        )))
+    }
+
+    /// A gate in front of the relay's QUIC carrier, which a client outside
+    /// the net dials in the relay's place so its packets can be delayed or
+    /// lost; the same gate on every ask.
+    pub async fn relay_gate(&mut self) -> Result<SocketAddr, NetError> {
+        if let Some(gate) = &self.relay_gate {
+            return Ok(gate.addr());
+        }
+        let gate = self.relay()?.gate().await?;
+        let addr = gate.addr();
+        self.relay_gate = Some(gate);
+        Ok(addr)
+    }
+
+    /// What the gate in front of the relay does to each datagram from now
+    /// on: delay, loss, or neither.
+    pub fn set_relay_faults(&self, faults: Faults) -> Result<Ack, NetError> {
+        let gate = self.relay_gate.as_ref().ok_or_else(|| NetError::Host {
+            host: "relay".to_owned(),
+            error: "has no gate; ask for one first".to_owned(),
+        })?;
+        gate.set_faults(faults);
+        Ok(self.ack(format!(
+            "the relay's gate delays {} ms and loses {}%",
+            faults.delay.as_millis(),
+            faults.loss_percent
+        )))
     }
 
     /// Takes UDP away from the host's way to the relay, or gives it back:
@@ -1228,9 +1311,13 @@ impl Net {
         } else {
             drop(daemon);
         }
-        observe::eventually(&format!("{name}'s runtime to be gone"), PATIENCE, || {
-            let gone = runs.iter().all(|run| run.upgrade().is_none());
-            async move { gone }
+        observe::until(&format!("{name}'s runtime to be gone"), || {
+            let live = runs.iter().filter(|run| run.upgrade().is_some()).count();
+            async move {
+                (live == 0)
+                    .then_some(())
+                    .ok_or_else(|| format!("{live} runtime references live"))
+            }
         })
         .await?;
         // A dead daemon's sockets die with its process, and the next one
@@ -1244,9 +1331,9 @@ impl Net {
         .and_then(|text| text.trim().parse::<u16>().ok())
         .filter(|_| host.decl.lan && !host.lan_handed);
         if let Some(port) = lan_port {
-            observe::eventually(&format!("{name}'s LAN port to be free"), PATIENCE, || {
-                let free = std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok();
-                async move { free }
+            observe::until(&format!("{name}'s LAN port to be free"), || {
+                let bound = std::net::UdpSocket::bind(("127.0.0.1", port));
+                async move { bound.map(|_| ()).map_err(|error| error.to_string()) }
             })
             .await?;
         }
@@ -1477,7 +1564,12 @@ impl Net {
     pub async fn wait_link(&self, a: &str, b: &str, up: bool) -> Result<(), NetError> {
         let (id_a, id_b) = (self.host(a)?.host_id, self.host(b)?.host_id);
         let what = format!("link {a} - {b} {}", if up { "up" } else { "down" });
-        observe::eventually(&what, PATIENCE, || async {
+        let wanted = if up {
+            HostVia::Direct
+        } else {
+            HostVia::Offline
+        };
+        observe::until(&what, || async {
             let via_ab = match self.edge(a) {
                 Ok(edge) => edge.via(id_b).await,
                 Err(_) => HostVia::Offline,
@@ -1486,11 +1578,9 @@ impl Net {
                 Ok(edge) => edge.via(id_a).await,
                 Err(_) => HostVia::Offline,
             };
-            if up {
-                via_ab == HostVia::Direct && via_ba == HostVia::Direct
-            } else {
-                via_ab == HostVia::Offline && via_ba == HostVia::Offline
-            }
+            (via_ab == wanted && via_ba == wanted)
+                .then_some(())
+                .ok_or_else(|| format!("{a} -> {b} {via_ab:?}, {b} -> {a} {via_ba:?}"))
         })
         .await?;
         Ok(())
@@ -1502,15 +1592,15 @@ impl Net {
     async fn wait_direct_gone(&self, a: &str, b: &str) -> Result<(), NetError> {
         let (id_a, id_b) = (self.host(a)?.host_id, self.host(b)?.host_id);
         let what = format!("the severed link {a} - {b} to go at both ends");
-        observe::eventually(&what, PATIENCE, || async {
-            for (near, far) in [(a, id_b), (b, id_a)] {
+        observe::until(&what, || async {
+            for (near, far, name) in [(a, id_b, a), (b, id_a, b)] {
                 if let Ok(edge) = self.edge(near)
                     && edge.via(far).await == HostVia::Direct
                 {
-                    return false;
+                    return Err(format!("{name} still routes direct"));
                 }
             }
-            true
+            Ok(())
         })
         .await?;
         Ok(())
@@ -1540,6 +1630,173 @@ impl Net {
             })?
         };
         invariant::check(&replica, &origin)?;
+        Ok(())
+    }
+
+    // --- fences ------------------------------------------------------------
+    //
+    // A test asserts about a host only after the host's own cursors say
+    // the step it triggered has landed there. These waits name the
+    // condition in the runtime's terms and wake on the store write that
+    // satisfies it, so nothing is inferred from time or from a proxy.
+
+    /// Waits on `host`'s store, reading it again after every write, until
+    /// `probe` answers what it found. Each `Err` is what the probe saw
+    /// instead, and the last one is reported if [`PATIENCE`] passes.
+    async fn on_write<T>(
+        &self,
+        host: &str,
+        what: &str,
+        mut probe: impl FnMut(&store::Sqlite) -> Result<T, String>,
+    ) -> Result<T, NetError> {
+        let runtime = self.runtime(host)?;
+        let mut writes = runtime.committed();
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        loop {
+            // Marked seen before the read, so a write landing between the
+            // read and the wait is a change the wait returns on.
+            writes.borrow_and_update();
+            let seen = match tokio::time::timeout_at(deadline, runtime.store()).await {
+                Ok(store) => match probe(&store) {
+                    Ok(found) => return Ok(found),
+                    Err(seen) => seen,
+                },
+                Err(_) => {
+                    return Err(Stuck::Hung {
+                        what: what.to_owned(),
+                        waited: PATIENCE,
+                    }
+                    .into());
+                }
+            };
+            match tokio::time::timeout_at(deadline, writes.changed()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => {
+                    return Err(Stuck::Closed {
+                        what: what.to_owned(),
+                        seen,
+                    }
+                    .into());
+                }
+                Err(_) => {
+                    return Err(Stuck::Deadline {
+                        what: what.to_owned(),
+                        waited: PATIENCE,
+                        seen,
+                    }
+                    .into());
+                }
+            }
+        }
+    }
+
+    /// Waits until `host` holds `agent`'s row at `order`: its newest row
+    /// is that one or a later one. After it, what the host holds through
+    /// `order` is what its store reports, on the origin and on a replica
+    /// alike.
+    pub async fn fence(&self, host: &str, agent: &str, order: u64) -> Result<(), NetError> {
+        let key = self.agent(agent)?.key();
+        let what = format!("{host} to hold {agent}'s row at order {order}");
+        self.on_write(host, &what, |store| {
+            let newest = store
+                .last_n(&key, 1)
+                .map_err(|error| error.to_string())?
+                .pop()
+                .map(|item| item.order);
+            match newest {
+                Some(held) if held >= order => Ok(()),
+                Some(held) => Err(format!("newest order {held}")),
+                None => Err("no rows".to_owned()),
+            }
+        })
+        .await
+    }
+
+    /// Waits until the `k`th turn of `agent` (counting from one) has
+    /// ended on its own host, and returns the order of the row that ended
+    /// it, so another host can be fenced to it. Counts the turn-end rows
+    /// in the block the host holds.
+    pub async fn turn_ended(&self, agent: &str, k: usize) -> Result<u64, NetError> {
+        assert!(k >= 1, "turns count from one");
+        let at = self.agent(agent)?.clone();
+        let key = at.key();
+        let what = format!("{agent}'s turn {k} to end");
+        self.on_write(&at.host, &what, |store| {
+            let mut ends: Vec<u64> = store
+                .cut(&key, u32::MAX)
+                .map_err(|error| error.to_string())?
+                .held
+                .iter()
+                .filter(|item| item.key.starts_with("turn:"))
+                .map(|item| item.order)
+                .collect();
+            ends.sort_unstable();
+            ends.get(k - 1)
+                .copied()
+                .ok_or_else(|| format!("{} turns ended", ends.len()))
+        })
+        .await
+    }
+
+    /// Waits until the input `agent` accepted under `input_id` has
+    /// settled on its own host: the row that reflects it exists. Returns
+    /// that row's order. A rejected input never settles; rejection is
+    /// the answer `send` and `input` return.
+    pub async fn input_settled(&self, agent: &str, input_id: &[u8]) -> Result<u64, NetError> {
+        let at = self.agent(agent)?.clone();
+        let key = at.key();
+        let what = format!("{agent}'s input {} to settle", hex(input_id));
+        self.on_write(&at.host, &what, |store| {
+            store
+                .item_by_input(&key, input_id)
+                .map_err(|error| error.to_string())?
+                .map(|item| item.order)
+                .ok_or_else(|| "no row carries it".to_owned())
+        })
+        .await
+    }
+
+    /// Waits until `host` holds what the origin holds for `agent`: caught
+    /// up through the origin's newest revision, with the block intact.
+    /// Reads both hosts, so it looks again every poll rather than waking
+    /// on one host's writes.
+    pub async fn current(&self, host: &str, agent: &str) -> Result<(), NetError> {
+        let at = self.agent(agent)?.clone();
+        let key = at.key();
+        let what = format!("{agent}'s replica at {host} to be current");
+        observe::until(&what, || async {
+            let newest = {
+                let runtime = self.runtime(&at.host).map_err(|error| error.to_string())?;
+                let store = runtime.store().await;
+                store
+                    .agent(&key)
+                    .map_err(|error| error.to_string())?
+                    .map(|row| row.next_revision - 1)
+                    .ok_or_else(|| "no origin row".to_owned())?
+            };
+            let (cursor, marker) = {
+                let runtime = self.runtime(host).map_err(|error| error.to_string())?;
+                let store = runtime.store().await;
+                let row = store
+                    .agent(&key)
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("no replica row; origin newest {newest}"))?;
+                let marker = store
+                    .cut(&key, 0)
+                    .map_err(|error| error.to_string())?
+                    .marker;
+                (row.source_cursor, marker)
+            };
+            if cursor != newest || marker != Some(Marker::CaughtUp) {
+                return Err(format!(
+                    "replica cursor {cursor}, marker {marker:?}; origin newest {newest}"
+                ));
+            }
+            self.assert_block_invariant(host, agent)
+                .await
+                .map_err(|error| error.to_string())
+        })
+        .await?;
         Ok(())
     }
 
@@ -1654,9 +1911,13 @@ async fn kill_agents_under(dir: &Path) -> Result<(), NetError> {
             .status()
             .await;
         let locked: Vec<PathBuf> = agent_dirs(dir);
-        observe::eventually("the killed agents to release their locks", PATIENCE, || {
-            let held = locked.iter().any(|dir| agent_dir::locked(dir));
-            async move { !held }
+        observe::until("the killed agents to release their locks", || {
+            let held: Vec<&PathBuf> = locked.iter().filter(|dir| agent_dir::locked(dir)).collect();
+            async move {
+                held.is_empty()
+                    .then_some(())
+                    .ok_or_else(|| format!("locks still held: {held:?}"))
+            }
         })
         .await?;
         Ok(())
@@ -1704,4 +1965,9 @@ fn work_dir(work: &Path, cwd: Option<&str>) -> Result<String, NetError> {
     let dir = work.join(cwd);
     std::fs::create_dir_all(&dir)?;
     Ok(dir.to_string_lossy().into_owned())
+}
+
+/// An input id as a failure message shows it.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

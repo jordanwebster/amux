@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "machine_model": "Mac14,6",
+  "configuration": "Measured",
+  "simulator": "amux-iphone-1",
+  "medians": {
+    "cold first frame": 632.2630643844604,
+    "cold store read": 27.567028999328613,
+    "cold fleet render": 81.76398277282715,
+    "reconciliation at 0 ms": 81.76696300506592,
+    "reconciliation at 100 ms": 775.2509117126465,
+    "reconciliation through the relay at 100 ms": 1007.3820352554321,
+    "streaming hitch time": 0.833074265701191,
+    "streaming main-thread CPU": 47.69235581557017,
+    "streaming footprint": 69.47106170654297,
+    "idle transcript commits": 0,
+    "idle display ticks": 0
+  }
+}

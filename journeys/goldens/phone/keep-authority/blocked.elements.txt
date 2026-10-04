@@ -11,11 +11,11 @@ chat.row.boundary | Started |  | 18,132,366,34
 chat.row.prompt | hello |  | 18,166,366,40
 chat.row.prose | Ready. | final | 18,217,366,20
 chat.prose.render |  | rendered | 18,217,366,20
-chat.row.turn-end | Worked <t> · $0.00 |  | 18,249,160,26
+chat.row.turn-end | Worked <t> · $0.00 |  | 48,245,130,16
 chat.row.prompt | Are you there? |  | 18,275,366,40
 chat.row.prose | Only this account reaches me. | final | 18,326,366,20
 chat.prose.render |  | rendered | 18,326,366,20
-chat.row.turn-end | Worked <t> · $0.00 |  | 18,358,160,26
+chat.row.turn-end | Worked <t> · $0.00 |  | 48,354,130,16
 chat.header | desk · this phone is signed out | detached | 18,64,303,54
 chat.back | Back |  | 16,68,42,46
 chat.title | guarded | guarded | 51,72,258,38
@@ -55,45 +55,15 @@ you.help.caption |  |  | 18,853,354,31
  | Back |  | 16,68,42,46
  | guarded, desk · this phone is signed out |  | 51,72,258,38
  | More |  | 344,69,44,44
- | Started |  | 18,136,366,16
- | hello |  | 320,166,64,40
- | Ready. |  | 18,217,366,20
- | Worked <t> · $0.00 |  | 48,245,130,16
- | Are you there? |  | 249,275,135,40
- | Only this account reaches me. |  | 18,326,366,20
- | Worked <t> · $0.00 |  | 48,354,130,16
  | Clear |  | 342,738,44,43
  | Attach |  | 23,779,44,44
  | claude-fake-1 |  | 71,779,139,44
  | Dictate |  | 287,779,44,44
  | Send |  | 335,779,44,44 (disabled)
- | Hosts |  | 18,72,69,32
- | 1 offline |  | 18,105,65,16
- | OFFLINE |  | 20,137,49,14
- | desk, macOS, offline while this phone is signed out, its agents’ state is unknown |  | 18,159,366,81
- | Agents on an offline host report their state as unknown. |  | 18,248,293,37
- | THIS PHONE |  | 20,303,70,14
- | Identity, amux-iphone-1 · <key> |  | 18,325,366,46
- | Paired Devices, 1 |  | 18,371,366,46
- | Revoking a device ends its access immediately. |  | 18,425,320,18
- | You |  | 18,70,46,32
- | ACCOUNTS |  | 20,120,56,14
- | ada, Signed out |  | 32,142,338,58
- | bob, bob@example.com |  | 32,201,338,59
- | Add Account |  | 18,260,366,46
- | ADA |  | 20,324,21,14
- | Relay, Included with this account |  | 18,346,366,46
- | Sign Out |  | 18,392,366,46
- | Remove from This Phone |  | 18,438,366,46
- | Delete Account |  | 18,485,366,46
- | THIS PHONE |  | 20,548,70,14
- | Appearance |  | 32,586,90,20
- | Light |  | 200,573,56,45
- | Dark |  | 256,573,49,45
- | System |  | 305,573,63,45
- | Identity, <key> |  | 18,621,366,46
- | HELP |  | 20,684,28,14
- | Contact Support |  | 18,707,366,46
- | Report a Problem |  | 18,753,366,45
- | Export Diagnostics |  | 18,799,366,46
- | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,853,346,31
+ | Started |  | 18,132,366,34
+ | hello |  | 18,166,366,40
+ | Ready. |  | 18,217,366,20
+ | Worked <t> · $0.00 |  | 48,245,130,16
+ | Are you there? |  | 18,275,366,40
+ | Only this account reaches me. |  | 18,326,366,20
+ | Worked <t> · $0.00 |  | 48,354,130,16

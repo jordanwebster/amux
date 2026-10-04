@@ -53,8 +53,11 @@ def main() -> None:
     # bridge current and leave xcodebuild to report `does not contain a binary
     # artifact` two stages later, which names neither the cache nor this
     # check. What was actually built is the only thing worth trusting.
+    # `ios package` removes the marker when it puts the shipping library in
+    # the stand-in's place, so a missing marker means the package tests
+    # would link the shipping Rust: not current.
     stand_in_current = (
-        not stand_in.is_file() or stand_in.read_text().strip() == fingerprint
+        stand_in.is_file() and stand_in.read_text().strip() == fingerprint
     )
     if (STAMP.is_file() and STAMP.read_text().strip() == fingerprint
             and linked.is_file() and packaged(shipping) and stand_in_current):

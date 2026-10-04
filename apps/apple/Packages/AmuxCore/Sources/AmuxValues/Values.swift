@@ -2062,6 +2062,10 @@ public struct HostView: Codable, Hashable, Sendable {
     public var addrs: [String]
     /// The route a live link runs over.
     public var via: HostVia
+    /// This device's copy of the host's agents has caught up with the host
+    /// on a live stream: what the fleet shows for it is what it lists now.
+    /// Always true for this device.
+    public var current: Bool
     public var lastDialError: String?
     public var platform: String?
     /// For this device: whether it is signed in to the account its profile
@@ -2069,7 +2073,7 @@ public struct HostView: Codable, Hashable, Sendable {
     public var signedIn: Bool?
     public var version: String?
 
-    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, presence: Presence, away: Away, addrs: [String], via: HostVia, lastDialError: String?, platform: String?, signedIn: Bool?, version: String?) {
+    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, presence: Presence, away: Away, addrs: [String], via: HostVia, current: Bool, lastDialError: String?, platform: String?, signedIn: Bool?, version: String?) {
         self.hostId = hostId
         self.name = name
         self.local = local
@@ -2079,6 +2083,7 @@ public struct HostView: Codable, Hashable, Sendable {
         self.away = away
         self.addrs = addrs
         self.via = via
+        self.current = current
         self.lastDialError = lastDialError
         self.platform = platform
         self.signedIn = signedIn
@@ -2095,6 +2100,7 @@ public struct HostView: Codable, Hashable, Sendable {
         case away
         case addrs
         case via
+        case current
         case lastDialError = "last_dial_error"
         case platform
         case signedIn = "signed_in"
@@ -3807,6 +3813,12 @@ public struct StartConfig: Codable, Hashable, Sendable {
     public var lanBind: String?
     /// The runtime's own log, which a dump includes.
     public var logPath: String?
+    /// Dial the relay's QUIC carrier here, instead of where the account
+    /// service names it, trusting `relay_root`. Only a driving build reads
+    /// it, to reach a served test relay the way a phone reaches the cloud.
+    public var relayQuic: String?
+    /// The served relay's self-signed certificate, DER as hex.
+    public var relayRoot: String?
     /// Dial the relay's TCP carrier here in plaintext, instead of where the
     /// account service names it. Only a driving build reads it, to reach a
     /// served test relay.
@@ -3814,13 +3826,15 @@ public struct StartConfig: Codable, Hashable, Sendable {
     /// How many rows a chat opens with.
     public var tail: UInt32?
 
-    public init(dataDir: String, deviceName: String, discoveryScope: String?, lan: Bool?, lanBind: String?, logPath: String?, relayTcp: String?, tail: UInt32?) {
+    public init(dataDir: String, deviceName: String, discoveryScope: String?, lan: Bool?, lanBind: String?, logPath: String?, relayQuic: String?, relayRoot: String?, relayTcp: String?, tail: UInt32?) {
         self.dataDir = dataDir
         self.deviceName = deviceName
         self.discoveryScope = discoveryScope
         self.lan = lan
         self.lanBind = lanBind
         self.logPath = logPath
+        self.relayQuic = relayQuic
+        self.relayRoot = relayRoot
         self.relayTcp = relayTcp
         self.tail = tail
     }
@@ -3832,6 +3846,8 @@ public struct StartConfig: Codable, Hashable, Sendable {
         case lan
         case lanBind = "lan_bind"
         case logPath = "log_path"
+        case relayQuic = "relay_quic"
+        case relayRoot = "relay_root"
         case relayTcp = "relay_tcp"
         case tail
     }

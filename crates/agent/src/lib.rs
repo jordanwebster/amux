@@ -104,6 +104,12 @@ pub enum AgentError {
     Socket(std::io::Error),
     #[error("writing the journal: {0}")]
     Journal(std::io::Error),
+    /// The provider's own state in private/ could not be written.
+    #[error("writing {}: {source}", path.display())]
+    Private {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 /// Runs the agent in `dir` until it exits.

@@ -92,6 +92,11 @@ public final class LocalDiscovery {
     private let resolve: Resolve
     private let after: After
     private var browser: NWBrowser?
+    /// Which browser's reports are taken: bumped as one starts and as one
+    /// stops, so a report still on its way to the main actor from a
+    /// browser that was stopped, or replaced, is ignored. Each report
+    /// carries the value it was made under.
+    private(set) var browse = 0
     /// Every advertisement being resolved or already resolved, by the endpoint
     /// the browser reports it under.
     private var tracked: [NWEndpoint: Tracked] = [:]
@@ -113,28 +118,35 @@ public final class LocalDiscovery {
         self.handOver = handOver
     }
 
+    /// The queue the browser starts and reports on. Starting a browser on
+    /// the main thread was measured at about 75 ms of a cold launch's main
+    /// thread; here it costs the launch nothing, and what it reports is
+    /// read on the main actor.
+    nonisolated private static let browsing = DispatchQueue(label: "sh.amux.discovery", qos: .utility)
+
     /// Begins browsing. Doing this twice is doing it once.
     public func start() {
         guard browser == nil else { return }
+        browse += 1
+        let browse = browse
         let parameters = NWParameters()
         parameters.includePeerToPeer = false
         let browser = NWBrowser(
             for: .bonjourWithTXTRecord(type: Self.service, domain: nil), using: parameters)
         browser.stateUpdateHandler = { state in
-            MainActor.assumeIsolated { self.browserSaid(state) }
+            Task { @MainActor in self.browserSaid(state, browse: browse) }
         }
         browser.browseResultsChangedHandler = { results, _ in
-            MainActor.assumeIsolated {
-                self.saw(results.map { result in
-                    Sighting(
-                        endpoint: result.endpoint,
-                        record: Self.record(of: result.metadata),
-                        routes: Self.routes(to: result.endpoint, on: result.interfaces))
-                })
+            let sightings = results.map { result in
+                Sighting(
+                    endpoint: result.endpoint,
+                    record: Self.record(of: result.metadata),
+                    routes: Self.routes(to: result.endpoint, on: result.interfaces))
             }
+            Task { @MainActor in self.saw(sightings, browse: browse) }
         }
         self.browser = browser
-        browser.start(queue: .main)
+        Self.browsing.async { browser.start(queue: Self.browsing) }
     }
 
     /// Stops browsing, forgetting what was seen without withdrawing it.
@@ -149,6 +161,7 @@ public final class LocalDiscovery {
         guard browser != nil else { return }
         browser?.cancel()
         browser = nil
+        browse += 1
         forget()
         // A refusal outlives the browser: the person has to change it in
         // Settings, and the card that says so must not vanish in the
@@ -160,6 +173,12 @@ public final class LocalDiscovery {
     /// a browser that is ready takes the refusal back: the waits and
     /// cancellations that follow a refusal say nothing new about it.
     func browserSaid(_ state: NWBrowser.State) {
+        browserSaid(state, browse: browse)
+    }
+
+    /// What a browser said of its state, taken only from the current one.
+    func browserSaid(_ state: NWBrowser.State, browse: Int) {
+        guard browse == self.browse else { return }
         let said = Self.permission(for: state)
         guard said != .unknown || permission != .denied else { return }
         permission = said
@@ -202,6 +221,12 @@ public final class LocalDiscovery {
     /// what it claims or where it was seen changes, because a machine that
     /// came back under the same name may be listening somewhere else.
     func saw(_ sightings: [Sighting]) {
+        saw(sightings, browse: browse)
+    }
+
+    /// What a browser said it saw, taken only from the current one.
+    func saw(_ sightings: [Sighting], browse: Int) {
+        guard browse == self.browse else { return }
         let visible = Set(sightings.map(\.endpoint))
         for endpoint in Array(tracked.keys) where !visible.contains(endpoint) {
             tracked.removeValue(forKey: endpoint)?.abandon?()

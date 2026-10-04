@@ -70,5 +70,6 @@ struct RootView: View {
         .modifier(ReportTools(composition: composition))
         .preferredColorScheme(composition.appearance?.colorScheme)
         .onOpenURL { composition.router.open($0) }
+        .onAppear { Signposts.emitWhenPresented(.shellPresented) }
     }
 }

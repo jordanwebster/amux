@@ -13,18 +13,19 @@ use wire::{
 use crate::Effect;
 use crate::claude_pty::QuestionShape;
 
-/// Built-in tools that only look: views fold runs of them together.
-pub(crate) const EXPLORATION: &[&str] = &[
-    "Read",
-    "Grep",
-    "Glob",
-    "LS",
-    "WebFetch",
-    "WebSearch",
-    "ToolSearch",
-    "NotebookRead",
-    "ListMcpResourcesTool",
-    "ReadMcpResourceTool",
+/// Built-in tools that only look, each by what it looks at: views fold runs
+/// of them together and name each by this verb.
+pub(crate) const EXPLORATION: &[(&str, ToolClass)] = &[
+    ("Read", ToolClass::Read),
+    ("NotebookRead", ToolClass::Read),
+    ("ReadMcpResourceTool", ToolClass::Read),
+    ("Grep", ToolClass::Search),
+    ("Glob", ToolClass::Search),
+    ("ToolSearch", ToolClass::Search),
+    ("LS", ToolClass::List),
+    ("ListMcpResourcesTool", ToolClass::List),
+    ("WebFetch", ToolClass::Fetch),
+    ("WebSearch", ToolClass::WebSearch),
 ];
 
 /// Tools whose calls are drawn as the task list, never as rows.
@@ -164,9 +165,7 @@ pub(crate) fn describe_tool(tool: &ToolCall) -> String {
         tool.name,
         ToolState::try_from(tool.state).map_or("?", |state| state.as_str_name())
     );
-    if tool.class == wire::ToolClass::Exploration as i32 {
-        text.push_str(" exploration");
-    }
+    text.push_str(describe_class(tool.class));
     if tool.background {
         text.push_str(" background");
     }
@@ -407,12 +406,29 @@ pub(crate) fn task_list(tasks: &Option<Vec<Task>>) -> TaskList {
     }
 }
 
-/// How a call is drawn: reads, searches and fetches fold into runs.
+/// How a call is drawn: a built-in tool that only looks takes its verb, and
+/// anything else may change the world.
 pub(crate) fn tool_class(server: &str, name: &str) -> ToolClass {
-    if server.is_empty() && EXPLORATION.contains(&name) {
-        ToolClass::Exploration
+    if server.is_empty()
+        && let Some((_, class)) = EXPLORATION.iter().find(|(tool, _)| *tool == name)
+    {
+        *class
     } else {
         ToolClass::Consequential
+    }
+}
+
+/// A class as goldens show it: nothing for a consequential call, the verb
+/// for one that only looks.
+pub(crate) fn describe_class(class: i32) -> &'static str {
+    match ToolClass::try_from(class) {
+        Ok(ToolClass::Read) => " read",
+        Ok(ToolClass::Search) => " search",
+        Ok(ToolClass::List) => " list",
+        Ok(ToolClass::Fetch) => " fetch",
+        Ok(ToolClass::WebSearch) => " web-search",
+        Ok(ToolClass::Look) => " look",
+        Ok(ToolClass::Unspecified | ToolClass::Consequential) | Err(_) => "",
     }
 }
 

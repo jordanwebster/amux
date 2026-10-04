@@ -16,6 +16,7 @@ pub const SUPERVISOR_LOG: &str = "supervisor.log";
 fn policy(config: &InstallationConfig) -> Result<UpdatePolicy> {
     let auto = config.updates()? == Updates::Auto;
     let source = node::release::release_key().map(|key| UpdateSource {
+        channel: config.channel_name().to_owned(),
         manifest_url: config.manifest_url(),
         key,
     });

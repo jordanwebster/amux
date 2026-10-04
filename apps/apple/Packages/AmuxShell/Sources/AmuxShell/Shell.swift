@@ -112,6 +112,11 @@ public struct Shell: View {
     /// the capture; the shell only knows where the row that asks for it is.
     private let report: @MainActor () -> Void
     private let actions: @MainActor (ShellAction) -> Void
+    /// The tabs somebody has been to. A tab is built when it is first
+    /// reached for and kept from then on, so coming back finds it as it
+    /// was; building all three for a launch that shows one was a third of
+    /// the first frame's work.
+    @State private var visited: Set<Tab> = []
 
     public init(
         router: Router,
@@ -150,28 +155,34 @@ public struct Shell: View {
         @Bindable var router = router
         ZStack(alignment: .bottom) {
             ZStack {
-                NavigationStack(path: $router.agentsPath) {
-                    AgentsTab(
-                        router: self.router, accounts: accounts, stores: stores,
-                        actions: actions)
-                        .navigationDestination(for: Route.self) { page($0) }
+                if reached(.agents) {
+                    NavigationStack(path: $router.agentsPath) {
+                        AgentsTab(
+                            router: self.router, accounts: accounts, stores: stores,
+                            actions: actions)
+                            .navigationDestination(for: Route.self) { page($0) }
+                    }
+                    .tabSurface(selected: router.tab == .agents)
                 }
-                .tabSurface(selected: router.tab == .agents)
 
-                NavigationStack(path: $router.hostsPath) {
-                    HostsTabRoot(router: self.router, stores: stores)
-                        .navigationDestination(for: Route.self) { page($0) }
+                if reached(.hosts) {
+                    NavigationStack(path: $router.hostsPath) {
+                        HostsTabRoot(router: self.router, stores: stores)
+                            .navigationDestination(for: Route.self) { page($0) }
+                    }
+                    .tabSurface(selected: router.tab == .hosts)
                 }
-                .tabSurface(selected: router.tab == .hosts)
 
-                NavigationStack(path: $router.youPath) {
-                    YouTabRoot(
-                        router: self.router, accounts: accounts, stores: stores,
-                        deletion: deletion, removal: removal, appearance: appearance,
-                        report: report, actions: actions)
-                        .navigationDestination(for: Route.self) { page($0) }
+                if reached(.you) {
+                    NavigationStack(path: $router.youPath) {
+                        YouTabRoot(
+                            router: self.router, accounts: accounts, stores: stores,
+                            deletion: deletion, removal: removal, appearance: appearance,
+                            report: report, actions: actions)
+                            .navigationDestination(for: Route.self) { page($0) }
+                    }
+                    .tabSurface(selected: router.tab == .you)
                 }
-                .tabSurface(selected: router.tab == .you)
             }
 
             // A bottom sheet or card over a tab's root takes the tab bar's
@@ -184,6 +195,13 @@ public struct Shell: View {
         .tint(design.accentColor)
         .reported("shell", value: router.tab.rawValue)
         .simultaneousGesture(backGesture)
+        .onChange(of: router.tab, initial: true) { _, now in visited.insert(now) }
+    }
+
+    /// Whether a tab has been reached for: the one on screen, or any that
+    /// was.
+    private func reached(_ tab: Tab) -> Bool {
+        tab == router.tab || visited.contains(tab)
     }
 
     /// Restores the platform's edge-to-pop interaction while the custom page

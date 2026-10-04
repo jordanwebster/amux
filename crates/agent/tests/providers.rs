@@ -49,6 +49,49 @@ async fn a_codex_agent_handshakes_runs_a_turn_and_resumes_its_thread() {
     assert_eq!(agent.exit().await, ExitCause::Stopped);
 }
 
+/// The thread id Codex answers with is what the next incarnation resumes;
+/// an incarnation that cannot keep it ends rather than run a thread nobody
+/// can find again. A read-only session file stands in for the full disk.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_codex_thread_that_cannot_be_kept_ends_the_incarnation() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let agent = Agent::start(Setup {
+        kind: "codex",
+        steps: vec![
+            Step::Text {
+                chunks: vec!["hello".into()],
+            },
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", "hi").await, Verdict::Accepted);
+    agent
+        .wait("the turn ends", |log| log.turn_ends() == 1)
+        .await;
+    daemon.stop(StopMode::Graceful).await;
+    assert_eq!(agent.exit().await, ExitCause::Stopped);
+
+    let session = agent.dir.join(agent::PRIVATE).join("provider-session");
+    std::fs::set_permissions(&session, std::fs::Permissions::from_mode(0o400)).unwrap();
+    agent.resume();
+    let cause = agent.exit().await;
+    std::fs::set_permissions(&session, std::fs::Permissions::from_mode(0o600)).unwrap();
+    match cause {
+        ExitCause::WriteFailed(why) => assert!(
+            why.contains("provider-session"),
+            "the cause names the file that could not be written: {why}"
+        ),
+        other => panic!("the resumed incarnation ends on the failed write: {other:?}"),
+    }
+    agent.assert_released();
+}
+
 /// A killed agent writes nothing more, so whatever was open stays open in
 /// its state. The next incarnation rebuilds that state from the facts ring
 /// (here small enough to have rotated, so from a checkpoint in the middle)

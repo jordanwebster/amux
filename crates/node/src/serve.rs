@@ -27,8 +27,13 @@ const MAX_CAP: u32 = 10_000;
 enum Opening {
     /// A client's: the newest rows.
     Tail(u32),
-    /// A peer source's: what came after the revision it holds.
-    After { revision: u64, cap: u32 },
+    /// A peer source's: what came after the revision it holds, taken
+    /// under `generation` of this origin.
+    After {
+        revision: u64,
+        cap: u32,
+        generation: u64,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -156,25 +161,35 @@ fn row_by_id(store: &Sqlite, own_host: &[u8], agent_id: &[u8]) -> Result<AgentRo
 }
 
 impl ProfileRuntime {
-    /// Opens a Subscribe stream on an agent: its Snapshot, the newest
-    /// `tail` rows of its block (at most K), its marker if one is set, then
-    /// every event its source broadcasts.
+    /// Opens a Subscribe stream on an agent: its Opening, its Snapshot,
+    /// the newest `tail` rows of its block (at most K), its marker if one
+    /// is set, then every event its source broadcasts.
     pub async fn subscribe(&self, agent_id: &[u8], tail: u32) -> Result<Subscription, ServeError> {
         self.open_subscription(agent_id, Opening::Tail(tail)).await
     }
 
     /// Opens a Subscribe stream for a peer that holds everything through
-    /// `revision`: the rows revised since, in revision order, when there
-    /// are at most `cap`; otherwise Reset and the newest `cap` rows. Either
-    /// way the Snapshot leads and the marker follows, then every event.
+    /// `revision` of this origin's `generation`: the rows revised since,
+    /// in revision order, when there are at most `cap`; otherwise, or when
+    /// the generation is not the one this origin runs, Reset and the
+    /// newest `cap` rows. Either way the Opening and Snapshot lead and the
+    /// marker follows, then every event.
     pub async fn subscribe_after(
         &self,
         agent_id: &[u8],
         revision: u64,
         cap: u32,
+        generation: u64,
     ) -> Result<Subscription, ServeError> {
-        self.open_subscription(agent_id, Opening::After { revision, cap })
-            .await
+        self.open_subscription(
+            agent_id,
+            Opening::After {
+                revision,
+                cap,
+                generation,
+            },
+        )
+        .await
     }
 
     async fn open_subscription(
@@ -205,15 +220,36 @@ impl ProfileRuntime {
         if let Some(hook) = hook {
             hook().await;
         }
+        // The origin generation the rows belong to: this run's for an
+        // agent of this host, and what the replica's source last caught
+        // up under for a replica (0 until one has).
+        let generation = if own {
+            self.generation()
+        } else {
+            row.source_generation
+        };
         let (reset, rows, cut) = match from {
             // A client's tail never exceeds what a replica keeps.
             Opening::Tail(tail) => {
                 let mut cut = store.cut(&row.agent, tail.min(k))?;
                 (false, std::mem::take(&mut cut.held), cut)
             }
-            Opening::After { revision, cap } => {
+            Opening::After {
+                revision,
+                cap,
+                generation: held,
+            } => {
                 let cap = cap.min(MAX_CAP);
-                match store.after(&row.agent, revision, cap)? {
+                // A cursor of another generation names revisions this
+                // origin may have minted again for different content, so
+                // it is answered as a cursor too far behind is: with a
+                // fresh tail.
+                let delta = if held == generation {
+                    store.after(&row.agent, revision, cap)?
+                } else {
+                    None
+                };
+                match delta {
                     Some(delta) => (false, delta, store.cut(&row.agent, 0)?),
                     None => {
                         let mut cut = store.cut(&row.agent, cap)?;
@@ -222,7 +258,10 @@ impl ProfileRuntime {
                 }
             }
         };
-        let mut opening = VecDeque::with_capacity(rows.len() + 3);
+        let mut opening = VecDeque::with_capacity(rows.len() + 4);
+        opening.push_back(Arc::new(event(session_event::Of::Opening(wire::Opening {
+            generation,
+        }))));
         if reset {
             opening.push_back(Arc::new(event(session_event::Of::Reset(wire::Reset {}))));
         }

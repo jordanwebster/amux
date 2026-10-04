@@ -97,20 +97,21 @@ async fn start(install: &Install, boot: &str, launch: Launch) -> (Daemon, Arc<Pr
 async fn crash(daemon: Daemon, runtime: Arc<ProfileRuntime>) {
     drop(daemon);
     let mut runtime = Some(runtime);
-    until(
-        "the crashed daemon's tasks to release its store",
-        async || match Arc::try_unwrap(runtime.take().unwrap()) {
+    until("the crashed daemon's tasks to release its store", || {
+        std::future::ready(match Arc::try_unwrap(runtime.take().unwrap()) {
             Ok(last) => {
                 drop(last);
-                true
+                Ok(())
             }
             Err(shared) => {
+                let held = Arc::strong_count(&shared);
                 runtime = Some(shared);
-                false
+                Err(format!("{held} references held"))
             }
-        },
-    )
-    .await;
+        })
+    })
+    .await
+    .unwrap();
 }
 
 async fn write_and_ingest(
@@ -359,7 +360,11 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
     drain(&mut subscription, &mut seen, Duration::from_millis(100)).await;
     assert_eq!(
         log(&seen),
-        vec!["snapshot r0 Starting queue=[]", "item a o1 r1 \"one\""],
+        vec![
+            "opening g1",
+            "snapshot r0 Starting queue=[]",
+            "item a o1 r1 \"one\""
+        ],
         "a torn frame is not read, and the journal has not ended while one is being written"
     );
     agent.journal().finish_partial().unwrap();
@@ -372,7 +377,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
     )
     .await;
     assert_eq!(
-        log(&seen[2..]),
+        log(&seen[3..]),
         vec!["item b o2 r2 \"two\"", "caught_up r2"]
     );
     agent.die().await;
@@ -399,6 +404,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r0 Starting queue=[]",
             "item a o1 r1 \"one\"",
             "caught_up r1"
@@ -462,6 +468,7 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r0 Starting queue=[]",
             "item a o1 r1 \"one\"",
             "item b o2 r3 \"two\"",
@@ -478,7 +485,7 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
         agent.nudge().await;
     }
     read_until(&mut subscription, &mut seen, "three live records", |seen| {
-        seen.len() == 7
+        seen.len() == 8
     })
     .await;
     for event in &seen[4..] {
@@ -497,7 +504,7 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
         }
     }
     assert_eq!(
-        log(&seen[4..]),
+        log(&seen[5..]),
         vec![
             "snapshot r4 Working queue=[\"q1\"]",
             "item c o3 r5 \"three\"",
@@ -521,7 +528,7 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
     .await;
     assert_eq!(agent.hellos(), 2);
     assert_eq!(
-        log(&seen[7..]),
+        log(&seen[8..]),
         vec![
             "snapshot r7 Idle queue=[]",
             "item d o4 r8 \"four\"",
@@ -535,28 +542,31 @@ async fn each_record_is_broadcast_once_after_its_commit_and_caught_up_once_per_h
     agent.append(&append("e", "!"));
     agent.nudge().await;
     read_until(&mut subscription, &mut seen, "two more records", |seen| {
-        seen.len() == 12
+        seen.len() == 13
     })
     .await;
     drain(&mut subscription, &mut seen, Duration::from_millis(100)).await;
     assert_eq!(
-        log(&seen[10..]),
+        log(&seen[11..]),
         vec!["item e o5 r9 \"five\"", "append e r10 base r9 \"!\""]
     );
 
     // The process dies after its marker: nothing more to announce.
     agent.die().await;
-    until("the row says exited", async || {
-        runtime
+    until("the row says exited", || async {
+        let lifecycle = runtime
             .store()
             .await
             .agent(&agent.key(&install))
             .unwrap()
             .unwrap()
-            .lifecycle
-            == Lifecycle::Exited as i32
+            .lifecycle;
+        (lifecycle == Lifecycle::Exited as i32)
+            .then_some(())
+            .ok_or_else(|| format!("lifecycle {lifecycle}"))
     })
-    .await;
+    .await
+    .unwrap();
     drain(&mut subscription, &mut seen, Duration::from_millis(100)).await;
     assert_eq!(
         caught_ups(&seen),
@@ -612,7 +622,12 @@ async fn a_lagging_subscriber_is_closed_with_lagged_and_ingest_never_waits() {
     }
     assert_eq!(
         log(&seen),
-        vec!["snapshot r0 Starting queue=[]", "caught_up r0", "lagged"],
+        vec![
+            "opening g1",
+            "snapshot r0 Starting queue=[]",
+            "caught_up r0",
+            "lagged"
+        ],
         "the opening, then one Lagged, then the stream ends"
     );
 
@@ -626,6 +641,7 @@ async fn a_lagging_subscriber_is_closed_with_lagged_and_ingest_never_waits() {
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r0 Starting queue=[]",
             "item k17 o18 r18 \"x\"",
             "item k18 o19 r19 \"x\"",
@@ -637,7 +653,11 @@ async fn a_lagging_subscriber_is_closed_with_lagged_and_ingest_never_waits() {
 }
 
 /// Installs a join hook that starts an ingest of `agent` and gives it time
-/// to reach the store before the subscribe reads its cut.
+/// to reach the store before the subscribe reads its cut. A forced delay:
+/// the subscribe holds the store lock through its opening, so the ingest
+/// cannot commit until the hook returns and nothing it writes can be
+/// waited on; the sleep only makes the contention real rather than
+/// absent, and the test's outcome is the same either way.
 fn ingest_between_join_and_cut(runtime: &Arc<ProfileRuntime>, agent: uuid::Uuid) {
     let target = Arc::downgrade(runtime);
     let hook: JoinHook = Arc::new(move || {
@@ -689,6 +709,7 @@ async fn a_snapshot_committed_between_join_and_cut_arrives_once() {
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r0 Starting queue=[]",
             "item a o1 r1 \"one\"",
             "caught_up r1",
@@ -747,7 +768,7 @@ async fn a_withdrawn_prompt_is_never_read_as_queued() {
     .await;
     assert_eq!(
         log(&seen),
-        vec!["snapshot r2 Working queue=[]", "caught_up r2"]
+        vec!["opening g1", "snapshot r2 Working queue=[]", "caught_up r2"]
     );
     assert_markers_describe_their_snapshot(&seen, &committed);
     crash(daemon, runtime).await;
@@ -766,13 +787,14 @@ async fn a_withdrawn_prompt_is_never_read_as_queued() {
     runtime.set_join_hook(None);
     let mut seen = Vec::new();
     read_until(&mut subscription, &mut seen, "the withdrawal", |seen| {
-        seen.len() == 3
+        seen.len() == 4
     })
     .await;
     drain(&mut subscription, &mut seen, Duration::from_millis(200)).await;
     assert_eq!(
         log(&seen),
         vec![
+            "opening g1",
             "snapshot r1 Working queue=[\"q1\"]",
             "caught_up r1",
             "snapshot r2 Working queue=[]",
@@ -1169,6 +1191,7 @@ async fn the_sweep_ingests_a_finished_childs_journal_before_marking_it_exited() 
     assert_eq!(
         log(&opening),
         vec![
+            "opening g1",
             "snapshot r3 Idle queue=[]",
             "item last o1 r2 \"the tests pass\"",
             "caught_up r3",
@@ -1511,15 +1534,23 @@ async fn retention_sweep() {
         ));
     }
     for &child in &children {
-        until("each one-shot child to finish and exit", async || {
-            runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
+        until("each one-shot child to finish and exit", || async {
+            let lifecycle = runtime.agent(child).await.unwrap().lifecycle;
+            (lifecycle == Lifecycle::Exited as i32)
+                .then_some(())
+                .ok_or_else(|| format!("lifecycle {lifecycle}"))
         })
-        .await;
+        .await
+        .unwrap();
     }
-    until("the parent to hear from both", async || {
-        runtime.store().await.deliveries().unwrap().is_empty()
+    until("the parent to hear from both", || async {
+        let rows = runtime.store().await.deliveries().unwrap().len();
+        (rows == 0)
+            .then_some(())
+            .ok_or_else(|| format!("{rows} delivery rows"))
     })
-    .await;
+    .await
+    .unwrap();
 
     let named = Named {
         names: old
@@ -1664,10 +1695,14 @@ async fn retention_sweep() {
         .expect("the parent's message resumes its kept child");
     let row = runtime.agent(child).await.unwrap();
     assert_eq!(row.incarnation, 2);
-    until("the resumed child to finish again", async || {
-        runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
+    until("the resumed child to finish again", || async {
+        let lifecycle = runtime.agent(child).await.unwrap().lifecycle;
+        (lifecycle == Lifecycle::Exited as i32)
+            .then_some(())
+            .ok_or_else(|| format!("lifecycle {lifecycle}"))
     })
-    .await;
+    .await
+    .unwrap();
     say(format!(
         "the parent sent child-1 a message: it resumed as incarnation {} and finished again",
         row.incarnation
@@ -1676,7 +1711,14 @@ async fn retention_sweep() {
     // The synthetic agent ignores Stop, and a stop's deadline runs on the
     // test's clock: it goes first, on its own.
     big.die().await;
-    until("big's exit", async || !runtime.live().contains(&big.id)).await;
+    until("big's exit", || async {
+        let live = runtime.live();
+        (!live.contains(&big.id))
+            .then_some(())
+            .ok_or_else(|| format!("live: {live:?}"))
+    })
+    .await
+    .unwrap();
     kill_all(&runtime).await;
     drop(runtime);
     daemon.shutdown().await.unwrap();

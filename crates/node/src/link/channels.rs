@@ -21,13 +21,13 @@ use tonic::codegen::http;
 use tonic::transport::{Channel, Endpoint};
 use wire::pb;
 
-use super::{ByteStream, OpenError};
+use super::{ByteStream, CarrierKind, OpenError};
+use crate::HostId;
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
 use crate::routing::{LinkId, LinkRegistry, RevocationMark, Revocations, Route};
 use crate::transport::{channel_from_single_io, configure_tonic_endpoint_keepalive};
 use crate::trust::SharedTrustStore;
-use crate::{AgentId, HostId};
 
 const CHANNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP2_FRAME_HEADER_LEN: usize = 9;
@@ -37,8 +37,18 @@ const HTTP2_DATA_FRAME: u8 = 0;
 #[serde(rename_all = "snake_case")]
 pub enum ChannelClass {
     Calls,
-    Session { agent: AgentId },
+    /// Session subscriptions, on a channel of their own so that they
+    /// neither wait behind nor hold up the host's calls.
+    Session,
     Bulk,
+}
+
+impl ChannelClass {
+    /// Whether one channel of this class serves every caller to a host
+    /// while its connection lasts.
+    fn shared(self) -> bool {
+        matches!(self, Self::Calls | Self::Session)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -68,6 +78,17 @@ pub enum ChannelError {
     Tls(String),
 }
 
+/// How a stream to a host is secured.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Handshake {
+    /// Whatever the route allows: none on a direct link of our own.
+    Any,
+    /// The pinned TLS handshake inside the stream, whatever the route.
+    Pinned,
+    /// None: the link the stream rides authenticated both ends.
+    None,
+}
+
 #[derive(Clone)]
 struct ChannelSecurity {
     identity: DeviceIdentity,
@@ -88,6 +109,10 @@ struct Cached {
 
 pub struct ChannelPool {
     by_key: RwLock<HashMap<ChannelKey, Cached>>,
+    /// One opener per shared channel: callers who ask while it is being
+    /// opened wait for it rather than opening their own, which at a launch
+    /// every agent's source would otherwise do at once.
+    opening: std::sync::Mutex<HashMap<ChannelKey, Arc<tokio::sync::Mutex<()>>>>,
     lifetimes: RwLock<HashMap<ChannelKey, Vec<Weak<CancellationToken>>>>,
     links: Arc<LinkRegistry>,
     security: Option<ChannelSecurity>,
@@ -151,6 +176,7 @@ impl ChannelPool {
     pub(crate) fn new(links: Arc<LinkRegistry>) -> Self {
         Self {
             by_key: RwLock::new(HashMap::new()),
+            opening: std::sync::Mutex::new(HashMap::new()),
             lifetimes: RwLock::new(HashMap::new()),
             links,
             security: None,
@@ -167,6 +193,7 @@ impl ChannelPool {
     ) -> Self {
         Self {
             by_key: RwLock::new(HashMap::new()),
+            opening: std::sync::Mutex::new(HashMap::new()),
             lifetimes: RwLock::new(HashMap::new()),
             links,
             security: Some(ChannelSecurity {
@@ -207,7 +234,22 @@ impl ChannelPool {
     }
 
     pub(crate) async fn channel(&self, key: ChannelKey) -> Result<Channel, ChannelError> {
-        let cached = if key.class == ChannelClass::Calls {
+        if !key.class.shared() {
+            return self.open_channel(key).await;
+        }
+        let opener = self
+            .opening
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(key)
+            .or_default()
+            .clone();
+        let _opening = opener.lock().await;
+        self.open_channel(key).await
+    }
+
+    async fn open_channel(&self, key: ChannelKey) -> Result<Channel, ChannelError> {
+        let cached = if key.class.shared() {
             self.by_key
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -239,12 +281,22 @@ impl ChannelPool {
             }
         }
 
-        let stream = self.open_stream(key.peer, key.route).await?;
+        let opened = std::time::Instant::now();
+        let (stream, handshake) = self
+            .open_stream(key.peer, key.route, Handshake::Any)
+            .await?;
         let ended = Arc::new(AtomicBool::new(false));
         let channel = self
-            .secure_channel(key, Watched::new(stream, ended.clone()))
+            .secure_channel(key, Watched::new(stream, ended.clone()), handshake)
             .await?;
-        if key.class == ChannelClass::Calls {
+        tracing::debug!(
+            peer = %key.peer,
+            class = ?key.class,
+            ?handshake,
+            elapsed_ms = opened.elapsed().as_millis(),
+            "opened a link stream"
+        );
+        if key.class.shared() {
             self.by_key
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -264,34 +316,53 @@ impl ChannelPool {
         peer: HostId,
         route: Route,
     ) -> Result<ByteStream, ChannelError> {
-        self.open_stream(peer, route).await
+        let (stream, _) = self.open_stream(peer, route, Handshake::Pinned).await?;
+        Ok(stream)
     }
 
     pub(crate) fn drop_link(&self, link: LinkId) {
-        self.by_key
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .retain(|key, _| route_link(key.route) != Some(link));
-        self.cancel_where(|key| route_link(key.route) == Some(link));
+        self.forget_where(|key| route_link(key.route) == Some(link));
     }
 
     pub(crate) fn drop_host(&self, host: HostId) {
-        self.by_key
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .retain(|key, _| key.peer != host && route_link_peer(key.route) != host);
-        self.cancel_where(|key| key.peer == host || route_link_peer(key.route) == host);
+        self.forget_where(|key| key.peer == host || route_link_peer(key.route) == host);
     }
 
     pub(crate) fn drop_route(&self, peer: HostId, route: Route) {
+        self.forget_where(|key| key.peer == peer && key.route == route);
+    }
+
+    /// Forgets the channels whose key `gone` names and cancels what ran on
+    /// them. The opener locks go too: a key holds its link's id, fresh on
+    /// every reconnect, so a daemon that kept them would hold one per
+    /// link it ever had. A call still waiting on one holds its own clone
+    /// and finishes as before.
+    fn forget_where(&self, gone: impl Fn(&ChannelKey) -> bool) {
         self.by_key
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .retain(|key, _| key.peer != peer || key.route != route);
-        self.cancel_where(|key| key.peer == peer && key.route == route);
+            .retain(|key, _| !gone(key));
+        self.opening
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|key, _| !gone(key));
+        self.cancel_where(gone);
     }
 
-    async fn open_stream(&self, peer: HostId, route: Route) -> Result<ByteStream, ChannelError> {
+    /// Opens a stream to `peer` on `route`, saying how it is secured. A
+    /// stream to a paired host on a direct QUIC link of our own is plain:
+    /// the link authenticated both ends when it came up, so the stream
+    /// carries no handshake. Every other stream handshakes inside, and
+    /// does not wait to be accepted first either: the handshake's first
+    /// flight leaves with the preface, and a refusal comes back out of
+    /// the handshake with its reason. Only an opener that asks for the
+    /// pinned handshake outright, pairing, waits for the answer first.
+    async fn open_stream(
+        &self,
+        peer: HostId,
+        route: Route,
+        wanted: Handshake,
+    ) -> Result<(ByteStream, Handshake), ChannelError> {
         let carrier = match route {
             Route::Direct(link) => {
                 self.links
@@ -308,30 +379,39 @@ impl ChannelPool {
                 .map(|(_, carrier)| carrier)
                 .ok_or(ChannelError::LinkUnavailable { host_id: relay })?,
         };
-        carrier
+        let plain = wanted == Handshake::Any
+            && matches!(route, Route::Direct(link) if link.peer() == peer)
+            && carrier.kind() == CarrierKind::Quic;
+        let mut stream = carrier
             .open_stream(pb::StreamPreface {
                 dst: peer.as_bytes().to_vec(),
+                plain,
             })
             .await
-            .map_err(|error| map_open_error(error, route))
+            .map_err(|error| map_open_error(error, route))?;
+        if plain {
+            return Ok((stream, Handshake::None));
+        }
+        if wanted == Handshake::Pinned {
+            stream
+                .accepted()
+                .await
+                .map_err(|error| map_open_error(error, route))?;
+        }
+        Ok((stream, Handshake::Pinned))
     }
 
     async fn secure_channel(
         &self,
         key: ChannelKey,
         stream: Watched<ByteStream>,
+        handshake: Handshake,
     ) -> Result<Channel, ChannelError> {
         let security = self
             .security
             .as_ref()
             .ok_or_else(|| ChannelError::Handshake("device identity is unavailable".to_string()))?;
-        let config = security
-            .identity
-            .client_tls_config_for_peer(security.trust_store.clone(), key.peer)?;
-        let connector = TlsConnector::from(Arc::new(config));
         let begun = security.revocations.mark();
-        let server_name = ServerName::try_from("amux-device".to_string())
-            .map_err(|error| ChannelError::Tls(error.to_string()))?;
         let lifetime = Arc::new(CancellationToken::new());
         {
             let mut lifetimes = self
@@ -343,14 +423,34 @@ impl ChannelPool {
             tracked.push(Arc::downgrade(&lifetime));
         }
         let stream = crate::transport::ShutdownIo::new_shared(stream, lifetime);
-        let tls = tokio::time::timeout(
-            self.handshake_timeout,
-            connector.connect(server_name, stream),
-        )
-        .await
-        .map_err(|_| ChannelError::Handshake("TLS handshake timed out".to_string()))?
-        .map_err(|error| ChannelError::Tls(error.to_string()))?;
-        let tls = TrustAnswer::new(tls, key.peer, security.revocations.clone(), begun);
+        let io: Box<dyn crate::transport::BoxedGrpcInner> = match handshake {
+            Handshake::None => Box::new(stream),
+            Handshake::Pinned | Handshake::Any => {
+                let config = security
+                    .identity
+                    .client_tls_config_for_peer(security.trust_store.clone(), key.peer)?;
+                let connector = TlsConnector::from(Arc::new(config));
+                let server_name = ServerName::try_from("amux-device".to_string())
+                    .map_err(|error| ChannelError::Tls(error.to_string()))?;
+                let tls = tokio::time::timeout(
+                    self.handshake_timeout,
+                    connector.connect(server_name, stream),
+                )
+                .await
+                .map_err(|_| ChannelError::Handshake("TLS handshake timed out".to_string()))?
+                .map_err(|error| match OpenError::carried(&error) {
+                    // The stream was not waited on: the open's answer is
+                    // read here, under the handshake, and is the error.
+                    Some(OpenError::Refused(reason)) => ChannelError::Refused(*reason),
+                    Some(OpenError::LinkClosed) => ChannelError::LinkUnavailable {
+                        host_id: route_link_peer(key.route),
+                    },
+                    _ => ChannelError::Tls(error.to_string()),
+                })?;
+                Box::new(tls)
+            }
+        };
+        let tls = TrustAnswer::new(io, key.peer, security.revocations.clone(), begun);
         let endpoint = configure_tonic_endpoint_keepalive(Endpoint::from_static("https://peer"));
         let hold = (key.class == ChannelClass::Bulk).then(|| {
             self.bulk_response_holds
@@ -607,11 +707,17 @@ pub(crate) fn peer_client(channel: Channel) -> PeerClient {
 fn name_refusal(error: tonic::transport::Error) -> tower::BoxError {
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
     while let Some(current) = source {
-        if let Some(io) = current.downcast_ref::<io::Error>()
-            && io.kind() == io::ErrorKind::PermissionDenied
-            && io.to_string() == TRUST_REVOKED
-        {
-            return Box::new(tonic::Status::unauthenticated(TRUST_REVOKED));
+        if let Some(io) = current.downcast_ref::<io::Error>() {
+            if io.kind() == io::ErrorKind::PermissionDenied && io.to_string() == TRUST_REVOKED {
+                return Box::new(tonic::Status::unauthenticated(TRUST_REVOKED));
+            }
+            // A plain stream is not waited on, so the host's refusal of it
+            // is read, not answered at the open.
+            if let Some(reason) = OpenError::refusal(io) {
+                return Box::new(tonic::Status::unavailable(format!(
+                    "stream refused: {reason:?}"
+                )));
+            }
         }
         source = current.source();
     }
@@ -748,15 +854,25 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for HoldAfterFirstDataFrame<T> {
     }
 }
 
+/// A stream a peer opened to this host, from the link it arrived on.
+pub(crate) struct InboundStream {
+    /// The host at the far end of that link, authenticated by it.
+    pub(crate) adjacent_peer: HostId,
+    pub(crate) stream: ByteStream,
+    /// The stream is the adjacent peer's own, over a direct link, and
+    /// carries no handshake: the link's authentication is the stream's.
+    pub(crate) plain: bool,
+}
+
 pub(crate) fn serve_inbound_streams(
     dispatcher: Arc<TunnelDispatcher>,
-    mut streams: mpsc::Receiver<(HostId, ByteStream)>,
+    mut streams: mpsc::Receiver<InboundStream>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        while let Some((adjacent_peer, stream)) = streams.recv().await {
+        while let Some(inbound) = streams.recv().await {
             let dispatcher = dispatcher.clone();
             tokio::spawn(async move {
-                if let Err(error) = dispatcher.dispatch_link_stream(adjacent_peer, stream).await {
+                if let Err(error) = dispatcher.dispatch_link_stream(inbound).await {
                     if error.is_peer_leaving() {
                         // The peer opened this and left before it said who it
                         // was, which is what a stream on a superseded link
@@ -792,5 +908,61 @@ pub(crate) fn route_link_peer(route: Route) -> HostId {
     match route {
         Route::Direct(link) => link.peer(),
         Route::Via(relay) => relay,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::*;
+
+    fn opener_count(pool: &ChannelPool) -> usize {
+        pool.opening.lock().unwrap().len()
+    }
+
+    fn opened(pool: &ChannelPool, key: ChannelKey) {
+        pool.opening.lock().unwrap().entry(key).or_default();
+    }
+
+    #[test]
+    fn dropping_a_link_a_route_or_a_host_forgets_their_opener_locks() {
+        let pool = ChannelPool::new(Arc::new(LinkRegistry::default()));
+        let host = Uuid::new_v4();
+        let relay = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let link = LinkId::new(host);
+        let direct = ChannelKey {
+            peer: host,
+            route: Route::Direct(link),
+            class: ChannelClass::Session,
+        };
+        let via = ChannelKey {
+            peer: host,
+            route: Route::Via(relay),
+            class: ChannelClass::Calls,
+        };
+        let elsewhere = ChannelKey {
+            peer: other,
+            route: Route::Direct(LinkId::new(other)),
+            class: ChannelClass::Calls,
+        };
+        opened(&pool, direct);
+        opened(&pool, via);
+        opened(&pool, elsewhere);
+        assert_eq!(opener_count(&pool), 3);
+
+        pool.drop_link(link);
+        assert_eq!(opener_count(&pool), 2, "the link's lock went with the link");
+
+        pool.drop_route(host, Route::Via(relay));
+        assert_eq!(
+            opener_count(&pool),
+            1,
+            "the route's lock went with the route"
+        );
+
+        pool.drop_host(other);
+        assert_eq!(opener_count(&pool), 0, "the host's lock went with the host");
     }
 }

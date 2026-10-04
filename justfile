@@ -92,6 +92,26 @@ release-check *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p amux --bins --no-default-features {{desktop_features}} "$@"
     if [ "${1-}" = -- ]; then shift; fi; scripts/release-policy-check.sh "$@"
 
+# `just release 0.8.0` writes the version, checks the release build, commits,
+# tags v0.8.0 and pushes; the tag's workflow builds the binaries into a
+# GitHub Release.
+# Cut a release of the amux binary.
+release VERSION:
+    {{bounded}} 1800 cargo run --locked -q -p xtask -- release cut {{VERSION}}
+
+# `just deploy 0.8.0` signs the release's binaries with the keychain's key and
+# publishes the stable manifest; `--channel preview` and `--rollout 10`
+# choose who takes it.
+# Put a cut release in front of a channel.
+deploy VERSION *ARGS:
+    shift; if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 3600 cargo run --locked -q -p xtask -- release deploy {{VERSION}} "$@"
+
+# `just release-key generate` makes one in the login keychain and prints its
+# public half; `just release-key public` prints it again.
+# The release signing key.
+release-key *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked -q -p xtask -- release key "$@"
+
 # Check the provider-free graph used by embedded clients.
 embedded-check:
     {{bounded}} 900 cargo check --locked -p node -p client -p ui-state -p ui-runtime -p app-runtime -p app-embedded
@@ -196,10 +216,6 @@ no-update-flags:
 
 # Run the same task sequence exercised across continuous-integration jobs.
 ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy deletion-ledger-check docs-check tests-check test contracts-check doctest release-check embedded-check embedded-test mobile-check
-
-# Push the rearchitect branch head to origin without force and wait for its CI run.
-ci-remote:
-    scripts/ci-remote.sh
 
 # Run the live provider compatibility lane for one kind (claude_pty,
 # claude_sdk or codex) and scenario (initialize, respond, decide, interrupt,

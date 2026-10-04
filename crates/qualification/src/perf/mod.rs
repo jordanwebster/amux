@@ -3,6 +3,7 @@
 use std::io;
 
 pub mod flood;
+pub mod phone;
 mod report;
 pub use report::{
     Baselines, DESKTOP_REFERENCE_STATE, Machine, Metric, MetricRun, PerfError, Report, Sample,

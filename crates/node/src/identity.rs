@@ -206,6 +206,13 @@ pub(crate) fn quic_transport_config() -> std::sync::Arc<quinn::TransportConfig> 
         std::time::Duration::from_secs(120),
     );
 
+    // A launch's first flight is every host's inventory and the fleet's
+    // session openings at once; through a relay they all ride one fresh
+    // connection. The ten-packet initial window of RFC 9002 holds about a
+    // third of that, so the rest waited a round trip per doubling. Thirty-
+    // two packets is what Chromium's QUIC starts with.
+    let mut congestion = quinn::congestion::CubicConfig::default();
+    congestion.initial_window(32 * 1200);
     let mut transport = quinn::TransportConfig::default();
     transport
         .keep_alive_interval(Some(keep_alive))
@@ -215,7 +222,8 @@ pub(crate) fn quic_transport_config() -> std::sync::Arc<quinn::TransportConfig> 
                 .expect("QUIC idle timeout fits in a QUIC variable integer"),
         ))
         .max_concurrent_bidi_streams(64_u32.into())
-        .max_concurrent_uni_streams(0_u32.into());
+        .max_concurrent_uni_streams(0_u32.into())
+        .congestion_controller_factory(std::sync::Arc::new(congestion));
     std::sync::Arc::new(transport)
 }
 

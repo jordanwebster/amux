@@ -133,7 +133,12 @@ def leave_and_recover(journey: TerminalJourney) -> list[str]:
     journey.frame(pane, "reconciled")
 
     # The laptop's own daemon restarts under the open chat: the client
-    # reconnects by itself, keeps the chat and the draft, and sends.
+    # reconnects by itself, keeps the chat and the draft, and sends. The
+    # daemon stays down until the client says so, because the live screen
+    # reads the same before the outage as after it and a send pressed while
+    # the client is reconnecting is not taken.
+    journey.request({"KillDaemon": {"host": "laptop"}})
+    journey.wait_terms(pane, "reconnecting", DRAFT, "Draft kept · sending waits")
     journey.request({"RestartDaemon": {"host": "laptop"}})
     journey.wait(
         pane,

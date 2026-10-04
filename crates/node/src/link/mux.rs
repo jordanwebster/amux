@@ -782,7 +782,10 @@ mod tests {
     }
 
     fn preface(dst: u8) -> pb::StreamPreface {
-        pb::StreamPreface { dst: vec![dst; 16] }
+        pb::StreamPreface {
+            dst: vec![dst; 16],
+            plain: false,
+        }
     }
 
     async fn open_with_partial_preface(

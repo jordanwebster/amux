@@ -350,9 +350,10 @@ mod tests {
             .await
             .unwrap();
         file.flush().await.unwrap();
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        // A window: a row that must not be consumed leaves no mark to wait
+        // on, so nothing may arrive for the whole of it.
         assert!(
-            tokio::time::timeout(Duration::from_millis(50), rows.recv())
+            tokio::time::timeout(Duration::from_millis(300), rows.recv())
                 .await
                 .is_err(),
             "an unterminated JSONL row must not be consumed"

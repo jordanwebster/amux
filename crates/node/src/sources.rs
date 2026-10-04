@@ -3,24 +3,31 @@
 //!
 //! Every trusted host has one follower. While the host is reachable it
 //! holds the host's SubscribeInventory stream: at the stream's CaughtUp it
-//! compares the host's generation with the one the store recorded (a
-//! change drops every replica of the host and records the new generation
-//! in one transaction), writes the rows the host lists and drops the ones
-//! it no longer lists, and only then marks the host ready. That is what
-//! "reachable" means for a source, so a drop always precedes a first
-//! absorb and a rewound origin never shows stale rows as current.
+//! records the host's generation, writes the rows the host lists and
+//! drops the ones it no longer lists, and only then marks the host ready.
+//! That is what "reachable" means for a source.
 //!
 //! Every replica agent of a ready host may have one source: one Subscribe
-//! to the origin. With no block it asks for a tail of K, with one for what
-//! came after its cursor, capped at K; the origin answers a delta when it
-//! fits and a Reset and a fresh tail otherwise. The source holds a
-//! catch-up until the origin's CaughtUp and then absorbs it in one go, so
-//! the block is never left half-replaced by a stream that died midway;
-//! the cursor moves to the revision CaughtUp carries, then per live
-//! record. Records are absorbed before they are broadcast. A stream that
-//! ends is Detached to local subscribers and retried after the cursor with
-//! backoff on the policy clock while the host stays reachable. A source
-//! for an exited agent closes once its catch-up has landed.
+//! to the origin. The agents the store remembers of a host get theirs as
+//! the host's inventory is subscribed, in the same flight, so a launch
+//! reconciles in one round trip to each host rather than two; the
+//! inventory's CaughtUp confirms them, and drops any for an agent the host
+//! no longer lists. With no block it asks for a tail of K, with one for what
+//! came after its cursor, capped at K, naming the origin generation the
+//! cursor was taken under; the origin answers a delta when it fits and the
+//! generation is the one it runs, and a Reset and a fresh tail otherwise.
+//! Every stream opens with the origin's generation, which the block takes
+//! at its Reset, so a rewound origin (an unclean reboot mints the same
+//! orders and revisions again for different content) resets each of its
+//! replicas on that replica's own stream, forgetting every row of the old
+//! generation. The source holds a catch-up until the origin's
+//! CaughtUp and then absorbs it in one go, so the block is never left
+//! half-replaced by a stream that died midway; the cursor moves to the
+//! revision CaughtUp carries, then per live record. Records are absorbed
+//! before they are broadcast. A stream that ends is Detached to local
+//! subscribers and retried after the cursor with backoff on the policy
+//! clock while the host stays reachable. A source for an exited agent
+//! closes once its catch-up has landed.
 //!
 //! Which agents get a source is the runtime's [`SourcePolicy`], read by
 //! one sweep after every inventory catch-up and change and once when the
@@ -102,6 +109,11 @@ pub(crate) struct Sources {
     /// Hosts whose inventory has caught up on the current stream, by the
     /// session that stream is. A session ends with its stream.
     ready: HashMap<Vec<u8>, u64>,
+    /// Hosts whose inventory is subscribed but has not caught up, by the
+    /// session it will confirm: the sources opened with it are current
+    /// from the start, so one that is lost waits out its backoff like any
+    /// other rather than ending.
+    following: HashMap<Vec<u8>, u64>,
     next_session: u64,
     /// Open sources and the host session each belongs to.
     open: HashMap<AgentKey, (u64, JoinHandle<()>)>,
@@ -131,6 +143,13 @@ impl Sources {
         }
         self.settling.clear();
         self.ready.clear();
+        self.following.clear();
+    }
+
+    /// Whether `session` is the one `host`'s agents are sourced under now,
+    /// caught up or still following.
+    fn is_current(&self, host: &[u8], session: u64) -> bool {
+        self.ready.get(host) == Some(&session) || self.following.get(host) == Some(&session)
     }
 }
 
@@ -344,6 +363,7 @@ impl ProfileRuntime {
         let stopped: Vec<(AgentKey, JoinHandle<()>)> = {
             let mut sources = self.sources.lock().unwrap();
             sources.ready.remove(&host_bytes);
+            sources.following.remove(&host_bytes);
             let keys: Vec<AgentKey> = sources
                 .open
                 .keys()
@@ -366,6 +386,7 @@ impl ProfileRuntime {
             }
             let Some(me) = runtime.upgrade() else { return };
             let mut store = me.store.lock().await;
+            me.host_current_changed(&host_bytes, false);
             let Ok(rows) = store.agents() else { return };
             for row in rows.iter().filter(|row| row.agent.host == host_bytes) {
                 me.detach(&mut store, &row.agent);
@@ -383,12 +404,46 @@ impl ProfileRuntime {
             .publish(key, event(session_event::Of::Detached(Detached {})));
     }
 
-    /// The host's inventory reached CaughtUp: compare its generation, write
+    /// Begins a host's inventory session: the number its sources are keyed
+    /// by until its stream ends. Under the `Listed` policy this also opens
+    /// a source for every agent the store remembers of the host, so their
+    /// subscriptions leave with the inventory's; the session is confirmed
+    /// when the inventory catches up, and an agent it no longer lists is
+    /// dropped then, source and all.
+    async fn begin_following(&self, host: HostId) -> u64 {
+        let host_bytes = host.as_bytes().to_vec();
+        let store = self.store.lock().await;
+        let rows = store.agents().unwrap_or_default();
+        let mut sources = self.sources.lock().unwrap();
+        sources.next_session += 1;
+        let session = sources.next_session;
+        sources.following.insert(host_bytes.clone(), session);
+        if sources.policy == SourcePolicy::Listed {
+            for row in rows.iter().filter(|row| row.agent.host == host_bytes) {
+                let key = &row.agent;
+                if sources.open.contains_key(key) || sources.settled.contains(key) {
+                    continue;
+                }
+                self.open_source_in(&mut sources, key, host, session);
+                // An exited agent's source only settles it; the sweep
+                // would otherwise reopen it for that.
+                if row.lifecycle == wire::Lifecycle::Exited as i32 {
+                    sources.settling.insert(key.clone());
+                }
+            }
+        }
+        drop(sources);
+        drop(store);
+        session
+    }
+
+    /// The host's inventory reached CaughtUp: record its generation, write
     /// what it lists and drop what it no longer does, all under one store
-    /// lock, then mark the host ready under a new session.
+    /// lock, then mark the host ready.
     async fn inventory_caught_up(
         &self,
         host: HostId,
+        session: u64,
         generation: Option<u64>,
         listed: Vec<Agent>,
     ) -> Result<u64, StoreError> {
@@ -405,19 +460,18 @@ impl ProfileRuntime {
         if let Some(generation) = generation
             && store.host_generation(&host_bytes)? != Some(generation)
         {
-            // A new generation: everything held under the old one goes,
-            // and the new one is recorded in the same transaction. Chats
-            // on agents the host still lists stay open and see the fresh
-            // tail arrive as a Reset.
-            let dropped = store.rewind_host(&host_bytes, generation)?;
-            if dropped > 0 {
-                tracing::info!(%host, generation, dropped, "the host's generation changed; its replicas were dropped");
+            // The replicas are not this stream's to reset: each source
+            // resumes after its cursor naming the generation it was taken
+            // under, and the origin answers the old one with a fresh tail.
+            // An exited agent's source had settled and would not look
+            // again; the sweep reopens it for that reset.
+            tracing::info!(%host, generation, "the host came back under a new generation");
+            store.record_host_generation(&host_bytes, generation)?;
+            {
+                let mut sources = self.sources.lock().unwrap();
+                sources.settled.retain(|key| key.host != host_bytes);
+                sources.settling.retain(|key| key.host != host_bytes);
             }
-            self.sources
-                .lock()
-                .unwrap()
-                .settled
-                .retain(|key| key.host != host_bytes);
             self.host_generation_changed(&host_bytes, generation);
         }
         for key in &unlisted {
@@ -426,11 +480,12 @@ impl ProfileRuntime {
         for agent in &listed {
             self.put_replica_row(&mut store, agent)?;
         }
-        let mut sources = self.sources.lock().unwrap();
-        sources.next_session += 1;
-        let session = sources.next_session;
-        sources.ready.insert(host_bytes, session);
-        drop(sources);
+        {
+            let mut sources = self.sources.lock().unwrap();
+            sources.following.remove(&host_bytes);
+            sources.ready.insert(host_bytes.clone(), session);
+        }
+        self.host_current_changed(&host_bytes, true);
         // Deliveries to a parent on that host may have waited for it.
         self.deliveries_due.notify_one();
         Ok(session)
@@ -581,12 +636,16 @@ impl ProfileRuntime {
         let Ok(host) = Uuid::from_slice(&key.host) else {
             return;
         };
+        self.open_source_in(sources, key, host, session);
+    }
+
+    fn open_source_in(&self, sources: &mut Sources, key: &AgentKey, host: HostId, session: u64) {
         let task = tokio::spawn(run_source(self.me.clone(), key.clone(), host, session));
         sources.open.insert(key.clone(), (session, task));
     }
 
     fn session_current(&self, key: &AgentKey, session: u64) -> bool {
-        self.sources.lock().unwrap().ready.get(&key.host) == Some(&session)
+        self.sources.lock().unwrap().is_current(&key.host, session)
     }
 
     fn source_ended(&self, key: &AgentKey, session: u64, settled: bool) {
@@ -607,14 +666,17 @@ impl ProfileRuntime {
     // --- absorbing -------------------------------------------------------------
 
     /// Absorbs a whole catch-up and the CaughtUp that ends it, then
-    /// broadcasts what the subscribers need, all under one store lock.
-    /// Returns whether the agent has exited.
+    /// broadcasts what the subscribers need, all under one store lock. A
+    /// Reset begins the block under `generation`, the origin's from the
+    /// stream's Opening; `revision` becomes the cursor. Returns whether the
+    /// agent has exited.
     async fn land_catch_up(
         &self,
         key: &AgentKey,
         session: u64,
         catch_up: CatchUp,
         revision: u64,
+        generation: u64,
     ) -> Result<Option<bool>, StoreError> {
         let mut store = self.store.lock().await;
         if !self.session_current(key, session) {
@@ -630,8 +692,10 @@ impl ProfileRuntime {
                 Absorb::Reset {
                     tail: tail.clone(),
                     snapshot,
+                    generation,
                 },
             )?;
+            self.wrote();
             let absorbed_rest = if rest.is_empty() {
                 Vec::new()
             } else {
@@ -671,11 +735,13 @@ impl ProfileRuntime {
                     live: false,
                 },
             )?;
+            self.wrote();
             for record in absorbed.stored {
                 self.fanout.publish(key, record_event(record));
             }
         }
         store.absorb(key, Absorb::CaughtUp(revision))?;
+        self.wrote();
         self.fanout.publish(
             key,
             event(session_event::Of::CaughtUp(wire::CaughtUp { revision })),
@@ -704,6 +770,7 @@ impl ProfileRuntime {
                 live: true,
             },
         )?;
+        self.wrote();
         for record in absorbed.stored {
             self.fanout.publish(key, record_event(record));
         }
@@ -761,8 +828,11 @@ impl ProfileRuntime {
                         exhausted: answer.exhausted,
                     },
                 );
-                if let Err(error) = absorbed {
-                    tracing::warn!(%error, "absorbing a page from the origin failed");
+                match absorbed {
+                    Ok(_) => self.wrote(),
+                    Err(error) => {
+                        tracing::warn!(%error, "absorbing a page from the origin failed");
+                    }
                 }
             }
         }
@@ -881,6 +951,12 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
     let Some(edge) = runtime.upgrade().and_then(|me| me.edge()) else {
         return false;
     };
+    // The sources open their channel while the inventory's opens, not
+    // after it: over a relay each takes two round trips.
+    let session = match runtime.upgrade() {
+        Some(me) => me.begin_following(host).await,
+        None => return false,
+    };
     let mut client = match edge.peer(host).await {
         Ok(client) => client,
         Err(error) => {
@@ -896,6 +972,7 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
             return false;
         }
     };
+    tracing::debug!(%host, "subscribed to the host's inventory");
     let host_bytes = host.as_bytes().to_vec();
     let mut generation = None;
     let mut listed = BTreeMap::new();
@@ -916,7 +993,10 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
             Some(inventory_event::Of::AgentRemoved(removed)) if removed.host_id == host_bytes => {
                 listed.remove(&removed.agent_id);
             }
-            Some(inventory_event::Of::CaughtUp(_)) => break,
+            Some(inventory_event::Of::CaughtUp(_)) => {
+                tracing::debug!(%host, agents = listed.len(), "the host's inventory caught up");
+                break;
+            }
             _ => {}
         }
     }
@@ -925,7 +1005,7 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
             return false;
         };
         if let Err(error) = me
-            .inventory_caught_up(host, generation, listed.into_values().collect())
+            .inventory_caught_up(host, session, generation, listed.into_values().collect())
             .await
         {
             tracing::warn!(%host, %error, "reconciling the host's inventory failed");
@@ -1032,6 +1112,7 @@ async fn source_once(
             subscribe_request::From::After(wire::After {
                 revision: row.source_cursor,
                 cap: k,
+                generation: row.source_generation,
             })
         } else {
             subscribe_request::From::Tail(k)
@@ -1054,7 +1135,7 @@ async fn source_once(
         )
     };
     let tail = matches!(request.from, Some(subscribe_request::From::Tail(_)));
-    let mut client = match edge.session_peer(host, agent_id).await {
+    let mut client = match edge.session_peer(host).await {
         Ok(client) => client,
         Err(_) => return Ended::Lost { caught_up: false },
     };
@@ -1064,11 +1145,14 @@ async fn source_once(
         Err(status) if status.code() == tonic::Code::NotFound => return Ended::Stale,
         Err(_) => return Ended::Lost { caught_up: false },
     };
+    tracing::debug!(%host, %agent_id, "subscribed to the session");
     let mut catch_up = Some(CatchUp {
         reset: tail,
         events: Vec::new(),
     });
     let mut caught_up = false;
+    // The origin's generation, from the stream's Opening.
+    let mut generation = None;
     loop {
         let message = match stream.message().await {
             Ok(Some(message)) => message,
@@ -1085,6 +1169,10 @@ async fn source_once(
             return Ended::Stale;
         };
         let record = match message.of {
+            Some(session_event::Of::Opening(opening)) => {
+                generation = Some(opening.generation);
+                continue;
+            }
             Some(session_event::Of::Reset(_)) => {
                 catch_up = Some(CatchUp {
                     reset: true,
@@ -1093,18 +1181,20 @@ async fn source_once(
                 continue;
             }
             Some(session_event::Of::CaughtUp(marker)) => {
-                let landed = match catch_up.take() {
-                    Some(held) => me.land_catch_up(key, session, held, marker.revision).await,
-                    None => {
-                        // Again, after a new Hello at the origin: nothing
-                        // to replay, the cursor is where it was.
-                        let held = CatchUp {
-                            reset: false,
-                            events: Vec::new(),
-                        };
-                        me.land_catch_up(key, session, held, marker.revision).await
-                    }
+                tracing::debug!(%host, %agent_id, revision = marker.revision, "the session caught up");
+                let Some(generation) = generation else {
+                    tracing::warn!(%host, %agent_id, "the origin's stream caught up without an Opening");
+                    return Ended::Lost { caught_up };
                 };
+                // Again, after a new Hello at the origin: nothing to
+                // replay, the cursor is where it was.
+                let held = catch_up.take().unwrap_or(CatchUp {
+                    reset: false,
+                    events: Vec::new(),
+                });
+                let landed = me
+                    .land_catch_up(key, session, held, marker.revision, generation)
+                    .await;
                 match landed {
                     Ok(Some(true)) => return Ended::Settled,
                     Ok(Some(false)) => caught_up = true,
@@ -1215,4 +1305,40 @@ pub(crate) fn from_wire(agent: &Agent) -> AgentRow {
     row.producer_version = agent.producer_version.clone();
     row.incarnation = agent.incarnation;
     row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn following(sources: &mut Sources, host: &[u8]) -> u64 {
+        sources.next_session += 1;
+        let session = sources.next_session;
+        sources.following.insert(host.to_vec(), session);
+        session
+    }
+
+    fn open(sources: &mut Sources, host: &[u8], agent: u8, session: u64) -> AgentKey {
+        let key = AgentKey {
+            host: host.to_vec(),
+            agent: vec![agent],
+        };
+        let task = tokio::spawn(std::future::pending::<()>());
+        sources.open.insert(key.clone(), (session, task));
+        key
+    }
+
+    #[tokio::test]
+    async fn a_following_session_is_current_until_the_sources_are_aborted() {
+        let host = b"host";
+        let mut sources = Sources::default();
+        let session = following(&mut sources, host);
+        open(&mut sources, host, 1, session);
+        assert!(sources.is_current(host, session));
+
+        sources.abort_all();
+
+        assert!(!sources.is_current(host, session));
+        assert!(sources.open.is_empty());
+    }
 }

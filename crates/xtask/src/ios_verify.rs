@@ -64,6 +64,15 @@ const CAPTURES: &[&str] = &[
     "ios accessibility",
 ];
 
+/// The phone measured: the optimised app against the served performance
+/// network, judged against budgets and the enrolled Mac's baseline
+/// (docs/PERFORMANCE.md, "The phone").
+///
+/// Only on an enrolled Mac, which the hosted runners are not, so it is in
+/// the developer's whole run and in `--measured`, never in the half CI
+/// names. A run on a machine not enrolled is refused rather than skipped.
+const MEASURED: &[&str] = &["ios perf"];
+
 const REQUIRED_JOURNEYS: &[&str] = &[
     "reach-host",
     "conversation-decision-claude-pty",
@@ -115,6 +124,7 @@ enum Phases {
     Gate,
     Captures,
     Shipping,
+    Measured,
 }
 
 impl Phases {
@@ -124,8 +134,9 @@ impl Phases {
             Some("--gate") => Ok(Self::Gate),
             Some("--captures") => Ok(Self::Captures),
             Some("--shipping") => Ok(Self::Shipping),
+            Some("--measured") => Ok(Self::Measured),
             Some(other) => Err(format!(
-                "ios-verify takes --gate, --captures or --shipping, not {other}"
+                "ios-verify takes --gate, --captures, --shipping or --measured, not {other}"
             )
             .into()),
         }
@@ -138,17 +149,19 @@ impl Phases {
                 .chain(GATE)
                 .chain(CAPTURES)
                 .chain(SHIPPING)
+                .chain(MEASURED)
                 .copied()
                 .collect(),
             Self::Gate => GATE.to_vec(),
             Self::Captures => CAPTURES.to_vec(),
             Self::Shipping => SHIPPING.to_vec(),
+            Self::Measured => MEASURED.to_vec(),
         }
     }
 
     /// Journeys are only owed by a run that drives them.
     fn drives_journeys(self) -> bool {
-        self != Self::Gate
+        matches!(self, Self::Everything | Self::Captures)
     }
 }
 
@@ -159,7 +172,13 @@ impl Phases {
 fn recipes(phases: Phases, root: &str, ios: &str) -> Result<Vec<&'static str>, Box<dyn Error>> {
     let root = declared(root);
     let ios = declared(ios);
-    for recipe in WORKSPACE.iter().chain(GATE).chain(CAPTURES).chain(SHIPPING) {
+    for recipe in WORKSPACE
+        .iter()
+        .chain(GATE)
+        .chain(CAPTURES)
+        .chain(SHIPPING)
+        .chain(MEASURED)
+    {
         // A stage may carry arguments; the recipe is its first word.
         let known = match recipe.strip_prefix("ios ") {
             Some(rest) => ios.contains(rest.split(' ').next().unwrap_or(rest)),
@@ -320,6 +339,7 @@ mod tests {
             .chain(GATE)
             .chain(CAPTURES)
             .chain(SHIPPING)
+            .chain(MEASURED)
             .copied()
             .collect()
     }
@@ -448,6 +468,7 @@ mod tests {
             .into_iter()
             .chain(recipes(Phases::Captures, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap())
             .chain(recipes(Phases::Shipping, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap())
+            .chain(recipes(Phases::Measured, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap())
             .collect();
         assert_eq!(everything, [WORKSPACE.to_vec(), split].concat());
     }

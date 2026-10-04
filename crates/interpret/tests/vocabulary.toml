@@ -50,7 +50,7 @@ codex = { mark = "full", carriers = ["item:agent_message"], golden = [" agent_me
 id = "C5"
 item = "Exploring"
 claude_pty = { mark = "full", carriers = ["item:tool"], golden = [" tool final ", "\" Read TOOL_STATE_SUCCEEDED"] }
-claude_sdk = { mark = "full", carriers = ["item:tool"], golden = [" tool final ", "\" Read TOOL_STATE_SUCCEEDED", " exploration"] }
+claude_sdk = { mark = "full", carriers = ["item:tool"], golden = [" tool final ", "\" Read TOOL_STATE_SUCCEEDED", " read"] }
 codex = { mark = "partial", carriers = ["item:work.web_search", "item:work.command"], golden = [" work ", " web_search "] }
 
 [[row]]
@@ -85,7 +85,7 @@ codex = { mark = "full", carriers = ["item:work.mcp"], golden = [" work final ",
 id = "C10"
 item = "Subagent"
 claude_pty = { mark = "partial", carriers = ["item:tool", "item:tool.subagent"], golden = ["\" Agent TOOL_STATE_SUCCEEDED", " subagent=1 ", " finished ", " out=\"The line says"] }
-claude_sdk = { mark = "full", carriers = ["item:task", "snapshot:active_tasks"], golden = [" task final "] }
+claude_sdk = { mark = "full", carriers = ["item:tool", "snapshot:active_tasks"], golden = [" Agent TOOL_STATE_", " subagent="] }
 codex = { mark = "partial", carriers = ["item:work.collab"], golden = [" work ", " collab "] }
 
 [[row]]

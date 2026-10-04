@@ -25,13 +25,13 @@ enum It {
 
 fn item(order: u64, it: &It) -> Item {
     use wire::claude_sdk_item::Kind as K;
-    let tool = |name: &str, input: String, state: ToolState, explore: bool, exit: Option<i32>| {
+    let tool = |name: &str, input: String, state: ToolState, reads: bool, exit: Option<i32>| {
         K::Tool(wire::ToolCall {
             name: name.into(),
             input_json: input.into_bytes(),
             state: state as i32,
-            class: if explore {
-                ToolClass::Exploration
+            class: if reads {
+                ToolClass::Read
             } else {
                 ToolClass::Consequential
             } as i32,

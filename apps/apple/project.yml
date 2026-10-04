@@ -8,8 +8,15 @@ options:
   minimumXcodeGenVersion: "2.46.0"
   generateEmptyDirectories: true
 
+# Three configurations, not two. `Measured` is how the performance suite's
+# app is built: optimised the way a shipped build is, because an unoptimised
+# Swift build measures the compiler rather than the app, but with the driving
+# door still compiled in, because the suite drives the app through it and
+# reads its marks and measurements back. Nobody installs a `Measured` build;
+# `Release` is still what ships.
 configs:
   Debug: debug
+  Measured: release
   Release: release
 
 settings:
@@ -167,6 +174,13 @@ targets:
           # defined by the time the shipping archive the package carries is
           # reached, so nothing is taken from that one. `just ios scope-audit`
           # checks that the release binary does not carry the build marker.
+          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
+        Measured:
+          # The same tools as Debug, and for the same reason: the suite
+          # drives the app through the door. What it does not carry is
+          # DEBUG, so the app and the packages behind it are compiled the
+          # way a shipped build is.
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: AMUX_DEBUG_TOOLS
           OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
         Release:
           # Belt as well as the AMUX_DEBUG_TOOLS braces: the debug sources

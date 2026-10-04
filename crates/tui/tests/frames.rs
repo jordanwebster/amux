@@ -449,22 +449,38 @@ async fn served_frames_match_their_goldens() {
     )
     .await
     .unwrap();
+    // The laptop's source ends with the desk's daemon (Detached) before
+    // the next one opens on the rebuilt journal (Reset, then CaughtUp), so
+    // the frame before the swap shows the desk away. Waiting for the
+    // Detached pins that order: the frame is composed from events, and a
+    // Reset read before the detach was noticed would draw "catching up".
     let events = chat
         .observe_until(
             |events| {
                 let after = &events[before..];
-                after
+                let Some(detached) = after
+                    .iter()
+                    .position(|event| matches!(event.of, Some(session_event::Of::Detached(_))))
+                else {
+                    return false;
+                };
+                after[detached..]
                     .iter()
                     .position(|event| matches!(event.of, Some(session_event::Of::Reset(_))))
-                    .is_some_and(|reset| caught_up(&after[reset..]))
+                    .is_some_and(|reset| caught_up(&after[detached + reset..]))
             },
             PATIENCE,
         )
         .await
         .unwrap()
         .to_vec();
-    let reset = before
+    let detached = before
         + events[before..]
+            .iter()
+            .position(|event| matches!(event.of, Some(session_event::Of::Detached(_))))
+            .unwrap();
+    let reset = detached
+        + events[detached..]
             .iter()
             .position(|event| matches!(event.of, Some(session_event::Of::Reset(_))))
             .unwrap();

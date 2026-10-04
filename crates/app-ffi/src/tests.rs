@@ -116,6 +116,8 @@ impl Phone {
             lan: true,
             lan_bind: None,
             relay_tcp: None,
+            relay_quic: None,
+            relay_root: None,
             tail: 50,
         };
         let (wake_sender, wakes) = mpsc::channel();
@@ -846,4 +848,67 @@ fn malformed_calls_are_refused_rather_than_crashing() {
 
 fn outcome<T: serde::de::DeserializeOwned>(value: Value) -> T {
     serde_json::from_value(value).unwrap()
+}
+
+/// Hands each callback's text to the sender the context points at.
+extern "C" fn record(context: *mut c_void, json: *const c_char) {
+    // SAFETY: the context is the test's own sender, alive for the test.
+    let sender = unsafe { &*(context as *const mpsc::Sender<String>) };
+    // SAFETY: the library hands a NUL-terminated string.
+    let text = unsafe { CStr::from_ptr(json) }
+        .to_string_lossy()
+        .into_owned();
+    let _ = sender.send(text);
+}
+
+#[test]
+fn an_act_dropped_by_the_pools_shutdown_answers_that_the_runtime_stopped() {
+    let pool = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (tx, rx) = mpsc::channel::<String>();
+    let context = Box::into_raw(Box::new(tx)) as *mut c_void;
+    spawn_on(pool.handle(), record, context, std::future::pending::<()>());
+    assert!(
+        rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "nothing answers while it runs"
+    );
+
+    pool.shutdown_timeout(Duration::from_secs(5));
+
+    let answer = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the drop answers");
+    assert_eq!(answer, r#"{"Err":"the runtime has stopped"}"#);
+    assert!(
+        rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "answered once"
+    );
+    // SAFETY: the pool is down; nothing holds the context now.
+    drop(unsafe { Box::from_raw(context as *mut mpsc::Sender<String>) });
+}
+
+#[test]
+fn an_act_that_finishes_answers_once_with_its_result() {
+    let pool = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (tx, rx) = mpsc::channel::<String>();
+    let context = Box::into_raw(Box::new(tx)) as *mut c_void;
+    spawn_on(pool.handle(), record, context, async { 7u8 });
+    let answer = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the act answers");
+    assert_eq!(answer, "7");
+    pool.shutdown_timeout(Duration::from_secs(5));
+    assert!(
+        rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "the drop does not answer again"
+    );
+    // SAFETY: the pool is down; nothing holds the context now.
+    drop(unsafe { Box::from_raw(context as *mut mpsc::Sender<String>) });
 }

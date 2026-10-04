@@ -149,9 +149,14 @@ message NeighborDown {
 
 // Written by the opener as the first bytes of every non-control stream. The
 // destination is routing information only; the pinned handshake inside the
-// stream establishes the caller's authority.
+// stream establishes the caller's authority, unless the stream is `plain`.
 message StreamPreface {
   bytes dst = 1;
+  // The stream carries no handshake of its own: the opener is the host at
+  // the near end of the link it arrived on, already authenticated by that
+  // link, and the stream's bytes start at once. Honoured only on a direct
+  // link to a paired host; a relay never forwards a plain stream as plain.
+  bool plain = 2;
 }
 
 // A stream reset before acceptance carries one of these refusal reasons.
@@ -300,6 +305,11 @@ message HostEntry {
   // Set when this host closed its link saying it no longer trusts this
   // machine; cleared when it links to this machine again.
   optional bool revoked = 15;
+  // Whether this machine's copy of the host's inventory has caught up on a
+  // live stream from it: its agents are as the host lists them now, not as
+  // they were remembered. Cleared when the host is lost; a client that
+  // reads every trusted host current has reconciled with its fleet.
+  optional bool current = 16;
 }
 
 enum Trust {
@@ -446,10 +456,14 @@ message SubscribeRequest {
   }
 }
 
-// The delta if it is at most cap rows, else Reset and a tail of cap.
+// The delta if it is at most cap rows and the origin still runs the
+// generation the cursor was taken under; else Reset and a tail of cap. A
+// revision belongs to a generation: after an unclean reboot the origin
+// mints the same numbers again for different content.
 message After {
   uint64 revision = 1;
   uint32 cap = 2;
+  uint64 generation = 3;
 }
 
 message SessionEvent {
@@ -461,7 +475,15 @@ message SessionEvent {
     Lagged lagged = 6;
     Reset reset = 7;
     Detached detached = 8;
+    Opening opening = 9;
   }
+}
+
+// The first event of every stream: the origin generation its rows and
+// revisions belong to. A peer source stores it on the block it takes and
+// names it with its cursor when it resumes; clients ignore it.
+message Opening {
+  uint64 generation = 1;
 }
 
 // "You hold what the origin holds as of now", on every stream. On a session

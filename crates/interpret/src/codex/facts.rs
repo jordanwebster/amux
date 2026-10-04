@@ -1390,10 +1390,21 @@ impl State {
                     .iter()
                     .map(|action| text(action, "type").to_owned())
                     .collect::<Vec<_>>();
-                let exploring = !kinds.is_empty()
+                // A command that only looks takes the verb of its widest
+                // action: a read among searches is a read.
+                let looking = !kinds.is_empty()
                     && kinds
                         .iter()
                         .all(|kind| matches!(kind.as_str(), "read" | "search" | "listFiles"));
+                let class = if !looking {
+                    ToolClass::Consequential
+                } else if kinds.iter().any(|kind| kind == "read") {
+                    ToolClass::Read
+                } else if kinds.iter().any(|kind| kind == "search") {
+                    ToolClass::Search
+                } else {
+                    ToolClass::List
+                };
                 let exit_code = int(item, "exitCode").map(|code| code as i32);
                 if completed && state == ToolState::Succeeded && exit_code.is_some_and(|c| c != 0) {
                     state = ToolState::Failed;
@@ -1406,11 +1417,7 @@ impl State {
                         action: kinds.join(","),
                         background: false,
                     }),
-                    if exploring {
-                        ToolClass::Exploration
-                    } else {
-                        ToolClass::Consequential
-                    },
+                    class,
                 )
             }
             "fileChange" => (
@@ -1467,7 +1474,7 @@ impl State {
                         error,
                     }),
                     if item.get("readOnlyHint") == Some(&Value::Bool(true)) {
-                        ToolClass::Exploration
+                        ToolClass::Look
                     } else {
                         ToolClass::Consequential
                     },
@@ -1482,7 +1489,7 @@ impl State {
                         })
                         .unwrap_or_default(),
                 }),
-                ToolClass::Exploration,
+                ToolClass::WebSearch,
             ),
             "imageView" | "imageGeneration" => (
                 work::Of::Image(wire::ImageWork {
@@ -1491,7 +1498,7 @@ impl State {
                         .or_else(|| opt_text(item, "savedPath"))
                         .unwrap_or_default(),
                 }),
-                ToolClass::Exploration,
+                ToolClass::Look,
             ),
             _ => (
                 work::Of::Collab(wire::CollabWork {
