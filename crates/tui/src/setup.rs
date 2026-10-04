@@ -71,7 +71,7 @@ impl Agent {
 /// What a new agent starts with, per agent: model, effort and mode, from
 /// the installation's settings (shipped with real values), so the new agent
 /// always shows what it will run.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentDefaults {
     pub model: String,
     pub effort: String,
@@ -79,28 +79,10 @@ pub struct AgentDefaults {
     pub mode: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Defaults {
     pub claude: AgentDefaults,
     pub codex: AgentDefaults,
-}
-
-impl Default for Defaults {
-    /// The shipped values, the same as the settings' own.
-    fn default() -> Self {
-        Defaults {
-            claude: AgentDefaults {
-                model: "opus".into(),
-                effort: "high".into(),
-                mode: "default".into(),
-            },
-            codex: AgentDefaults {
-                model: "gpt-6.1-sol".into(),
-                effort: "medium".into(),
-                mode: "default".into(),
-            },
-        }
-    }
 }
 
 impl Defaults {

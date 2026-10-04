@@ -51,7 +51,7 @@ fn item(order: u64, read: Option<&str>) -> Item {
             kind: Some(K::Tool(wire::ToolCall {
                 name: "Read".into(),
                 state: ToolState::Succeeded as i32,
-                class: ToolClass::Exploration as i32,
+                class: ToolClass::Read as i32,
                 input_json: format!(r#"{{"file_path":"{path}"}}"#).into_bytes(),
                 ..Default::default()
             })),
@@ -1130,7 +1130,7 @@ fn raw_attach_is_only_for_terminals_on_this_machine() {
         layout: None,
         reports: None,
         chat_in: crate::setup::ChatIn::Amux,
-        defaults: crate::setup::Defaults::default(),
+        defaults: defaults(),
     };
     let agent = |host: &[u8], kind: Kind| wire::Agent {
         host_id: host.to_vec(),
@@ -2089,6 +2089,19 @@ fn home_fleet() -> FleetState {
     fleet
 }
 
+/// New-agent defaults like the shipped ones.
+fn defaults() -> crate::setup::Defaults {
+    let of = |model: &str, effort: &str| crate::setup::AgentDefaults {
+        model: model.into(),
+        effort: effort.into(),
+        mode: "default".into(),
+    };
+    crate::setup::Defaults {
+        claude: of("opus", "high"),
+        codex: of("gpt-6.1-sol", "medium"),
+    }
+}
+
 static HOME_PLACE: std::sync::LazyLock<crate::home::Place<'static>> =
     std::sync::LazyLock::new(|| crate::home::Place {
         local_host: b"a",
@@ -2096,7 +2109,7 @@ static HOME_PLACE: std::sync::LazyLock<crate::home::Place<'static>> =
         working_dir: "~/work/amux",
         attach: false,
         chat_in: crate::setup::ChatIn::Amux,
-        defaults: Box::leak(Box::new(crate::setup::Defaults::default())),
+        defaults: Box::leak(Box::new(defaults())),
     });
 
 fn home_screen(home: &mut crate::home::Home, fleet: &FleetState, theme: Theme) -> String {

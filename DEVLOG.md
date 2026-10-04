@@ -1,3 +1,9 @@
+2026-10-04 — **One home for a new agent's shipped values.** The
+installation's settings ship each agent's starting model, effort and
+mode; the terminal client kept a second copy of the same values as its
+own default. It now has none of its own (an empty value, used only by
+tests' blank views), and its tests build theirs explicitly.
+
 2026-10-04 — **The phone's pictures and copy lint catch up with the
 mode and effort words.** The copy lint's exemptions name Codex's `default`
 preset instead of the old `auto`; the chat goldens read the effort in
