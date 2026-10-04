@@ -343,6 +343,33 @@ The phone journeys are drawn flat too: the journey driver turns the flag on
 at every launch, including the reopens a story makes, and their screens are
 held to the same thresholds as the whole-screen goldens.
 
+### What a compared picture may differ by
+
+The component snapshots, the whole-screen goldens and the journeys' screens
+are held to one allowance:
+
+- any pixel may move by one 8-bit level per channel, which is the
+  rasteriser's rounding;
+- at most 64 pixels of a picture may move further, and none of them by more
+  than 8 levels in any channel.
+
+Drawn flat, a picture repeats to rounding nearly every time. Now and then
+the rasteriser draws the anti-aliased edge of a rounded border a few levels
+differently, in a picture that has stopped changing: eight pixels on a
+card's four corners, off by up to four levels, failed a CI run. Noise like
+that is small in area and in distance at once, and a change somebody made
+is not: a mark gone missing moves its pixels far (the needs-you dot alone
+is some 450 pixels), and a colour token that drifted moves thousands. Both
+numbers are deliberately tight, since slack of 12 levels over 600 pixels
+once hid a misplaced mask, and neither is a percentage, which would grow
+with the picture.
+
+The numbers live in two places that must agree: `golden::ALLOWANCE` in
+`crates/xtask/src/golden.rs` for the screens, and `RoundingImageDiff.swift`
+for the component snapshots. A match that spent some of the allowance says
+so in the run's output (`AMUX_SNAPSHOT_STRAYS`, `AMUX_PICTURE_STRAYS`), so
+the numbers can be judged from what runs actually see.
+
 ### Component snapshots
 
 The debug-only `ComponentCatalog` in `Amux/Debug/` supplies named examples to
@@ -365,9 +392,10 @@ written: inspect both appearances before committing it, then run an ordinary
 comparison. The perturbation recipe verifies the unchanged baseline, draws a
 stripe over the component and requires a mismatch.
 
-Comparisons use Point-Free's SnapshotTesting and allow at most one 8-bit
-level per channel for rasteriser rounding (`RoundingImageDiff`); one pixel
-with a larger difference fails. Each example is drawn flat (see above) in a
+Comparisons use Point-Free's SnapshotTesting under the allowance every
+compared phone picture shares (`RoundingImageDiff`; see
+[What a compared picture may differ by](#what-a-compared-picture-may-differ-by)).
+Each example is drawn flat (see above) in a
 window of its own, on screen, and photographed once it reports ready and its
 photographs have stayed unchanged for a second: a few take one more change
 after they report ready (a chat feed moving to its newest row, an attachment
@@ -401,11 +429,9 @@ fresh with the reduce-transparency flag on, pairs with the desk by the code
 it printed, and taps through to each screen while the served network makes
 the desk's agents act. Each screen is compared in light and dark twice over:
 
-- The display's pixels, with `xtask golden diff`, at a tolerance of 1 per
-  channel with no pixel past it: drawn flat, repeated runs match their
-  goldens pixel for pixel outside the masks. The measurement behind these
-  numbers sits beside them in `scripts/journeys/phone.py`, the driver every
-  phone suite shares.
+- The display's pixels outside the masks, with `xtask golden diff`, under
+  the allowance every compared phone picture shares (see
+  [What a compared picture may differ by](#what-a-compared-picture-may-differ-by)).
 - The door's element geometry, as `<screen>.elements.txt`, compared word for
   word and frame for frame. Tab pages covered by a pushed page are left out.
 

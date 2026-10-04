@@ -1,3 +1,16 @@
+2026-10-04 — **Compared phone pictures forgive a few faint stray pixels.**
+A component snapshot failed on CI over eight pixels: the four corners of
+a card's rounded border, off by up to four levels, in a picture that had
+been still for a second. The comparison allowed one level per channel and
+no pixel past it. It now also allows up to 64 pixels of a picture to move
+further, none by more than 8 levels: noise is small in area and distance
+at once, while a missing mark moves far and a drifted colour moves
+thousands of pixels. The same allowance holds for the component
+snapshots, the whole-screen goldens and the journeys' screens; the screen
+comparison's numbers moved from the journey driver into `xtask golden
+diff`, which the driver no longer overrides. A match that spends some of
+the allowance prints how much.
+
 2026-10-04 — **The restart story sees the outage before it sends.**
 The terminal's leave-and-recover journey timed out once on macOS CI with
 the draft still in the composer. It restarted the laptop's daemon and

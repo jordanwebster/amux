@@ -42,14 +42,6 @@ SCRATCH_DIR = Path("/tmp/amux-phone-journey")
 SCRATCH_LOCK = Path("/tmp/amux-phone-journey.lock")
 # The pinned simulator whose system-chrome masks every comparison uses.
 SIMULATOR = "golden"
-# How far one channel may move before a pixel counts as different, and how
-# many pixels may differ beyond that. Every picture a journey compares is
-# drawn flat (see `flat`), and drawn flat, four runs of every whole screen in
-# both appearances matched the same goldens pixel for pixel outside the masks,
-# so a screen is held to a channel's rounding (what the component snapshots
-# allow too) with no pixel past it. A needs-you dot alone is some 450 pixels.
-TOLERANCE = 1
-MAX_DIFFERING = 0
 # The golden simulator draws three pixels to the point.
 SCALE = 3
 # A surface a view reports under a name ending here holds text that moves with
@@ -239,9 +231,6 @@ class PhoneJourney:
         self.update = os.environ.get("UPDATE_JOURNEY_GOLDENS") == "1"
         # Whether a screen leaves out the tab roots a pushed page covers.
         self.covered_hidden = False
-        # How far a pixel may move, and how many may, before a screen differs.
-        self.tolerance = TOLERANCE
-        self.max_differing = MAX_DIFFERING
         # Whether every launch turns the app's reduce-transparency setting on,
         # so each frosted surface is drawn flat. The render server finishes
         # glass after the app has drawn, on its own schedule, and a photograph
@@ -579,8 +568,6 @@ class PhoneJourney:
                 "--actual", str(png),
                 "--out", str(self.output / "diff" / label),
                 "--simulator", SIMULATOR,
-                "--tolerance", str(self.tolerance),
-                "--max-differing", str(self.max_differing),
                 *[argument for mask in masks for argument in ("--mask", mask)],
             ],
             cwd=ROOT, text=True, capture_output=True, timeout=600,
@@ -590,6 +577,12 @@ class PhoneJourney:
                 f"screen {label} differs: {compared.stdout}{compared.stderr}"
                 f"; expected, actual and diff are under {self.output / 'diff' / label}"
             )
+        # A match that spent some of the comparison's allowance for stray
+        # pixels says how much, so the allowance can be judged from the runs.
+        verdict = compared.stdout.strip()
+        if verdict != "same":
+            print(f"AMUX_PICTURE_STRAYS screen={label} {verdict}", flush=True)
+            self.actions.append(f"compared {label}: {verdict}")
         return None
 
     def steady_display(self, png: Path) -> None:

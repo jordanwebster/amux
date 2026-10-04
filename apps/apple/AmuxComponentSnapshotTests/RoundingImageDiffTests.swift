@@ -3,7 +3,7 @@ import UIKit
 import XCTest
 
 final class RoundingImageDiffTests: XCTestCase {
-    private let diffing = RoundingImageDiff.allowingChannelRounding(.image(scale: 1))
+    private let diffing = RoundingImageDiff.allowingRasterNoise(.image(scale: 1), named: "test")
 
     func testIdenticalImagesMatch() throws {
         let reference = try image([100, 110, 120, 255])
@@ -17,25 +17,55 @@ final class RoundingImageDiffTests: XCTestCase {
         XCTAssertNil(diffing.diffV2(reference, actual))
     }
 
-    func testOneLargerChannelDifferenceFailsAndRetainsAttachments() throws {
+    func testRoundingEverywhereSpendsNoneOfTheAllowance() throws {
+        let reference = try image(flat(pixels: 200))
+        let actual = try image(flat(pixels: 200, moving: 200, by: 1))
+        XCTAssertEqual(RoundingImageDiff.measure(reference, actual), .init(pixels: 0, largest: 0))
+        XCTAssertNil(diffing.diffV2(reference, actual))
+    }
+
+    func testAFewPixelsALittlePastRoundingMatchAndAreCounted() throws {
+        let reference = try image(flat(pixels: 200))
+        let actual = try image(flat(
+            pixels: 200, moving: RoundingImageDiff.strayPixels,
+            by: UInt8(RoundingImageDiff.strayCeiling)))
+        XCTAssertEqual(
+            RoundingImageDiff.measure(reference, actual),
+            .init(pixels: RoundingImageDiff.strayPixels, largest: RoundingImageDiff.strayCeiling))
+        XCTAssertNil(diffing.diffV2(reference, actual))
+    }
+
+    func testOnePixelMoreThanTheAllowanceFails() throws {
+        let reference = try image(flat(pixels: 200))
+        let actual = try image(flat(pixels: 200, moving: RoundingImageDiff.strayPixels + 1, by: 2))
+        XCTAssertNotNil(diffing.diffV2(reference, actual))
+    }
+
+    func testOneChannelPastTheCeilingFailsAndRetainsAttachments() throws {
         let reference = try image([100, 110, 120, 255, 100, 110, 120, 255])
         for channel in 0..<3 {
             var pixels: [UInt8] = [100, 110, 120, 255, 100, 110, 120, 255]
-            pixels[channel] += 2
+            pixels[channel] += UInt8(RoundingImageDiff.strayCeiling) + 1
             let failure = try XCTUnwrap(diffing.diffV2(reference, try image(pixels)))
             XCTAssertFalse(failure.1.isEmpty)
         }
     }
 
-    func testLargerAlphaDifferenceFails() throws {
+    func testAlphaPastTheCeilingFails() throws {
         XCTAssertNotNil(diffing.diffV2(
-            try image([0, 0, 0, 255]), try image([0, 0, 0, 253])))
+            try image([0, 0, 0, 255]), try image([0, 0, 0, 240])))
     }
 
     func testDifferentDimensionsFail() throws {
         XCTAssertNotNil(diffing.diffV2(
             try image([100, 110, 120, 255]),
             try image([100, 110, 120, 255, 100, 110, 120, 255])))
+    }
+
+    /// One row of one colour, its first `moving` pixels moved by `by` in the
+    /// red channel.
+    private func flat(pixels: Int, moving: Int = 0, by: UInt8 = 0) -> [UInt8] {
+        (0..<pixels).flatMap { [100 + ($0 < moving ? by : 0), 110, 120, 255] }
     }
 
     private func image(_ rgba: [UInt8]) throws -> UIImage {

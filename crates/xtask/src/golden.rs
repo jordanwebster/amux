@@ -141,8 +141,15 @@ impl GoldenManifest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GoldenVerdict {
     Same,
+    /// A match that spent some of the allowance for stray pixels: how many
+    /// moved further than rounding, and the furthest any channel moved.
+    Close {
+        pixels: u64,
+        largest: u8,
+    },
     Different {
         pixels: u64,
+        largest: u8,
         first: (u32, u32),
     },
     SizeMismatch {
@@ -157,7 +164,7 @@ pub enum GoldenVerdict {
 
 impl GoldenVerdict {
     pub fn passed(&self) -> bool {
-        matches!(self, Self::Same)
+        matches!(self, Self::Same | Self::Close { .. })
     }
 }
 
@@ -165,9 +172,17 @@ impl fmt::Display for GoldenVerdict {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Same => write!(out, "same"),
-            Self::Different { pixels, first } => write!(
+            Self::Close { pixels, largest } => write!(
                 out,
-                "{pixels} pixels differ, first at {},{}",
+                "same but for {pixels} pixels off by up to {largest} levels"
+            ),
+            Self::Different {
+                pixels,
+                largest,
+                first,
+            } => write!(
+                out,
+                "{pixels} pixels differ by up to {largest} levels, first at {},{}",
                 first.0, first.1
             ),
             Self::SizeMismatch { expected, actual } => write!(
@@ -270,13 +285,42 @@ fn write_png(path: &Path, image: &Image) -> Result<(), GoldenError> {
         .map_err(|error| GoldenError::Png(error.to_string()))
 }
 
+/// How far a capture may sit from its baseline and still match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Allowance {
+    /// How far a channel of any pixel may move.
+    pub rounding: u8,
+    /// How many pixels may move further than that.
+    pub strays: u64,
+    /// How far a channel of such a pixel may move.
+    pub stray_ceiling: u8,
+}
+
+/// What the phone's compared pictures are held to.
+///
+/// Every compared picture is drawn flat, and drawn flat, repeated runs match
+/// their baselines to a channel's rounding nearly every time. Now and then
+/// the rasteriser draws the anti-aliased edge of a rounded border a few
+/// levels differently: once on CI, eight pixels on a card's four corners
+/// moved by up to four levels in a picture that had stopped changing. So a
+/// few pixels may move further than rounding, but only a little. Noise is
+/// small in both ways at once and a change somebody made is not: a mark gone
+/// missing moves its pixels far (and a needs-you dot alone is some 450
+/// pixels), while a colour token that drifted moves thousands of pixels.
+/// Slack of 12 levels over 600 pixels once hid a misplaced mask, which is
+/// why neither number is generous. The component snapshots hold the same
+/// numbers in `RoundingImageDiff.swift`.
+pub const ALLOWANCE: Allowance = Allowance {
+    rounding: 1,
+    strays: 64,
+    stray_ceiling: 8,
+};
+
 /// Compares two captures, retains the pair, and writes a difference only when
 /// the comparison fails.
 ///
-/// The tolerance is per channel, because a capture of the same screen on the
-/// same simulator can differ by a value or two where a gradient is dithered,
-/// and failing on that would train everybody to update baselines without
-/// looking. Anything a person could see differs by far more.
+/// Failing on what nobody could see would train everybody to update
+/// baselines without looking, so the comparison takes an [`Allowance`].
 ///
 /// Pixels under the simulator's system chrome are never counted, whatever
 /// they hold: that part of the picture is the system's, not the app's.
@@ -284,8 +328,7 @@ pub fn diff(
     expected: &Path,
     actual: &Path,
     out: &Path,
-    tolerance: u8,
-    max_differing_pixels: u64,
+    allowance: Allowance,
     system_chrome: &[SystemChrome],
 ) -> Result<GoldenVerdict, GoldenError> {
     if !actual.is_file() {
@@ -310,11 +353,13 @@ pub fn diff(
     }
 
     // Most captures agree exactly. Compare the normalized bytes first; neither
-    // tolerance nor excluded chrome can turn identical pixels into a failure.
+    // the allowance nor excluded chrome can turn identical pixels into a
+    // failure.
     if baseline.pixels == taken.pixels {
         return Ok(GoldenVerdict::Same);
     }
     let mut differences = Vec::new();
+    let mut largest = 0;
     for (index, (expected, actual)) in baseline
         .pixels
         .as_chunks::<4>()
@@ -330,15 +375,22 @@ pub fn diff(
         if system_chrome.iter().any(|chrome| chrome.covers(x, y)) {
             continue;
         }
-        if expected[0].abs_diff(actual[0]) > tolerance
-            || expected[1].abs_diff(actual[1]) > tolerance
-            || expected[2].abs_diff(actual[2]) > tolerance
-            || expected[3].abs_diff(actual[3]) > tolerance
-        {
+        let moved = expected
+            .iter()
+            .zip(actual)
+            .map(|(expected, actual)| expected.abs_diff(*actual))
+            .max()
+            .unwrap_or(0);
+        if moved > allowance.rounding {
             differences.push(index);
+            largest = largest.max(moved);
         }
     }
-    if differences.len() as u64 > max_differing_pixels {
+    if differences.is_empty() {
+        return Ok(GoldenVerdict::Same);
+    }
+    let pixels = differences.len() as u64;
+    if pixels > allowance.strays || largest > allowance.stray_ceiling {
         // Only failures need a picture. Red marks changed pixels; blue marks
         // system chrome that was excluded, whether or not it changed.
         let mut marked = Image {
@@ -365,22 +417,18 @@ pub fn diff(
         write_png(&out.join("diff.png"), &marked)?;
         let first = differences[0] as u32;
         return Ok(GoldenVerdict::Different {
-            pixels: differences.len() as u64,
+            pixels,
+            largest,
             first: (first % taken.width, first / taken.width),
         });
     }
-    Ok(GoldenVerdict::Same)
+    Ok(GoldenVerdict::Close { pixels, largest })
 }
 
 // MARK: - The command
 
 const MANIFEST: &str = "apps/apple/Goldens/manifest.json";
 const OUT: &str = "target/ios/goldens";
-/// A capture of the same screen on the same simulator can differ by a value or
-/// two where a gradient is dithered; anything a person could see differs by
-/// much more than this, in far more than a handful of pixels.
-const TOLERANCE: u8 = 2;
-const MAX_DIFFERING_PIXELS: u64 = 64;
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<String> = std::env::args().skip(2).collect();
@@ -389,7 +437,8 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => {
             eprintln!(
                 "usage: xtask golden diff --expected PNG --actual PNG [--out DIR] \
-                 [--simulator NAME] [--tolerance N] [--max-differing N] [--mask X,Y,W,H]..."
+                 [--simulator NAME] [--tolerance N] [--max-differing N] [--max-delta N] \
+                 [--mask X,Y,W,H]..."
             );
             std::process::exit(2);
         }
@@ -408,14 +457,22 @@ fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     let expected = value(arguments, "--expected").ok_or("--expected names the baseline PNG")?;
     let actual = value(arguments, "--actual").ok_or("--actual names the capture")?;
     let out = value(arguments, "--out").unwrap_or_else(|| format!("{OUT}/diff"));
-    let tolerance = value(arguments, "--tolerance")
-        .map(|text| text.parse())
-        .transpose()?
-        .unwrap_or(TOLERANCE);
-    let allowed = value(arguments, "--max-differing")
-        .map(|text| text.parse())
-        .transpose()?
-        .unwrap_or(MAX_DIFFERING_PIXELS);
+    // The allowance every phone suite compares under, unless a flag names
+    // another for a comparison made by hand.
+    let allowance = Allowance {
+        rounding: value(arguments, "--tolerance")
+            .map(|text| text.parse())
+            .transpose()?
+            .unwrap_or(ALLOWANCE.rounding),
+        strays: value(arguments, "--max-differing")
+            .map(|text| text.parse())
+            .transpose()?
+            .unwrap_or(ALLOWANCE.strays),
+        stray_ceiling: value(arguments, "--max-delta")
+            .map(|text| text.parse())
+            .transpose()?
+            .unwrap_or(ALLOWANCE.stray_ceiling),
+    };
     // The chrome of a named pinned simulator, so a pair of files compares the
     // way the run compares them; without one, every pixel counts.
     let mut chrome = match value(arguments, "--simulator") {
@@ -434,8 +491,7 @@ fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         Path::new(&expected),
         Path::new(&actual),
         Path::new(&out),
-        tolerance,
-        allowed,
+        allowance,
         &chrome,
     )?;
     println!("{verdict}");
@@ -493,6 +549,106 @@ mod tests {
         write_png(path, &image).expect("the test image is written");
     }
 
+    /// Rounding and nothing past it.
+    fn strict(rounding: u8) -> Allowance {
+        Allowance {
+            rounding,
+            strays: 0,
+            stray_ceiling: 0,
+        }
+    }
+
+    /// A flat picture with `count` pixels, from the first, moved by `by` in
+    /// the red channel.
+    fn write_with_strays(path: &Path, colour: [u8; 4], count: usize, by: u8) {
+        let (width, height) = (16, 16);
+        let mut pixels = Vec::with_capacity(width * height * 4);
+        for _ in 0..width * height {
+            pixels.extend_from_slice(&colour);
+        }
+        for pixel in pixels.as_chunks_mut::<4>().0.iter_mut().take(count) {
+            pixel[0] += by;
+        }
+        write_png(
+            path,
+            &Image {
+                width: width as u32,
+                height: height as u32,
+                pixels,
+            },
+        )
+        .expect("a PNG");
+    }
+
+    #[test]
+    fn a_few_pixels_a_little_past_rounding_match_and_are_counted() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let expected = room.path().join("expected.png");
+        let actual = room.path().join("actual.png");
+        write(&expected, 16, 16, [10, 20, 30, 255]);
+        write_with_strays(&actual, [10, 20, 30, 255], 64, 8);
+        let out = room.path().join("out");
+        let verdict = diff(&expected, &actual, &out, ALLOWANCE, &[]).expect("a verdict");
+        assert_eq!(
+            verdict,
+            GoldenVerdict::Close {
+                pixels: 64,
+                largest: 8
+            }
+        );
+        assert!(verdict.passed());
+        assert!(!out.join("diff.png").exists());
+    }
+
+    #[test]
+    fn one_pixel_more_than_the_allowance_differs() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let expected = room.path().join("expected.png");
+        let actual = room.path().join("actual.png");
+        write(&expected, 16, 16, [10, 20, 30, 255]);
+        write_with_strays(&actual, [10, 20, 30, 255], 65, 2);
+        let out = room.path().join("out");
+        assert_eq!(
+            diff(&expected, &actual, &out, ALLOWANCE, &[]).expect("a verdict"),
+            GoldenVerdict::Different {
+                pixels: 65,
+                largest: 2,
+                first: (0, 0)
+            }
+        );
+        assert!(out.join("diff.png").is_file());
+    }
+
+    #[test]
+    fn one_pixel_moved_past_the_ceiling_differs() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let expected = room.path().join("expected.png");
+        let actual = room.path().join("actual.png");
+        write(&expected, 16, 16, [10, 20, 30, 255]);
+        write_with_strays(&actual, [10, 20, 30, 255], 1, 9);
+        assert_eq!(
+            diff(&expected, &actual, &room.path().join("out"), ALLOWANCE, &[]).expect("a verdict"),
+            GoldenVerdict::Different {
+                pixels: 1,
+                largest: 9,
+                first: (0, 0)
+            }
+        );
+    }
+
+    #[test]
+    fn rounding_everywhere_spends_none_of_the_allowance() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let expected = room.path().join("expected.png");
+        let actual = room.path().join("actual.png");
+        write(&expected, 16, 16, [10, 20, 30, 255]);
+        write(&actual, 16, 16, [11, 19, 31, 255]);
+        assert_eq!(
+            diff(&expected, &actual, &room.path().join("out"), ALLOWANCE, &[]).expect("a verdict"),
+            GoldenVerdict::Same
+        );
+    }
+
     #[test]
     fn the_same_capture_twice_is_the_same() {
         let room = tempfile::tempdir().expect("a temporary directory");
@@ -502,7 +658,7 @@ mod tests {
         write(&actual, 4, 4, [10, 20, 30, 255]);
         let out = room.path().join("out");
         assert_eq!(
-            diff(&expected, &actual, &out, 2, 0, &[]).expect("a verdict"),
+            diff(&expected, &actual, &out, strict(2), &[]).expect("a verdict"),
             GoldenVerdict::Same
         );
         assert!(out.join("expected.png").is_file());
@@ -518,7 +674,7 @@ mod tests {
         write(&expected, 4, 4, [10, 20, 30, 255]);
         write(&actual, 4, 4, [11, 21, 31, 255]);
         assert_eq!(
-            diff(&expected, &actual, &room.path().join("out"), 2, 0, &[]).expect("a verdict"),
+            diff(&expected, &actual, &room.path().join("out"), strict(2), &[]).expect("a verdict"),
             GoldenVerdict::Same
         );
     }
@@ -530,8 +686,9 @@ mod tests {
         let actual = room.path().join("actual.png");
         write(&expected, 4, 4, [10, 20, 30, 255]);
         write(&actual, 4, 4, [200, 20, 30, 255]);
-        match diff(&expected, &actual, &room.path().join("out"), 2, 0, &[]).expect("a verdict") {
-            GoldenVerdict::Different { pixels, first } => {
+        match diff(&expected, &actual, &room.path().join("out"), strict(2), &[]).expect("a verdict")
+        {
+            GoldenVerdict::Different { pixels, first, .. } => {
                 assert_eq!(pixels, 16);
                 assert_eq!(first, (0, 0));
             }
@@ -548,7 +705,7 @@ mod tests {
         write(&expected, 4, 4, [10, 20, 30, 255]);
         write(&actual, 8, 4, [10, 20, 30, 255]);
         assert_eq!(
-            diff(&expected, &actual, &room.path().join("out"), 2, 0, &[]).expect("a verdict"),
+            diff(&expected, &actual, &room.path().join("out"), strict(2), &[]).expect("a verdict"),
             GoldenVerdict::SizeMismatch {
                 expected: (4, 4),
                 actual: (8, 4)
@@ -566,8 +723,7 @@ mod tests {
                 &room.path().join("nothing.png"),
                 &actual,
                 &room.path().join("out"),
-                2,
-                0,
+                strict(2),
                 &[]
             )
             .expect("a verdict"),
@@ -584,8 +740,7 @@ mod tests {
             &expected,
             &room.path().join("nothing.png"),
             &room.path().join("out"),
-            2,
-            0,
+            strict(2),
             &[],
         )
         .expect("a verdict");
@@ -653,14 +808,15 @@ mod tests {
         write_with_speck(&actual, 4, 4, [10, 20, 30, 255], (2, 2));
         let out = room.path().join("out");
         assert_eq!(
-            diff(&expected, &actual, &out, 2, 0, &[]).expect("a verdict"),
+            diff(&expected, &actual, &out, strict(2), &[]).expect("a verdict"),
             GoldenVerdict::Different {
                 pixels: 1,
+                largest: 240,
                 first: (2, 2)
             }
         );
         assert_eq!(
-            diff(&expected, &actual, &out, 2, 0, &[bar()]).expect("a verdict"),
+            diff(&expected, &actual, &out, strict(2), &[bar()]).expect("a verdict"),
             GoldenVerdict::Same
         );
     }
@@ -674,9 +830,10 @@ mod tests {
         write_with_speck(&actual, 4, 4, [10, 20, 30, 255], (3, 2));
         let out = room.path().join("out");
         assert_eq!(
-            diff(&expected, &actual, &out, 2, 0, &[bar()]).expect("a verdict"),
+            diff(&expected, &actual, &out, strict(2), &[bar()]).expect("a verdict"),
             GoldenVerdict::Different {
                 pixels: 1,
+                largest: 240,
                 first: (3, 2)
             }
         );
