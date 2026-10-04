@@ -16,7 +16,7 @@ use crossterm::event::EventStream;
 use futures_util::StreamExt as _;
 use futures_util::future::BoxFuture;
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use ratatui::backend::{Backend as _, ClearType, CrosstermBackend};
 use tokio::sync::watch;
 use ui_runtime::Fleet;
 use wire::Agent;
@@ -87,7 +87,12 @@ pub async fn ready(events: &mut EventStream) -> Option<io::Result<crossterm::eve
 async fn session(app: &mut App) -> Result<Leave> {
     let guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
-    terminal.clear()?;
+    // A fresh terminal's buffers are blank, so a blank screen matches them.
+    // `Terminal::clear` would also ask the terminal where its cursor is and
+    // fail if no reply comes in time; after a raw attach, the input reader
+    // still holds the wake-up from the last session's dropped event stream,
+    // which ends that wait at once.
+    terminal.backend_mut().clear_region(ClearType::All)?;
     let mut events = EventStream::new();
     let mut fleet_changed = app.fleet.changed();
     let mut chat: Option<(Vec<u8>, watch::Receiver<()>)> = None;

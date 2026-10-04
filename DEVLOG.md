@@ -1,3 +1,13 @@
+2026-10-04 — **Coming home from an agent's own terminal no longer exits
+amux.** Leaving raw attach with `<leader> h` failed with "The cursor
+position could not be read within a normal duration" and dropped to the
+shell. Each return to the screens cleared the terminal through ratatui,
+which asks the terminal where its cursor is; crossterm's input reader
+still held the wake-up sent when the previous session's event stream was
+dropped, and that wake-up ended the wait for the reply at once. The
+screen is now cleared without the question: a new terminal's buffers are
+blank, so nothing needs the cursor's place.
+
 2026-10-03 — **Questions: no empty step, a steady box.** While questions
 are open the feed draws no step for them (the box is the ask); streamed,
 Claude's question tool showed up before its questions and read "Asking 0
