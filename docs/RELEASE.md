@@ -8,11 +8,7 @@ Three things ship from this repository, each on its own schedule:
 | --- | --- | --- |
 | The iPhone app | `just ios release`, from a Mac with the signing setup below | `ios-v<version>-b<build>` |
 | The `amux` binary | `just release <version>`, then the Release workflow on the pushed tag | `v<version>` |
-| The daemon's release feed | `just deploy <version>` signs the release's binaries with the release Mac's key and publishes the channel manifest | none |
-
-The daemon side of the feed is built and tested and the publishing side runs
-from the release Mac; the route that serves manifests from amux.sh is not
-deployed yet, see [What amux.sh serves](#what-amuxsh-serves).
+| The daemon's release feed | `just deploy <version>` signs the release's binaries with the release Mac's key and publishes the channel manifest to amux.sh | none |
 
 ## The iPhone app
 
@@ -785,12 +781,15 @@ the workflow can sign.
 
 ### What amux.sh serves
 
-A machine reads `https://amux.sh/releases/<channel>.json`. amux.sh answers
-with the manifest of the newest GitHub Release that carries
-`<channel>.json`, cached for a few minutes, the way it already projects the
-older `/manifest.json` from the latest release's `checksums.txt`. It never
-holds the key and cannot alter a manifest without the signature failing.
-That route is the one piece that lives in the amuxcloud repository rather
-than here, and it is not deployed yet: until it is, both channel addresses
-answer 404, a supervised machine's hourly check finds nothing, and
-`amux update` reports the failed fetch.
+A machine reads `https://amux.sh/releases/<channel>.json`. That is a static
+file: the deploy's last step runs the operator's publish script,
+`~/scripts/amux-publish-manifest <channel> <version> <manifest>`, which puts
+the signed manifest where amux.sh serves it and reads it back over the
+public address to confirm. The script is not in this repository; which host
+holds the files, where, and how the Mac reaches it belong with the rest of
+the host configuration, and this repository only says that the step happens
+and refuses to finish a deploy without it, since a manifest uploaded to the
+release alone reaches no machine. amux.sh never holds the key and cannot
+alter a manifest without the signature failing; the worst it can do is
+serve a stale one or none, in which case a supervised machine's hourly
+check finds nothing and `amux update` reports it.

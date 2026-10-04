@@ -1,3 +1,15 @@
+2026-10-04 — **A deploy publishes its manifest to amux.sh through the operator's script.**
+Machines read `https://amux.sh/releases/<channel>.json`, and the plan had
+been a route in the account service polling GitHub for the newest
+release carrying the file. The manifest is a signed static file and the
+server is untrusted either way, so the dumb thing is right: nginx serves
+a directory on the host, and the deploy's last step runs
+`~/scripts/amux-publish-manifest`, which the operator keeps with the host
+configuration and which copies the file over, renames it into place and
+reads it back over the public address. A deploy without the script fails
+rather than silently stopping at the GitHub upload, which no machine
+reads.
+
 2026-10-04 — **A rewound origin's envelope replaces the old one whatever its number.**
 The handoff review found that a Reset under a new generation copied the
 fresh snapshot only when its revision beat the row's, which, zeroed, still

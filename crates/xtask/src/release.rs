@@ -12,7 +12,8 @@
 //! tag's workflow builds the binaries into a GitHub Release. `deploy` puts
 //! that release in front of machines: a channel and a rollout are chosen,
 //! the binaries' checksums are signed, and the channel manifest is uploaded
-//! to the release, where amux.sh serves it as `/releases/<channel>.json`.
+//! to the release and handed to the operator's publish script, which puts
+//! it where amux.sh serves it as `/releases/<channel>.json`.
 //! Deploying repeats against the same release (a wider rollout, preview
 //! promoted to stable); cutting does not.
 //!
@@ -262,8 +263,9 @@ fn options(rest: &[&str]) -> Result<Options, Box<dyn std::error::Error>> {
 
 /// Puts a cut release in front of a channel: waits for the tag's workflow
 /// to have published the binaries, signs their checksums, verifies every
-/// signature against the key the workflow compiles in, and uploads
-/// `<channel>.json` to the release, replacing one already there.
+/// signature against the key the workflow compiles in, uploads
+/// `<channel>.json` to the release, replacing one already there, and runs
+/// the publish script that puts it where amux.sh serves it.
 fn deploy(version: &str, rest: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     let options = options(rest)?;
     let version = version.strip_prefix('v').unwrap_or(version);
@@ -352,14 +354,51 @@ fn deploy(version: &str, rest: &[&str]) -> Result<(), Box<dyn std::error::Error>
         "--clobber",
     ])?;
     println!(
-        "deployed {tag} to {}{}; amux.sh serves it as /releases/{}.json",
+        "deployed {tag} to {}{} on the release; publishing to amux.sh",
         options.channel,
         options
             .rollout
             .map(|percent| format!(" at {percent}%"))
             .unwrap_or_default(),
-        options.channel
     );
+    publish(&options.channel, version, &file)?;
+    Ok(())
+}
+
+/// Where the operator's publish script lives: `~/scripts/<PUBLISH_SCRIPT>`.
+/// The script is not in this repository. Machines read manifests from
+/// amux.sh, and how a manifest gets there (which host, which path, which
+/// key) is the operator's to keep with the rest of the host configuration;
+/// this repository only says that it happens, with these arguments.
+const PUBLISH_SCRIPT: &str = "amux-publish-manifest";
+
+/// Runs the publish script as `<script> <channel> <version> <manifest>`.
+/// A deploy that stops at the GitHub upload is a silent no-op for every
+/// machine, so a missing script is an error, not a skipped step.
+fn publish(
+    channel: &str,
+    version: &str,
+    manifest: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+    let script = Path::new(&home).join("scripts").join(PUBLISH_SCRIPT);
+    if !script.is_file() {
+        return Err(format!(
+            "{} is uploaded to the release but not published: {} is missing, and machines \
+             read https://amux.sh/releases/{channel}.json, not the release",
+            manifest.display(),
+            script.display()
+        )
+        .into());
+    }
+    let status = Command::new(&script)
+        .arg(channel)
+        .arg(version)
+        .arg(manifest)
+        .status()?;
+    if !status.success() {
+        return Err(format!("{} failed with {status}", script.display()).into());
+    }
     Ok(())
 }
 
