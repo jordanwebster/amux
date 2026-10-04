@@ -783,13 +783,47 @@ the workflow can sign.
 
 A machine reads `https://amux.sh/releases/<channel>.json`. That is a static
 file: the deploy's last step runs the operator's publish script,
-`~/scripts/amux-publish-manifest <channel> <version> <manifest>`, which puts
-the signed manifest where amux.sh serves it and reads it back over the
-public address to confirm. The script is not in this repository; which host
-holds the files, where, and how the Mac reaches it belong with the rest of
-the host configuration, and this repository only says that the step happens
-and refuses to finish a deploy without it, since a manifest uploaded to the
-release alone reaches no machine. amux.sh never holds the key and cannot
-alter a manifest without the signature failing; the worst it can do is
-serve a stale one or none, in which case a supervised machine's hourly
-check finds nothing and `amux update` reports it.
+`~/scripts/amux-publish-release <channel> <version> <manifest> [<file>...]`,
+which puts the signed manifest, and any files named after it, where amux.sh
+serves them and reads each back over the public address to confirm. The
+script is not in this repository; which host holds the files, where, and how
+the Mac reaches it belong with the rest of the host configuration, and this
+repository only says that the step happens and refuses to finish a deploy
+without it, since a manifest uploaded to the release alone reaches no
+machine. amux.sh never holds the key and cannot alter a manifest without the
+signature failing; the worst it can do is serve a stale one or none, in
+which case a supervised machine's hourly check finds nothing and
+`amux update` reports it.
+
+### Installing
+
+`https://amux.sh/install` is the same arrangement. The scripts are
+[`scripts/install/install.sh`](../scripts/install/install.sh) and
+[`install.ps1`](../scripts/install/install.ps1); every stable deploy hands
+them to the publish script beside the manifest, from the checkout the deploy
+runs in, and amux.sh answers `/install` with the one for the caller's shell:
+
+```sh
+curl -fsSL https://amux.sh/install | sh      # macOS, Linux
+irm https://amux.sh/install | iex            # Windows PowerShell
+```
+
+A script reads the stable manifest, takes the entry for the machine's target,
+downloads the binary the entry names, and installs it to `~/.amux/bin` only
+when the download's size and sha256 are the entry's. So the manifest is the
+one statement of what a new machine runs, as it is for a running one: a
+release that was cut but never deployed to stable is not installed, and a
+release pulled from stable stops being installed at once. The rollout
+percentage is ignored: it protects machines that already run something, and
+a new machine has nothing to protect.
+
+A script does not check the manifest's signature. It and the manifest come
+from the same server, so a check there would trust the server it was
+checking; the first install trusts amux.sh over TLS, and every update after
+it is verified by the installed binary with the key it was built with.
+
+The scripts parse the manifest by hand, so
+[`crates/xtask/tests/install_scripts.rs`](../crates/xtask/tests/install_scripts.rs)
+runs them against a manifest the release crate serialized, served from a
+loopback stand-in for amux.sh: a change to the manifest's shape that would
+break an installer breaks that test first.

@@ -729,6 +729,24 @@ cargo = [
 ]
 
 [[suite]]
+name = "install-scripts"
+contract = "The install scripts take the stable manifest's entry for the machine and install the binary it names only when the download's size and sha256 are the entry's; a machine the channel has no build for is told so."
+paths = ["crates/xtask/tests/install_scripts.rs", "scripts/install"]
+recipe = "just test-crate xtask"
+boundary = "System composition"
+oracle = "Exact script exits and the installed file's bytes, against a manifest the release crate serialized."
+real = ["child processes", "temporary files", "loopback HTTP"]
+substituted = ["amux.sh", "the release's assets"]
+time = "real"
+capabilities = ["Unix"]
+lane = "tool"
+evidence = ""
+update = ""
+cargo = [
+  { package = "xtask", targets = ["install_scripts"], features = [] },
+]
+
+[[suite]]
 name = "ios-verify-boundary"
 contract = "iOS verification runs every stage in order, refuses recipes the justfiles no longer declare, and stops on a failed stage or a skipped journey."
 paths = ["crates/xtask/tests/ios_verify_cli.rs"]

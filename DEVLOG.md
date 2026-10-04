@@ -1,3 +1,16 @@
+2026-10-04 — **The installer reads the stable manifest and lives beside its format.**
+`amux.sh/install` asked GitHub's API for the latest release and lived in
+the account service's repository, so a release cut but never deployed
+was installed, and the scripts parsed nothing this repository tested.
+They are `scripts/install/install.sh` and `install.ps1` here now: each
+takes its machine's entry from the stable manifest and installs the
+binary it names only when the size and sha256 match, ignoring the
+rollout percentage, and without a signature check that would only trust
+the server it came from. A test runs them against a manifest the release
+crate serialized, served from loopback. A stable deploy hands them to
+the publish script beside the manifest (renamed `amux-publish-release`,
+since it publishes more than a manifest now).
+
 2026-10-04 — **`just deploy` passes its version once.**
 The first real deploy failed with "unknown argument 0.8.0": recipes take
 positional arguments, so the version was both named in the command and

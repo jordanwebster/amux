@@ -13,7 +13,8 @@
 //! that release in front of machines: a channel and a rollout are chosen,
 //! the binaries' checksums are signed, and the channel manifest is uploaded
 //! to the release and handed to the operator's publish script, which puts
-//! it where amux.sh serves it as `/releases/<channel>.json`.
+//! it where amux.sh serves it as `/releases/<channel>.json`. A stable
+//! deploy hands over the install scripts with it: they read that manifest.
 //! Deploying repeats against the same release (a wider rollout, preview
 //! promoted to stable); cutting does not.
 //!
@@ -361,24 +362,38 @@ fn deploy(version: &str, rest: &[&str]) -> Result<(), Box<dyn std::error::Error>
             .map(|percent| format!(" at {percent}%"))
             .unwrap_or_default(),
     );
-    publish(&options.channel, version, &file)?;
+    // The installer reads the stable manifest, so it goes out with one:
+    // a preview deploy changes nothing a new machine runs.
+    let installers: Vec<PathBuf> = if options.channel == "stable" {
+        INSTALL_SCRIPTS.iter().map(|path| root.join(path)).collect()
+    } else {
+        Vec::new()
+    };
+    publish(&options.channel, version, &file, &installers)?;
     Ok(())
 }
 
-/// Where the operator's publish script lives: `~/scripts/<PUBLISH_SCRIPT>`.
-/// The script is not in this repository. Machines read manifests from
-/// amux.sh, and how a manifest gets there (which host, which path, which
-/// key) is the operator's to keep with the rest of the host configuration;
-/// this repository only says that it happens, with these arguments.
-const PUBLISH_SCRIPT: &str = "amux-publish-manifest";
+/// What `https://amux.sh/install` hands a new machine, by its shell.
+const INSTALL_SCRIPTS: &[&str] = &["scripts/install/install.sh", "scripts/install/install.ps1"];
 
-/// Runs the publish script as `<script> <channel> <version> <manifest>`.
-/// A deploy that stops at the GitHub upload is a silent no-op for every
-/// machine, so a missing script is an error, not a skipped step.
+/// Where the operator's publish script lives: `~/scripts/<PUBLISH_SCRIPT>`.
+/// The script is not in this repository. Machines read manifests and the
+/// installer from amux.sh, and how a file gets there (which host, which
+/// path, which key) is the operator's to keep with the rest of the host
+/// configuration; this repository only says that it happens, with these
+/// arguments.
+const PUBLISH_SCRIPT: &str = "amux-publish-release";
+
+/// Runs the publish script as `<script> <channel> <version> <manifest>
+/// [<file>...]`: the manifest, then any files to publish beside it under
+/// their own names. A deploy that stops at the GitHub upload is a silent
+/// no-op for every machine, so a missing script is an error, not a skipped
+/// step.
 fn publish(
     channel: &str,
     version: &str,
     manifest: &Path,
+    beside: &[PathBuf],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
     let script = Path::new(&home).join("scripts").join(PUBLISH_SCRIPT);
@@ -395,6 +410,7 @@ fn publish(
         .arg(channel)
         .arg(version)
         .arg(manifest)
+        .args(beside)
         .status()?;
     if !status.success() {
         return Err(format!("{} failed with {status}", script.display()).into());
