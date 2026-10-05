@@ -297,7 +297,13 @@ pub fn telemetry(config_path: Option<&Path>, state: Option<Switch>) -> Result<()
     let line = match (config.telemetry, destination) {
         (Switch::Off, _) => "Telemetry: off. amux sends no product analytics.".to_owned(),
         (Switch::On, _) if analytics::do_not_track() => {
-            "Telemetry: off while DO_NOT_TRACK is set. amux sends no product analytics.".to_owned()
+            // This command sees its own shell's environment, not the
+            // daemon's: one started at login never sees a variable set in a
+            // shell profile, so only the setting is sure to reach it.
+            "Telemetry: on, but DO_NOT_TRACK is set in this shell, so a daemon started from \
+             it sends nothing. A daemon started at login does not see it; \
+             `amux config telemetry off` turns telemetry off for every daemon."
+                .to_owned()
         }
         (Switch::On, None) => {
             "Telemetry: on, but this is a development build, which sends nothing.".to_owned()

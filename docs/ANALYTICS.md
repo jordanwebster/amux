@@ -13,11 +13,13 @@ It is on by default. To turn it off:
 - **On a computer:** `amux config telemetry off`. A running daemon stops
   sending at once, and nothing it records while off is sent later.
   `amux config telemetry on` resumes it, or, if the daemon started with
-  telemetry off, takes effect when it next starts. `amux config telemetry` says whether it is
-  on and where it goes.
-- **Anywhere:** set `DO_NOT_TRACK=1` in the environment the daemon starts
-  in. Any value other than empty or `0` turns it off, whatever the setting
-  says.
+  telemetry off, takes effect when it next starts. `amux config telemetry`
+  says whether it is on and where it goes.
+- **`DO_NOT_TRACK`:** a daemon started with `DO_NOT_TRACK` set to anything
+  but empty or `0` sends nothing, whatever the setting says. It must be set
+  where the daemon starts: a daemon started at login, or by a service
+  manager, does not see a variable set in a shell profile, so on a desktop
+  install the setting above is the switch that always reaches it.
 - **On the iPhone:** turn off **Share Usage** under **You**, in **This phone**.
 
 Development builds, test runs and test networks never send anything. Only

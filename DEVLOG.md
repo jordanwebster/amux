@@ -1,3 +1,10 @@
+2026-10-06 — **`DO_NOT_TRACK` is described as far as it reaches.** A
+daemon started at login sees only the environment its login item gives
+it, never a shell profile's, so `amux config telemetry` no longer reports
+telemetry off because the shell it runs in has `DO_NOT_TRACK` set; it says
+which daemons that covers and points at the setting, and the public page
+says the same.
+
 2026-10-05 — **Nothing recorded while sharing is off is sent later.** The
 uploader checked the telemetry setting only when a batch went out, so on
 the phone, turning Share Usage off and back on within the minute sent what
