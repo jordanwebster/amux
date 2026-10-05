@@ -160,7 +160,7 @@ cargo = [
 
 [[suite]]
 name = "claude-transport-boundary"
-contract = "The claude crate carries provider transport only: no session host, and the SDK modules hold stream-JSON frames and options."
+contract = "The claude crate carries provider transport only: no session host, and its SDK module holds only the error a stream host reports; the stream-JSON frames live in claude-protocol."
 paths = ["crates/claude/tests/boundary.rs", "crates/claude/src"]
 recipe = "just test-crate claude"
 boundary = "Provider adapter"
@@ -216,6 +216,25 @@ cargo = [
   { package = "codex-specs", kind = "lib", targets = ["codex_specs"], features = [] },
   { package = "codex-specs", kind = "bin", targets = ["codex-probe"], features = [] },
   { package = "codex-specs", targets = ["spec_replay"], features = [] },
+]
+
+[[suite]]
+name = "claude-protocol"
+contract = "Every line of every headless Claude recording, in both directions, decodes as a known frame and encodes back to the same JSON; an unknown frame type is kept whole in production and refused by the strict check."
+paths = ["crates/claude-protocol"]
+recipe = "just test-crate claude-protocol"
+boundary = "Provider adapter"
+oracle = "Strict decoding of each recorded line and JSON equality after encoding."
+real = ["recorded provider bytes"]
+substituted = ["live Claude process"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = "crates/claude-specs/fixtures/sdk"
+update = "A failing line is provider drift or a wrong type: fix the type in crates/claude-protocol/src, never a live recording."
+cargo = [
+  { package = "claude-protocol", kind = "lib", targets = ["claude_protocol"], features = [] },
+  { package = "claude-protocol", targets = ["frames", "stream_corpus"], features = [] },
 ]
 
 [[suite]]

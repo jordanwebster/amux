@@ -1,3 +1,22 @@
+2026-10-06 — **Claude's headless stream as types in its own crate.**
+The stream-JSON frames, control requests and responses and the initialize
+exchange moved from `claude::sdk` into a new pure crate,
+`claude-protocol`, under `stream`. Control requests now decode as well as
+encode, in both directions (amux's initialize, mode and model changes;
+Claude's tool permission asks, hook callbacks, MCP messages and
+elicitations), and amux's input lines (prompts, control requests, control
+responses) have a type of their own. Decoding follows the Codex crate's
+rule: an unknown frame is kept whole, an unknown content block, stream
+event or enum spelling is kept as written, and `strict` refuses all of
+them. Every line of the 41 headless recordings decodes strictly and
+encodes back to the same JSON, which took typing two frames Claude sends
+(`command_lifecycle` and the `peer_message_hold` system frame) and the
+`tool_reference` result block, and no longer turning a tool result's
+plain text into a list of blocks. Ids are plain strings now, so the crate
+depends on serde and serde_json alone. `claude::sdk` re-exports the stream
+and keeps only the error a stream host reports; the spec driver sends its
+control requests through the typed encoder.
+
 2026-10-06 — **Codex's app-server messages as types.**
 A new pure crate, `codex-protocol`, types what Codex's server sends
 (notifications, requests that wait for an answer, results) and what amux

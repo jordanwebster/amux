@@ -1,33 +1,4 @@
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("{message}")]
-pub struct ProtocolError {
-    message: String,
-    frame: Option<serde_json::Value>,
-}
-
-impl ProtocolError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            frame: None,
-        }
-    }
-
-    pub fn with_frame(message: impl Into<String>, frame: serde_json::Value) -> Self {
-        Self {
-            message: message.into(),
-            frame: Some(frame),
-        }
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    pub fn frame(&self) -> Option<&serde_json::Value> {
-        self.frame.as_ref()
-    }
-}
+pub use claude_protocol::stream::ProtocolError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -1,20 +1,8 @@
-//! Claude Code's bidirectional stream-JSON protocol: the frames, control
-//! requests and option types as Claude reads and writes them.
+//! Claude Code's bidirectional stream-JSON protocol. The frames, control
+//! requests and option types live in `claude_protocol::stream`; this module
+//! adds the error a host or client of that stream reports.
 
-pub mod control;
 pub mod error;
-pub mod init;
-pub mod message;
-pub mod options;
-pub mod types;
 
-pub use control::{
-    BackgroundTaskSummary, InterruptResult, McpPermissionMode, McpPermissionModeOverrideResult,
-    McpServerStatus, McpSetServersResult, PluginInfo, ReloadPluginsResult, ReloadSkillsResult,
-    RewindFilesResult,
-};
+pub use claude_protocol::stream::{control, init, message, options, types, *};
 pub use error::{Error, ProtocolError};
-pub use init::InitializationResult;
-pub use message::*;
-pub use options::*;
-pub use types::*;

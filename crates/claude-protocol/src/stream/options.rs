@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::sdk::types::{
+use crate::stream::types::{
     CompactTrigger, ConfigChangeSource, Extensions, PermissionMode, PermissionResult,
     PermissionUpdate, RawFrame, SessionStartSource, SetupTrigger,
 };
@@ -405,7 +405,7 @@ impl HookEvent {
     }
 }
 
-/// A hook matcher Claude Code should forward as an [`SdkEvent`](crate::sdk::SdkEvent).
+/// A hook matcher Claude Code should forward as an [`SdkEvent`](crate::stream::SdkEvent).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookSubscription {
     pub event: HookEvent,

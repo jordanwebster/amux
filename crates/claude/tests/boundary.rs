@@ -1,6 +1,6 @@
 //! The claude crate is provider transport: launching Claude, its hooks and
-//! messaging sockets, the stream-JSON frames, and the keymaps that turn
-//! semantic input into PTY bytes. Hosting a session and deciding what its
+//! messaging sockets, and the keymaps that turn semantic input into PTY
+//! bytes. The stream-JSON frames are claude-protocol's. Hosting a session and deciding what its
 //! traffic means belong to the agent process and the interpreter.
 
 use std::fs;
@@ -18,18 +18,7 @@ fn modules(dir: &str) -> Vec<String> {
 
 #[test]
 fn the_crate_carries_transport_and_no_session_host() {
-    assert_eq!(
-        modules("src/sdk"),
-        [
-            "control.rs",
-            "error.rs",
-            "init.rs",
-            "message.rs",
-            "mod.rs",
-            "options.rs",
-            "types.rs"
-        ]
-    );
+    assert_eq!(modules("src/sdk"), ["error.rs", "mod.rs"]);
     assert_eq!(
         modules("src/pty"),
         ["input.rs", "keymap.rs", "mod.rs", "spawn.rs"]

@@ -199,7 +199,7 @@ async fn resumed_at(session: &mut SpecSession) {
         .messages()
         .iter()
         .find_map(|message| match message {
-            crate::driver::sdk::Message::Assistant(assistant) => Some(assistant.uuid),
+            crate::driver::sdk::Message::Assistant(assistant) => Some(assistant.uuid.clone()),
             _ => None,
         })
         .expect("an answered turn carries an assistant message to fork at");

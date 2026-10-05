@@ -6,7 +6,10 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::driver::sdk::abort::{Shutdown, ShutdownReason};
-use crate::driver::sdk::control::{ControlRequest, ControlResponseEnvelope, ControlResponseInner};
+use crate::driver::sdk::control::{
+    ControlOutcome, ControlRequest, ControlRequestBody, ControlResponse, ControlResponseInner,
+    InitializeRequestBody,
+};
 use crate::driver::sdk::error::{Error, ProtocolError};
 use crate::driver::sdk::init::InitializationResult;
 use crate::driver::sdk::mcp::SdkMcpServer;
@@ -34,7 +37,7 @@ pub(crate) struct QueryInner {
     pub pending_controls: Mutex<HashMap<String, oneshot::Sender<ControlResponseInner>>>,
     pub init_result: OnceLock<InitializationResult>,
     pub request_counter: AtomicU64,
-    pub initialize_request: serde_json::Value,
+    pub initialize_request: InitializeRequestBody,
     pub pending_incoming: Mutex<HashMap<String, IncomingRequestKind>>,
     pub hook_callback_ids: HashSet<String>,
     pub sdk_mcp_servers: std::sync::RwLock<HashMap<String, SdkMcpServer>>,
@@ -56,10 +59,8 @@ impl QueryInner {
     }
 
     /// Send a control request and wait for the matching response.
-    pub async fn send_control<T: serde::Serialize>(
-        &self,
-        body: T,
-    ) -> Result<ControlResponseInner, Error> {
+    /// Answers with the response's payload, null when it has none.
+    pub async fn send_control(&self, body: ControlRequestBody) -> Result<serde_json::Value, Error> {
         let id = format!(
             "req_{}",
             self.request_counter.fetch_add(1, Ordering::Relaxed)
@@ -67,12 +68,9 @@ impl QueryInner {
         let (tx, rx) = oneshot::channel();
         self.pending_controls.lock().await.insert(id.clone(), tx);
 
-        let req = ControlRequest {
-            r#type: "control_request",
-            request_id: id.clone(),
-            request: body,
-        };
-        let json = serde_json::to_vec(&req)?;
+        let json = crate::driver::sdk::encode(&crate::driver::sdk::Input::ControlRequest(
+            ControlRequest::new(id.clone(), body),
+        ));
 
         if let Err(error) = self.write(json).await {
             self.pending_controls.lock().await.remove(&id);
@@ -86,14 +84,14 @@ impl QueryInner {
         if let Some(err) = &resp.error {
             return Err(Error::Control(err.clone()));
         }
-        if resp.subtype != "success" {
+        if resp.subtype != ControlOutcome::Success {
             return Err(Error::Control(format!(
-                "unexpected control response subtype {}",
+                "unexpected control response subtype {:?}",
                 resp.subtype
             )));
         }
 
-        Ok(resp)
+        Ok(resp.response.unwrap_or_default())
     }
 
     pub(crate) async fn answer_incoming(
@@ -212,7 +210,7 @@ async fn dispatch_line(
     let msg_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
     if msg_type == "control_response" {
-        let envelope = match serde_json::from_value::<ControlResponseEnvelope>(value.clone()) {
+        let envelope = match serde_json::from_value::<ControlResponse>(value.clone()) {
             Ok(envelope) => envelope,
             Err(error) => {
                 let _ = turn_tx
@@ -1398,7 +1396,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use crate::driver::sdk::control::ControlRequestBody;
+    use crate::driver::sdk::control::{self, ControlRequestBody};
 
     /// A wait here proves a task completes at all, not that it completes
     /// quickly; a loaded machine can stall a runtime for seconds, so only a
@@ -1412,7 +1410,7 @@ mod tests {
             pending_controls: Mutex::new(HashMap::new()),
             init_result: OnceLock::new(),
             request_counter: AtomicU64::new(0),
-            initialize_request: serde_json::json!({ "subtype": "initialize" }),
+            initialize_request: InitializeRequestBody::default(),
             pending_incoming: Mutex::new(HashMap::new()),
             hook_callback_ids: HashSet::new(),
             sdk_mcp_servers: std::sync::RwLock::new(HashMap::new()),
@@ -1501,9 +1499,10 @@ mod tests {
         let inner = test_inner(stdin_tx);
 
         let error = inner
-            .send_control(ControlRequestBody::Interrupt {
+            .send_control(ControlRequestBody::Interrupt(control::InterruptRequest {
                 cancel_queued: None,
-            })
+                extensions: Default::default(),
+            }))
             .await
             .unwrap_err();
 
@@ -1518,9 +1517,10 @@ mod tests {
         let task_inner = inner.clone();
         let task = tokio::spawn(async move {
             task_inner
-                .send_control(ControlRequestBody::Interrupt {
+                .send_control(ControlRequestBody::Interrupt(control::InterruptRequest {
                     cancel_queued: None,
-                })
+                    extensions: Default::default(),
+                }))
                 .await
         });
 

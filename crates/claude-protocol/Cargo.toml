@@ -1,0 +1,11 @@
+[package]
+name = "claude-protocol"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Claude Code's headless stream, transcript rows and hook payloads as types, with a tolerant decoder"
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }

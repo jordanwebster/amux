@@ -903,8 +903,8 @@ impl Turn {
                 MessageContent::Blocks(blocks) => blocks
                     .iter()
                     .filter_map(|block| match block {
-                        ContentBlock::ToolResult { content, .. } => Some(
-                            content
+                        ContentBlock::ToolResult { content, .. } => Some(match content {
+                            Some(crate::driver::sdk::ToolResultBody::Blocks(parts)) => parts
                                 .iter()
                                 .map(|part| match part {
                                     crate::driver::sdk::ToolResultContent::Text {
@@ -913,7 +913,9 @@ impl Turn {
                                     other => serde_json::to_string(other).unwrap_or_default(),
                                 })
                                 .collect::<String>(),
-                        ),
+                            Some(body) => body.text(),
+                            None => String::new(),
+                        }),
                         _ => None,
                     })
                     .collect(),

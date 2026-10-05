@@ -645,6 +645,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "claude-protocol",
  "pty-host",
  "semver",
  "serde",
@@ -656,6 +657,14 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "uuid",
+]
+
+[[package]]
+name = "claude-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

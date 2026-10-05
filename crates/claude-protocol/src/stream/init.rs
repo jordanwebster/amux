@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::sdk::types::Extensions;
+use crate::stream::types::Extensions;
 
 /// Complete response to the stream-JSON `initialize` control request.
 #[derive(Debug, Clone, Serialize, Deserialize)]

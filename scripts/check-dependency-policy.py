@@ -23,10 +23,11 @@ ALLOWED_LOCAL = {
     # The agent process: its lock, journal and sockets, the interpreter,
     # and the provider hosts.
     "agent": {"agent-dir", "attachments", "claude", "interpret", "journal", "pty-host", "wire"},
-    "claude": {"pty-host"},
+    "claude": {"claude-protocol", "pty-host"},
     "codex": set(),
     # Each provider's messages as types: pure, so the interpreter the phone
     # links can read them. PURE_EXTERNAL below bounds what they may pull in.
+    "claude-protocol": set(),
     "codex-protocol": set(),
     "pty-host": set(),
     # The daemon reaches agent processes only through the directory contract,
@@ -72,11 +73,15 @@ ALLOWED_LOCAL = {
 # (app-ffi, app-embedded) hosts the runtime in process and is not one of them.
 UI_CRATES = {"model", "client", "ui-state", "ui-view", "ui-runtime", "tui", "app-runtime"}
 FORBIDDEN_FOR_UI = {
-    "node", "store", "interpret", "agent", "claude", "codex", "codex-protocol", "pty-host",
+    "node", "store", "interpret", "agent", "claude", "claude-protocol", "codex", "codex-protocol",
+    "pty-host",
 }
 # The protocol crates hold types and nothing else: no process, socket or
 # async runtime code may come in through a dependency.
-PURE_EXTERNAL = {"codex-protocol": {"serde", "serde_json"}}
+PURE_EXTERNAL = {
+    "claude-protocol": {"serde", "serde_json"},
+    "codex-protocol": {"serde", "serde_json"},
+}
 TEST_SUPPORT = {
     "patience",
     "testnet",

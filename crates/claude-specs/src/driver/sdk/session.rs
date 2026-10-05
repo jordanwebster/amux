@@ -10,7 +10,7 @@ use tokio::sync::watch;
 
 use crate::driver::sdk::abort::{AbortHandle, Shutdown, ShutdownReason};
 use crate::driver::sdk::control::{
-    ControlRequestBody, InterruptResult, McpPermissionMode, McpPermissionModeOverrideResult,
+    self, ControlRequestBody, InterruptResult, McpPermissionMode, McpPermissionModeOverrideResult,
     McpServerStatus, McpSetServersResult, ReloadPluginsResult, ReloadSkillsResult,
     RewindFilesResult,
 };
@@ -96,19 +96,15 @@ impl Control {
     pub async fn interrupt(&self) -> Result<Option<InterruptResult>, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::Interrupt {
+            .send_control(ControlRequestBody::Interrupt(control::InterruptRequest {
                 cancel_queued: None,
-            })
+                extensions: Default::default(),
+            }))
             .await?;
-        if response.response.is_null()
-            || response
-                .response
-                .as_object()
-                .is_some_and(serde_json::Map::is_empty)
-        {
+        if response.is_null() || response.as_object().is_some_and(serde_json::Map::is_empty) {
             return Ok(None);
         }
-        serde_json::from_value(response.response)
+        serde_json::from_value(response)
             .map(Some)
             .map_err(|error| Error::Control(format!("failed to parse interrupt receipt: {error}")))
     }
@@ -163,9 +159,14 @@ impl Control {
     ) -> Result<Option<PermissionMode>, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::SetPermissionMode { mode })
+            .send_control(ControlRequestBody::SetPermissionMode(
+                control::SetPermissionModeRequest {
+                    mode,
+                    extensions: Default::default(),
+                },
+            ))
             .await?;
-        let Some(applied) = response.response.get("mode") else {
+        let Some(applied) = response.get("mode") else {
             return Ok(None);
         };
         serde_json::from_value(applied.clone())
@@ -179,9 +180,10 @@ impl Control {
 
     pub async fn set_model(&self, model: Option<&str>) -> Result<(), Error> {
         self.inner
-            .send_control(ControlRequestBody::SetModel {
+            .send_control(ControlRequestBody::SetModel(control::SetModelRequest {
                 model: model.map(str::to_owned),
-            })
+                extensions: Default::default(),
+            }))
             .await?;
         Ok(())
     }
@@ -202,18 +204,21 @@ impl Control {
     ) -> Result<McpPermissionModeOverrideResult, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::SetMcpPermissionModeOverride {
-                server_name: server_name.to_owned(),
-                mode,
-            })
+            .send_control(ControlRequestBody::SetMcpPermissionModeOverride(
+                control::McpPermissionModeOverrideRequest {
+                    server_name: server_name.to_owned(),
+                    mode,
+                    extensions: Default::default(),
+                },
+            ))
             .await?;
-        if response.response.is_null() {
+        if response.is_null() {
             return Ok(McpPermissionModeOverrideResult {
                 warning: None,
                 extensions: Default::default(),
             });
         }
-        serde_json::from_value(response.response).map_err(|error| {
+        serde_json::from_value(response).map_err(|error| {
             Error::Control(format!("failed to parse MCP permission override: {error}"))
         })
     }
@@ -225,7 +230,12 @@ impl Control {
             ));
         }
         self.inner
-            .send_control(ControlRequestBody::ApplyFlagSettings { settings })
+            .send_control(ControlRequestBody::ApplyFlagSettings(
+                control::ApplyFlagSettingsRequest {
+                    settings,
+                    extensions: Default::default(),
+                },
+            ))
             .await?;
         Ok(())
     }
@@ -233,9 +243,11 @@ impl Control {
     pub async fn reinitialize(&self) -> Result<InitializationResult, Error> {
         let response = self
             .inner
-            .send_control(self.inner.initialize_request.clone())
+            .send_control(ControlRequestBody::Initialize(
+                self.inner.initialize_request.clone(),
+            ))
             .await?;
-        serde_json::from_value(response.response)
+        serde_json::from_value(response)
             .map_err(|error| Error::Control(format!("failed to parse init response: {error}")))
     }
 
@@ -269,10 +281,9 @@ impl Control {
     pub async fn mcp_server_status(&self) -> Result<Vec<McpServerStatus>, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::McpStatus)
+            .send_control(ControlRequestBody::McpStatus(Default::default()))
             .await?;
         let response = response
-            .response
             .get("mcpServers")
             .cloned()
             .ok_or_else(|| Error::Control("mcp status response omitted mcpServers".into()))?;
@@ -283,9 +294,9 @@ impl Control {
     pub async fn get_context_usage(&self) -> Result<ContextUsage, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::GetContextUsage)
+            .send_control(ControlRequestBody::GetContextUsage(Default::default()))
             .await?;
-        serde_json::from_value(response.response)
+        serde_json::from_value(response)
             .map_err(|error| Error::Control(format!("failed to parse context usage: {error}")))
     }
 
@@ -294,13 +305,9 @@ impl Control {
     pub async fn applied_settings(&self) -> Result<AppliedSettings, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::GetSettings)
+            .send_control(ControlRequestBody::GetSettings(Default::default()))
             .await?;
-        let applied = response
-            .response
-            .get("applied")
-            .cloned()
-            .unwrap_or_default();
+        let applied = response.get("applied").cloned().unwrap_or_default();
         serde_json::from_value(applied)
             .map_err(|error| Error::Control(format!("failed to parse applied settings: {error}")))
     }
@@ -308,36 +315,40 @@ impl Control {
     pub async fn reload_plugins(&self) -> Result<ReloadPluginsResult, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::ReloadPlugins)
+            .send_control(ControlRequestBody::ReloadPlugins(Default::default()))
             .await?;
-        serde_json::from_value(response.response)
+        serde_json::from_value(response)
             .map_err(|error| Error::Control(format!("failed to parse plugin reload: {error}")))
     }
 
     pub async fn reload_skills(&self) -> Result<ReloadSkillsResult, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::ReloadSkills)
+            .send_control(ControlRequestBody::ReloadSkills(Default::default()))
             .await?;
-        serde_json::from_value(response.response)
+        serde_json::from_value(response)
             .map_err(|error| Error::Control(format!("failed to parse skill reload: {error}")))
     }
 
     pub async fn reconnect_mcp_server(&self, name: &str) -> Result<(), Error> {
         self.inner
-            .send_control(ControlRequestBody::McpReconnect {
-                server_name: name.to_owned(),
-            })
+            .send_control(ControlRequestBody::McpReconnect(
+                control::McpServerRequest {
+                    server_name: name.to_owned(),
+                    extensions: Default::default(),
+                },
+            ))
             .await?;
         Ok(())
     }
 
     pub async fn toggle_mcp_server(&self, name: &str, enabled: bool) -> Result<(), Error> {
         self.inner
-            .send_control(ControlRequestBody::McpToggle {
+            .send_control(ControlRequestBody::McpToggle(control::McpToggleRequest {
                 server_name: name.to_owned(),
                 enabled,
-            })
+                extensions: Default::default(),
+            }))
             .await?;
         Ok(())
     }
@@ -349,21 +360,27 @@ impl Control {
     ) -> Result<RewindFilesResult, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::RewindFiles {
-                user_message_id: user_message_id.to_owned(),
-                dry_run,
-            })
+            .send_control(ControlRequestBody::RewindFiles(
+                control::RewindFilesRequest {
+                    user_message_id: user_message_id.to_owned(),
+                    dry_run,
+                    extensions: Default::default(),
+                },
+            ))
             .await?;
-        serde_json::from_value(response.response)
+        serde_json::from_value(response)
             .map_err(|error| Error::Control(format!("failed to parse rewind result: {error}")))
     }
 
     pub async fn seed_read_state(&self, path: &str, mtime: u64) -> Result<(), Error> {
         self.inner
-            .send_control(ControlRequestBody::SeedReadState {
-                path: path.to_owned(),
-                mtime,
-            })
+            .send_control(ControlRequestBody::SeedReadState(
+                control::SeedReadStateRequest {
+                    path: path.to_owned(),
+                    mtime,
+                    extensions: Default::default(),
+                },
+            ))
             .await?;
         Ok(())
     }
@@ -398,22 +415,26 @@ impl Control {
             .expect("SDK MCP server lock poisoned") = sdk_servers;
         let response = self
             .inner
-            .send_control(ControlRequestBody::McpSetServers {
-                servers: servers
-                    .iter()
-                    .map(|(name, config)| (name.clone(), config.to_wire()))
-                    .collect(),
-            })
+            .send_control(ControlRequestBody::McpSetServers(
+                control::McpSetServersRequest {
+                    servers: servers
+                        .iter()
+                        .map(|(name, config)| (name.clone(), config.to_wire()))
+                        .collect(),
+                    extensions: Default::default(),
+                },
+            ))
             .await?;
-        serde_json::from_value(response.response)
+        serde_json::from_value(response)
             .map_err(|error| Error::Control(format!("failed to parse MCP server update: {error}")))
     }
 
     pub async fn stop_task(&self, task_id: &str) -> Result<(), Error> {
         self.inner
-            .send_control(ControlRequestBody::StopTask {
+            .send_control(ControlRequestBody::StopTask(control::StopTaskRequest {
                 task_id: task_id.to_owned(),
-            })
+                extensions: Default::default(),
+            }))
             .await?;
         Ok(())
     }
@@ -421,11 +442,14 @@ impl Control {
     pub async fn background_tasks(&self, tool_use_id: Option<&str>) -> Result<bool, Error> {
         let response = self
             .inner
-            .send_control(ControlRequestBody::BackgroundTasks {
-                tool_use_id: tool_use_id.map(str::to_owned),
-            })
+            .send_control(ControlRequestBody::BackgroundTasks(
+                control::BackgroundTasksRequest {
+                    tool_use_id: tool_use_id.map(str::to_owned),
+                    extensions: Default::default(),
+                },
+            ))
             .await?;
-        match response.response.get("backgrounded") {
+        match response.get("backgrounded") {
             None | Some(serde_json::Value::Null) => Ok(true),
             Some(serde_json::Value::Bool(backgrounded)) => Ok(*backgrounded),
             Some(other) => Err(Error::Control(format!(

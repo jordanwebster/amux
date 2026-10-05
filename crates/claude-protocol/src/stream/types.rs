@@ -16,6 +16,16 @@ impl RawFrame {
         Self { raw }
     }
 
+    /// A frame a decoder keeps without knowing it; a strict decode refuses
+    /// the line.
+    pub(crate) fn unknown(what: &str, raw: serde_json::Value) -> Self {
+        crate::strictness::unknown(|| {
+            let kind = raw.get("type").and_then(|kind| kind.as_str()).unwrap_or("");
+            format!("unknown {what} {kind:?}")
+        });
+        Self { raw }
+    }
+
     pub fn field(&self, name: &str) -> Option<&serde_json::Value> {
         self.raw.get(name)
     }
@@ -50,7 +60,10 @@ macro_rules! open_string_enum {
                 let value = String::deserialize(deserializer)?;
                 Ok(match value.as_str() {
                     $($wire => Self::$variant,)+
-                    _ => Self::Unknown(value),
+                    _ => {
+                        $crate::strictness::unknown(|| format!(concat!("unknown ", stringify!($name), " {:?}"), value));
+                        Self::Unknown(value)
+                    }
                 })
             }
         }
@@ -123,8 +136,8 @@ pub enum ContentBlock {
     },
     ToolResult {
         tool_use_id: String,
-        #[serde(default, deserialize_with = "deserialize_tool_result_content")]
-        content: Vec<ToolResultContent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<ToolResultBody>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
         #[serde(flatten)]
@@ -193,7 +206,31 @@ impl<'de> Deserialize<'de> for ContentBlock {
                     extensions: value.extensions,
                 })
                 .map_err(serde::de::Error::custom),
-            _ => Ok(Self::Unknown(RawFrame::new(raw))),
+            _ => Ok(Self::Unknown(RawFrame::unknown("ContentBlock", raw))),
+        }
+    }
+}
+
+/// A tool result as Claude wrote it: plain text, or content blocks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolResultBody {
+    Text(String),
+    Blocks(Vec<ToolResultContent>),
+}
+
+impl ToolResultBody {
+    /// The result's text: the plain text, or every text block joined.
+    pub fn text(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ToolResultContent::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect(),
         }
     }
 }
@@ -203,6 +240,12 @@ impl<'de> Deserialize<'de> for ContentBlock {
 pub enum ToolResultContent {
     Text {
         text: String,
+        #[serde(flatten)]
+        extensions: Extensions,
+    },
+    /// A tool the result makes available, named.
+    ToolReference {
+        tool_name: String,
         #[serde(flatten)]
         extensions: Extensions,
     },
@@ -235,7 +278,13 @@ impl<'de> Deserialize<'de> for ToolResultContent {
                     extensions: value.extensions,
                 })
                 .map_err(serde::de::Error::custom),
-            _ => Ok(Self::Unknown(RawFrame::new(raw))),
+            "tool_reference" => parse_payload(raw, "type")
+                .map(|value: ToolReferenceBlock| Self::ToolReference {
+                    tool_name: value.tool_name,
+                    extensions: value.extensions,
+                })
+                .map_err(serde::de::Error::custom),
+            _ => Ok(Self::Unknown(RawFrame::unknown("ToolResultContent", raw))),
         }
     }
 }
@@ -473,7 +522,7 @@ impl<'de> Deserialize<'de> for StreamEvent {
                     extensions: value.extensions,
                 })
                 .map_err(serde::de::Error::custom),
-            _ => Ok(Self::Unknown(RawFrame::new(raw))),
+            _ => Ok(Self::Unknown(RawFrame::unknown("StreamEvent", raw))),
         }
     }
 }
@@ -548,7 +597,7 @@ impl<'de> Deserialize<'de> for StreamDelta {
                     extensions: value.extensions,
                 })
                 .map_err(serde::de::Error::custom),
-            _ => Ok(Self::Unknown(RawFrame::new(raw))),
+            _ => Ok(Self::Unknown(RawFrame::unknown("StreamDelta", raw))),
         }
     }
 }
@@ -674,10 +723,17 @@ struct ToolUseContentBlock {
 }
 
 #[derive(Deserialize)]
+struct ToolReferenceBlock {
+    tool_name: String,
+    #[serde(flatten)]
+    extensions: Extensions,
+}
+
+#[derive(Deserialize)]
 struct ToolResultContentBlock {
     tool_use_id: String,
-    #[serde(default, deserialize_with = "deserialize_tool_result_content")]
-    content: Vec<ToolResultContent>,
+    #[serde(default)]
+    content: Option<ToolResultBody>,
     #[serde(default)]
     is_error: Option<bool>,
     #[serde(flatten)]
@@ -764,6 +820,7 @@ pub enum PermissionUpdate {
 #[serde(rename_all = "camelCase")]
 pub struct PermissionRuleValue {
     pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule_content: Option<String>,
 }
 
@@ -870,55 +927,4 @@ pub enum ConfigChangeSource {
     LocalSettings,
     PolicySettings,
     Skills,
-}
-
-// ── Deserialization helpers ────────────────────────────────────────
-
-/// Deserialize the `content` field of a ToolResult, which the CLI may
-/// send as a plain string, an array of content blocks, or null.
-fn deserialize_tool_result_content<'de, D>(
-    deserializer: D,
-) -> Result<Vec<ToolResultContent>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de;
-
-    struct Visitor;
-
-    impl<'de> de::Visitor<'de> for Visitor {
-        type Value = Vec<ToolResultContent>;
-
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("a string, array of content blocks, or null")
-        }
-
-        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(vec![])
-        }
-
-        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(vec![])
-        }
-
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            Ok(vec![ToolResultContent::Text {
-                text: v.to_string(),
-                extensions: Extensions::new(),
-            }])
-        }
-
-        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
-            Ok(vec![ToolResultContent::Text {
-                text: v,
-                extensions: Extensions::new(),
-            }])
-        }
-
-        fn visit_seq<A: de::SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
-            Vec::deserialize(de::value::SeqAccessDeserializer::new(seq))
-        }
-    }
-
-    deserializer.deserialize_any(Visitor)
 }

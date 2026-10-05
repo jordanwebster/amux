@@ -14,7 +14,7 @@ use tokio::process::{Child, ChildStderr};
 use tokio::sync::{Mutex, mpsc, watch};
 
 use crate::driver::sdk::abort::{Shutdown, ShutdownReason};
-use crate::driver::sdk::control::{HookMatcherConfig, InitializeRequestBody};
+use crate::driver::sdk::control::{ControlRequestBody, HookMatcherConfig, InitializeRequestBody};
 use crate::driver::sdk::dispatch::{self, QueryInner, WriteCommand};
 use crate::driver::sdk::error::Error;
 use crate::driver::sdk::options::{QueryOptions, SkillsConfig, SystemPrompt};
@@ -195,19 +195,20 @@ impl From<QueryOptions> for QueryRuntimeConfig {
                     matcher: subscription.matcher,
                     hook_callback_ids: vec![callback_id],
                     timeout: None,
+                    extensions: Default::default(),
                 });
         }
 
         Self {
             initialize_request: InitializeRequestBody {
-                subtype: "initialize",
                 sdk_mcp_servers: (!sdk_mcp_server_names.is_empty()).then_some(sdk_mcp_server_names),
                 hooks: (!wire_hooks.is_empty()).then_some(wire_hooks),
                 json_schema: output_format.map(|format| format.schema),
                 system_prompt,
                 append_system_prompt,
                 plan_mode_instructions,
-                tool_aliases: (!tool_aliases.is_empty()).then_some(tool_aliases),
+                tool_aliases: (!tool_aliases.is_empty())
+                    .then_some(tool_aliases.into_iter().collect()),
                 exclude_dynamic_sections,
                 agents: (!agents.is_empty()).then_some(agents.into_iter().collect()),
                 title,
@@ -218,6 +219,7 @@ impl From<QueryOptions> for QueryRuntimeConfig {
                 supported_dialog_kinds: (!supported_dialog_kinds.is_empty())
                     .then_some(supported_dialog_kinds),
                 per_task_stop_affordance,
+                extensions: Default::default(),
             },
             sdk_mcp_servers,
             hook_callback_ids,
@@ -330,8 +332,7 @@ impl Query {
             pending_controls: Mutex::new(HashMap::new()),
             init_result: std::sync::OnceLock::new(),
             request_counter: AtomicU64::new(0),
-            initialize_request: serde_json::to_value(runtime.initialize_request)
-                .unwrap_or_else(|_| serde_json::json!({ "subtype": "initialize" })),
+            initialize_request: runtime.initialize_request,
             pending_incoming: Mutex::new(HashMap::new()),
             hook_callback_ids: runtime.hook_callback_ids,
             sdk_mcp_servers: std::sync::RwLock::new(runtime.sdk_mcp_servers),
@@ -364,9 +365,11 @@ impl Query {
         }
         let response = self
             .inner
-            .send_control(self.inner.initialize_request.clone())
+            .send_control(ControlRequestBody::Initialize(
+                self.inner.initialize_request.clone(),
+            ))
             .await?;
-        let initialization = serde_json::from_value(response.response)
+        let initialization = serde_json::from_value(response)
             .map_err(|error| Error::Control(format!("failed to parse init response: {error}")))?;
         let _ = self.inner.init_result.set(initialization);
         Ok(())

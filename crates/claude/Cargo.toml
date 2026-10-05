@@ -12,6 +12,7 @@ pty = ["dep:pty-host", "dep:sha2", "dep:toml"]
 [dependencies]
 anyhow.workspace = true
 chrono = { workspace = true }
+claude-protocol.workspace = true
 pty-host = { workspace = true, optional = true }
 semver = { workspace = true, features = ["serde"] }
 serde.workspace = true
