@@ -22,7 +22,10 @@ ALLOWED_LOCAL = {
     "interpret": {"attachments", "codex-protocol", "redaction", "wire"},
     # The agent process: its lock, journal and sockets, the interpreter,
     # and the provider hosts.
-    "agent": {"agent-dir", "attachments", "claude", "interpret", "journal", "pty-host", "wire"},
+    "agent": {
+        "agent-dir", "attachments", "claude", "claude-protocol", "codex-protocol", "interpret",
+        "journal", "pty-host", "wire",
+    },
     "claude": {"claude-protocol", "pty-host"},
     "codex": {"codex-protocol"},
     # Each provider's messages as types: pure, so the interpreter the phone

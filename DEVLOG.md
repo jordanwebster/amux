@@ -1,3 +1,16 @@
+2026-10-06 — **The agent's provider handshake is built from the protocol types.**
+The agent process wrote Codex's initialize, `initialized`, thread start and
+resume, Claude's initialize control request and every headless user
+message as hand-built JSON, and read the Codex handshake's answers by
+indexing a `serde_json::Value`. It now builds each from
+`codex_protocol`/`claude_protocol::stream` types and encodes them through
+the crates' encoders, reads the answers with `codex_protocol::decode`, and
+appends a Codex turn's attachments to the typed turn start or steer. The
+Codex lines are byte-identical (the fakes compare every byte). Claude's
+initialize request now comes out with its keys sorted, as every encoded
+line does; Claude reads the same request, and the two headless replay
+fixtures carry the new line.
+
 2026-10-06 — **The Codex interpreter reads Codex through the protocol types.**
 Every line Codex's server sends now reaches the interpreter as a decoded
 `codex_protocol::ServerMessage`; the string-keyed lookups into

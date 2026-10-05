@@ -18,6 +18,12 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use claude_protocol::stream as claude_stream;
+use codex_protocol::client::{
+    Capabilities, ClientInfo, InitializeParams, ThreadResumeParams, ThreadStartParams,
+};
+use codex_protocol::items::{LocalImageInput, UserInput};
+use codex_protocol::{ClientMessage, ClientNotification, ClientRequest, RequestId, ServerMessage};
 use interpret::{Channel, Effect, Fact};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
@@ -239,8 +245,14 @@ impl Provider {
         };
         // Claude reports nothing until it is asked; its answer is what says
         // it takes input.
+        let initialize = claude_stream::ControlRequest::new(
+            "agent-initialize",
+            claude_stream::ControlRequestBody::Initialize(Default::default()),
+        );
         provider
-            .write_line(br#"{"type":"control_request","request_id":"agent-initialize","request":{"subtype":"initialize"}}"#)
+            .write_line(&claude_stream::encode(
+                &claude_stream::Input::ControlRequest(initialize),
+            ))
             .await?;
         Ok(provider)
     }
@@ -285,22 +297,28 @@ impl Provider {
             let mut initialized = Some(initialized);
             let mut stdout = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = stdout.next_line().await {
-                if let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) {
-                    match message["id"].as_str() {
-                        Some(CODEX_INITIALIZE) => {
-                            if let Some(initialized) = initialized.take() {
-                                let _ = initialized.send(());
-                            }
+                let answer = match codex_protocol::decode(line.as_bytes()) {
+                    Ok(ServerMessage::Response { id, result, .. }) => Some((id, result.ok())),
+                    Ok(ServerMessage::Unknown(unknown)) => unknown.id.map(|id| (id, None)),
+                    _ => None,
+                };
+                match answer {
+                    Some((RequestId::String(id), _)) if id == CODEX_INITIALIZE => {
+                        if let Some(initialized) = initialized.take() {
+                            let _ = initialized.send(());
                         }
-                        // The thread the server made or resumed is the
-                        // session the next incarnation resumes.
-                        Some(CODEX_THREAD) => {
-                            if let Some(thread) = message["result"]["thread"]["id"].as_str() {
-                                persist(&lines, &session_path, thread).await;
-                            }
-                        }
-                        _ => {}
                     }
+                    // The thread the server made or resumed is the session
+                    // the next incarnation resumes.
+                    Some((RequestId::String(id), Some(result))) if id == CODEX_THREAD => {
+                        if let Ok(answer) = codex_protocol::result::<
+                            codex_protocol::server::ThreadResponse,
+                        >(&result)
+                        {
+                            persist(&lines, &session_path, &answer.thread.id).await;
+                        }
+                    }
+                    _ => {}
                 }
                 let fact = Fact {
                     channel: Channel::Rpc,
@@ -330,36 +348,46 @@ impl Provider {
         let cwd = spec.cwd.clone();
         let model = spec.config.as_ref().and_then(|config| config.model.clone());
         tokio::spawn(async move {
-            let initialize = serde_json::json!({
-                "id": CODEX_INITIALIZE,
-                "method": "initialize",
-                "params": {
-                    "clientInfo": { "name": "amux", "title": null, "version": crate::VERSION },
-                    "capabilities": { "experimentalApi": true },
-                },
-            });
-            if write_line(&handshake, initialize.to_string().as_bytes())
+            let initialize = ClientMessage::request(
+                RequestId::String(CODEX_INITIALIZE.into()),
+                ClientRequest::Initialize(InitializeParams {
+                    client_info: ClientInfo {
+                        name: "amux".into(),
+                        title: None,
+                        version: crate::VERSION.into(),
+                        extra: Default::default(),
+                    },
+                    capabilities: Some(Capabilities {
+                        experimental_api: Some(true),
+                        extra: Default::default(),
+                    }),
+                    extra: Default::default(),
+                }),
+            );
+            if write_line(&handshake, &codex_protocol::encode(&initialize))
                 .await
                 .is_err()
                 || on_initialized.await.is_err()
             {
                 return;
             }
-            let mut params = serde_json::json!({ "cwd": cwd });
-            if let Some(model) = model {
-                params["model"] = serde_json::json!(model);
-            }
-            let method = match thread {
-                Some(thread) => {
-                    params["threadId"] = serde_json::json!(thread);
-                    "thread/resume"
-                }
-                None => "thread/start",
+            let start = match thread {
+                Some(thread_id) => ClientRequest::ThreadResume(ThreadResumeParams {
+                    thread_id,
+                    cwd: Some(cwd),
+                    model,
+                    ..Default::default()
+                }),
+                None => ClientRequest::ThreadStart(ThreadStartParams {
+                    cwd: Some(cwd),
+                    model,
+                    ..Default::default()
+                }),
             };
-            let start =
-                serde_json::json!({ "id": CODEX_THREAD, "method": method, "params": params });
-            let _ = write_line(&handshake, br#"{"method":"initialized"}"#).await;
-            let _ = write_line(&handshake, start.to_string().as_bytes()).await;
+            let start = ClientMessage::request(RequestId::String(CODEX_THREAD.into()), start);
+            let initialized = ClientMessage::notification(ClientNotification::Initialized(()));
+            let _ = write_line(&handshake, &codex_protocol::encode(&initialized)).await;
+            let _ = write_line(&handshake, &codex_protocol::encode(&start)).await;
         });
 
         Ok(Self {
@@ -591,16 +619,21 @@ impl Provider {
     /// A headless user message's content: the text with its elements, or,
     /// when a person attached images, content blocks with each image's bytes
     /// as a native image block right after its element.
-    fn content(&self, text: &str, attachments: &[Attachment]) -> serde_json::Value {
+    fn content(&self, text: &str, attachments: &[Attachment]) -> claude_stream::MessageContent {
         use attachments::Piece;
+        use claude_stream::{ContentBlock, ImageSource, ImageSourceType};
         use wire::attachment::Of;
 
         let images = attachments
             .iter()
             .any(|attachment| matches!(attachment.of, Some(Of::Image(_))));
         if !images {
-            return self.with_attachments(text, attachments).into();
+            return claude_stream::MessageContent::Text(self.with_attachments(text, attachments));
         }
+        let text_block = |text: String| ContentBlock::Text {
+            text,
+            extensions: Default::default(),
+        };
         let positioned = attachments::Positioned {
             text: text.to_owned(),
             attachments: attachments.to_vec(),
@@ -624,24 +657,23 @@ impl Provider {
                     let Some(bytes) = path.and_then(|path| std::fs::read(path).ok()) else {
                         continue;
                     };
-                    blocks.push(
-                        serde_json::json!({ "type": "text", "text": std::mem::take(&mut prose) }),
-                    );
-                    blocks.push(serde_json::json!({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": blob.mime,
-                            "data": base64(&bytes),
+                    blocks.push(text_block(std::mem::take(&mut prose)));
+                    blocks.push(ContentBlock::Image {
+                        source: ImageSource {
+                            r#type: ImageSourceType::Base64,
+                            media_type: blob.mime.clone(),
+                            data: base64(&bytes),
+                            extensions: Default::default(),
                         },
-                    }));
+                        extensions: Default::default(),
+                    });
                 }
             }
         }
         if !prose.is_empty() {
-            blocks.push(serde_json::json!({ "type": "text", "text": prose }));
+            blocks.push(text_block(prose));
         }
-        blocks.into()
+        claude_stream::MessageContent::Blocks(blocks)
     }
 
     fn type_keys(&self, steps: Vec<claude::pty::keymap::KeyStep>) -> io::Result<()> {
@@ -692,15 +724,19 @@ impl Provider {
         text: &str,
         attachments: &[Attachment],
     ) -> io::Result<()> {
-        let content = self.content(text, attachments);
-        let line = serde_json::json!({
-            "type": "user",
-            "message": { "role": "user", "content": content },
-            "parent_tool_use_id": null,
-            "session_id": self.session,
-            "uuid": uuid,
+        let line = claude_stream::Input::User(claude_stream::UserInput {
+            message: claude_stream::MessageParam {
+                role: claude_stream::Role::User,
+                content: self.content(text, attachments),
+                extensions: Default::default(),
+            },
+            parent_tool_use_id: None,
+            session_id: self.session.clone(),
+            uuid: Some(uuid.to_owned()),
+            priority: None,
+            extensions: Default::default(),
         });
-        self.write_line(line.to_string().as_bytes()).await
+        self.write_line(&claude_stream::encode(&line)).await
     }
 
     async fn write_line(&mut self, bytes: &[u8]) -> io::Result<()> {
@@ -846,31 +882,40 @@ fn codex_turn_input(
     attachments: &[Attachment],
     blobs: &Path,
 ) -> io::Result<Vec<u8>> {
-    let mut request: serde_json::Value = serde_json::from_slice(request)
+    let mut request = codex_protocol::decode_client(request)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let Some(input) = request["params"]["input"].as_array_mut() else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "a Codex turn request without params.input",
-        ));
+    let input = match &mut request {
+        ClientMessage::Request {
+            request: ClientRequest::TurnStart(params),
+            ..
+        } => &mut params.input,
+        ClientMessage::Request {
+            request: ClientRequest::TurnSteer(params),
+            ..
+        } => &mut params.input,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "a Codex turn request that is neither a turn start nor a steer",
+            ));
+        }
     };
     for attachment in attachments {
         input.push(match &attachment.of {
-            Some(wire::attachment::Of::Image(blob)) => serde_json::json!({
-                "type": "localImage",
-                "path": blobs.join(interpret::to_hex(&blob.hash)),
+            Some(wire::attachment::Of::Image(blob)) => UserInput::LocalImage(LocalImageInput {
+                path: blobs
+                    .join(interpret::to_hex(&blob.hash))
+                    .to_string_lossy()
+                    .into_owned(),
+                extra: Default::default(),
             }),
-            _ => serde_json::json!({
-                "type": "text",
-                "text": attachments::element(
-                    attachment,
-                    attachments::blob_path(attachment, blobs).as_deref(),
-                ),
-                "text_elements": [],
-            }),
+            _ => UserInput::text(attachments::element(
+                attachment,
+                attachments::blob_path(attachment, blobs).as_deref(),
+            )),
         });
     }
-    serde_json::to_vec(&request).map_err(io::Error::other)
+    Ok(codex_protocol::encode(&request))
 }
 
 /// A followed transcript and the task reading it.
@@ -1240,8 +1285,7 @@ mod tests {
             },
         ];
         let blobs = Path::new("/agents/a/blobs");
-        let request =
-            br#"{"method":"turn/start","params":{"input":[{"type":"text","text":"read these"}]}}"#;
+        let request = br#"{"id":"amux-1","method":"turn/start","params":{"threadId":"t1","input":[{"type":"text","text":"read these","text_elements":[]}]}}"#;
         let written = super::codex_turn_input(request, &attachments, blobs).unwrap();
         let written: serde_json::Value = serde_json::from_slice(&written).unwrap();
         let input = written["params"]["input"].as_array().unwrap();
