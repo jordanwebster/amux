@@ -9,7 +9,8 @@ pub(crate) mod query;
 pub mod session;
 
 pub use abort::AbortHandle;
-pub use claude::sdk::*;
+pub use claude::sdk::Error;
+pub use claude_protocol::stream::*;
 pub use mcp::{
     CreateSdkMcpServerOptions, SdkMcpServer, SdkMcpTool, SdkMcpToolCall, SdkMcpToolError,
     SdkMcpToolOptions, SdkMcpToolResult, create_sdk_mcp_server, tool,

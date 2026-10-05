@@ -10,7 +10,6 @@ use crate::driver::sdk::control::{
     ControlOutcome, ControlRequest, ControlRequestBody, ControlResponse, ControlResponseInner,
     InitializeRequestBody,
 };
-use crate::driver::sdk::error::{Error, ProtocolError};
 use crate::driver::sdk::init::InitializationResult;
 use crate::driver::sdk::mcp::SdkMcpServer;
 use crate::driver::sdk::message::Message;
@@ -20,6 +19,7 @@ use crate::driver::sdk::options::{
 };
 use crate::driver::sdk::session::SdkEvent;
 use crate::driver::sdk::types::{CanUseToolOptions, PermissionResult, PermissionUpdate};
+use crate::driver::sdk::{Error, ProtocolError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IncomingRequestKind {

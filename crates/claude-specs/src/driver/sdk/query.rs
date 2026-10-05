@@ -13,10 +13,10 @@ use tokio::io::{AsyncBufRead, AsyncWrite};
 use tokio::process::{Child, ChildStderr};
 use tokio::sync::{Mutex, mpsc, watch};
 
+use crate::driver::sdk::Error;
 use crate::driver::sdk::abort::{Shutdown, ShutdownReason};
 use crate::driver::sdk::control::{ControlRequestBody, HookMatcherConfig, InitializeRequestBody};
 use crate::driver::sdk::dispatch::{self, QueryInner, WriteCommand};
-use crate::driver::sdk::error::Error;
 use crate::driver::sdk::options::{QueryOptions, SkillsConfig, SystemPrompt};
 use crate::driver::sdk::process::CliProcess;
 use crate::driver::sdk::session::SdkEvent;

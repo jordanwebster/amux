@@ -22,7 +22,7 @@ fn stream_start_preserves_absent_null_and_populated_stop_fields() {
                     message.insert(key.to_string(), value);
                 }
             }
-            let parsed = claude::sdk::Message::parse(row.clone()).unwrap();
+            let parsed = claude_protocol::stream::Message::parse(row.clone()).unwrap();
             assert_eq!(serde_json::to_value(parsed).unwrap(), row);
         }
     }

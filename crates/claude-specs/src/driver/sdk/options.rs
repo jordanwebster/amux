@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use claude::sdk::PermissionMode;
-pub use claude::sdk::options::*;
+use claude_protocol::stream::PermissionMode;
+pub use claude_protocol::stream::options::*;
 use serde::Serialize;
 
 use crate::driver::sdk::mcp::SdkMcpServer;
@@ -28,12 +28,12 @@ impl McpServerConfig {
     }
 
     /// The server as Claude reads it.
-    pub fn to_wire(&self) -> claude::sdk::McpServerConfig {
+    pub fn to_wire(&self) -> claude_protocol::stream::McpServerConfig {
         match self {
-            Self::Stdio(config) => claude::sdk::McpServerConfig::Stdio(config.clone()),
-            Self::Sse(config) => claude::sdk::McpServerConfig::Sse(config.clone()),
-            Self::Http(config) => claude::sdk::McpServerConfig::Http(config.clone()),
-            Self::Sdk(server) => claude::sdk::McpServerConfig::Sdk {
+            Self::Stdio(config) => claude_protocol::stream::McpServerConfig::Stdio(config.clone()),
+            Self::Sse(config) => claude_protocol::stream::McpServerConfig::Sse(config.clone()),
+            Self::Http(config) => claude_protocol::stream::McpServerConfig::Http(config.clone()),
+            Self::Sdk(server) => claude_protocol::stream::McpServerConfig::Sdk {
                 name: server.configured_name().to_owned(),
             },
         }
@@ -181,8 +181,8 @@ impl QueryOptions {
         }
     }
 
-    pub fn validate(&self) -> Result<(), crate::driver::sdk::error::Error> {
-        use crate::driver::sdk::error::Error;
+    pub fn validate(&self) -> Result<(), crate::driver::sdk::Error> {
+        use crate::driver::sdk::Error;
 
         if self.permission_mode == Some(PermissionMode::BypassPermissions)
             && !self.allow_dangerously_skip_permissions
@@ -225,7 +225,7 @@ impl QueryOptions {
                 for spec in mcp_servers {
                     if let AgentMcpServerSpec::Inline(servers) = spec
                         && servers.values().any(|config| {
-                            matches!(config, claude::sdk::McpServerConfig::Sdk { .. })
+                            matches!(config, claude_protocol::stream::McpServerConfig::Sdk { .. })
                         })
                     {
                         return Err(Error::InvalidOptions(format!(

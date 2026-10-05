@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::driver::sdk::error::Error;
+use crate::driver::sdk::Error;
 use crate::driver::sdk::types::Extensions;
 
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[

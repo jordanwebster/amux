@@ -8,6 +8,7 @@ use futures_core::Stream;
 use tokio::io::{AsyncBufRead, AsyncWrite};
 use tokio::sync::watch;
 
+use crate::driver::sdk::Error;
 use crate::driver::sdk::abort::{AbortHandle, Shutdown, ShutdownReason};
 use crate::driver::sdk::control::{
     self, ControlRequestBody, InterruptResult, McpPermissionMode, McpPermissionModeOverrideResult,
@@ -15,7 +16,6 @@ use crate::driver::sdk::control::{
     RewindFilesResult,
 };
 use crate::driver::sdk::dispatch::{IncomingRequestKind, QueryInner};
-use crate::driver::sdk::error::Error;
 use crate::driver::sdk::init::{
     AccountInfo, AgentInfo, AppliedSettings, ContextUsage, InitializationResult, ModelInfo,
     SlashCommand,

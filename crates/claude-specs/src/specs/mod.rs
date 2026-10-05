@@ -390,7 +390,9 @@ impl SpecSession {
             .expect("an opened session has been initialized")
     }
 
-    pub async fn applied_settings(&self) -> Result<claude::sdk::init::AppliedSettings, Error> {
+    pub async fn applied_settings(
+        &self,
+    ) -> Result<claude_protocol::stream::init::AppliedSettings, Error> {
         self.control().applied_settings().await
     }
 

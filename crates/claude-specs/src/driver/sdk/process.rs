@@ -4,7 +4,7 @@ use std::{env, fs};
 use tokio::io::BufReader;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
-use crate::driver::sdk::error::Error;
+use crate::driver::sdk::Error;
 use crate::driver::sdk::options::{
     Effort, PluginType, QueryOptions, SdkBeta, SettingSource, ThinkingConfig, ToolsConfig,
 };

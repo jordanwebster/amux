@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use chrono::{DateTime, Utc};
+use claude_protocol::stream::{Extensions, RawFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
 
 use crate::sdk::error::Error;
-use crate::sdk::types::{Extensions, RawFrame};
 
 #[derive(Debug, Clone, Default)]
 pub struct ListSessionsOptions {
