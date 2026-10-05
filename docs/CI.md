@@ -31,7 +31,7 @@ Every workflow sets `CARGO_INCREMENTAL=0`, and every job has a
 | Terminal journeys | `ubuntu-latest`, `macos-latest` | Installs `tmux`, then eight `just journey terminal <name>` runs |
 | Embedded client | `ubuntu-latest` | `just embedded-check`, `just embedded-test` |
 | iOS target check | `macos-latest` | `just mobile-check` |
-| iOS gate | `macos-26` | `just ios gate` on Xcode 26.6 |
+| iOS gate | `macos-26` | `just ios gate` on Xcode 26.6, when a push touches the phone's paths |
 
 The test job runs with `--no-fail-fast`, so a platform reports every failing
 test binary, not only the first. Its matrix does not fail fast either: a
@@ -100,6 +100,16 @@ crate on the macOS runner; that pushed the macOS run from 449 s to past its
 [36616922626](https://github.com/jordanwebster/amux/actions/runs/36616922626).
 
 ### The iOS gate
+
+The iOS gate runs only when a push or pull request touches a path that
+reaches the phone: `apps/apple`, the three `app-*` crates, `xtask`,
+`scripts`, the root justfile and Cargo manifests, the toolchain pin or
+`ci.yml` itself (the `iOS changes` job decides). The rest of the bridge's
+Rust graph needs no entry: everything it hands Swift crosses as the
+generated mirrors in `apps/apple/Packages/AmuxCore/Sources/AmuxValues`,
+which a workspace test holds to the Rust definitions, so a change to their
+shape cannot land without touching the app. The iOS target check still
+compiles the bridge's graph on every push.
 
 The iOS gate job selects Xcode 26.6, asserts that the iOS 26.5 simulator
 runtime and the iPhone 17 Pro device type are available, installs XcodeGen,

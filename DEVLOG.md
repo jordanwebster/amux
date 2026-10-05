@@ -1,3 +1,14 @@
+2026-10-05 — **The iOS gate runs only when a push touches the phone.**
+It took 18 to 27 minutes on a macOS runner for every push, including the
+terminal, provider and docs work that cannot change what the phone does.
+A new `iOS changes` job now lets it run only for `apps/apple`, the `app-*`
+crates, `xtask`, `scripts`, the root justfile and Cargo manifests, the
+toolchain pin and `ci.yml`. The rest of the bridge's Rust needs no entry:
+what it hands Swift crosses as the generated mirrors in `AmuxValues`, which
+a workspace test holds to the Rust definitions, so a shape change upstream
+lands with an app change. The iOS target check still compiles the bridge's
+graph on every push.
+
 2026-10-05 — **Terminal journey frames recorded on macOS match Linux
 where a row shows a path.** On macOS a program reading its working
 directory prints `/private/tmp/…`; the journey driver spells it `/tmp/…`

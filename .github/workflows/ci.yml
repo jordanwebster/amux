@@ -170,8 +170,40 @@ jobs:
       - name: Check iOS device and simulator graphs
         run: just mobile-check
 
+  # A change reaches the phone only through these paths. Whatever else the
+  # bridge reads crosses to Swift as the generated mirrors in apps/apple,
+  # which a workspace test holds to the Rust definitions, so a shape change
+  # upstream cannot land without touching the app. Behaviour upstream is the
+  # workspace tests' to judge; the iOS target check above compiles the
+  # bridge's graph on every push.
+  ios-changes:
+    name: iOS changes
+    runs-on: ubuntu-latest
+    outputs:
+      phone: ${{ steps.filter.outputs.phone }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            phone:
+              - 'apps/apple/**'
+              - 'crates/app-ffi/**'
+              - 'crates/app-embedded/**'
+              - 'crates/app-runtime/**'
+              - 'crates/xtask/**'
+              - 'scripts/**'
+              - 'justfile'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yml'
+
   ios-gate:
     name: iOS gate
+    needs: ios-changes
+    if: needs.ios-changes.outputs.phone == 'true'
     runs-on: macos-26
     # The gate builds the app and runs the suites one simulator can answer.
     # The capture suites are not here: see `just ios captures`.

@@ -496,7 +496,7 @@ prose are judged on their name only and listed in the record, which lands in
 
 | Recipe | Runs |
 | --- | --- |
-| `just ios gate` | The iOS graph checks, lint, script tests, bridge graph check, bridge, simulator, app, component snapshots, loopback smoke and unit suites. What CI runs on every push. |
+| `just ios gate` | The iOS graph checks, lint, script tests, bridge graph check, bridge, simulator, app, component snapshots, loopback smoke and unit suites. What CI runs on every push that touches the phone's paths ([CI](CI.md)). |
 | `just ios captures` | Goldens and their perturbation, the store suite on the simulator, journeys and the accessibility audit. Nightly and on demand in CI. |
 | `just ios shipping` | The shipping XCFramework and the Release scope audit. `just ios release` depends on both. |
 | `just ios measured` | The phone measured on this Mac: `just ios perf`, on an enrolled Mac only ([Performance](PERFORMANCE.md)). |
