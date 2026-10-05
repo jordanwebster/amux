@@ -21,11 +21,16 @@ const ENDS_WITHIN: Duration = Duration::from_secs(60);
 
 #[test]
 fn a_failing_terminal_wait_ends_its_test() {
+    let said = tempfile::NamedTempFile::new().unwrap();
+    // One file description for both streams, so neither overwrites the other.
+    let output = said.reopen().unwrap();
     let started = Instant::now();
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "a_terminal_wait_that_fails", "--nocapture"])
         .env(FAILING, "1")
         .stdin(Stdio::null())
+        .stdout(output.try_clone().unwrap())
+        .stderr(output)
         .process_group(0)
         .spawn()
         .expect("the test binary runs");
@@ -38,16 +43,20 @@ fn a_failing_terminal_wait_ends_its_test() {
             // process group, which it leads.
             unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
             let _ = child.wait();
-            panic!("the failing terminal test was still running after {ENDS_WITHIN:?}");
+            panic!(
+                "the failing terminal test was still running after {ENDS_WITHIN:?}; it said:\n{}",
+                std::fs::read_to_string(said.path()).unwrap_or_default()
+            );
         }
         std::thread::sleep(Duration::from_millis(100));
     };
+    let said = std::fs::read_to_string(said.path()).unwrap();
     assert!(
-        !status.success(),
-        "the failing terminal wait passed: {status}"
+        !status.success() && said.contains("waiting for text the fleet never shows"),
+        "the terminal wait did not fail as it should: {status}\n{said}"
     );
     println!(
-        "the failing terminal test exited with {status} after {:?}",
+        "the failing terminal test exited with {status} after {:?}; it said:\n{said}",
         started.elapsed()
     );
 }
