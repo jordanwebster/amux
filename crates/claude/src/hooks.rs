@@ -1,14 +1,17 @@
-//! External Claude Code hook payloads and their per-session socket transport.
+//! Carrying terminal Claude's hook payloads to the agent process: the hook
+//! command forwards its stdin over a per-session socket.
+//!
+//! The payloads themselves are [`claude_protocol::hooks::Payload`].
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use claude_protocol::hooks;
+use claude_protocol::hooks::Payload;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-
-use crate::sdk::PermissionUpdate;
 
 const FORWARD_ENVELOPE_FIELD: &str = "amux_hook_forward_v1";
 
@@ -32,191 +35,16 @@ impl std::fmt::Debug for MessagingCredentials {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct HookCommon {
-    pub session_id: Uuid,
-    pub transcript_path: PathBuf,
-    pub cwd: PathBuf,
-    #[serde(default)]
-    pub permission_mode: Option<String>,
-    #[serde(skip)]
-    pub messaging: Option<MessagingCredentials>,
-    #[serde(skip)]
-    pub raw: Value,
-}
-
-#[derive(Debug, Clone)]
-pub enum HookPayload {
-    SessionStart(HookCommon),
-    UserPromptSubmit(HookCommon),
-    PermissionRequest {
-        common: HookCommon,
-        tool_name: String,
-        tool_input: Value,
-        suggestions: Vec<PermissionUpdate>,
-    },
-    PreToolUse {
-        common: HookCommon,
-        tool_name: String,
-        tool_input: Value,
-    },
-    PostToolUse {
-        common: HookCommon,
-        tool_name: String,
-        tool_response: Value,
-    },
-    Notification {
-        common: HookCommon,
-        message: String,
-    },
-    Stop {
-        common: HookCommon,
-        permission_mode: String,
-        last_assistant_message: Option<String>,
-    },
-    SessionEnd(HookCommon),
-    Unknown {
-        name: String,
-        common: HookCommon,
-        raw: Value,
-    },
-}
-
-impl HookPayload {
-    pub fn common(&self) -> &HookCommon {
-        match self {
-            Self::SessionStart(common)
-            | Self::UserPromptSubmit(common)
-            | Self::SessionEnd(common) => common,
-            Self::PermissionRequest { common, .. }
-            | Self::PreToolUse { common, .. }
-            | Self::PostToolUse { common, .. }
-            | Self::Notification { common, .. }
-            | Self::Stop { common, .. }
-            | Self::Unknown { common, .. } => common,
-        }
-    }
-
-    pub fn name(&self) -> &str {
-        match self {
-            Self::SessionStart(_) => "SessionStart",
-            Self::UserPromptSubmit(_) => "UserPromptSubmit",
-            Self::PermissionRequest { .. } => "PermissionRequest",
-            Self::PreToolUse { .. } => "PreToolUse",
-            Self::PostToolUse { .. } => "PostToolUse",
-            Self::Notification { .. } => "Notification",
-            Self::Stop { .. } => "Stop",
-            Self::SessionEnd(_) => "SessionEnd",
-            Self::Unknown { name, .. } => name,
-        }
-    }
-
-    pub fn raw(&self) -> &Value {
-        match self {
-            Self::Unknown { raw, .. } => raw,
-            _ => &self.common().raw,
-        }
-    }
-
-    fn common_mut(&mut self) -> &mut HookCommon {
-        match self {
-            Self::SessionStart(common)
-            | Self::UserPromptSubmit(common)
-            | Self::SessionEnd(common) => common,
-            Self::PermissionRequest { common, .. }
-            | Self::PreToolUse { common, .. }
-            | Self::PostToolUse { common, .. }
-            | Self::Notification { common, .. }
-            | Self::Stop { common, .. }
-            | Self::Unknown { common, .. } => common,
-        }
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
-pub enum HookParseError {
-    #[error("hook payload is not valid JSON: {0}")]
+pub enum ForwardedError {
+    #[error("forwarded hook bytes are not valid JSON: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("hook payload omitted `{0}`")]
+    #[error("forwarded hook payload: {0}")]
+    Payload(#[from] claude_protocol::DecodeError),
+    #[error("forwarded hook envelope omitted `{0}`")]
     Missing(&'static str),
-    #[error("hook payload field `{0}` had the wrong shape")]
+    #[error("forwarded hook envelope field `{0}` had the wrong shape")]
     Invalid(&'static str),
-}
-
-pub fn parse(payload: &[u8]) -> Result<HookPayload, HookParseError> {
-    let raw: Value = serde_json::from_slice(payload)?;
-    parse_value(raw)
-}
-
-fn parse_value(raw: Value) -> Result<HookPayload, HookParseError> {
-    let name = string(&raw, "hook_event_name")?.to_string();
-    let common = parse_common(&raw)?;
-    let parsed = match name.as_str() {
-        "SessionStart" => HookPayload::SessionStart(common),
-        "UserPromptSubmit" => HookPayload::UserPromptSubmit(common),
-        "PermissionRequest" => HookPayload::PermissionRequest {
-            common,
-            tool_name: string(&raw, "tool_name")?.to_string(),
-            tool_input: raw.get("tool_input").cloned().unwrap_or(Value::Null),
-            suggestions: raw
-                .get("permission_suggestions")
-                .or_else(|| raw.get("suggestions"))
-                .cloned()
-                .map(serde_json::from_value)
-                .transpose()?
-                .unwrap_or_default(),
-        },
-        "PreToolUse" => HookPayload::PreToolUse {
-            common,
-            tool_name: string(&raw, "tool_name")?.to_string(),
-            tool_input: raw.get("tool_input").cloned().unwrap_or(Value::Null),
-        },
-        "PostToolUse" => HookPayload::PostToolUse {
-            common,
-            tool_name: string(&raw, "tool_name")?.to_string(),
-            tool_response: raw.get("tool_response").cloned().unwrap_or(Value::Null),
-        },
-        "Notification" => HookPayload::Notification {
-            common,
-            message: raw
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        },
-        "Stop" => HookPayload::Stop {
-            permission_mode: raw
-                .get("permission_mode")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            last_assistant_message: raw
-                .get("last_assistant_message")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            common,
-        },
-        "SessionEnd" => HookPayload::SessionEnd(common),
-        _ => HookPayload::Unknown { name, common, raw },
-    };
-    Ok(parsed)
-}
-
-fn parse_common(raw: &Value) -> Result<HookCommon, HookParseError> {
-    let session_id = string(raw, "session_id")?
-        .parse()
-        .map_err(|_| HookParseError::Invalid("session_id"))?;
-    Ok(HookCommon {
-        session_id,
-        transcript_path: PathBuf::from(string(raw, "transcript_path")?),
-        cwd: PathBuf::from(string(raw, "cwd")?),
-        permission_mode: raw
-            .get("permission_mode")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        messaging: None,
-        raw: raw.clone(),
-    })
 }
 
 /// The variables Claude sets on a hook command for its messaging socket.
@@ -228,17 +56,17 @@ pub const MESSAGING_TOKEN_ENV: &str = "CLAUDE_CODE_MESSAGING_TOKEN";
 /// that arrived without the envelope is returned as it came.
 pub fn unwrap_forwarded(
     bytes: &[u8],
-) -> Result<(Vec<u8>, Option<MessagingCredentials>), HookParseError> {
+) -> Result<(Vec<u8>, Option<MessagingCredentials>), ForwardedError> {
     let raw: Value = serde_json::from_slice(bytes)?;
     let Some(envelope) = raw.get(FORWARD_ENVELOPE_FIELD) else {
         return Ok((bytes.to_vec(), None));
     };
     if envelope.get("version").and_then(Value::as_u64) != Some(1) {
-        return Err(HookParseError::Invalid("amux_hook_forward_v1.version"));
+        return Err(ForwardedError::Invalid("amux_hook_forward_v1.version"));
     }
     let payload = envelope
         .get("payload")
-        .ok_or(HookParseError::Missing("amux_hook_forward_v1.payload"))?;
+        .ok_or(ForwardedError::Missing("amux_hook_forward_v1.payload"))?;
     let messaging = envelope
         .get("messaging")
         .cloned()
@@ -247,40 +75,17 @@ pub fn unwrap_forwarded(
     Ok((serde_json::to_vec(payload)?, messaging))
 }
 
-fn parse_forwarded(payload: &[u8]) -> Result<HookPayload, HookParseError> {
-    let raw: Value = serde_json::from_slice(payload)?;
-    let Some(envelope) = raw.get(FORWARD_ENVELOPE_FIELD) else {
-        return parse_value(raw);
-    };
-    let version = envelope.get("version").and_then(Value::as_u64);
-    if version != Some(1) {
-        return Err(HookParseError::Invalid("amux_hook_forward_v1.version"));
-    }
-    let original = envelope
-        .get("payload")
-        .cloned()
-        .ok_or(HookParseError::Missing("amux_hook_forward_v1.payload"))?;
-    let messaging = envelope
-        .get("messaging")
-        .cloned()
-        .map(serde_json::from_value)
-        .transpose()?;
-    let mut parsed = parse_value(original)?;
-    parsed.common_mut().messaging = messaging;
-    Ok(parsed)
-}
-
-fn string<'a>(raw: &'a Value, field: &'static str) -> Result<&'a str, HookParseError> {
-    raw.get(field)
-        .ok_or(HookParseError::Missing(field))?
-        .as_str()
-        .ok_or(HookParseError::Invalid(field))
+/// The hook payload in a forwarded connection's bytes, without the
+/// messaging credentials the forwarder may have added.
+fn parse_forwarded(bytes: &[u8]) -> Result<Payload, ForwardedError> {
+    let (payload, _messaging) = unwrap_forwarded(bytes)?;
+    Ok(hooks::decode(&payload)?)
 }
 
 /// A per-session Unix socket receiving forwarded hook stdin.
 pub struct HookReceiver {
     pub path: PathBuf,
-    payloads: Mutex<Option<mpsc::Receiver<HookPayload>>>,
+    payloads: Mutex<Option<mpsc::Receiver<Payload>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -339,7 +144,7 @@ impl HookReceiver {
         ))
     }
 
-    pub fn payloads(&self) -> mpsc::Receiver<HookPayload> {
+    pub fn payloads(&self) -> mpsc::Receiver<Payload> {
         self.payloads
             .lock()
             .expect("hook receiver mutex poisoned")
@@ -366,8 +171,8 @@ pub fn forward(stdin: &[u8], socket: &Path) -> Result<(), std::io::Error> {
 
 /// Forward hook stdin and the provider's per-session messaging credentials.
 ///
-/// The transport envelope is removed by [`HookReceiver`]; the credential token
-/// is never inserted into [`HookPayload::raw`].
+/// [`HookReceiver`] and [`unwrap_forwarded`] remove the transport envelope,
+/// so the credential token never reaches the payload.
 #[cfg(unix)]
 pub fn forward_with_messaging(
     stdin: &[u8],
@@ -430,27 +235,43 @@ pub fn forward(_stdin: &[u8], _socket: &Path) -> Result<(), std::io::Error> {
 mod tests {
     use super::*;
 
-    fn payload(name: &str) -> Vec<u8> {
+    fn session_start() -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
-            "hook_event_name": name,
+            "hook_event_name": "SessionStart",
             "session_id": "00000000-0000-0000-0000-000000000001",
             "transcript_path": "/tmp/transcript.jsonl",
             "cwd": "/tmp",
-            "tool_name": "Bash",
-            "tool_input": {"command":"ls"}
+            "source": "startup"
         }))
         .unwrap()
     }
 
     #[test]
-    fn known_and_unknown_payloads_preserve_raw_fields() {
-        let known = parse(&payload("PermissionRequest")).unwrap();
-        assert!(matches!(known, HookPayload::PermissionRequest { .. }));
-        assert_eq!(known.raw()["tool_input"]["command"], "ls");
+    fn unwrapping_splits_the_payload_from_the_credentials() {
+        let messaging = MessagingCredentials {
+            socket_path: PathBuf::from("/runtime/claude.sock"),
+            token: "secret".to_string(),
+        };
+        let envelope = serde_json::to_vec(&serde_json::json!({
+            FORWARD_ENVELOPE_FIELD: {
+                "version": 1,
+                "payload": serde_json::from_slice::<Value>(&session_start()).unwrap(),
+                "messaging": messaging,
+            }
+        }))
+        .unwrap();
+        let (payload, unwrapped) = unwrap_forwarded(&envelope).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&payload).unwrap(),
+            serde_json::from_slice::<Value>(&session_start()).unwrap()
+        );
+        let unwrapped = unwrapped.unwrap();
+        assert_eq!(unwrapped.socket_path, messaging.socket_path);
+        assert_eq!(unwrapped.token, messaging.token);
 
-        let unknown = parse(&payload("FutureHook")).unwrap();
-        assert_eq!(unknown.name(), "FutureHook");
-        assert_eq!(unknown.common().session_id, Uuid::from_u128(1));
+        let (bare, none) = unwrap_forwarded(&session_start()).unwrap();
+        assert_eq!(bare, session_start());
+        assert!(none.is_none());
     }
 
     #[cfg(unix)]
@@ -462,18 +283,17 @@ mod tests {
             .unwrap();
         let receiver = HookReceiver::bind(dir.path()).await.unwrap();
         let mut payloads = receiver.payloads();
-        forward(&payload("SessionStart"), &receiver.path).unwrap();
+        forward(&session_start(), &receiver.path).unwrap();
         let received = tokio::time::timeout(std::time::Duration::from_secs(1), payloads.recv())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(received.name(), "SessionStart");
-        assert!(received.common().messaging.is_none());
+        assert!(matches!(received, Payload::SessionStart(_)));
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn receiver_keeps_messaging_credentials_out_of_raw_payload() {
+    async fn receiver_keeps_messaging_credentials_out_of_the_payload() {
         let dir = tempfile::Builder::new()
             .prefix("ch")
             .tempdir_in("/tmp")
@@ -485,17 +305,16 @@ mod tests {
             token: "secret".to_string(),
         };
 
-        forward_with_messaging(&payload("SessionStart"), &receiver.path, &messaging).unwrap();
+        forward_with_messaging(&session_start(), &receiver.path, &messaging).unwrap();
         let received = tokio::time::timeout(std::time::Duration::from_secs(1), payloads.recv())
             .await
             .unwrap()
             .unwrap();
 
-        let received_messaging = received.common().messaging.as_ref().unwrap();
-        assert_eq!(received_messaging.socket_path, messaging.socket_path);
-        assert_eq!(received_messaging.token, messaging.token);
-        assert!(received.raw().get(FORWARD_ENVELOPE_FIELD).is_none());
-        assert!(!received.raw().to_string().contains("secret"));
+        assert!(matches!(received, Payload::SessionStart(_)));
+        let encoded = String::from_utf8(hooks::encode(&received)).unwrap();
+        assert!(!encoded.contains(FORWARD_ENVELOPE_FIELD));
+        assert!(!encoded.contains("secret"));
         assert!(!format!("{received:?}").contains("secret"));
     }
 }

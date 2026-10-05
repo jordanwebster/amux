@@ -1,3 +1,23 @@
+2026-10-06 — **Terminal Claude's transcript rows and hook payloads as types.**
+`claude-protocol` gains `transcript` and `hooks`. A transcript row is one
+of the conversation rows (user, assistant, system by subtype, attachment
+by attachment type) or one of Claude's bookkeeping rows (mode, permission
+mode, title, last prompt, queue operation, file history, bridge session,
+agent name); a hook payload is one of the nine events amux handles. The
+decoding rule is the stream's: an unknown row type, system subtype,
+attachment type or hook event is kept whole, unknown fields of a known
+one are kept as written, and `strict` refuses the former. Every one of
+the 1,124 rows and payloads in the 31 terminal recordings decodes
+strictly and encodes back to the same JSON (the tailer's own
+"read to the end" marker is skipped: it is amux's, not Claude's). The
+`claude` crate keeps the transcript tailer and the hook socket and
+forwarder; its untyped row wrappers, `HookPayload`, `HookCommon` and
+`parse` are gone. The hook receiver now yields the payload alone (its
+messaging credentials were never read there; the agent process still
+takes them through `unwrap_forwarded`). The terminal spec driver and
+recorder read the typed rows and payloads, and the dependency policy lets
+`claude-specs` use the protocol crate.
+
 2026-10-06 — **Claude's headless stream as types in its own crate.**
 The stream-JSON frames, control requests and responses and the initialize
 exchange moved from `claude::sdk` into a new pure crate,

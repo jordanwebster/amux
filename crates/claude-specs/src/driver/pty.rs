@@ -9,11 +9,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use claude::hooks::{HookPayload, HookReceiver};
+use claude::hooks::HookReceiver;
 use claude::launch::Launch;
 pub use claude::pty::*;
-use claude::transcript::{TranscriptRow, TranscriptTailer};
+use claude::transcript::TranscriptTailer;
 use claude::version::{ClaudeVersion, VersionError, probe_version};
+use claude_protocol::hooks::{self, Payload as HookPayload};
+use claude_protocol::stream::ContentBlock;
+use claude_protocol::transcript::{self, Row as TranscriptRow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -195,6 +198,7 @@ impl TranscriptSource {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum PtyEvent {
     Ready {
         version: ClaudeVersion,
@@ -577,13 +581,19 @@ pub fn from_sources(sources: Sources, keymaps: &claude::pty::keymap::KeymapSourc
         let _receiver = receiver;
         let mut current_path = None;
         while let Some(hook) = payloads.recv().await {
-            let path = hook.common().transcript_path.clone();
-            let path_changed = current_path.as_ref() != Some(&path);
-            let reason = relink_reason(&hook, current_path.is_none());
-            // Claude can compact a transcript in place. Its SessionStart source
-            // is therefore the relink boundary even when the path is unchanged.
-            let provider_relink = matches!(reason, RelinkReason::Compact | RelinkReason::Clear);
-            if path_changed || provider_relink {
+            // A hook this build does not know names no transcript to follow.
+            let relinking = hook.common().map(|common| {
+                let path = common.transcript_path.clone();
+                let path_changed = current_path.as_ref() != Some(&path);
+                let reason = relink_reason(&hook, current_path.is_none());
+                (path, path_changed, reason)
+            });
+            if let Some((path, path_changed, reason)) = relinking
+                // Claude can compact a transcript in place. Its SessionStart
+                // source is therefore the relink boundary even when the path
+                // is unchanged.
+                && (path_changed || matches!(reason, RelinkReason::Compact | RelinkReason::Clear))
+            {
                 if path_changed {
                     relink(path.clone());
                 }
@@ -871,7 +881,11 @@ fn relink_reason(hook: &HookPayload, initial: bool) -> RelinkReason {
     if initial {
         return RelinkReason::Initial;
     }
-    match hook.raw().get("source").and_then(Value::as_str) {
+    let source = match hook {
+        HookPayload::SessionStart(start) => Some(start.source.as_str()),
+        _ => None,
+    };
+    match source {
         Some("compact") => RelinkReason::Compact,
         Some("clear") => RelinkReason::Clear,
         Some(other) => RelinkReason::Other(other.to_string()),
@@ -880,21 +894,20 @@ fn relink_reason(hook: &HookPayload, initial: bool) -> RelinkReason {
 }
 
 fn ask_from_hook(hook: &HookPayload) -> Option<AskFacts> {
-    let HookPayload::PermissionRequest {
+    let HookPayload::PermissionRequest(hooks::PermissionRequest {
         common,
         tool_name,
         tool_input,
-        suggestions,
-    } = hook
+        tool_use_id,
+        permission_suggestions,
+        ..
+    }) = hook
     else {
         return None;
     };
-    let id = hook
-        .raw()
-        .get("tool_use_id")
-        .or_else(|| hook.raw().get("prompt_id"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
+    let id = tool_use_id
+        .clone()
+        .or_else(|| common.prompt_id.clone())
         .unwrap_or_else(|| format!("permission:{}:{tool_name}", common.session_id));
     let kind = if tool_name == "AskUserQuestion" {
         AskKind::Question {
@@ -903,7 +916,7 @@ fn ask_from_hook(hook: &HookPayload) -> Option<AskFacts> {
     } else {
         AskKind::Permission {
             tool_name: tool_name.clone(),
-            suggestions: suggestions.len(),
+            suggestions: permission_suggestions.as_ref().map_or(0, Vec::len),
             is_plan: tool_name == "ExitPlanMode",
         }
     };
@@ -946,12 +959,18 @@ fn question_facts(input: &Value) -> Option<Vec<QuestionFact>> {
 }
 
 fn ask_from_transcript(row: &TranscriptRow) -> Option<AskFacts> {
-    for block in row.as_value().pointer("/message/content")?.as_array()? {
-        if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+    let TranscriptRow::Assistant(row) = row else {
+        return None;
+    };
+    for block in &row.message.content {
+        let ContentBlock::ToolUse {
+            id, name, input, ..
+        } = block
+        else {
             continue;
-        }
-        let id = block.get("id").and_then(Value::as_str)?.to_string();
-        match block.get("name").and_then(Value::as_str)? {
+        };
+        let id = id.clone();
+        match name.as_str() {
             "ExitPlanMode" => {
                 return Some(AskFacts {
                     id: AskId(id),
@@ -963,7 +982,7 @@ fn ask_from_transcript(row: &TranscriptRow) -> Option<AskFacts> {
                 });
             }
             "AskUserQuestion" => {
-                let questions = question_facts(block.get("input")?)?;
+                let questions = question_facts(input)?;
                 return Some(AskFacts {
                     id: AskId(id),
                     kind: AskKind::Question { questions },
@@ -1006,7 +1025,7 @@ async fn pump_hooks(
         match reader.read_line(&mut line).await {
             Ok(0) | Err(_) => break,
             Ok(_) => {
-                if let Ok(payload) = claude::hooks::parse(line.trim().as_bytes())
+                if let Ok(payload) = hooks::decode(line.trim().as_bytes())
                     && tx.send(payload).await.is_err()
                 {
                     break;
@@ -1036,7 +1055,10 @@ async fn pump_transcript(
                     .map(PathBuf::from)
                     .unwrap_or_else(|| fallback.clone());
                 let row = value.get("row").cloned().unwrap_or(value);
-                if tx.send((path, TranscriptRow::parse(row))).await.is_err() {
+                let Ok(row) = transcript::decode(row.to_string().as_bytes()) else {
+                    continue;
+                };
+                if tx.send((path, row)).await.is_err() {
                     break;
                 }
             }
@@ -1046,9 +1068,35 @@ async fn pump_transcript(
 
 #[cfg(test)]
 mod tests {
-    use claude::hooks::HookCommon;
-
     use super::*;
+
+    /// An assistant row holding one message with `content`.
+    fn assistant_row(content: Value) -> TranscriptRow {
+        let row = serde_json::json!({
+            "type":"assistant",
+            "uuid":"row-1",
+            "parentUuid":null,
+            "sessionId":"00000000-0000-0000-0000-000000000001",
+            "timestamp":"2026-10-06T00:00:00.000Z",
+            "version":"2.1.283",
+            "cwd":"/tmp",
+            "gitBranch":"HEAD",
+            "isSidechain":false,
+            "userType":"external",
+            "entrypoint":"cli",
+            "message":{
+                "id":"msg-1",
+                "type":"message",
+                "role":"assistant",
+                "model":"claude-haiku-4-5",
+                "content":content,
+                "usage":{"input_tokens":1,"output_tokens":1}
+            }
+        });
+        let row = transcript::strict(row.to_string().as_bytes()).unwrap();
+        assert!(matches!(row, TranscriptRow::Assistant(_)));
+        row
+    }
 
     #[tokio::test]
     async fn recording_frames_preserve_arbitrary_pty_bytes() {
@@ -1119,14 +1167,7 @@ mod tests {
             "cwd":"/tmp",
             "source":source,
         });
-        HookPayload::SessionStart(HookCommon {
-            session_id: uuid::Uuid::from_u128(1),
-            transcript_path: PathBuf::from(path),
-            cwd: PathBuf::from("/tmp"),
-            permission_mode: None,
-            messaging: None,
-            raw,
-        })
+        hooks::strict(raw.to_string().as_bytes()).unwrap()
     }
 
     async fn next(events: &mut EventStream) -> PtyEvent {
@@ -1245,7 +1286,7 @@ mod tests {
             "permission_suggestions":[{"type":"addDirectories","directories":["/tmp"],"destination":"session"}],
         });
         hooks
-            .send(claude::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .send(hooks::decode(raw.to_string().as_bytes()).unwrap())
             .await
             .unwrap();
         loop {
@@ -1276,7 +1317,7 @@ mod tests {
             ]}
         });
         hooks
-            .send(claude::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .send(hooks::decode(raw.to_string().as_bytes()).unwrap())
             .await
             .unwrap();
         loop {
@@ -1303,10 +1344,9 @@ mod tests {
             }
         }
 
-        let row = TranscriptRow::parse(serde_json::json!({
-            "type":"assistant",
-            "message":{"content":[{"type":"tool_use","id":"ask-1","name":"AskUserQuestion","input":{"questions":[{"options":[{},{}],"multiSelect":true}]}}]}
-        }));
+        let row = assistant_row(
+            serde_json::json!([{"type":"tool_use","id":"ask-1","name":"AskUserQuestion","input":{"questions":[{"options":[{},{}],"multiSelect":true}]}}]),
+        );
         rows.send((PathBuf::from("/tmp/one"), row)).await.unwrap();
         loop {
             if let PtyEvent::Ask(ask) = next(&mut session.events).await {
@@ -1343,7 +1383,7 @@ mod tests {
             "tool_input":{"plan":"Update README.md"},
         });
         hooks
-            .send(claude::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .send(hooks::decode(raw.to_string().as_bytes()).unwrap())
             .await
             .unwrap();
         let ask = loop {
@@ -1404,15 +1444,12 @@ mod tests {
         let _ = next(&mut session.events).await;
         rows.send((
             PathBuf::from("/tmp/one"),
-            TranscriptRow::parse(serde_json::json!({
-                "type":"assistant",
-                "message":{"content":[{
-                    "type":"tool_use",
-                    "id":"question-1",
-                    "name":"AskUserQuestion",
-                    "input":{"questions":[{"options":[{},{}],"multiSelect":false}]}
-                }]}
-            })),
+            assistant_row(serde_json::json!([{
+                "type":"tool_use",
+                "id":"question-1",
+                "name":"AskUserQuestion",
+                "input":{"questions":[{"options":[{},{}],"multiSelect":false}]}
+            }])),
         ))
         .await
         .unwrap();
@@ -1472,15 +1509,12 @@ mod tests {
 
         rows.send((
             PathBuf::from("/tmp/one"),
-            TranscriptRow::parse(serde_json::json!({
-                "type":"assistant",
-                "message":{"content":[{
-                    "type":"tool_use",
-                    "id":"plan-1",
-                    "name":"ExitPlanMode",
-                    "input":{}
-                }]}
-            })),
+            assistant_row(serde_json::json!([{
+                "type":"tool_use",
+                "id":"plan-1",
+                "name":"ExitPlanMode",
+                "input":{}
+            }])),
         ))
         .await
         .unwrap();
@@ -1516,7 +1550,7 @@ mod tests {
             }); 7],
         });
         hooks
-            .send(claude::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .send(hooks::decode(raw.to_string().as_bytes()).unwrap())
             .await
             .unwrap();
         loop {

@@ -16,8 +16,6 @@ pub mod message;
 pub mod options;
 pub mod types;
 
-use std::fmt;
-
 pub use control::{
     BackgroundTaskSummary, ControlRequest, ControlRequestBody, ControlResponse, InterruptResult,
     McpPermissionMode, McpPermissionModeOverrideResult, McpServerStatus, McpSetServersResult,
@@ -33,6 +31,7 @@ use serde_json::{Map, Value};
 pub use types::*;
 
 use crate::strictness;
+pub use crate::{DecodeError, Drift};
 
 /// One line Claude prints.
 #[derive(Debug, Clone)]
@@ -80,45 +79,6 @@ pub struct Unknown {
     pub kind: Option<String>,
     pub raw: Box<RawValue>,
 }
-
-/// A line that is not a JSON object.
-#[derive(Debug)]
-pub struct DecodeError(serde_json::Error);
-
-impl fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "not a JSON object: {}", self.0)
-    }
-}
-
-impl std::error::Error for DecodeError {}
-
-/// What [`strict`] refuses: a line some part of which this crate does not
-/// know.
-#[derive(Debug)]
-pub enum Drift {
-    NotAnObject(DecodeError),
-    Unknown {
-        kind: Option<String>,
-        reasons: Vec<String>,
-    },
-}
-
-impl fmt::Display for Drift {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotAnObject(error) => error.fmt(f),
-            Self::Unknown { kind, reasons } => write!(
-                f,
-                "{}: {}",
-                kind.as_deref().unwrap_or("a line with no type"),
-                reasons.join("; ")
-            ),
-        }
-    }
-}
-
-impl std::error::Error for Drift {}
 
 /// Decodes one line Claude printed. Fails only when the line is not a JSON
 /// object.
@@ -201,8 +161,8 @@ fn framed(kind: &str, payload: &impl Serialize) -> Vec<u8> {
 }
 
 fn parse(line: &[u8]) -> Result<(Map<String, Value>, Box<RawValue>), DecodeError> {
-    let object = serde_json::from_slice::<Map<String, Value>>(line).map_err(DecodeError)?;
-    let raw = serde_json::from_slice::<Box<RawValue>>(line).map_err(DecodeError)?;
+    let object = serde_json::from_slice::<Map<String, Value>>(line).map_err(DecodeError::new)?;
+    let raw = serde_json::from_slice::<Box<RawValue>>(line).map_err(DecodeError::new)?;
     Ok((object, raw))
 }
 

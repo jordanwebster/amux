@@ -674,6 +674,7 @@ dependencies = [
  "bytes",
  "chrono",
  "claude",
+ "claude-protocol",
  "futures-core",
  "pty-host",
  "redaction",

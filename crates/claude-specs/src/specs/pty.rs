@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 
 use claude::launch::Launch;
 use claude::pty::keymap::KeymapSources;
+use claude_protocol::hooks;
+use claude_protocol::stream::PermissionMode;
 use replay_support::{IoDirection, IoEvent, Manifest, ReplayReport, SpecEntry, StrictReplay};
 use tokio::sync::{mpsc, watch};
 
@@ -667,28 +669,21 @@ impl PtySpecSession {
                 .await
                 .ok_or_else(|| "PTY event stream ended".to_owned())?
         };
-        if let PtyEvent::Hook(claude::hooks::HookPayload::PreToolUse {
-            tool_name, common, ..
-        }) = &event
-            && let Some(tool_use_id) = common
-                .raw
-                .get("tool_use_id")
-                .and_then(serde_json::Value::as_str)
-        {
+        if let PtyEvent::Hook(hooks::Payload::PreToolUse(started)) = &event {
             self.tool_use_ids
-                .insert(tool_name.clone(), tool_use_id.to_owned());
+                .insert(started.tool_name.clone(), started.tool_use_id.clone());
         }
         if let Some(capture) = &self.capture {
             match &event {
                 PtyEvent::Hook(hook) => capture.push(
                     "hook",
                     IoDirection::Read,
-                    serde_json::to_string(hook.raw()).expect("hook JSON serializes"),
+                    String::from_utf8(hooks::encode(hook)).expect("hook JSON is UTF-8"),
                 ),
                 PtyEvent::Transcript { path, row } => capture.push(
                     "transcript",
                     IoDirection::Read,
-                    serde_json::json!({"path": path, "row": row.as_value()}).to_string(),
+                    serde_json::json!({"path": path, "row": row}).to_string(),
                 ),
                 _ => {}
             }
@@ -712,7 +707,7 @@ impl PtySpecSession {
         loop {
             match self.next().await? {
                 PtyEvent::Ask(ask) if matches(&ask.kind) => return Ok(ask),
-                PtyEvent::Hook(claude::hooks::HookPayload::Stop { .. }) => {
+                PtyEvent::Hook(hooks::Payload::Stop(_)) => {
                     return Err("Claude stopped the turn before producing the expected ask".into());
                 }
                 PtyEvent::Exited(status) => {
@@ -730,10 +725,11 @@ impl PtySpecSession {
         matches: impl Fn(&serde_json::Value) -> bool,
     ) -> Result<serde_json::Value, String> {
         loop {
-            if let PtyEvent::Transcript { row, .. } = self.next().await?
-                && matches(row.as_value())
-            {
-                return Ok(row.into_value());
+            if let PtyEvent::Transcript { row, .. } = self.next().await? {
+                let row = serde_json::to_value(row).expect("a row serializes");
+                if matches(&row) {
+                    return Ok(row);
+                }
             }
         }
     }
@@ -761,8 +757,8 @@ impl PtySpecSession {
 
     async fn wait_hook(
         &mut self,
-        matches: impl Fn(&claude::hooks::HookPayload) -> bool,
-    ) -> Result<claude::hooks::HookPayload, String> {
+        matches: impl Fn(&hooks::Payload) -> bool,
+    ) -> Result<hooks::Payload, String> {
         loop {
             if let PtyEvent::Hook(hook) = self.next().await?
                 && matches(&hook)
@@ -789,16 +785,16 @@ impl PtySpecSession {
             self.pending.push_back(event);
             while let Some(event) = self.pending.pop_front() {
                 if let Some(capture) = &self.capture {
-                    match event {
+                    match &event {
                         PtyEvent::Hook(hook) => capture.push(
                             "hook",
                             IoDirection::Read,
-                            serde_json::to_string(hook.raw()).expect("hook JSON serializes"),
+                            String::from_utf8(hooks::encode(hook)).expect("hook JSON is UTF-8"),
                         ),
                         PtyEvent::Transcript { path, row } => capture.push(
                             "transcript",
                             IoDirection::Read,
-                            serde_json::json!({"path": path, "row": row.as_value()}).to_string(),
+                            serde_json::json!({"path": path, "row": row}).to_string(),
                         ),
                         _ => {}
                     }
@@ -946,7 +942,7 @@ async fn steer_queued(session: &mut PtySpecSession) -> Result<(), String> {
         })
         .await?;
     session
-        .wait_hook(|hook| matches!(hook, claude::hooks::HookPayload::PreToolUse { tool_name, .. } if tool_name == "Bash"))
+        .wait_hook(|hook| matches!(hook, hooks::Payload::PreToolUse(started) if started.tool_name == "Bash"))
         .await?;
     session
         .send(Intent::Prompt {
@@ -980,12 +976,12 @@ async fn steer_send_now(session: &mut PtySpecSession) -> Result<(), String> {
         })
         .await?;
     let started = session
-        .wait_hook(|hook| matches!(hook, claude::hooks::HookPayload::PreToolUse { tool_name, .. } if tool_name == "Bash"))
+        .wait_hook(|hook| matches!(hook, hooks::Payload::PreToolUse(started) if started.tool_name == "Bash"))
         .await?;
     // A command the model backgrounds itself leaves nothing for the chord
     // to move; the capture is then about something else.
-    if let claude::hooks::HookPayload::PreToolUse { tool_input, .. } = &started
-        && tool_input["run_in_background"] == true
+    if let hooks::Payload::PreToolUse(started) = &started
+        && started.tool_input["run_in_background"] == true
     {
         return Err("the model ran the command in the background itself".to_owned());
     }
@@ -1103,24 +1099,20 @@ async fn tools(session: &mut PtySpecSession) -> Result<(), String> {
     let mut results = Vec::new();
     loop {
         match session.next().await? {
-            PtyEvent::Hook(claude::hooks::HookPayload::PreToolUse {
-                tool_name, common, ..
-            }) if expected_tools.contains(&tool_name.as_str()) => {
+            PtyEvent::Hook(hooks::Payload::PreToolUse(started))
+                if expected_tools.contains(&started.tool_name.as_str()) =>
+            {
+                let tool_name = &started.tool_name;
                 if expected_tools.get(tool_ids.len()).copied() != Some(tool_name.as_str()) {
                     return Err(format!(
                         "expected Read, Edit, Bash in order; observed {tool_name}"
                     ));
                 }
-                let id = common
-                    .raw
-                    .get("tool_use_id")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        format!("{tool_name} PreToolUse hook omitted its tool-use id")
-                    })?;
-                tool_ids.push(id.to_owned());
+                tool_ids.push(started.tool_use_id);
             }
-            PtyEvent::Transcript { row, .. } => results.push(row.into_value()),
+            PtyEvent::Transcript { row, .. } => {
+                results.push(serde_json::to_value(row).expect("a row serializes"))
+            }
             PtyEvent::Exited(status) => {
                 return Err(format!(
                     "Claude exited before all three tool results: {status:?}"
@@ -1269,9 +1261,7 @@ async fn plan_auto(session: &mut PtySpecSession) -> Result<(), String> {
                     ask.kind
                 ));
             }
-            PtyEvent::Hook(claude::hooks::HookPayload::PreToolUse { tool_name, .. })
-                if tool_name == "Edit" =>
-            {
+            PtyEvent::Hook(hooks::Payload::PreToolUse(started)) if started.tool_name == "Edit" => {
                 edit_tool_use_id = session.tool_use_id("Edit").map(str::to_owned);
                 if edit_tool_use_id.is_none() {
                     return Err("Edit PreToolUse hook omitted its tool-use id".to_owned());
@@ -1279,12 +1269,17 @@ async fn plan_auto(session: &mut PtySpecSession) -> Result<(), String> {
             }
             PtyEvent::Transcript { row, .. }
                 if edit_tool_use_id.as_ref().is_some_and(|tool_use_id| {
-                    structured_patch_changes(row.as_value(), tool_use_id, "-CURRENT", "+UPDATED")
+                    structured_patch_changes(
+                        &serde_json::to_value(&row).expect("a row serializes"),
+                        tool_use_id,
+                        "-CURRENT",
+                        "+UPDATED",
+                    )
                 }) =>
             {
                 return Ok(());
             }
-            PtyEvent::Hook(claude::hooks::HookPayload::Stop { .. }) => {
+            PtyEvent::Hook(hooks::Payload::Stop(_)) => {
                 return Err("Claude stopped before the automatically approved edit landed".into());
             }
             PtyEvent::Exited(status) => {
@@ -1483,7 +1478,7 @@ async fn interrupt(session: &mut PtySpecSession) -> Result<(), String> {
         })
         .await?;
     session
-        .wait_hook(|hook| matches!(hook, claude::hooks::HookPayload::PreToolUse { tool_name, .. } if tool_name == "Bash"))
+        .wait_hook(|hook| matches!(hook, hooks::Payload::PreToolUse(started) if started.tool_name == "Bash"))
         .await?;
     session.send(Intent::Interrupt).await?;
     session
@@ -1500,9 +1495,12 @@ async fn mode_cycle(session: &mut PtySpecSession) -> Result<(), String> {
         })
         .await?;
     let hook = session
-        .wait_hook(|hook| matches!(hook, claude::hooks::HookPayload::Stop { .. }))
+        .wait_hook(|hook| matches!(hook, hooks::Payload::Stop(_)))
         .await?;
-    if hook.common().permission_mode.as_deref() == Some("default") {
+    let mode = hook
+        .common()
+        .and_then(|common| common.permission_mode.as_ref());
+    if mode == Some(&PermissionMode::Default) {
         return Err("permission mode remained default after cycle".to_owned());
     }
     Ok(())
@@ -1515,7 +1513,7 @@ async fn completed_turn(session: &mut PtySpecSession) -> Result<(), String> {
         })
         .await?;
     session
-        .wait_hook(|hook| matches!(hook, claude::hooks::HookPayload::Stop { .. }))
+        .wait_hook(|hook| matches!(hook, hooks::Payload::Stop(_)))
         .await?;
     Ok(())
 }
@@ -1572,8 +1570,10 @@ async fn collect_turn(
     let mut stopped = false;
     loop {
         match session.next().await? {
-            PtyEvent::Transcript { row, .. } => rows.push(row.into_value()),
-            PtyEvent::Hook(claude::hooks::HookPayload::Stop { .. }) => stopped = true,
+            PtyEvent::Transcript { row, .. } => {
+                rows.push(serde_json::to_value(row).expect("a row serializes"))
+            }
+            PtyEvent::Hook(hooks::Payload::Stop(_)) => stopped = true,
             PtyEvent::Exited(status) => {
                 return Err(format!("Claude exited mid-turn: {status:?}"));
             }
