@@ -1,3 +1,15 @@
+2026-10-05 — **A terminal test whose wait fails now fails instead of
+hanging.** When a wait in a test that drives amux in a terminal timed
+out, the test's panic dropped the terminal's output receiver, so nothing
+read the terminal any more; the program in it, killed or not, could not
+finish exiting while its terminal held unread output, and the test's
+runtime waited forever for the terminal's reader. The test terminal now
+kills its process group when dropped and reads the terminal to its end
+on a thread of its own. A new test target, `term_fails_fast`, runs a
+deliberately failing wait in a child test process and requires it to
+exit non-zero within a minute; before the fix it was still running at
+the minute.
+
 2026-10-05 — **Terminal journey frames recorded on macOS match Linux
 where a row shows a path.** On macOS a program reading its working
 directory prints `/private/tmp/…`; the journey driver spells it `/tmp/…`

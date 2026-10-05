@@ -79,7 +79,17 @@ impl Term {
 
     /// Reads until `done` holds of what the terminal shows.
     pub async fn until(&mut self, what: &str, done: impl Fn(&Term) -> bool) {
-        let waited = tokio::time::timeout(PATIENCE, async {
+        self.until_within(what, PATIENCE, done).await;
+    }
+
+    /// Reads until `done` holds, failing once `patience` has passed.
+    pub async fn until_within(
+        &mut self,
+        what: &str,
+        patience: Duration,
+        done: impl Fn(&Term) -> bool,
+    ) {
+        let waited = tokio::time::timeout(patience, async {
             while !done(self) {
                 match self.output.recv().await {
                     Some(bytes) => {
@@ -147,5 +157,22 @@ impl Term {
         }
         assert!(status.success(), "amux failed:\n{}", self.said());
         self.said()
+    }
+}
+
+/// Ends what runs in the terminal with the test, by return or by panic.
+/// The process group is killed and the terminal read to its end on a
+/// thread of its own: a program cannot finish exiting while its terminal
+/// holds output nobody reads, and the test's runtime waits for the
+/// terminal's reader before the test can end.
+impl Drop for Term {
+    fn drop(&mut self) {
+        let _ = self
+            .process
+            .handle
+            .signal_process_group(pty_host::ProcessGroupSignal::Kill);
+        let (_, closed) = tokio::sync::mpsc::channel(1);
+        let mut output = std::mem::replace(&mut self.output, closed);
+        std::thread::spawn(move || while output.blocking_recv().is_some() {});
     }
 }
