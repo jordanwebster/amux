@@ -5,6 +5,7 @@ mod probe;
 mod registry;
 mod sanitize;
 pub mod transport;
+pub mod wire_size;
 
 use std::path::Path;
 

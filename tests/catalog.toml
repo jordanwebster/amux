@@ -344,6 +344,25 @@ update = ""
 cargo = [{ package = "replay-support", targets = ["bundle"], features = [] }]
 
 [[suite]]
+name = "wire-size"
+contract = "The size meter replays a headless Claude recording through the interpreter and reports the snapshot count, the largest and median encoded snapshot, and per tool call the bytes its items and appends took."
+paths = ["crates/replay-support/src/wire_size.rs", "crates/replay-support/src/bin/wire-size.rs", "crates/replay-support/tests/wire_size.rs", "crates/replay-support/tests/fixtures/wire_size"]
+recipe = "just test-crate replay-support -- --test wire_size"
+boundary = "Interpreter"
+oracle = "Encoded sizes counted by hand, and the counts of a five-line recording."
+real = ["headless Claude interpreter", "a hand-written recording"]
+substituted = ["provider", "daemon"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "tool"
+evidence = "`just wire-size RECORDING` prints the numbers"
+update = ""
+cargo = [
+  { package = "replay-support", kind = "bin", targets = ["wire-size"], features = [] },
+  { package = "replay-support", targets = ["wire_size"], features = [] },
+]
+
+[[suite]]
 name = "journal-segments"
 contract = "The journal appends steps into segments named by offset, rotates, lets readers start at any frame and follow a live writer, never returns a partial frame wherever it is cut, and reclaims only below a durable cursor."
 paths = ["crates/journal/tests", "crates/journal/src"]

@@ -1,3 +1,13 @@
+2026-10-05 — **A size meter for what a headless Claude session sends.**
+`just wire-size RECORDING` replays a headless Claude recording through
+the interpreter and prints JSON: how many snapshots it journaled, the
+largest and median encoded snapshot, and per tool call how many times
+its item was sent whole, how many appends followed and the bytes they
+took together. Sizes are of the records as the interpreter writes them,
+before the daemon stamps ids on them. On the background shell recording
+today a snapshot is about 28 KB, nearly all of it what the agent offers
+(models, commands), sent again with every change.
+
 2026-10-05 — **Every terminal story runs with one command, in CI too.**
 `just journey terminal all` runs each terminal story in the manifest on
 its own, keeps going after a failure, prints one pass or fail line per
