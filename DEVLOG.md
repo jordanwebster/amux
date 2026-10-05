@@ -1,3 +1,24 @@
+2026-10-05 — **amux records usage events and sends them to amux.sh.**
+A new `analytics` crate holds every event a device may send as one typed
+enum whose fields are enums, counts, bools, versions and host ids only, so
+no prompt, name or path fits in one; `docs/ANALYTICS.md` lists them for
+users, and a test fails when an event or property is missing from it. Each
+profile records through a cheap handle into one uploader per installation,
+which batches per host (every minute or 50 events), posts to
+`<account service>/api/events` with the profile's bearer when it is bound
+there, retries twice and then drops, and flushes on shutdown. The daemon
+records at its choke points on the machine where a person acted: agent
+creation, accepted prompts and answers (a forwarded one counts on the
+sender only), pairing on both sides, sign-in and sign-out, the relay's
+free-tier refusal, the terminal opening (from its first fleet
+subscription), a daily check-in per profile, and install, update, rollback
+and crash from the generation file, which now carries the version. Only a
+published build sends; `AMUX_ANALYTICS_URL` points any build at a server,
+`DO_NOT_TRACK` and `amux config telemetry off` stop it. The phone's runtime
+takes the setting in `StartConfig.telemetry` and gains calls to change it,
+count a foreground, flush on background and record the paywall and
+purchase events only the app sees.
+
 2026-10-05 — **The iOS gate runs only when a push touches the phone.**
 It took 18 to 27 minutes on a macOS runner for every push, including the
 terminal, provider and docs work that cannot change what the phone does.

@@ -48,6 +48,10 @@ pub struct StartConfig {
     /// How many rows a chat opens with.
     #[serde(default = "default_tail")]
     pub tail: u32,
+    /// Whether a published build sends product analytics, as the person
+    /// set it in the app's settings.
+    #[serde(default = "yes")]
+    pub telemetry: bool,
 }
 
 fn yes() -> bool {
@@ -348,6 +352,33 @@ pub enum AgentAct {
     Rename(String),
     Stop,
     Delete,
+}
+
+/// What only the app sees, which the runtime records for product
+/// analytics on a profile's behalf.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum UsageEvent {
+    /// The subscription page opened, from one of the app's tabs.
+    PaywallViewed { from: PaywallFrom },
+    /// A purchase began with the App Store.
+    PurchaseStarted { interval: BillingInterval },
+}
+
+/// The tab the subscription page was opened from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PaywallFrom {
+    Agents,
+    Hosts,
+    You,
+}
+
+/// How often a subscription bills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BillingInterval {
+    Monthly,
+    Yearly,
 }
 
 /// A machine a pairing has reached and authenticated, before this device

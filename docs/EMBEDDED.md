@@ -182,7 +182,7 @@ returns.
 
 | Family | Handle | What it covers |
 | --- | --- | --- |
-| `amux_runtime_*` | `AmuxRuntime` | The installation: start and stop, the profile list and its wake, the registry (create, delete, bind, sign out, pause, resume), source policy, discovered machines, bearers, entitlement refresh, which profiles trust a host |
+| `amux_runtime_*` | `AmuxRuntime` | The installation: start and stop, the profile list and its wake, the registry (create, delete, bind, sign out, pause, resume), source policy, discovered machines, bearers, entitlement refresh, which profiles trust a host, product analytics (the setting, foreground, background flush, the app's own events) |
 | `amux_profile_*` | `AmuxProfile` | One profile open on screen: pairing, the roster, account state, creating agents and listing directories, renaming, stopping and deleting agents, the dump |
 | `amux_fleet_*` | `AmuxProfile` | That profile's fleet: rows, cards, family headers, hosts, and taking its changes |
 | `amux_session_*` | `AmuxChat` | One open chat: keys and rows by key, the ask card, strip, settings and frame, taking changes; sending, answering, withdrawing, interrupting, resuming, paging, blobs and the review |

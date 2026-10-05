@@ -10,7 +10,9 @@
 use std::sync::Arc;
 
 use app_embedded::{EdgeOverrides, EmbeddedRuntime, PairRequest, ProfileId, StartConfig};
-use app_runtime::values::{AccountBinding, Draft, RelayLink};
+use app_runtime::values::{
+    AccountBinding, BillingInterval, Draft, PaywallFrom, RelayLink, UsageEvent,
+};
 use app_runtime::{AppRuntime, Wake};
 use client::SystemClock;
 use model::AgentKey;
@@ -50,6 +52,7 @@ fn config(dir: &std::path::Path) -> StartConfig {
         relay_quic: None,
         relay_root: None,
         tail: 50,
+        telemetry: true,
     }
 }
 
@@ -592,5 +595,71 @@ async fn a_phone_dump_carries_the_runtimes_log_redacted() {
         "the log itself is what the runtime wrote"
     );
     drop(app);
+    embedded.shutdown().await.unwrap();
+}
+
+/// The app's own events land on the profile they name, or on every profile
+/// when they name none; coming to the front counts once an hour.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_apps_own_events_are_recorded_on_its_profiles() {
+    let dir = tempfile::tempdir().unwrap();
+    let recording = analytics::Recording::new();
+    let embedded = EmbeddedRuntime::start_with(
+        &config(dir.path()),
+        EdgeOverrides {
+            recording: Some(recording.clone()),
+            ..loopback()
+        },
+        Arc::new(SystemClock),
+    )
+    .await
+    .unwrap();
+    let profile = only_profile(&embedded).await;
+    let host = uuid::Uuid::from_slice(&embedded.host_id(profile).unwrap()).unwrap();
+
+    embedded.client_opened();
+    embedded.client_opened();
+    embedded.record(
+        None,
+        UsageEvent::PaywallViewed {
+            from: PaywallFrom::Hosts,
+        },
+    );
+    embedded.record(
+        Some(profile),
+        UsageEvent::PurchaseStarted {
+            interval: BillingInterval::Yearly,
+        },
+    );
+    embedded.flush_analytics().await;
+
+    let events: Vec<_> = recording
+        .events()
+        .into_iter()
+        .filter(|(_, event)| event.name() != "installed")
+        .collect();
+    assert_eq!(
+        events,
+        [
+            (
+                host,
+                analytics::Event::ClientOpened {
+                    client: analytics::Client::Phone
+                }
+            ),
+            (
+                host,
+                analytics::Event::PaywallViewed {
+                    from: analytics::PaywallFrom::Hosts
+                }
+            ),
+            (
+                host,
+                analytics::Event::PurchaseStarted {
+                    interval: analytics::Interval::Yearly
+                }
+            ),
+        ]
+    );
     embedded.shutdown().await.unwrap();
 }

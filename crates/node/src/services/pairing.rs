@@ -122,6 +122,7 @@ pub(crate) struct PairingService {
     connections: Arc<ConnectionManager>,
     data_dir: PathBuf,
     spake2_responder_timeout: Duration,
+    analytics: analytics::Analytics,
 }
 
 impl PairingService {
@@ -143,7 +144,22 @@ impl PairingService {
             connections,
             data_dir,
             spake2_responder_timeout: PAIR_RESPONDER_TIMEOUT,
+            analytics: analytics::Analytics::off(),
         }
+    }
+
+    /// Records how pairings this host offered turn out.
+    pub(crate) fn with_analytics(mut self, analytics: analytics::Analytics) -> Self {
+        self.analytics = analytics;
+        self
+    }
+
+    fn failed(&self, method: analytics::Method, reason: analytics::PairingFailure) {
+        self.analytics.record(analytics::Event::PairingFailed {
+            role: analytics::Role::Offerer,
+            method,
+            reason,
+        });
     }
 
     #[cfg(test)]
@@ -210,14 +226,17 @@ impl PairingService {
         outbound: mpsc::Sender<Result<wire::pb::PairMessage, Status>>,
     ) -> Result<(), Status> {
         validate_name(&self.host_name)?;
+        let method = attempt.method();
         let peer_spake_msg = match read_spake2_message(&mut inbound).await? {
             PairingRead::Expected(bytes) => bytes,
             PairingRead::PeerError(_) => {
                 audit::pairing_failure("spake2", "peer rejected pairing");
+                self.failed(method, analytics::PairingFailure::Abandoned);
                 return Ok(());
             }
             PairingRead::Eof => {
                 audit::pairing_failure("spake2", "pairing stream closed before SPAKE2 message");
+                self.failed(method, analytics::PairingFailure::Abandoned);
                 return Ok(());
             }
             PairingRead::Unexpected => {
@@ -242,6 +261,7 @@ impl PairingService {
             Ok(shared) => shared,
             Err(_) => {
                 let _ = self.pair_mode.record_failure(&mut attempt);
+                self.failed(method, analytics::PairingFailure::WrongSecret);
                 send_pairing_error(
                     &outbound,
                     wire::pb::pairing_error::Reason::InvalidPin,
@@ -257,10 +277,12 @@ impl PairingService {
             PairingRead::Expected(bytes) => bytes,
             PairingRead::PeerError(_) => {
                 audit::pairing_failure("spake2", "peer rejected pairing");
+                self.failed(method, analytics::PairingFailure::Abandoned);
                 return Ok(());
             }
             PairingRead::Eof => {
                 audit::pairing_failure("spake2", "pairing stream closed before key confirmation");
+                self.failed(method, analytics::PairingFailure::Abandoned);
                 return Ok(());
             }
             PairingRead::Unexpected => {
@@ -280,6 +302,7 @@ impl PairingService {
             &peer_confirmation,
         ) {
             let _ = self.pair_mode.record_failure(&mut attempt);
+            self.failed(method, analytics::PairingFailure::WrongSecret);
             send_pairing_error(
                 &outbound,
                 wire::pb::pairing_error::Reason::InvalidPin,
@@ -319,6 +342,7 @@ impl PairingService {
             PairingRead::Expected(bytes) => bytes,
             PairingRead::PeerError(error) => {
                 audit::pairing_failure("spake2", "peer rejected pairing");
+                self.failed(method, analytics::PairingFailure::Abandoned);
                 if error.reason == wire::pb::pairing_error::Reason::UserRejected as i32 {
                     // Release the attempt before acknowledging cancellation so callers
                     // can immediately begin again without consuming an attempt slot.
@@ -335,6 +359,7 @@ impl PairingService {
             }
             PairingRead::Eof => {
                 audit::pairing_failure("spake2", "pairing stream closed before sealed identity");
+                self.failed(method, analytics::PairingFailure::Abandoned);
                 return Ok(());
             }
             PairingRead::Unexpected => {
@@ -356,6 +381,7 @@ impl PairingService {
             Ok(identity) => identity,
             Err(()) => {
                 let _ = self.pair_mode.record_failure(&mut attempt);
+                self.failed(method, analytics::PairingFailure::WrongSecret);
                 send_pairing_error(
                     &outbound,
                     wire::pb::pairing_error::Reason::InvalidPin,
@@ -402,6 +428,11 @@ impl PairingService {
         )
         .await?;
         audit::pairing_success("spake2", peer_host_id);
+        self.analytics.record(analytics::Event::PairingSucceeded {
+            role: analytics::Role::Offerer,
+            method,
+            remote_host: peer_host_id,
+        });
         Ok(())
     }
 }
@@ -862,6 +893,8 @@ impl wire::pairing_service_server::PairingService for PairingService {
         let (tx, rx) = mpsc::channel(8);
         let service = self.clone();
         let responder_timeout = self.spake2_responder_timeout.min(attempt.remaining());
+        let method = attempt.method();
+        let outcomes = self.clone();
         tokio::spawn(async move {
             let responder = service.run_spake2_responder(
                 attempt,
@@ -873,10 +906,12 @@ impl wire::pairing_service_server::PairingService for PairingService {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
                     audit::pairing_failure("spake2", &error);
+                    outcomes.failed(method, analytics::PairingFailure::Other);
                     let _ = tx.send(Err(error)).await;
                 }
                 Err(_) => {
                     audit::pairing_failure("spake2", "PAIRING_TIMEOUT");
+                    outcomes.failed(method, analytics::PairingFailure::TimedOut);
                     let _ = tx
                         .send(Err(pairing_status(
                             Code::DeadlineExceeded,

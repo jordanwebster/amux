@@ -77,6 +77,9 @@ pub struct NetOptions {
     /// temporary directory, so a client that draws the net's paths draws the
     /// same ones on every run. The directory must not already hold a `net`.
     pub root_in: Option<PathBuf>,
+    /// What every host does with product analytics: nothing, unless a
+    /// test hands a sink to record into.
+    pub analytics: Option<node::Telemetry>,
 }
 
 /// A verb's acknowledgement: what was installed, at what policy time.
@@ -217,6 +220,7 @@ pub struct Net {
     bus: ScriptedDiscovery,
     edge_hook: Option<EdgeHook>,
     launch_hook: Option<LaunchHook>,
+    analytics: Option<node::Telemetry>,
     hosts: BTreeMap<String, Host>,
     links: BTreeMap<(String, String), Link>,
     agents: BTreeMap<String, NetAgent>,
@@ -270,6 +274,7 @@ impl Net {
             bus: ScriptedDiscovery::new(),
             edge_hook: options.edge,
             launch_hook: options.launch,
+            analytics: options.analytics,
             hosts: BTreeMap::new(),
             links: BTreeMap::new(),
             agents: BTreeMap::new(),
@@ -1093,6 +1098,7 @@ impl Net {
             daemon_log: None,
             front_door: Some(host.info.front_door.clone()),
             edge,
+            analytics: self.analytics.clone().unwrap_or(node::Telemetry::Off),
         };
         let daemon = node::start(options, None)
             .await

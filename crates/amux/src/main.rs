@@ -225,6 +225,15 @@ enum ServerCommand {
 enum ConfigCommand {
     /// Which releases the supervisor follows.
     Channel { channel: CliChannel },
+    /// Whether amux sends product analytics; with no value, says whether
+    /// it does and where.
+    Telemetry { state: Option<OnOff> },
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum OnOff {
+    On,
+    Off,
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -321,6 +330,18 @@ fn run(command: Command, config_path: Option<PathBuf>, profile: Option<String>) 
                     CliChannel::Stable => settings::Channel::Stable,
                     CliChannel::Preview => settings::Channel::Preview,
                 },
+            );
+        }
+        if let Command::Config {
+            command: ConfigCommand::Telemetry { state },
+        } = command
+        {
+            return setup::telemetry(
+                config_path.as_deref(),
+                state.map(|state| match state {
+                    OnOff::On => settings::Switch::On,
+                    OnOff::Off => settings::Switch::Off,
+                }),
             );
         }
         let config = connect::load_config(config_path.as_deref())?;

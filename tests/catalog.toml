@@ -383,9 +383,9 @@ cargo = [
 
 [[suite]]
 name = "single-daemon-contract"
-contract = "One daemon commits journaled steps atomically, fans out and serves subscriptions without losing committed rows across crashes, failed commits and power cuts, carries inputs, messages, deliveries and notifications exactly once, stores blobs and diffs, assembles redacted dumps, and adopts, starts, stops and resumes agent processes."
+contract = "One daemon commits journaled steps atomically, fans out and serves subscriptions without losing committed rows across crashes, failed commits and power cuts, carries inputs, messages, deliveries and notifications exactly once, stores blobs and diffs, assembles redacted dumps, adopts, starts, stops and resumes agent processes, and records each usage event where it happens."
 paths = ["crates/node/tests"]
-recipe = "just test -- --test single_daemon --test messaging --test push --test blobs --test registry --test dump"
+recipe = "just test -- --test single_daemon --test messaging --test push --test blobs --test registry --test dump --test analytics"
 boundary = "Single daemon"
 oracle = "Committed rows, the stream log, failure-cut equality with a reference run, delivery and notification rows, bundle contents with every planted secret absent, and process observations."
 real = ["SQLite store", "journal files", "Unix sockets", "agent processes in the registry and messaging cases"]
@@ -395,7 +395,7 @@ capabilities = ["desktop", "Unix for the agent-process cases"]
 lane = "fast"
 evidence = ""
 update = ""
-cargo = [{ package = "node", targets = ["blobs", "dump", "messaging", "push", "registry", "single_daemon"], features = [] }]
+cargo = [{ package = "node", targets = ["analytics", "blobs", "dump", "messaging", "push", "registry", "single_daemon"], features = [] }]
 
 [[suite]]
 name = "supervisor-update"
@@ -419,8 +419,8 @@ cargo = [
 [[suite]]
 name = "daemon-library-units"
 contract = "Daemon-side libraries preserve their local parsing, state, routing, lifecycle, persistence, agent-directory and wire invariants."
-paths = ["crates/agent-dir/src", "crates/client/src", "crates/node/src", "crates/release/src", "crates/settings/src", "crates/version-stamp/src", "crates/wire/src"]
-recipe = "just test -- --lib -p agent-dir -p client -p node -p release -p settings -p version-stamp -p wire"
+paths = ["crates/agent-dir/src", "crates/analytics/src", "crates/client/src", "crates/node/src", "crates/release/src", "crates/settings/src", "crates/version-stamp/src", "crates/wire/src"]
+recipe = "just test -- --lib -p agent-dir -p analytics -p client -p node -p release -p settings -p version-stamp -p wire"
 boundary = "Single daemon"
 oracle = "Value assertions, explicit state transitions, wire round trips, and owned-resource observations."
 real = ["temporary files and local sockets in integration-shaped unit cases"]
@@ -432,6 +432,7 @@ evidence = ""
 update = ""
 cargo = [
   { package = "agent-dir", kind = "lib", targets = ["agent_dir"], features = [] },
+  { package = "analytics", kind = "lib", targets = ["analytics"], features = [] },
   { package = "client", kind = "lib", targets = ["client"], features = [] },
   { package = "node", kind = "lib", targets = ["node"], features = [] },
   { package = "release", kind = "lib", targets = ["release"], features = [] },
@@ -518,9 +519,9 @@ cargo = [
 
 [[suite]]
 name = "many-daemon-protocol-spec"
-contract = "Production daemons enforce pairing, trust, discovery, routing, relay carriers, credential refresh, revocation and account isolation, reconcile the inventory, keep each replica one contiguous block, and carry agent families and their deliveries across hosts."
-paths = ["crates/testnet/tests/spec_edge.rs", "crates/testnet/tests/spec_families.rs", "crates/testnet/tests/spec_inventory.rs", "crates/testnet/tests/spec_network.rs", "crates/testnet/tests/spec_replication.rs", "crates/testnet/tests/support"]
-recipe = "just test -- --test spec_edge --test spec_families --test spec_inventory --test spec_network --test spec_replication"
+contract = "Production daemons enforce pairing, trust, discovery, routing, relay carriers, credential refresh, revocation and account isolation, reconcile the inventory, keep each replica one contiguous block, carry agent families and their deliveries across hosts, and count pairings and forwarded prompts once on the right host."
+paths = ["crates/testnet/tests/spec_analytics.rs", "crates/testnet/tests/spec_edge.rs", "crates/testnet/tests/spec_families.rs", "crates/testnet/tests/spec_inventory.rs", "crates/testnet/tests/spec_network.rs", "crates/testnet/tests/spec_replication.rs", "crates/testnet/tests/support"]
+recipe = "just test -- --test spec_analytics --test spec_edge --test spec_families --test spec_inventory --test spec_network --test spec_replication"
 boundary = "Many daemons"
 oracle = "Typed topology observations, protocol events, refusals, replica markers and state dumps at bounded deadlines."
 real = ["daemon runtimes", "agent processes", "loopback QUIC and TCP", "TLS", "relay server", "files"]
@@ -530,7 +531,7 @@ capabilities = ["loopback network", "desktop"]
 lane = "fast"
 evidence = ""
 update = ""
-cargo = [{ package = "testnet", targets = ["spec_edge", "spec_families", "spec_inventory", "spec_network", "spec_replication"], features = [] }]
+cargo = [{ package = "testnet", targets = ["spec_analytics", "spec_edge", "spec_families", "spec_inventory", "spec_network", "spec_replication"], features = [] }]
 
 [[suite]]
 name = "claude-pty-live-compatibility"

@@ -32,6 +32,13 @@ pub fn release_key() -> Option<[u8; 32]> {
     }
 }
 
+/// Whether this is a published build: optimised and built by the release
+/// workflow, which names the release key. Development builds, test binaries
+/// and test networks are not, and send no product analytics.
+pub fn is_published() -> bool {
+    option_env!("AMUX_RELEASE_PUBLIC_KEY").is_some() && !cfg!(debug_assertions)
+}
+
 #[used]
 static STAMP: [u8; version_stamp::LEN] = version_stamp::stamp(env!("CARGO_PKG_VERSION"));
 

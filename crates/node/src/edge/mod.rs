@@ -229,6 +229,7 @@ pub struct Edge {
     clock: Arc<dyn Clock>,
     shutdown: watch::Sender<bool>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
+    analytics: analytics::Analytics,
 }
 
 impl Edge {
@@ -239,6 +240,7 @@ impl Edge {
         options: &EdgeOptions,
         clock: Arc<dyn Clock>,
         runtime: Weak<ProfileRuntime>,
+        analytics: analytics::Analytics,
     ) -> Result<Arc<Self>, EdgeError> {
         let identity = crate::identity::load_or_create_device_identity_in(dir)?;
         let trust: SharedTrustStore =
@@ -265,7 +267,10 @@ impl Edge {
             trust.clone(),
             routing.revocations().clone(),
         ));
-        let connections = Arc::new(ConnectionManager::new(routing.clone(), channels.clone()));
+        let connections = Arc::new(
+            ConnectionManager::new(routing.clone(), channels.clone())
+                .with_analytics(analytics.clone()),
+        );
         let (incoming_streams_tx, incoming_streams_rx) = mpsc::channel(64);
         let (trusted_tx, trusted_rx) = mpsc::channel(64);
         let (pairing_tx, pairing_rx) = mpsc::channel(64);
@@ -304,7 +309,8 @@ impl Edge {
                     trust_gate.clone(),
                     connections.clone(),
                     dir.to_owned(),
-                ),
+                )
+                .with_analytics(analytics.clone()),
                 pairing_rx,
                 shutdown.subscribe(),
             ),
@@ -414,6 +420,7 @@ impl Edge {
             clock,
             shutdown,
             tasks: Mutex::new(tasks),
+            analytics,
         });
         if signed_in {
             edge.start_cloud().await;
@@ -630,6 +637,33 @@ impl Edge {
             wire::Intent::LoggedOut => Some(false),
             wire::Intent::Unbound | wire::Intent::Unspecified => None,
         }
+    }
+
+    /// The account service the profile is bound to, signed in or not.
+    pub(crate) fn account_service(&self) -> Option<String> {
+        self.account
+            .service()
+            .map(|service| service.as_str().to_owned())
+    }
+
+    /// Paired hosts by the route that reaches each now; offline ones are
+    /// left out.
+    pub(crate) async fn routes(&self) -> analytics::Counts<analytics::Route> {
+        let hosts: Vec<HostId> = match self.trust.read() {
+            Ok(store) => store.entries().map(|(host, _)| host).collect(),
+            Err(_) => return analytics::Counts::default(),
+        };
+        let mut routes = analytics::Counts::default();
+        for host in hosts {
+            if let Some(route) = crate::telemetry::route(self.connections.via_for(host).await) {
+                routes.add(route, 1);
+            }
+        }
+        routes
+    }
+
+    pub(crate) fn analytics(&self) -> &analytics::Analytics {
+        &self.analytics
     }
 
     /// A bearer for the account service, for a client that calls it on the

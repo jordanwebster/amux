@@ -117,7 +117,12 @@ and are tuned the same way:
 | Wait on an origin for a page | 10 s | `FETCH_PATIENCE` in [`crates/node/src/sources.rs`](../crates/node/src/sources.rs) |
 | Largest journal or control-socket frame | 64 MiB | `journal::MAX_FRAME_BYTES`; `agent_dir::MAX_FRAME_BYTES` |
 | Fixed per-row allowance in retention's byte count | 48 bytes | `ITEM_OVERHEAD_BYTES` in [`crates/store/src/lib.rs`](../crates/store/src/lib.rs) |
+| Analytics batch: wait, size and queue | Sent every 60 s, or at once at 50 events; at most 1,000 waiting, beyond which new events are dropped; at most 100 events in one request, the server's limit | `Params` in [`crates/analytics/src/upload.rs`](../crates/analytics/src/upload.rs) |
+| Analytics retries | Two more tries, 5 s then 10 s apart, then the batch is dropped; 10 s per request; a shutdown waits at most 2 s and the phone 3 s as it leaves the screen | `Params` in [`crates/analytics/src/upload.rs`](../crates/analytics/src/upload.rs); `SHUTDOWN_FLUSH` in [`crates/node/src/telemetry.rs`](../crates/node/src/telemetry.rs); `BACKGROUND_FLUSH` in [`crates/app-embedded/src/lib.rs`](../crates/app-embedded/src/lib.rs) |
+| Analytics check-in | Once a day per profile, never sooner than a minute after a start | `CHECK_IN_EVERY_MS` and `CHECK_IN_SETTLE_MS` in [`crates/node/src/telemetry.rs`](../crates/node/src/telemetry.rs) |
+| Analytics repeats held back | `client_opened` and `relay_refused` at most once an hour per profile | `CLIENT_OPENED_EVERY` and `RELAY_REFUSED_EVERY` in [`crates/node/src/telemetry.rs`](../crates/node/src/telemetry.rs); the phone's in [`crates/app-embedded/src/lib.rs`](../crates/app-embedded/src/lib.rs) |
 
-What these values govern is described in [the journal and store](JOURNAL_AND_STORE.md),
+The analytics values are described in [what amux sends](ANALYTICS.md). What
+the other values govern is described in [the journal and store](JOURNAL_AND_STORE.md),
 [the wire](WIRE.md), [the agent process](AGENT_PROCESS.md) and
 [the supervisor](SUPERVISOR.md).

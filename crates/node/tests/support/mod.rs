@@ -123,6 +123,7 @@ impl Install {
             daemon_log: None,
             front_door: None,
             edge: node::EdgeOptions::default(),
+            analytics: node::Telemetry::Off,
         }
     }
 

@@ -442,6 +442,7 @@ by its name or its id.
 | `amux init` | Sets up this install, including whether amux starts at login (`--login-item yes\|no`, asked when omitted). |
 | `amux update` | Asks the supervisor to install the channel's release now, even one that was rolled back here. |
 | `amux config channel stable\|preview` | Chooses which releases the supervisor follows. |
+| `amux config telemetry [on\|off]` | Turns the usage events amux sends on or off; with no value, says whether they are on and where they go. See [what amux sends](ANALYTICS.md). |
 | `amux server start` | Starts amux detached from the terminal: the supervisor where the install has one, the daemon otherwise. With `--cloud` it runs the cloud relay in the foreground instead. |
 | `amux server stop` | Stops amux cleanly, the supervisor first where one runs; agents keep running. |
 | `amux supervise` | Runs the daemon under a supervisor that restarts it and, under `updates: auto`, installs releases. See [SUPERVISOR.md](SUPERVISOR.md). |

@@ -30,6 +30,7 @@ use wire::{
 use crate::blobs::BlobError;
 use crate::forward::{ForwardError, Owner};
 use crate::runtime::{AgentId, ProfileRuntime};
+use crate::telemetry::{self, InputShape};
 
 /// A wire error as a gRPC status: the coarse code for generic clients, and
 /// the whole error, details included, in the status details for ours.
@@ -73,6 +74,9 @@ pub struct ClientApi {
     /// daemon. Off for calls that arrived from a peer: forwarding goes one
     /// hop, so no two hosts can pass a call back and forth.
     forwards: bool,
+    /// The client this service counts as opened when it lists the agents:
+    /// set on the profile's socket, where the terminal client connects.
+    opened: Option<analytics::Client>,
 }
 
 impl ClientApi {
@@ -85,6 +89,33 @@ impl ClientApi {
             runtime,
             caller,
             forwards: true,
+            opened: None,
+        }
+    }
+
+    /// Counts a client opened each time a caller lists the agents, at most
+    /// once an hour: the terminal client lists them when it starts.
+    pub fn opened_as(mut self, client: analytics::Client) -> Self {
+        self.opened = Some(client);
+        self
+    }
+
+    /// Whether this call is counted: a person's, made on the host where it
+    /// started, so a call forwarded to a paired host is counted once.
+    fn counts(&self) -> bool {
+        self.caller.is_none() && self.forwards
+    }
+
+    /// Records a person's accepted input, where it went.
+    fn record_input(
+        &self,
+        runtime: &ProfileRuntime,
+        shape: Option<InputShape>,
+        on: analytics::On,
+        queued: Option<bool>,
+    ) {
+        if let (true, Some(shape), Some(queued)) = (self.counts(), shape, queued) {
+            runtime.analytics().record(shape.event(on, queued));
         }
     }
 
@@ -95,6 +126,7 @@ impl ClientApi {
             runtime,
             caller: None,
             forwards: false,
+            opened: None,
         }
     }
 
@@ -213,11 +245,17 @@ impl ClientService for ClientApi {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::SubscribeInventoryStream>, Status> {
-        let subscription = self
-            .runtime()?
+        let runtime = self.runtime()?;
+        let subscription = runtime
             .subscribe_inventory()
             .await
             .map_err(|error| status(error.to_wire()))?;
+        if let Some(client) = self.opened.filter(|_| self.counts()) {
+            runtime.analytics().record_at_most_every(
+                telemetry::CLIENT_OPENED_EVERY,
+                analytics::Event::ClientOpened { client },
+            );
+        }
         let stream = futures_util::stream::unfold(subscription, |mut subscription| async move {
             let event = subscription.next().await?;
             Some((Ok(InventoryEvent::clone(&event)), subscription))
@@ -289,6 +327,7 @@ impl ClientService for ClientApi {
         let request = request.into_inner();
         let runtime = self.runtime()?;
         self.lineage(&runtime, &request.agent_id).await?;
+        let shape = request.input.as_ref().and_then(InputShape::of);
         if let Some(host) = self.forward_to(&runtime, &request.agent_id).await? {
             let forwarded = runtime
                 .on_peer(host, |mut client| async move {
@@ -296,18 +335,24 @@ impl ClientService for ClientApi {
                 })
                 .await;
             return match forwarded {
-                Ok(verdict) => Ok(Response::new(verdict)),
+                Ok(verdict) => {
+                    let on = analytics::On::PairedHost(host);
+                    self.record_input(&runtime, shape, on, telemetry::accepted(&verdict));
+                    Ok(Response::new(verdict))
+                }
                 Err(ForwardError::Unreachable { .. }) => {
                     Ok(Response::new(crate::relay::rejected(HOST_UNREACHABLE)))
                 }
                 Err(error) => Err(status(error.to_wire())),
             };
         }
-        runtime
+        let verdict = runtime
             .send_input(&request)
             .await
-            .map(Response::new)
-            .map_err(|error| status(error.to_wire()))
+            .map_err(|error| status(error.to_wire()))?;
+        let on = analytics::On::ThisHost;
+        self.record_input(&runtime, shape, on, telemetry::accepted(&verdict));
+        Ok(Response::new(verdict))
     }
 
     async fn create_agent(
@@ -319,14 +364,31 @@ impl ClientService for ClientApi {
         let host = runtime
             .target_host(&request)
             .map_err(|error| status(error.to_wire()))?;
-        let spawned = if host == runtime.host() || !self.forwards {
-            runtime.spawn(request, self.caller).await
+        let kind = telemetry::kind(request.kind());
+        let first = request.initial_prompt.as_ref().and_then(InputShape::of);
+        let on = if host == runtime.host() || !self.forwards {
+            analytics::On::ThisHost
         } else {
-            runtime.spawn_on(host, request, self.caller).await
+            analytics::On::PairedHost(host)
         };
-        spawned
-            .map(Response::new)
-            .map_err(|error| status(error.to_wire()))
+        let spawned = match on {
+            analytics::On::ThisHost => runtime.spawn(request, self.caller).await,
+            analytics::On::PairedHost(host) => runtime.spawn_on(host, request, self.caller).await,
+        }
+        .map_err(|error| status(error.to_wire()))?;
+        if self.forwards
+            && let Some(kind) = kind
+        {
+            let by = match self.caller {
+                Some(_) => analytics::By::Agent,
+                None => analytics::By::Person,
+            };
+            runtime
+                .analytics()
+                .record(analytics::Event::AgentCreated { kind, on, by });
+            self.record_input(&runtime, first, on, Some(false));
+        }
+        Ok(Response::new(spawned))
     }
 
     async fn rename_agent(
@@ -377,17 +439,22 @@ impl ClientService for ClientApi {
         self.people_only("resume an agent")?;
         let request = request.into_inner();
         let runtime = self.runtime()?;
+        let first = request.initial_prompt.as_ref().and_then(InputShape::of);
         if let Some(host) = self.forward_to(&runtime, &request.agent_id).await? {
-            return forwarded(&runtime, host, |mut client| async move {
+            let resumed = forwarded(&runtime, host, |mut client| async move {
                 client.resume_agent(request).await
             })
-            .await;
+            .await?;
+            let on = analytics::On::PairedHost(host);
+            self.record_input(&runtime, first, on, Some(false));
+            return Ok(resumed);
         }
-        runtime
+        let resumed = runtime
             .resume(agent_id(&request.agent_id)?, request.initial_prompt)
             .await
-            .map(Response::new)
-            .map_err(|error| status(error.to_wire()))
+            .map_err(|error| status(error.to_wire()))?;
+        self.record_input(&runtime, first, analytics::On::ThisHost, Some(false));
+        Ok(Response::new(resumed))
     }
 
     async fn delete_agent(

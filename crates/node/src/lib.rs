@@ -46,6 +46,7 @@ mod sources;
 mod spec;
 #[cfg(not(target_os = "ios"))]
 pub mod supervisor;
+mod telemetry;
 mod transport;
 mod trust;
 
@@ -94,6 +95,7 @@ pub use serve::{InventorySubscription, MAX_PAGE, ServeError, Subscription};
 pub use sources::{
     InventoryHook, NO_LONGER_LISTED, NOT_TRUSTED, SourceHook, SourcePolicy, SourceVerdict,
 };
+pub use telemetry::Telemetry;
 
 /// Internals the testnet harness assembles topologies from. Hidden and
 /// unstable: reachable only for test infrastructure, never for products.

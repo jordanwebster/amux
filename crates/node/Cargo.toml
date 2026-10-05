@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 agent-dir = { workspace = true }
+analytics = { workspace = true }
 async-trait = { workspace = true }
 base64 = "0.22"
 bytes = { workspace = true }

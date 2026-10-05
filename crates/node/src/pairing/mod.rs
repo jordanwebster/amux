@@ -82,6 +82,7 @@ pub(crate) struct PairModeAttempt {
     state: Arc<Mutex<PairModeState>>,
     session_id: u64,
     secret: Vec<u8>,
+    method: &'static str,
     active: bool,
     expires_at: Instant,
 }
@@ -192,6 +193,7 @@ impl PairMode {
             state: self.state.clone(),
             session_id: session.id,
             secret: secret.value.clone(),
+            method: secret.method,
             active: true,
             expires_at: session.expires_at,
         })
@@ -308,6 +310,15 @@ impl PairMode {
 impl PairModeAttempt {
     pub(crate) fn remaining(&self) -> Duration {
         self.expires_at.saturating_duration_since(Instant::now())
+    }
+
+    /// How the secret travels, for analytics: a typed PIN, demo or not, or
+    /// a QR code.
+    pub(crate) fn method(&self) -> analytics::Method {
+        match self.method {
+            "qr" => analytics::Method::Qr,
+            _ => analytics::Method::Pin,
+        }
     }
 
     /// The SPAKE2 password bytes for this attempt: the PIN's ASCII digits

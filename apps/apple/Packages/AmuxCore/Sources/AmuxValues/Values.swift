@@ -944,6 +944,12 @@ public struct Bearer: Codable, Hashable, Sendable {
     }
 }
 
+/// How often a subscription bills.
+public enum BillingInterval: String, Codable, Hashable, Sendable, CaseIterable {
+    case monthly = "monthly"
+    case yearly = "yearly"
+}
+
 /// Content-addressed bytes in the owning agent's directory. The name belongs
 /// to the reference, not the bytes.
 public struct BlobRef: Codable, Hashable, Sendable {
@@ -2583,6 +2589,13 @@ public struct PairedPeer: Codable, Hashable, Sendable {
     }
 }
 
+/// The tab the subscription page was opened from.
+public enum PaywallFrom: String, Codable, Hashable, Sendable, CaseIterable {
+    case agents = "agents"
+    case hosts = "hosts"
+    case you = "you"
+}
+
 /// A machine a pairing has reached and authenticated, before this device
 /// trusts it: what the person compares and then accepts or turns away.
 public struct PendingPair: Codable, Hashable, Sendable {
@@ -3825,8 +3838,11 @@ public struct StartConfig: Codable, Hashable, Sendable {
     public var relayTcp: String?
     /// How many rows a chat opens with.
     public var tail: UInt32?
+    /// Whether a published build sends product analytics, as the person
+    /// set it in the app's settings.
+    public var telemetry: Bool?
 
-    public init(dataDir: String, deviceName: String, discoveryScope: String?, lan: Bool?, lanBind: String?, logPath: String?, relayQuic: String?, relayRoot: String?, relayTcp: String?, tail: UInt32?) {
+    public init(dataDir: String, deviceName: String, discoveryScope: String?, lan: Bool?, lanBind: String?, logPath: String?, relayQuic: String?, relayRoot: String?, relayTcp: String?, tail: UInt32?, telemetry: Bool?) {
         self.dataDir = dataDir
         self.deviceName = deviceName
         self.discoveryScope = discoveryScope
@@ -3837,6 +3853,7 @@ public struct StartConfig: Codable, Hashable, Sendable {
         self.relayRoot = relayRoot
         self.relayTcp = relayTcp
         self.tail = tail
+        self.telemetry = telemetry
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -3850,6 +3867,7 @@ public struct StartConfig: Codable, Hashable, Sendable {
         case relayRoot = "relay_root"
         case relayTcp = "relay_tcp"
         case tail
+        case telemetry
     }
 }
 
@@ -4009,6 +4027,63 @@ public enum ToolStateView: String, Codable, Hashable, Sendable, CaseIterable {
     case failed = "Failed"
     case denied = "Denied"
     case cancelled = "Cancelled"
+}
+
+/// What only the app sees, which the runtime records for product
+/// analytics on a profile's behalf.
+public enum UsageEvent: Codable, Hashable, Sendable {
+    /// The subscription page opened, from one of the app's tabs.
+    case paywallViewed(from: PaywallFrom)
+    /// A purchase began with the App Store.
+    case purchaseStarted(interval: BillingInterval)
+
+    private enum Tag: String, CodingKey {
+        case paywallViewed = "PaywallViewed"
+        case purchaseStarted = "PurchaseStarted"
+    }
+
+    private enum PaywallViewedKeys: String, CodingKey {
+        case from
+    }
+
+    private enum PurchaseStartedKeys: String, CodingKey {
+        case interval
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a UsageEvent names exactly one variant"))
+        }
+        switch _tag {
+        case .paywallViewed:
+            let _fields = try _container.nestedContainer(
+                keyedBy: PaywallViewedKeys.self, forKey: .paywallViewed)
+            self = .paywallViewed(
+                from: try _fields.decode(PaywallFrom.self, forKey: .from))
+        case .purchaseStarted:
+            let _fields = try _container.nestedContainer(
+                keyedBy: PurchaseStartedKeys.self, forKey: .purchaseStarted)
+            self = .purchaseStarted(
+                interval: try _fields.decode(BillingInterval.self, forKey: .interval))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .paywallViewed(let from):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: PaywallViewedKeys.self, forKey: .paywallViewed)
+            try _fields.encode(from, forKey: .from)
+        case .purchaseStarted(let interval):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: PurchaseStartedKeys.self, forKey: .purchaseStarted)
+            try _fields.encode(interval, forKey: .interval)
+        }
+    }
 }
 
 public struct UsageView: Codable, Hashable, Sendable {

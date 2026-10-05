@@ -119,6 +119,7 @@ impl Phone {
             relay_quic: None,
             relay_root: None,
             tail: 50,
+            telemetry: true,
         };
         let (wake_sender, wakes) = mpsc::channel();
         let wake_sender = Box::new(wake_sender);

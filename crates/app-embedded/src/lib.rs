@@ -20,13 +20,15 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use app_runtime::values::{
-    AccountBinding, AccountView, Bearer, Found, Identity, PairedPeer, PendingPair, RelayLink,
-    Roster,
+    AccountBinding, AccountView, Bearer, BillingInterval, Found, Identity, PairedPeer, PaywallFrom,
+    PendingPair, RelayLink, Roster,
 };
-pub use app_runtime::values::{PairRequest, ProfileView, StartConfig};
+pub use app_runtime::values::{PairRequest, ProfileView, StartConfig, UsageEvent};
 use client::{Client, Clock, InProcess, SystemClock};
 use futures_util::{Stream, StreamExt};
 pub use node::ProfileId;
@@ -56,6 +58,12 @@ pub struct EdgeOverrides {
     pub discovery: Option<DiscoveryFactory>,
     /// Where direct links listen: every interface by default.
     pub lan_bind: SocketAddr,
+    /// Whether this is the app as published, which sends product
+    /// analytics; tests and driving builds are not, and send none unless
+    /// `AMUX_ANALYTICS_URL` names a server.
+    pub published: bool,
+    /// Where profiles record analytics instead of sending it: for tests.
+    pub recording: Option<Arc<dyn analytics::Sink>>,
 }
 
 impl Default for EdgeOverrides {
@@ -64,7 +72,33 @@ impl Default for EdgeOverrides {
             cloud: CloudOptions::default(),
             discovery: None,
             lan_bind: SocketAddr::from(([0, 0, 0, 0], 0)),
+            published: false,
+            recording: None,
         }
+    }
+}
+
+/// A client opening again within this long is the same visit.
+const CLIENT_OPENED_EVERY: Duration = Duration::from_secs(60 * 60);
+/// How long a flush as the app leaves the screen may take.
+const BACKGROUND_FLUSH: Duration = Duration::from_secs(3);
+
+/// What only the app sees, as the event it is sent as.
+fn usage_event(event: UsageEvent) -> analytics::Event {
+    match event {
+        UsageEvent::PaywallViewed { from } => analytics::Event::PaywallViewed {
+            from: match from {
+                PaywallFrom::Agents => analytics::PaywallFrom::Agents,
+                PaywallFrom::Hosts => analytics::PaywallFrom::Hosts,
+                PaywallFrom::You => analytics::PaywallFrom::You,
+            },
+        },
+        UsageEvent::PurchaseStarted { interval } => analytics::Event::PurchaseStarted {
+            interval: match interval {
+                BillingInterval::Monthly => analytics::Interval::Monthly,
+                BillingInterval::Yearly => analytics::Interval::Yearly,
+            },
+        },
     }
 }
 
@@ -91,6 +125,9 @@ pub struct EmbeddedRuntime {
     door: FrontDoor,
     data_dir: PathBuf,
     clock: Arc<dyn Clock>,
+    /// The app's telemetry setting, read before every upload.
+    telemetry: Arc<AtomicBool>,
+    analytics: Option<analytics::Flusher>,
 }
 
 /// A change to the profile list, as the registry announces it.
@@ -153,6 +190,21 @@ impl EmbeddedRuntime {
             link_socket: false,
             cloud: overrides.cloud,
         };
+        let telemetry = Arc::new(AtomicBool::new(config.telemetry));
+        let analytics = match overrides.recording {
+            Some(sink) => node::Telemetry::Record(sink),
+            None => match analytics::Endpoint::resolve(overrides.published) {
+                Some(endpoint) => node::Telemetry::Upload {
+                    endpoint,
+                    channel: analytics::Channel::Stable,
+                    gate: {
+                        let telemetry = telemetry.clone();
+                        Arc::new(move || telemetry.load(Ordering::SeqCst))
+                    },
+                },
+                None => node::Telemetry::Off,
+            },
+        };
         let options = StartOptions {
             data_dir: config.data_dir.clone(),
             // The phone has no boot id to read; each start is its own boot.
@@ -163,14 +215,74 @@ impl EmbeddedRuntime {
             daemon_log: config.log_path.clone(),
             front_door: None,
             edge,
+            analytics,
         };
         let daemon = node::start(options, None).await?;
         Ok(EmbeddedRuntime {
             door: daemon.front_door(),
             data_dir: daemon.data_dir().to_owned(),
+            analytics: daemon.analytics_flusher(),
             daemon: Mutex::new(Some(daemon)),
             clock,
+            telemetry,
         })
+    }
+
+    fn hosted(&self) -> Vec<Arc<ProfileRuntime>> {
+        self.daemon
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+            .map(Daemon::profiles)
+            .unwrap_or_default()
+    }
+
+    // --- analytics -----------------------------------------------------------
+
+    /// The app's telemetry setting changed: off stops what is waiting from
+    /// going, on lets it go again.
+    pub fn set_telemetry(&self, on: bool) {
+        self.telemetry.store(on, Ordering::SeqCst);
+    }
+
+    /// The app came to the front: counted for every profile, at most once
+    /// an hour.
+    pub fn client_opened(&self) {
+        for runtime in self.hosted() {
+            runtime.analytics().record_at_most_every(
+                CLIENT_OPENED_EVERY,
+                analytics::Event::ClientOpened {
+                    client: analytics::Client::Phone,
+                },
+            );
+        }
+    }
+
+    /// Records what only the app sees, on the profile it concerns, or on
+    /// every profile when it names none it hosts.
+    pub fn record(&self, profile: Option<ProfileId>, event: UsageEvent) {
+        let event = usage_event(event);
+        let hosted = self.hosted();
+        let named: Vec<_> = hosted
+            .iter()
+            .filter(|runtime| Some(runtime.profile()) == profile)
+            .collect();
+        let targets = if named.is_empty() {
+            hosted.iter().collect()
+        } else {
+            named
+        };
+        for runtime in targets {
+            runtime.analytics().record(event.clone());
+        }
+    }
+
+    /// Sends what is waiting, as the app leaves the screen and may be
+    /// suspended.
+    pub async fn flush_analytics(&self) {
+        if let Some(flusher) = &self.analytics {
+            flusher.flush(BACKGROUND_FLUSH).await;
+        }
     }
 
     fn runtime(&self, profile: ProfileId) -> Result<Arc<ProfileRuntime>, EmbeddedError> {
@@ -578,14 +690,7 @@ impl EmbeddedRuntime {
                 })
             })
             .collect();
-        let profiles = self
-            .daemon
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .as_ref()
-            .map(Daemon::profiles)
-            .unwrap_or_default();
-        for runtime in profiles {
+        for runtime in self.hosted() {
             if let Some(edge) = runtime.edge() {
                 edge.hand_over_discovered(found.clone());
             }

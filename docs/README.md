@@ -6,6 +6,8 @@
 
 - [How amux works](HOW_IT_WORKS.md) — for people using amux: devices, accounts, pairing, hosts, the relay,
   revocation, and agents that keep running while the daemon restarts.
+- [What amux sends](ANALYTICS.md) — the usage events a machine sends amux.sh, every property, what is never
+  sent, and how to turn it off.
 
 ## The system
 

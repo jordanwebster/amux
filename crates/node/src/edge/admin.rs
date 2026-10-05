@@ -47,6 +47,7 @@ struct PendingPair {
     pairing: PendingPairing,
     reachability: Reachability,
     via: PeerVia,
+    method: analytics::Method,
 }
 
 /// Every refusal a guessing peer could learn from reads the same.
@@ -59,6 +60,20 @@ fn opaque_pairing_status(error: Status) -> Status {
         tonic::Code::Unavailable | tonic::Code::Internal => error,
         tonic::Code::InvalidArgument if error.message().contains("SELF_PAIRING") => error,
         _ => invalid_pin(),
+    }
+}
+
+/// Why a pairing failed, as analytics reads a refusal.
+fn pairing_failure(status: &Status) -> analytics::PairingFailure {
+    use analytics::PairingFailure;
+    match status.code() {
+        tonic::Code::PermissionDenied => PairingFailure::WrongSecret,
+        tonic::Code::InvalidArgument if status.message().contains("SELF_PAIRING") => {
+            PairingFailure::SelfPairing
+        }
+        tonic::Code::Unavailable => PairingFailure::Unreachable,
+        tonic::Code::DeadlineExceeded => PairingFailure::TimedOut,
+        _ => PairingFailure::Other,
     }
 }
 
@@ -239,6 +254,13 @@ impl Edge {
             (method, ttl, secret)
         };
         audit::pairing_start(method);
+        self.analytics.record(analytics::Event::PairingStarted {
+            role: analytics::Role::Offerer,
+            method: match method {
+                "qr" => analytics::Method::Qr,
+                _ => analytics::Method::Pin,
+            },
+        });
         Ok(StartPairingResponse {
             identity: Some(PairingIdentity {
                 expires_at_unix_ms: 0,
@@ -282,6 +304,34 @@ impl Edge {
     pub async fn begin_pair(
         &self,
         request: BeginPairRequest,
+    ) -> Result<PendingPairResponse, Status> {
+        let method = match &request.secret {
+            Some(wire::begin_pair_request::Secret::QrSecret(_)) => analytics::Method::Qr,
+            _ => analytics::Method::Pin,
+        };
+        self.analytics.record(analytics::Event::PairingStarted {
+            role: analytics::Role::Joiner,
+            method,
+        });
+        let begun = self.reach_pairing_host(request, method).await;
+        if let Err(status) = &begun {
+            self.pairing_failed(method, status);
+        }
+        begun
+    }
+
+    fn pairing_failed(&self, method: analytics::Method, status: &Status) {
+        self.analytics.record(analytics::Event::PairingFailed {
+            role: analytics::Role::Joiner,
+            method,
+            reason: pairing_failure(status),
+        });
+    }
+
+    async fn reach_pairing_host(
+        &self,
+        request: BeginPairRequest,
+        method: analytics::Method,
     ) -> Result<PendingPairResponse, Status> {
         if self.trust_gate.is_closed() {
             return Err(Status::failed_precondition("profile is unavailable"));
@@ -444,6 +494,7 @@ impl Edge {
                     pairing: pending,
                     reachability,
                     via,
+                    method,
                 },
             );
         }
@@ -471,6 +522,23 @@ impl Edge {
     /// key, and this side dials the peer at the route pairing found.
     pub async fn confirm_pair(&self, token: &[u8]) -> Result<PeerEntry, Status> {
         let pending = self.take_pending(token)?;
+        let method = pending.method;
+        let confirmed = self.confirm_pending(pending).await;
+        match &confirmed {
+            Ok(host) => self.analytics.record(analytics::Event::PairingSucceeded {
+                role: analytics::Role::Joiner,
+                method,
+                remote_host: *host,
+            }),
+            Err(status) => self.pairing_failed(method, status),
+        }
+        let host = confirmed?;
+        self.peer_entry(PeerRef {
+            identifier: Some(wire::peer_ref::Identifier::HostId(host.as_bytes().to_vec())),
+        })
+    }
+
+    async fn confirm_pending(&self, pending: PendingPair) -> Result<HostId, Status> {
         let peer = tokio::time::timeout(PAIR_INITIATOR_TIMEOUT, pending.pairing.confirm())
             .await
             .map_err(|_| invalid_pin())?
@@ -484,13 +552,16 @@ impl Edge {
         };
         self.commit_peer(peer, Some(pending.reachability), method)
             .await?;
-        self.peer_entry(PeerRef {
-            identifier: Some(wire::peer_ref::Identifier::HostId(host.as_bytes().to_vec())),
-        })
+        Ok(host)
     }
 
     pub async fn abandon_pair(&self, token: &[u8]) -> Result<(), Status> {
         let pending = self.take_pending(token)?;
+        self.analytics.record(analytics::Event::PairingFailed {
+            role: analytics::Role::Joiner,
+            method: pending.method,
+            reason: analytics::PairingFailure::Abandoned,
+        });
         tokio::time::timeout(PAIR_INITIATOR_TIMEOUT, pending.pairing.abandon())
             .await
             .map_err(|_| invalid_pin())?
@@ -531,6 +602,13 @@ impl Edge {
                 })
             })
             .transpose()?;
+        // The side that dialled knows how to reach the other; SSH pairings
+        // reach the daemon only once the exchange worked, so a start and
+        // its success are counted together.
+        let role = match reachability {
+            Some(_) => analytics::Role::Joiner,
+            None => analytics::Role::Offerer,
+        };
         self.commit_peer(
             SshPairingPeer {
                 host_id: host,
@@ -540,7 +618,16 @@ impl Edge {
             reachability,
             "ssh",
         )
-        .await
+        .await?;
+        let method = analytics::Method::Ssh;
+        self.analytics
+            .record(analytics::Event::PairingStarted { role, method });
+        self.analytics.record(analytics::Event::PairingSucceeded {
+            role,
+            method,
+            remote_host: host,
+        });
+        Ok(())
     }
 
     /// Commits trust in a peer and dials it at the route that proved it.

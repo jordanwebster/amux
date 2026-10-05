@@ -91,6 +91,7 @@ pub fn run_daemon(config: &InstallationConfig, pipe: Option<node::InheritedPipe>
             daemon_log: Some(log),
             front_door: Some(config.front_door_socket.clone()),
             edge: edge_options(config),
+            analytics: telemetry(config),
         };
         let pipe = pipe
             .map(node::InheritedPipe::into_pipe)
@@ -117,6 +118,39 @@ pub fn run_daemon(config: &InstallationConfig, pipe: Option<node::InheritedPipe>
         daemon.shutdown().await.context("shutting down")?;
         Ok(())
     })
+}
+
+/// Whether the daemon sends product analytics, and where: only a published
+/// build or one `AMUX_ANALYTICS_URL` points somewhere sends, only while the
+/// installation's `telemetry` setting is on, and never under `DO_NOT_TRACK`.
+fn telemetry(config: &InstallationConfig) -> node::Telemetry {
+    if config.telemetry == Switch::Off {
+        return node::Telemetry::Off;
+    }
+    let Some(endpoint) = analytics::Endpoint::resolve(node::release::is_published()) else {
+        return node::Telemetry::Off;
+    };
+    // Read again before every upload, so `amux config telemetry off` stops
+    // a running daemon at once. A file that no longer reads sends nothing.
+    let path = config
+        .path
+        .clone()
+        .unwrap_or_else(InstallationConfig::default_path);
+    let gate = Arc::new(move || match InstallationConfig::from_file(&path) {
+        Ok(config) => config.telemetry == Switch::On,
+        Err(settings::ConfigError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            true
+        }
+        Err(_) => false,
+    });
+    node::Telemetry::Upload {
+        endpoint,
+        channel: match config.channel {
+            settings::Channel::Stable => analytics::Channel::Stable,
+            settings::Channel::Preview => analytics::Channel::Preview,
+        },
+        gate,
+    }
 }
 
 /// What each profile serves on the network: a LAN listener, discovery in
