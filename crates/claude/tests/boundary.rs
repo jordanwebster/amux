@@ -20,7 +20,9 @@ fn modules(dir: &str) -> Vec<String> {
 #[test]
 fn the_crate_carries_transport_and_no_session_host() {
     assert!(
-        !Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sdk").exists(),
+        !Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/sdk")
+            .exists(),
         "a stream client belongs beside the stream's users, not in the host crate"
     );
     assert_eq!(
