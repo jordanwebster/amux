@@ -23,7 +23,7 @@ tagged_enum! {
         "webSearch" => WebSearch(WebSearchItem),
         "imageView" => ImageView(ImageViewItem),
         "sleep" => Sleep(IdItem),
-        "imageGeneration" => ImageGeneration(IdItem),
+        "imageGeneration" => ImageGeneration(ImageGenerationItem),
         "enteredReviewMode" => EnteredReviewMode(ReviewItem),
         "exitedReviewMode" => ExitedReviewMode(ReviewItem),
         "contextCompaction" => ContextCompaction(IdItem),
@@ -39,7 +39,6 @@ impl ThreadItem {
             Self::HookPrompt(item)
             | Self::SubAgentActivity(item)
             | Self::Sleep(item)
-            | Self::ImageGeneration(item)
             | Self::ContextCompaction(item)
             | Self::FunctionCallOutput(item) => &item.id,
             Self::AgentMessage(item) | Self::Plan(item) => &item.id,
@@ -51,6 +50,7 @@ impl ThreadItem {
             Self::CollabAgentToolCall(item) => &item.id,
             Self::WebSearch(item) => &item.id,
             Self::ImageView(item) => &item.id,
+            Self::ImageGeneration(item) => &item.id,
             Self::EnteredReviewMode(item) | Self::ExitedReviewMode(item) => &item.id,
             Self::Unknown(object) => object.get("id").and_then(Value::as_str).unwrap_or(""),
         }
@@ -247,6 +247,8 @@ pub struct McpToolCallItem {
     pub error: Option<McpToolCallError>,
     #[serde(default)]
     pub read_only_hint: Option<bool>,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -254,9 +256,20 @@ pub struct McpToolCallItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct McpToolCallResult {
     /// MCP content blocks.
-    pub content: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<Value>>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+impl McpToolCallResult {
+    /// The text of each content block that has some.
+    pub fn texts(&self) -> impl Iterator<Item = &str> {
+        self.content
+            .iter()
+            .flatten()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -270,6 +283,9 @@ pub struct McpToolCallError {
 #[serde(rename_all = "camelCase")]
 pub struct DynamicToolCallItem {
     pub id: String,
+    /// The namespace amux gave the tool, when it gave one.
+    #[serde(default)]
+    pub namespace: Option<String>,
     pub tool: String,
     pub status: ToolStatus,
     /// The tool's arguments, as the model wrote them.
@@ -278,6 +294,8 @@ pub struct DynamicToolCallItem {
     pub content_items: Option<Vec<ToolOutputContent>>,
     #[serde(default)]
     pub success: Option<bool>,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -381,6 +399,19 @@ pub struct WebPageFind {
 pub struct ImageViewItem {
     pub id: String,
     pub path: String,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationItem {
+    pub id: String,
+    #[serde(default)]
+    pub status: String,
+    /// Where Codex saved the image, once it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_path: Option<String>,
     #[serde(flatten)]
     pub extra: Extra,
 }

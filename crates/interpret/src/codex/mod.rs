@@ -246,8 +246,8 @@ fn item_body(kind: codex_item::Kind) -> Vec<u8> {
 }
 
 /// A request id as an ask key: the JSON the server sent.
-fn ask_key(id: &Value) -> String {
-    id.to_string()
+fn ask_key(id: &codex_protocol::RequestId) -> String {
+    serde_json::to_string(id).expect("a request id serializes")
 }
 
 impl State {

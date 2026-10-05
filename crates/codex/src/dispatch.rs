@@ -376,10 +376,7 @@ impl ServerInner {
             ServerMessage::Unknown(unknown) => {
                 // A request this client cannot read can never be answered;
                 // refusing it keeps Codex from waiting on it.
-                let id = serde_json::from_str::<Envelope>(unknown.raw.get())
-                    .ok()
-                    .and_then(|envelope| envelope.id);
-                match id {
+                match unknown.id.clone() {
                     Some(id) => {
                         let method = unknown.method.clone().unwrap_or_default();
                         self.refuse(id, &method, -32601);
@@ -410,12 +407,6 @@ impl ServerInner {
             let _ = stdin_tx.send(line).await;
         });
     }
-}
-
-/// The id of a line, read when nothing else about it could be.
-#[derive(serde::Deserialize)]
-struct Envelope {
-    id: Option<RequestId>,
 }
 
 #[cfg(test)]

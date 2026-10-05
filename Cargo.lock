@@ -1948,6 +1948,7 @@ dependencies = [
  "attachments",
  "base64 0.22.1",
  "chrono",
+ "codex-protocol",
  "prost",
  "prost-types",
  "redaction",

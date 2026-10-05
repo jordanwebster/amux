@@ -227,6 +227,12 @@ pub struct ItemNotification {
     pub thread_id: String,
     pub turn_id: String,
     pub item: ThreadItem,
+    /// When the item started; on `item/started`, from Codex 0.157.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<i64>,
+    /// When the item ended; on `item/completed`, from Codex 0.157.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at_ms: Option<i64>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -289,6 +295,10 @@ pub struct AutoApprovalReview {
     pub target_item_id: Option<String>,
     pub review: Review,
     pub action: ReviewAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at_ms: Option<i64>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -385,6 +395,9 @@ pub struct McpServerStatusUpdated {
     pub status: McpServerStartupState,
     #[serde(default)]
     pub error: Option<String>,
+    /// Why it failed, when Codex knows: `reauthenticationRequired`.
+    #[serde(default)]
+    pub failure_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
     #[serde(flatten)]
@@ -447,6 +460,9 @@ pub struct CommandApprovalParams {
     pub thread_id: String,
     pub turn_id: String,
     pub item_id: String,
+    /// When Codex started asking, from Codex 0.157.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -487,8 +503,26 @@ pub enum CommandDecision {
     },
     #[serde(rename_all = "camelCase")]
     ApplyNetworkPolicyAmendment {
-        apply_network_policy_amendment: Extra,
+        apply_network_policy_amendment: NetworkPolicyChoice,
     },
+}
+
+/// A persistent network rule an approval can add. Written in snake case,
+/// unlike the rest of the protocol.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NetworkPolicyChoice {
+    pub network_policy_amendment: NetworkPolicyAmendment,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NetworkPolicyAmendment {
+    pub host: String,
+    /// `allow` or `deny`.
+    pub action: String,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 /// The rule an approval adds: commands starting with these words run
@@ -529,6 +563,7 @@ pub struct PermissionsApprovalParams {
     pub thread_id: String,
     pub turn_id: String,
     pub item_id: String,
+    #[serde(default)]
     pub cwd: String,
     #[serde(default)]
     pub reason: Option<String>,
@@ -640,7 +675,7 @@ pub struct ElicitationParams {
     pub extra: Extra,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ElicitationMeta {
     /// How long an acceptance may last: "session", "always".
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -666,17 +701,23 @@ pub struct InitializeResponse {
     pub extra: Extra,
 }
 
-/// The answer to `thread/start` and `thread/resume`.
+/// The answer to `thread/start` and `thread/resume`. Only the thread is
+/// required: the agent's thread starts on this answer, so a setting Codex
+/// stops sending must not stop it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadResponse {
     pub thread: Thread,
+    #[serde(default)]
     pub model: String,
+    #[serde(default)]
     pub cwd: String,
-    pub approval_policy: AskForApproval,
+    #[serde(default)]
+    pub approval_policy: Option<AskForApproval>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
-    pub sandbox: SandboxPolicy,
+    #[serde(default)]
+    pub sandbox: Option<SandboxPolicy>,
     #[serde(default)]
     pub reasoning_effort: Option<ReasoningEffort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

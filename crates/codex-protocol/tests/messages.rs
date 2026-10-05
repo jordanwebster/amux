@@ -217,7 +217,10 @@ fn completed_items_read_their_outcomes() {
         panic!("not an MCP call");
     };
     assert_eq!(call.status, ToolStatus::Completed);
-    assert_eq!(call.result.expect("result").content[0]["text"], "BLUE");
+    assert_eq!(
+        call.result.expect("result").texts().collect::<Vec<_>>(),
+        ["BLUE"]
+    );
 
     let ThreadItem::DynamicToolCall(call) = completed_item("dynamic_tools", "dynamicToolCall")
     else {

@@ -1,3 +1,24 @@
+2026-10-06 — **The Codex interpreter reads Codex through the protocol types.**
+Every line Codex's server sends now reaches the interpreter as a decoded
+`codex_protocol::ServerMessage`; the string-keyed lookups into
+`serde_json::Value` are gone from its fact handling, and answers to amux's
+own requests are read as their response types. A line the protocol crate
+cannot type (`Unknown`) takes the path an unreadable line took before: a
+request is refused with an error and drawn as unrecognized, a notification
+from this thread is drawn as unrecognized, one from a child thread is
+dropped. `Unknown` now carries the line's id, so the `codex` client no
+longer re-parses the raw line to refuse a request. The protocol types
+gained the fields the interpreter reads that were still untyped (item
+start and end times, turn and tool-call durations, the thread's CLI
+version and fork origin, a tool server's failure reason, a dynamic tool's
+namespace, network-rule amendments, the generated image's path), and
+tolerate the fields the interpreter's authored facts leave out; the
+handshake's thread answer requires only the thread, so a setting Codex
+stops sending cannot keep the agent's thread from starting. The form
+schema of an elicitation is still copied from the line as written, since
+decoding loses the key order the form asks in. Every interpreter golden
+is unchanged.
+
 2026-10-06 — **Claude's typed control answers write what amux writes.**
 The protocol's permission answer wrote `null` for every field amux left
 out, and its hook answer serialized field names and an event tag Claude

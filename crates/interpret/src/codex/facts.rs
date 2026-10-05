@@ -1,5 +1,20 @@
 //! What the app server writes: responses, requests and notifications.
 
+use codex_protocol::items::{
+    CommandAction, DynamicToolCallItem, McpToolCallItem, MessagePhase, PatchChangeKind, ThreadItem,
+    UserInput, WebSearchAction,
+};
+use codex_protocol::server::{
+    AccountReadResponse, AutoApprovalReview, CommandApprovalParams, CommandDecision,
+    Decision as Offered, ElicitationParams, ErrorNotification, McpServerStatusUpdated,
+    ModelListResponse, SkillsListResponse, ThreadResponse, TurnStartResponse,
+};
+use codex_protocol::thread::{
+    AskForApproval, CodexErrorInfo, RateLimitSnapshot, ReasoningEffort, SandboxPolicy, TurnError,
+};
+use codex_protocol::{
+    RequestId, RpcError, ServerMessage, ServerNotification, ServerRequest, Thread, Unknown,
+};
 use serde_json::{Value, json};
 use wire::{
     AccessGrant, ApiError, CodexAsk, CommandApproval, Decision, DecisionOutcome,
@@ -14,70 +29,55 @@ use super::{
     AskMeta, InjectConsumption, Request, State, Streamed, WorkState, ask_key, item_body, work_ask,
     work_complete,
 };
-use crate::claude_common::{compact_json, text};
+use crate::claude_common::compact_json;
 use crate::shared::json_as_written;
 use crate::{
     AMUX_TOOL_SERVER, Channel, Effect, Emit, Fact, ItemDraft, SendOutcome, ask_item, is_send_tool,
     is_status_tool, sent_message, status_working_on,
 };
 
-/// Notifications that carry nothing a client draws, or that another fact
-/// already covers.
-const QUIET: &[&str] = &[
-    "thread/status/changed",
-    "thread/name/updated",
-    "thread/compacted",
-    "thread/archived",
-    "thread/unarchived",
-    "remoteControl/status/changed",
-    "serverRequest/resolved",
-    "guardianWarning",
-    "warning",
-    "item/fileChange/outputDelta",
-    "item/commandExecution/terminalInteraction",
+/// The answers a command approval offers when Codex names none.
+const DEFAULT_DECISIONS: [Offered; 4] = [
+    Offered::Accept,
+    Offered::AcceptForSession,
+    Offered::Decline,
+    Offered::Cancel,
 ];
 
-const DEFAULT_DECISIONS: &[&str] = &["accept", "acceptForSession", "decline", "cancel"];
-
-fn int(value: &Value, key: &str) -> Option<i64> {
-    value.get(key).and_then(Value::as_i64)
+fn default_decisions() -> Vec<CommandDecision> {
+    DEFAULT_DECISIONS
+        .into_iter()
+        .map(CommandDecision::Plain)
+        .collect()
 }
 
-fn opt_text(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
+/// A string that says something.
+fn some(text: &str) -> Option<String> {
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
-fn strings(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default()
+fn some_of(text: Option<&str>) -> Option<String> {
+    text.and_then(some)
 }
 
 /// A sandbox policy as the mode name inputs use.
-fn sandbox_mode(policy: &Value) -> Option<String> {
-    let kind = match policy {
-        Value::String(kind) => kind.as_str(),
-        other => other.get("type")?.as_str()?,
-    };
-    Some(
-        match kind {
-            "readOnly" => "read-only",
-            "workspaceWrite" => "workspace-write",
-            "dangerFullAccess" => "danger-full-access",
-            other => other,
-        }
-        .to_owned(),
-    )
+fn sandbox_mode(policy: &SandboxPolicy) -> Option<String> {
+    match policy.mode() {
+        Some(mode) => Some(mode.as_str().to_owned()),
+        None => some(policy.kind()),
+    }
+}
+
+/// An approval policy as inputs name it; a granular policy has no name.
+fn approval_name(policy: &AskForApproval) -> Option<String> {
+    match policy {
+        AskForApproval::Named(policy) => some(policy.as_str()),
+        AskForApproval::Granular { .. } => None,
+    }
+}
+
+fn effort_name(effort: Option<&ReasoningEffort>) -> Option<String> {
+    some_of(effort.map(ReasoningEffort::as_str))
 }
 
 fn tool_state(status: &str) -> ToolState {
@@ -91,25 +91,15 @@ fn tool_state(status: &str) -> ToolState {
 }
 
 /// An offered approval decision as the wire's, and the response it sends.
-fn offered_decision(offered: &Value) -> Option<(Decision, String)> {
+fn offered_decision(offered: &CommandDecision) -> Option<(Decision, String)> {
     let decision = match offered {
-        Value::String(name) => match name.as_str() {
-            "accept" => Decision::Approve,
-            "acceptForSession" => Decision::ApproveSession,
-            "decline" => Decision::Deny,
-            "cancel" => Decision::Abort,
-            _ => return None,
-        },
-        Value::Object(object) => {
-            if object.contains_key("acceptWithExecpolicyAmendment") {
-                Decision::ApproveSimilar
-            } else if object.contains_key("applyNetworkPolicyAmendment") {
-                Decision::ApproveNetwork
-            } else {
-                return None;
-            }
-        }
-        _ => return None,
+        CommandDecision::Plain(Offered::Accept) => Decision::Approve,
+        CommandDecision::Plain(Offered::AcceptForSession) => Decision::ApproveSession,
+        CommandDecision::Plain(Offered::Decline) => Decision::Deny,
+        CommandDecision::Plain(Offered::Cancel) => Decision::Abort,
+        CommandDecision::Plain(Offered::Other(_)) => return None,
+        CommandDecision::AcceptWithExecpolicyAmendment { .. } => Decision::ApproveSimilar,
+        CommandDecision::ApplyNetworkPolicyAmendment { .. } => Decision::ApproveNetwork,
     };
     Some((decision, json!({ "decision": offered }).to_string()))
 }
@@ -117,37 +107,21 @@ fn offered_decision(offered: &Value) -> Option<(Decision, String)> {
 /// The skills `skills/list` answers, across every folder it lists; a skill
 /// the person turned off is left out.
 fn skills(result: &Value) -> Vec<OfferedCommand> {
-    result
-        .get("data")
-        .and_then(Value::as_array)
+    let Ok(listed) = codex_protocol::result::<SkillsListResponse>(result) else {
+        return Vec::new();
+    };
+    listed
+        .data
         .into_iter()
-        .flatten()
-        .filter_map(|folder| folder.get("skills").and_then(Value::as_array))
-        .flatten()
-        .filter(|skill| skill.get("enabled").and_then(Value::as_bool) != Some(false))
+        .flat_map(|folder| folder.skills)
+        .filter(|skill| skill.enabled)
         .map(|skill| OfferedCommand {
-            name: text(skill, "name").to_owned(),
-            description: text(skill, "description").to_owned(),
+            name: skill.name,
+            description: skill.description,
             argument_hint: String::new(),
-            source: text(skill, "scope").to_owned(),
+            source: skill.scope,
         })
         .collect()
-}
-
-/// Every string under a `host` key.
-fn hosts(value: &Value, out: &mut Vec<String>) {
-    match value {
-        Value::Object(object) => {
-            for (key, value) in object {
-                match (key.as_str(), value) {
-                    ("host", Value::String(host)) => out.push(host.clone()),
-                    _ => hosts(value, out),
-                }
-            }
-        }
-        Value::Array(items) => items.iter().for_each(|item| hosts(item, out)),
-        _ => {}
-    }
 }
 
 /// "Reconnecting... 2/5" as attempt and maximum.
@@ -166,22 +140,35 @@ fn attempts(message: &str) -> (u32, u32) {
 }
 
 /// Codex's typed error kind: the name of its error-info variant.
-fn error_kind(info: &Value) -> String {
-    match info {
-        Value::String(kind) => kind.clone(),
-        Value::Object(object) => object.keys().next().cloned().unwrap_or_default(),
-        _ => String::new(),
+fn error_kind(error: &TurnError) -> String {
+    error
+        .codex_error_info
+        .as_ref()
+        .map(|info| info.kind().to_owned())
+        .unwrap_or_default()
+}
+
+fn unauthorized(error: &TurnError) -> bool {
+    match &error.codex_error_info {
+        Some(CodexErrorInfo::Named(kind)) => kind == "unauthorized",
+        Some(info) => info.http_status_code() == Some(401),
+        None => false,
     }
 }
 
-fn unauthorized(error: &Value) -> bool {
-    let info = error.get("codexErrorInfo").unwrap_or(&Value::Null);
-    info.as_str() == Some("unauthorized")
-        || info
-            .as_object()
-            .and_then(|object| object.values().next())
-            .and_then(|inner| int(inner, "httpStatusCode"))
-            == Some(401)
+/// What an error says: its details when it has them, else its headline.
+fn error_message(error: &TurnError) -> String {
+    some_of(error.additional_details.as_deref()).unwrap_or_else(|| error.message.clone())
+}
+
+/// The thread a notification is about, for telling a child thread's
+/// activity from this one's. `thread/started` is read whichever thread it
+/// names: the thread it starts may be this agent's own.
+fn about_thread(notification: &ServerNotification) -> Option<&str> {
+    match notification {
+        ServerNotification::ThreadStarted(_) => None,
+        notification => notification.thread_id(),
+    }
 }
 
 impl State {
@@ -193,19 +180,58 @@ impl State {
                 "a fact on a channel Codex does not use",
             );
         }
-        let Ok(message) = serde_json::from_slice::<Value>(&fact.payload) else {
-            return self.unrecognized(emit, "unparsed", "a line that is not JSON");
-        };
-        let params = message.get("params").cloned().unwrap_or(Value::Null);
-        match (
-            message.get("method").and_then(Value::as_str),
-            message.get("id"),
-        ) {
-            (Some(method), Some(id)) => {
-                self.server_request(emit, method, id, &params, &fact.payload)
+        let message = match codex_protocol::decode(&fact.payload) {
+            Ok(message) => message,
+            Err(_) if serde_json::from_slice::<serde::de::IgnoredAny>(&fact.payload).is_ok() => {
+                return self.unrecognized(emit, "message", "neither a request nor a response");
             }
-            (Some(method), None) => self.notification(emit, method, &params),
-            (None, Some(id)) => self.response(emit, id, &message),
+            Err(_) => return self.unrecognized(emit, "unparsed", "a line that is not JSON"),
+        };
+        match message {
+            ServerMessage::Request { id, request, .. } => {
+                self.server_request(emit, &id, request, &fact.payload)
+            }
+            ServerMessage::Notification { notification, .. } => {
+                self.notification(emit, notification)
+            }
+            ServerMessage::Response { id, result, .. } => self.response(emit, &id, result),
+            ServerMessage::Unknown(unknown) => self.unknown(emit, unknown),
+        }
+    }
+
+    /// A line this interpreter cannot read. A request is refused, so the
+    /// server does not wait on it; an answer it cannot read did not do what
+    /// was asked.
+    fn unknown(&mut self, emit: &mut Emit, unknown: Unknown) {
+        match (unknown.method.as_deref(), unknown.id.as_ref()) {
+            (Some(method), Some(id)) => {
+                emit.effect(crate::Effect::ProviderWrite(
+                    serde_json::to_vec(&json!({
+                        "id": id,
+                        "error": { "code": -32601, "message": format!("amux does not handle {method}") },
+                    }))
+                    .expect("json"),
+                ));
+                self.unrecognized(emit, method, "a request amux cannot answer");
+            }
+            (Some(method), None) => {
+                // A child thread's activity on the same server is its own.
+                if let (Some(ours), Some(theirs)) = (self.thread_id.as_deref(), unknown.thread_id())
+                    && ours != theirs
+                {
+                    return;
+                }
+                self.unrecognized(emit, method, "a notification amux does not read");
+            }
+            (None, Some(id)) => {
+                let refused = RpcError {
+                    code: 0,
+                    message: String::new(),
+                    data: None,
+                    extra: Default::default(),
+                };
+                self.response(emit, id, Err(refused));
+            }
             (None, None) => self.unrecognized(emit, "message", "neither a request nor a response"),
         }
     }
@@ -245,25 +271,37 @@ impl State {
 
     // --- responses -------------------------------------------------------
 
-    fn response(&mut self, emit: &mut Emit, id: &Value, message: &Value) {
-        let result = message.get("result").unwrap_or(&Value::Null);
-        let error = message.get("error");
-        let Some(request) = id.as_str().and_then(|id| self.requests.remove(id)) else {
+    fn response(&mut self, emit: &mut Emit, id: &RequestId, result: Result<Value, RpcError>) {
+        let tracked = match id {
+            RequestId::String(id) => self
+                .requests
+                .remove(id)
+                .map(|request| (id.clone(), request)),
+            RequestId::Integer(_) => None,
+        };
+        let Some((id, request)) = tracked else {
             // The agent process's own handshake.
-            if let Some(thread) = result.get("thread") {
-                self.thread_started(emit, thread, Some(result));
+            let Ok(result) = result else {
+                return;
+            };
+            if let Ok(response) = codex_protocol::result::<ThreadResponse>(&result) {
+                self.thread_started(emit, &response.thread, Some(&response));
                 self.list_offers(emit);
-            } else if let Some(account) = result.get("account") {
-                self.sign_in = Some(match account {
-                    Value::Null => SignIn {
+            } else if let Ok(response) = codex_protocol::result::<AccountReadResponse>(&result) {
+                self.sign_in = Some(match response.account {
+                    None => SignIn {
                         state: SignInState::SignedOut as i32,
                         ..Default::default()
                     },
-                    account => SignIn {
+                    Some(account) => SignIn {
                         state: SignInState::SignedIn as i32,
-                        account: opt_text(account, "email")
-                            .or_else(|| opt_text(account, "type"))
-                            .unwrap_or_default(),
+                        account: match &account {
+                            codex_protocol::server::Account::Chatgpt(chatgpt) => {
+                                some_of(chatgpt.email.as_deref())
+                            }
+                            _ => None,
+                        }
+                        .unwrap_or_else(|| account.kind().to_owned()),
                         message: String::new(),
                     },
                 });
@@ -271,59 +309,63 @@ impl State {
             return;
         };
         if let Request::Models { page, listed } = request {
-            return self.models_listed(emit, page, listed, error.is_none().then_some(result));
+            return self.models_listed(emit, page, listed, result.ok().as_ref());
         }
         if let Request::Skills = request {
-            if error.is_none() {
+            if let Ok(result) = &result {
                 self.commands = skills(result);
             }
             return;
         }
-        if let Some(error) = error {
-            // A steer that lost the race with the turn's end is not a
-            // failure: the prompt waits for the next turn.
-            if let Request::Steer { input_id } = &request {
-                self.shared.steer_refused(input_id);
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                // A steer that lost the race with the turn's end is not a
+                // failure: the prompt waits for the next turn.
+                if let Request::Steer { input_id } = &request {
+                    self.shared.steer_refused(input_id);
+                    return;
+                }
+                self.error_item(
+                    emit,
+                    format!("error:rpc:{id}"),
+                    ApiError {
+                        error_kind: "request".into(),
+                        message: error.message,
+                        ..Default::default()
+                    },
+                );
+                match request {
+                    Request::Turn { consumes } => {
+                        // An interrupt asked for while this turn was starting
+                        // had this turn in mind, never the next one.
+                        self.interrupt_pending = false;
+                        self.shared.reflect_prompt();
+                        self.shared.turn_abandoned();
+                        // Nothing will consume them now.
+                        for envelope in consumes {
+                            self.shared.message_consumed(&envelope);
+                        }
+                    }
+                    Request::Compact => {
+                        self.interrupt_pending = false;
+                        self.shared.turn_abandoned();
+                    }
+                    Request::Steer { .. } => {}
+                    Request::Inject { envelope_id, .. } => {
+                        self.shared.message_consumed(&envelope_id);
+                    }
+                    Request::Interrupt | Request::Models { .. } | Request::Skills => {}
+                }
                 return;
             }
-            let key = format!("error:rpc:{}", id.as_str().unwrap_or_default());
-            self.error_item(
-                emit,
-                key,
-                ApiError {
-                    error_kind: "request".into(),
-                    message: text(error, "message").to_owned(),
-                    ..Default::default()
-                },
-            );
-            match request {
-                Request::Turn { consumes } => {
-                    // An interrupt asked for while this turn was starting
-                    // had this turn in mind, never the next one.
-                    self.interrupt_pending = false;
-                    self.shared.reflect_prompt();
-                    self.shared.turn_abandoned();
-                    // Nothing will consume them now.
-                    for envelope in consumes {
-                        self.shared.message_consumed(&envelope);
-                    }
-                }
-                Request::Compact => {
-                    self.interrupt_pending = false;
-                    self.shared.turn_abandoned();
-                }
-                Request::Steer { .. } => {}
-                Request::Inject { envelope_id, .. } => {
-                    self.shared.message_consumed(&envelope_id);
-                }
-                Request::Interrupt | Request::Models { .. } | Request::Skills => {}
-            }
-            return;
-        }
+        };
         match request {
             Request::Turn { consumes } => {
                 if self.active_turn.is_none() {
-                    self.active_turn = result.get("turn").and_then(|turn| opt_text(turn, "id"));
+                    self.active_turn = codex_protocol::result::<TurnStartResponse>(&result)
+                        .ok()
+                        .and_then(|response| some(&response.turn.id));
                 }
                 for envelope in consumes {
                     self.shared.message_consumed(&envelope);
@@ -368,28 +410,30 @@ impl State {
         let Some(page) = page else {
             return;
         };
-        let data = page.get("data").and_then(Value::as_array);
-        listed.extend(
-            data.into_iter()
-                .flatten()
-                .filter(|model| model.get("hidden").and_then(Value::as_bool) != Some(true))
-                .map(|model| OfferedModel {
-                    value: text(model, "id").to_owned(),
-                    display_name: text(model, "displayName").to_owned(),
-                    description: text(model, "description").to_owned(),
-                    efforts: model
-                        .get("supportedReasoningEfforts")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|effort| opt_text(effort, "reasoningEffort"))
-                        .collect(),
-                    default_effort: opt_text(model, "defaultReasoningEffort"),
-                    resolved_model: text(model, "model").to_owned(),
-                }),
-        );
-        match opt_text(page, "nextCursor") {
-            Some(cursor) if data.is_some_and(|data| !data.is_empty()) => {
+        let page = codex_protocol::result::<ModelListResponse>(page).ok();
+        let data = page
+            .as_ref()
+            .map(|page| page.data.as_slice())
+            .unwrap_or_default();
+        listed.extend(data.iter().filter(|model| !model.hidden).map(|model| {
+            OfferedModel {
+                value: model.id.clone(),
+                display_name: model.display_name.clone(),
+                description: model.description.clone(),
+                efforts: model
+                    .supported_reasoning_efforts
+                    .iter()
+                    .filter_map(|effort| some(effort.reasoning_effort.as_str()))
+                    .collect(),
+                default_effort: some(model.default_reasoning_effort.as_str()),
+                resolved_model: model.model.clone(),
+            }
+        }));
+        match page
+            .as_ref()
+            .and_then(|page| some_of(page.next_cursor.as_deref()))
+        {
+            Some(cursor) if !data.is_empty() => {
                 self.list_models(emit, number + 1, Some(cursor), listed)
             }
             _ => self.models = listed,
@@ -436,22 +480,27 @@ impl State {
     }
 
     /// The thread, from the handshake's response or `thread/started`.
-    fn thread_started(&mut self, emit: &mut Emit, thread: &Value, response: Option<&Value>) {
-        let Some(id) = opt_text(thread, "id") else {
+    fn thread_started(
+        &mut self,
+        emit: &mut Emit,
+        thread: &Thread,
+        response: Option<&ThreadResponse>,
+    ) {
+        let Some(id) = some(&thread.id) else {
             return;
         };
         if let Some(response) = response {
-            if let Some(model) = opt_text(response, "model") {
+            if let Some(model) = some(&response.model) {
                 self.launch_model.get_or_insert(model.clone());
                 self.model = Some(model);
             }
-            if let Some(policy) = opt_text(response, "approvalPolicy") {
+            if let Some(policy) = response.approval_policy.as_ref().and_then(approval_name) {
                 self.approval = Some(policy);
             }
-            if let Some(sandbox) = response.get("sandbox").and_then(sandbox_mode) {
+            if let Some(sandbox) = response.sandbox.as_ref().and_then(sandbox_mode) {
                 self.sandbox = Some(sandbox);
             }
-            if let Some(effort) = opt_text(response, "reasoningEffort") {
+            if let Some(effort) = effort_name(response.reasoning_effort.as_ref()) {
                 self.effort = Some(effort);
             }
         }
@@ -466,18 +515,13 @@ impl State {
             return;
         }
         self.thread_id = Some(id);
-        if let Some(version) = opt_text(thread, "cliVersion") {
+        if let Some(version) = some_of(thread.cli_version.as_deref()) {
             self.version = Some(version);
         }
         self.shared.provider_started();
-        let kind = if opt_text(thread, "forkedFromId").is_some() {
+        let kind = if some_of(thread.forked_from_id.as_deref()).is_some() {
             wire::BoundaryKind::Forked
-        } else if self.incarnation > 1
-            || thread
-                .get("turns")
-                .and_then(Value::as_array)
-                .is_some_and(|turns| !turns.is_empty())
-        {
+        } else if self.incarnation > 1 || !thread.turns.is_empty() {
             wire::BoundaryKind::Resumed
         } else {
             wire::BoundaryKind::Started
@@ -491,77 +535,18 @@ impl State {
     fn server_request(
         &mut self,
         emit: &mut Emit,
-        method: &str,
-        id: &Value,
-        params: &Value,
+        id: &RequestId,
+        request: ServerRequest,
         payload: &[u8],
     ) {
         let key = ask_key(id);
-        let item_id = text(params, "itemId").to_owned();
-        let (item_key, body, decisions) = match method {
-            "item/commandExecution/requestApproval" => {
-                if !self.works.contains_key(&item_id) {
-                    let at_ms = int(params, "startedAtMs").unwrap_or(self.shared.now_ms());
-                    self.works.insert(
-                        item_id.clone(),
-                        WorkState {
-                            at_ms,
-                            work: Some(Work {
-                                of: Some(work::Of::Command(wire::CommandWork {
-                                    command: text(params, "command").to_owned(),
-                                    cwd: text(params, "cwd").to_owned(),
-                                    ..Default::default()
-                                })),
-                                state: ToolState::Pending as i32,
-                                class: ToolClass::Consequential as i32,
-                                ..Default::default()
-                            }),
-                            text: String::new(),
-                            turn: text(params, "turnId").to_owned(),
-                        },
-                    );
-                    self.emit_work(emit, &item_id);
-                }
-                let mut network_hosts = Vec::new();
-                if let Some(context) = params.get("networkApprovalContext") {
-                    hosts(context, &mut network_hosts);
-                }
-                let mut offered = params
-                    .get("availableDecisions")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_else(|| DEFAULT_DECISIONS.iter().map(|d| json!(d)).collect());
-                // Codex honours decline even when its offer leaves it out, and
-                // a person must always be able to refuse a command.
-                if !offered.contains(&json!("decline")) {
-                    let at = offered
-                        .iter()
-                        .position(|decision| *decision == json!("cancel"))
-                        .unwrap_or(offered.len());
-                    offered.insert(at, json!("decline"));
-                }
-                for decision in &offered {
-                    if decision.get("applyNetworkPolicyAmendment").is_some() {
-                        hosts(decision, &mut network_hosts);
-                    }
-                }
-                network_hosts.dedup();
-                (
-                    item_id,
-                    codex_ask::Body::Command(CommandApproval {
-                        command: text(params, "command").to_owned(),
-                        cwd: text(params, "cwd").to_owned(),
-                        reason: text(params, "reason").to_owned(),
-                        allow_prefix: strings(params.get("proposedExecpolicyAmendment")),
-                        network_hosts,
-                    }),
-                    offered,
-                )
-            }
-            "item/fileChange/requestApproval" => {
+        let method = request.method();
+        let (item_key, body, decisions) = match request {
+            ServerRequest::CommandApproval(params) => self.command_approval(emit, params),
+            ServerRequest::FileChangeApproval(params) => {
                 let changes = match self
                     .works
-                    .get(&item_id)
+                    .get(&params.item_id)
                     .and_then(|state| state.work.as_ref())
                     .and_then(|work| work.of.as_ref())
                 {
@@ -569,80 +554,56 @@ impl State {
                     _ => Vec::new(),
                 };
                 (
-                    item_id,
+                    params.item_id,
                     codex_ask::Body::FileChange(FileChangeApproval {
-                        reason: text(params, "reason").to_owned(),
-                        grant_root: text(params, "grantRoot").to_owned(),
+                        reason: params.reason.unwrap_or_default(),
+                        grant_root: params.grant_root.unwrap_or_default(),
                         changes,
                     }),
-                    DEFAULT_DECISIONS.iter().map(|d| json!(d)).collect(),
+                    default_decisions(),
                 )
             }
-            "item/permissions/requestApproval" => {
-                let permissions = params.get("permissions").unwrap_or(&Value::Null);
-                let files = permissions.get("fileSystem").unwrap_or(&Value::Null);
-                let network = permissions.get("network").unwrap_or(&Value::Null);
-                let mut network_hosts = Vec::new();
-                hosts(network, &mut network_hosts);
+            ServerRequest::PermissionsApproval(params) => {
+                let files = params.permissions.file_system.unwrap_or_default();
+                let network = params.permissions.network.unwrap_or_default();
                 (
                     String::new(),
                     codex_ask::Body::Access(AccessGrant {
-                        reason: text(params, "reason").to_owned(),
-                        read: strings(files.get("read")),
-                        write: strings(files.get("write")),
-                        network: network
-                            .get("enabled")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                        network_hosts,
+                        reason: params.reason.unwrap_or_default(),
+                        read: files.read.unwrap_or_default(),
+                        write: files.write.unwrap_or_default(),
+                        network: network.enabled.unwrap_or(false),
+                        network_hosts: Vec::new(),
                     }),
                     Vec::new(),
                 )
             }
-            "item/tool/requestUserInput" => {
+            ServerRequest::RequestUserInput(params) => {
                 let mut shapes = Vec::new();
                 let questions = params
-                    .get("questions")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default()
-                    .iter()
+                    .questions
+                    .into_iter()
                     .map(|question| {
-                        let options = question
-                            .get("options")
-                            .and_then(Value::as_array)
-                            .cloned()
-                            .unwrap_or_default();
+                        let options = question.options.unwrap_or_default();
                         shapes.push((
-                            text(question, "id").to_owned(),
-                            options
-                                .iter()
-                                .map(|option| text(option, "label").to_owned())
-                                .collect(),
+                            question.id,
+                            options.iter().map(|option| option.label.clone()).collect(),
                         ));
                         Question {
-                            header: text(question, "header").to_owned(),
-                            question: text(question, "question").to_owned(),
+                            header: question.header,
+                            question: question.question,
                             multi_select: false,
                             options: options
-                                .iter()
+                                .into_iter()
                                 .map(|option| QuestionOption {
-                                    label: text(option, "label").to_owned(),
-                                    description: text(option, "description").to_owned(),
+                                    recommended: option.label.trim_end().ends_with("(Recommended)"),
+                                    label: option.label,
+                                    description: option.description,
                                     preview: String::new(),
-                                    recommended: text(option, "label")
-                                        .trim_end()
-                                        .ends_with("(Recommended)"),
                                 })
                                 .collect(),
-                            allow_other: question
-                                .get("isOther")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false),
-                            secret: question
-                                .get("isSecret")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false),
+                            allow_other: question.is_other.unwrap_or(false),
+                            secret: question.is_secret.unwrap_or(false),
                         }
                     })
                     .collect();
@@ -663,10 +624,10 @@ impl State {
                     },
                 );
             }
-            "mcpServer/elicitation/request" => {
+            ServerRequest::Elicitation(params) => {
                 return self.elicitation(emit, key, method, params, payload);
             }
-            "item/tool/call" => {
+            ServerRequest::ToolCall(_) => {
                 // Tools amux offers Codex are served by amux's tool server;
                 // a client-side tool is nothing this agent hosts.
                 return self.respond(
@@ -680,17 +641,6 @@ impl State {
                         }],
                     }),
                 );
-            }
-            _ => {
-                let id = serde_json::from_str::<Value>(&key).unwrap_or(Value::Null);
-                emit.effect(crate::Effect::ProviderWrite(
-                    serde_json::to_vec(&json!({
-                        "id": id,
-                        "error": { "code": -32601, "message": format!("amux does not handle {method}") },
-                    }))
-                    .expect("json"),
-                ));
-                return self.unrecognized(emit, method, "a request amux cannot answer");
             }
         };
         let (decisions, responses) = decisions
@@ -714,6 +664,75 @@ impl State {
                 at_ms: 0,
             },
         );
+    }
+
+    /// A command approval: the command's work, if Codex has not reported
+    /// it yet, and what may be answered.
+    fn command_approval(
+        &mut self,
+        emit: &mut Emit,
+        params: CommandApprovalParams,
+    ) -> (String, codex_ask::Body, Vec<CommandDecision>) {
+        let item_id = params.item_id;
+        let command = params.command.unwrap_or_default();
+        let cwd = params.cwd.unwrap_or_default();
+        if !self.works.contains_key(&item_id) {
+            let at_ms = params.started_at_ms.unwrap_or(self.shared.now_ms());
+            self.works.insert(
+                item_id.clone(),
+                WorkState {
+                    at_ms,
+                    work: Some(Work {
+                        of: Some(work::Of::Command(wire::CommandWork {
+                            command: command.clone(),
+                            cwd: cwd.clone(),
+                            ..Default::default()
+                        })),
+                        state: ToolState::Pending as i32,
+                        class: ToolClass::Consequential as i32,
+                        ..Default::default()
+                    }),
+                    text: String::new(),
+                    turn: params.turn_id,
+                },
+            );
+            self.emit_work(emit, &item_id);
+        }
+        let mut network_hosts = Vec::new();
+        if let Some(context) = params.network_approval_context {
+            network_hosts.push(context.host);
+        }
+        let mut offered = params.available_decisions.unwrap_or_else(default_decisions);
+        // Codex honours decline even when its offer leaves it out, and
+        // a person must always be able to refuse a command.
+        let decline = CommandDecision::Plain(Offered::Decline);
+        if !offered.contains(&decline) {
+            let at = offered
+                .iter()
+                .position(|decision| *decision == CommandDecision::Plain(Offered::Cancel))
+                .unwrap_or(offered.len());
+            offered.insert(at, decline);
+        }
+        for decision in &offered {
+            if let CommandDecision::ApplyNetworkPolicyAmendment {
+                apply_network_policy_amendment: choice,
+            } = decision
+            {
+                network_hosts.push(choice.network_policy_amendment.host.clone());
+            }
+        }
+        network_hosts.dedup();
+        (
+            item_id,
+            codex_ask::Body::Command(CommandApproval {
+                command,
+                cwd,
+                reason: params.reason.unwrap_or_default(),
+                allow_prefix: params.proposed_execpolicy_amendment.unwrap_or_default(),
+                network_hosts,
+            }),
+            offered,
+        )
     }
 
     /// Opens an ask; one that is the work gets its own item, which the ask
@@ -751,14 +770,16 @@ impl State {
         emit: &mut Emit,
         key: String,
         method: &str,
-        params: &Value,
+        params: ElicitationParams,
         payload: &[u8],
     ) {
-        let meta = params.get("_meta").unwrap_or(&Value::Null);
-        let server = text(params, "serverName").to_owned();
-        let approval = text(meta, "codex_approval_kind") == "mcp_tool_call";
-        let session = strings(meta.get("persist"))
+        let meta = params.meta.unwrap_or_default();
+        let server = params.server_name;
+        let approval = meta.codex_approval_kind.as_deref() == Some("mcp_tool_call");
+        let session = meta
+            .persist
             .iter()
+            .flatten()
             .any(|scope| scope == "session");
         if approval && server == AMUX_TOOL_SERVER {
             // amux's own tools never ask, as the Claude launch settings
@@ -770,7 +791,7 @@ impl State {
             }
             return self.respond(emit, &key, accept);
         }
-        let message = text(params, "message").to_owned();
+        let message = params.message.unwrap_or_default();
         let (item_key, call_server, tool) = self.running_tool_call().unwrap_or_default();
         let (body, offered): (_, Vec<(Decision, Value)>) = if approval {
             let mut offered = vec![(
@@ -799,17 +820,17 @@ impl State {
                         call_server
                     },
                     tool,
-                    arguments_json: compact_json(meta.get("tool_params").unwrap_or(&Value::Null))
+                    arguments_json: compact_json(meta.tool_params.as_ref().unwrap_or(&Value::Null))
                         .into_bytes(),
                 }),
                 offered,
             )
-        } else if text(params, "mode") == "url" {
+        } else if params.mode == "url" {
             (
                 codex_ask::Body::McpLink(LinkAsk {
                     server,
                     message,
-                    url: text(params, "url").to_owned(),
+                    url: params.url.unwrap_or_default(),
                 }),
                 Vec::new(),
             )
@@ -818,6 +839,8 @@ impl State {
                 codex_ask::Body::McpForm(FormAsk {
                     server,
                     message,
+                    // The schema as the server wrote it: its key order is
+                    // the order the form asks in, which decoding loses.
                     schema_json: json_as_written(payload, &["params", "requestedSchema"])
                         .unwrap_or_default(),
                 }),
@@ -858,28 +881,21 @@ impl State {
 
     // --- notifications ---------------------------------------------------
 
-    fn notification(&mut self, emit: &mut Emit, method: &str, params: &Value) {
+    fn notification(&mut self, emit: &mut Emit, notification: ServerNotification) {
         // A child thread's activity on the same server is its own; the
         // collaboration item reports it here.
-        if let (Some(ours), Some(theirs)) = (
-            self.thread_id.as_deref(),
-            params.get("threadId").and_then(Value::as_str),
-        ) && ours != theirs
+        if let (Some(ours), Some(theirs)) = (self.thread_id.as_deref(), about_thread(&notification))
+            && ours != theirs
         {
             return;
         }
-        match method {
-            "thread/started" => {
-                if let Some(thread) = params.get("thread") {
-                    self.thread_started(emit, thread, None);
-                }
+        match notification {
+            ServerNotification::ThreadStarted(started) => {
+                self.thread_started(emit, &started.thread, None);
             }
-            "turn/started" => {
+            ServerNotification::TurnStarted(started) => {
                 self.shared.turn_started();
-                self.active_turn = params
-                    .get("turn")
-                    .and_then(|turn| opt_text(turn, "id"))
-                    .or(self.active_turn.take());
+                self.active_turn = some(&started.turn.id).or(self.active_turn.take());
                 if std::mem::take(&mut self.interrupt_pending)
                     && let Some(turn) = self.active_turn.clone()
                 {
@@ -891,178 +907,199 @@ impl State {
                     );
                 }
             }
-            "turn/completed" => {
-                let turn = params.get("turn").cloned().unwrap_or(Value::Null);
-                self.turn_completed(emit, &turn);
+            ServerNotification::TurnCompleted(completed) => {
+                self.turn_completed(emit, &completed.turn);
             }
-            "item/started" => self.item_event(emit, params, false),
-            "item/completed" => self.item_event(emit, params, true),
-            "item/agentMessage/delta" | "item/plan/delta" | "item/reasoning/textDelta" => {
-                let key = text(params, "itemId").to_owned();
-                self.extend(emit, &key, text(params, "delta"));
+            ServerNotification::ItemStarted(started) => self.item_event(
+                emit,
+                &started.item,
+                &started.turn_id,
+                started.started_at_ms,
+                started.completed_at_ms,
+                false,
+            ),
+            ServerNotification::ItemCompleted(completed) => self.item_event(
+                emit,
+                &completed.item,
+                &completed.turn_id,
+                completed.started_at_ms,
+                completed.completed_at_ms,
+                true,
+            ),
+            ServerNotification::AgentMessageDelta(delta)
+            | ServerNotification::PlanDelta(delta)
+            | ServerNotification::ReasoningTextDelta(delta) => {
+                self.extend(emit, &delta.item_id, &delta.delta);
             }
-            "item/commandExecution/outputDelta" => {
-                let key = text(params, "itemId").to_owned();
-                let delta = text(params, "delta");
-                if let Some(state) = self.works.get_mut(&key) {
-                    state.text.push_str(delta);
+            ServerNotification::CommandOutputDelta(delta) => {
+                if let Some(state) = self.works.get_mut(&delta.item_id) {
+                    state.text.push_str(&delta.delta);
                 }
-                self.extend(emit, &key, delta);
+                self.extend(emit, &delta.item_id, &delta.delta);
             }
-            "item/reasoning/summaryPartAdded" | "item/reasoning/summaryTextDelta" => {
-                let key = text(params, "itemId").to_owned();
-                let index = int(params, "summaryIndex").unwrap_or(0) as usize;
-                let delta = text(params, "delta");
-                if let Some(Streamed::Reasoning(summary)) = self.streamed.get_mut(&key) {
-                    if summary.len() <= index {
-                        summary.resize(index + 1, String::new());
-                    }
-                    summary[index].push_str(delta);
-                    if !delta.is_empty() {
-                        self.emit_reasoning(emit, &key, None, false);
-                    }
-                }
+            ServerNotification::ReasoningSummaryPartAdded(part) => {
+                self.summary_delta(emit, &part.item_id, part.summary_index, "");
             }
-            "turn/diff/updated" => {
-                let key = format!("diff:{}", text(params, "turnId"));
-                let diff = (key.clone(), text(params, "diff").to_owned());
+            ServerNotification::ReasoningSummaryTextDelta(delta) => {
+                self.summary_delta(emit, &delta.item_id, delta.summary_index, &delta.delta);
+            }
+            ServerNotification::TurnDiffUpdated(updated) => {
+                let key = format!("diff:{}", updated.turn_id);
+                let diff = (key.clone(), updated.diff);
                 if self.last_diff.as_ref() == Some(&diff) {
                     return;
                 }
+                let patch = diff.1.clone();
                 self.last_diff = Some(diff);
                 self.emit_item(
                     emit,
                     ItemDraft {
                         key,
-                        body: item_body(codex_item::Kind::TurnDiff(wire::TurnDiff {
-                            patch: text(params, "diff").to_owned(),
-                        })),
+                        body: item_body(codex_item::Kind::TurnDiff(wire::TurnDiff { patch })),
                         complete: true,
                         ..Default::default()
                     },
                 );
             }
-            "turn/plan/updated" => {
+            ServerNotification::TurnPlanUpdated(updated) => {
                 self.plan = Some(
-                    params
-                        .get("plan")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default()
-                        .iter()
+                    updated
+                        .plan
+                        .into_iter()
                         .map(|step| {
-                            let status = match text(step, "status") {
+                            let status = match step.status.as_str() {
                                 "completed" => TaskListStatus::Completed,
                                 "inProgress" => TaskListStatus::InProgress,
                                 _ => TaskListStatus::Pending,
                             };
-                            let subject = opt_text(step, "step")
-                                .or_else(|| opt_text(step, "text"))
-                                .unwrap_or_default();
-                            (subject, status as i32)
+                            (step.step, status as i32)
                         })
                         .collect(),
                 );
             }
-            "thread/tokenUsage/updated" => {
-                let usage = params.get("tokenUsage").unwrap_or(&Value::Null);
-                if let Some(total) = usage.get("last").and_then(|last| int(last, "totalTokens")) {
-                    self.context_tokens = Some(total as u64);
-                }
-                if let Some(window) = int(usage, "modelContextWindow") {
+            ServerNotification::ThreadTokenUsageUpdated(updated) => {
+                let usage = updated.token_usage;
+                self.context_tokens = Some(usage.last.total_tokens as u64);
+                if let Some(window) = usage.model_context_window {
                     self.context_window = Some(window as u64);
                 }
             }
-            "account/rateLimits/updated" => {
-                self.usage = Some(usage_limits(
-                    params.get("rateLimits").unwrap_or(&Value::Null),
-                ));
+            ServerNotification::AccountRateLimitsUpdated(updated) => {
+                self.usage = Some(usage_limits(&updated.rate_limits));
             }
-            "account/updated" => {
-                self.sign_in = Some(match opt_text(params, "authMode") {
-                    None => SignIn {
-                        state: SignInState::SignedOut as i32,
-                        ..Default::default()
-                    },
-                    Some(mode) => SignIn {
-                        state: SignInState::SignedIn as i32,
-                        account: match opt_text(params, "planType") {
-                            Some(plan) => format!("{mode} {plan}"),
-                            None => mode,
+            ServerNotification::AccountUpdated(updated) => {
+                self.sign_in = Some(
+                    match some_of(updated.auth_mode.as_ref().map(|m| m.as_str())) {
+                        None => SignIn {
+                            state: SignInState::SignedOut as i32,
+                            ..Default::default()
                         },
-                        message: String::new(),
+                        Some(mode) => SignIn {
+                            state: SignInState::SignedIn as i32,
+                            account: match some_of(updated.plan_type.as_ref().map(|p| p.as_str())) {
+                                Some(plan) => format!("{mode} {plan}"),
+                                None => mode,
+                            },
+                            message: String::new(),
+                        },
                     },
-                });
+                );
             }
-            "account/login/completed" => {
-                if params.get("success").and_then(Value::as_bool) == Some(false) {
+            ServerNotification::AccountLoginCompleted(completed) => {
+                if !completed.success {
                     self.sign_in = Some(SignIn {
                         state: SignInState::Failed as i32,
                         account: String::new(),
-                        message: text(params, "error").to_owned(),
+                        message: completed.error.unwrap_or_default(),
                     });
                 }
             }
-            "mcpServer/startupStatus/updated" => self.server_status(emit, params),
-            "model/rerouted" => {
-                let to = text(params, "toModel").to_owned();
+            ServerNotification::McpServerStatusUpdated(updated) => {
+                self.server_status(emit, updated)
+            }
+            ServerNotification::ModelRerouted(rerouted) => {
                 let key = self.local_key("reroute");
                 self.emit_item(
                     emit,
                     ItemDraft {
                         key,
                         body: item_body(codex_item::Kind::Reroute(ModelSwitch {
-                            from: text(params, "fromModel").to_owned(),
-                            to: to.clone(),
-                            reason: text(params, "reason").to_owned(),
+                            from: rerouted.from_model,
+                            to: rerouted.to_model.clone(),
+                            reason: rerouted.reason,
                         })),
                         complete: true,
                         ..Default::default()
                     },
                 );
-                self.model = Some(to);
+                self.model = Some(rerouted.to_model);
             }
-            "error" => self.api_error(emit, params),
-            "item/autoApprovalReview/started" | "item/autoApprovalReview/completed" => {
-                self.review(emit, params, method.ends_with("completed"))
+            ServerNotification::Error(error) => self.api_error(emit, error),
+            ServerNotification::AutoApprovalReviewStarted(review) => {
+                self.review(emit, review, false)
             }
-            "thread/settings/updated" => {
-                let settings = params.get("threadSettings").unwrap_or(&Value::Null);
-                if let Some(model) = opt_text(settings, "model") {
+            ServerNotification::AutoApprovalReviewCompleted(review) => {
+                self.review(emit, review, true)
+            }
+            ServerNotification::ThreadSettingsUpdated(updated) => {
+                let settings = updated.thread_settings;
+                if let Some(model) = some(&settings.model) {
                     self.model = Some(model);
                 }
-                if let Some(policy) = opt_text(settings, "approvalPolicy") {
+                if let Some(policy) = approval_name(&settings.approval_policy) {
                     self.approval = Some(policy);
                 }
-                if let Some(sandbox) = settings.get("sandboxPolicy").and_then(sandbox_mode) {
+                if let Some(sandbox) = sandbox_mode(&settings.sandbox_policy) {
                     self.sandbox = Some(sandbox);
                 }
-                if let Some(effort) = settings.get("effort") {
-                    self.effort = effort.as_str().map(str::to_owned);
-                }
+                self.effort = settings.effort.map(|effort| effort.as_str().to_owned());
             }
-            method if QUIET.contains(&method) => {
-                if method == "serverRequest/resolved"
-                    && let Some(id) = params.get("requestId")
-                {
-                    self.ask_resolved(emit, &ask_key(id));
-                }
+            ServerNotification::ServerRequestResolved(resolved) => {
+                self.ask_resolved(emit, &ask_key(&resolved.request_id));
             }
-            other => self.unrecognized(emit, other, "a notification amux does not read"),
+            // Nothing a client draws, or what another fact already covers.
+            ServerNotification::ThreadStatusChanged(_)
+            | ServerNotification::ThreadNameUpdated(_)
+            | ServerNotification::ThreadCompacted(_)
+            | ServerNotification::ThreadArchived(_)
+            | ServerNotification::ThreadUnarchived(_)
+            | ServerNotification::RemoteControlStatusChanged(_)
+            | ServerNotification::GuardianWarning(_)
+            | ServerNotification::Warning(_)
+            | ServerNotification::FileChangeOutputDelta(_)
+            | ServerNotification::TerminalInteraction(_) => {}
+            other
+            @ (ServerNotification::ThreadClosed(_) | ServerNotification::SkillsChanged(_)) => {
+                self.unrecognized(emit, other.method(), "a notification amux does not read")
+            }
         }
     }
 
-    fn server_status(&mut self, emit: &mut Emit, params: &Value) {
-        let name = text(params, "name").to_owned();
-        let status = match text(params, "status") {
+    /// A reasoning summary's part, started or extended.
+    fn summary_delta(&mut self, emit: &mut Emit, key: &str, index: i64, delta: &str) {
+        let index = index as usize;
+        if let Some(Streamed::Reasoning(summary)) = self.streamed.get_mut(key) {
+            if summary.len() <= index {
+                summary.resize(index + 1, String::new());
+            }
+            summary[index].push_str(delta);
+            if !delta.is_empty() {
+                self.emit_reasoning(emit, key, None, false);
+            }
+        }
+    }
+
+    fn server_status(&mut self, emit: &mut Emit, updated: McpServerStatusUpdated) {
+        let name = updated.name;
+        let status = match updated.status.as_str() {
             "starting" => ToolServerStatus::Starting,
             "ready" => ToolServerStatus::Ready,
             "failed" | "cancelled" => ToolServerStatus::Failed,
             "needsAuth" | "notLoggedIn" => ToolServerStatus::NeedsAuth,
             _ => ToolServerStatus::Unspecified,
         };
-        let error = opt_text(params, "error")
-            .or_else(|| opt_text(params, "failureReason"))
+        let error = some_of(updated.error.as_deref())
+            .or_else(|| some_of(updated.failure_reason.as_deref()))
             .unwrap_or_default();
         let health = self.servers.get_or_insert_with(ToolServerHealth::default);
         let entry = ToolServer {
@@ -1103,32 +1140,28 @@ impl State {
         }
     }
 
-    fn api_error(&mut self, emit: &mut Emit, params: &Value) {
-        let error = params.get("error").unwrap_or(&Value::Null);
-        let will_retry = params
-            .get("willRetry")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let headline = text(error, "message");
+    fn api_error(&mut self, emit: &mut Emit, notification: ErrorNotification) {
+        let error = notification.error;
+        let will_retry = notification.will_retry;
         let (attempt, max_attempts) = if will_retry {
-            attempts(headline)
+            attempts(&error.message)
         } else {
             (0, 0)
         };
-        let message = opt_text(error, "additionalDetails").unwrap_or_else(|| headline.to_owned());
-        if unauthorized(error) {
+        let message = error_message(&error);
+        if unauthorized(&error) {
             self.sign_in = Some(SignIn {
                 state: SignInState::Failed as i32,
                 account: String::new(),
                 message: message.clone(),
             });
         }
-        let turn = text(params, "turnId").to_owned();
+        let turn = notification.turn_id;
         self.error_item(
             emit,
             format!("error:{turn}"),
             ApiError {
-                error_kind: error_kind(error.get("codexErrorInfo").unwrap_or(&Value::Null)),
+                error_kind: error_kind(&error),
                 message,
                 will_retry,
                 attempt,
@@ -1139,21 +1172,20 @@ impl State {
         self.final_error = (!will_retry).then_some(turn);
     }
 
-    fn review(&mut self, emit: &mut Emit, params: &Value, completed: bool) {
-        let review = params.get("review").unwrap_or(&Value::Null);
-        let target = text(params, "targetItemId").to_owned();
-        let decision = text(review, "status").to_owned();
+    fn review(&mut self, emit: &mut Emit, review: AutoApprovalReview, completed: bool) {
+        let target = review.target_item_id.unwrap_or_default();
+        let decision = review.review.status.as_str().to_owned();
         self.emit_item(
             emit,
             ItemDraft {
-                key: format!("review:{}", text(params, "reviewId")),
+                key: format!("review:{}", review.review_id),
                 body: item_body(codex_item::Kind::Verdict(ReviewerVerdict {
                     decision: decision.clone(),
-                    risk: text(review, "riskLevel").to_owned(),
-                    rationale: text(review, "rationale").to_owned(),
+                    risk: review.review.risk_level.unwrap_or_default(),
+                    rationale: review.review.rationale.unwrap_or_default(),
                     item_key: target.clone(),
                 })),
-                at_ms: int(params, "startedAtMs"),
+                at_ms: review.started_at_ms,
                 complete: true,
                 ..Default::default()
             },
@@ -1180,21 +1212,25 @@ impl State {
 
     // --- items -----------------------------------------------------------
 
-    fn item_event(&mut self, emit: &mut Emit, params: &Value, completed: bool) {
-        let item = params.get("item").unwrap_or(&Value::Null);
-        let id = text(item, "id").to_owned();
-        let turn = text(params, "turnId").to_owned();
-        let at_ms = int(params, "startedAtMs");
-        let ended_at_ms = int(params, "completedAtMs");
-        match text(item, "type") {
-            "userMessage" => {
+    fn item_event(
+        &mut self,
+        emit: &mut Emit,
+        item: &ThreadItem,
+        turn: &str,
+        at_ms: Option<i64>,
+        ended_at_ms: Option<i64>,
+        completed: bool,
+    ) {
+        let id = item.id().to_owned();
+        match item {
+            ThreadItem::UserMessage(message) => {
                 if completed {
-                    self.user_message(emit, &id, item);
+                    self.user_message(emit, &id, &message.content);
                 }
             }
-            "agentMessage" | "plan" => {
+            ThreadItem::AgentMessage(message) | ThreadItem::Plan(message) => {
                 let kind = self.streamed.get(&id).cloned().unwrap_or(
-                    if text(item, "phase") == "commentary" {
+                    if message.phase == Some(MessagePhase::Commentary) {
                         Streamed::WorkingNote
                     } else {
                         Streamed::Message
@@ -1208,8 +1244,8 @@ impl State {
                 };
                 let (text, attachments) = match self.shared.open_item(&id) {
                     Some(open) if !completed => (open.text.clone(), Vec::new()),
-                    _ if completed => crate::shared::parse_reply(text(item, "text").to_owned()),
-                    _ => (text(item, "text").to_owned(), Vec::new()),
+                    _ if completed => crate::shared::parse_reply(message.text.clone()),
+                    _ => (message.text.clone(), Vec::new()),
                 };
                 self.emit_item(
                     emit,
@@ -1227,8 +1263,8 @@ impl State {
                     self.shared.note_message(&id);
                 }
             }
-            "reasoning" => {
-                let summary = strings(item.get("summary"));
+            ThreadItem::Reasoning(reasoning) => {
+                let summary = reasoning.summary.clone().unwrap_or_default();
                 let entry = self
                     .streamed
                     .entry(id.clone())
@@ -1236,26 +1272,26 @@ impl State {
                 if completed || !summary.is_empty() {
                     *entry = Streamed::Reasoning(summary);
                 }
-                let content = strings(item.get("content")).join("\n");
+                let content = reasoning.content.clone().unwrap_or_default().join("\n");
                 self.emit_reasoning(emit, &id, completed.then_some(content), completed);
             }
-            "contextCompaction" => {
+            ThreadItem::ContextCompaction(_) => {
                 if completed {
                     self.boundary(emit, wire::BoundaryKind::Compacted, String::new());
                 }
             }
-            "commandExecution"
-            | "fileChange"
-            | "mcpToolCall"
-            | "dynamicToolCall"
-            | "webSearch"
-            | "imageView"
-            | "imageGeneration"
-            | "collabAgentToolCall" => {
-                self.work_item(emit, &id, item, &turn, at_ms, ended_at_ms, completed)
+            ThreadItem::CommandExecution(_)
+            | ThreadItem::FileChange(_)
+            | ThreadItem::McpToolCall(_)
+            | ThreadItem::DynamicToolCall(_)
+            | ThreadItem::WebSearch(_)
+            | ThreadItem::ImageView(_)
+            | ThreadItem::ImageGeneration(_)
+            | ThreadItem::CollabAgentToolCall(_) => {
+                self.work_item(emit, &id, item, turn, at_ms, ended_at_ms, completed)
             }
             other => {
-                let other = other.to_owned();
+                let other = other.kind().to_owned();
                 self.emit_item(
                     emit,
                     ItemDraft {
@@ -1306,7 +1342,7 @@ impl State {
 
     /// A prompt as Codex reflects it. One this interpreter sent is already
     /// an item; one typed into an attached terminal becomes one.
-    fn user_message(&mut self, emit: &mut Emit, id: &str, item: &Value) {
+    fn user_message(&mut self, emit: &mut Emit, id: &str, content: &[UserInput]) {
         if self.shared.reflect_prompt().is_some() {
             return;
         }
@@ -1325,18 +1361,14 @@ impl State {
             );
             return;
         }
-        let text = item
-            .get("content")
-            .and_then(Value::as_array)
-            .map(|parts| {
-                parts
-                    .iter()
-                    .filter(|part| text(part, "type") == "text")
-                    .map(|part| text(part, "text"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
+        let text = content
+            .iter()
+            .filter_map(|part| match part {
+                UserInput::Text(text) => Some(text.text.as_str()),
+                _ => None,
             })
-            .unwrap_or_default();
+            .collect::<Vec<_>>()
+            .join("\n");
         self.emit_item(
             emit,
             ItemDraft {
@@ -1354,65 +1386,80 @@ impl State {
         &mut self,
         emit: &mut Emit,
         id: &str,
-        item: &Value,
+        item: &ThreadItem,
         turn: &str,
         at_ms: Option<i64>,
         ended_at_ms: Option<i64>,
         completed: bool,
     ) {
-        let kind = text(item, "type");
-        if kind == "mcpToolCall" && is_status_tool(text(item, "server"), text(item, "tool")) {
-            let arguments = compact_json(item.get("arguments").unwrap_or(&Value::Null));
-            if let Some(working_on) = status_working_on(arguments.as_bytes()) {
-                self.shared.set_working_on(working_on);
+        if let ThreadItem::McpToolCall(call) = item {
+            if is_status_tool(&call.server, &call.tool) {
+                let arguments = compact_json(&call.arguments);
+                if let Some(working_on) = status_working_on(arguments.as_bytes()) {
+                    self.shared.set_working_on(working_on);
+                }
+                return;
             }
-            return;
-        }
-        if kind == "mcpToolCall" && is_send_tool(text(item, "server"), text(item, "tool")) {
-            return self.sent_message(emit, id, item, at_ms, completed);
+            if is_send_tool(&call.server, &call.tool) {
+                return self.sent_message(emit, id, call, at_ms, completed);
+            }
         }
         let prior = self.works.get(id).cloned();
-        let mut state = match text(item, "status") {
+        let status = match item {
+            ThreadItem::CommandExecution(command) => command.status.as_str(),
+            ThreadItem::FileChange(change) => change.status.as_str(),
+            ThreadItem::McpToolCall(call) => call.status.as_str(),
+            ThreadItem::DynamicToolCall(call) => call.status.as_str(),
+            ThreadItem::CollabAgentToolCall(call) => call.status.as_str(),
+            ThreadItem::ImageGeneration(image) => image.status.as_str(),
+            _ => "",
+        };
+        let mut state = match status {
             "" => ToolState::Succeeded,
             status => tool_state(status),
         };
         if !completed && state != ToolState::Running {
             state = ToolState::Running;
         }
-        let (of, class) = match kind {
-            "commandExecution" => {
-                let actions = item
-                    .get("commandActions")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                let kinds = actions
+        let (of, class) = match item {
+            ThreadItem::CommandExecution(command) => {
+                let kinds = command
+                    .command_actions
                     .iter()
-                    .map(|action| text(action, "type").to_owned())
+                    .map(|action| action.kind().to_owned())
                     .collect::<Vec<_>>();
                 // A command that only looks takes the verb of its widest
                 // action: a read among searches is a read.
-                let looking = !kinds.is_empty()
-                    && kinds
-                        .iter()
-                        .all(|kind| matches!(kind.as_str(), "read" | "search" | "listFiles"));
+                let actions = &command.command_actions;
+                let looking = !actions.is_empty()
+                    && actions.iter().all(|action| {
+                        matches!(
+                            action,
+                            CommandAction::Read(_)
+                                | CommandAction::Search(_)
+                                | CommandAction::ListFiles(_)
+                        )
+                    });
                 let class = if !looking {
                     ToolClass::Consequential
-                } else if kinds.iter().any(|kind| kind == "read") {
+                } else if actions.iter().any(|a| matches!(a, CommandAction::Read(_))) {
                     ToolClass::Read
-                } else if kinds.iter().any(|kind| kind == "search") {
+                } else if actions
+                    .iter()
+                    .any(|a| matches!(a, CommandAction::Search(_)))
+                {
                     ToolClass::Search
                 } else {
                     ToolClass::List
                 };
-                let exit_code = int(item, "exitCode").map(|code| code as i32);
+                let exit_code = command.exit_code.map(|code| code as i32);
                 if completed && state == ToolState::Succeeded && exit_code.is_some_and(|c| c != 0) {
                     state = ToolState::Failed;
                 }
                 (
                     work::Of::Command(wire::CommandWork {
-                        command: text(item, "command").to_owned(),
-                        cwd: text(item, "cwd").to_owned(),
+                        command: command.command.clone(),
+                        cwd: command.cwd.clone(),
                         exit_code,
                         action: kinds.join(","),
                         background: false,
@@ -1420,94 +1467,81 @@ impl State {
                     class,
                 )
             }
-            "fileChange" => (
+            ThreadItem::FileChange(change) => (
                 work::Of::FileChange(wire::FileChangeWork {
-                    changes: item
-                        .get("changes")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default()
+                    changes: change
+                        .changes
                         .iter()
-                        .map(|change| {
-                            let kind = change.get("kind").unwrap_or(&Value::Null);
-                            wire::FileChange {
-                                path: text(change, "path").to_owned(),
-                                kind: match text(kind, "type") {
-                                    "add" => wire::FileChangeKind::Add,
-                                    "delete" => wire::FileChangeKind::Delete,
-                                    "update" => wire::FileChangeKind::Update,
-                                    _ => wire::FileChangeKind::Unspecified,
-                                } as i32,
-                                move_to: text(kind, "move_path").to_owned(),
-                                patch: text(change, "diff").to_owned(),
-                            }
+                        .map(|change| wire::FileChange {
+                            path: change.path.clone(),
+                            kind: match &change.kind {
+                                PatchChangeKind::Add(_) => wire::FileChangeKind::Add,
+                                PatchChangeKind::Delete(_) => wire::FileChangeKind::Delete,
+                                PatchChangeKind::Update(_) => wire::FileChangeKind::Update,
+                                PatchChangeKind::Unknown(_) => wire::FileChangeKind::Unspecified,
+                            } as i32,
+                            move_to: match &change.kind {
+                                PatchChangeKind::Update(update) => {
+                                    update.move_path.clone().unwrap_or_default()
+                                }
+                                _ => String::new(),
+                            },
+                            patch: change.diff.clone(),
                         })
                         .collect(),
                 }),
                 ToolClass::Consequential,
             ),
-            "mcpToolCall" | "dynamicToolCall" => {
-                let dynamic = kind == "dynamicToolCall";
-                if dynamic && completed && item.get("success") == Some(&Value::Bool(false)) {
+            ThreadItem::McpToolCall(call) => (
+                work::Of::Mcp(mcp_work(call)),
+                if call.read_only_hint == Some(true) {
+                    ToolClass::Look
+                } else {
+                    ToolClass::Consequential
+                },
+            ),
+            ThreadItem::DynamicToolCall(call) => {
+                if completed && call.success == Some(false) {
                     state = ToolState::Failed;
                 }
-                let error = match item.get("error") {
-                    Some(Value::String(error)) => error.clone(),
-                    Some(error @ Value::Object(_)) => text(error, "message").to_owned(),
-                    _ => String::new(),
-                };
-                (
-                    work::Of::Mcp(wire::McpToolCall {
-                        server: if dynamic {
-                            text(item, "namespace").to_owned()
-                        } else {
-                            text(item, "server").to_owned()
-                        },
-                        tool: text(item, "tool").to_owned(),
-                        arguments_json: compact_json(item.get("arguments").unwrap_or(&Value::Null))
-                            .into_bytes(),
-                        result_json: compact_json(
-                            item.get(if dynamic { "contentItems" } else { "result" })
-                                .unwrap_or(&Value::Null),
-                        )
-                        .into_bytes(),
-                        error,
-                    }),
-                    if item.get("readOnlyHint") == Some(&Value::Bool(true)) {
-                        ToolClass::Look
-                    } else {
-                        ToolClass::Consequential
-                    },
-                )
+                (work::Of::Mcp(dynamic_work(call)), ToolClass::Consequential)
             }
-            "webSearch" => (
+            ThreadItem::WebSearch(search) => (
                 work::Of::WebSearch(wire::WebSearch {
-                    query: opt_text(item, "query")
-                        .or_else(|| {
-                            item.get("action")
-                                .and_then(|action| opt_text(action, "query"))
+                    query: some(&search.query)
+                        .or_else(|| match &search.action {
+                            Some(WebSearchAction::Search(action)) => {
+                                some_of(action.query.as_deref())
+                            }
+                            _ => None,
                         })
                         .unwrap_or_default(),
                 }),
                 ToolClass::WebSearch,
             ),
-            "imageView" | "imageGeneration" => (
+            ThreadItem::ImageView(image) => (
                 work::Of::Image(wire::ImageWork {
-                    generated: kind == "imageGeneration",
-                    path: opt_text(item, "path")
-                        .or_else(|| opt_text(item, "savedPath"))
-                        .unwrap_or_default(),
+                    generated: false,
+                    path: image.path.clone(),
                 }),
                 ToolClass::Look,
             ),
-            _ => (
+            ThreadItem::ImageGeneration(image) => (
+                work::Of::Image(wire::ImageWork {
+                    generated: true,
+                    path: image.saved_path.clone().unwrap_or_default(),
+                }),
+                ToolClass::Look,
+            ),
+            ThreadItem::CollabAgentToolCall(call) => (
                 work::Of::Collab(wire::CollabWork {
-                    tool: text(item, "tool").to_owned(),
-                    thread_ids: strings(item.get("receiverThreadIds")),
-                    prompt: text(item, "prompt").to_owned(),
+                    tool: call.tool.as_str().to_owned(),
+                    thread_ids: call.receiver_thread_ids.clone(),
+                    prompt: call.prompt.clone().unwrap_or_default(),
                 }),
                 ToolClass::Consequential,
             ),
+            _ => return,
         };
         let prior_work = prior.as_ref().and_then(|prior| prior.work.clone());
         let decision = prior_work
@@ -1529,16 +1563,24 @@ impl State {
             of => of,
         };
         let started = prior.as_ref().map(|prior| prior.at_ms);
-        let text = match (kind, completed) {
-            ("commandExecution", true) => opt_text(item, "aggregatedOutput")
-                .or_else(|| prior.as_ref().map(|prior| prior.text.clone()))
-                .unwrap_or_default(),
+        let text = match (item, completed) {
+            (ThreadItem::CommandExecution(command), true) => {
+                some_of(command.aggregated_output.as_deref())
+                    .or_else(|| prior.as_ref().map(|prior| prior.text.clone()))
+                    .unwrap_or_default()
+            }
             _ => prior.as_ref().map(|p| p.text.clone()).unwrap_or_default(),
+        };
+        let duration_ms = match item {
+            ThreadItem::CommandExecution(command) => command.duration_ms,
+            ThreadItem::McpToolCall(call) => call.duration_ms,
+            ThreadItem::DynamicToolCall(call) => call.duration_ms,
+            _ => None,
         };
         let at_ms = started.or(at_ms).unwrap_or(self.shared.now_ms());
         let ended_at_ms = if completed {
             ended_at_ms
-                .or_else(|| int(item, "durationMs").map(|duration| at_ms + duration))
+                .or_else(|| duration_ms.map(|duration| at_ms + duration))
                 .or(Some(self.shared.now_ms()))
         } else {
             None
@@ -1570,31 +1612,24 @@ impl State {
         &mut self,
         emit: &mut Emit,
         id: &str,
-        item: &Value,
+        call: &McpToolCallItem,
         at_ms: Option<i64>,
         completed: bool,
     ) {
-        let arguments = compact_json(item.get("arguments").unwrap_or(&Value::Null));
-        let returned = item
-            .pointer("/result/content")
-            .and_then(Value::as_array)
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .filter_map(|block| block.get("text").and_then(Value::as_str))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
+        let arguments = compact_json(&call.arguments);
+        let returned = call
+            .result
+            .as_ref()
+            .map(|result| result.texts().collect::<Vec<_>>().join("\n"))
             .unwrap_or_default();
-        let error = match item.get("error") {
-            Some(Value::String(error)) => error.clone(),
-            Some(error @ Value::Object(_)) => text(error, "message").to_owned(),
-            _ => String::new(),
-        };
-        let failed = item.pointer("/result/isError") == Some(&Value::Bool(true));
-        let outcome = match (completed, tool_state(text(item, "status"))) {
+        let error = call
+            .error
+            .as_ref()
+            .map(|error| error.message.clone())
+            .unwrap_or_default();
+        let outcome = match (completed, tool_state(call.status.as_str())) {
             (false, _) => SendOutcome::Running,
-            (true, ToolState::Succeeded) if !failed => SendOutcome::Returned(&returned),
+            (true, ToolState::Succeeded) => SendOutcome::Returned(&returned),
             (true, _) if error.is_empty() => SendOutcome::Failed(&returned),
             (true, _) => SendOutcome::Failed(&error),
         };
@@ -1619,26 +1654,23 @@ impl State {
 
     // --- turn end and exit -----------------------------------------------
 
-    fn turn_completed(&mut self, emit: &mut Emit, turn: &Value) {
-        let status = text(turn, "status");
-        let outcome = match status {
+    fn turn_completed(&mut self, emit: &mut Emit, turn: &codex_protocol::Turn) {
+        let outcome = match turn.status.as_str() {
             "completed" => TurnOutcome::Completed,
             "interrupted" => TurnOutcome::Interrupted,
             "failed" => TurnOutcome::Failed,
             _ => TurnOutcome::Unspecified,
         };
-        let turn_id = text(turn, "id").to_owned();
-        if let Some(error) = turn.get("error").filter(|error| !error.is_null())
+        let turn_id = turn.id.clone();
+        if let Some(error) = &turn.error
             && self.final_error.as_deref() != Some(turn_id.as_str())
         {
-            let message = opt_text(error, "additionalDetails")
-                .unwrap_or_else(|| text(error, "message").into());
             self.error_item(
                 emit,
                 format!("error:{turn_id}"),
                 ApiError {
-                    error_kind: error_kind(error.get("codexErrorInfo").unwrap_or(&Value::Null)),
-                    message,
+                    error_kind: error_kind(error),
+                    message: error_message(error),
                     ..Default::default()
                 },
             );
@@ -1671,7 +1703,7 @@ impl State {
             }
         }
         let at_ms = self.shared.now_ms();
-        let duration = int(turn, "durationMs");
+        let duration = turn.duration_ms;
         if let Some(ended) = self.shared.turn_ended(emit) {
             let started_at_ms = duration.map_or(ended.started_at_ms, |duration| at_ms - duration);
             self.emit_item(
@@ -1792,13 +1824,16 @@ impl State {
     }
 }
 
-fn usage_limits(limits: &Value) -> UsageLimits {
+fn usage_limits(limits: &RateLimitSnapshot) -> UsageLimits {
     let mut windows = Vec::new();
-    for slot in ["primary", "secondary"] {
-        let Some(window) = limits.get(slot).filter(|window| !window.is_null()) else {
+    for (slot, window) in [
+        ("primary", &limits.primary),
+        ("secondary", &limits.secondary),
+    ] {
+        let Some(window) = window else {
             continue;
         };
-        let minutes = int(window, "windowDurationMins").unwrap_or(0);
+        let minutes = window.window_duration_mins.unwrap_or(0);
         windows.push(UsageWindow {
             name: match minutes {
                 0 => slot.to_owned(),
@@ -1806,18 +1841,12 @@ fn usage_limits(limits: &Value) -> UsageLimits {
                 m if m % 60 == 0 => format!("{}h", m / 60),
                 m => format!("{m}m"),
             },
-            used_percent: window
-                .get("usedPercent")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0),
-            resets_at_ms: int(window, "resetsAt").map(|at| at * 1000),
+            used_percent: window.used_percent as f64,
+            resets_at_ms: window.resets_at.map(|at| at * 1000),
         });
     }
-    let blocked = limits
-        .get("rateLimitReachedType")
-        .is_some_and(|reached| !reached.is_null());
+    let blocked = limits.rate_limit_reached_type.is_some();
     let near = windows.iter().any(|window| window.used_percent >= 80.0);
-    let credits = limits.get("credits").filter(|credits| !credits.is_null());
     UsageLimits {
         state: if blocked {
             UsageState::Blocked
@@ -1827,12 +1856,43 @@ fn usage_limits(limits: &Value) -> UsageLimits {
             UsageState::Ok
         } as i32,
         windows,
-        credits: credits.and_then(|credits| {
-            if credits.get("unlimited").and_then(Value::as_bool) == Some(true) {
+        credits: limits.credits.as_ref().and_then(|credits| {
+            if credits.unlimited {
                 Some("unlimited".to_owned())
             } else {
-                opt_text(credits, "balance")
+                some_of(credits.balance.as_deref())
             }
         }),
     }
+}
+
+/// A tool-server call's work.
+fn mcp_work(call: &McpToolCallItem) -> wire::McpToolCall {
+    wire::McpToolCall {
+        server: call.server.clone(),
+        tool: call.tool.clone(),
+        arguments_json: compact_json(&call.arguments).into_bytes(),
+        result_json: compact_json(&as_written(&call.result)).into_bytes(),
+        error: call
+            .error
+            .as_ref()
+            .map(|error| error.message.clone())
+            .unwrap_or_default(),
+    }
+}
+
+/// A dynamic tool call's work, drawn as a tool-server call.
+fn dynamic_work(call: &DynamicToolCallItem) -> wire::McpToolCall {
+    wire::McpToolCall {
+        server: call.namespace.clone().unwrap_or_default(),
+        tool: call.tool.clone(),
+        arguments_json: compact_json(&call.arguments).into_bytes(),
+        result_json: compact_json(&as_written(&call.content_items)).into_bytes(),
+        error: String::new(),
+    }
+}
+
+/// A decoded part of a message as the JSON Codex wrote.
+fn as_written(value: &impl serde::Serialize) -> Value {
+    serde_json::to_value(value).expect("protocol types serialize")
 }

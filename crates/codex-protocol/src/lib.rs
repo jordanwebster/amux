@@ -71,12 +71,49 @@ pub struct RpcError {
 pub struct Unknown {
     /// The line's method, when it has one.
     pub method: Option<String>,
+    /// The line's id, when it has one: a request nobody can read still
+    /// needs an answer, or the server waits on it.
+    pub id: Option<RequestId>,
     pub raw: Box<RawValue>,
+}
+
+impl Unknown {
+    fn new(raw: &RawValue, method: Option<String>) -> Self {
+        #[derive(Deserialize)]
+        struct Envelope {
+            #[serde(default)]
+            id: Option<RequestId>,
+        }
+        let id = serde_json::from_str::<Envelope>(raw.get())
+            .ok()
+            .and_then(|envelope| envelope.id);
+        Self {
+            method,
+            id,
+            raw: raw.to_owned(),
+        }
+    }
+
+    /// The thread the line names in its params, when it names one.
+    pub fn thread_id(&self) -> Option<String> {
+        #[derive(Deserialize)]
+        struct Envelope {
+            params: Params,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Params {
+            thread_id: String,
+        }
+        serde_json::from_str::<Envelope>(self.raw.get())
+            .ok()
+            .map(|envelope| envelope.params.thread_id)
+    }
 }
 
 impl PartialEq for Unknown {
     fn eq(&self, other: &Self) -> bool {
-        self.method == other.method && self.raw.get() == other.raw.get()
+        self.method == other.method && self.id == other.id && self.raw.get() == other.raw.get()
     }
 }
 
@@ -353,15 +390,8 @@ struct Parts {
 }
 
 fn parts(mut object: Map<String, Value>, raw: &RawValue) -> Result<Parts, Failed> {
-    let fail = |method: Option<String>, reason: &str| {
-        (
-            Unknown {
-                method,
-                raw: raw.to_owned(),
-            },
-            reason.to_owned(),
-        )
-    };
+    let fail =
+        |method: Option<String>, reason: &str| (Unknown::new(raw, method), reason.to_owned());
     let method = match object.remove("method") {
         None => None,
         Some(Value::String(method)) => Some(method),
@@ -386,13 +416,7 @@ fn parts(mut object: Map<String, Value>, raw: &RawValue) -> Result<Parts, Failed
 }
 
 fn unknown(raw: &RawValue, method: Option<String>, reason: impl fmt::Display) -> Failed {
-    (
-        Unknown {
-            method,
-            raw: raw.to_owned(),
-        },
-        reason.to_string(),
-    )
+    (Unknown::new(raw, method), reason.to_string())
 }
 
 fn typed<T>(

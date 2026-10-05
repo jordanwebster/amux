@@ -15,11 +15,19 @@ use crate::macros::{string_enum, tagged_enum};
 #[serde(rename_all = "camelCase")]
 pub struct Thread {
     pub id: String,
+    /// The thread this one was forked from.
+    #[serde(default)]
+    pub forked_from_id: Option<String>,
+    /// The version of Codex that made the thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_version: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
     pub cwd: String,
     #[serde(default)]
     pub path: Option<String>,
+    #[serde(default)]
     pub status: ThreadStatus,
     #[serde(default)]
     pub turns: Vec<Turn>,
@@ -33,6 +41,13 @@ tagged_enum! {
         "idle" => Idle(Extra),
         "systemError" => SystemError(Extra),
         "active" => Active(ActiveStatus),
+    }
+}
+
+/// Read when the status is left out: no known status.
+impl Default for ThreadStatus {
+    fn default() -> Self {
+        Self::Unknown(Extra::new())
     }
 }
 
@@ -55,10 +70,14 @@ string_enum! {
 #[serde(rename_all = "camelCase")]
 pub struct Turn {
     pub id: String,
+    #[serde(default)]
     pub items: Vec<ThreadItem>,
+    #[serde(default)]
     pub status: TurnStatus,
     #[serde(default)]
     pub error: Option<TurnError>,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -69,6 +88,13 @@ string_enum! {
         Completed = "completed",
         Interrupted = "interrupted",
         Failed = "failed",
+    }
+}
+
+/// Read when the status is left out: no known status.
+impl Default for TurnStatus {
+    fn default() -> Self {
+        Self::Other(String::new())
     }
 }
 
@@ -257,9 +283,13 @@ pub struct ThreadTokenUsage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenUsageBreakdown {
+    #[serde(default)]
     pub input_tokens: i64,
+    #[serde(default)]
     pub cached_input_tokens: i64,
+    #[serde(default)]
     pub output_tokens: i64,
+    #[serde(default)]
     pub reasoning_output_tokens: i64,
     pub total_tokens: i64,
     #[serde(flatten)]
