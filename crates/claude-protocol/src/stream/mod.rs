@@ -20,6 +20,7 @@ pub use control::{
     BackgroundTaskSummary, ControlRequest, ControlRequestBody, ControlResponse, InterruptResult,
     McpPermissionMode, McpPermissionModeOverrideResult, McpServerStatus, McpSetServersResult,
     PluginInfo, ReloadPluginsResult, ReloadSkillsResult, RewindFilesResult,
+    SetPermissionModeResult,
 };
 pub use error::ProtocolError;
 pub use init::InitializationResult;

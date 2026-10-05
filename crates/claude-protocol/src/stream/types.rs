@@ -844,6 +844,8 @@ pub enum PermissionUpdateDestination {
 
 // ── PermissionResult ────────────────────────────────────────────────
 
+/// amux's answer to `can_use_tool`, and the decision a `PermissionRequest`
+/// hook returns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     tag = "behavior",
@@ -852,13 +854,18 @@ pub enum PermissionUpdateDestination {
 )]
 pub enum PermissionResult {
     Allow {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         updated_input: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         updated_permissions: Option<Vec<PermissionUpdate>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_use_id: Option<String>,
     },
     Deny {
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         interrupt: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_use_id: Option<String>,
     },
 }

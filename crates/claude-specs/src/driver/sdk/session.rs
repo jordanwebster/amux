@@ -118,14 +118,13 @@ impl Control {
             .answer_incoming(
                 id,
                 IncomingRequestKind::Permission,
-                crate::driver::sdk::dispatch::permission_result_to_control_value(result),
+                serde_json::to_value(result)?,
             )
             .await
     }
 
     pub async fn answer_hook(&self, id: RequestId, output: HookOutput) -> Result<(), Error> {
-        let response =
-            crate::driver::sdk::dispatch::serialize_hook_output(output).map_err(Error::Control)?;
+        let response = serde_json::to_value(output)?;
         self.inner
             .answer_incoming(id, IncomingRequestKind::Hook, response)
             .await

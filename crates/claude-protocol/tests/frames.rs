@@ -6,8 +6,9 @@ use std::path::Path;
 use claude_protocol::stream::control::{ControlOutcome, InitializeRequestBody};
 use claude_protocol::stream::{
     self, ContentBlock, ControlRequest, ControlRequestBody, ControlResponse, Extensions,
-    InitializationResult, Input, Message, MessageContent, MessageParam, Output, PermissionMode,
-    Role, UserInput,
+    HookOutput, HookSpecificOutput, InitializationResult, Input, Message, MessageContent,
+    MessageParam, Output, PermissionMode, PermissionResult, PermissionUpdate,
+    PermissionUpdateDestination, Role, SyncHookOutput, UserInput,
 };
 use serde_json::Value;
 
@@ -96,6 +97,68 @@ fn what_amux_writes_encodes_with_sorted_keys() {
     assert_eq!(
         stream::encode(&refusal),
         br#"{"response":{"error":"no","request_id":"req_9","subtype":"error"},"type":"control_response"}"#
+    );
+}
+
+#[test]
+fn amux_answers_write_only_the_keys_amux_sets() {
+    fn answer(payload: &impl serde::Serialize) -> String {
+        let response = ControlResponse::success("req_1", payload);
+        String::from_utf8(stream::encode(&Input::ControlResponse(response))).expect("UTF-8")
+    }
+    let allow = PermissionResult::Allow {
+        updated_input: Some(serde_json::json!({"command": "ls"})),
+        updated_permissions: None,
+        tool_use_id: None,
+    };
+    assert_eq!(
+        answer(&allow),
+        r#"{"response":{"request_id":"req_1","response":{"behavior":"allow","updatedInput":{"command":"ls"}},"subtype":"success"},"type":"control_response"}"#
+    );
+    let plan = PermissionResult::Allow {
+        updated_input: Some(serde_json::json!({})),
+        updated_permissions: Some(vec![PermissionUpdate::SetMode {
+            mode: PermissionMode::AcceptEdits,
+            destination: PermissionUpdateDestination::Session,
+        }]),
+        tool_use_id: None,
+    };
+    assert_eq!(
+        answer(&plan),
+        r#"{"response":{"request_id":"req_1","response":{"behavior":"allow","updatedInput":{},"updatedPermissions":[{"destination":"session","mode":"acceptEdits","type":"setMode"}]},"subtype":"success"},"type":"control_response"}"#
+    );
+    let deny = PermissionResult::Deny {
+        message: "no".into(),
+        interrupt: Some(false),
+        tool_use_id: None,
+    };
+    assert_eq!(
+        answer(&deny),
+        r#"{"response":{"request_id":"req_1","response":{"behavior":"deny","interrupt":false,"message":"no"},"subtype":"success"},"type":"control_response"}"#
+    );
+
+    let carry_on = HookOutput::Sync(SyncHookOutput {
+        r#continue: Some(true),
+        ..SyncHookOutput::default()
+    });
+    assert_eq!(
+        answer(&carry_on),
+        r#"{"response":{"request_id":"req_1","response":{"continue":true},"subtype":"success"},"type":"control_response"}"#
+    );
+    let decided = HookOutput::Sync(SyncHookOutput {
+        hook_specific_output: Some(HookSpecificOutput::PermissionRequest { decision: deny }),
+        ..SyncHookOutput::default()
+    });
+    assert_eq!(
+        answer(&decided),
+        r#"{"response":{"request_id":"req_1","response":{"hookSpecificOutput":{"decision":{"behavior":"deny","interrupt":false,"message":"no"},"hookEventName":"PermissionRequest"}},"subtype":"success"},"type":"control_response"}"#
+    );
+    let later = HookOutput::Async {
+        timeout: Some(std::time::Duration::from_secs(2)),
+    };
+    assert_eq!(
+        answer(&later),
+        r#"{"response":{"request_id":"req_1","response":{"async":true,"asyncTimeout":2000},"subtype":"success"},"type":"control_response"}"#
     );
 }
 

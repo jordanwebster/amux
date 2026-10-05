@@ -2,10 +2,11 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
+use crate::Drift;
 use crate::stream::init::{AgentInfo, SlashCommand};
 use crate::stream::options::{AgentDefinition, McpServerConfig};
 use crate::stream::types::{Extensions, PermissionMode, PermissionUpdate};
-use crate::strictness::tagged_enum;
+use crate::strictness::{self, tagged_enum};
 
 /// A control request, in either direction: amux asking Claude to change or
 /// report something, or Claude asking amux to decide.
@@ -336,6 +337,26 @@ impl ControlResponse {
     pub fn result<T: serde::de::DeserializeOwned>(&self) -> Option<Result<T, serde_json::Error>> {
         self.response.response.as_ref().map(T::deserialize)
     }
+
+    /// [`result`](Self::result), failing on anything the decode would keep
+    /// without knowing it, as [`strict`](crate::stream::strict) does for a
+    /// whole line.
+    pub fn strict_result<T: serde::de::DeserializeOwned>(&self) -> Option<Result<T, Drift>> {
+        let response = self.response.response.as_ref()?;
+        let (decoded, mut reasons) = strictness::noticing(|| T::deserialize(response));
+        Some(match decoded {
+            Ok(result) if reasons.is_empty() => Ok(result),
+            decoded => {
+                if let Err(error) = decoded {
+                    reasons.insert(0, error.to_string());
+                }
+                Err(Drift::Unknown {
+                    kind: Some("control_response".into()),
+                    reasons,
+                })
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -362,6 +383,14 @@ pub struct InterruptResult {
     pub still_queued: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancelled: Option<Vec<String>>,
+    #[serde(flatten)]
+    pub extensions: Extensions,
+}
+
+/// The answer to `set_permission_mode`: the mode Claude applied.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetPermissionModeResult {
+    pub mode: PermissionMode,
     #[serde(flatten)]
     pub extensions: Extensions,
 }

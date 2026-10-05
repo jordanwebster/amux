@@ -120,7 +120,8 @@ pub struct ContextUsage {
     pub total_tokens: u64,
     pub max_tokens: u64,
     pub raw_max_tokens: u64,
-    pub percentage: f64,
+    /// As written: Claude writes a whole percentage without a fraction.
+    pub percentage: serde_json::Number,
     pub grid_rows: Vec<Vec<serde_json::Value>>,
     pub model: String,
     pub memory_files: Vec<serde_json::Value>,

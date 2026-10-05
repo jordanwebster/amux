@@ -618,23 +618,77 @@ pub struct PostToolBatchToolCall {
 
 // ── HookOutput ──────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+/// amux's answer to a `hook_callback`.
+#[derive(Debug, Clone)]
 pub enum HookOutput {
+    /// The hook goes on in the background; Claude waits at most `timeout`
+    /// for it. Written `{"async": true, "asyncTimeout": milliseconds}`.
     Async {
         timeout: Option<std::time::Duration>,
     },
     Sync(SyncHookOutput),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Serialize for HookOutput {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Async { timeout } => {
+                let mut object = serde_json::Map::new();
+                object.insert("async".into(), true.into());
+                if let Some(timeout) = timeout {
+                    let millis = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+                    object.insert("asyncTimeout".into(), millis.into());
+                }
+                object.serialize(serializer)
+            }
+            Self::Sync(sync) => sync.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HookOutput {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let mut object = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        if object.get("async") != Some(&serde_json::Value::Bool(true)) {
+            return SyncHookOutput::deserialize(serde_json::Value::Object(object))
+                .map(Self::Sync)
+                .map_err(D::Error::custom);
+        }
+        object.remove("async");
+        let timeout = match object.remove("asyncTimeout") {
+            None => None,
+            Some(millis) => Some(std::time::Duration::from_millis(
+                millis
+                    .as_u64()
+                    .ok_or_else(|| D::Error::custom("asyncTimeout is not milliseconds"))?,
+            )),
+        };
+        if let Some(field) = object.keys().next() {
+            return Err(D::Error::custom(format!(
+                "an async hook answer with {field:?}"
+            )));
+        }
+        Ok(Self::Async { timeout })
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncHookOutput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#continue: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suppress_output: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<HookDecision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hook_specific_output: Option<HookSpecificOutput>,
 }
 
@@ -645,74 +699,104 @@ pub enum HookDecision {
     Block,
 }
 
+/// What a hook answers for its own event, told apart by `hookEventName`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "hookEventName", rename_all_fields = "camelCase")]
 pub enum HookSpecificOutput {
     PreToolUse {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         permission_decision: Option<HookPermissionDecision>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         permission_decision_reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         updated_input: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     UserPromptSubmit {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     UserPromptExpansion {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         suppress_original_prompt: Option<bool>,
     },
     SessionStart {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     Setup {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     SubagentStart {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     Stop {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     SubagentStop {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     PostToolUse {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
+        #[serde(
+            rename = "updatedMCPToolOutput",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         updated_mcp_tool_output: Option<serde_json::Value>,
     },
     PostToolUseFailure {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     PostToolBatch {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     Notification {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         additional_context: Option<String>,
     },
     PermissionRequest {
         decision: PermissionResult,
     },
     PermissionDenied {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         retry: Option<bool>,
     },
     Elicitation {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         action: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<serde_json::Value>,
     },
     ElicitationResult {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         action: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<serde_json::Value>,
     },
     CwdChanged {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         watch_paths: Option<Vec<String>>,
     },
     FileChanged {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         watch_paths: Option<Vec<String>>,
     },
     WorktreeCreate {
         worktree_path: String,
     },
     MessageDisplay {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         display_content: Option<String>,
     },
 }

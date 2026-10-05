@@ -1,3 +1,18 @@
+2026-10-06 — **Claude's typed control answers write what amux writes.**
+The protocol's permission answer wrote `null` for every field amux left
+out, and its hook answer serialized field names and an event tag Claude
+never reads, so the specification driver built both answers as JSON by
+hand. Both types now encode exactly the keys amux sets (a hook answer is
+`continue`, `hookSpecificOutput` with its `hookEventName`, or
+`async`/`asyncTimeout`), and the driver answers through them; its
+hand-built encoders are gone. The headless corpus check pairs every
+recorded control answer, in both directions, with the request it answers
+and reads it strictly as that request's result type
+(`ControlResponse::strict_result`). That found `get_context_usage`
+writing a whole percentage without a fraction, which a float re-encoded
+as `12.0`; the percentage is kept as the number written. A
+`set_permission_mode` answer has its own type now.
+
 2026-10-06 — **Recorded Codex answers are held to their response types.**
 Codex's answers to amux's requests keep their result as plain JSON on the
 wire type, so the corpus check never asked whether a recorded answer fits
