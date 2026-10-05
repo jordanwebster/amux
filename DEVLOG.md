@@ -1,3 +1,9 @@
+2026-10-05 — **Two event properties no longer collide with what amux.sh
+adds.** amux.sh puts the upload's `version` and the token's `client` on
+every event, so `daemon_crashed` now names the version that stopped
+`crashed_version` and `client_opened` names the terminal or phone
+`surface`; before, one value silently replaced the other.
+
 2026-10-05 — **The phone has a Share Usage switch and reports its
 paywall.** **Share Usage** sits under **You**, in **This phone**, on until
 turned off; the choice is kept in the app's defaults and handed to the

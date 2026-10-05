@@ -80,8 +80,8 @@ a version, or a host id. No event has a field for free text.
 | `checked_in` | Once a day for each profile while amux runs. | `agents_running`, `agents_created_24h` and `turns_24h`: counts of this machine's agents running now, created in the last day and turns they finished since the last check-in, each by kind (`claude_pty`, `claude_sdk`, `codex`). `paired_hosts`: how many machines are paired. `hosts_by_route`: how many are reachable now `direct`, through the `relay` or over `ssh`. `relay_carrier`: `quic` or `tcp`, while connected to the relay. `signed_in`: whether the profile is signed in. `tier`: `free` or `pro`, while connected to the relay. |
 | `updated` | amux starts on a newer version than last time. | `from_version`, `to_version` |
 | `update_rolled_back` | amux starts on an older version than last time, because the newer one was put back. | `from_version`, `to_version` |
-| `daemon_crashed` | amux starts and finds that its last run stopped without shutting down, with the machine still up. | `version`: the version that stopped. |
-| `client_opened` | The terminal client starts, or the iPhone app comes to the front; at most once an hour. | `client`: `terminal` or `phone`. |
+| `daemon_crashed` | amux starts and finds that its last run stopped without shutting down, with the machine still up. | `crashed_version`: the version that stopped. |
+| `client_opened` | The terminal client starts, or the iPhone app comes to the front; at most once an hour. | `surface`: `terminal` or `phone`. |
 | `agent_created` | A new agent is started. | `kind`; `on`: `this_host` or `paired_host`, with `remote_host` for a paired one; `by`: `person` or `agent` (an agent starting a helper). |
 | `prompt_sent` | A prompt you sent is accepted. | `kind`; `on` and `remote_host` as above; `queued`: whether it waits behind a turn already running. |
 | `ask_answered` | Your answer to an agent's question or request is accepted. | `kind`; `on` and `remote_host` as above; `ask`: `question`, `permission`, `plan`, `form`, `link` or `grant`. |

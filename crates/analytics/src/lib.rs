@@ -207,8 +207,8 @@ mod tests {
                 "update_rolled_back",
                 json!({"from_version": "0.8.0", "to_version": "0.7.0"}),
             ),
-            ("daemon_crashed", json!({"version": "0.8.0"})),
-            ("client_opened", json!({"client": "terminal"})),
+            ("daemon_crashed", json!({"crashed_version": "0.8.0"})),
+            ("client_opened", json!({"surface": "terminal"})),
             (
                 "agent_created",
                 json!({"kind": "claude_sdk", "on": "this_host", "by": "person"}),

@@ -392,10 +392,10 @@ impl Event {
             }
             Event::DaemonCrashed { version: crashed } => {
                 if let Some(crashed) = crashed {
-                    put("version", version(crashed));
+                    put("crashed_version", version(crashed));
                 }
             }
-            Event::ClientOpened { client } => put("client", token(*client)),
+            Event::ClientOpened { client } => put("surface", token(*client)),
             Event::AgentCreated { kind, on, by } => {
                 put("kind", token(*kind));
                 where_(&mut put, *on);
