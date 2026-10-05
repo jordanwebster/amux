@@ -1,3 +1,14 @@
+2026-10-05 — **Every terminal story runs with one command, in CI too.**
+`just journey terminal all` runs each terminal story in the manifest on
+its own, keeps going after a failure, prints one pass or fail line per
+story into `target/journeys/summary.txt` and fails if any story did. CI's
+terminal journey job calls it, so the nine stories it skipped (plans,
+questions, tool server asks, the queue, sending while away, the
+composer's limits, starting an agent, reporting a problem) now run there,
+and it keeps the results as an artifact. Two stories raced the screen:
+they took a frame right after typing, before the typed text was drawn,
+and failed on a fast machine. They now wait for the text first.
+
 2026-10-05 — **A terminal test whose wait fails now fails instead of
 hanging.** When a wait in a test that drives amux in a terminal timed
 out, the test's panic dropped the terminal's output receiver, so nothing

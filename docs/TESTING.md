@@ -98,6 +98,7 @@ just test-ui                               # the client model spec
 just test-tui                              # terminal presentation and goldens
 just offline-test                          # workspace tests with isolated config and no network
 just journey terminal reach-host           # one terminal journey
+just journey terminal all                  # every terminal story, one line each, keeps going after a failure
 just journey system survive-daemon         # the built binaries' system journey
 just ios unit                              # phone package and app-hosted unit suites
 just ios journey                           # the shared stories on the phone; `-- <story>` for one
@@ -168,6 +169,7 @@ dropped with the reason, and a script test checks every named step exists.
 
 ```sh
 just journey terminal <story>   # builds amux, the fakes and testnet, then runs the story in tmux
+just journey terminal all       # every terminal story in the manifest; summary in target/journeys/summary.txt
 just ios journey -- <story>     # the app on the leased simulator, driven through its door
 ```
 

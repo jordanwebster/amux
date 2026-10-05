@@ -132,15 +132,17 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install tmux
       - name: Run terminal journeys
-        run: |
-          just journey terminal reach-host
-          just journey terminal conversation-decision-claude-pty
-          just journey terminal conversation-decision-claude-sdk
-          just journey terminal conversation-decision-codex
-          just journey terminal leave-and-recover
-          just journey terminal manage-agent
-          just journey terminal attachment-or-review
-          just journey terminal keep-authority
+        # Every terminal story in the manifest, one after another; a failure
+        # does not stop the rest, and the job fails if any story did.
+        run: just journey terminal all
+      - name: Upload the terminal journeys' results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-journeys-${{ matrix.os }}
+          path: target/journeys
+          if-no-files-found: warn
+          retention-days: 7
 
   embedded:
     name: Embedded client

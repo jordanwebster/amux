@@ -139,7 +139,10 @@ shot *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked --quiet -p shot --bin amux-shot -- "$@"
 
 # Run one declared journey through its real client. System journeys are the
-# built binaries on the fakes, printing their transcripts.
+# built binaries on the fakes, printing their transcripts. `just journey
+# terminal all` runs every terminal story, keeps going after a failure,
+# prints one line per story to target/journeys/summary.txt and fails if any
+# story did.
 journey CLIENT NAME *ARGS:
     #!/usr/bin/env sh
     set -eu
@@ -147,7 +150,11 @@ journey CLIENT NAME *ARGS:
     case "{{CLIENT}}" in
     terminal)
         {{bounded}} 900 cargo build --locked -p amux -p provider-fakes -p testnet --bins {{desktop_features}}
-        {{bounded}} 600 scripts/python -B scripts/terminal-journey.py "{{NAME}}"
+        if [ "{{NAME}}" = all ]; then
+            {{bounded}} 3000 scripts/python -B scripts/terminal-journeys.py
+        else
+            {{bounded}} 600 scripts/python -B scripts/terminal-journey.py "{{NAME}}"
+        fi
         ;;
     system)
         # --keep leaves the install running for other clients to open.

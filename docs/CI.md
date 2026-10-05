@@ -28,7 +28,7 @@ Every workflow sets `CARGO_INCREMENTAL=0`, and every job has a
 | Codegen and dependency policy | `ubuntu-latest` | `just codegen-check`, `just proto-check`, `just dependency-policy`, `just tests-check`, `just docs-check`, `just deletion-ledger-check` |
 | Test | `ubuntu-latest`, `macos-latest`, `windows-latest` | `scripts/no-update-flags.sh`, `just test -- --no-fail-fast`, `just doctest`; on macOS also `just contracts-check` |
 | Build | `ubuntu-latest`, `macos-latest`, `windows-latest` | `just release-check` |
-| Terminal journeys | `ubuntu-latest`, `macos-latest` | Installs `tmux`, then eight `just journey terminal <name>` runs |
+| Terminal journeys | `ubuntu-latest`, `macos-latest` | Installs `tmux`, then `just journey terminal all`: every terminal story in the manifest |
 | Embedded client | `ubuntu-latest` | `just embedded-check`, `just embedded-test` |
 | iOS target check | `macos-latest` | `just mobile-check` |
 | iOS gate | `macos-26` | `just ios gate` on Xcode 26.6 |
