@@ -1,3 +1,9 @@
+2026-10-05 — **The vocabulary's prompt row reads the same time in every
+time zone.** Its rows were written at the epoch, which the row's clock
+shows in the machine's time zone, so the golden recorded in Europe
+failed on every CI machine. The rows are now written at 14:07 on the
+machine's own clock.
+
 2026-10-04 — **One home for a new agent's shipped values.** The
 installation's settings ship each agent's starting model, effort and
 mode; the terminal client kept a second copy of the same values as its

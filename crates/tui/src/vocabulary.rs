@@ -281,7 +281,7 @@ fn row(kind: RowKind) -> Row {
     Row {
         id: "k".into(),
         order: 1,
-        at_ms: 0,
+        at_ms: written_at(),
         kind,
         run: None,
         collapsed: false,
@@ -289,6 +289,17 @@ fn row(kind: RowKind) -> Row {
         attention: false,
         parent: None,
     }
+}
+
+/// When every row was written: 14:07 on the machine's clock, so a row's
+/// time reads the same in every time zone.
+fn written_at() -> i64 {
+    use chrono::TimeZone;
+    chrono::Local
+        .with_ymd_and_hms(2026, 1, 15, 14, 7, 0)
+        .single()
+        .expect("14:07 on a winter day exists in every time zone")
+        .timestamp_millis()
 }
 
 fn text(words: &str) -> Vec<Segment> {
