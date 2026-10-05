@@ -304,6 +304,14 @@ pub fn result<T: serde::de::DeserializeOwned>(result: &Value) -> Result<T, serde
     T::deserialize(result)
 }
 
+/// [`result`], failing where it would keep an unknown enum spelling or
+/// object type, as [`strict`] does for a whole line.
+pub fn strict_result<T: serde::de::DeserializeOwned>(
+    result: &Value,
+) -> Result<T, serde_json::Error> {
+    macros::strictly(|| T::deserialize(result))
+}
+
 fn to_value(value: &impl Serialize) -> Value {
     serde_json::to_value(value).expect("protocol types serialize")
 }

@@ -81,7 +81,7 @@ specification.
 
 | Check | Where | What it holds |
 |---|---|---|
-| Recording corpus | `codex-protocol/tests/corpus.rs`, `claude-protocol/tests/stream_corpus.rs` and `pty_corpus.rs` | Every recorded line decodes strictly and encodes back to the same JSON. |
+| Recording corpus | `codex-protocol/tests/corpus.rs`, `claude-protocol/tests/stream_corpus.rs` and `pty_corpus.rs` | Every recorded line decodes strictly and encodes back to the same JSON, and every recorded answer reads strictly as the response type of the request it answers. |
 | Specification replay | `codex-specs/tests/spec_replay.rs`, `claude-specs/tests/spec_replay.rs` | The clients, on the protocol types, send exactly what the recordings show. |
 | Fakes' shape check | [`provider-fakes/src/shape.rs`](../crates/provider-fakes/src/shape.rs) | Every frame a fake provider composes has a recorded shape and decodes strictly with its protocol crate. The fakes never use the host crates, so a host bug cannot hide behind code the fakes share. |
 | Dependency policy | `scripts/check-dependency-policy.py` | The protocol crates stay pure, and only the crates listed there use them. |

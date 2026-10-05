@@ -1,3 +1,14 @@
+2026-10-06 — **Recorded Codex answers are held to their response types.**
+Codex's answers to amux's requests keep their result as plain JSON on the
+wire type, so the corpus check never asked whether a recorded answer fits
+the type amux reads it as. It now pairs every answer with the request it
+answers, by id within its recording, reads the result strictly as that
+request's response type (`codex_protocol::strict_result`), and checks the
+typed value encodes back to the same JSON; requests answered with an
+empty object are listed by name. The check found the hand-written
+`codex-offers` recording offering models without the description, hidden
+flag and default flag real Codex writes, so it carries them now.
+
 2026-10-06 — **The Codex client and the fakes' check on the protocol types.**
 The `codex` crate keeps only what starts Codex's app-server and talks to
 it: the process, the lines in and out, and routing each message to the
