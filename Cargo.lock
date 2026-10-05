@@ -727,6 +727,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "codex-specs"
 version = "0.1.0"
 dependencies = [

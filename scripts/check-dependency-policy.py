@@ -25,6 +25,9 @@ ALLOWED_LOCAL = {
     "agent": {"agent-dir", "attachments", "claude", "interpret", "journal", "pty-host", "wire"},
     "claude": {"pty-host"},
     "codex": set(),
+    # Each provider's messages as types: pure, so the interpreter the phone
+    # links can read them. PURE_EXTERNAL below bounds what they may pull in.
+    "codex-protocol": set(),
     "pty-host": set(),
     # The daemon reaches agent processes only through the directory contract,
     # never the agent crate, so the phone can host a runtime without a
@@ -68,7 +71,12 @@ ALLOWED_LOCAL = {
 # the daemon, its store, the interpreters or a provider. The phone bridge
 # (app-ffi, app-embedded) hosts the runtime in process and is not one of them.
 UI_CRATES = {"model", "client", "ui-state", "ui-view", "ui-runtime", "tui", "app-runtime"}
-FORBIDDEN_FOR_UI = {"node", "store", "interpret", "agent", "claude", "codex", "pty-host"}
+FORBIDDEN_FOR_UI = {
+    "node", "store", "interpret", "agent", "claude", "codex", "codex-protocol", "pty-host",
+}
+# The protocol crates hold types and nothing else: no process, socket or
+# async runtime code may come in through a dependency.
+PURE_EXTERNAL = {"codex-protocol": {"serde", "serde_json"}}
 TEST_SUPPORT = {
     "patience",
     "testnet",
@@ -137,6 +145,19 @@ def main() -> int:
             failures.append(
                 f"{name}: local dependencies are {sorted(actual)}, expected {sorted(allowed)}"
             )
+
+    for name, allowed in PURE_EXTERNAL.items():
+        package = packages.get(name)
+        if package is None:
+            failures.append(f"missing required workspace package {name}")
+            continue
+        normal = {
+            dependency["name"]
+            for dependency in package["dependencies"]
+            if dependency["kind"] is None
+        }
+        if extra := normal - allowed:
+            failures.append(f"{name}: a protocol crate depends on {sorted(extra)}")
 
     for name, package in packages.items():
         if name not in TEST_SUPPORT and (edges := local_edges(package) & TEST_SUPPORT):

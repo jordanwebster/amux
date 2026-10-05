@@ -219,6 +219,25 @@ cargo = [
 ]
 
 [[suite]]
+name = "codex-protocol"
+contract = "Every line of every Codex recording, in both directions, decodes as a known message and encodes back to the same JSON; an unknown method or item type is kept whole in production and refused by the strict check; what amux writes to Codex encodes to the bytes it has always written."
+paths = ["crates/codex-protocol"]
+recipe = "just test-crate codex-protocol"
+boundary = "Provider adapter"
+oracle = "Strict decoding of each recorded line, JSON equality after encoding, the typed fields read from recorded lines, and exact encoded bytes."
+real = ["recorded provider bytes"]
+substituted = ["live Codex process"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = "crates/codex-specs/fixtures/runtime, journeys/recordings"
+update = "A failing line is provider drift or a wrong type: fix the type in crates/codex-protocol/src, never a live recording."
+cargo = [
+  { package = "codex-protocol", kind = "lib", targets = ["codex_protocol"], features = [] },
+  { package = "codex-protocol", targets = ["corpus", "messages"], features = [] },
+]
+
+[[suite]]
 name = "provider-fake-behaviour"
 contract = "Each scripted fake provider speaks its real protocol as a host sees it: every frame it composes has a recorded shape, it echoes, queues, folds, steers, interrupts and blocks on asks the way its provider does, and every journey script loads on every fake."
 paths = ["crates/provider-fakes/src", "crates/provider-fakes/tests/codex.rs", "crates/provider-fakes/tests/pty.rs", "crates/provider-fakes/tests/sdk.rs", "crates/provider-fakes/tests/scripts.rs"]

@@ -1,3 +1,18 @@
+2026-10-06 — **Codex's app-server messages as types.**
+A new pure crate, `codex-protocol`, types what Codex's server sends
+(notifications, requests that wait for an answer, results) and what amux
+sends (requests, the initialized notification, answers). `decode` never
+fails on a JSON object: an unknown method keeps the whole line, an unknown
+item type or enum spelling is kept as written, and unknown fields of a
+known message stay in its `extra` map, so encoding writes the same JSON
+back. `strict` refuses all of those, which is how recording checks catch
+drift. Encoding writes keys sorted, as the hand-built JSON did, so moving
+the interpreter onto the types will not change a byte sent. Every line of
+the 30 Codex recordings decodes strictly and round-trips. The dependency
+policy now limits the crate to serde and serde_json. The hand-written
+`codex-offers` recording asked for the first model page with a null
+cursor; amux sends an empty object there, so the recording does too now.
+
 2026-10-05 — **A size meter for what a headless Claude session sends.**
 `just wire-size RECORDING` replays a headless Claude recording through
 the interpreter and prints JSON: how many snapshots it journaled, the
