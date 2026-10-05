@@ -1,7 +1,8 @@
 //! The claude crate is provider transport: launching Claude, its hooks and
-//! messaging sockets, and the keymaps that turn semantic input into PTY
-//! bytes. The stream-JSON frames are claude-protocol's. Hosting a session and deciding what its
-//! traffic means belong to the agent process and the interpreter.
+//! messaging sockets, finding its transcript, and the keymaps that turn
+//! semantic input into PTY bytes. The stream-JSON frames are
+//! claude-protocol's. Hosting a session and deciding what its traffic means
+//! belong to the agent process and the interpreter.
 
 use std::fs;
 use std::path::Path;
@@ -18,7 +19,10 @@ fn modules(dir: &str) -> Vec<String> {
 
 #[test]
 fn the_crate_carries_transport_and_no_session_host() {
-    assert_eq!(modules("src/sdk"), ["error.rs", "mod.rs"]);
+    assert!(
+        !Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sdk").exists(),
+        "a stream client belongs beside the stream's users, not in the host crate"
+    );
     assert_eq!(
         modules("src/pty"),
         ["input.rs", "keymap.rs", "mod.rs", "spawn.rs"]

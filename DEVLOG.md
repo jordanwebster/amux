@@ -25,6 +25,11 @@ bodies, replacing its private copies of them. A new documentation page,
 docs/PROVIDER_CRATES.md, describes each provider's protocol, host and
 client layers, who uses each, and the checks holding them to the
 recordings.
+The `claude` crate now holds host code only: the stream error moved to
+the spec driver, the stream's one client, and `claude::history` shrank to
+finding a session's transcript file, the one part anything used; its
+unused session listing, message reading and forking, which read
+transcript rows by hand, are gone.
 
 2026-10-06 — **Terminal Claude's transcript rows and hook payloads as types.**
 `claude-protocol` gains `transcript` and `hooks`. A transcript row is one

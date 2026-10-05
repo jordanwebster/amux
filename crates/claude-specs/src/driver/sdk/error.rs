@@ -1,3 +1,5 @@
+//! What the headless stream client reports when the stream fails.
+
 pub use claude_protocol::stream::ProtocolError;
 
 #[derive(Debug, thiserror::Error)]
@@ -12,8 +14,6 @@ pub enum Error {
     Protocol(#[from] ProtocolError),
     #[error("process error: {0}")]
     Process(String),
-    #[error("persisted session error: {0}")]
-    Persistence(String),
     #[error("Claude process exited unsuccessfully ({status}): {stderr}")]
     ProcessExit { status: String, stderr: String },
     #[error("query aborted")]
