@@ -169,6 +169,15 @@ agent's source. Put away, the browser stops and forgets what it found, and
 only the chats a push opens keep a source. Coming back to the front starts
 the browser again and lists every agent again.
 
+The same two moments drive [product analytics](ANALYTICS.md), which the
+runtime keeps and sends: coming to the front counts the app as opened (at
+most once an hour), and going to the back sends what is waiting before the
+system may suspend the app. The paywall opening and a purchase starting are
+seen only by the app, which records them on the account on screen
+(`RuntimeCoordinator.record`). **Share Usage** under **You** turns it off; the
+choice is kept in the app's defaults and handed to the runtime at start and
+on every change. Only the App Store build sends.
+
 A "needs you" notification's payload names a host and an agent under its
 `amux` key (`PushPayload`). When one wakes the app in the background,
 `RuntimeCoordinator.warm` brings the account whose profile trusts that host

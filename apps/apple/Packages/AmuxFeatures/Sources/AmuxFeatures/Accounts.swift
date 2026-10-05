@@ -15,6 +15,8 @@ public enum AccountsAction: Equatable, Sendable {
     /// Open what this account has bought.
     case subscription
     case appearance(Appearance?)
+    /// Turn sending amux.sh usage events on or off.
+    case shareUsage(Bool)
     case identity
     case support
     case report
@@ -228,17 +230,20 @@ public struct YouScreen: View {
     @Environment(\.design) private var design
     private let accounts: AccountRegistry
     private let appearance: Appearance?
+    private let shareUsage: Bool
     private let identity: String?
     private let actions: @MainActor (AccountsAction) -> Void
 
     public init(
         accounts: AccountRegistry,
         appearance: Appearance? = nil,
+        shareUsage: Bool = true,
         identity: String? = nil,
         actions: @escaping @MainActor (AccountsAction) -> Void
     ) {
         self.accounts = accounts
         self.appearance = appearance
+        self.shareUsage = shareUsage
         self.identity = identity
         self.actions = actions
     }
@@ -356,6 +361,8 @@ public struct YouScreen: View {
             SectionHead(title: "This phone")
             VStack(spacing: 0) {
                 appearanceRow
+                rule(inset: 14)
+                shareUsageRow
                 if let identity {
                     rule(inset: 14)
                     row("Identity", value: identity, id: "identity", mono: true) { actions(.identity) }
@@ -384,6 +391,25 @@ public struct YouScreen: View {
         .padding(.vertical, 9)
         .accessibilityElement(children: .contain)
         .identified("you.appearance", value: appearance?.rawValue ?? "system")
+    }
+
+    /// A switch, not a page: what it sends is described on amux.sh, and the
+    /// caption says what it is in a line.
+    private var shareUsageRow: some View {
+        Toggle(isOn: Binding(get: { shareUsage }, set: { actions(.shareUsage($0)) })) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Share Usage")
+                    .designFont(.body, design)
+                    .foregroundStyle(design.ink.color)
+                Text("Counts and choices, never what you type")
+                    .designFont(.caption, design)
+                    .foregroundStyle(design.inkMuted.color)
+            }
+        }
+        .tint(design.ink.color)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .identified("you.shareUsage", value: shareUsage ? "on" : "off")
     }
 
     private func choice(_ title: String, _ wanted: Appearance?) -> some View {

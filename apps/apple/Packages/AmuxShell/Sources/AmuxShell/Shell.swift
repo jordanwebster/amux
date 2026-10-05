@@ -65,6 +65,8 @@ public enum ShellAction: Equatable, Sendable {
     case cancelDeletion
     /// Light, dark, or whatever the phone is set to.
     case wear(Appearance?)
+    /// Turn sending amux.sh usage events on or off.
+    case shareUsage(Bool)
     /// Write this phone's diagnostic dump and offer it to share.
     case exportDump
 }
@@ -108,6 +110,8 @@ public struct Shell: View {
     private let removal: RemovalStore
     /// What the app is wearing, or nothing for whatever the phone is set to.
     private let appearance: Appearance?
+    /// Whether this phone sends amux.sh usage events.
+    private let shareUsage: Bool
     /// Freezes the screen and opens a report on it, from Help. The app owns
     /// the capture; the shell only knows where the row that asks for it is.
     private let report: @MainActor () -> Void
@@ -127,10 +131,12 @@ public struct Shell: View {
         deletion: DeletionStore,
         removal: RemovalStore = RemovalStore(),
         appearance: Appearance? = nil,
+        shareUsage: Bool = true,
         report: @escaping @MainActor () -> Void = {},
         actions: @escaping @MainActor (ShellAction) -> Void
     ) {
         self.appearance = appearance
+        self.shareUsage = shareUsage
         self.deletion = deletion
         self.removal = removal
         self.router = router
@@ -178,7 +184,7 @@ public struct Shell: View {
                         YouTabRoot(
                             router: self.router, accounts: accounts, stores: stores,
                             deletion: deletion, removal: removal, appearance: appearance,
-                            report: report, actions: actions)
+                            shareUsage: shareUsage, report: report, actions: actions)
                             .navigationDestination(for: Route.self) { page($0) }
                     }
                     .tabSurface(selected: router.tab == .you)
@@ -812,6 +818,7 @@ private struct YouTabRoot: View {
     let deletion: DeletionStore
     let removal: RemovalStore
     let appearance: Appearance?
+    let shareUsage: Bool
     /// Freezes the screen behind this page and opens the report on it.
     let report: @MainActor () -> Void
     let actions: @MainActor (ShellAction) -> Void
@@ -848,7 +855,7 @@ private struct YouTabRoot: View {
 
     private var you: some View {
         YouScreen(
-            accounts: accounts, appearance: appearance,
+            accounts: accounts, appearance: appearance, shareUsage: shareUsage,
             // This phone's own key, read off the machine store the way the
             // devices page reads it: absent until a connection has said what
             // this device's identity is, rather than guessed at.
@@ -862,6 +869,7 @@ private struct YouTabRoot: View {
             case .remove(let id): actions(.removeAccount(id))
             case .subscription: actions(.subscribe)
             case .appearance(let wanted): actions(.wear(wanted))
+            case .shareUsage(let on): actions(.shareUsage(on))
             case .delete(let id): actions(.deleteAccount(id))
             // This phone's key and the machines that trust it are one page,
             // and it is the machines tab: an identity is only interesting

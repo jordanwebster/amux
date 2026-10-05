@@ -1,3 +1,12 @@
+2026-10-05 — **The phone has a Share Usage switch and reports its
+paywall.** **Share Usage** sits under **You**, in **This phone**, on until
+turned off; the choice is kept in the app's defaults and handed to the
+runtime at start and on every change, and off holds back what is already
+waiting. Coming to the front counts the app as opened and going to the back
+flushes what is waiting. Opening the subscription page and starting a
+purchase are recorded on the account on screen, with the tab it was opened
+from and the billing interval chosen.
+
 2026-10-05 — **amux records usage events and sends them to amux.sh.**
 A new `analytics` crate holds every event a device may send as one typed
 enum whose fields are enums, counts, bools, versions and host ids only, so

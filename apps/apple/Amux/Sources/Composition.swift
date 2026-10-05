@@ -34,6 +34,16 @@ final class Composition {
     /// What the app is wearing. Nothing means whatever the phone is set to,
     /// which is what most people want and what the app starts as.
     var appearance: Appearance?
+    /// Whether this phone sends amux.sh usage events. On until somebody
+    /// turns it off, and kept across launches: an off that a relaunch
+    /// forgot would send what the person said not to.
+    var shareUsage = UserDefaults.standard.object(forKey: Composition.shareUsageKey) as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(shareUsage, forKey: Self.shareUsageKey)
+            runtime.shareUsage = shareUsage
+        }
+    }
+    private static let shareUsageKey = "shareUsage"
     /// The one report this phone is in the middle of, from a screenshot or
     /// from Help. In every build: reporting a problem is for everybody.
     let reports = ReportStore()
@@ -124,6 +134,7 @@ final class Composition {
         // machines and agents, however the account on screen changed.
         runtime.accountChanged = { [weak router] in router?.leaveAccount() }
         router.loads(with: self)
+        runtime.shareUsage = shareUsage
         // Starting the runtime reads this phone's own store before it dials,
         // so the first frame has rows and needs no network.
         runtime.start()
@@ -178,10 +189,12 @@ final class Composition {
         // Subscribing is a page, and it asks the store what it has on the
         // way: the screen is useful before the answer arrives.
         case .subscribe:
+            runtime.record(.paywallViewed(from: Self.paywallFrom(router.tab)))
             paywall.entitled(accounts.selectedAccount?.entitlement ?? .none)
             router.open(.paywall(router.tab))
             Task { await paywall.load(from: store) }
         case .buySubscription:
+            runtime.record(.purchaseStarted(interval: Self.interval(paywall.chosen)))
             Task {
                 guard case .bought(let purchase)? = await paywall.buy(store) else { return }
                 await confirm(purchase)
@@ -223,6 +236,8 @@ final class Composition {
             forget(id)
         case .wear(let wanted):
             appearance = wanted
+        case .shareUsage(let on):
+            shareUsage = on
         case .deleteAccount(let id):
             deletion.ask(id)
         case .cancelDeletion:
@@ -231,6 +246,21 @@ final class Composition {
             Task { await deletion.delete(with: cloud, forgetting: { [weak self] in self?.forget($0) }) }
         case .exportDump:
             Task { await exportDump() }
+        }
+    }
+
+    private static func paywallFrom(_ tab: Tab) -> PaywallFrom {
+        switch tab {
+        case .agents: .agents
+        case .hosts: .hosts
+        case .you: .you
+        }
+    }
+
+    private static func interval(_ period: Plan.Period) -> BillingInterval {
+        switch period {
+        case .monthly: .monthly
+        case .yearly: .yearly
         }
     }
 

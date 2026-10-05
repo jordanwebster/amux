@@ -212,8 +212,8 @@ public struct AgentsHome: View {
         // Nothing else the panel can say reaches this screen: the rest of an
         // account's actions live under You, where there is room to state what
         // they do.
-        case .signOut, .remove, .delete, .subscription, .appearance, .identity, .support,
-             .report, .exportDump:
+        case .signOut, .remove, .delete, .subscription, .appearance, .shareUsage, .identity,
+             .support, .report, .exportDump:
             break
         }
     }

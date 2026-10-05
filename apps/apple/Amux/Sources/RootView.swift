@@ -59,6 +59,7 @@ struct RootView: View {
                     deletion: composition.deletion,
                     removal: composition.removal,
                     appearance: composition.appearance,
+                    shareUsage: composition.shareUsage,
                     report: { composition.beginReport() },
                     actions: { composition.handle($0) }
                 )
