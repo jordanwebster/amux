@@ -1,3 +1,12 @@
+2026-10-05 — **Terminal journey frames recorded on macOS match Linux
+where a row shows a path.** On macOS a program reading its working
+directory prints `/private/tmp/…`; the journey driver spells it `/tmp/…`
+and used to close the gap by pulling the rest of the row left, so a
+header's `[Home]` or a box's edge sat 8 columns short in every golden
+recorded on a Mac, and Linux CI never matched them. The dropped cells now
+come back as blanks in the first gap after the path, where the shorter
+path would have left them. Eight frames in three journeys re-recorded.
+
 2026-10-05 — **The vocabulary's prompt row reads the same time in every
 time zone.** Its rows were written at the epoch, which the row's clock
 shows in the machine's time zone, so the golden recorded in Europe

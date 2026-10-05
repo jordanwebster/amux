@@ -6,7 +6,7 @@
 
   ▾ Running 6 ──────────────────────────────────────────────────────────────────────────────────────────────
 
-  › ○ helper  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                [x]
+  › ○ helper  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                        [x]
                                   ╭─ Stop ────────────────────────────────╮
     ○ decision-pty  Claude (termin│                                       │/work                       now
                                   │ Stop helper? It can be resumed later. │

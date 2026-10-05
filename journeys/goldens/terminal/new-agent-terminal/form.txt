@@ -10,7 +10,7 @@
                    │                                                                      │
     ○ expired  Clau│  Name      release-notes                                             │            now
                    │  Agent      Claude   Codex                                           │
-    ○ limited  Clau│  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work        │            now
+    ○ limited  Clau│  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work                │            now
                    │  Host       cabin   desk   laptop                                    │
     ○ worker  Claud│                                                                      │            now
                    │  [Start]  [Cancel]                                                   │

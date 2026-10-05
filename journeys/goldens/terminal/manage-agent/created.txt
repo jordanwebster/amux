@@ -1,5 +1,5 @@
 
-  the agent │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                           1 │ [Diff] │ [Home]
+  the agent │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                   1 │ [Diff] │ [Home]
 
 
 

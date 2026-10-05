@@ -27,7 +27,7 @@
   │ deploy --check                                                                                         │
   │                                                                                                        │
   │ › 1. Yes                                                                                               │
-  │   2. Yes, and allow access to /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work for this session        │
+  │   2. Yes, and allow access to /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work for this session                │
   │   3. No, and stop  esc · tab to add a note                                                             │
   ╰─────────────────────────────────────────────────────────────────────────────────────────────── Fake 1 ─╯
 

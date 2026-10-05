@@ -206,8 +206,10 @@ def logical_paths(
     printed its physical path instead. A program reading its own working
     directory gets the physical path, and on macOS /tmp is a link to
     /private/tmp: without this a frame recorded there would never match one
-    from Linux. The dropped prefix's cells leave the row, as they would had
-    the program printed the shorter path."""
+    from Linux. The dropped prefix's cells come back as blanks in the first
+    gap of two or more blanks after the path, as they would had the program
+    printed the shorter path into a padded line: a box's edge or right-aligned
+    text keeps its place. With no such gap they come back at the row's end."""
     if physical == logical or not physical.endswith(logical[1:]):
         return texts, styles
     drop = len(physical) - len(logical)
@@ -216,8 +218,15 @@ def logical_paths(
         row = list(row)
         while (start := text.find(physical)) >= 0:
             cell = sum(_cell_width(c) for c in text[:start])
-            row = row[:cell] + row[cell + drop :] + [row[-1]] * drop
             text = text[:start] + text[start + drop :]
+            row = row[:cell] + row[cell + drop :]
+            gap = text.find("  ", start + len(logical))
+            if gap < 0:
+                row += [row[-1]] * drop
+            else:
+                at = sum(_cell_width(c) for c in text[:gap])
+                text = text[:gap] + " " * drop + text[gap:]
+                row = row[:at] + [row[at]] * drop + row[at:]
         out_texts.append(text)
         out_styles.append(row)
     return out_texts, out_styles
