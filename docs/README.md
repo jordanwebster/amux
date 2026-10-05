@@ -13,6 +13,8 @@
   directory, startup, remote hosts and the cloud, and the crate map with its dependency policy.
 - [The agent process](AGENT_PROCESS.md) — lifecycle, control socket, provider children, facts and hooks, the pty
   socket and raw attach, the tool server, exit and self-destruct.
+- [Provider crates](PROVIDER_CRATES.md) — each provider's protocol, host and client layers, who uses each, and
+  the checks that hold them to the recordings.
 - [Interpreters](INTERPRETERS.md) — how terminal Claude, headless Claude and Codex output becomes chat items:
   the step rule, checkpoints, redaction, keymaps, provider crates, recordings and the coverage test.
 - [Journal and store](JOURNAL_AND_STORE.md) — journal segments, commit and revisions, durability, ingest, the

@@ -21,7 +21,10 @@ everyone imports `claude_protocol::stream` directly. The Claude spec
 driver now reads each line with `claude_protocol::stream::decode` and
 Claude's requests (tool permission, hook callback, MCP message,
 elicitation and the user dialog, newly typed) as the protocol's request
-bodies, replacing its private copies of them.
+bodies, replacing its private copies of them. A new documentation page,
+docs/PROVIDER_CRATES.md, describes each provider's protocol, host and
+client layers, who uses each, and the checks holding them to the
+recordings.
 
 2026-10-06 — **Terminal Claude's transcript rows and hook payloads as types.**
 `claude-protocol` gains `transcript` and `hooks`. A transcript row is one
