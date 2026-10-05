@@ -21,6 +21,14 @@ that. It stops there: **nothing here submits anything for review.** A
 rehearsal, `--no-upload` and `--no-push` each stop short; see
 [Where it stops](#where-it-stops).
 
+The app's privacy manifest, `apps/apple/Amux/Resources/PrivacyInfo.xcprivacy`,
+declares what the app collects and why it calls the APIs Apple asks reasons
+for (UserDefaults, file timestamps, disk space). An upload that uses one of
+those APIs without a declared reason is refused. The manifest and the App
+Privacy answers in App Store Connect describe the same collection, so a change
+to what the app or [analytics](ANALYTICS.md) sends updates both, and the App
+Store Connect answers before the version that starts sending is submitted.
+
 The app is the next version of the listing already on the App Store, not a
 new one. Its bundle identifier, `sh.amux.app`, is what signing and the App
 Store record agree on, and it is committed in `apps/apple/project.yml`, from

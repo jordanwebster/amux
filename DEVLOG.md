@@ -1,3 +1,11 @@
+2026-10-06 — **The iPhone app carries a privacy manifest.** The Share Usage
+switch put UserDefaults into release code, and Apple refuses an upload that
+uses it without a declared reason, so `PrivacyInfo.xcprivacy` declares it
+along with the file-timestamp and disk-space calls the Rust core and SQLite
+make, and lists the data the app collects for its own functions and for
+analytics, none for tracking. RELEASE.md says the manifest and the App
+Privacy answers move together.
+
 2026-10-06 — **`DO_NOT_TRACK` is described as far as it reaches.** A
 daemon started at login sees only the environment its login item gives
 it, never a shell profile's, so `amux config telemetry` no longer reports

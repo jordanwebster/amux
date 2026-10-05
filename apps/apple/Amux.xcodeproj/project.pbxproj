@@ -103,6 +103,7 @@
 		6805234D9DC817A50B5F83BD /* AmuxDesign in Frameworks */ = {isa = PBXBuildFile; productRef = C0C0812086F76FDC86EC6F93 /* AmuxDesign */; };
 		687D6AFC158EA02B38F25433 /* SnapshotTesting in Frameworks */ = {isa = PBXBuildFile; productRef = 452D6B5733E5F7617EFF32B3 /* SnapshotTesting */; };
 		6B0E85DB1DB5AC0F55A2B0EC /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 945602D9376D08934B80A0F1 /* manifest.json */; };
+		6B19BAA39C6C7A8BAC26801A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 77ECF06E521C94FBE6BCA2F1 /* PrivacyInfo.xcprivacy */; };
 		6D9A21635B9E0A9376F58940 /* components.review-folded-light.png in Resources */ = {isa = PBXBuildFile; fileRef = E32B3EBC99E143C2F8AF9920 /* components.review-folded-light.png */; };
 		6E69841EDA04D4895B357693 /* components.review-selection-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = C839E4964A504CC0A88672A2 /* components.review-selection-dark.png */; };
 		6F22A1F3C365E383E85D3CA5 /* components.row-ask-unanswerable-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 253C10E399D04F37057DDF0A /* components.row-ask-unanswerable-light.png */; };
@@ -433,6 +434,7 @@
 		76F5FF4BBADA211560A4F526 /* components.row-ask-question-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-ask-question-dark.png"; sourceTree = "<group>"; };
 		771394A0DB198CE32C0953CD /* components.ask-codex-command-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-codex-command-light.png"; sourceTree = "<group>"; };
 		7730E5ADC6A2608A431B6A8F /* components.ask-codex-command-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-codex-command-dark.png"; sourceTree = "<group>"; };
+		77ECF06E521C94FBE6BCA2F1 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		7841E9EA7855115C8262F599 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		7AB23EF6A2C55EB6D252F059 /* components.composer-strip-expanded-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-strip-expanded-dark.png"; sourceTree = "<group>"; };
 		7B1A889748D51DDCD9D87004 /* components.ask-question-secret-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-question-secret-dark.png"; sourceTree = "<group>"; };
@@ -936,6 +938,7 @@
 			children = (
 				2BA304BF0D2207C48DE6459A /* InfoPlist.xcstrings */,
 				7841E9EA7855115C8262F599 /* Localizable.xcstrings */,
+				77ECF06E521C94FBE6BCA2F1 /* PrivacyInfo.xcprivacy */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -1147,6 +1150,7 @@
 				EEEEF4C1DDA205961E7286E0 /* DebugCopy.xcstrings in Resources */,
 				108379821A1408D28DB67B7C /* InfoPlist.xcstrings in Resources */,
 				BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */,
+				6B19BAA39C6C7A8BAC26801A /* PrivacyInfo.xcprivacy in Resources */,
 				CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
