@@ -572,14 +572,24 @@ pub struct PermissionsApprovalParams {
     pub extra: Extra,
 }
 
-/// Extra file and network access, asked for or granted.
+/// Extra file and network access, asked for or granted. Codex writes a
+/// part it does not ask for as null; amux leaves out a part it does not
+/// grant.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionProfile {
-    #[serde(default)]
-    pub file_system: Option<FileSystemPermissions>,
-    #[serde(default)]
-    pub network: Option<NetworkPermissions>,
+    #[serde(
+        default,
+        deserialize_with = "crate::present_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub file_system: Option<Option<FileSystemPermissions>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::present_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub network: Option<Option<NetworkPermissions>>,
     #[serde(flatten)]
     pub extra: Extra,
 }

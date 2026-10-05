@@ -17,25 +17,41 @@
 
 use std::collections::BTreeMap;
 
+use codex_protocol::client::{ElicitationAction, GrantScope, InjectedContent, InjectedItem};
+use codex_protocol::server::{CommandDecision, Decision as Offered};
+use codex_protocol::{
+    ClientMessage, ClientRequest, ClientResponse, RequestId, ServerMessage, ServerNotification,
+    ServerRequest,
+};
 use prost::Message as _;
-use serde_json::{Value, json};
+use serde::Deserialize;
 use wire::{
     AnswerInput, Approve, CodexAnswer, CodexInput, Envelope, EnvelopeKind, FormAction, FormAnswer,
     GrantAnswer, Input, Interrupt, LinkAnswer, PromptInput, QuestionAnswer, QuestionResponse,
     codex_answer, codex_input, input,
 };
 
-use crate::claude_common::text;
 use crate::{Channel, Event, Fact};
 
-/// Requests the interpreter itself sends.
-const INTERPRETER_METHODS: &[&str] = &[
-    "turn/start",
-    "turn/steer",
-    "turn/interrupt",
-    "thread/inject_items",
-    "thread/compact/start",
-];
+/// One line of a recording.
+#[derive(Deserialize)]
+struct Recorded {
+    /// Microseconds since the recording began.
+    #[serde(default)]
+    us: i64,
+    /// `stdout` for what the server wrote; anything else is the host's.
+    #[serde(default)]
+    dir: String,
+    /// The JSON-RPC line; an exit has none.
+    #[serde(default)]
+    line: Option<String>,
+}
+
+/// A recorded line, read in the direction it went.
+enum Line {
+    Server(ServerMessage),
+    Host(ClientMessage),
+}
 
 pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
     if format != "codex_io" {
@@ -47,35 +63,43 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
         .filter(|line| !line.trim().is_empty())
         .enumerate()
         .map(|(index, line)| {
-            serde_json::from_str::<Value>(line)
+            serde_json::from_str::<Recorded>(line)
                 .map_err(|error| format!("line {}: {error}", index + 1))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let us = |line: &Value| line.get("us").and_then(Value::as_i64).unwrap_or(0);
-    let parsed = |line: &Value| {
-        line.get("line")
-            .and_then(Value::as_str)
-            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+    let parsed = |recorded: &Recorded| {
+        let line = recorded.line.as_deref()?.as_bytes();
+        Some(if recorded.dir == "stdout" {
+            Line::Server(codex_protocol::decode(line).ok()?)
+        } else {
+            Line::Host(codex_protocol::decode_client(line).ok()?)
+        })
     };
     let origin = lines
         .iter()
-        .find_map(|line| Some(parsed(line)?.get("emittedAtMs")?.as_i64()? - us(line) / 1000))
+        .find_map(|recorded| match parsed(recorded)? {
+            Line::Server(ServerMessage::Notification {
+                emitted_at_ms: Some(at),
+                ..
+            }) => Some(at - recorded.us / 1000),
+            _ => None,
+        })
         .unwrap_or(0);
 
     let mut events = Vec::new();
     let mut now = None;
-    // Server requests by id, to read the host's responses as answers.
-    let mut asked = BTreeMap::<String, Value>::new();
+    // Server requests by their key, to read the host's responses as answers.
+    let mut asked = BTreeMap::<String, ServerRequest>::new();
     // Host request ids the interpreter stands in for, renumbered.
     let mut renumbered = BTreeMap::<String, String>::new();
     let mut inputs = 0;
     let mut injected_while_idle = false;
     let mut busy = false;
-    for line in &lines {
-        let Some(mut message) = parsed(line) else {
+    for recorded in &lines {
+        let Some(line) = parsed(recorded) else {
             continue;
         };
-        let at_ms = origin + us(line) / 1000;
+        let at_ms = origin + recorded.us / 1000;
         let mut push = |event: Event| {
             if now.is_none_or(|now| at_ms > now) {
                 now = Some(at_ms);
@@ -83,58 +107,77 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
             }
             events.push(event);
         };
-        let method = text(&message, "method").to_owned();
-        let params = message.get("params").cloned().unwrap_or(Value::Null);
-        if line.get("dir").and_then(Value::as_str) == Some("stdout") {
-            match (method.as_str(), message.get("id")) {
-                ("", Some(id)) => {
-                    if let Some(ours) = renumbered.get(&id.to_string()) {
-                        message["id"] = json!(ours);
+        let message = match line {
+            Line::Server(mut message) => {
+                match &mut message {
+                    ServerMessage::Response { id, .. } => {
+                        if let Some(ours) = renumbered.get(&key(id)) {
+                            *id = RequestId::String(ours.clone());
+                        }
                     }
+                    ServerMessage::Request { id, request, .. } => {
+                        asked.insert(key(id), request.clone());
+                    }
+                    ServerMessage::Notification {
+                        notification: ServerNotification::TurnStarted(_),
+                        ..
+                    } => busy = true,
+                    ServerMessage::Notification {
+                        notification: ServerNotification::TurnCompleted(_),
+                        ..
+                    } => busy = false,
+                    _ => {}
                 }
-                (_, Some(id)) => {
-                    asked.insert(id.to_string(), message.clone());
-                }
-                ("turn/started", None) => busy = true,
-                ("turn/completed", None) => busy = false,
-                _ => {}
+                push(Event::Fact(Fact {
+                    channel: Channel::Rpc,
+                    payload: codex_protocol::encode_server(&message),
+                }));
+                continue;
             }
-            push(Event::Fact(Fact {
-                channel: Channel::Rpc,
-                payload: message.to_string().into_bytes(),
-            }));
-            continue;
-        }
+            Line::Host(message) => message,
+        };
 
-        let id = message.get("id").map(Value::to_string).unwrap_or_default();
-        if INTERPRETER_METHODS.contains(&method.as_str()) {
-            renumbered.insert(id.clone(), format!("amux-{}", renumbered.len() + 1));
+        if let ClientMessage::Request { id, request, .. } = &message
+            && matches!(
+                request,
+                ClientRequest::TurnStart(_)
+                    | ClientRequest::TurnSteer(_)
+                    | ClientRequest::TurnInterrupt(_)
+                    | ClientRequest::ThreadInjectItems(_)
+                    | ClientRequest::ThreadCompactStart(_)
+            )
+        {
+            // The interpreter sends these itself.
+            renumbered.insert(key(id), format!("amux-{}", renumbered.len() + 1));
         }
         inputs += 1;
         let input_id = format!("stdin-{inputs}").into_bytes();
-        let arm = match method.as_str() {
-            "turn/start" => {
-                let text = input_text(&params);
+        let arm = match message {
+            ClientMessage::Request {
+                request: ClientRequest::TurnStart(params),
+                ..
+            } => {
+                let text = input_text(&params.input);
                 if text.is_empty() && std::mem::take(&mut injected_while_idle) {
                     continue;
                 }
                 // Overrides the host put on the turn are inputs before it.
-                if let Some(model) = params.get("model").and_then(Value::as_str) {
+                if let Some(model) = params.model {
                     push(Event::Input(Input {
                         input_id: format!("stdin-{inputs}-model").into_bytes(),
                         of: Some(input::Of::Codex(CodexInput {
                             of: Some(codex_input::Of::Model(wire::SetModel {
-                                model: Some(model.to_owned()),
+                                model: Some(model),
                             })),
                         })),
                     }));
                 }
-                if let Some(effort) = params.get("effort").and_then(Value::as_str) {
+                if let Some(Some(effort)) = params.effort {
                     push(Event::Input(Input {
                         input_id: format!("stdin-{inputs}-effort").into_bytes(),
                         of: Some(input::Of::Codex(CodexInput {
                             of: Some(codex_input::Of::Effort(wire::SetEffort {
-                                effort: Some(effort.to_owned()),
+                                effort: Some(effort.as_str().to_owned()),
                             })),
                         })),
                     }));
@@ -144,13 +187,16 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                     ..Default::default()
                 })
             }
-            "turn/steer" => {
+            ClientMessage::Request {
+                request: ClientRequest::TurnSteer(params),
+                ..
+            } => {
                 let queued = format!("stdin-{inputs}-queued").into_bytes();
                 push(Event::Input(Input {
                     input_id: queued.clone(),
                     of: Some(input::Of::Codex(CodexInput {
                         of: Some(codex_input::Of::Prompt(PromptInput {
-                            text: input_text(&params),
+                            text: input_text(&params.input),
                             ..Default::default()
                         })),
                     })),
@@ -159,25 +205,33 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                     queued_input_id: queued,
                 })
             }
-            "turn/interrupt" => codex_input::Of::Interrupt(Interrupt {}),
-            "thread/compact/start" => codex_input::Of::Prompt(PromptInput {
+            ClientMessage::Request {
+                request: ClientRequest::TurnInterrupt(_),
+                ..
+            } => codex_input::Of::Interrupt(Interrupt {}),
+            ClientMessage::Request {
+                request: ClientRequest::ThreadCompactStart(_),
+                ..
+            } => codex_input::Of::Prompt(PromptInput {
                 text: "/compact".into(),
                 ..Default::default()
             }),
-            "thread/inject_items" => {
+            ClientMessage::Request {
+                request: ClientRequest::ThreadInjectItems(params),
+                ..
+            } => {
                 injected_while_idle = !busy;
                 let text = params
-                    .get("items")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .flat_map(|item| {
-                        item.get("content")
-                            .and_then(Value::as_array)
-                            .cloned()
-                            .unwrap_or_default()
+                    .items
+                    .iter()
+                    .flat_map(|item| match item {
+                        InjectedItem::Message(message) => message.content.as_slice(),
+                        InjectedItem::Unknown(_) => &[],
                     })
-                    .map(|part| text(&part, "text").to_owned())
+                    .map(|part| match part {
+                        InjectedContent::InputText(text) => text.text.as_str(),
+                        InjectedContent::Unknown(_) => "",
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
                 push(Event::Input(Input {
@@ -191,10 +245,20 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                 }));
                 continue;
             }
-            "" => match answer(asked.get(&id), &message) {
-                Some(arm) => arm,
-                None => continue,
-            },
+            ClientMessage::Response {
+                id,
+                response: Ok(response),
+                ..
+            } => {
+                let key = key(&id);
+                match asked
+                    .get(&key)
+                    .and_then(|asked| answer(asked, key, &response))
+                {
+                    Some(arm) => arm,
+                    None => continue,
+                }
+            }
             _ => continue,
         };
         push(Event::Input(Input {
@@ -205,24 +269,28 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
     Ok(events)
 }
 
-fn input_text(params: &Value) -> String {
-    params
-        .get("input")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|part| text(part, "type") == "text")
-        .map(|part| text(part, "text").to_owned())
+/// A request id as the interpreter keys its asks: the JSON it was sent as.
+fn key(id: &RequestId) -> String {
+    serde_json::to_string(id).expect("a request id serializes")
+}
+
+fn input_text(input: &[codex_protocol::items::UserInput]) -> String {
+    input
+        .iter()
+        .filter_map(|part| match part {
+            codex_protocol::items::UserInput::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 /// The host's response to a server request, as the input that sends it.
-fn answer(request: Option<&Value>, response: &Value) -> Option<codex_input::Of> {
-    let request = request?;
-    let key = request.get("id")?.to_string();
-    let params = request.get("params").unwrap_or(&Value::Null);
-    let result = response.get("result")?;
+fn answer(
+    request: &ServerRequest,
+    key: String,
+    response: &ClientResponse,
+) -> Option<codex_input::Of> {
     let body = |of: codex_answer::Of| {
         Some(codex_input::Of::Answer(AnswerInput {
             ask_key: key.clone(),
@@ -236,80 +304,61 @@ fn answer(request: Option<&Value>, response: &Value) -> Option<codex_input::Of> 
             decision: decision as i32,
         }))
     };
-    match text(request, "method") {
-        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
-            approve(match result.get("decision")? {
-                Value::String(name) => match name.as_str() {
-                    "accept" => wire::Decision::Approve,
-                    "acceptForSession" => wire::Decision::ApproveSession,
-                    "decline" => wire::Decision::Deny,
-                    "cancel" => wire::Decision::Abort,
-                    _ => return None,
-                },
-                Value::Object(object) if object.contains_key("acceptWithExecpolicyAmendment") => {
-                    wire::Decision::ApproveSimilar
-                }
-                Value::Object(object) if object.contains_key("applyNetworkPolicyAmendment") => {
-                    wire::Decision::ApproveNetwork
-                }
-                _ => return None,
-            })
-        }
-        "item/permissions/requestApproval" => {
-            let permissions = result.get("permissions").unwrap_or(&Value::Null);
-            let files = permissions.get("fileSystem").unwrap_or(&Value::Null);
-            let paths = |key: &str| {
-                files
-                    .get(key)
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|path| path.as_str().map(str::to_owned))
-                    .collect()
-            };
+    match (request, response) {
+        (
+            ServerRequest::CommandApproval(_) | ServerRequest::FileChangeApproval(_),
+            ClientResponse::CommandApproval(answer),
+        ) => approve(match &answer.decision {
+            CommandDecision::Plain(Offered::Accept) => wire::Decision::Approve,
+            CommandDecision::Plain(Offered::AcceptForSession) => wire::Decision::ApproveSession,
+            CommandDecision::Plain(Offered::Decline) => wire::Decision::Deny,
+            CommandDecision::Plain(Offered::Cancel) => wire::Decision::Abort,
+            CommandDecision::Plain(Offered::Other(_)) => return None,
+            CommandDecision::AcceptWithExecpolicyAmendment { .. } => wire::Decision::ApproveSimilar,
+            CommandDecision::ApplyNetworkPolicyAmendment { .. } => wire::Decision::ApproveNetwork,
+        }),
+        (ServerRequest::PermissionsApproval(_), ClientResponse::PermissionsApproval(grant)) => {
+            let files = grant.permissions.file_system.clone().flatten();
+            let files = files.unwrap_or_default();
             body(codex_answer::Of::Grant(GrantAnswer {
-                read: paths("read"),
-                write: paths("write"),
-                network: permissions
-                    .get("network")
-                    .and_then(|network| network.get("enabled"))
-                    .and_then(Value::as_bool)
+                read: files.read.unwrap_or_default(),
+                write: files.write.unwrap_or_default(),
+                network: grant
+                    .permissions
+                    .network
+                    .clone()
+                    .flatten()
+                    .and_then(|network| network.enabled)
                     .unwrap_or(false),
-                for_session: text(result, "scope") == "session",
+                for_session: grant.scope == Some(GrantScope::Session),
             }))
         }
-        "item/tool/requestUserInput" => {
-            let answers = result.get("answers").unwrap_or(&Value::Null);
+        (ServerRequest::RequestUserInput(params), ClientResponse::UserInput(answered)) => {
             let mut note = String::new();
             let responses = params
-                .get("questions")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
+                .questions
+                .iter()
                 .map(|question| {
                     let labels = question
-                        .get("options")
-                        .and_then(Value::as_array)
-                        .into_iter()
+                        .options
+                        .iter()
                         .flatten()
-                        .map(|option| text(option, "label"))
+                        .map(|option| option.label.as_str())
                         .collect::<Vec<_>>();
                     let mut response = QuestionResponse::default();
-                    for picked in answers
-                        .get(text(question, "id"))
-                        .and_then(|answer| answer.get("answers"))
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(Value::as_str)
+                    for picked in answered
+                        .answers
+                        .get(&question.id)
+                        .map(|answer| answer.answers.as_slice())
+                        .unwrap_or_default()
                     {
                         if let Some(noted) = picked.strip_prefix(super::USER_NOTE) {
                             note = noted.to_owned();
                             continue;
                         }
-                        match labels.iter().position(|label| *label == picked) {
+                        match labels.iter().position(|label| label == picked) {
                             Some(index) => response.selected.push(index as u32),
-                            None => response.other = Some(picked.to_owned()),
+                            None => response.other = Some(picked.clone()),
                         }
                     }
                     response
@@ -320,33 +369,38 @@ fn answer(request: Option<&Value>, response: &Value) -> Option<codex_input::Of> 
                 note,
             }))
         }
-        "mcpServer/elicitation/request" => {
-            let action = match text(result, "action") {
-                "accept" => FormAction::Accept,
-                "decline" => FormAction::Decline,
-                "cancel" => FormAction::Cancel,
-                _ => return None,
+        (ServerRequest::Elicitation(params), ClientResponse::Elicitation(answered)) => {
+            let action = match answered.action {
+                ElicitationAction::Accept => FormAction::Accept,
+                ElicitationAction::Decline => FormAction::Decline,
+                ElicitationAction::Cancel => FormAction::Cancel,
+                ElicitationAction::Other(_) => return None,
             };
-            let meta = params.get("_meta").unwrap_or(&Value::Null);
-            if text(meta, "codex_approval_kind") == "mcp_tool_call" {
-                let session = result
-                    .get("_meta")
-                    .is_some_and(|meta| text(meta, "persist") == "session");
+            let approval_kind = params
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.codex_approval_kind.as_deref());
+            if approval_kind == Some("mcp_tool_call") {
+                let session = answered
+                    .meta
+                    .as_ref()
+                    .is_some_and(|meta| meta.persist.as_deref() == Some("session"));
                 approve(match action {
                     FormAction::Accept if session => wire::Decision::ApproveSession,
                     FormAction::Accept => wire::Decision::Approve,
                     FormAction::Decline => wire::Decision::Deny,
                     _ => wire::Decision::Abort,
                 })
-            } else if text(params, "mode") == "url" {
+            } else if params.mode == "url" {
                 body(codex_answer::Of::Link(LinkAnswer {
                     action: action as i32,
                 }))
             } else {
                 body(codex_answer::Of::Form(FormAnswer {
                     action: action as i32,
-                    content_json: result
-                        .get("content")
+                    content_json: answered
+                        .content
+                        .as_ref()
                         .filter(|content| !content.is_null())
                         .map(|content| content.to_string().into_bytes())
                         .unwrap_or_default(),

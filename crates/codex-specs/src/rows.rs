@@ -97,7 +97,7 @@ pub(super) async fn reasoning_summary(
                 "Think carefully about which is larger, 17 * 23 or 19 * 21, then reply with only \
                  the larger product.",
             )],
-            effort: Some(ReasoningEffort::High),
+            effort: Some(Some(ReasoningEffort::High)),
             summary: Some(ReasoningSummary::Detailed),
             ..TurnStartParams::default()
         })

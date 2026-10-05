@@ -1,8 +1,12 @@
 //! What the app server writes: responses, requests and notifications.
 
+use codex_protocol::client::{
+    CommandApprovalResponse, ElicitationAction, ModelListParams, SkillsListParams,
+    ToolCallResponse, TurnInterruptParams,
+};
 use codex_protocol::items::{
-    CommandAction, DynamicToolCallItem, McpToolCallItem, MessagePhase, PatchChangeKind, ThreadItem,
-    UserInput, WebSearchAction,
+    CommandAction, DynamicToolCallItem, McpToolCallItem, MessagePhase, PatchChangeKind,
+    TextContent, ThreadItem, ToolOutputContent, UserInput, WebSearchAction,
 };
 use codex_protocol::server::{
     AccountReadResponse, AutoApprovalReview, CommandApprovalParams, CommandDecision,
@@ -13,9 +17,10 @@ use codex_protocol::thread::{
     AskForApproval, CodexErrorInfo, RateLimitSnapshot, ReasoningEffort, SandboxPolicy, TurnError,
 };
 use codex_protocol::{
-    RequestId, RpcError, ServerMessage, ServerNotification, ServerRequest, Thread, Unknown,
+    ClientRequest, ClientResponse, RequestId, RpcError, ServerMessage, ServerNotification,
+    ServerRequest, Thread, Unknown,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use wire::{
     AccessGrant, ApiError, CodexAsk, CommandApproval, Decision, DecisionOutcome,
     FileChangeApproval, FormAsk, LinkAsk, McpToolApproval, ModelSwitch, OfferedCommand,
@@ -26,8 +31,8 @@ use wire::{
 };
 
 use super::{
-    AskMeta, InjectConsumption, Request, State, Streamed, WorkState, ask_key, item_body, work_ask,
-    work_complete,
+    AskMeta, InjectConsumption, Request, State, Streamed, WorkState, ask_key, elicitation_response,
+    item_body, work_ask, work_complete,
 };
 use crate::claude_common::compact_json;
 use crate::shared::json_as_written;
@@ -101,7 +106,24 @@ fn offered_decision(offered: &CommandDecision) -> Option<(Decision, String)> {
         CommandDecision::AcceptWithExecpolicyAmendment { .. } => Decision::ApproveSimilar,
         CommandDecision::ApplyNetworkPolicyAmendment { .. } => Decision::ApproveNetwork,
     };
-    Some((decision, json!({ "decision": offered }).to_string()))
+    Some((decision, response_text(&decision_response(offered.clone()))))
+}
+
+fn decision_response(decision: CommandDecision) -> ClientResponse {
+    ClientResponse::CommandApproval(CommandApprovalResponse {
+        decision,
+        extra: Default::default(),
+    })
+}
+
+/// An answer as an ask keeps it until the person picks it.
+fn response_text(response: &ClientResponse) -> String {
+    serde_json::to_string(response).expect("protocol types serialize")
+}
+
+/// The empty form content an approval accepts with.
+fn no_content() -> Option<Value> {
+    Some(Value::Object(Default::default()))
 }
 
 /// The skills `skills/list` answers, across every folder it lists; a skill
@@ -205,13 +227,13 @@ impl State {
     fn unknown(&mut self, emit: &mut Emit, unknown: Unknown) {
         match (unknown.method.as_deref(), unknown.id.as_ref()) {
             (Some(method), Some(id)) => {
-                emit.effect(crate::Effect::ProviderWrite(
-                    serde_json::to_vec(&json!({
-                        "id": id,
-                        "error": { "code": -32601, "message": format!("amux does not handle {method}") },
-                    }))
-                    .expect("json"),
-                ));
+                let refusal = RpcError {
+                    code: -32601,
+                    message: format!("amux does not handle {method}"),
+                    data: None,
+                    extra: Default::default(),
+                };
+                self.respond(emit, &ask_key(id), Err(refusal));
                 self.unrecognized(emit, method, "a request amux cannot answer");
             }
             (Some(method), None) => {
@@ -451,8 +473,7 @@ impl State {
         self.list_models(emit, 1, None, Vec::new());
         let skills = self.request_as(
             "amux-skills".into(),
-            "skills/list",
-            json!({}),
+            ClientRequest::SkillsList(SkillsListParams::default()),
             Request::Skills,
         );
         emit.effect(Effect::ProviderWrite(skills));
@@ -466,14 +487,13 @@ impl State {
         cursor: Option<String>,
         listed: Vec<OfferedModel>,
     ) {
-        let params = match cursor {
-            Some(cursor) => json!({ "cursor": cursor }),
-            None => json!({}),
+        let params = ModelListParams {
+            cursor,
+            extra: Default::default(),
         };
         let bytes = self.request_as(
             format!("amux-models-{page}"),
-            "model/list",
-            params,
+            ClientRequest::ModelList(params),
             Request::Models { page, listed },
         );
         emit.effect(Effect::ProviderWrite(bytes));
@@ -564,8 +584,8 @@ impl State {
                 )
             }
             ServerRequest::PermissionsApproval(params) => {
-                let files = params.permissions.file_system.unwrap_or_default();
-                let network = params.permissions.network.unwrap_or_default();
+                let files = params.permissions.file_system.flatten().unwrap_or_default();
+                let network = params.permissions.network.flatten().unwrap_or_default();
                 (
                     String::new(),
                     codex_ask::Body::Access(AccessGrant {
@@ -630,17 +650,15 @@ impl State {
             ServerRequest::ToolCall(_) => {
                 // Tools amux offers Codex are served by amux's tool server;
                 // a client-side tool is nothing this agent hosts.
-                return self.respond(
-                    emit,
-                    &key,
-                    json!({
-                        "success": false,
-                        "contentItems": [{
-                            "type": "inputText",
-                            "text": "This client hosts no dynamic tools.",
-                        }],
-                    }),
-                );
+                let refused = ToolCallResponse {
+                    content_items: vec![ToolOutputContent::Text(TextContent {
+                        text: "This client hosts no dynamic tools.".into(),
+                        extra: Default::default(),
+                    })],
+                    success: false,
+                    extra: Default::default(),
+                };
+                return self.respond(emit, &key, Ok(ClientResponse::ToolCall(refused)));
             }
         };
         let (decisions, responses) = decisions
@@ -785,32 +803,33 @@ impl State {
             // amux's own tools never ask, as the Claude launch settings
             // pre-approve them: the call is approved at once, for the rest
             // of the session when Codex offers that.
-            let mut accept = json!({ "action": "accept", "content": {} });
-            if session {
-                accept["_meta"] = json!({ "persist": "session" });
-            }
-            return self.respond(emit, &key, accept);
+            let accept = elicitation_response(
+                ElicitationAction::Accept,
+                no_content(),
+                session.then_some("session"),
+            );
+            return self.respond(emit, &key, Ok(accept));
         }
         let message = params.message.unwrap_or_default();
         let (item_key, call_server, tool) = self.running_tool_call().unwrap_or_default();
-        let (body, offered): (_, Vec<(Decision, Value)>) = if approval {
+        let (body, offered): (_, Vec<(Decision, ClientResponse)>) = if approval {
             let mut offered = vec![(
                 Decision::Approve,
-                json!({ "action": "accept", "content": {} }),
+                elicitation_response(ElicitationAction::Accept, no_content(), None),
             )];
             if session {
                 offered.push((
                     Decision::ApproveSession,
-                    json!({ "action": "accept", "content": {}, "_meta": { "persist": "session" } }),
+                    elicitation_response(ElicitationAction::Accept, no_content(), Some("session")),
                 ));
             }
             offered.push((
                 Decision::Deny,
-                json!({ "action": "decline", "content": null }),
+                elicitation_response(ElicitationAction::Decline, None, None),
             ));
             offered.push((
                 Decision::Abort,
-                json!({ "action": "cancel", "content": null }),
+                elicitation_response(ElicitationAction::Cancel, None, None),
             ));
             (
                 codex_ask::Body::McpTool(McpToolApproval {
@@ -849,7 +868,7 @@ impl State {
         };
         let (decisions, responses) = offered
             .into_iter()
-            .map(|(decision, response)| (decision as i32, response.to_string()))
+            .map(|(decision, response)| (decision as i32, response_text(&response)))
             .unzip();
         self.open(
             emit,
@@ -901,8 +920,11 @@ impl State {
                 {
                     self.request(
                         emit,
-                        "turn/interrupt",
-                        json!({ "threadId": self.thread(), "turnId": turn }),
+                        ClientRequest::TurnInterrupt(TurnInterruptParams {
+                            thread_id: self.thread(),
+                            turn_id: turn,
+                            extra: Default::default(),
+                        }),
                         Request::Interrupt,
                     );
                 }

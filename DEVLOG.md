@@ -1,3 +1,18 @@
+2026-10-06 — **The Codex interpreter writes through the protocol types.**
+Every request and answer the Codex interpreter sends (turn start, steer,
+interrupt, compaction, injected items, the model and skill lists, approval
+and question answers, form and link answers, access grants, the refusal of
+a request it cannot read) is now a `codex_protocol` value encoded by
+`codex_protocol::encode`; no `json!` is left under `interpret/src/codex`.
+The recording reader that turns a recorded session into interpreter events
+decodes each line with `decode`/`decode_client` too. Every write encodes to
+the bytes written before: the protocol gained what that needed — a string
+enum's `parse`, a sandbox mode's turn-start policy, an effort override that
+can be written as null, a permission grant that leaves out what it does not
+grant while a request's null parts still read back as null, and typed
+`_meta` on an elicitation answer. Goldens and the fakes' conformance run
+are unchanged.
+
 2026-10-06 — **The agent's provider handshake is built from the protocol types.**
 The agent process wrote Codex's initialize, `initialized`, thread start and
 resume, Claude's initialize control request and every headless user

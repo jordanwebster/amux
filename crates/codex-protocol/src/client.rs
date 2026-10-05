@@ -223,8 +223,13 @@ pub struct TurnStartParams {
     pub client_user_message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effort: Option<ReasoningEffort>,
+    /// `Some(None)` writes null: back to the model's default effort.
+    #[serde(
+        default,
+        deserialize_with = "crate::present_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub effort: Option<Option<ReasoningEffort>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<ReasoningSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -334,7 +339,17 @@ pub struct ElicitationResponse {
     /// The form's answers; null unless accepted.
     pub content: Option<Value>,
     #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
-    pub meta: Option<Extra>,
+    pub meta: Option<ElicitationResponseMeta>,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ElicitationResponseMeta {
+    /// How long an acceptance lasts, from what the request offered:
+    /// "session", "always".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persist: Option<String>,
     #[serde(flatten)]
     pub extra: Extra,
 }

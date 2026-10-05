@@ -92,10 +92,14 @@ fn a_permissions_request_reads_the_access_asked_for() {
         panic!("not a permissions request");
     };
     assert_eq!(
-        ask.permissions.network.and_then(|network| network.enabled),
+        ask.permissions
+            .network
+            .flatten()
+            .and_then(|network| network.enabled),
         Some(true)
     );
-    assert!(ask.permissions.file_system.is_none());
+    // Codex writes the part it does not ask for as null.
+    assert_eq!(ask.permissions.file_system, Some(None));
 }
 
 #[test]
@@ -368,7 +372,7 @@ fn a_turn_and_a_model_page_encode_to_the_bytes_amux_writes() {
         ClientRequest::TurnStart(TurnStartParams {
             thread_id: "t".into(),
             input: vec![UserInput::text("hello")],
-            effort: Some(ReasoningEffort::High),
+            effort: Some(Some(ReasoningEffort::High)),
             ..Default::default()
         }),
     );

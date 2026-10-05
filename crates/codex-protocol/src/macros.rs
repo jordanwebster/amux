@@ -50,6 +50,14 @@ macro_rules! string_enum {
                     Self::Other(other) => other,
                 }
             }
+
+            /// The variant written `text`; `Other` when none is.
+            pub fn parse(text: &str) -> Self {
+                match text {
+                    $($wire => Self::$variant,)*
+                    other => Self::Other(other.to_owned()),
+                }
+            }
         }
 
         impl ::serde::Serialize for $name {

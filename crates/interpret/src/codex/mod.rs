@@ -28,9 +28,18 @@ mod recording;
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 
+use codex_protocol::client::{
+    Answer, ElicitationAction, ElicitationResponse, GrantScope, InjectItemsParams, InjectedContent,
+    InjectedItem, InjectedMessage, PermissionsApprovalResponse, ThreadIdParams,
+    TurnInterruptParams, TurnStartParams, TurnSteerParams, UserInputResponse,
+};
+use codex_protocol::items::{TextContent, UserInput};
+use codex_protocol::server::{FileSystemPermissions, NetworkPermissions, PermissionProfile};
+use codex_protocol::thread::{ApprovalPolicy, AskForApproval, ReasoningEffort, SandboxMode};
+use codex_protocol::{ClientMessage, ClientRequest, ClientResponse, RequestId, RpcError};
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use wire::{
     AgentSpec, AskClosed, AskItem, BackgroundProcesses, CodexAnswer, CodexAsk, CodexItem,
     CodexSnapshot, ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction,
@@ -360,34 +369,39 @@ impl State {
 
     // --- writing to Codex ------------------------------------------------
 
-    fn request(&mut self, emit: &mut Emit, method: &str, params: Value, request: Request) {
-        emit.effect(Effect::ProviderWrite(
-            self.request_bytes(method, params, request),
-        ));
+    fn request(&mut self, emit: &mut Emit, message: ClientRequest, request: Request) {
+        emit.effect(Effect::ProviderWrite(self.request_bytes(message, request)));
     }
 
-    fn request_bytes(&mut self, method: &str, params: Value, request: Request) -> Vec<u8> {
+    fn request_bytes(&mut self, message: ClientRequest, request: Request) -> Vec<u8> {
         self.next_request += 1;
         let id = format!("amux-{}", self.next_request);
-        self.request_as(id, method, params, request)
+        self.request_as(id, message, request)
     }
 
     /// A request under an id of its own choosing, outside the numbered run
     /// that turns and their controls take.
-    fn request_as(&mut self, id: String, method: &str, params: Value, request: Request) -> Vec<u8> {
+    fn request_as(&mut self, id: String, message: ClientRequest, request: Request) -> Vec<u8> {
         self.requests.insert(id.clone(), request);
-        serde_json::to_vec(&json!({ "id": id, "method": method, "params": params })).expect("json")
+        codex_protocol::encode(&ClientMessage::request(RequestId::String(id), message))
     }
 
-    fn respond(&self, emit: &mut Emit, id: &str, result: Value) {
-        let id = serde_json::from_str::<Value>(id).unwrap_or(Value::Null);
-        emit.effect(Effect::ProviderWrite(
-            serde_json::to_vec(&json!({ "id": id, "result": result })).expect("json"),
-        ));
+    /// Answers the server request an ask key names.
+    fn respond(&self, emit: &mut Emit, key: &str, response: Result<ClientResponse, RpcError>) {
+        let Ok(id) = serde_json::from_str::<RequestId>(key) else {
+            return;
+        };
+        emit.effect(Effect::ProviderWrite(codex_protocol::encode(
+            &ClientMessage::Response {
+                id,
+                response,
+                extra: Default::default(),
+            },
+        )));
     }
 
-    fn thread(&self) -> Value {
-        json!(self.thread_id.clone().unwrap_or_default())
+    fn thread(&self) -> String {
+        self.thread_id.clone().unwrap_or_default()
     }
 
     // --- items -----------------------------------------------------------
@@ -503,8 +517,11 @@ impl State {
         match self.active_turn.clone() {
             Some(turn) => self.request(
                 emit,
-                "turn/interrupt",
-                json!({ "threadId": self.thread(), "turnId": turn }),
+                ClientRequest::TurnInterrupt(TurnInterruptParams {
+                    thread_id: self.thread(),
+                    turn_id: turn,
+                    extra: Default::default(),
+                }),
                 Request::Interrupt,
             ),
             None if self.shared.is_busy() => self.interrupt_pending = true,
@@ -597,14 +614,17 @@ impl State {
             self.shared.reflect_prompt();
             self.request(
                 emit,
-                "thread/compact/start",
-                json!({ "threadId": self.thread() }),
+                ClientRequest::ThreadCompactStart(ThreadIdParams {
+                    thread_id: self.thread(),
+                    extra: Default::default(),
+                }),
                 Request::Compact,
             );
         } else {
             consumes.append(&mut self.parked);
             let params = self.turn_params(&entry.text);
-            let request = self.request_bytes("turn/start", params, Request::Turn { consumes });
+            let request =
+                self.request_bytes(ClientRequest::TurnStart(params), Request::Turn { consumes });
             emit.effect(if entry.attachments.is_empty() {
                 Effect::ProviderWrite(request)
             } else {
@@ -628,38 +648,43 @@ impl State {
         );
     }
 
-    fn turn_params(&mut self, text: &str) -> Value {
-        let input = if text.is_empty() {
-            json!([])
-        } else {
-            json!([{ "type": "text", "text": text, "text_elements": [] }])
-        };
-        let mut params = json!({ "threadId": self.thread(), "input": input });
+    fn turn_params(&mut self, text: &str) -> TurnStartParams {
         let overrides = std::mem::take(&mut self.overrides);
-        if let Some(model) = overrides.model {
-            params["model"] = json!(model);
+        let (approval_policy, sandbox_policy) = match overrides.approval {
+            Some((policy, sandbox)) => (
+                Some(AskForApproval::Named(ApprovalPolicy::parse(&policy))),
+                Some(SandboxMode::parse(&sandbox).policy()),
+            ),
+            None => (None, None),
+        };
+        TurnStartParams {
+            thread_id: self.thread(),
+            input: if text.is_empty() {
+                Vec::new()
+            } else {
+                vec![UserInput::text(text)]
+            },
+            model: overrides.model,
+            effort: overrides
+                .effort
+                .map(|effort| effort.as_deref().map(ReasoningEffort::parse)),
+            approval_policy,
+            sandbox_policy,
+            ..Default::default()
         }
-        if let Some(effort) = overrides.effort {
-            params["effort"] = json!(effort);
-        }
-        if let Some((policy, sandbox)) = overrides.approval {
-            params["approvalPolicy"] = json!(policy);
-            params["sandboxPolicy"] = sandbox_policy(&sandbox);
-        }
-        params
     }
 
     /// Delivers a queued prompt into the running turn. Its item waits for
     /// Codex's reflection; a refused steer returns it to the queue.
     fn steer(&mut self, emit: &mut Emit, turn: &str, entry: QueuedInput) {
-        let params = json!({
-            "threadId": self.thread(),
-            "expectedTurnId": turn,
-            "input": [{ "type": "text", "text": entry.text, "text_elements": [] }],
-        });
+        let params = TurnSteerParams {
+            thread_id: self.thread(),
+            expected_turn_id: turn.to_owned(),
+            input: vec![UserInput::text(entry.text.clone())],
+            ..Default::default()
+        };
         let request = self.request_bytes(
-            "turn/steer",
-            params,
+            ClientRequest::TurnSteer(params),
             Request::Steer {
                 input_id: entry.input_id,
             },
@@ -714,16 +739,20 @@ impl State {
     /// Records an agent message in the thread; whatever turn runs next
     /// sees it.
     fn inject_items(&mut self, emit: &mut Emit, envelope: &Envelope, during_turn: bool) {
+        let message = InjectedMessage {
+            role: "user".into(),
+            content: vec![InjectedContent::InputText(TextContent {
+                text: injected_text(envelope),
+                extra: Default::default(),
+            })],
+            extra: Default::default(),
+        };
         self.request(
             emit,
-            "thread/inject_items",
-            json!({
-                "threadId": self.thread(),
-                "items": [{
-                    "type": "message",
-                    "role": "user",
-                    "content": [{ "type": "input_text", "text": injected_text(envelope) }],
-                }],
+            ClientRequest::ThreadInjectItems(InjectItemsParams {
+                thread_id: self.thread(),
+                items: vec![InjectedItem::Message(message)],
+                extra: Default::default(),
             }),
             Request::Inject {
                 envelope_id: envelope.id.clone(),
@@ -738,7 +767,11 @@ impl State {
     fn kick(&mut self, emit: &mut Emit, consumes: Vec<Vec<u8>>) {
         self.shared.turn_started();
         let params = self.turn_params("");
-        self.request(emit, "turn/start", params, Request::Turn { consumes });
+        self.request(
+            emit,
+            ClientRequest::TurnStart(params),
+            Request::Turn { consumes },
+        );
     }
 
     /// Inject what was held until a thread was running. A prompt queued
@@ -794,13 +827,13 @@ impl State {
             .iter()
             .position(|offered| *offered == approve.decision)
             .and_then(|at| meta.responses.get(at))
-            .and_then(|response| serde_json::from_str::<Value>(response).ok())
+            .and_then(|response| serde_json::from_str::<ClientResponse>(response).ok())
         else {
             return self.shared.reject(emit, id, reason::UNSUPPORTED);
         };
         self.shared.answer(emit, id, &key);
         self.asks.remove(&key);
-        self.respond(emit, &meta.id, response);
+        self.respond(emit, &meta.id, Ok(response));
         let decision = Decision::try_from(approve.decision).unwrap_or_default();
         let (outcome, scope) = match decision {
             Decision::Approve => (DecisionOutcome::Allowed, ""),
@@ -840,7 +873,7 @@ impl State {
         };
         self.shared.answer(emit, id, &key);
         self.asks.remove(&key);
-        self.respond(emit, &meta.id, response);
+        self.respond(emit, &meta.id, Ok(response));
         self.emit_ask(emit, &ask, meta.at_ms, Some(closed));
         self.shared.accept(emit, id, false);
     }
@@ -866,17 +899,6 @@ fn prompt_key(input_id: &[u8]) -> String {
     format!("prompt:{}", serde_pb::to_hex(input_id))
 }
 
-/// A sandbox mode as `turn/start` wants it.
-fn sandbox_policy(sandbox: &str) -> Value {
-    let kind = match sandbox {
-        "read-only" => "readOnly",
-        "workspace-write" => "workspaceWrite",
-        "danger-full-access" => "dangerFullAccess",
-        other => other,
-    };
-    json!({ "type": kind })
-}
-
 fn work_complete(work: &Work) -> bool {
     !matches!(
         wire::ToolState::try_from(work.state).unwrap_or_default(),
@@ -893,13 +915,13 @@ fn codex_answer_response(
     ask: &CodexAsk,
     meta: &AskMeta,
     answer: codex_answer::Of,
-) -> Option<(Value, AskClosed)> {
+) -> Option<(ClientResponse, AskClosed)> {
     match (ask.body.as_ref()?, answer) {
         (codex_ask::Body::Question(asked), codex_answer::Of::Question(answer)) => {
             if answer.answers.len() != meta.questions.len() {
                 return None;
             }
-            let mut answers = serde_json::Map::new();
+            let mut answers = std::collections::BTreeMap::new();
             let last = meta.questions.len().saturating_sub(1);
             for (at, ((question, labels), response)) in
                 meta.questions.iter().zip(&answer.answers).enumerate()
@@ -917,27 +939,35 @@ fn codex_answer_response(
                 if at == last && !answer.note.is_empty() {
                     picked.push(format!("{USER_NOTE}{}", answer.note));
                 }
-                answers.insert(question.clone(), json!({ "answers": picked }));
+                answers.insert(
+                    question.clone(),
+                    Answer {
+                        answers: picked,
+                        extra: Default::default(),
+                    },
+                );
             }
             Some((
-                json!({ "answers": answers }),
+                ClientResponse::UserInput(UserInputResponse {
+                    answers,
+                    extra: Default::default(),
+                }),
                 ask_item::answered(asked, &answer)?,
             ))
         }
         (codex_ask::Body::McpForm(_), codex_answer::Of::Form(form)) => {
             let action = form_action(form.action)?;
-            let content = if action == "accept" {
-                serde_json::from_slice(&form.content_json).unwrap_or(json!({}))
-            } else {
-                Value::Null
-            };
+            let content = (action == ElicitationAction::Accept).then(|| {
+                serde_json::from_slice(&form.content_json)
+                    .unwrap_or_else(|_| Value::Object(Default::default()))
+            });
             Some((
-                json!({ "action": action, "content": content }),
+                elicitation_response(action, content, None),
                 ask_item::form_sent(&form),
             ))
         }
         (codex_ask::Body::McpLink(_), codex_answer::Of::Link(link)) => Some((
-            json!({ "action": form_action(link.action)?, "content": null }),
+            elicitation_response(form_action(link.action)?, None, None),
             ask_item::link_answered(link.action),
         )),
         (codex_ask::Body::Access(asked), codex_answer::Of::Grant(grant)) => {
@@ -950,19 +980,34 @@ fn codex_answer_response(
             {
                 return None;
             }
-            let mut permissions = serde_json::Map::new();
-            if !grant.read.is_empty() || !grant.write.is_empty() {
-                permissions.insert(
-                    "fileSystem".into(),
-                    json!({ "read": grant.read, "write": grant.write }),
-                );
-            }
-            if grant.network {
-                permissions.insert("network".into(), json!({ "enabled": true }));
-            }
-            let scope = if grant.for_session { "session" } else { "turn" };
+            let files = (!grant.read.is_empty() || !grant.write.is_empty()).then(|| {
+                Some(FileSystemPermissions {
+                    read: Some(grant.read.clone()),
+                    write: Some(grant.write.clone()),
+                    extra: Default::default(),
+                })
+            });
+            let network = grant.network.then(|| {
+                Some(NetworkPermissions {
+                    enabled: Some(true),
+                    extra: Default::default(),
+                })
+            });
+            let scope = if grant.for_session {
+                GrantScope::Session
+            } else {
+                GrantScope::Turn
+            };
             Some((
-                json!({ "permissions": permissions, "scope": scope }),
+                ClientResponse::PermissionsApproval(PermissionsApprovalResponse {
+                    permissions: PermissionProfile {
+                        file_system: files,
+                        network,
+                        extra: Default::default(),
+                    },
+                    scope: Some(scope),
+                    extra: Default::default(),
+                }),
                 ask_item::granted(&grant),
             ))
         }
@@ -985,12 +1030,29 @@ fn work_ask(ask: &CodexAsk) -> Option<AskItem> {
     Some(ask_item::opened(asked))
 }
 
-fn form_action(action: i32) -> Option<&'static str> {
+fn form_action(action: i32) -> Option<ElicitationAction> {
     Some(match FormAction::try_from(action).ok()? {
-        FormAction::Accept => "accept",
-        FormAction::Decline => "decline",
-        FormAction::Cancel => "cancel",
+        FormAction::Accept => ElicitationAction::Accept,
+        FormAction::Decline => ElicitationAction::Decline,
+        FormAction::Cancel => ElicitationAction::Cancel,
         FormAction::Unspecified => return None,
+    })
+}
+
+/// An answer to an MCP server's elicitation.
+fn elicitation_response(
+    action: ElicitationAction,
+    content: Option<Value>,
+    persist: Option<&str>,
+) -> ClientResponse {
+    ClientResponse::Elicitation(ElicitationResponse {
+        action,
+        content,
+        meta: persist.map(|persist| codex_protocol::client::ElicitationResponseMeta {
+            persist: Some(persist.to_owned()),
+            extra: Default::default(),
+        }),
+        extra: Default::default(),
     })
 }
 

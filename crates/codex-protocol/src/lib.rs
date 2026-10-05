@@ -349,6 +349,17 @@ pub fn strict_result<T: serde::de::DeserializeOwned>(
     macros::strictly(|| T::deserialize(result))
 }
 
+/// Reads a field that may be absent or null, keeping which: `None` when
+/// absent, `Some(None)` when null. With `skip_serializing_if =
+/// "Option::is_none"` it writes back what it read.
+pub fn present_nullable<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
+}
+
 fn to_value(value: &impl Serialize) -> Value {
     serde_json::to_value(value).expect("protocol types serialize")
 }

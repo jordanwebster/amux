@@ -194,6 +194,20 @@ tagged_enum! {
     }
 }
 
+impl SandboxMode {
+    /// The same sandbox as turn start sets it.
+    pub fn policy(&self) -> SandboxPolicy {
+        match self {
+            Self::ReadOnly => SandboxPolicy::ReadOnly(Extra::new()),
+            Self::WorkspaceWrite => SandboxPolicy::WorkspaceWrite(Extra::new()),
+            Self::DangerFullAccess => SandboxPolicy::DangerFullAccess(Extra::new()),
+            Self::Other(kind) => {
+                SandboxPolicy::Unknown(Extra::from_iter([("type".into(), kind.clone().into())]))
+            }
+        }
+    }
+}
+
 impl SandboxPolicy {
     /// The same sandbox as thread start names it.
     pub fn mode(&self) -> Option<SandboxMode> {
