@@ -1,3 +1,11 @@
+2026-10-05 — **Nothing recorded while sharing is off is sent later.** The
+uploader checked the telemetry setting only when a batch went out, so on
+the phone, turning Share Usage off and back on within the minute sent what
+happened in between. It now checks as each event arrives and drops it while
+sharing is off. The desktop wording says what actually happens: off stops a
+running daemon at once, on resumes one that started on, and a daemon that
+started off waits for its next start.
+
 2026-10-05 — **Two event properties no longer collide with what amux.sh
 adds.** amux.sh puts the upload's `version` and the token's `client` on
 every event, so `daemon_crashed` now names the version that stopped

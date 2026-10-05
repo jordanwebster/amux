@@ -280,8 +280,9 @@ pub fn set_channel(config_path: Option<&Path>, channel: Channel) -> Result<()> {
 
 /// `amux config telemetry [on|off]`: turns product analytics on or off, or
 /// says whether it is on and where it goes. The daemon reads the setting
-/// before every upload, so off takes effect at once; on takes effect when
-/// the daemon next starts.
+/// before every upload, so off takes effect at once and on resumes a daemon
+/// that started with it on; a daemon that started with it off has no
+/// uploader and starts sending when it next starts.
 pub fn telemetry(config_path: Option<&Path>, state: Option<Switch>) -> Result<()> {
     if let Some(state) = state {
         let name = match state {
@@ -308,7 +309,7 @@ pub fn telemetry(config_path: Option<&Path>, state: Option<Switch>) -> Result<()
     };
     println!("{line}");
     if state == Some(Switch::On) {
-        println!("A running daemon starts sending when it next starts.");
+        println!("A daemon that started with telemetry off starts sending when it next starts.");
     }
     Ok(())
 }

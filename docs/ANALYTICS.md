@@ -11,8 +11,9 @@ files stay on your machines.
 It is on by default. To turn it off:
 
 - **On a computer:** `amux config telemetry off`. A running daemon stops
-  sending at its next upload; `amux config telemetry on` starts it again
-  from the daemon's next start. `amux config telemetry` says whether it is
+  sending at once, and nothing it records while off is sent later.
+  `amux config telemetry on` resumes it, or, if the daemon started with
+  telemetry off, takes effect when it next starts. `amux config telemetry` says whether it is
   on and where it goes.
 - **Anywhere:** set `DO_NOT_TRACK=1` in the environment the daemon starts
   in. Any value other than empty or `0` turns it off, whatever the setting

@@ -231,6 +231,12 @@ async fn run(
                     return;
                 }
                 Some(Command::Event(host, recorded)) => {
+                    // Checked as each event arrives, not only at send time:
+                    // what happens while sharing is off must not go out if
+                    // sharing is turned back on before the next flush.
+                    if !(sender.upload.gate)() {
+                        continue;
+                    }
                     waiting.push((host, recorded));
                     if waiting.len() >= sender.params.batch {
                         sender.send(std::mem::take(&mut waiting)).await;
@@ -241,7 +247,11 @@ async fn run(
                     let mut flushes = vec![done];
                     while let Ok(command) = received.try_recv() {
                         match command {
-                            Command::Event(host, recorded) => waiting.push((host, recorded)),
+                            Command::Event(host, recorded) => {
+                                if (sender.upload.gate)() {
+                                    waiting.push((host, recorded));
+                                }
+                            }
                             Command::Flush(done) => flushes.push(done),
                         }
                     }
@@ -576,6 +586,28 @@ mod tests {
             1,
             "what waited while the gate was closed was dropped"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn what_happens_while_off_stays_unsent_when_turned_back_on_before_a_flush() {
+        let server = Arc::new(Server::default());
+        let on = Arc::new(AtomicBool::new(false));
+        let gate = {
+            let on = on.clone();
+            Arc::new(move || on.load(Ordering::SeqCst))
+        };
+        let uploader = start(&server, gate, accounts());
+        let handle = Analytics::new(UNBOUND, uploader.sink());
+        handle.record(Event::Installed);
+        tokio::task::yield_now().await;
+        on.store(true, Ordering::SeqCst);
+        handle.record(Event::SignedOut);
+        uploader.flush(Duration::from_secs(5)).await;
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        let events = requests[0].2["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["event"], "signed_out");
     }
 
     #[tokio::test(start_paused = true)]
