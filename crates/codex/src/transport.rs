@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
 };
@@ -47,57 +46,6 @@ impl WireRecorder {
             let _ = file.flush();
         }
     }
-}
-
-// ── JSON-RPC wire types ──────────────────────────────────────────
-
-/// A raw JSON-RPC message (no "jsonrpc" field — codex variant).
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawMessage {
-    /// Present on requests and responses.
-    pub id: Option<serde_json::Value>,
-    /// Present on requests and notifications.
-    pub method: Option<String>,
-    /// Present on successful responses.
-    pub result: Option<serde_json::Value>,
-    /// Present on error responses.
-    pub error: Option<RpcError>,
-    /// Present on requests and notifications.
-    pub params: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct RpcError {
-    pub code: i64,
-    pub message: String,
-    pub data: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct OutgoingRequest {
-    pub id: u64,
-    pub method: String,
-    pub params: serde_json::Value,
-}
-
-#[derive(Debug, Serialize)]
-#[allow(dead_code)]
-pub(crate) struct OutgoingNotification {
-    pub method: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct OutgoingResponse {
-    pub id: crate::approval::RequestId,
-    pub result: serde_json::Value,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct OutgoingErrorResponse {
-    pub id: crate::approval::RequestId,
-    pub error: RpcError,
 }
 
 // ── Process spawning ─────────────────────────────────────────────

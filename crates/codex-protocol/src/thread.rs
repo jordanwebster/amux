@@ -115,7 +115,22 @@ impl CodexErrorInfo {
 #[serde(untagged)]
 pub enum AskForApproval {
     Named(ApprovalPolicy),
-    Granular { granular: Extra },
+    Granular { granular: GranularApproval },
+}
+
+/// Which kinds of approval reach the client; the rest Codex decides alone.
+/// Written in snake case, unlike the rest of the protocol.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GranularApproval {
+    pub sandbox_approval: bool,
+    pub rules: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_approval: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_permissions: Option<bool>,
+    pub mcp_elicitations: bool,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 string_enum! {
@@ -173,6 +188,16 @@ string_enum! {
         Medium = "medium",
         High = "high",
         XHigh = "xhigh",
+    }
+}
+
+string_enum! {
+    /// How much of its reasoning the model summarises.
+    pub enum ReasoningSummary {
+        Auto = "auto",
+        Concise = "concise",
+        Detailed = "detailed",
+        None = "none",
     }
 }
 

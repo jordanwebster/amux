@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 chrono = { workspace = true }
 codex = { path = "../codex" }
+codex-protocol.workspace = true
 redaction = { workspace = true }
 replay-support = { path = "../replay-support" }
 semver = { workspace = true }

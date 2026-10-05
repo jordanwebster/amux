@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 chrono = { workspace = true }
+claude-protocol.workspace = true
+codex-protocol.workspace = true
 libc = { workspace = true }
 pty-host = { workspace = true }
 serde = { workspace = true }

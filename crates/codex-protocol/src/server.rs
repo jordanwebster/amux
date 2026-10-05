@@ -483,12 +483,21 @@ pub enum CommandDecision {
     Plain(Decision),
     #[serde(rename_all = "camelCase")]
     AcceptWithExecpolicyAmendment {
-        accept_with_execpolicy_amendment: Extra,
+        accept_with_execpolicy_amendment: ExecpolicyAmendment,
     },
     #[serde(rename_all = "camelCase")]
     ApplyNetworkPolicyAmendment {
         apply_network_policy_amendment: Extra,
     },
+}
+
+/// The rule an approval adds: commands starting with these words run
+/// without asking. Written in snake case, unlike the rest of the protocol.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExecpolicyAmendment {
+    pub execpolicy_amendment: Vec<String>,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 string_enum! {

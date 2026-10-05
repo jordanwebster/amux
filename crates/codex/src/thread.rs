@@ -1,22 +1,24 @@
 use std::sync::Arc;
 
-use crate::approval::{ApprovalResponse, RequestId};
-use crate::config::{self, TurnConfig, TurnInput};
+use codex_protocol::client::{
+    InjectItemsParams, InjectedItem, ThreadIdParams, TurnInterruptParams, TurnStartParams,
+    TurnSteerParams,
+};
+use codex_protocol::items::{TextInput, UserInput};
+use codex_protocol::server::{ThreadResponse, TurnStartResponse, TurnSteerResponse};
+use codex_protocol::{ClientRequest, ClientResponse, Extra, RequestId, Turn};
+
 use crate::dispatch::{ServerInner, ThreadEventReceiver, ThreadRegistration};
 use crate::error::Error;
-#[cfg(test)]
-use crate::notification::ThreadEvent;
 use crate::thread_event_stream::ThreadEventStream;
-use crate::types::{
-    DynamicToolCallResponse, ThreadInfo, ThreadSessionInfo, TurnStartResponse, TurnSteerResponse,
-};
 
 // ── Thread ───────────────────────────────────────────────────────
 
 /// Handle to a single conversation thread on the codex app-server.
 ///
-/// Created via [`Codex::start_thread()`] or [`Codex::resume_thread()`].
-/// Cheap to clone (internally `Arc`-wrapped). Clones share the event channel.
+/// Created via [`crate::Codex::start_thread()`] or
+/// [`crate::Codex::resume_thread()`]. Cheap to clone (internally
+/// `Arc`-wrapped). Clones share the event channel.
 #[derive(Clone)]
 pub struct Thread {
     pub(crate) inner: Arc<ThreadInner>,
@@ -25,14 +27,14 @@ pub struct Thread {
 pub(crate) struct ThreadInner {
     pub server: Arc<ServerInner>,
     pub thread_id: String,
-    pub session: ThreadSessionInfo,
+    pub session: ThreadResponse,
     pub registration: Arc<ThreadRegistration>,
 }
 
 impl Thread {
     pub(crate) fn new(
         server: Arc<ServerInner>,
-        session: ThreadSessionInfo,
+        session: ThreadResponse,
         registration: Arc<ThreadRegistration>,
     ) -> Self {
         let thread_id = session.thread.id.clone();
@@ -51,13 +53,8 @@ impl Thread {
         &self.inner.thread_id
     }
 
-    /// The thread info returned at creation/resume time.
-    pub fn info(&self) -> &ThreadInfo {
-        &self.inner.session.thread
-    }
-
-    /// Thread/session metadata returned by thread/start/resume/fork.
-    pub fn session_info(&self) -> &ThreadSessionInfo {
+    /// What `thread/start` or `thread/resume` answered.
+    pub fn session(&self) -> &ThreadResponse {
         &self.inner.session
     }
 
@@ -75,39 +72,27 @@ impl Thread {
 
     // ── Turn management ──────────────────────────────────────────
 
-    /// Start a turn with default config.
+    /// Start a turn on this thread; `params.thread_id` is filled in.
     ///
     /// The turn's events arrive on the thread's continuous [`Self::events`]
-    /// stream; nothing is returned but the new turn's ID.
-    pub async fn start_turn(&self, input: impl Into<TurnInput>) -> Result<String, Error> {
-        self.start_turn_with(input, TurnConfig::default()).await
-    }
-
-    /// Start a turn without adding another input item.
-    ///
-    /// This lets the app-server consume items previously appended with
-    /// [`Self::inject_items`].
-    pub async fn start_empty_turn(&self) -> Result<String, Error> {
-        self.start_turn(TurnInput::Items(Vec::new())).await
-    }
-
-    /// Start a turn with explicit config.
-    pub async fn start_turn_with(
-        &self,
-        input: impl Into<TurnInput>,
-        turn_config: TurnConfig,
-    ) -> Result<String, Error> {
-        let input_value = config::turn_input_to_value(input.into());
-        let mut params = config::turn_config_to_params(&turn_config);
-        params.insert("threadId".into(), serde_json::json!(self.inner.thread_id));
-        params.insert("input".into(), input_value);
-
+    /// stream.
+    pub async fn start_turn(&self, mut params: TurnStartParams) -> Result<Turn, Error> {
+        params.thread_id = self.inner.thread_id.clone();
         let start: TurnStartResponse = self
             .inner
             .server
-            .request("turn/start", serde_json::Value::Object(params))
+            .request(ClientRequest::TurnStart(params))
             .await?;
-        Ok(start.turn.id)
+        Ok(start.turn)
+    }
+
+    /// Start a turn with one plain text input.
+    pub async fn say(&self, text: impl Into<String>) -> Result<Turn, Error> {
+        self.start_turn(TurnStartParams {
+            input: vec![text_input(text)],
+            ..TurnStartParams::default()
+        })
+        .await
     }
 
     /// Ask the app-server to compact the thread's history now. Progress
@@ -115,41 +100,38 @@ impl Thread {
     pub async fn compact(&self) -> Result<(), Error> {
         self.inner
             .server
-            .request_unit(
-                "thread/compact/start",
-                serde_json::json!({ "threadId": self.inner.thread_id }),
-            )
+            .request_value(ClientRequest::ThreadCompactStart(ThreadIdParams {
+                thread_id: self.inner.thread_id.clone(),
+                extra: Extra::new(),
+            }))
             .await
+            .map(drop)
     }
 
-    /// Append raw Responses API items to the thread's model-visible history.
-    pub async fn inject_items(&self, items: Vec<serde_json::Value>) -> Result<(), Error> {
+    /// Append items to the thread's model-visible history without a turn.
+    pub async fn inject_items(&self, items: Vec<InjectedItem>) -> Result<(), Error> {
         self.inner
             .server
-            .request_unit(
-                "thread/inject_items",
-                serde_json::json!({
-                    "threadId": self.inner.thread_id,
-                    "items": items,
-                }),
-            )
+            .request_value(ClientRequest::ThreadInjectItems(InjectItemsParams {
+                thread_id: self.inner.thread_id.clone(),
+                items,
+                extra: Extra::new(),
+            }))
             .await
+            .map(drop)
     }
 
     /// Steer an active turn with additional input.
-    pub async fn steer(&self, turn_id: &str, input: impl Into<TurnInput>) -> Result<String, Error> {
-        let input_value = config::turn_input_to_value(input.into());
+    pub async fn steer(&self, turn_id: &str, input: Vec<UserInput>) -> Result<String, Error> {
         let response: TurnSteerResponse = self
             .inner
             .server
-            .request(
-                "turn/steer",
-                serde_json::json!({
-                    "threadId": self.inner.thread_id,
-                    "expectedTurnId": turn_id,
-                    "input": input_value,
-                }),
-            )
+            .request(ClientRequest::TurnSteer(TurnSteerParams {
+                thread_id: self.inner.thread_id.clone(),
+                expected_turn_id: turn_id.to_owned(),
+                input,
+                ..TurnSteerParams::default()
+            }))
             .await?;
         Ok(response.turn_id)
     }
@@ -158,52 +140,28 @@ impl Thread {
     pub async fn interrupt(&self, turn_id: &str) -> Result<(), Error> {
         self.inner
             .server
-            .request_unit(
-                "turn/interrupt",
-                serde_json::json!({
-                    "threadId": self.inner.thread_id,
-                    "turnId": turn_id,
-                }),
-            )
+            .request_value(ClientRequest::TurnInterrupt(TurnInterruptParams {
+                thread_id: self.inner.thread_id.clone(),
+                turn_id: turn_id.to_owned(),
+                extra: Extra::new(),
+            }))
             .await
+            .map(drop)
     }
 
-    // ── Manual approval response ─────────────────────────────────
-
-    /// Respond to an approval request manually.
-    pub async fn respond_approval(
-        &self,
-        request_id: RequestId,
-        response: ApprovalResponse,
-    ) -> Result<(), Error> {
-        self.inner
-            .server
-            .respond(request_id, response.to_wire_value())
-            .await
+    /// Answer a request the server sent on this thread.
+    pub async fn respond(&self, id: RequestId, response: ClientResponse) -> Result<(), Error> {
+        self.inner.server.respond(id, response).await
     }
+}
 
-    /// Respond to a JSON-RPC request with a raw JSON value.
-    /// Used for structured responses like question answers that don't
-    /// map to ApprovalResponse variants.
-    pub async fn respond_raw(
-        &self,
-        request_id: RequestId,
-        value: serde_json::Value,
-    ) -> Result<(), Error> {
-        self.inner.server.respond(request_id, value).await
-    }
-
-    /// Respond to an `item/tool/call` request surfaced by the turn stream.
-    pub async fn respond_tool_call(
-        &self,
-        request_id: RequestId,
-        response: DynamicToolCallResponse,
-    ) -> Result<(), Error> {
-        self.inner
-            .server
-            .respond(request_id, serde_json::to_value(response)?)
-            .await
-    }
+/// Plain text, written without the marked spans amux's own prompts carry.
+pub fn text_input(text: impl Into<String>) -> UserInput {
+    UserInput::Text(TextInput {
+        text: text.into(),
+        text_elements: None,
+        extra: Extra::new(),
+    })
 }
 
 pub(crate) fn restore_event_receiver(thread_inner: Arc<ThreadInner>, rx: ThreadEventReceiver) {
@@ -221,70 +179,46 @@ pub(crate) fn restore_event_receiver(thread_inner: Arc<ThreadInner>, rx: ThreadE
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::atomic::AtomicU64;
-
-    use tokio::sync::{Mutex, mpsc};
+    use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::config::{ApprovalPolicy, ApprovalsReviewer, ReadOnlyAccess, SandboxPolicy};
-    use crate::notification::{ServerNotification, TurnEvent};
-    use crate::types::{ThreadSessionInfo, ThreadStatus};
+    use crate::event::ThreadEvent;
 
     fn test_server() -> Arc<ServerInner> {
         let (stdin_tx, stdin_rx) = mpsc::channel(1);
-        let (global_notif_tx, _global_notif_rx) = mpsc::channel::<ServerNotification>(1);
+        let (global_tx, _global_rx) = mpsc::channel(1);
         drop(stdin_rx);
-
-        Arc::new(ServerInner {
+        Arc::new(ServerInner::new(
             stdin_tx,
-            pending_requests: Mutex::new(HashMap::new()),
-            thread_channels: Mutex::new(HashMap::new()),
-            global_notif_tx,
-            init_result: std::sync::OnceLock::new(),
-            request_counter: AtomicU64::new(1),
-            cancel: CancellationToken::new(),
-            child_waiter: Mutex::new(None),
-        })
+            global_tx,
+            CancellationToken::new(),
+            None,
+        ))
     }
 
     fn test_thread(server: Arc<ServerInner>) -> Thread {
-        Thread::new(
-            server,
-            ThreadSessionInfo {
-                thread: ThreadInfo {
-                    id: "thread-1".into(),
-                    preview: String::new(),
-                    ephemeral: false,
-                    model_provider: String::new(),
-                    created_at: 0,
-                    updated_at: 0,
-                    status: ThreadStatus::Idle,
-                    path: None,
-                    cwd: std::env::current_dir().unwrap_or_else(|_| ".".into()),
-                    cli_version: String::new(),
-                    source: crate::types::SessionSource::default(),
-                    agent_nickname: None,
-                    agent_role: None,
-                    git_info: None,
-                    name: None,
-                    turns: Vec::new(),
-                },
-                model: String::new(),
-                model_provider: String::new(),
-                service_tier: None,
-                cwd: std::env::current_dir().unwrap_or_else(|_| ".".into()),
-                approval_policy: ApprovalPolicy::OnRequest,
-                approvals_reviewer: ApprovalsReviewer::User,
-                sandbox: SandboxPolicy::ReadOnly {
-                    access: ReadOnlyAccess::FullAccess,
-                    network_access: false,
-                },
-                reasoning_effort: None,
-            },
-            crate::dispatch::ThreadRegistration::new(),
-        )
+        let session = codex_protocol::result(&serde_json::json!({
+            "thread": {"id": "thread-1", "cwd": "/tmp", "status": {"type": "idle"}},
+            "model": "test",
+            "cwd": "/tmp",
+            "approvalPolicy": "on-request",
+            "sandbox": {"type": "readOnly"}
+        }))
+        .unwrap();
+        Thread::new(server, session, ThreadRegistration::new())
+    }
+
+    fn event(line: &str) -> ThreadEvent {
+        let codex_protocol::ServerMessage::Notification { notification, .. } =
+            codex_protocol::decode(line.as_bytes()).unwrap()
+        else {
+            panic!("{line} is a notification")
+        };
+        ThreadEvent {
+            event: crate::Event::Notification(notification),
+            replayed: false,
+        }
     }
 
     #[tokio::test]
@@ -292,24 +226,15 @@ mod tests {
         let thread = test_thread(test_server());
         let registration = thread.inner.registration.clone();
         let mut events = thread.events().await.unwrap();
-        for (method, turn_id) in [("turn/started", "turn-1"), ("turn/completed", "turn-2")] {
-            assert!(registration.send(ThreadEvent {
-                method: method.into(),
-                params: serde_json::json!({
-                    "threadId": "thread-1",
-                    "turnId": turn_id,
-                }),
-                turn_id: Some(turn_id.into()),
-                event: TurnEvent::Warning {
-                    message: method.into(),
-                },
-                replayed: false,
-            }));
+        let lines = [
+            r#"{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","items":[],"status":"inProgress"}}}"#,
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-2","items":[],"status":"completed"}}}"#,
+        ];
+        for line in lines {
+            assert!(registration.send(event(line)));
         }
-        assert_eq!(events.next().await.unwrap().unwrap().method, "turn/started");
-        assert_eq!(
-            events.next().await.unwrap().unwrap().method,
-            "turn/completed"
-        );
+        for line in lines {
+            assert_eq!(events.next().await.unwrap().unwrap(), event(line));
+        }
     }
 }

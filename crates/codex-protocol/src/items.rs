@@ -82,8 +82,19 @@ pub struct UserMessageItem {
 pub struct TextItem {
     pub id: String,
     pub text: String,
+    /// Which part of the turn an agent message belongs to; plans have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<MessagePhase>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+string_enum! {
+    pub enum MessagePhase {
+        /// Said on the way, before the turn's answer.
+        Commentary = "commentary",
+        FinalAnswer = "final_answer",
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -386,7 +397,7 @@ tagged_enum! {
     /// One piece of what a person or amux gives a turn.
     pub enum UserInput {
         "text" => Text(TextInput),
-        "image" => Image(Extra),
+        "image" => Image(ImageInput),
         "localImage" => LocalImage(LocalImageInput),
         "audio" => Audio(Extra),
         "localAudio" => LocalAudio(Extra),
@@ -412,6 +423,14 @@ pub struct TextInput {
     /// Marked spans of the text; amux writes an empty list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_elements: Option<Vec<Value>>,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// An image by URL, a data URL included.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageInput {
+    pub url: String,
     #[serde(flatten)]
     pub extra: Extra,
 }

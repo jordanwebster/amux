@@ -1,3 +1,5 @@
+use codex_protocol::RpcError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("process error: {0}")]
@@ -6,15 +8,10 @@ pub enum Error {
     #[error("transport closed")]
     TransportClosed,
 
-    #[error("JSON-RPC error ({code}): {message}")]
-    Rpc {
-        code: i64,
-        message: String,
-        codex_error_info: Option<String>,
-        data: Option<serde_json::Value>,
-    },
+    #[error("JSON-RPC error ({}): {}", .0.code, .0.message)]
+    Rpc(RpcError),
 
-    #[error("turn already active")]
+    #[error("another consumer holds the thread's events")]
     TurnActive,
 
     #[error("thread event queue overflowed for thread {0}")]
@@ -25,8 +22,4 @@ pub enum Error {
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
-
-    /// Safety net for internal anyhow errors not explicitly converted.
-    #[error("{0:#}")]
-    Internal(#[from] anyhow::Error),
 }

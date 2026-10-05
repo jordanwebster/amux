@@ -5,8 +5,9 @@
 //! subtype, request kind, content kind…). A composed frame conforms when
 //! every path it has appears on some recorded frame of the same group, and
 //! it carries every field the newest recorded provider version always
-//! sends in that group. A fake that invents a field, drops one, or composes
-//! a frame the provider never sends fails.
+//! sends in that group, and the provider's protocol crate reads it with
+//! nothing unknown. A fake that invents a field, drops one, or composes a
+//! frame the provider never sends fails.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -315,6 +316,7 @@ impl Corpus {
 
     /// Whether a composed frame of `group` has a recorded shape.
     pub fn check(&self, kind: Kind, group: &str, frame: &Value) -> Result<(), String> {
+        typed(kind, frame).map_err(|drift| format!("{group}: {drift}: {frame}"))?;
         let Some(recorded) = self.groups.get(group) else {
             return Err(format!("the corpus never shows a {group} frame: {frame}"));
         };
@@ -333,5 +335,66 @@ impl Corpus {
                 "{group}: fields no recording has {invented:?}; fields the newest recordings always send {dropped:?}"
             ))
         }
+    }
+}
+
+/// Whether the provider's protocol types read a composed frame with nothing
+/// left unknown, as they read what the provider itself sends.
+pub fn typed(kind: Kind, frame: &Value) -> Result<(), String> {
+    let line = serde_json::to_vec(frame).map_err(|error| error.to_string())?;
+    match kind {
+        Kind::Codex => codex_protocol::strict(&line)
+            .map(drop)
+            .map_err(|drift| drift.to_string()),
+        Kind::ClaudeSdk => claude_protocol::stream::strict(&line)
+            .map(drop)
+            .map_err(|drift| drift.to_string()),
+        Kind::ClaudePty if frame.get("hook_event_name").is_some() => {
+            claude_protocol::hooks::strict(&line)
+                .map(drop)
+                .map_err(|drift| drift.to_string())
+        }
+        Kind::ClaudePty => claude_protocol::transcript::strict(&line)
+            .map(drop)
+            .map_err(|drift| drift.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn completed(status: &str) -> Value {
+        json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "t",
+                "turn": {"id": "u", "items": [], "status": status, "error": null}
+            }
+        })
+    }
+
+    /// A status Codex never sends has the same shape as one it does; only
+    /// the protocol types tell them apart.
+    #[test]
+    fn a_spelling_codex_never_sends_fails_though_its_shape_matches() {
+        assert_eq!(typed(Kind::Codex, &completed("completed")), Ok(()));
+        assert_eq!(
+            signature(Kind::Codex, &completed("completed")),
+            signature(Kind::Codex, &completed("paused"))
+        );
+        assert!(typed(Kind::Codex, &completed("paused")).is_err());
+    }
+
+    #[test]
+    fn a_frame_of_each_claude_channel_is_read_by_its_own_types() {
+        let result = json!({"type": "result", "subtype": "invented"});
+        assert!(typed(Kind::ClaudeSdk, &result).is_err());
+        let hook = json!({"hook_event_name": "InventedEvent", "session_id": "s"});
+        assert!(typed(Kind::ClaudePty, &hook).is_err());
+        let row = json!({"type": "invented-row"});
+        assert!(typed(Kind::ClaudePty, &row).is_err());
     }
 }

@@ -2,11 +2,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use codex::{
-    ApprovalPolicy, ApprovalResponse, Codex, CodexConfig, DynamicToolCallResponse,
-    FunctionDynamicToolSpec, ListThreadsParams, MessagePhase, SandboxMode, Thread, ThreadConfig,
-    ThreadEvent, ThreadEventStream, ThreadItem, TurnEvent, TurnStatus,
+use codex::{Codex, CodexConfig, Event, Thread, ThreadEvent, ThreadEventStream};
+use codex_protocol::client::{
+    CommandApprovalResponse, DynamicTool, InjectedContent, InjectedItem, InjectedMessage,
+    ThreadListParams, ThreadResumeParams, ThreadStartParams, ToolCallResponse, TurnStartParams,
 };
+use codex_protocol::items::{MessagePhase, TextContent, ThreadItem, ToolOutputContent};
+use codex_protocol::server::{
+    CommandDecision, Decision, ErrorNotification, ServerNotification, ServerRequest,
+};
+use codex_protocol::thread::{ApprovalPolicy, AskForApproval, SandboxMode, TurnStatus};
+use codex_protocol::{ClientResponse, Extra, Turn};
 use replay_support::{ReplayAdvance, SpecEntry, StrictReplay};
 use semver::Version;
 
@@ -286,13 +292,13 @@ async fn run_scenario(
     }
 }
 
-fn thread_config(model: &str, project: &Path) -> ThreadConfig {
-    ThreadConfig {
+fn thread_config(model: &str, project: &Path) -> ThreadStartParams {
+    ThreadStartParams {
         model: Some(model.to_string()),
         cwd: Some(project.to_string_lossy().into_owned()),
-        approval_policy: Some(ApprovalPolicy::OnRequest),
+        approval_policy: Some(AskForApproval::Named(ApprovalPolicy::OnRequest)),
         sandbox: Some(SandboxMode::WorkspaceWrite),
-        ..ThreadConfig::default()
+        ..ThreadStartParams::default()
     }
 }
 
@@ -305,9 +311,57 @@ async fn start_thread(codex: &Codex, model: &str, project: &Path) -> Result<Thre
 
 fn report(thread: &Thread) -> ScenarioReport {
     ScenarioReport {
-        server_model: thread.session_info().model.clone(),
+        server_model: thread.session().model.clone(),
         session_ids: vec![thread.id().to_string()],
     }
+}
+
+fn notification(event: &ThreadEvent) -> Option<&ServerNotification> {
+    event.notification()
+}
+
+/// The item an `item/started` carries.
+fn started(event: &ThreadEvent) -> Option<&ThreadItem> {
+    match notification(event)? {
+        ServerNotification::ItemStarted(started) => Some(&started.item),
+        _ => None,
+    }
+}
+
+/// The item an `item/completed` carries.
+fn completed(event: &ThreadEvent) -> Option<&ThreadItem> {
+    match notification(event)? {
+        ServerNotification::ItemCompleted(completed) => Some(&completed.item),
+        _ => None,
+    }
+}
+
+fn turn_started(event: &ThreadEvent) -> Option<&Turn> {
+    match notification(event)? {
+        ServerNotification::TurnStarted(started) => Some(&started.turn),
+        _ => None,
+    }
+}
+
+fn turn_completed(event: &ThreadEvent) -> Option<&Turn> {
+    match notification(event)? {
+        ServerNotification::TurnCompleted(completed) => Some(&completed.turn),
+        _ => None,
+    }
+}
+
+fn error_of(event: &ThreadEvent) -> Option<&ErrorNotification> {
+    match notification(event)? {
+        ServerNotification::Error(error) => Some(error),
+        _ => None,
+    }
+}
+
+fn decision(decision: Decision) -> ClientResponse {
+    ClientResponse::CommandApproval(CommandApprovalResponse {
+        decision: CommandDecision::Plain(decision),
+        extra: Extra::new(),
+    })
 }
 
 async fn initialize_and_start(
@@ -327,7 +381,7 @@ async fn turn_round_trip(
     let thread = start_thread(codex, model, project).await?;
     let mut events = thread.events().await.map_err(stringify)?;
     thread
-        .start_turn("Reply with exactly CODEX_SPEC_PONG and nothing else.")
+        .say("Reply with exactly CODEX_SPEC_PONG and nothing else.")
         .await
         .map_err(stringify)?;
     let messages = wait_for_completion(&mut events).await?;
@@ -369,29 +423,28 @@ async fn approval(
             file.display()
         )
     };
-    thread.start_turn(command).await.map_err(stringify)?;
+    thread.say(command).await.map_err(stringify)?;
 
     loop {
         let event = next_event(&mut events, "approval request").await?;
-        match event.event {
-            TurnEvent::ApprovalRequired(request) => {
-                thread
-                    .respond_approval(
-                        request.request_id(),
-                        if allow {
-                            ApprovalResponse::Accept
-                        } else {
-                            ApprovalResponse::Decline
-                        },
-                    )
-                    .await
-                    .map_err(stringify)?;
-                break;
-            }
-            TurnEvent::TurnCompleted { .. } => {
-                return Err("turn completed before requesting approval".to_string());
-            }
-            _ => {}
+        if let Event::Request {
+            id,
+            request: ServerRequest::CommandApproval(_) | ServerRequest::FileChangeApproval(_),
+        } = event.event
+        {
+            let answer = if allow {
+                Decision::Accept
+            } else {
+                Decision::Decline
+            };
+            thread
+                .respond(id, decision(answer))
+                .await
+                .map_err(stringify)?;
+            break;
+        }
+        if turn_completed(&event).is_some() {
+            return Err("turn completed before requesting approval".to_string());
         }
     }
     wait_for_completion(&mut events).await?;
@@ -407,21 +460,12 @@ async fn approval(
 async fn interrupt(codex: &Codex, model: &str, project: &Path) -> Result<ScenarioReport, String> {
     let thread = start_thread(codex, model, project).await?;
     let mut events = thread.events().await.map_err(stringify)?;
-    let turn_id = thread
-        .start_turn("Count slowly from one to one hundred, one number per line.")
+    let turn = thread
+        .say("Count slowly from one to one hundred, one number per line.")
         .await
         .map_err(stringify)?;
-    loop {
-        if matches!(
-            next_event(&mut events, "turn start before interrupt")
-                .await?
-                .event,
-            TurnEvent::TurnStarted { .. }
-        ) {
-            break;
-        }
-    }
-    thread.interrupt(&turn_id).await.map_err(stringify)?;
+    while turn_started(&next_event(&mut events, "turn start before interrupt").await?).is_none() {}
+    thread.interrupt(&turn.id).await.map_err(stringify)?;
     wait_for_completion(&mut events).await?;
     Ok(report(&thread))
 }
@@ -435,7 +479,7 @@ async fn thread_list_and_resume(
     let original = report(&thread);
     let mut events = thread.events().await.map_err(stringify)?;
     thread
-        .start_turn("Reply with exactly CODEX_SPEC_RESUME and nothing else.")
+        .say("Reply with exactly CODEX_SPEC_RESUME and nothing else.")
         .await
         .map_err(stringify)?;
     wait_for_completion(&mut events).await?;
@@ -445,7 +489,7 @@ async fn thread_list_and_resume(
         .await
         .map_err(stringify)?;
     let listed = codex
-        .list_threads(ListThreadsParams::default())
+        .list_threads(ThreadListParams::default())
         .await
         .map_err(stringify)?;
     if !listed.data.iter().any(|item| item.id == thread.id()) {
@@ -453,15 +497,23 @@ async fn thread_list_and_resume(
     }
     let id = thread.id().to_string();
     drop(thread);
+    let config = thread_config(model, project);
     let resumed = codex
-        .resume_thread(&id, thread_config(model, project))
+        .resume_thread(ThreadResumeParams {
+            thread_id: id.clone(),
+            cwd: config.cwd,
+            model: config.model,
+            approval_policy: config.approval_policy,
+            sandbox: config.sandbox,
+            extra: Extra::new(),
+        })
         .await
         .map_err(stringify)?;
     if resumed.id() != id {
         return Err("thread/resume changed thread identity".to_string());
     }
     Ok(ScenarioReport {
-        server_model: resumed.session_info().model.clone(),
+        server_model: resumed.session().model.clone(),
         session_ids: original.session_ids,
     })
 }
@@ -472,7 +524,7 @@ async fn dynamic_tools(
     project: &Path,
 ) -> Result<ScenarioReport, String> {
     let mut config = thread_config(model, project);
-    config.dynamic_tools = Some(vec![FunctionDynamicToolSpec {
+    config.dynamic_tools = Some(vec![DynamicTool {
         name: "send".to_string(),
         description: "Send a short message to another agent.".to_string(),
         input_schema: serde_json::json!({
@@ -481,57 +533,66 @@ async fn dynamic_tools(
             "required": ["to", "text"]
         }),
         defer_loading: None,
+        extra: Extra::new(),
     }]);
     let thread = codex.start_thread(config).await.map_err(stringify)?;
     let mut events = thread.events().await.map_err(stringify)?;
     thread
-        .start_turn("Call the send tool exactly once with to=probe and text=CODEX_SPEC_SENT. Do not use any other tool.")
+        .say("Call the send tool exactly once with to=probe and text=CODEX_SPEC_SENT. Do not use any other tool.")
         .await
         .map_err(stringify)?;
     let mut called = false;
     loop {
         let event = next_event(&mut events, "dynamic tool call and completion").await?;
-        match event.event {
-            TurnEvent::ToolCallRequired(request) if request.tool == "send" => {
-                if request.arguments
-                    != serde_json::json!({"to": "probe", "text": "CODEX_SPEC_SENT"})
-                {
-                    return Err(format!(
-                        "dynamic tool arguments differed: {}",
-                        request.arguments
-                    ));
-                }
-                called = true;
-                thread
-                    .respond_tool_call(
-                        request.request_id,
-                        DynamicToolCallResponse {
-                            content_items: vec![
-                                serde_json::json!({"type": "inputText", "text": "sent"}),
-                            ],
-                            success: true,
-                        },
-                    )
-                    .await
-                    .map_err(stringify)?;
+        if let Some(turn) = turn_completed(&event) {
+            if turn.status != TurnStatus::Completed || !called {
+                return Err("dynamic tool turn completed without the required call".to_string());
             }
-            TurnEvent::TurnCompleted { turn } => {
-                if turn.status != TurnStatus::Completed || !called {
-                    return Err("dynamic tool turn completed without the required call".to_string());
-                }
-                break;
-            }
-            _ => {}
+            break;
         }
+        let Event::Request {
+            id,
+            request: ServerRequest::ToolCall(call),
+        } = event.event
+        else {
+            continue;
+        };
+        if call.tool != "send" {
+            continue;
+        }
+        if call.arguments != serde_json::json!({"to": "probe", "text": "CODEX_SPEC_SENT"}) {
+            return Err(format!(
+                "dynamic tool arguments differed: {}",
+                call.arguments
+            ));
+        }
+        called = true;
+        thread
+            .respond(
+                id,
+                ClientResponse::ToolCall(ToolCallResponse {
+                    content_items: vec![ToolOutputContent::Text(TextContent {
+                        text: "sent".to_string(),
+                        extra: Extra::new(),
+                    })],
+                    success: true,
+                    extra: Extra::new(),
+                }),
+            )
+            .await
+            .map_err(stringify)?;
     }
     Ok(report(&thread))
 }
 
-fn injected_item(text: &str) -> serde_json::Value {
-    serde_json::json!({
-        "type": "message",
-        "role": "user",
-        "content": [{"type": "input_text", "text": text}]
+fn injected_item(text: &str) -> InjectedItem {
+    InjectedItem::Message(InjectedMessage {
+        role: "user".to_string(),
+        content: vec![InjectedContent::InputText(TextContent {
+            text: text.to_string(),
+            extra: Extra::new(),
+        })],
+        extra: Extra::new(),
     })
 }
 
@@ -544,7 +605,11 @@ async fn inject_idle(codex: &Codex, model: &str, project: &Path) -> Result<Scena
         )])
         .await
         .map_err(stringify)?;
-    thread.start_empty_turn().await.map_err(stringify)?;
+    // A turn with no input of its own consumes what was injected.
+    thread
+        .start_turn(TurnStartParams::default())
+        .await
+        .map_err(stringify)?;
     let messages = wait_for_completion(&mut events).await?;
     if !messages
         .iter()
@@ -559,17 +624,10 @@ async fn inject_busy(codex: &Codex, model: &str, project: &Path) -> Result<Scena
     let thread = start_thread(codex, model, project).await?;
     let mut events = thread.events().await.map_err(stringify)?;
     thread
-        .start_turn("Think briefly, then reply exactly CODEX_SPEC_INITIAL.")
+        .say("Think briefly, then reply exactly CODEX_SPEC_INITIAL.")
         .await
         .map_err(stringify)?;
-    loop {
-        if matches!(
-            next_event(&mut events, "busy turn start").await?.event,
-            TurnEvent::TurnStarted { .. }
-        ) {
-            break;
-        }
-    }
+    while turn_started(&next_event(&mut events, "busy turn start").await?).is_none() {}
     thread
         .inject_items(vec![injected_item(
             "Reply with exactly CODEX_SPEC_INJECT_BUSY and nothing else.",
@@ -598,33 +656,28 @@ async fn inject_drain(
     project: &Path,
 ) -> Result<ScenarioReport, String> {
     let mut config = thread_config(model, project);
-    config.approval_policy = Some(ApprovalPolicy::Never);
+    config.approval_policy = Some(AskForApproval::Named(ApprovalPolicy::Never));
     let thread = codex
         .start_thread(config)
         .await
         .map_err(|error| format!("model {model}: thread/start failed: {error}"))?;
     let mut events = thread.events().await.map_err(stringify)?;
     thread
-        .start_turn(
+        .say(
             "Run the shell command `sleep 5`, then reply with exactly CODEX_SPEC_DONE_A and \
              nothing else.",
         )
         .await
         .map_err(stringify)?;
     let turn_id = loop {
-        if let TurnEvent::TurnStarted { turn } = next_event(&mut events, "turn start").await?.event
-        {
-            break turn.id;
+        if let Some(turn) = turn_started(&next_event(&mut events, "turn start").await?) {
+            break turn.id.clone();
         }
     };
-    loop {
-        if matches!(
-            next_event(&mut events, "the command").await?.event,
-            TurnEvent::ItemStarted(ThreadItem::CommandExecution { .. })
-        ) {
-            break;
-        }
-    }
+    while !matches!(
+        started(&next_event(&mut events, "the command").await?),
+        Some(ThreadItem::CommandExecution(_))
+    ) {}
     thread
         .inject_items(vec![injected_item(
             "Ignore the earlier instruction about the final reply. Reply with exactly \
@@ -635,29 +688,33 @@ async fn inject_drain(
 
     let mut messages = Vec::new();
     loop {
-        match next_event(&mut events, "turn completion").await?.event {
-            TurnEvent::ItemStarted(ThreadItem::UserMessage { .. })
-            | TurnEvent::ItemCompleted(ThreadItem::UserMessage { .. }) => {
-                return Err("the injected item surfaced as a userMessage item".to_string());
-            }
-            TurnEvent::TurnStarted { turn } => {
+        let event = next_event(&mut events, "turn completion").await?;
+        if matches!(
+            started(&event).or(completed(&event)),
+            Some(ThreadItem::UserMessage(_))
+        ) {
+            return Err("the injected item surfaced as a userMessage item".to_string());
+        }
+        if let Some(turn) = turn_started(&event) {
+            return Err(format!(
+                "turn {} started before the running turn completed",
+                turn.id
+            ));
+        }
+        if let Some(ThreadItem::AgentMessage(message)) = completed(&event) {
+            messages.push(message.text.clone());
+        }
+        if let Some(turn) = turn_completed(&event) {
+            if turn.id != turn_id || turn.status != TurnStatus::Completed {
                 return Err(format!(
-                    "turn {} started before the running turn completed",
-                    turn.id
+                    "expected turn {turn_id} to complete, got {} with status {:?}",
+                    turn.id, turn.status
                 ));
             }
-            TurnEvent::ItemCompleted(ThreadItem::AgentMessage { text, .. }) => messages.push(text),
-            TurnEvent::TurnCompleted { turn } => {
-                if turn.id != turn_id || turn.status != TurnStatus::Completed {
-                    return Err(format!(
-                        "expected turn {turn_id} to complete, got {} with status {:?}",
-                        turn.id, turn.status
-                    ));
-                }
-                break;
-            }
-            TurnEvent::Error { message, .. } => return Err(format!("turn error: {message}")),
-            _ => {}
+            break;
+        }
+        if let Some(error) = error_of(&event) {
+            return Err(format!("turn error: {}", error.error.message));
         }
     }
     if !messages
@@ -679,7 +736,7 @@ async fn two_assistant_messages(
     let thread = start_thread(codex, model, project).await?;
     let mut events = thread.events().await.map_err(stringify)?;
     thread
-        .start_turn("Send two separate assistant messages in this turn: first exactly CODEX_SPEC_FIRST in commentary, then exactly CODEX_SPEC_SECOND as the final answer.")
+        .say("Send two separate assistant messages in this turn: first exactly CODEX_SPEC_FIRST in commentary, then exactly CODEX_SPEC_SECOND as the final answer.")
         .await
         .map_err(stringify)?;
     let messages = wait_for_completion(&mut events).await?;
@@ -708,18 +765,17 @@ async fn wait_for_completion(
     let mut messages = Vec::new();
     loop {
         let event = next_event(events, "turn completion").await?;
-        match event.event {
-            TurnEvent::ItemCompleted(ThreadItem::AgentMessage { text, phase, .. }) => {
-                messages.push((text, phase));
+        if let Some(ThreadItem::AgentMessage(message)) = completed(&event) {
+            messages.push((message.text.clone(), message.phase.clone()));
+        }
+        if let Some(turn) = turn_completed(&event) {
+            if turn.status != TurnStatus::Completed && turn.status != TurnStatus::Interrupted {
+                return Err(format!("turn completed with status {:?}", turn.status));
             }
-            TurnEvent::TurnCompleted { turn } => {
-                if turn.status != TurnStatus::Completed && turn.status != TurnStatus::Interrupted {
-                    return Err(format!("turn completed with status {:?}", turn.status));
-                }
-                return Ok(messages);
-            }
-            TurnEvent::Error { message, .. } => return Err(format!("turn error: {message}")),
-            _ => {}
+            return Ok(messages);
+        }
+        if let Some(error) = error_of(&event) {
+            return Err(format!("turn error: {}", error.error.message));
         }
     }
 }

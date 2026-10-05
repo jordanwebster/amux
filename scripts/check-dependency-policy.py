@@ -24,7 +24,7 @@ ALLOWED_LOCAL = {
     # and the provider hosts.
     "agent": {"agent-dir", "attachments", "claude", "interpret", "journal", "pty-host", "wire"},
     "claude": {"claude-protocol", "pty-host"},
-    "codex": set(),
+    "codex": {"codex-protocol"},
     # Each provider's messages as types: pure, so the interpreter the phone
     # links can read them. PURE_EXTERNAL below bounds what they may pull in.
     "claude-protocol": set(),
@@ -104,10 +104,11 @@ SUPPORT_ALLOWED_LOCAL = {
     # checks while reusing the network harness rather than shipping it.
     "qualification": {"node", "provider-fakes", "store", "testnet", "wire"},
     "claude-specs": {"claude", "claude-protocol", "pty-host", "redaction", "replay-support"},
-    "codex-specs": {"codex", "redaction", "replay-support"},
-    # The fake providers speak each protocol from its recordings, not from
-    # the host crates, so a host bug cannot hide behind a shared parser.
-    "provider-fakes": {"pty-host"},
+    "codex-specs": {"codex", "codex-protocol", "redaction", "replay-support"},
+    # The fake providers speak each protocol from its recordings, and check
+    # what they compose against the protocol crates' types. They never use
+    # the host crates, so a host bug cannot hide behind shared host code.
+    "provider-fakes": {"claude-protocol", "codex-protocol", "pty-host"},
     # A stand-in amux binary that runs the real supervisor, so the
     # supervisor tests exec and roll back the shipped code.
     "fake-amux": {"agent-dir", "node"},

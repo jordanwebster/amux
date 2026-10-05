@@ -722,10 +722,8 @@ name = "codex"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
- "futures-util",
+ "codex-protocol",
  "nix 0.31.3",
- "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -733,7 +731,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -750,6 +747,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "codex",
+ "codex-protocol",
  "redaction",
  "replay-support",
  "semver",
@@ -3110,6 +3108,8 @@ name = "provider-fakes"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "claude-protocol",
+ "codex-protocol",
  "libc",
  "patience",
  "pty-host",

@@ -12,8 +12,8 @@ use crate::items::{ToolOutputContent, UserInput};
 use crate::macros::{method_enum, string_enum, tagged_enum};
 use crate::server::{CommandDecision, PermissionProfile};
 use crate::thread::{
-    ApprovalsReviewer, AskForApproval, CollaborationMode, ReasoningEffort, SandboxMode,
-    SandboxPolicy,
+    ApprovalsReviewer, AskForApproval, CollaborationMode, ReasoningEffort, ReasoningSummary,
+    SandboxMode, SandboxPolicy,
 };
 
 method_enum! {
@@ -78,6 +78,12 @@ pub struct ThreadStartParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    /// Codex configuration for this thread, keyed by dotted path, as
+    /// `codex --config` takes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<Extra>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_policy: Option<AskForApproval>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
@@ -85,9 +91,23 @@ pub struct ThreadStartParams {
     pub sandbox: Option<SandboxMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub developer_instructions: Option<String>,
-    /// Tools amux defines for the thread, as JSON schemas.
+    /// Tools amux defines for the thread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dynamic_tools: Option<Vec<Value>>,
+    pub dynamic_tools: Option<Vec<DynamicTool>>,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// A function tool the thread may call; Codex asks amux to run it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DynamicTool {
+    pub name: String,
+    pub description: String,
+    /// The JSON schema of the tool's arguments.
+    pub input_schema: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -205,6 +225,8 @@ pub struct TurnStartParams {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ReasoningSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_policy: Option<AskForApproval>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

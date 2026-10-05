@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::dispatch::{ThreadChannelState, ThreadEventReceiver};
 use crate::error::Error;
-use crate::notification::ThreadEvent;
+use crate::event::ThreadEvent;
 use crate::thread::{ThreadInner, restore_event_receiver};
 
 /// Continuous receiver for every event routed to one Codex thread.

@@ -1,36 +1,38 @@
-use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
+use codex_protocol::client::{
+    AccountReadParams, Capabilities, ClientInfo, InitializeParams, ThreadListParams,
+    ThreadResumeParams, ThreadSetNameParams, ThreadStartParams,
+};
+use codex_protocol::server::{
+    AccountReadResponse, InitializeResponse, ThreadListResponse, ThreadResponse,
+};
+use codex_protocol::{ClientNotification, ClientRequest, Extra};
 use tokio::io::{AsyncBufRead, AsyncWrite};
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{self, CodexConfig, ThreadConfig};
+use crate::config::CodexConfig;
 use crate::dispatch::ServerInner;
 use crate::error::Error;
-use crate::init::{ClientInfo, InitializationResult, InitializeCapabilities, InitializeParams};
-use crate::notification::ServerNotification;
+use crate::event::Event;
 use crate::thread::Thread;
 use crate::transport;
-use crate::types::{
-    AccountReadParams, AccountReadResponse, ListThreadsParams, ThreadListResponse,
-    ThreadSessionInfo,
-};
 
 // ── Codex ────────────────────────────────────────────────────────
 
-/// Handle to a running codex app-server subprocess.
+/// A client of one codex app-server.
 ///
-/// Created via [`connect()`](crate::connect). All methods take `&self`.
-/// The handle is backed by `Arc<ServerInner>` and is cheap to clone.
+/// Created via [`connect()`](crate::connect) or [`Codex::from_io`]. All
+/// methods take `&self`; the handle is cheap to clone.
 #[derive(Clone)]
 pub struct Codex {
     pub(crate) inner: Arc<ServerInner>,
-    global_notif_rx: Arc<Mutex<Option<mpsc::Receiver<ServerNotification>>>>,
+    global_rx: Arc<Mutex<Option<mpsc::Receiver<Event>>>>,
 }
 
 impl Codex {
-    /// Connect to a codex app-server, performing the initialize handshake.
+    /// Start a codex app-server on stdio and perform the initialize handshake.
     pub(crate) async fn connect(config: CodexConfig) -> Result<Self, Error> {
         let process = transport::spawn_process(transport::process_command(&config))
             .map_err(|e| Error::Process(format!("{e:#}")))?;
@@ -44,184 +46,144 @@ impl Codex {
             stdout,
             stderr,
         } = process;
-
         let cancel = CancellationToken::new();
-        let recorder = config
-            .record_io
-            .as_deref()
-            .map(transport::WireRecorder::new)
-            .transpose()?;
         let child_waiter = transport::spawn_child_waiter(child, cancel.clone());
-        let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(64);
-        let (global_notif_tx, global_notif_rx) = mpsc::channel::<ServerNotification>(64);
-
-        let inner = Arc::new(ServerInner {
-            stdin_tx,
-            pending_requests: Mutex::new(std::collections::HashMap::new()),
-            thread_channels: Mutex::new(std::collections::HashMap::new()),
-            global_notif_tx,
-            init_result: OnceLock::new(),
-            request_counter: AtomicU64::new(1),
-            cancel: cancel.clone(),
-            child_waiter: Mutex::new(Some(child_waiter)),
-        });
-
-        // Spawn background tasks
-        transport::spawn_reader_task(stdout, inner.clone(), cancel.clone(), recorder.clone());
-        transport::spawn_writer_task(stdin, stdin_rx, cancel.clone(), recorder);
         transport::spawn_stderr_task(stderr, "codex app-server stdio");
-
-        let codex = Self {
-            inner,
-            global_notif_rx: Arc::new(Mutex::new(Some(global_notif_rx))),
-        };
-
-        // Initialize handshake
-        let init: InitializationResult = match codex
-            .inner
-            .request("initialize", initialize_params(&config))
-            .await
-        {
-            Ok(init) => init,
-            Err(error) => {
-                codex.inner.shutdown().await;
-                return Err(error);
-            }
-        };
-        if let Err(error) = codex.inner.notify_no_params("initialized").await {
-            codex.inner.shutdown().await;
-            return Err(error);
-        }
-        let _ = codex.inner.init_result.set(init);
-
-        Ok(codex)
+        Self::start(stdout, stdin, config, cancel, Some(child_waiter)).await
     }
 
-    /// Create a Codex handle from raw IO handles (for replay/testing).
-    /// Performs the initialize handshake via the provided IO.
+    /// A client over already-open lines (for replay and tests). Performs the
+    /// initialize handshake over them.
     pub async fn from_io(
         reader: impl AsyncBufRead + Unpin + Send + 'static,
         writer: impl AsyncWrite + Unpin + Send + 'static,
         config: CodexConfig,
     ) -> Result<Self, Error> {
-        let cancel = CancellationToken::new();
+        Self::start(reader, writer, config, CancellationToken::new(), None).await
+    }
+
+    async fn start(
+        reader: impl AsyncBufRead + Unpin + Send + 'static,
+        writer: impl AsyncWrite + Unpin + Send + 'static,
+        config: CodexConfig,
+        cancel: CancellationToken,
+        child_waiter: Option<tokio::task::JoinHandle<()>>,
+    ) -> Result<Self, Error> {
         let recorder = config
             .record_io
             .as_deref()
             .map(transport::WireRecorder::new)
             .transpose()?;
         let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(64);
-        let (global_notif_tx, global_notif_rx) = mpsc::channel::<ServerNotification>(64);
-
-        let inner = Arc::new(ServerInner {
+        let (global_tx, global_rx) = mpsc::channel::<Event>(64);
+        let inner = Arc::new(ServerInner::new(
             stdin_tx,
-            pending_requests: Mutex::new(std::collections::HashMap::new()),
-            thread_channels: Mutex::new(std::collections::HashMap::new()),
-            global_notif_tx,
-            init_result: OnceLock::new(),
-            request_counter: AtomicU64::new(1),
-            cancel: cancel.clone(),
-            child_waiter: Mutex::new(None),
-        });
-
+            global_tx,
+            cancel.clone(),
+            child_waiter,
+        ));
         transport::spawn_reader_task(reader, inner.clone(), cancel.clone(), recorder.clone());
         transport::spawn_writer_task(writer, stdin_rx, cancel, recorder);
 
         let codex = Self {
             inner,
-            global_notif_rx: Arc::new(Mutex::new(Some(global_notif_rx))),
+            global_rx: Arc::new(Mutex::new(Some(global_rx))),
         };
-
-        // Initialize handshake with the caller's identity and capabilities.
-        let init: InitializationResult = match codex
-            .inner
-            .request("initialize", initialize_params(&config))
-            .await
-        {
-            Ok(init) => init,
-            Err(error) => {
-                codex.inner.shutdown().await;
-                return Err(error);
-            }
-        };
-        if let Err(error) = codex.inner.notify_no_params("initialized").await {
+        if let Err(error) = codex.initialize(&config).await {
             codex.inner.shutdown().await;
             return Err(error);
         }
-        let _ = codex.inner.init_result.set(init);
-
         Ok(codex)
     }
 
-    /// Return the cached initialize response, if available.
-    pub fn initialization_result(&self) -> Option<&InitializationResult> {
+    async fn initialize(&self, config: &CodexConfig) -> Result<(), Error> {
+        let init: InitializeResponse = self
+            .inner
+            .request(ClientRequest::Initialize(InitializeParams {
+                client_info: ClientInfo {
+                    name: config.client_name.clone(),
+                    title: config.client_title.clone(),
+                    version: config.client_version.clone(),
+                    extra: Extra::new(),
+                },
+                capabilities: Some(Capabilities {
+                    experimental_api: Some(config.experimental_api),
+                    extra: Extra::new(),
+                }),
+                extra: Extra::new(),
+            }))
+            .await?;
+        self.inner
+            .notify(ClientNotification::Initialized(()))
+            .await?;
+        let _ = self.inner.init_result.set(init);
+        Ok(())
+    }
+
+    /// What the server answered to `initialize`.
+    pub fn initialization_result(&self) -> Option<&InitializeResponse> {
         self.inner.init_result.get()
     }
 
     // ── Thread management ────────────────────────────────────────
 
     /// Start a new thread.
-    pub async fn start_thread(&self, config: ThreadConfig) -> Result<Thread, Error> {
-        let session: ThreadSessionInfo = self
+    pub async fn start_thread(&self, params: ThreadStartParams) -> Result<Thread, Error> {
+        let session: ThreadResponse = self
             .inner
-            .request("thread/start", config::thread_config_to_params(&config))
+            .request(ClientRequest::ThreadStart(params))
             .await?;
         let registration = self.inner.register_thread(&session.thread.id).await;
         Ok(Thread::new(self.inner.clone(), session, registration))
     }
 
-    /// Resume an existing thread by ID.
-    pub async fn resume_thread(
-        &self,
-        thread_id: &str,
-        config: ThreadConfig,
-    ) -> Result<Thread, Error> {
-        let mut params = config::thread_config_to_params(&config);
-        if let serde_json::Value::Object(ref mut m) = params {
-            m.insert("threadId".into(), serde_json::json!(thread_id));
-        }
-        // Install a fresh registration before the RPC. The app-server may emit
-        // replay/history notifications before returning the response.
-        let registration = self.inner.reregister_thread_for_resume(thread_id).await;
-        let session: ThreadSessionInfo = self.inner.request("thread/resume", params).await?;
+    /// Resume an existing thread.
+    pub async fn resume_thread(&self, params: ThreadResumeParams) -> Result<Thread, Error> {
+        // Install a fresh registration before the request: the app-server
+        // replays the thread's history before it answers.
+        let registration = self
+            .inner
+            .reregister_thread_for_resume(&params.thread_id)
+            .await;
+        let session: ThreadResponse = self
+            .inner
+            .request(ClientRequest::ThreadResume(params))
+            .await?;
         registration.finish_staging().await;
         Ok(Thread::new(self.inner.clone(), session, registration))
     }
 
-    /// List threads.
     pub async fn list_threads(
         &self,
-        params: ListThreadsParams,
+        params: ThreadListParams,
     ) -> Result<ThreadListResponse, Error> {
-        self.inner.request("thread/list", params).await
+        self.inner.request(ClientRequest::ThreadList(params)).await
     }
 
-    /// Rename a thread.
     pub async fn rename_thread(&self, thread_id: &str, name: &str) -> Result<(), Error> {
         self.inner
-            .request_unit(
-                "thread/name/set",
-                serde_json::json!({ "threadId": thread_id, "name": name }),
-            )
+            .request_value(ClientRequest::ThreadSetName(ThreadSetNameParams {
+                thread_id: thread_id.to_owned(),
+                name: name.to_owned(),
+                extra: Extra::new(),
+            }))
             .await
+            .map(drop)
     }
 
     // ── Non-thread operations ────────────────────────────────────
 
-    /// Read the currently authenticated account, optionally refreshing its token first.
+    /// Read the signed-in account, optionally refreshing its token first.
     pub async fn read_account(
         &self,
         params: AccountReadParams,
     ) -> Result<AccountReadResponse, Error> {
-        self.inner.request("account/read", params).await
+        self.inner.request(ClientRequest::AccountRead(params)).await
     }
 
-    // ── Global notifications ─────────────────────────────────────
-
-    /// Take the global (non-thread-scoped) notification receiver.
-    /// Returns `None` if already taken.
-    pub fn take_notifications(&self) -> Option<mpsc::Receiver<ServerNotification>> {
-        self.global_notif_rx.try_lock().ok()?.take()
+    /// Take the receiver for what names no thread. `None` once taken.
+    pub fn take_notifications(&self) -> Option<mpsc::Receiver<Event>> {
+        self.global_rx.try_lock().ok()?.take()
     }
 
     // ── Shutdown ─────────────────────────────────────────────────
@@ -234,24 +196,6 @@ impl Codex {
     /// Whether the underlying transport reader has terminated.
     pub fn is_closed(&self) -> bool {
         self.inner.cancel.is_cancelled()
-    }
-}
-
-fn initialize_params(config: &CodexConfig) -> InitializeParams {
-    InitializeParams {
-        client_info: ClientInfo {
-            name: config.client_name.clone(),
-            title: config.client_title.clone(),
-            version: config.client_version.clone(),
-        },
-        capabilities: Some(InitializeCapabilities {
-            experimental_api: config.experimental_api,
-            opt_out_notification_methods: if config.opt_out_notification_methods.is_empty() {
-                None
-            } else {
-                Some(config.opt_out_notification_methods.clone())
-            },
-        }),
     }
 }
 
@@ -298,6 +242,8 @@ mod remediation_tests {
         serde_json::json!({
             "thread": {
                 "id": thread_id,
+                "cwd": "/tmp",
+                "status": {"type": "idle"},
                 "path": null,
                 "agentNickname": null,
                 "agentRole": null,
@@ -313,6 +259,13 @@ mod remediation_tests {
             "sandbox": {"type": "readOnly", "networkAccess": false},
             "reasoningEffort": null
         })
+    }
+
+    fn warning_message(event: &crate::ThreadEvent) -> &str {
+        match event.notification() {
+            Some(codex_protocol::ServerNotification::Warning(warning)) => &warning.message,
+            other => panic!("expected a warning, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -336,7 +289,7 @@ mod remediation_tests {
 
         assert!(matches!(
             connect.await.unwrap(),
-            Err(Error::Rpc { code: -32602, .. })
+            Err(Error::Rpc(codex_protocol::RpcError { code: -32602, .. }))
         ));
         let mut trailing = String::new();
         let bytes = tokio::time::timeout(
@@ -383,7 +336,10 @@ mod remediation_tests {
         let resume_client = codex.clone();
         let resume = tokio::spawn(async move {
             resume_client
-                .resume_thread("thread-long", ThreadConfig::default())
+                .resume_thread(ThreadResumeParams {
+                    thread_id: "thread-long".into(),
+                    ..ThreadResumeParams::default()
+                })
                 .await
         });
         let request = read_json_line(&mut server_reader).await;
@@ -419,7 +375,7 @@ mod remediation_tests {
         let mut events = thread.events().await.unwrap();
         for index in 0..REPLAY_EVENTS {
             let event = events.next().await.unwrap().expect("staged replay event");
-            assert_eq!(event.params["message"], index.to_string());
+            assert_eq!(warning_message(&event), index.to_string());
             assert!(
                 event.replayed,
                 "history staged before the resume answered is a replay"
@@ -446,7 +402,7 @@ mod remediation_tests {
         )
         .await;
         let live = events.next().await.unwrap().expect("live event");
-        assert_eq!(live.params["message"], "live");
+        assert_eq!(warning_message(&live), "live");
         assert!(
             !live.replayed,
             "an event after the resume answered is not a replay"
@@ -523,7 +479,10 @@ while :; do sleep 0.01; done
         let shutdown = tokio::spawn(async move {
             let result = Codex::from_process(CodexConfig::default(), process).await;
             if initialize_error {
-                assert!(matches!(result, Err(Error::Rpc { code: -32602, .. })));
+                assert!(matches!(
+                    result,
+                    Err(Error::Rpc(codex_protocol::RpcError { code: -32602, .. }))
+                ));
             } else {
                 result.unwrap().close().await;
             }
@@ -613,9 +572,7 @@ mod tests {
         .unwrap();
         let init = codex.initialization_result().unwrap();
         assert_eq!(init.user_agent, "ua");
-        assert_eq!(init.codex_home, std::path::Path::new("/tmp/codex"));
-        assert_eq!(init.platform_family, "unix");
-        assert_eq!(init.platform_os, "macos");
+        assert_eq!(init.extra["platformOs"], "macos");
 
         server_task.await.unwrap();
     }

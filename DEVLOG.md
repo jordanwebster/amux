@@ -1,3 +1,24 @@
+2026-10-06 — **The Codex client and the fakes' check on the protocol types.**
+The `codex` crate keeps only what starts Codex's app-server and talks to
+it: the process, the lines in and out, and routing each message to the
+thread it names. Its own copies of Codex's messages (threads, turns,
+items, approvals, notifications, the initialize exchange and the thread
+and turn settings) are gone; requests are `codex_protocol::ClientRequest`
+values written by `codex_protocol::encode`, every line read goes through
+`codex_protocol::decode`, and a thread's events are the protocol's
+notifications and server requests. A request Codex sends that the
+protocol does not know is refused with "method not found" at once, since
+nobody could answer it. To carry what the specifications send, the
+protocol crate gained a thread's model provider and configuration, the
+turn's reasoning summary, typed dynamic tools, granular approval, image
+input, the agent message's phase and the execution-policy rule an
+approval adds. All 29 Codex specifications replay strictly on the
+rebuilt client. The fakes' shape check now also reads every frame a fake
+composes with the provider's protocol crate, so a status or kind Codex
+or Claude never sends fails even when its shape matches a recorded one.
+Earlier the same day `claude::sdk` stopped re-exporting the stream:
+everyone imports `claude_protocol::stream` directly.
+
 2026-10-06 — **Terminal Claude's transcript rows and hook payloads as types.**
 `claude-protocol` gains `transcript` and `hooks`. A transcript row is one
 of the conversation rows (user, assistant, system by subtype, attachment
