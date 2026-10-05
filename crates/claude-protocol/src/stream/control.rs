@@ -53,6 +53,7 @@ tagged_enum! {
         "hook_callback" => HookCallback(HookCallbackRequest),
         "mcp_message" => McpMessage(McpMessageRequest),
         "elicitation" => Elicitation(ElicitationRequestBody),
+        "request_user_dialog" => UserDialog(UserDialogRequestBody),
     }
 }
 
@@ -260,6 +261,23 @@ pub struct ElicitationRequestBody {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elicitation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(flatten)]
+    pub extensions: Extensions,
+}
+
+/// Claude asking the person through one of its own dialogs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserDialogRequestBody {
+    pub dialog_kind: String,
+    pub payload: serde_json::Map<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
     #[serde(flatten)]
     pub extensions: Extensions,
 }

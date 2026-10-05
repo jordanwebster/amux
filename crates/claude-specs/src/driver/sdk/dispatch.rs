@@ -2,23 +2,25 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use claude_protocol::stream::Output;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::driver::sdk::abort::{Shutdown, ShutdownReason};
 use crate::driver::sdk::control::{
-    ControlOutcome, ControlRequest, ControlRequestBody, ControlResponse, ControlResponseInner,
-    InitializeRequestBody,
+    CanUseToolRequest, ControlOutcome, ControlRequest, ControlRequestBody, ControlResponseInner,
+    ElicitationRequestBody, HookCallbackRequest, InitializeRequestBody,
 };
 use crate::driver::sdk::init::InitializationResult;
 use crate::driver::sdk::mcp::SdkMcpServer;
 use crate::driver::sdk::message::Message;
 use crate::driver::sdk::options::{
-    ElicitationRequest, HookCallbackContext, HookDecision, HookEventData, HookInput, HookOutput,
-    HookPermissionDecision, HookSpecificOutput, SyncHookOutput, UserDialogRequest,
+    ElicitationMode, ElicitationRequest, HookCallbackContext, HookDecision, HookEventData,
+    HookInput, HookOutput, HookPermissionDecision, HookSpecificOutput, SyncHookOutput,
+    UserDialogRequest,
 };
 use crate::driver::sdk::session::SdkEvent;
-use crate::driver::sdk::types::{CanUseToolOptions, PermissionResult, PermissionUpdate};
+use crate::driver::sdk::types::{PermissionResult, PermissionUpdate};
 use crate::driver::sdk::{Error, ProtocolError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,8 +197,10 @@ async fn dispatch_line(
     turn_tx: &mpsc::Sender<Result<SdkEvent, Error>>,
     inner: &QueryInner,
 ) {
-    let value = match serde_json::from_str::<serde_json::Value>(line) {
-        Ok(value) => value,
+    // The frame as written, for an error that quotes it.
+    let frame = || serde_json::from_str::<serde_json::Value>(line).unwrap_or_default();
+    let output = match claude_protocol::stream::decode(line.as_bytes()) {
+        Ok(output) => output,
         Err(error) => {
             let _ = turn_tx
                 .send(Err(Error::Protocol(ProtocolError::new(format!(
@@ -207,258 +211,141 @@ async fn dispatch_line(
         }
     };
 
-    let msg_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-    if msg_type == "control_response" {
-        let envelope = match serde_json::from_value::<ControlResponse>(value.clone()) {
-            Ok(envelope) => envelope,
-            Err(error) => {
+    match output {
+        Output::ControlResponse(envelope) => {
+            let request_id = envelope.response.request_id.clone();
+            if let Some(tx) = inner.pending_controls.lock().await.remove(&request_id) {
+                let _ = tx.send(envelope.response);
+            } else {
                 let _ = turn_tx
                     .send(Err(Error::Protocol(ProtocolError::with_frame(
-                        format!("malformed control response: {error}"),
-                        value,
+                        format!("control response has no pending request `{request_id}`"),
+                        frame(),
                     ))))
                     .await;
-                return;
             }
-        };
-        let request_id = envelope.response.request_id.clone();
-        if let Some(tx) = inner.pending_controls.lock().await.remove(&request_id) {
-            let _ = tx.send(envelope.response);
-        } else {
-            let _ = turn_tx
-                .send(Err(Error::Protocol(ProtocolError::with_frame(
-                    format!("control response has no pending request `{request_id}`"),
-                    value,
-                ))))
-                .await;
         }
-        return;
-    }
-
-    if msg_type == "control_request" {
-        handle_incoming_control_request(&value, inner, turn_tx).await;
-        return;
-    }
-
-    match Message::parse(value) {
-        Ok(msg) => {
-            let _ = turn_tx.send(Ok(SdkEvent::Message(msg))).await;
+        Output::ControlRequest(request) => {
+            handle_incoming_control_request(request, frame, inner, turn_tx).await;
         }
-        Err(error) => {
-            let _ = turn_tx
-                .send(Err(Error::Protocol(ProtocolError::new(format!(
-                    "invalid Claude message: {error}; line: {line}"
-                )))))
-                .await;
+        Output::Message(message) => {
+            let _ = turn_tx.send(Ok(SdkEvent::Message(message))).await;
+        }
+        Output::Unknown(unknown) => {
+            let error = match unknown.kind.as_deref() {
+                Some(kind @ ("control_request" | "control_response")) => {
+                    ProtocolError::with_frame(format!("malformed {kind}"), frame())
+                }
+                // A frame type this driver does not know still reaches the
+                // caller, as the published SDK passes it on.
+                _ => match Message::parse(frame()) {
+                    Ok(message) => {
+                        let _ = turn_tx.send(Ok(SdkEvent::Message(message))).await;
+                        return;
+                    }
+                    Err(error) => {
+                        ProtocolError::new(format!("invalid Claude message: {error}; line: {line}"))
+                    }
+                },
+            };
+            let _ = turn_tx.send(Err(Error::Protocol(error))).await;
         }
     }
 }
 
 /// Parse incoming requests without running host code in the transport task.
 async fn handle_incoming_control_request(
-    value: &serde_json::Value,
+    request: ControlRequest,
+    frame: impl Fn() -> serde_json::Value,
     inner: &QueryInner,
     turn_tx: &mpsc::Sender<Result<SdkEvent, Error>>,
 ) {
-    let Some(request_id) = value
-        .get("request_id")
-        .and_then(|v| v.as_str())
-        .map(str::to_owned)
-    else {
+    let ControlRequest {
+        request_id,
+        request,
+        ..
+    } = request;
+    let refuse = |error: String| async {
+        let _ = send_control_error(inner, &request_id, &error).await;
         let _ = turn_tx
             .send(Err(Error::Protocol(ProtocolError::with_frame(
-                "control request requires string field `request_id`",
-                value.clone(),
+                error,
+                frame(),
             ))))
             .await;
-        return;
     };
-    let request = value.get("request");
-    let Some(subtype) = request
-        .and_then(|r| r.get("subtype"))
-        .and_then(|s| s.as_str())
-    else {
-        let _ = turn_tx
-            .send(Err(Error::Protocol(ProtocolError::with_frame(
-                "control request requires string field `request.subtype`",
-                value.clone(),
-            ))))
-            .await;
-        return;
-    };
-
-    if subtype == "can_use_tool" {
-        let parsed = match parse_permission_request(request.expect("request checked"), &request_id)
-        {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                let _ = turn_tx
-                    .send(Err(Error::Protocol(ProtocolError::with_frame(
-                        error.clone(),
-                        value.clone(),
-                    ))))
-                    .await;
-                let _ = send_control_error(inner, &request_id, &error).await;
-                return;
-            }
-        };
-        let event = SdkEvent::PermissionRequest {
-            id: request_id.clone(),
-            tool_name: parsed.tool_name,
-            input: parsed.input,
-            suggestions: parsed.options.suggestions,
-            blocked_path: parsed.options.blocked_path,
-        };
-        emit_incoming(
-            inner,
-            turn_tx,
-            request_id,
+    let (kind, event) = match request {
+        ControlRequestBody::CanUseTool(body) => (
             IncomingRequestKind::Permission,
-            event,
-        )
-        .await;
-        return;
-    }
-
-    if subtype == "hook_callback" {
-        match parse_hook_callback_request(request, &request_id, inner) {
-            Ok((input, context)) => {
-                let event = SdkEvent::HookCallback {
+            permission_request(body, &request_id),
+        ),
+        ControlRequestBody::HookCallback(body) => match hook_callback(body, &request_id, inner) {
+            Ok((input, context)) => (
+                IncomingRequestKind::Hook,
+                SdkEvent::HookCallback {
                     id: request_id.clone(),
                     input,
                     context,
-                };
-                emit_incoming(inner, turn_tx, request_id, IncomingRequestKind::Hook, event).await;
-            }
-            Err(error) => {
-                let _ = send_control_error(inner, &request_id, &error).await;
-                let _ = turn_tx
-                    .send(Err(Error::Protocol(ProtocolError::with_frame(
-                        error,
-                        value.clone(),
-                    ))))
-                    .await;
-            }
-        }
-        return;
-    }
-
-    if subtype == "mcp_message" {
-        let request = request.expect("request checked");
-        let server_name = request
-            .get("server_name")
-            .and_then(serde_json::Value::as_str);
-        let message = request.get("message");
-        let Some((server_name, message)) = server_name.zip(message) else {
-            let error = "mcp_message requires server_name and message";
-            let _ = send_control_error(inner, &request_id, error).await;
-            let _ = turn_tx
-                .send(Err(Error::Protocol(ProtocolError::with_frame(
-                    error,
-                    value.clone(),
-                ))))
+                },
+            ),
+            Err(error) => return refuse(error).await,
+        },
+        ControlRequestBody::McpMessage(body) => {
+            let server = inner
+                .sdk_mcp_servers
+                .read()
+                .expect("SDK MCP server lock poisoned")
+                .get(&body.server_name)
+                .cloned();
+            let Some(server) = server else {
+                let _ = send_control_error(
+                    inner,
+                    &request_id,
+                    &format!("SDK MCP server not found: {}", body.server_name),
+                )
                 .await;
-            return;
-        };
-        let server = inner
-            .sdk_mcp_servers
-            .read()
-            .expect("SDK MCP server lock poisoned")
-            .get(server_name)
-            .cloned();
-        let Some(server) = server else {
-            let _ = send_control_error(
+                return;
+            };
+            let mcp_response = server
+                .handle_message(&body.message)
+                .await
+                .unwrap_or_else(|| serde_json::json!({ "jsonrpc": "2.0", "id": 0, "result": {} }));
+            let _ = send_control_success(
                 inner,
                 &request_id,
-                &format!("SDK MCP server not found: {server_name}"),
+                serde_json::json!({ "mcp_response": mcp_response }),
             )
             .await;
             return;
-        };
-        let mcp_response = server
-            .handle_message(message)
-            .await
-            .unwrap_or_else(|| serde_json::json!({ "jsonrpc": "2.0", "id": 0, "result": {} }));
-        let _ = send_control_success(
-            inner,
-            &request_id,
-            serde_json::json!({ "mcp_response": mcp_response }),
-        )
-        .await;
-        return;
-    }
-
-    if subtype == "elicitation" {
-        let request = match parse_elicitation_request(request.expect("request checked")) {
-            Ok(request) => request,
-            Err(error) => {
-                let _ = send_control_error(inner, &request_id, &error).await;
-                let _ = turn_tx
-                    .send(Err(Error::Protocol(ProtocolError::with_frame(
-                        error,
-                        value.clone(),
-                    ))))
-                    .await;
-                return;
-            }
-        };
-        let event = SdkEvent::Elicitation {
-            id: request_id.clone(),
-            request,
-        };
-        emit_incoming(
-            inner,
-            turn_tx,
-            request_id,
-            IncomingRequestKind::Elicitation,
-            event,
-        )
-        .await;
-        return;
-    }
-
-    if subtype == "request_user_dialog" {
-        let request = match parse_user_dialog_request(request.expect("request checked")) {
-            Ok(request) => request,
-            Err(error) => {
-                let _ = send_control_error(inner, &request_id, &error).await;
-                let _ = turn_tx
-                    .send(Err(Error::Protocol(ProtocolError::with_frame(
-                        error,
-                        value.clone(),
-                    ))))
-                    .await;
-                return;
-            }
-        };
-        let event = SdkEvent::UserDialog {
-            id: request_id.clone(),
-            request,
-        };
-        emit_incoming(
-            inner,
-            turn_tx,
-            request_id,
+        }
+        ControlRequestBody::Elicitation(body) => match elicitation_request(body) {
+            Ok(request) => (
+                IncomingRequestKind::Elicitation,
+                SdkEvent::Elicitation {
+                    id: request_id.clone(),
+                    request,
+                },
+            ),
+            Err(error) => return refuse(error).await,
+        },
+        ControlRequestBody::UserDialog(body) => (
             IncomingRequestKind::UserDialog,
-            event,
-        )
-        .await;
-        return;
-    }
-
-    let _ = turn_tx
-        .send(Err(Error::Protocol(ProtocolError::with_frame(
-            format!("unsupported control request subtype `{subtype}`"),
-            value.clone(),
-        ))))
-        .await;
-    let _ = send_control_error(
-        inner,
-        &request_id,
-        &format!("unsupported control request subtype `{subtype}`"),
-    )
-    .await;
+            SdkEvent::UserDialog {
+                id: request_id.clone(),
+                request: UserDialogRequest {
+                    dialog_kind: body.dialog_kind,
+                    payload: serde_json::Value::Object(body.payload),
+                    tool_use_id: body.tool_use_id,
+                    extensions: body.extensions,
+                },
+            },
+        ),
+        other => {
+            let error = format!("unsupported control request subtype `{}`", other.kind());
+            return refuse(error).await;
+        }
+    };
+    emit_incoming(inner, turn_tx, request_id, kind, event).await;
 }
 
 async fn emit_incoming(
@@ -478,179 +365,35 @@ async fn emit_incoming(
     }
 }
 
-fn deserialize_permission_updates(
-    value: serde_json::Value,
-) -> Result<Vec<PermissionUpdate>, String> {
-    serde_json::from_value(value)
-        .map_err(|error| format!("invalid permission_suggestions: {error}"))
-}
-
-struct ParsedPermissionRequest {
-    tool_name: String,
-    input: serde_json::Value,
-    options: CanUseToolOptions,
-}
-
-#[derive(serde::Deserialize)]
-struct IncomingPermissionRequest {
-    #[serde(rename = "subtype")]
-    _subtype: String,
-    tool_name: String,
-    input: serde_json::Map<String, serde_json::Value>,
-    #[serde(default)]
-    permission_suggestions: Option<Vec<serde_json::Value>>,
-    #[serde(default)]
-    blocked_path: Option<String>,
-    #[serde(default)]
-    decision_reason: Option<String>,
-    #[serde(default)]
-    decision_reason_type: Option<String>,
-    #[serde(default)]
-    classifier_approvable: Option<bool>,
-    #[serde(default)]
-    suppress_always_allow_rule: Option<bool>,
-    #[serde(default)]
-    default_to_no: Option<bool>,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    display_name: Option<String>,
-    tool_use_id: String,
-    #[serde(default)]
-    agent_id: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    matched_ask_rule: Option<IncomingMatchedAskRule>,
-    #[serde(default)]
-    requires_user_interaction: Option<bool>,
-    #[serde(flatten)]
-    extensions: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(serde::Deserialize)]
-struct IncomingMatchedAskRule {
-    source: String,
-    tool_name: String,
-    #[serde(default)]
-    rule_content: Option<String>,
-    #[serde(flatten)]
-    extensions: serde_json::Map<String, serde_json::Value>,
-}
-
-fn parse_permission_request(
-    request: &serde_json::Value,
-    request_id: &str,
-) -> Result<ParsedPermissionRequest, String> {
-    let parsed: IncomingPermissionRequest = serde_json::from_value(request.clone())
-        .map_err(|error| format!("malformed can_use_tool request: {error}"))?;
-    let permission_suggestions = parsed.permission_suggestions.unwrap_or_default();
-    let suggestions =
-        deserialize_permission_updates(serde_json::Value::Array(permission_suggestions.clone()))?;
-    Ok(ParsedPermissionRequest {
-        tool_name: parsed.tool_name,
-        input: serde_json::Value::Object(parsed.input),
-        options: CanUseToolOptions {
-            suggestions,
-            blocked_path: parsed.blocked_path,
-            decision_reason: parsed.decision_reason,
-            decision_reason_type: parsed.decision_reason_type,
-            classifier_approvable: parsed.classifier_approvable,
-            suppress_always_allow_rule: parsed.suppress_always_allow_rule,
-            default_to_no: parsed.default_to_no,
-            title: parsed.title,
-            display_name: parsed.display_name,
-            description: parsed.description,
-            tool_use_id: parsed.tool_use_id,
-            agent_id: parsed.agent_id,
-            request_id: request_id.to_owned(),
-            matched_ask_rule: parsed.matched_ask_rule.map(|rule| {
-                crate::driver::sdk::types::MatchedAskRule {
-                    source: rule.source,
-                    tool_name: rule.tool_name,
-                    rule_content: rule.rule_content,
-                    extensions: rule.extensions,
-                }
-            }),
-            requires_user_interaction: parsed.requires_user_interaction,
-            extensions: parsed.extensions,
-        },
-    })
-}
-
-#[derive(serde::Deserialize)]
-struct IncomingElicitationRequest {
-    #[serde(rename = "subtype")]
-    _subtype: String,
-    mcp_server_name: String,
-    message: String,
-    #[serde(default)]
-    mode: Option<crate::driver::sdk::options::ElicitationMode>,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    elicitation_id: Option<String>,
-    #[serde(default)]
-    requested_schema: Option<serde_json::Value>,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    display_name: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(flatten)]
-    extensions: serde_json::Map<String, serde_json::Value>,
-}
-
-fn parse_elicitation_request(request: &serde_json::Value) -> Result<ElicitationRequest, String> {
-    let parsed: IncomingElicitationRequest = serde_json::from_value(request.clone())
-        .map_err(|error| format!("malformed elicitation request: {error}"))?;
-    Ok(ElicitationRequest {
-        server_name: parsed.mcp_server_name,
-        message: parsed.message,
-        mode: parsed.mode,
-        url: parsed.url,
-        elicitation_id: parsed.elicitation_id,
-        requested_schema: parsed.requested_schema,
-        title: parsed.title,
-        display_name: parsed.display_name,
-        description: parsed.description,
-        extensions: parsed.extensions,
-    })
-}
-
-#[derive(serde::Deserialize)]
-struct IncomingUserDialogRequest {
-    #[serde(rename = "subtype")]
-    _subtype: String,
-    dialog_kind: String,
-    payload: serde_json::Map<String, serde_json::Value>,
-    #[serde(default)]
-    tool_use_id: Option<String>,
-    #[serde(flatten)]
-    extensions: serde_json::Map<String, serde_json::Value>,
-}
-
-fn parse_user_dialog_request(request: &serde_json::Value) -> Result<UserDialogRequest, String> {
-    let parsed: IncomingUserDialogRequest = serde_json::from_value(request.clone())
-        .map_err(|error| format!("malformed request_user_dialog request: {error}"))?;
-    Ok(UserDialogRequest {
-        dialog_kind: parsed.dialog_kind,
-        payload: serde_json::Value::Object(parsed.payload),
-        tool_use_id: parsed.tool_use_id,
-        extensions: parsed.extensions,
-    })
-}
-
-fn object_extensions(
-    value: &serde_json::Value,
-    known: &[&str],
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut extensions = value.as_object().cloned().unwrap_or_default();
-    for field in known {
-        extensions.remove(*field);
+fn permission_request(body: CanUseToolRequest, request_id: &str) -> SdkEvent {
+    SdkEvent::PermissionRequest {
+        id: request_id.to_owned(),
+        tool_name: body.tool_name,
+        input: body.input,
+        suggestions: body.permission_suggestions.unwrap_or_default(),
+        blocked_path: body.blocked_path,
     }
-    extensions
+}
+
+fn elicitation_request(body: ElicitationRequestBody) -> Result<ElicitationRequest, String> {
+    let mode = match body.mode.as_deref() {
+        None => None,
+        Some("form") => Some(ElicitationMode::Form),
+        Some("url") => Some(ElicitationMode::Url),
+        Some(other) => return Err(format!("unknown elicitation mode `{other}`")),
+    };
+    Ok(ElicitationRequest {
+        server_name: body.mcp_server_name,
+        message: body.message,
+        mode,
+        url: body.url,
+        elicitation_id: body.elicitation_id,
+        requested_schema: body.requested_schema,
+        title: body.title,
+        display_name: body.display_name,
+        description: body.description,
+        extensions: body.extensions,
+    })
 }
 
 pub(crate) fn permission_result_to_control_value(result: PermissionResult) -> serde_json::Value {
@@ -721,34 +464,40 @@ fn permission_result_to_hook_value(result: PermissionResult) -> serde_json::Valu
     }
 }
 
-fn parse_hook_callback_request(
-    request: Option<&serde_json::Value>,
+fn deserialize_permission_updates(
+    value: serde_json::Value,
+) -> Result<Vec<PermissionUpdate>, String> {
+    serde_json::from_value(value)
+        .map_err(|error| format!("invalid permission_suggestions: {error}"))
+}
+
+fn object_extensions(
+    value: &serde_json::Value,
+    known: &[&str],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut extensions = value.as_object().cloned().unwrap_or_default();
+    for field in known {
+        extensions.remove(*field);
+    }
+    extensions
+}
+
+fn hook_callback(
+    body: HookCallbackRequest,
     request_id: &str,
     inner: &QueryInner,
 ) -> Result<(HookInput, HookCallbackContext), String> {
-    let callback_id = request
-        .and_then(|r| r.get("callback_id"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "hook callback is missing callback_id".to_string())?;
-    if !inner.hook_callback_ids.contains(callback_id) {
-        return Err(format!("no hook subscription found for ID: {callback_id}"));
+    if !inner.hook_callback_ids.contains(&body.callback_id) {
+        return Err(format!(
+            "no hook subscription found for ID: {}",
+            body.callback_id
+        ));
     }
-    let input_value = request
-        .and_then(|r| r.get("input"))
-        .cloned()
-        .ok_or_else(|| "hook callback is missing input".to_string())?;
-    let input = parse_hook_input(&input_value)?;
-    let tool_use_id = request
-        .and_then(|r| r.get("tool_use_id"))
-        .and_then(|v| v.as_str())
-        .map(str::to_owned);
+    let input = parse_hook_input(&body.input)?;
     let context = HookCallbackContext {
         request_id: request_id.to_owned(),
-        tool_use_id,
-        extensions: object_extensions(
-            request.expect("hook request checked"),
-            &["subtype", "callback_id", "input", "tool_use_id"],
-        ),
+        tool_use_id: body.tool_use_id,
+        extensions: body.extensions,
     };
     Ok((input, context))
 }

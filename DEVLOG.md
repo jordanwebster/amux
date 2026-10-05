@@ -17,7 +17,11 @@ rebuilt client. The fakes' shape check now also reads every frame a fake
 composes with the provider's protocol crate, so a status or kind Codex
 or Claude never sends fails even when its shape matches a recorded one.
 Earlier the same day `claude::sdk` stopped re-exporting the stream:
-everyone imports `claude_protocol::stream` directly.
+everyone imports `claude_protocol::stream` directly. The Claude spec
+driver now reads each line with `claude_protocol::stream::decode` and
+Claude's requests (tool permission, hook callback, MCP message,
+elicitation and the user dialog, newly typed) as the protocol's request
+bodies, replacing its private copies of them.
 
 2026-10-06 — **Terminal Claude's transcript rows and hook payloads as types.**
 `claude-protocol` gains `transcript` and `hooks`. A transcript row is one
