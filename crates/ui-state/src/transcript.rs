@@ -47,9 +47,13 @@ pub struct Transcript {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Appended {
     Applied,
-    /// The held revision already covers it.
-    Stale,
-    /// The base is not held; the driver answers with Get.
+    /// Nothing to apply: the held revision already covers it, or nothing is
+    /// held for the key. An item not held is below the window or let go of,
+    /// and every stream of appends ends with the item whole, so whoever
+    /// reads that row later fetches it whole.
+    Dropped,
+    /// A held item is at another revision than the base; the driver answers
+    /// with Get.
     NeedGet,
 }
 
@@ -194,11 +198,11 @@ impl Transcript {
 
     pub(crate) fn append(&mut self, append: &Append, changed: &mut Changed) -> Appended {
         let Some(&order) = self.by_key.get(&append.key) else {
-            return Appended::NeedGet;
+            return Appended::Dropped;
         };
         let held = &self.items[&order];
         if held.item.revision >= append.revision {
-            return Appended::Stale;
+            return Appended::Dropped;
         }
         if held.item.revision != append.base_revision {
             return Appended::NeedGet;

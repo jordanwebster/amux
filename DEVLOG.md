@@ -1,3 +1,13 @@
+2026-10-06 — **A client drops an append for an item it holds nothing for.**
+Now that appends go to any open item, a session kept small while off screen
+would have fetched every running command below its window with a `Get` on each
+chunk of output. An append for a key the client holds nothing for is dropped:
+the stream sends an item before its appends, so such an item was let go (below
+the window, or released for a reload) and comes back whole from the store when
+read again. A held item at another revision than the append's base still
+fetches. The client specs cover both, and CLIENT.md and WIRE.md state the rule
+and why it is safe.
+
 2026-10-06 — **Any open item takes appends, and a running command keeps bounded output.**
 The interpreters' rule that only the newest item may be appended to made the
 Codex interpreter send a command's whole output again with every chunk once

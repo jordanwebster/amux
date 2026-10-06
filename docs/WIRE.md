@@ -274,10 +274,19 @@ message Append { bytes agent = 1; string key = 2; uint64 base_revision = 3;
 
 A client applies an append when the item it holds for `key` is at
 `base_revision`: it adds `text` and takes `revision`. If it holds a newer
-revision it ignores the append. If it holds nothing for the key, or an older
-revision, it calls `Get` for the item. Appends are only sent live, never in an
-opening, and every stream of appends ends with a full item, so a client that
-subscribes late receives the full item and never an append it cannot apply.
+revision it ignores the append. If it holds an older revision it calls `Get`
+for the item. If it holds nothing for the key it drops the append. Appends are
+only sent live, never in an opening, and every stream of appends ends with a
+full item, so a client that subscribes late receives the full item and never
+an append it cannot apply.
+
+Dropping is safe because the stream sends an item before any append to it, so
+a client that holds nothing for a key has let the item go: it is below the
+window the client keeps, or behind a reload it is waiting for. Whenever the
+client reads that row again (a page, a reload) the store gives it whole.
+Appends go to any item still open, not only the newest, so fetching instead
+would cost a client with a small window a `Get` for every running command
+below it.
 
 ![Exactly one appendable field, catch-up always full, every stream ends full. Those three rules are what keep streaming from needing per-kind code anywhere but the interpreter.](figures/appends.svg)
 
@@ -301,7 +310,7 @@ kept for next time. An origin that cannot be reached is an error
 held they are returned with `exhausted` false, and the next page asks again.
 
 `Get(agent_id, key)` returns one held item in full. It is how a client
-recovers when an append's base does not match what it holds.
+recovers when an append's base does not match the revision it holds.
 
 ## Inputs
 
@@ -535,7 +544,8 @@ A checklist for a client against `ClientService`:
    first `CaughtUp` as "the list is complete".
 2. To open a chat, `Subscribe` with a tail. Draw from the snapshot at once;
    merge items by key, keep the highest revision, sort by order.
-3. Apply appends only on a matching base; otherwise `Get` the item.
+3. Apply appends only on a matching base; `Get` an item held at another
+   revision; drop an append for a key you hold nothing for.
 4. On `Reset`, build a fresh transcript and swap it in at `CaughtUp`. On
    `Lagged` or a dropped stream, subscribe again with a tail and back off
    between attempts.

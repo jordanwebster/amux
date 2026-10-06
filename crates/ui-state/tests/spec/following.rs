@@ -60,12 +60,13 @@ fn following_drops_the_oldest_rows_past_the_cap_as_live_rows_arrive() {
         assert_eq!(state.page_room(), Some(0), "a full window pages nothing");
 
         // A later revision of a dropped key is ignored like any row below
-        // the window, and an append to it is a Get whose answer is too.
+        // the window, and an append to it is dropped without a Get.
         let outcome = apply_block(&mut state, ev_item(text(kind, 1, 200, "revised")));
         assert!(outcome.changed.is_empty());
         assert!(state.transcript().get("k1").is_none());
         let outcome = apply_block(&mut state, ev_append("k1", 200, 201, "x"));
-        assert_eq!(outcome.need_get.as_deref(), Some("k1"));
+        assert!(outcome.need_get.is_none() && outcome.changed.is_empty());
+        assert!(state.transcript().get("k1").is_none());
 
         // Keys, input ids and referrers of dropped rows are forgotten.
         apply_block(&mut state, ev_item(prompt(kind, 7, 107, "hi", b"p7")));

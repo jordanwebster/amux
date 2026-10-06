@@ -57,8 +57,9 @@ pub struct Outcome {
     /// Every key whose row may differ, including a run's members when its
     /// attributes moved, and nothing else.
     pub changed: Vec<Key>,
-    /// An Append whose base this client does not hold: the driver answers
-    /// with Get and feeds the item back.
+    /// An Append to a held item at another revision than its base: the
+    /// driver answers with Get and feeds the item back. An Append for a key
+    /// the client holds nothing for is dropped instead.
     pub need_get: Option<Key>,
     /// A Reset's transcript was swapped in: every row id may be new.
     pub reloaded: bool,
@@ -182,11 +183,11 @@ impl Arrivals {
 
     fn append(&mut self, kind: Kind, append: &wire::Append) -> Appended {
         let Some(&order) = self.by_key.get(&append.key) else {
-            return Appended::NeedGet;
+            return Appended::Dropped;
         };
         let held = &self.rows[&order];
         if held.item.revision >= append.revision {
-            return Appended::Stale;
+            return Appended::Dropped;
         }
         if held.item.revision != append.base_revision {
             return Appended::NeedGet;
@@ -632,11 +633,10 @@ impl SessionState {
                     self.transcript.append(&append, changed)
                 } else if self.arrivals.get(&append.key).is_some() {
                     self.arrivals.append(kind, &append)
-                } else if self.arrivals.moved_on {
-                    // The reload brings the row whole.
-                    Appended::Stale
                 } else {
-                    Appended::NeedGet
+                    // Nothing held for the key: the row is below the window
+                    // or let go of, and comes whole when it is read again.
+                    Appended::Dropped
                 };
                 if target == Appended::NeedGet {
                     outcome.need_get = Some(append.key);

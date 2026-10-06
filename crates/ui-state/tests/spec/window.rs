@@ -159,21 +159,33 @@ fn a_live_append_extends_the_held_text() {
 }
 
 #[test]
-fn a_wrong_base_becomes_a_get() {
+fn a_held_item_at_the_wrong_revision_fetches() {
     for kind in KINDS {
         let mut state = open_with(kind, 1..=2);
         let outcome = apply_checked(&mut state, ev_append("k2", 9, 12, "x"));
         assert_eq!(outcome.need_get.as_deref(), Some("k2"));
         assert!(outcome.changed.is_empty());
-        let outcome = apply_checked(&mut state, ev_append("k9", 3, 4, "x"));
-        assert_eq!(
-            outcome.need_get.as_deref(),
-            Some("k9"),
-            "an append for a row not held is a Get"
-        );
         // The driver's Get answer lands as a full item.
         let outcome = apply_checked(&mut state, ev_item(text(kind, 2, 12, "held.x")));
         assert_eq!(outcome.changed, vec!["k2"]);
+    }
+}
+
+#[test]
+fn an_append_for_a_key_not_held_is_dropped() {
+    for kind in KINDS {
+        let mut state = open_with(kind, 1..=2);
+        let outcome = apply_checked(&mut state, ev_append("k3", 3, 4, "x"));
+        assert!(
+            outcome.need_get.is_none(),
+            "an append for a row not held is not a Get"
+        );
+        assert!(outcome.changed.is_empty());
+        assert!(state.transcript().get("k3").is_none());
+        // The row comes whole when the item itself arrives.
+        let outcome = apply_checked(&mut state, ev_item(text(kind, 3, 5, "whole.x")));
+        assert_eq!(outcome.changed, vec!["k3"]);
+        assert_eq!(state.transcript().get("k3").unwrap().item.text, "whole.x");
     }
 }
 

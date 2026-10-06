@@ -118,7 +118,7 @@ The driver forwards everything as a [`Msg`](../crates/ui-state/src/session.rs):
 | `Reloading` | The driver reopened the stream for the reload a return asked for; a fresh tail follows. |
 
 `update` returns an `Outcome`: `changed` lists every row key whose row may differ (including every member of a
-run whose attributes moved, and nothing else), `need_get` names an Append whose base this client does not hold,
+run whose attributes moved, and nothing else), `need_get` names an Append to a held item at another revision than its base,
 `reloaded` says a Reset's or a reload's transcript was swapped in, `session` says something outside the rows
 moved, and `reload` asks the driver to reopen the stream with a fresh tail.
 
@@ -265,7 +265,7 @@ agent's host and that host cannot be reached; the chat says so rather than showi
 client fell behind: the pump reopens it with a tail at once. Any other end of the stream marks the connection
 `Reconnecting`, waits (250 ms, doubling to at most 5 s, back to 250 ms once a stream catches up; see
 `RECONNECT_FIRST_MS` and `RECONNECT_MAX_MS`), and subscribes again with the same tail. A refusal that is not a
-transport failure ends the session (`ended()`). An Append whose base the state does not hold is answered with a
+transport failure ends the session (`ended()`). An Append to a held item at another revision is answered with a
 `Get` for that key before the next event is applied, so later appends meet it. The origin's presence is not the
 driver's concern: Detached and CaughtUp on the stream say whether the chat is current, and the runtime's source
 reconnects to the origin on its own.
@@ -440,9 +440,17 @@ the entry on lifecycle, the snapshot on everything else.
 
 The interpreter streams a reply as Appends: a key, the base revision it extends, the revision it produces, and
 text. The transcript applies an Append only when the held item's revision equals its base; an Append the held
-revision already covers is stale and ignored; any other gap returns `need_get`, and the driver fetches the full
-item with `Get`. Appends are only ever sent live, after CaughtUp, so their base is what the client holds. The
-final full item closes the stream: a `Prose` row reads `streaming: false` once its item is complete.
+revision already covers is stale and ignored; a held item at any other revision returns `need_get`, and the
+driver fetches the full item with `Get`. An Append for a key the session holds nothing for is dropped. Appends
+are only ever sent live, after CaughtUp, so their base is what the client holds. The final full item closes the
+stream: a `Prose` row reads `streaming: false` once its item is complete.
+
+Dropping is safe because an item always reaches the stream before its first Append. A session that holds
+nothing for a key has let that item go: it is below the window (a session off screen keeps only a few rows), or
+it arrived while the reader was away and was released for the reload. The row comes back whole from the store
+the next time it is read, by a page or the reload. Fetching it instead would cost a `Get` per running item below
+the window, and with appends going to any open item, a long command below a small window would fetch on every
+chunk of its output.
 
 ### Paging
 
