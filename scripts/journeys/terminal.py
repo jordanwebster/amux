@@ -169,6 +169,9 @@ AGE = re.compile(r"\b(just now|\d+[smhd] ago)\b")
 # length; masking them keeps every width. A suffix may be cut short where a
 # window covers the rest of its line.
 SCRATCH = re.compile(r"(aj-|testnet)([A-Za-z0-9_]{1,8})(?![A-Za-z0-9_])")
+# A path shortened in its middle can cut a suffix in two: what is left of it
+# after the ellipsis is masked too.
+SCRATCH_TAIL = re.compile(r"((?:aj-|testnet)[A-Za-z0-9_]*…)([A-Za-z0-9_]+)(?=/)")
 
 
 # The fleet's age cell is compact ("now", "2m", "3h") and sits between
@@ -187,7 +190,8 @@ def normalize(text: str) -> str:
     text = RESETS.sub("hh:mm", text)
     text = AGE.sub(lambda match: "<age>".ljust(len(match.group(0))), text)
     text = FLEET_AGE.sub(lambda match: "<a>" if len(match.group(0)) == 3 else "<>", text)
-    return SCRATCH.sub(lambda match: match.group(1) + "x" * len(match.group(2)), text)
+    text = SCRATCH.sub(lambda match: match.group(1) + "x" * len(match.group(2)), text)
+    return SCRATCH_TAIL.sub(lambda match: match.group(1) + "x" * len(match.group(2)), text)
 
 
 # Durations measured on the run's own clock ("380ms", "1.2s", "1m 4s") are

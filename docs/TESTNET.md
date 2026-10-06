@@ -259,8 +259,8 @@ verb without fields is a bare string (`"Shutdown"`).
 | `{"Stop": {"agent"}}` | Stop the agent on its host, as a person does; it can be resumed. |
 | `{"Freeze": {"agent"}}`, `{"Thaw": {"agent"}}` | Stop the agent's process where it stands, answering nothing, and let it run again. |
 | `{"OpenGate": {"name"}}` | Release `wait_for` steps waiting on that file. |
-| `{"Inventory": {"host"}}` | The host's fleet once its inventory has caught up: `{"agents": [{"name", "id", "host_id", "lifecycle", "phase"}]}`. |
-| `{"Chat": {"host", "agent"}}` | Everything the host holds of a chat, read to its first CaughtUp: `{"items": [{"key", "order", "text", "input_id", "attachments"}], "phase"}`. `agent` is a declared name or, for an agent a client created, its id. |
+| `{"Inventory": {"host"}}` | The host's fleet once its inventory has caught up: `{"agents": [{"name", "id", "host_id", "lifecycle", "phase", "cwd", "branch"}]}`; `branch` is null outside a repository. |
+| `{"Chat": {"host", "agent"}}` | Everything the host holds of a chat, read to its first CaughtUp: `{"items": [{"key", "order", "text", "input_id", "attachments"}], "phase", "model"}`, `model` as the newest snapshot names it. `agent` is a declared name or, for an agent a client created, its id. |
 | `{"Block": {"host", "agent"}}` | Check the replica block invariant: `"holds"`. |
 | `{"ProviderInput": {"agent"}}` | Every line the agent's provider read: `{"lines": […]}`. |
 | `"Shutdown"` | Stop every agent and daemon, remove the net's root, reply, and exit. |

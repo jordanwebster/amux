@@ -2808,6 +2808,116 @@ fn a_new_agent_says_when_its_provider_is_not_signed_in() {
     );
 }
 
+/// A new agent can start in a new worktree, from the composer's settings
+/// or the own-terminal form's checkbox, and the request asks for one; a
+/// start the host refuses says why in the form and keeps what was typed.
+#[test]
+fn a_new_agent_asks_for_a_new_worktree_and_shows_why_a_start_failed() {
+    let fleet = home_fleet();
+    let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+    let refused = "starting in a new worktree: the repository already has a branch named fix-it";
+    let mut home = crate::home::Home::default();
+    home.key(&fleet, key(KeyCode::Char('n')), false);
+    home_screen(&mut home, &fleet, theme());
+    home.key(&fleet, ctrl_s, false);
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(screen.contains("w worktree"), "{screen}");
+    home.key(&fleet, key(KeyCode::Char('w')), false);
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        screen.contains("│ ~/work/amux · new worktree │"),
+        "{screen}"
+    );
+    for c in "fix it".chars() {
+        home.key(&fleet, key(KeyCode::Char(c)), false);
+    }
+    let effects = home.key(&fleet, key(KeyCode::Enter), false);
+    let [FleetEffect::Start { setup, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert!(setup.request(b"id".to_vec(), None).new_worktree);
+    assert!(home.start_failed(refused.to_owned()));
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        screen.contains("Could not start the agent: starting in a new worktree:"),
+        "{screen}"
+    );
+    assert!(screen.contains("fix it"), "{screen}");
+    // Started again, the old reason goes; off again, the request asks for
+    // none.
+    home.key(&fleet, ctrl_s, false);
+    home.key(&fleet, key(KeyCode::Char('w')), false);
+    let effects = home.key(&fleet, key(KeyCode::Enter), false);
+    let [FleetEffect::Start { setup, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert!(!setup.request(b"id".to_vec(), None).new_worktree);
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(!screen.contains("Could not start"), "{screen}");
+    // Left meanwhile, the form has nowhere to say it.
+    home.key(&fleet, key(KeyCode::Esc), false);
+    assert!(!home.start_failed(refused.to_owned()));
+
+    // The form for an agent used in its own terminal: a checkbox.
+    let place = crate::home::Place {
+        local_host: HOME_PLACE.local_host,
+        version: HOME_PLACE.version,
+        working_dir: HOME_PLACE.working_dir,
+        attach: false,
+        chat_in: crate::setup::ChatIn::Terminal,
+        defaults: HOME_PLACE.defaults,
+    };
+    let mut home = crate::home::Home::default();
+    home.key(&fleet, key(KeyCode::Char('n')), false);
+    let screen = home_screen_at(&mut home, &fleet, &place);
+    assert!(screen.contains("Worktree  [ ] new worktree"), "{screen}");
+    // Out of the name, down to the last row, and Space ticks it.
+    home.key(&fleet, key(KeyCode::Esc), false);
+    for _ in 0..4 {
+        home.key(&fleet, key(KeyCode::Down), false);
+    }
+    home.key(&fleet, key(KeyCode::Char(' ')), false);
+    let screen = home_screen_at(&mut home, &fleet, &place);
+    assert!(screen.contains("Worktree  [✓] new worktree"), "{screen}");
+    let effects = home.key(&fleet, key(KeyCode::Enter), false);
+    let [FleetEffect::Start { setup, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert!(setup.request(b"id".to_vec(), None).new_worktree);
+    assert!(home.start_failed(refused.to_owned()));
+    let screen = home_screen_at(&mut home, &fleet, &place);
+    assert!(
+        screen.contains("Could not start the agent: starting in a new worktree:"),
+        "{screen}"
+    );
+    assert!(screen.contains("[Start]"), "{screen}");
+}
+
+/// Home drawn for `place`.
+fn home_screen_at(
+    home: &mut crate::home::Home,
+    fleet: &FleetState,
+    place: &crate::home::Place<'_>,
+) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            home.draw(
+                frame,
+                area,
+                fleet,
+                &HashMap::new(),
+                None,
+                now(),
+                theme(),
+                place,
+            );
+        })
+        .unwrap();
+    text(terminal.backend().buffer())
+}
+
 #[test]
 fn the_filter_lives_in_the_top_line_and_narrows_the_list() {
     let fleet = home_fleet();

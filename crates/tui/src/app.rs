@@ -529,8 +529,9 @@ impl App {
                 }
             }
             AppEvent::StartFailed(error) => {
-                self.fleet_view.home.start_failed();
-                self.notice(format!("could not start the agent: {error}"), Tone::Warn);
+                if !self.fleet_view.home.start_failed(error.clone()) {
+                    self.notice(format!("could not start the agent: {error}"), Tone::Warn);
+                }
             }
         }
         Flow::Continue

@@ -141,6 +141,8 @@ pub struct Draft {
     open: bool,
     /// The create call is in flight.
     starting: bool,
+    /// Why the last start failed, shown in the form until the next start.
+    error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -294,7 +296,13 @@ impl Home {
         self.draft.picker = None;
         self.draft.form = None;
         self.draft.prefix = false;
+        self.open_draft();
+    }
+
+    /// Onto the new agent's screen, with no error from an earlier visit.
+    fn open_draft(&mut self) {
         self.draft.open = true;
+        self.draft.error = None;
     }
 
     /// The new agent's setup while its screen is open, made from the
@@ -319,8 +327,13 @@ impl Home {
         self.overlay = Some(Overlay::Hosts);
     }
 
-    pub fn start_failed(&mut self) {
+    /// The create call failed: the form takes the person's settings back
+    /// and says why. False when the form was left meanwhile, so the error
+    /// has nowhere to show.
+    pub fn start_failed(&mut self, error: String) -> bool {
         self.draft.starting = false;
+        self.draft.error = self.draft.open.then_some(error);
+        self.draft.open
     }
 
     /// Whether a text field has the keys and holds something, for Ctrl+C.
@@ -487,7 +500,7 @@ impl Home {
 
     fn activate(&mut self, target: Target) -> Vec<FleetEffect> {
         match target {
-            Target::New => self.draft.open = true,
+            Target::New => self.open_draft(),
             Target::Agent(agent) => return vec![FleetEffect::Open(agent)],
             Target::Section(section) => self.toggle_section(section),
         }
@@ -551,7 +564,7 @@ impl Home {
                 self.filter.get_or_insert_with(Editor::default);
             }
             KeyCode::Esc => self.filter = None,
-            KeyCode::Char('n') => self.draft.open = true,
+            KeyCode::Char('n') => self.open_draft(),
             KeyCode::Right => {
                 if let Some(agent) = agent.filter(|agent| {
                     fleet.families().children(agent).next().is_some()
@@ -700,6 +713,7 @@ impl Home {
                 }
                 FormOutcome::Start => {
                     self.draft.starting = true;
+                    self.draft.error = None;
                     vec![FleetEffect::Start {
                         setup: Box::new(setup.clone()),
                         text: String::new(),
@@ -732,7 +746,7 @@ impl Home {
                 KeyCode::Char('p') => Some(Setting::Permission),
                 KeyCode::Char('d') => Some(Setting::Folder),
                 KeyCode::Char('h') => Some(Setting::Host),
-                KeyCode::Char('w') if crate::pending::offers_worktree() => Some(Setting::Worktree),
+                KeyCode::Char('w') => Some(Setting::Worktree),
                 KeyCode::Char('a') => Some(Setting::Kind),
                 _ => None,
             };
@@ -757,6 +771,7 @@ impl Home {
                     return vec![];
                 };
                 self.draft.starting = true;
+                self.draft.error = None;
                 return vec![FleetEffect::Start {
                     setup: Box::new(setup),
                     text: self.draft.editor.text().trim_end().to_owned(),
@@ -862,6 +877,7 @@ impl Home {
                     FormOutcome::Close => self.draft.open = false,
                     FormOutcome::Start => {
                         self.draft.starting = true;
+                        self.draft.error = None;
                         return vec![FleetEffect::Start {
                             setup: Box::new(setup.clone()),
                             text: String::new(),
@@ -990,6 +1006,17 @@ impl Home {
             // box, a blank to let it breathe and the keys below.
             let body = height.saturating_sub(4 + composer.len());
             laid.resize_with(2 + body, Laid::default);
+            // A failed start says why just above the box, a blank between.
+            if let Some(error) = &self.draft.error {
+                let words = format!("Could not start the agent: {error}");
+                let wrapped = text::wrap(&words, width - 2 * MARGIN);
+                let from = laid.len().saturating_sub(wrapped.len() + 1).max(2);
+                for (at, words) in (from..laid.len()).zip(wrapped) {
+                    let mut line = Line::from(Span::raw(" ".repeat(MARGIN)));
+                    push(&mut line, words, theme.warning(), width);
+                    laid[at] = Laid::plain(line);
+                }
+            }
             box_top = Some(laid.len());
             cursor = at
                 .filter(|_| self.draft.picker.is_none())
@@ -1119,7 +1146,8 @@ impl Home {
         // The new agent's modal, centred over home.
         self.draft.modal.clear();
         if modal && let (Some(setup), Some(form)) = (&self.draft.setup, &self.draft.form) {
-            let (lines, hits, at) = form.modal(setup, fleet, width, theme);
+            let error = self.draft.error.as_deref();
+            let (lines, hits, at) = form.modal(setup, fleet, error, width, theme);
             let w = lines.iter().map(text::line_width).max().unwrap_or(0) as u16;
             let h = (lines.len() as u16).min(area.height);
             let x = area.x + area.width.saturating_sub(w) / 2;
@@ -1631,9 +1659,7 @@ impl Home {
                     ("a", "agent", key(KeyCode::Char('a'))),
                     ("esc", "back", key(KeyCode::Esc)),
                 ]
-                .into_iter()
-                .filter(|(letter, _, _)| *letter != "w" || crate::pending::offers_worktree())
-                .collect(),
+                .into(),
                 (None, false) => vec![
                     ("enter", "start", key(KeyCode::Enter)),
                     (

@@ -561,9 +561,7 @@ impl Setup {
                     self.offered = None;
                 }
             }
-            Item::Worktree => {
-                self.worktree = !self.worktree && crate::pending::offers_worktree();
-            }
+            Item::Worktree => self.worktree = !self.worktree,
         }
     }
 
@@ -599,6 +597,7 @@ impl Setup {
             kind: self.kind() as i32,
             initial_prompt: prompt,
             config: Some(config),
+            new_worktree: self.worktree,
             ..CreateAgentRequest::default()
         }
     }
@@ -1090,14 +1089,14 @@ pub enum Field {
     Worktree,
 }
 
-/// The form's rows; the worktree only where a new one can be made.
-fn fields() -> Vec<Field> {
-    let mut fields = vec![Field::Name, Field::Kind, Field::Folder, Field::Host];
-    if crate::pending::offers_worktree() {
-        fields.push(Field::Worktree);
-    }
-    fields
-}
+/// The form's rows, in order.
+const FIELDS: [Field; 5] = [
+    Field::Name,
+    Field::Kind,
+    Field::Folder,
+    Field::Host,
+    Field::Worktree,
+];
 
 /// What a click on the form lands on.
 #[derive(Clone, Debug, PartialEq)]
@@ -1173,10 +1172,9 @@ impl Form {
     }
 
     fn move_field(&mut self, step: isize) {
-        let fields = fields();
-        let at = fields.iter().position(|f| *f == self.field).unwrap_or(0) as isize;
-        let next = (at + step).clamp(0, fields.len() as isize - 1) as usize;
-        self.field = fields[next];
+        let at = FIELDS.iter().position(|f| *f == self.field).unwrap_or(0) as isize;
+        let next = (at + step).clamp(0, FIELDS.len() as isize - 1) as usize;
+        self.field = FIELDS[next];
     }
 
     /// The next choice on a choice row, or the worktree flipped.
@@ -1318,12 +1316,14 @@ impl Form {
 
     /// The modal, at most `room` columns wide: its lines, each line's click
     /// targets as (line, from, to, hit) in the modal's own columns, and the
-    /// cursor's (column, line) while a text row is typed into.
+    /// cursor's (column, line) while a text row is typed into. `error` is
+    /// why the last start failed, said under the rows.
     #[allow(clippy::type_complexity)]
     pub fn modal(
         &self,
         setup: &Setup,
         fleet: &FleetState,
+        error: Option<&str>,
         room: usize,
         theme: Theme,
     ) -> (
@@ -1337,7 +1337,7 @@ impl Form {
         let mut rows: Vec<(Line<'static>, Vec<(usize, usize, FormHit)>, bool)> = Vec::new();
         let mut cursor = None;
         rows.push((Line::default(), Vec::new(), false));
-        for field in fields() {
+        for field in FIELDS {
             let current = self.field == field;
             let mut line = Line::from(Span::raw(" "));
             let label = match field {
@@ -1458,6 +1458,15 @@ impl Form {
                 if !folders.is_empty() {
                     rows.push((more, spots, false));
                 }
+            }
+        }
+        if let Some(error) = error {
+            rows.push((Line::default(), Vec::new(), false));
+            let words = format!("Could not start the agent: {error}");
+            for words in text::wrap(&words, wide.saturating_sub(2)) {
+                let mut line = Line::from(Span::raw(" "));
+                push(&mut line, words, theme.warning(), wide);
+                rows.push((line, Vec::new(), false));
             }
         }
         rows.push((Line::default(), Vec::new(), false));

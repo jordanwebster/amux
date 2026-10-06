@@ -1,0 +1,34 @@
+
+  amux  new agent
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Redesign the landing page.                                                                           │
+  ╰─── site-redesign │ Claude │ /tmp/aj-xxxxxxxx/testnetx…xx/desk/repositories/site · new worktree │ desk ─╯
+
+  enter start   ctrl+s settings   shift+tab permission   esc back

@@ -1,3 +1,22 @@
+2026-10-06 — **A new agent can start in a new worktree from the terminal.**
+The new agent's screen offers the worktree under Ctrl+S w (the edge then
+says "new worktree"), and the form for an agent used in its own terminal has
+a Worktree checkbox; the create request carries the choice and the host
+makes the worktree. A start the host refuses no longer flashes past as a
+notice: the screen or the form says why above its box until the next start,
+keeping what was typed; only a start whose screen was left meanwhile falls
+back to a notice. New terminal story `new-agent-worktree`, on its own small
+network: from the laptop, a Claude agent set to run on the desk, in the
+desk's repository, on a model only the desk's catalogue offers, in a new
+worktree, starts there on that model and answers, and `git worktree list`
+in the desk's repository shows its folder on a branch named after it;
+started again under the same name, the screen says the branch is taken and
+no second agent exists. The test network's door now reports an agent's
+folder and branch in `Inventory` and the running model in `Chat`. Journey
+frames mask what is left of a scratch folder's random suffix after a path
+is shortened in its middle. The own-terminal form's goldens in
+`new-agent-terminal` gain the checkbox row.
+
 2026-10-06 — **Terminal stories tell a send that never left from one that may have arrived.**
 Two new stories on the served flows network send to the cabin's agent from
 the laptop. In `send-rejected` the laptop cannot open a call to the cabin

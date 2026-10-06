@@ -5,13 +5,13 @@
 
 
   ▾ Running 10 ─────────────────────────────────────────────────────────────────────────────────────────────
-
-  › ○ backups  Clau╭─ New Agent ──────────────────────────────────────────────────────────╮            [x]
-                   │                                                                      │
-    ○ expired  Clau│  Name      release-notes                                             │            now
-      Tidied.      │  Agent      Claude   Codex                                           │
-                   │  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work                │
-    ○ limited  Clau│  Host       cabin   desk   laptop                                    │            now
+                   ╭─ New Agent ──────────────────────────────────────────────────────────╮
+  › ○ backups  Clau│                                                                      │            [x]
+                   │  Name      release-notes                                             │
+    ○ expired  Clau│  Agent      Claude   Codex                                           │            now
+      Tidied.      │  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work                │
+                   │  Host       cabin   desk   laptop                                    │
+    ○ limited  Clau│  Worktree  [ ] new worktree                                          │            now
       usage limit r│                                                                      │
                    │  [Start]  [Cancel]                                                   │
     ○ worker  Claud│  enter next   esc done                                               │            now

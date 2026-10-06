@@ -574,6 +574,8 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
                         "host_id": Uuid::from_slice(&agent.host_id).unwrap_or_default(),
                         "lifecycle": agent.lifecycle,
                         "phase": agent.phase,
+                        "cwd": agent.cwd,
+                        "branch": agent.git.as_ref().and_then(|git| git.branch.clone()),
                     })
                 })
                 .collect();
@@ -598,6 +600,7 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
                 .await?;
             let mut items: Vec<Value> = Vec::new();
             let mut phase = Value::Null;
+            let mut model = Value::Null;
             for event in events {
                 match &event.of {
                     Some(wire::session_event::Of::Item(item)) => {
@@ -612,16 +615,30 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
                     }
                     Some(wire::session_event::Of::Snapshot(snapshot)) => {
                         phase = json!(snapshot.phase().as_str_name());
+
+                        model = json!(running_model(snapshot));
                     }
                     _ => {}
                 }
             }
             items.sort_by_key(|item| item["order"].as_u64());
-            json!({ "items": items, "phase": phase })
+            json!({ "items": items, "phase": phase, "model": model })
         }
         Control::ProviderInput { agent } => json!({ "lines": net.provider_input(&agent)? }),
         Control::Shutdown => unreachable!("the connection handles shutdown"),
     })
+}
+
+/// The model a snapshot says the agent runs, from its per-kind body.
+fn running_model(snapshot: &wire::Snapshot) -> Option<String> {
+    use prost::Message;
+    let body = snapshot.body.as_slice();
+    match wire::kind_from_tag(&snapshot.kind)? {
+        wire::Kind::ClaudeSdk => wire::ClaudeSdkSnapshot::decode(body).ok()?.model,
+        wire::Kind::ClaudePty => wire::ClaudePtySnapshot::decode(body).ok()?.model,
+        wire::Kind::Codex => wire::CodexSnapshot::decode(body).ok()?.model,
+        wire::Kind::Unspecified => None,
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {

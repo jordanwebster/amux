@@ -7,12 +7,6 @@
 //! pretends: a feature is either built from facts that exist, or it is not
 //! offered.
 
-/// Whether a new agent can start in a new worktree. The create request
-/// cannot ask for one yet, so the toggle is not offered.
-pub fn offers_worktree() -> bool {
-    false
-}
-
 /// Whether an agent's own terminal on another host can be attached. Raw
 /// attach reads the agent's directory on this machine, so an agent
 /// elsewhere opens its chat with a notice instead.

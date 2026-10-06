@@ -1,0 +1,30 @@
+{
+  "hosts": [
+    {"name": "laptop"},
+    {
+      "name": "desk",
+      "repositories": ["site"],
+      "files": {"site/README.md": "# The site\n"},
+      "script": {
+        "model": "claude-opus-4-1",
+        "models": [
+          {"value": "claude-opus-4-1", "display_name": "Opus 4.1", "efforts": ["low", "medium", "high"], "default_effort": "high"},
+          {"value": "claude-fable-5", "display_name": "Fable 5", "efforts": ["low", "medium", "high"], "default_effort": "high"}
+        ],
+        "steps": [{"text": {"chunks": ["Working in the new worktree."]}}, "turn_end"]
+      }
+    }
+  ],
+  "links": [{"a": "desk", "b": "laptop"}],
+  "settle": true,
+  "agents": [
+    {
+      "name": "site-keeper",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "repository": "site",
+      "prompt": "Check the site builds.",
+      "script": {"steps": [{"text": {"chunks": ["The site builds."]}}, "turn_end"]}
+    }
+  ]
+}

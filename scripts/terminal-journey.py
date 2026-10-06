@@ -1113,6 +1113,116 @@ def new_agent_terminal(journey: TerminalJourney) -> list[str]:
     ]
 
 
+def worktrees(repository: Path) -> list[dict]:
+    """`git worktree list --porcelain` of `repository`, one dict per tree."""
+    listed = subprocess.run(
+        ["git", "-C", str(repository), "worktree", "list", "--porcelain"],
+        check=True, text=True, stdout=subprocess.PIPE, timeout=30,
+    ).stdout
+    trees = []
+    for block in listed.strip().split("\n\n"):
+        fields = dict(line.split(" ", 1) for line in block.splitlines() if " " in line)
+        trees.append(fields)
+    return trees
+
+
+def pick(journey: TerminalJourney, pane: str, label: str) -> None:
+    """Picks `label` in an open flyover by the number it is listed under."""
+    numbered = re.search(rf"(\d)\. {re.escape(label)}\b", journey.capture(pane))
+    if numbered is None:
+        raise RuntimeError(f"no flyover lists {label!r}")
+    journey.type(pane, numbered.group(1))
+
+
+def new_agent_worktree(journey: TerminalJourney) -> list[str]:
+    name = "site-redesign"
+    pane = journey.launch("terminal", "laptop")
+    journey.wait(pane, at_home, "home")
+    journey.keys(pane, "n")
+    journey.wait_terms(pane, "What should the new agent work on?")
+    # On the desk, which offers a model the laptop does not.
+    journey.keys(pane, "C-s", "h")
+    journey.wait_terms(pane, "╭─ Host", ". desk")
+    pick(journey, pane, "desk")
+    journey.wait(pane, lambda frame: "│ desk ─╯" in frame and "╭─ Host" not in frame, "the desk chosen")
+    journey.keys(pane, "C-s", "m")
+    journey.wait_terms(pane, "╭─ Model", ". Fable 5")
+    journey.frame(pane, "desk-models")
+    pick(journey, pane, "Fable 5")
+    journey.wait(pane, lambda frame: "Fable 5 (high)" in frame and "╭─ Model" not in frame, "Fable 5 chosen")
+    # In the desk's repository, which its agent already works in.
+    journey.keys(pane, "C-s", "d")
+    journey.wait_terms(pane, "╭─ Folder")
+    journey.type(pane, "repositories/site")
+    journey.wait_terms(pane, "desk/repositories/site")
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: "╭─ Folder" not in frame and "repositories/site" in frame, "the repository chosen")
+    journey.keys(pane, "C-s", "n")
+    journey.wait_terms(pane, "╭─ Name")
+    journey.type(pane, name)
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: f"─ {name} │" in frame, "the name given")
+    journey.keys(pane, "C-s", "w")
+    journey.wait_terms(pane, "· new worktree │")
+    journey.type(pane, "Redesign the landing page.")
+    journey.wait_terms(pane, "› Redesign the landing page.")
+    journey.frame(pane, "worktree-set")
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: chat_of(frame) == name and at_rest(frame, "Working in the new worktree."), "the new agent's reply")
+    journey.frame(pane, "worktree-chat")
+
+    # The desk made it there, on the chosen model, in a worktree of its
+    # repository on a branch named after the agent.
+    made = journey.wait_inventory(
+        "desk", lambda agents: any(a["name"] == name and a["branch"] == name for a in agents), "created-in-worktree"
+    )
+    (agent,) = [a for a in made if a["name"] == name]
+    if agent["host_id"] != journey.host_id("desk"):
+        raise RuntimeError(f"{name} runs on {agent['host_id']}, not the desk")
+    chat = journey.wait_chat("desk", agent["id"], lambda chat: chat["phase"] == "IDLE", "answered")
+    reflected_once(chat, "Redesign the landing page.")
+    if chat["model"] != "claude-fable-5":
+        raise RuntimeError(f"{name} runs {chat['model']!r}, not the desk's Fable 5")
+    repository = Path(journey.ready["root"]) / "desk" / "repositories" / "site"
+    trees = worktrees(repository)
+    journey.observations["desk-worktrees"] = trees
+    folder = os.path.realpath(agent["cwd"])
+    listed = [tree for tree in trees if os.path.realpath(tree["worktree"]) == folder]
+    if len(listed) != 1 or listed[0].get("branch") != f"refs/heads/{name}":
+        raise RuntimeError(f"the desk's repository lists {trees!r}, not {folder} on {name}")
+    if folder == os.path.realpath(repository) or Path(folder).name != name:
+        raise RuntimeError(f"{name} works in {folder}, not a worktree of its own")
+
+    # The same name again: the branch is taken, and the screen says so.
+    journey.home(pane)
+    journey.keys(pane, "n")
+    journey.wait_terms(pane, "What should the new agent work on?", "· new worktree │")
+    journey.keys(pane, "C-s", "n")
+    journey.wait_terms(pane, "╭─ Name")
+    journey.type(pane, name)
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: f"─ {name} │" in frame, "the name given again")
+    journey.type(pane, "Redesign it again.")
+    journey.wait_terms(pane, "› Redesign it again.")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Could not start the agent:", "already has a branch named")
+    journey.wait_terms(pane, "› Redesign it again.")
+    journey.frame(pane, "branch-taken")
+    again = journey.inventory("desk", "after-refusal")
+    if [a["name"] for a in again].count(name) != 1:
+        raise RuntimeError(f"the desk lists {again!r}")
+    journey.keys(pane, "Escape")
+    journey.wait(pane, at_home, "home again")
+    journey.quit_client(pane)
+    return [
+        "the new agent was set to run on the desk, on Fable 5 from the desk's own catalogue, in the desk's repository, in a new worktree",
+        "it started on the desk on claude-fable-5 and answered; its prompt reached the desk once",
+        f"the desk's repository lists the agent's folder as a worktree on branch {name}, named after the agent",
+        f"started again as {name}, the desk refused and the new agent's screen said the branch is taken, keeping the prompt; no second agent exists",
+        "the client exited 0",
+    ]
+
+
 
 def report_a_problem(journey: TerminalJourney) -> list[str]:
     pane = journey.launch("terminal", "laptop")
@@ -1204,6 +1314,7 @@ STORIES = {
     "send-may-not-have-arrived": send_may_not_have_arrived,
     "composer-limits": composer_limits,
     "new-agent-terminal": new_agent_terminal,
+    "new-agent-worktree": new_agent_worktree,
     "report-a-problem": report_a_problem,
 }
 

@@ -1,0 +1,34 @@
+
+  site-redesign │ site-redesign /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/data/worktrees/sit…  1 │ [Diff] │ [Home]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+    Redesign the landing page.                                                                       hh:mm
+
+
+    Working in the new worktree.
+
+    Worked <t>
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message site-redesign                                                                                │
+  ╰─────────────────────────────────────────────────────────────────────────────────────── Fable 5 (high) ─╯
+
+  shift+tab permission   ctrl+a more

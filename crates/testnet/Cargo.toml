@@ -22,6 +22,7 @@ hyper-util = { workspace = true }
 journal = { workspace = true, features = ["synthetic"] }
 node = { workspace = true }
 patience = { workspace = true }
+prost = { workspace = true }
 provider-fakes = { workspace = true }
 quinn = { workspace = true }
 rcgen = { workspace = true }
@@ -41,5 +42,4 @@ wire = { workspace = true }
 
 [dev-dependencies]
 interpret = { workspace = true }
-prost = { workspace = true }
 ui-state = { workspace = true }
