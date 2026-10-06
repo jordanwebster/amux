@@ -1,7 +1,8 @@
 //! The overview pane: the row above the composer, unfolded. The chat's
-//! task list in full, each background job still running, the working
-//! tree's changed files, and the tool servers that failed, each section
-//! folding under its heading. Drawn as a fixed title over a body that
+//! task list in full, each background job still running, the changed
+//! files of the comparison the person chose, the tool servers that failed
+//! and the usage limits when one is near, each section folding under its
+//! heading. Drawn as a fixed title over a body that
 //! scrolls; the chat places it beside itself, or over its feed on a narrow
 //! terminal.
 
@@ -9,8 +10,8 @@ use std::collections::HashSet;
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ui_state::Key;
-use ui_view::{Overview, TaskMark};
+use ui_view::{JobRow, Overview, TaskMark};
+use wire::UsageState;
 
 use crate::text::{self, pad_to, push};
 use crate::theme::Theme;
@@ -26,6 +27,7 @@ pub enum Section {
     Background,
     Changes,
     Servers,
+    Usage,
 }
 
 impl Section {
@@ -35,6 +37,7 @@ impl Section {
             Section::Background => "Background",
             Section::Changes => "Changes",
             Section::Servers => "Tool servers",
+            Section::Usage => "Usage",
         }
     }
 
@@ -45,6 +48,7 @@ impl Section {
             Section::Background => "background",
             Section::Changes => "changes",
             Section::Servers => "servers",
+            Section::Usage => "usage",
         }
     }
 
@@ -54,6 +58,7 @@ impl Section {
             Section::Background,
             Section::Changes,
             Section::Servers,
+            Section::Usage,
         ]
         .into_iter()
         .find(|section| section.key() == key)
@@ -77,29 +82,15 @@ pub enum PaneHit {
 pub enum PaneItem {
     /// A section's heading, which folds it.
     Heading(Section),
-    /// A running background job, by the step that started it.
-    Job(Key),
-    /// A changed file of the working tree, by its path.
+    /// A running background job, which opens the step that started it.
+    Job(JobRow),
+    /// A changed file, by its path.
     File(String),
-}
-
-pub use super::changes::FileLine;
-
-/// A background job the agent started and that is still running.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Job {
-    /// The step that started it, to open from the list.
-    pub key: Key,
-    pub command: String,
-    pub started_at_ms: i64,
 }
 
 /// What the pane shows, read once a frame.
 pub struct Contents<'a> {
     pub overview: &'a Overview,
-    pub jobs: &'a [Job],
-    /// None until the working tree's diff is read.
-    pub files: Option<&'a [FileLine]>,
     pub folded: &'a HashSet<Section>,
 }
 
@@ -110,14 +101,22 @@ impl Contents<'_> {
         if self.overview.tasks.is_some() {
             sections.push(Section::Tasks);
         }
-        if !self.jobs.is_empty() {
+        if !self.overview.jobs.is_empty() {
             sections.push(Section::Background);
         }
-        if self.files.is_some_and(|files| !files.is_empty()) {
+        if self
+            .overview
+            .changes
+            .as_ref()
+            .is_some_and(|changes| changes.totals.files > 0)
+        {
             sections.push(Section::Changes);
         }
         if !self.overview.failed_servers.is_empty() {
             sections.push(Section::Servers);
+        }
+        if self.overview.usage_near_limit.is_some() {
+            sections.push(Section::Usage);
         }
         sections
     }
@@ -132,15 +131,20 @@ impl Contents<'_> {
                 continue;
             }
             match section {
-                Section::Background => {
-                    items.extend(self.jobs.iter().map(|job| PaneItem::Job(job.key.clone())))
-                }
+                Section::Background => items.extend(
+                    self.overview
+                        .jobs
+                        .iter()
+                        .map(|job| PaneItem::Job(job.clone())),
+                ),
                 Section::Changes => items.extend(
-                    super::changes::ordered(self.files.unwrap_or_default())
-                        .into_iter()
+                    self.overview
+                        .changes
+                        .iter()
+                        .flat_map(super::changes::ordered)
                         .map(PaneItem::File),
                 ),
-                Section::Tasks | Section::Servers => {}
+                Section::Tasks | Section::Servers | Section::Usage => {}
             }
         }
         items
@@ -235,9 +239,18 @@ pub fn pane_lines(
                 .as_ref()
                 .map(|tasks| format!("{} of {}", tasks.done, tasks.total))
                 .unwrap_or_default(),
-            Section::Background => contents.jobs.len().to_string(),
-            Section::Changes => contents.files.unwrap_or_default().len().to_string(),
+            Section::Background => contents.overview.jobs.len().to_string(),
+            Section::Changes => contents
+                .overview
+                .changes
+                .as_ref()
+                .map(|changes| changes.totals.files.to_string())
+                .unwrap_or_default(),
             Section::Servers => contents.overview.failed_servers.len().to_string(),
+            Section::Usage => match &contents.overview.usage_near_limit {
+                Some(usage) if usage.blocked => "limit reached".to_owned(),
+                _ => "near a limit".to_owned(),
+            },
         };
         // Like home's headings: a fold marker, the words, the count and a
         // hairline to the edge. A control: lit, its marker and words
@@ -292,7 +305,7 @@ pub fn pane_lines(
                 }
             }
             Section::Background => {
-                for job in contents.jobs {
+                for job in &contents.overview.jobs {
                     // Each job on one line: its command, and how long it
                     // has run. A click (or Enter on the focused one) opens
                     // the step that started it.
@@ -303,7 +316,7 @@ pub fn pane_lines(
                     push(&mut line, command, theme.code(), inner);
                     pad_to(&mut line, inner.saturating_sub(text::str_width(&age)));
                     push(&mut line, age, theme.faint(), inner);
-                    let item = PaneItem::Job(job.key.clone());
+                    let item = PaneItem::Job(job.clone());
                     if lit == Some(&item) {
                         card = Some(out.body.len());
                     }
@@ -315,8 +328,10 @@ pub fn pane_lines(
             Section::Changes => {
                 // The shared changes list; only files take the keys, and a
                 // click (or Enter) opens the review page at one.
-                let list =
-                    super::changes::changes_lines(contents.files.unwrap_or_default(), inner, theme);
+                let Some(changes) = &contents.overview.changes else {
+                    continue;
+                };
+                let list = super::changes::changes_lines(changes, inner, theme);
                 let start = out.body.len();
                 out.dir_lines
                     .extend(list.dir_lines.iter().map(|line| start + line));
@@ -362,6 +377,58 @@ pub fn pane_lines(
                         );
                         push_line(&mut out, line, Some(entry), None);
                     }
+                    entry += 1;
+                }
+            }
+            Section::Usage => {
+                let Some(usage) = &contents.overview.usage_near_limit else {
+                    continue;
+                };
+                for window in &usage.windows {
+                    // Each window on two lines: its name and how full it
+                    // is, then its state and when it resets, in the ink
+                    // of its state.
+                    let (state, ink) = match window.state {
+                        UsageState::Blocked => (Some("reached"), theme.warning()),
+                        UsageState::NearLimit => (Some("near"), theme.text()),
+                        UsageState::Ok => (Some("fine"), theme.muted()),
+                        UsageState::Unknown => (None, theme.muted()),
+                    };
+                    let used = format!("{:.0}% used", window.used_percent);
+                    let mut line = Line::default();
+                    let room = inner.saturating_sub(text::str_width(&used) + 2);
+                    push(
+                        &mut line,
+                        text::ellipsize(&super::composer::limit_name(&window.label), room),
+                        ink,
+                        inner,
+                    );
+                    pad_to(&mut line, inner.saturating_sub(text::str_width(&used)));
+                    push(&mut line, used, ink, inner);
+                    push_line(&mut out, line, Some(entry), None);
+                    let resets = window
+                        .resets_at_ms
+                        .filter(|at| *at > now_ms)
+                        .map(|at| format!("resets {}", super::composer::resets(at, now_ms)));
+                    let words: Vec<String> =
+                        state.map(str::to_owned).into_iter().chain(resets).collect();
+                    if !words.is_empty() {
+                        let mut line = Line::default();
+                        pad_to(&mut line, 2);
+                        push(&mut line, words.join(" · "), theme.faint(), inner);
+                        push_line(&mut out, line, Some(entry), None);
+                    }
+                    entry += 1;
+                }
+                if let Some(credits) = &usage.credits {
+                    let mut line = Line::default();
+                    push(
+                        &mut line,
+                        format!("credits {credits}"),
+                        theme.faint(),
+                        inner,
+                    );
+                    push_line(&mut out, line, Some(entry), None);
                     entry += 1;
                 }
             }

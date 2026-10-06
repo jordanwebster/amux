@@ -2447,9 +2447,8 @@ fn a_stretch_under_way_shows_its_newest_steps() {
 #[test]
 fn the_chat_header_names_the_agent_and_offers_the_diff_and_home() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-    let state = chat(replies(1, 2));
+    let state = chat_in_git(replies(1, 2), Some("main"));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.diff_stat = Some((42, 7));
     let (screen, _) = feed(&mut view, &state);
     assert!(
         screen.lines().next().unwrap_or_default().trim().is_empty(),
@@ -2486,6 +2485,174 @@ fn the_chat_header_names_the_agent_and_offers_the_diff_and_home() {
         theme(),
     );
     assert!(matches!(effects.as_slice(), [ChatEffect::Home]));
+}
+
+/// A chat like `chat` whose agent works on a branch with changes, with
+/// `base` as the branch it left.
+fn chat_in_git(items: Vec<Item>, base: Option<&str>) -> SessionState {
+    let totals = |files, added, removed| wire::ChangeTotals {
+        files,
+        added,
+        removed,
+    };
+    let agent = wire::Agent {
+        git: Some(wire::Git {
+            branch: Some("topic".into()),
+            base_branch: base.map(str::to_owned),
+            uncommitted: Some(totals(2, 42, 7)),
+            on_branch: Some(totals(5, 120, 30)),
+        }),
+        ..fixtures::agent(Kind::ClaudeSdk)
+    };
+    let mut state = SessionState::new(agent, crate::chat::layout::CAP as usize);
+    state.update(Msg::Connection(ui_state::Connection::Live));
+    state.update(snapshot(Phase::Idle, vec![], vec![]));
+    for item in items {
+        state.update(event(session_event::Of::Item(item)));
+    }
+    state.update(caught_up(0));
+    state
+}
+
+/// The header counts the comparison the person chose, from the agent's
+/// row: uncommitted changes, or everything since the branch left its base.
+#[test]
+fn the_header_counts_the_comparison_chosen() {
+    let state = chat_in_git(replies(1, 2), Some("main"));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let header = |view: &mut ChatView| feed(view, &state).0.lines().nth(1).unwrap().to_owned();
+    assert!(header(&mut view).contains("[Diff +42 −7]"));
+    assert!(view.switch_comparison(&state));
+    assert!(header(&mut view).contains("[Diff vs main +120 −30]"));
+    assert!(view.switch_comparison(&state));
+    assert!(header(&mut view).contains("[Diff +42 −7]"));
+
+    // With no base branch there is nothing to count the branch against.
+    let state = chat_in_git(replies(1, 2), None);
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    assert!(!view.switch_comparison(&state));
+    assert_eq!(view.comparison, crate::chat::Comparison::Uncommitted);
+}
+
+/// The overview fetches the changed files, without a patch, only while it
+/// shows: once per comparison, and again when the row's totals move.
+#[test]
+fn the_overview_fetches_its_changed_files_once_per_comparison_and_totals() {
+    use wire::diff_base::Base;
+
+    use crate::chat::Comparison;
+    let mut state = chat_in_git(replies(1, 2), Some("main"));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    assert!(view.wants_changes(&state).is_none(), "the pane is closed");
+
+    view.open_pane();
+    let (key, base) = view.wants_changes(&state).expect("asked on opening");
+    assert_eq!(key.comparison, Comparison::Uncommitted);
+    assert!(matches!(base.base, Some(Base::WorkingTree(_))));
+    assert!(view.wants_changes(&state).is_none(), "asked once");
+
+    assert!(view.switch_comparison(&state));
+    let (key, base) = view.wants_changes(&state).expect("asked for the branch");
+    assert_eq!(key.comparison, Comparison::OnBranch);
+    assert_eq!(base.base, Some(Base::Branch("main".into())));
+    assert!(view.wants_changes(&state).is_none());
+
+    // A turn end moves the branch's totals: the list is asked for again.
+    let mut agent = state.agent().clone();
+    if let Some(git) = agent.git.as_mut() {
+        git.on_branch = Some(wire::ChangeTotals {
+            files: 6,
+            added: 130,
+            removed: 30,
+        });
+    }
+    state.update(Msg::Entry(agent));
+    assert!(view.wants_changes(&state).is_some());
+}
+
+/// The overview lists each running background job with its command and
+/// running time, the fetched files under their folders, and every usage
+/// window with its name, fullness, state and reset.
+#[test]
+fn the_overview_lists_jobs_files_by_folder_and_usage_windows() {
+    use crate::chat::{Comparison, FetchKey};
+    let meter = |used_percent, state: wire::UsageState| {
+        Some(wire::UsageMeter {
+            used_percent,
+            resets_at_ms: None,
+            state: state as i32,
+        })
+    };
+    let body = wire::ClaudeSdkSnapshot {
+        background_jobs: Some(wire::BackgroundJobs {
+            known: true,
+            jobs: vec![wire::BackgroundJob {
+                step: "k2".into(),
+                command: "npm run dev".into(),
+                started_at_ms: 0,
+            }],
+        }),
+        usage: Some(wire::ClaudeUsage {
+            state: wire::UsageState::NearLimit as i32,
+            windows: vec![
+                wire::ClaudeUsageWindow {
+                    limit: wire::ClaudeLimit::FiveHour as i32,
+                    meter: meter(91.0, wire::UsageState::NearLimit),
+                    ..Default::default()
+                },
+                wire::ClaudeUsageWindow {
+                    limit: wire::ClaudeLimit::Weekly as i32,
+                    model: Some("Fable".into()),
+                    meter: meter(30.0, wire::UsageState::Ok),
+                    ..Default::default()
+                },
+            ],
+        }),
+        ..Default::default()
+    }
+    .encode_to_vec();
+    let mut state = chat_in_git(replies(1, 2), Some("main"));
+    state.update(snapshot(Phase::Idle, body, vec![]));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.open_pane();
+    let file = |path: &str| wire::DiffFile {
+        path: path.into(),
+        added: 1,
+        ..Default::default()
+    };
+    view.changes_fetched(
+        FetchKey {
+            comparison: Comparison::Uncommitted,
+            totals: None,
+        },
+        wire::Diff {
+            files: vec![file("src/b.rs"), file("README.md"), file("src/a.rs")],
+            ..Default::default()
+        },
+    );
+    let (buffer, _) = draw(&mut view, &state, 5 * 60_000, 140, 40, theme());
+    let screen = text(&buffer);
+    let pane: Vec<String> = screen
+        .lines()
+        .filter_map(|line| line.split_once('│').map(|(_, pane)| pane.trim().to_owned()))
+        .filter(|line| !line.is_empty())
+        .collect();
+    let at = |words: &str| {
+        pane.iter()
+            .position(|line| line.starts_with(words))
+            .unwrap_or_else(|| panic!("{words:?} not in the pane:\n{screen}"))
+    };
+    assert!(pane[at("npm run dev")].ends_with("5m"), "{screen}");
+    // Root files first, then each folder with its files by name.
+    assert!(at("README.md") < at("src/"));
+    assert!(at("src/") < at("a.rs") && at("a.rs") < at("b.rs"));
+    assert!(pane[at("5-hour limit")].ends_with("91% used"), "{screen}");
+    assert_eq!(pane[at("5-hour limit") + 1], "near");
+    assert!(
+        pane[at("Fable weekly limit")].ends_with("30% used"),
+        "{screen}"
+    );
+    assert_eq!(pane[at("Fable weekly limit") + 1], "fine");
 }
 
 // --- the chat: keys, the pinned prompt -------------------------------------

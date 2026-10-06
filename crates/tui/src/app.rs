@@ -78,6 +78,9 @@ pub struct Layout {
     /// Each chat's folded overview sections, by agent id in hex.
     #[serde(default)]
     pub folds: std::collections::BTreeMap<String, Vec<String>>,
+    /// What a chat's changes are counted against.
+    #[serde(default)]
+    pub comparison: crate::chat::Comparison,
 }
 
 impl Layout {
@@ -176,13 +179,11 @@ pub enum AppEvent {
         /// The file to open the page at.
         at: Option<String>,
     },
-    /// The working tree's lines added and removed, for the chat's header,
-    /// and each changed file's, for its overview.
-    DiffStat {
+    /// The changed files of one comparison, for the chat's overview.
+    Changes {
         agent_id: Vec<u8>,
-        added: u32,
-        removed: u32,
-        files: Vec<crate::chat::pane::FileLine>,
+        key: crate::chat::FetchKey,
+        diff: Diff,
     },
 }
 
@@ -403,6 +404,7 @@ impl App {
                         // composer has the keys either way.
                         view.pane_open = self.layout.overview;
                         view.pane_folds = self.layout.folds_of(&agent.agent);
+                        view.comparison = self.layout.comparison;
                         self.fleet_view.select(agent.clone());
                         self.chat = Some(OpenChat {
                             session,
@@ -454,23 +456,21 @@ impl App {
                     .filter(|chat| chat.view.agent_id == agent_id)
                 {
                     chat.view.open_review_at(diff, patch, at.as_deref());
-                    // The page answers "reading the working tree…".
+                    // The page answers "reading the changes…".
                     self.notice = None;
                 }
             }
-            AppEvent::DiffStat {
+            AppEvent::Changes {
                 agent_id,
-                added,
-                removed,
-                files,
+                key,
+                diff,
             } => {
                 if let Some(chat) = self
                     .chat
                     .as_mut()
                     .filter(|chat| chat.view.agent_id == agent_id)
                 {
-                    chat.view.diff_stat = Some((added, removed));
-                    chat.view.diff_files = Some(files);
+                    chat.view.changes_fetched(key, diff);
                 }
             }
             AppEvent::Started {
@@ -724,6 +724,12 @@ impl App {
                 drop(state);
                 self.review(None);
             }
+            KeyCode::Char('c') => {
+                if !chat.view.switch_comparison(&state) {
+                    drop(state);
+                    self.notice("no base branch to compare with", Tone::Info);
+                }
+            }
             KeyCode::Char('a') if self.config.attach => {
                 let agent = chat.agent.clone();
                 drop(state);
@@ -750,20 +756,25 @@ impl App {
         let state = chat.session.state();
         let writable = matches!(state.composer(), Composer::Send | Composer::Resume);
         let agent_id = chat.view.agent_id.clone();
+        // The page reads the changes the header counts.
+        let base = ui_view::diff_base(&state, chat.view.comparison);
         drop(state);
         if !writable {
             self.notice("review waits until the chat is current", Tone::Warn);
             return;
         }
+        let Some(base) = base else {
+            self.notice("no base branch to compare with", Tone::Info);
+            return;
+        };
         {
             let client = self.client.clone();
-            self.notice("reading the working tree…", Tone::Info);
+            self.notice("reading the changes…", Tone::Info);
             self.spawn(async move {
                 Some(
-                    match ui_runtime::review::working_tree_review(client.as_ref(), &agent_id).await
-                    {
+                    match ui_runtime::review::review(client.as_ref(), &agent_id, base).await {
                         Ok((_, patch)) if patch.trim().is_empty() => {
-                            AppEvent::Notice("no changes in the working tree".into(), Tone::Info)
+                            AppEvent::Notice("no changes to review".into(), Tone::Info)
                         }
                         Ok((diff, patch)) => AppEvent::Review {
                             agent_id,
@@ -772,7 +783,7 @@ impl App {
                             at,
                         },
                         Err(error) => AppEvent::Notice(
-                            format!("could not read the working tree: {error}"),
+                            format!("could not read the changes: {error}"),
                             Tone::Warn,
                         ),
                     },
@@ -1078,8 +1089,8 @@ impl App {
     }
 
     /// What the loop does before each frame: a deleted agent's open chat
-    /// closes to the fleet, and the open chat's working-tree totals are
-    /// read when it asks (after opening and after each turn ends).
+    /// closes to the fleet, and the changed files its overview lists are
+    /// fetched when it asks.
     pub fn housekeep(&mut self) {
         let ended = self.chat.as_ref().and_then(|chat| chat.session.ended());
         if let Some(error) = ended {
@@ -1092,32 +1103,19 @@ impl App {
         };
         let wanted = {
             let state = chat.session.state();
-            chat.view.wants_diff_stat(&state)
+            chat.view.wants_changes(&state)
         };
-        if wanted {
+        if let Some((key, base)) = wanted {
             let client = self.client.clone();
             let agent_id = chat.view.agent_id.clone();
             self.spawn(async move {
-                let base = wire::DiffBase {
-                    base: Some(wire::diff_base::Base::WorkingTree(wire::Empty {})),
-                };
                 let diff = ui_runtime::review::changed_files(client.as_ref(), &agent_id, base)
                     .await
                     .ok()?;
-                let changes = ui_view::changes(&diff);
-                Some(AppEvent::DiffStat {
+                Some(AppEvent::Changes {
                     agent_id,
-                    added: changes.totals.added,
-                    removed: changes.totals.removed,
-                    files: diff
-                        .files
-                        .iter()
-                        .map(|file| crate::chat::pane::FileLine {
-                            path: file.path.clone(),
-                            added: file.added,
-                            removed: file.removed,
-                        })
-                        .collect(),
+                    key,
+                    diff,
                 })
             });
         }
@@ -1331,8 +1329,10 @@ impl App {
         let Some(chat) = &self.chat else {
             return;
         };
-        let mut changed = chat.view.pane_open != self.layout.overview;
+        let mut changed = chat.view.pane_open != self.layout.overview
+            || chat.view.comparison != self.layout.comparison;
         self.layout.overview = chat.view.pane_open;
+        self.layout.comparison = chat.view.comparison;
         changed |= self
             .layout
             .set_folds(&chat.view.agent_id, &chat.view.pane_folds);
@@ -1360,6 +1360,12 @@ fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
         entry("amux", "b", "bug report", 'b'),
         entry("amux", "?", "all keys", '?'),
         entry("this chat", "r", "review changes", 'r'),
+        entry(
+            "this chat",
+            "c",
+            "count changes: uncommitted or on this branch",
+            'c',
+        ),
     ];
     if attach {
         entries.push(entry("this chat", "a", "attach to its own terminal", 'a'));

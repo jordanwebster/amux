@@ -112,7 +112,11 @@ Enter on a row opens its chat. From top to bottom:
 
 - **The header**: the agent's name, a faint `│`, then faintly the folder it works in (`~/source/amux`) and, when it
   runs on another machine, `· <host>`. At the right, split by the same faint `│`: how much of its context is used
-  (`41K / 200K`, in the warning ink near the limit), `[Diff]`, which opens the review page, and `[Home]`. The
+  (`41K / 200K`, in the warning ink near the limit), `[Diff +42 −7]`, which opens the review page, and `[Home]`.
+  The change totals come from the agent's row, as of its last turn end, for the comparison the person chose: the
+  uncommitted changes (`[Diff +42 −7]`), or everything since the branch left its base, uncommitted work included
+  (`[Diff vs main +120 −30]`). The leader then `c` switches between the two; the choice is the terminal's, kept
+  with its layout, and the branch comparison needs a base branch to count against. The
   header says where the chat stands only when that is a problem: `exited` with its cause, `catching up` before the
   first CaughtUp, `reconnecting`, `refreshing` while a rebuilt history is on its way, or why the host is away (not
   current, this machine signed out, or the host no longer trusts this machine).
@@ -216,12 +220,18 @@ turn`.
 ### The overview
 
 `ctrl+o` opens the overview beside the chat (over it on a narrow terminal): what the agent has in flight, in
-sections like home's, each foldable: its tasks (`✓` done, `●` current, `○` to do) and its tool servers that need
-signing in. It stays open across chats until closed, and remembers its folds per agent.
+sections like home's, each foldable: its tasks (`✓` done, `●` current, `○` to do); each background job still
+running, its command with how long it has run, which opens the step that started it; the changed files of the
+comparison the header counts, root files first and then each folder with its files and their lines added and
+removed, each opening the review page at that file; its tool servers that need signing in or failed; and, near a
+usage limit, every usage window with its name (`5-hour limit`, `Weekly limit`, `Fable weekly limit`), how full it
+is, its state and when it resets, and Codex's credits. The changed files are asked for without a patch while the
+overview shows, again when the row's totals move or the comparison changes. It stays open across chats until
+closed, and remembers its folds per agent.
 
 ### The review page
 
-The leader then `r`, or `[Diff]` in the header, asks the agent's host for its working-tree diff and opens it as a
+The leader then `r`, or `[Diff]` in the header, asks the agent's host for the diff the header counts and opens it as a
 full-screen review page, frozen as it was when the page opened. The header names the agent and the folder, with
 `review · working tree at 3f2a1c9 │ 42 files · +109 −74` at the right. The changed files are listed on the left,
 grouped by directory with each file's lines added and removed; beside them one stream of every file in that order,

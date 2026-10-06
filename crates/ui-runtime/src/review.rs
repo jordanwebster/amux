@@ -21,18 +21,29 @@ pub async fn changed_files(
 }
 
 /// Asks the agent's host for its working-tree diff and fetches the patch
-/// the diff names. The diff comes back exactly as the host froze it, so a
-/// review sent with it names the same patch the page showed.
+/// the diff names.
 pub async fn working_tree_review(
     client: &dyn Client,
     agent_id: &[u8],
 ) -> Result<(Diff, String), RpcError> {
+    let base = DiffBase {
+        base: Some(diff_base::Base::WorkingTree(wire::Empty {})),
+    };
+    review(client, agent_id, base).await
+}
+
+/// Asks the agent's host for its diff against `base` and fetches the patch
+/// the diff names. The diff comes back exactly as the host froze it, so a
+/// review sent with it names the same patch the page showed.
+pub async fn review(
+    client: &dyn Client,
+    agent_id: &[u8],
+    base: DiffBase,
+) -> Result<(Diff, String), RpcError> {
     let diff = client
         .diff(DiffRequest {
             agent_id: agent_id.to_vec(),
-            base: Some(DiffBase {
-                base: Some(diff_base::Base::WorkingTree(wire::Empty {})),
-            }),
+            base: Some(base),
             with_patch: true,
         })
         .await?;

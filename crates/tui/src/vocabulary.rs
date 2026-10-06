@@ -79,6 +79,9 @@ pub const FRAMES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The chat surroundings' frames: columns and rows.
+const CHAT_SIZE: (u16, u16) = (120, 28);
+
 /// One named component drawn in `theme`.
 pub struct Component {
     pub name: &'static str,
@@ -122,6 +125,13 @@ pub fn components(theme: Theme) -> Vec<Component> {
         editor.set(draft, Vec::new());
         let lines = composer_lines(&editor, &composer, "fixer", "studio", away, w, theme);
         add(name, shows, lines);
+    }
+    for (name, shows, buffer) in chat_surroundings(theme) {
+        out.push(Component {
+            name,
+            shows,
+            buffer,
+        });
     }
     out.push(Component {
         name: "home_rows",
@@ -1795,6 +1805,280 @@ fn composers() -> Vec<(&'static str, &'static str, Composer, Away, &'static str)
             Composer::Disabled(Waiting::Detached),
             Away::Revoked,
             "",
+        ),
+    ]
+}
+
+/// Whole chats around their conversation: the header's change totals in
+/// both comparisons with the overview open on the changed files by folder
+/// and the background jobs, and the overview's usage windows for each
+/// provider.
+fn chat_surroundings(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> {
+    use prost::Message as _;
+    use ui_state::{Connection, Msg, SessionState};
+    use wire::{Kind, session_event};
+
+    use crate::chat::{ChatView, Comparison, FetchKey};
+
+    // A Thursday afternoon in this machine's zone, as the clock reads it.
+    let now = written_at();
+    const MINUTE: i64 = 60_000;
+    const HOUR: i64 = 60 * MINUTE;
+
+    let totals = |files, added, removed| wire::ChangeTotals {
+        files,
+        added,
+        removed,
+    };
+    let git = wire::Git {
+        branch: Some("overview-files".into()),
+        base_branch: Some("main".into()),
+        uncommitted: Some(totals(4, 42, 7)),
+        on_branch: Some(totals(6, 120, 30)),
+    };
+    let file = |path: &str, added, removed, change: wire::DiffFileChange| wire::DiffFile {
+        path: path.into(),
+        added,
+        removed,
+        change: change as i32,
+        binary: false,
+    };
+    use wire::DiffFileChange::{Changed, Created, Deleted};
+    let uncommitted = wire::Diff {
+        files: vec![
+            file("crates/ui-view/src/overview.rs", 30, 4, Changed),
+            file("README.md", 2, 0, Changed),
+            file("crates/tui/src/chat/pane.rs", 9, 3, Changed),
+            file("crates/tui/src/chat/changes.rs", 1, 0, Created),
+        ],
+        ..Default::default()
+    };
+    let on_branch = wire::Diff {
+        files: vec![
+            file("crates/ui-view/src/overview.rs", 64, 10, Changed),
+            file("README.md", 2, 0, Changed),
+            file("crates/tui/src/chat/pane.rs", 25, 8, Changed),
+            file("crates/tui/src/chat/changes.rs", 20, 0, Created),
+            file("crates/tui/src/strip.rs", 0, 12, Deleted),
+            file("docs/OVERVIEW.md", 9, 0, Created),
+        ],
+        ..Default::default()
+    };
+    let jobs = wire::BackgroundJobs {
+        known: true,
+        jobs: vec![
+            wire::BackgroundJob {
+                step: "t1".into(),
+                command: "npm run dev -- --port 5173".into(),
+                started_at_ms: now - 14 * MINUTE,
+            },
+            wire::BackgroundJob {
+                step: "t2".into(),
+                command: "cargo watch -x 'test -p ui-view'".into(),
+                started_at_ms: now - 40_000,
+            },
+        ],
+    };
+    let meter = |used_percent, resets_at_ms: i64, state: wire::UsageState| {
+        Some(wire::UsageMeter {
+            used_percent,
+            resets_at_ms: Some(resets_at_ms),
+            state: state as i32,
+        })
+    };
+    use wire::UsageState::{NearLimit, Ok};
+    let claude_usage = wire::ClaudeUsage {
+        state: NearLimit as i32,
+        windows: vec![
+            wire::ClaudeUsageWindow {
+                limit: wire::ClaudeLimit::FiveHour as i32,
+                model: None,
+                provider_name: "five_hour".into(),
+                meter: meter(91.0, now + 2 * HOUR, NearLimit),
+            },
+            wire::ClaudeUsageWindow {
+                limit: wire::ClaudeLimit::Weekly as i32,
+                model: None,
+                provider_name: "seven_day".into(),
+                meter: meter(40.0, now + 72 * HOUR, Ok),
+            },
+            wire::ClaudeUsageWindow {
+                limit: wire::ClaudeLimit::Weekly as i32,
+                model: Some("Fable".into()),
+                provider_name: "seven_day_overage_included".into(),
+                meter: meter(84.0, now + 72 * HOUR, NearLimit),
+            },
+        ],
+    };
+    let codex_usage = wire::CodexUsage {
+        state: NearLimit as i32,
+        windows: vec![
+            wire::CodexUsageWindow {
+                limit: wire::CodexLimit::FiveHour as i32,
+                window_minutes: 300,
+                meter: meter(95.0, now + 3 * HOUR, NearLimit),
+            },
+            wire::CodexUsageWindow {
+                limit: wire::CodexLimit::Weekly as i32,
+                window_minutes: 10_080,
+                meter: meter(30.0, now + 100 * HOUR, Ok),
+            },
+        ],
+        credits: Some("12.50".into()),
+    };
+
+    let item = |order: u64, prompt: bool, words: &str, kind: Kind| {
+        let body = match kind {
+            Kind::Codex => {
+                use wire::codex_item::Kind as K;
+                wire::CodexItem {
+                    kind: Some(if prompt {
+                        K::Prompt(wire::Prompt {})
+                    } else {
+                        K::Message(wire::Text { complete: true })
+                    }),
+                }
+                .encode_to_vec()
+            }
+            _ => {
+                use wire::claude_sdk_item::Kind as K;
+                wire::ClaudeSdkItem {
+                    kind: Some(if prompt {
+                        K::Prompt(wire::Prompt {})
+                    } else {
+                        K::Message(wire::Text { complete: true })
+                    }),
+                }
+                .encode_to_vec()
+            }
+        };
+        wire::Item {
+            key: format!("k{order}"),
+            order,
+            revision: order,
+            text: words.into(),
+            kind: wire::kind_tag(kind).into(),
+            body,
+            at_ms: now - 20 * MINUTE + order as i64 * 1_000,
+            ..Default::default()
+        }
+    };
+    let session = |kind: Kind, body: Vec<u8>| {
+        let agent = wire::Agent {
+            agent_id: b"agent".to_vec(),
+            host_id: b"host".to_vec(),
+            kind: kind as i32,
+            name: "fixer".into(),
+            cwd: "/srv/amux".into(),
+            lifecycle: wire::Lifecycle::Live as i32,
+            phase: wire::Phase::Idle as i32,
+            incarnation: 1,
+            git: Some(git.clone()),
+            ..Default::default()
+        };
+        let mut state = SessionState::new(agent, crate::chat::layout::CAP as usize);
+        let event = |of| Msg::Event(wire::SessionEvent { of: Some(of) });
+        state.update(Msg::Connection(Connection::Live));
+        state.update(event(session_event::Of::Snapshot(wire::Snapshot {
+            kind: wire::kind_tag(kind).into(),
+            body,
+            phase: wire::Phase::Idle as i32,
+            ..Default::default()
+        })));
+        for item in [
+            item(
+                1,
+                true,
+                "Show the changed files by folder in the overview",
+                kind,
+            ),
+            item(
+                2,
+                false,
+                "Done: the overview lists them under their folders, and the dev server and the test watcher keep running.",
+                kind,
+            ),
+        ] {
+            state.update(event(session_event::Of::Item(item)));
+        }
+        state.update(event(session_event::Of::CaughtUp(wire::CaughtUp {
+            revision: 2,
+        })));
+        state
+    };
+    let draw = |state: &SessionState, comparison: Comparison, diff: Option<&wire::Diff>| {
+        let mut view = ChatView::new(b"agent".to_vec(), now, false);
+        view.pane_open = true;
+        view.comparison = comparison;
+        if let Some(diff) = diff {
+            view.changes_fetched(
+                FetchKey {
+                    comparison,
+                    totals: None,
+                },
+                diff.clone(),
+            );
+        }
+        let (width, height) = CHAT_SIZE;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                view.draw(frame, area, state, None, None, now, theme);
+            })
+            .expect("draw");
+        terminal.backend().buffer().clone()
+    };
+
+    let claude_working = wire::ClaudeSdkSnapshot {
+        model: Some("opus".into()),
+        permission_mode: Some("default".into()),
+        background_jobs: Some(jobs.clone()),
+        ..Default::default()
+    }
+    .encode_to_vec();
+    let changes = session(Kind::ClaudeSdk, claude_working);
+    let claude = session(
+        Kind::ClaudeSdk,
+        wire::ClaudeSdkSnapshot {
+            model: Some("opus".into()),
+            permission_mode: Some("default".into()),
+            usage: Some(claude_usage),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    );
+    let codex = session(
+        Kind::Codex,
+        wire::CodexSnapshot {
+            model: Some("gpt-5.5".into()),
+            approval_policy: Some("on-request".into()),
+            sandbox: Some("workspace-write".into()),
+            usage: Some(codex_usage),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    );
+    vec![
+        (
+            "chat_changes_uncommitted",
+            "A chat counting uncommitted changes: the header's [Diff +42 −7] from the agent's row, and the overview open beside it with the two background jobs, each command with how long it has run, and the four changed files under their folders, root files first, each with its lines added and removed.",
+            draw(&changes, Comparison::Uncommitted, Some(&uncommitted)),
+        ),
+        (
+            "chat_changes_on_branch",
+            "The same chat counting everything on its branch: the header's [Diff vs main +120 −30], and the overview listing the branch's six changed files by folder, a created and a deleted file among them.",
+            draw(&changes, Comparison::OnBranch, Some(&on_branch)),
+        ),
+        (
+            "chat_usage_claude",
+            "A Claude chat near a usage limit, the overview listing every window with its name, how full it is, its state and when it resets: the 5-hour limit near, the weekly limit fine, and Fable's own weekly limit near.",
+            draw(&claude, Comparison::Uncommitted, None),
+        ),
+        (
+            "chat_usage_codex",
+            "A Codex chat near a usage limit, the overview listing its 5-hour limit near and its weekly limit fine, each with its fullness and reset time, and the credits left.",
+            draw(&codex, Comparison::Uncommitted, None),
         ),
     ]
 }

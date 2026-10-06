@@ -17,7 +17,7 @@ use ratatui::widgets::Paragraph;
 use ui_view::{LineKind, ReviewDoc, review_doc};
 use wire::{Attachment, Diff, Review, ReviewComment, attachment};
 
-use super::changes::{FileLine, changes_lines, ordered};
+use super::changes::{changes_lines, ordered};
 use super::composer::editor_lines;
 use crate::editor::Editor;
 use crate::text::{self, push};
@@ -135,17 +135,23 @@ impl ReviewPage {
         page
     }
 
-    /// The files as the shared list takes them.
-    fn file_lines(&self) -> Vec<FileLine> {
-        self.doc
-            .files
-            .iter()
-            .map(|file| FileLine {
-                path: file.path.clone(),
-                added: file.added,
-                removed: file.removed,
-            })
-            .collect()
+    /// `files` of the document as the shared view groups them by folder.
+    fn changes(&self, files: impl IntoIterator<Item = usize>) -> ui_view::Changes {
+        ui_view::changes(&Diff {
+            files: files
+                .into_iter()
+                .map(|f| {
+                    let file = &self.doc.files[f];
+                    wire::DiffFile {
+                        path: file.path.clone(),
+                        added: file.added,
+                        removed: file.removed,
+                        ..wire::DiffFile::default()
+                    }
+                })
+                .collect(),
+            ..Diff::default()
+        })
     }
 
     /// The list's order, as the filter leaves it, and the targets in that
@@ -157,7 +163,7 @@ impl ReviewPage {
             .as_ref()
             .map(|filter| filter.text().trim().to_lowercase())
             .filter(|needle| !needle.is_empty());
-        self.order = ordered(&self.file_lines())
+        self.order = ordered(&self.changes(0..self.doc.files.len()))
             .into_iter()
             .filter(|path| {
                 needle
@@ -637,18 +643,7 @@ impl ReviewPage {
                 );
             }
         }
-        let files: Vec<FileLine> = self
-            .order
-            .iter()
-            .map(|&f| {
-                let file = &self.doc.files[f];
-                FileLine {
-                    path: file.path.clone(),
-                    added: file.added,
-                    removed: file.removed,
-                }
-            })
-            .collect();
+        let files = self.changes(self.order.iter().copied());
         let list = changes_lines(&files, inner, theme);
         let here = (!self.targets.is_empty()).then(|| file_of(self.target()));
         let here_line = list.files.iter().find_map(|(line, path)| {

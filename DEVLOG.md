@@ -1,3 +1,18 @@
+2026-10-06 — **The terminal shows changes, background jobs and usage from real facts.**
+The chat header's `[Diff +a −b]` reads the agent's row: the uncommitted totals,
+or everything since the branch left its base (`[Diff vs main +a −b]`), switched
+with the leader then `c` and kept with the terminal's layout; nothing is
+fetched to count. The overview draws ui-view's `Overview`: each running
+background job with its command and running time (opening its step), the
+changed files of that comparison under ui-view's folders, fetched without a
+patch while the overview shows and again when the totals move, and near a
+usage limit every window with its name, fullness, state and reset, a model's
+weekly limit named for the model, and Codex's credits. The review page reads
+the same comparison and lists its files through the same folders. The
+terminal's stand-ins for jobs and counts, the turn-end patch count and its own
+file grouping are gone. New component goldens draw the header in both
+comparisons with the overview, and the usage windows of each provider.
+
 2026-10-06 — **One overview value replaces the session strip.**
 `ui_view::Strip` mixed what is still in flight around a chat with the agent's
 settings and a sign-in problem, and counted background jobs instead of

@@ -26,6 +26,7 @@ use ratatui::widgets::Paragraph;
 use ui_state::{
     ActivityKind, Composer, InputState, InputWhat, Key, PhaseView, SessionState, Waiting,
 };
+pub use ui_view::Comparison;
 use ui_view::{
     AskBody, AskCard, Away, CardState, ChatOptions, FamilyHeader, RowKind, ToolRows, ask_card,
     chat_rows_for, composer, overview, queue_rows,
@@ -185,6 +186,22 @@ enum HeaderControl {
 /// Where each header control was drawn: its columns, and what it does.
 type HeaderSpots = Vec<((usize, usize), HeaderControl)>;
 
+/// The changed files of one comparison, fetched without a patch.
+#[derive(Debug)]
+pub struct Fetched {
+    pub key: FetchKey,
+    pub diff: wire::Diff,
+}
+
+/// What a fetch of the changed files answers: a comparison, as of the
+/// totals the agent's row carried when it was asked for. New totals mean
+/// the files changed and the list is fetched again.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FetchKey {
+    pub comparison: Comparison,
+    pub totals: Option<wire::ChangeTotals>,
+}
+
 /// The client's state for one open chat.
 #[derive(Debug)]
 pub struct ChatView {
@@ -211,12 +228,13 @@ pub struct ChatView {
     /// Whether the agent runs on this machine; the header names its host
     /// only when it does not.
     pub local: bool,
-    /// The working tree's lines added and removed, as last read: after the
-    /// chat opens and after each turn ends.
-    pub diff_stat: Option<(u32, u32)>,
-    /// Whether the agent was working when the diff stat was last asked
-    /// for; `None` until the first ask.
-    stat_seen: Option<bool>,
+    /// What the changes are counted against, in the header and the
+    /// overview: the person's choice, kept by the app across chats.
+    pub comparison: Comparison,
+    /// The changed files the overview lists, as last fetched.
+    pub changes: Option<Fetched>,
+    /// The fetch last asked for, so one is asked for once.
+    changes_asked: Option<FetchKey>,
     /// The header's controls on the last frame: row, columns, control.
     header_spots: Vec<(u16, (u16, u16), HeaderControl)>,
     /// The header control under the mouse.
@@ -248,8 +266,6 @@ pub struct ChatView {
     pane_page: usize,
     /// The item under the mouse; hover and focus are one highlight.
     pane_hover: Option<pane::PaneItem>,
-    /// The working tree's changed files, as last read with the diff stat.
-    pub diff_files: Option<Vec<pane::FileLine>>,
     /// Where the pane was drawn: a click inside gives it the keys.
     pane_rect: Option<Rect>,
     /// A step was just scrolled to from the pane: if it sits within the
@@ -328,8 +344,9 @@ impl ChatView {
             leader: 'a',
             stretches: HashSet::new(),
             local: true,
-            diff_stat: None,
-            stat_seen: None,
+            comparison: Comparison::Uncommitted,
+            changes: None,
+            changes_asked: None,
             header_spots: Vec::new(),
             hover: None,
             panel: None,
@@ -344,7 +361,6 @@ impl ChatView {
             pane_follow: false,
             pane_page: 0,
             pane_hover: None,
-            diff_files: None,
             pane_rect: None,
             revealed: false,
             pane_spots: Vec::new(),
@@ -984,12 +1000,9 @@ impl ChatView {
 
     /// The pane's items in its order, as this frame would draw them.
     fn pane_items(&self, state: &SessionState) -> Vec<pane::PaneItem> {
-        let overview = overview(state, None);
-        let jobs = crate::pending::background_jobs(state);
+        let overview = self.overview(state);
         pane::Contents {
             overview: &overview,
-            jobs: &jobs,
-            files: self.diff_files.as_deref(),
             folded: &self.pane_folds,
         }
         .items()
@@ -1050,8 +1063,10 @@ impl ChatView {
                 self.pane_follow = true;
                 vec![]
             }
-            pane::PaneItem::Job(key) => {
-                self.reveal_step(state, &key);
+            pane::PaneItem::Job(job) => {
+                if let Some(key) = &job.step {
+                    self.reveal_step(state, key);
+                }
                 vec![]
             }
             pane::PaneItem::File(path) => vec![ChatEffect::ReviewAt(path)],
@@ -1306,22 +1321,64 @@ impl ChatView {
         vec![]
     }
 
-    /// Whether the working tree's totals should be read now: once the chat
-    /// is current after opening, and again each time a turn ends, since
-    /// that is when the agent's changes land. Never on every frame.
-    pub fn wants_diff_stat(&mut self, state: &SessionState) -> bool {
-        if !crate::pending::diff_counts()
-            || !matches!(state.composer(), Composer::Send | Composer::Resume)
-        {
+    /// The overview with the changed files fetched for the comparison
+    /// shown, while they still answer it.
+    fn overview(&self, state: &SessionState) -> ui_view::Overview {
+        let key = self.fetch_key(state);
+        let diff = self
+            .changes
+            .as_ref()
+            .filter(|fetched| fetched.key.comparison == key.comparison)
+            .map(|fetched| &fetched.diff);
+        overview(state, diff)
+    }
+
+    /// The fetch the overview needs now: the comparison shown, as of the
+    /// row's totals for it.
+    fn fetch_key(&self, state: &SessionState) -> FetchKey {
+        FetchKey {
+            comparison: self.comparison,
+            totals: change_totals(state, self.comparison),
+        }
+    }
+
+    /// The comparison's changed files to fetch, without a patch: while the
+    /// overview shows, once for each comparison and again whenever the
+    /// row's totals for it move. Never on every frame.
+    pub fn wants_changes(&mut self, state: &SessionState) -> Option<(FetchKey, wire::DiffBase)> {
+        if !self.pane_open || !matches!(state.composer(), Composer::Send | Composer::Resume) {
+            return None;
+        }
+        let key = self.fetch_key(state);
+        if self.changes_asked.as_ref() == Some(&key) {
+            return None;
+        }
+        let base = ui_view::diff_base(state, key.comparison)?;
+        self.changes_asked = Some(key.clone());
+        Some((key, base))
+    }
+
+    /// Takes in a fetch of the changed files, unless the person has moved
+    /// to another comparison since it was asked for.
+    pub fn changes_fetched(&mut self, key: FetchKey, diff: wire::Diff) {
+        if key.comparison == self.comparison {
+            self.changes = Some(Fetched { key, diff });
+        }
+    }
+
+    /// Switches the comparison the header and the overview count against:
+    /// uncommitted changes, or everything on this branch. False when the
+    /// branch has no base to compare with, and nothing changes.
+    pub fn switch_comparison(&mut self, state: &SessionState) -> bool {
+        let next = match self.comparison {
+            Comparison::Uncommitted => Comparison::OnBranch,
+            Comparison::OnBranch => Comparison::Uncommitted,
+        };
+        if ui_view::diff_base(state, next).is_none() {
             return false;
         }
-        let working = state.phase() == PhaseView::Working;
-        let wanted = match self.stat_seen {
-            None => true,
-            Some(was_working) => was_working && !working,
-        };
-        self.stat_seen = Some(working);
-        wanted
+        self.comparison = next;
+        true
     }
 
     /// What the feed line under a click does there.
@@ -1663,18 +1720,11 @@ impl ChatView {
             .map(|host| host.name.clone())
             .unwrap_or_else(|| "its host".into());
 
-        let overview = overview(state, None);
+        let overview = self.overview(state);
         let sign_in = ui_view::sign_in(state);
         let effort = ui_view::effort_in_force(state.agent_state());
-        let jobs = if self.pane_open {
-            crate::pending::background_jobs(state)
-        } else {
-            Vec::new()
-        };
         let items = pane::Contents {
             overview: &overview,
-            jobs: &jobs,
-            files: self.diff_files.as_deref(),
             folded: &self.pane_folds,
         }
         .items();
@@ -1825,7 +1875,7 @@ impl ChatView {
         // The row rests on the composer's box; a blank line sets it apart
         // from whatever is above. It is the pane folded: while the pane is
         // open it takes the row's place.
-        let running = crate::pending::background_jobs(state).len();
+        let running = overview.jobs.len();
         self.servers_failing = overview
             .failed_servers
             .iter()
@@ -2137,7 +2187,10 @@ impl ChatView {
             // The lit job's step, when the feed shows it, carries the same
             // card, so the pane's line and the feed's line read as one.
             if let Some(pane::PaneItem::Job(job)) = lit.as_ref()
-                && let Some(block) = laid.blocks.iter().position(|block| &block.key == job)
+                && let Some(block) = laid
+                    .blocks
+                    .iter()
+                    .position(|block| job.step.as_ref() == Some(&block.key))
             {
                 let owners = line_owners(&laid, feed.len());
                 // Exactly the step's own lines, flat: a block may end in
@@ -2273,7 +2326,7 @@ impl ChatView {
                 paint.render_widget(ratatui::widgets::Clear, cleared);
             }
             self.pane_rect = Some(rect);
-            self.draw_side_pane(paint, rect, &overview, &jobs, lit.as_ref(), now_ms, theme);
+            self.draw_side_pane(paint, rect, &overview, lit.as_ref(), now_ms, theme);
         }
         // A model or effort being chosen: its flyover rises from the model's
         // words on the composer's edge, over the box (and the pane).
@@ -2341,7 +2394,6 @@ impl ChatView {
         paint: &mut Paint<'_>,
         rect: Rect,
         overview: &ui_view::Overview,
-        jobs: &[pane::Job],
         lit: Option<&pane::PaneItem>,
         now_ms: i64,
         theme: Theme,
@@ -2358,8 +2410,6 @@ impl ChatView {
         let content = pane::pane_lines(
             &pane::Contents {
                 overview,
-                jobs,
-                files: self.diff_files.as_deref(),
                 folded: &self.pane_folds,
             },
             lit,
@@ -2546,10 +2596,7 @@ impl ChatView {
             };
             right.push(Span::styled(words, style));
         }
-        let diff = match self.diff_stat {
-            Some((added, removed)) if added + removed > 0 => format!("[Diff +{added} −{removed}]"),
-            _ => "[Diff]".to_owned(),
-        };
+        let diff = diff_words(state, self.comparison);
         let mut controls = Vec::new();
         for (words, control) in [
             (diff, HeaderControl::Diff),
@@ -2614,6 +2661,41 @@ impl ChatView {
         }
         (line, spots)
     }
+}
+
+/// The row's change totals for `comparison`, as of the last turn end.
+fn change_totals(state: &SessionState, comparison: Comparison) -> Option<wire::ChangeTotals> {
+    let git = state.agent().git.as_ref()?;
+    match comparison {
+        Comparison::Uncommitted => git.uncommitted,
+        Comparison::OnBranch => git.on_branch,
+    }
+}
+
+/// The header's way to the review page, with the change totals of the
+/// comparison shown: "[Diff +42 −7]" for uncommitted changes, "[Diff vs
+/// main +120 −30]" for everything on the branch, a bare "[Diff]" with
+/// nothing to count.
+fn diff_words(state: &SessionState, comparison: Comparison) -> String {
+    let against = match comparison {
+        Comparison::Uncommitted => None,
+        Comparison::OnBranch => state
+            .agent()
+            .git
+            .as_ref()
+            .and_then(|git| git.base_branch.as_deref()),
+    };
+    let mut words = "[Diff".to_owned();
+    if let Some(base) = against {
+        words.push_str(&format!(" vs {base}"));
+    }
+    if let Some(totals) = change_totals(state, comparison)
+        .filter(|totals| totals.added + totals.removed > 0 || totals.files > 0)
+    {
+        words.push_str(&format!(" +{} −{}", totals.added, totals.removed));
+    }
+    words.push(']');
+    words
 }
 
 /// "41K", "1.2M": a token count at a glance.

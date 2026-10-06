@@ -1,21 +1,14 @@
-//! The working tree's changed files as a list: grouped under their
-//! directory, sorted by path, each file's lines added and removed at the
+//! A comparison's changed files as a list, under their folders as the
+//! shared view groups them, each file's lines added and removed at the
 //! right in the theme's green and red. The Overview's Changes section and
 //! the review page's file list both draw it; each places it and sets its
 //! width.
 
 use ratatui::text::Line;
+use ui_view::Changes;
 
 use crate::text::{self, pad_to, push};
 use crate::theme::Theme;
-
-/// A changed file as the list shows it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileLine {
-    pub path: String,
-    pub added: u32,
-    pub removed: u32,
-}
 
 /// The list drawn, `width` columns wide from its own left edge.
 #[derive(Default)]
@@ -38,25 +31,30 @@ impl ChangesOut {
     }
 }
 
-/// Files under their directory: a faint line naming it, shortened in the
+/// Files under their folder: a faint line naming it, shortened in the
 /// middle so both ends survive, then each file's name two columns in with
-/// its lines added and removed at the right; a blank line between groups.
-pub fn changes_lines(files: &[FileLine], width: usize, theme: Theme) -> ChangesOut {
+/// its lines added and removed at the right; a blank line between folders.
+pub fn changes_lines(changes: &Changes, width: usize, theme: Theme) -> ChangesOut {
     let mut out = ChangesOut::default();
-    for (n, (dir, files)) in grouped(files).into_iter().enumerate() {
+    for (n, folder) in changes.folders.iter().enumerate() {
         if n > 0 {
             out.lines.push(Line::default());
         }
-        let indent = if dir.is_empty() {
+        let indent = if folder.path.is_empty() {
             0
         } else {
             let mut line = Line::default();
-            push(&mut line, shorten_middle(dir, width), theme.faint(), width);
+            push(
+                &mut line,
+                shorten_middle(&folder.path, width),
+                theme.faint(),
+                width,
+            );
             out.dir_lines.push(out.lines.len());
             out.lines.push(line);
             2
         };
-        for file in files {
+        for file in &folder.files {
             // A zero side is left out: "+1", or "−5" for a pure deletion.
             let added = if file.added > 0 {
                 format!("+{}", file.added)
@@ -69,11 +67,15 @@ pub fn changes_lines(files: &[FileLine], width: usize, theme: Theme) -> ChangesO
                 (n, false) => format!(" \u{2212}{n}"),
             };
             let counts = format!("{added}{removed}");
-            let name = &file.path[dir.len()..];
             let room = width.saturating_sub(indent + text::str_width(&counts) + 2);
             let mut line = Line::default();
             pad_to(&mut line, indent);
-            push(&mut line, shorten_left(name, room), theme.text(), width);
+            push(
+                &mut line,
+                shorten_left(&file.name, room),
+                theme.text(),
+                width,
+            );
             pad_to(&mut line, width.saturating_sub(text::str_width(&counts)));
             // Green and red from the terminal's palette.
             push(&mut line, added, theme.ok(), width);
@@ -85,38 +87,14 @@ pub fn changes_lines(files: &[FileLine], width: usize, theme: Theme) -> ChangesO
     out
 }
 
-/// The paths in the list's order: by directory, root files first.
-pub fn ordered(files: &[FileLine]) -> Vec<String> {
-    grouped(files)
-        .into_iter()
-        .flat_map(|(_, files)| files)
+/// The paths in the list's order.
+pub fn ordered(changes: &Changes) -> Vec<String> {
+    changes
+        .folders
+        .iter()
+        .flat_map(|folder| &folder.files)
         .map(|file| file.path.clone())
         .collect()
-}
-
-/// The changed files by directory, sorted by path: files at the root first,
-/// under no directory, then each directory with its files. A directory is
-/// named with its trailing slash.
-fn grouped(files: &[FileLine]) -> Vec<(&str, Vec<&FileLine>)> {
-    let mut sorted: Vec<&FileLine> = files.iter().collect();
-    sorted.sort_by(|a, b| {
-        let dir = |f: &FileLine| f.path.rfind('/').map_or(0, |at| at + 1);
-        f_key(a, dir(a)).cmp(&f_key(b, dir(b)))
-    });
-    let mut groups: Vec<(&str, Vec<&FileLine>)> = Vec::new();
-    for file in sorted {
-        let dir = &file.path[..file.path.rfind('/').map_or(0, |at| at + 1)];
-        match groups.last_mut() {
-            Some((last, members)) if *last == dir => members.push(file),
-            _ => groups.push((dir, vec![file])),
-        }
-    }
-    groups
-}
-
-/// Root files first, then by directory, then by name.
-fn f_key(file: &FileLine, dir: usize) -> (bool, &str, &str) {
-    (dir > 0, &file.path[..dir], &file.path[dir..])
 }
 
 /// A directory in at most `max` columns, cut in the middle at directories

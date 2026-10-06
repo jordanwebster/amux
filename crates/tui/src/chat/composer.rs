@@ -153,7 +153,7 @@ fn usage_words(
 /// A usage window in words: the 5-hour limit, the weekly one or a model's
 /// weekly one; a window known only by its length or the provider's own
 /// name says that.
-fn limit_name(label: &ui_view::UsageLabel) -> String {
+pub(crate) fn limit_name(label: &ui_view::UsageLabel) -> String {
     match label {
         ui_view::UsageLabel::FiveHour => "5-hour limit".to_owned(),
         ui_view::UsageLabel::Weekly { model: None } => "Weekly limit".to_owned(),

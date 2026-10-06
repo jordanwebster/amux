@@ -14,10 +14,8 @@
 //! interpreter does not stream a tool call's input, so the plan arrives
 //! whole).
 
-use ui_state::SessionState;
 use wire::Kind;
 
-use crate::chat::pane::Job;
 use crate::setup;
 
 /// Whether a question ask can be declined with the person's own message
@@ -38,23 +36,6 @@ pub fn skips_questions(kind: Kind) -> bool {
 /// Whether a new agent can start in a new worktree. The create request
 /// cannot ask for one yet, so the toggle is not offered.
 pub fn offers_worktree() -> bool {
-    false
-}
-
-/// The background jobs still running, for the row above the composer and
-/// the Overview. The wire counts them but does not list them, and a list
-/// rebuilt from the transcript misses what the agent did not show as a
-/// step, so they are not shown until the wire lists them.
-pub fn background_jobs(_state: &SessionState) -> Vec<Job> {
-    Vec::new()
-}
-
-/// Whether the working tree's change counts are shown: the header's
-/// `[Diff +a −b]` and the Overview's Changes. Counting needs the whole
-/// working-tree patch today; until the host keeps per-file counts with the
-/// agent, the header shows a plain `[Diff]` (the review page still reads
-/// the patch when opened) and the Overview has no Changes.
-pub fn diff_counts() -> bool {
     false
 }
 
