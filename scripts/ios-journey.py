@@ -464,6 +464,197 @@ def decide_plan_codex(journey: PhoneJourney) -> list[str]:
     ]
 
 
+OTHER = "From the help panel"
+ANSWERS = {
+    "How should the settings screen be laid out?": "Stacked",
+    "Where should the screen open from?": OTHER,
+}
+SKIPPED = "Which section should come first?"
+PALETTE = "Pick the palette too."
+QUESTION_REPLY = "Let me see both palettes on the desk first."
+
+
+def answered(decisions: list[dict], answers: dict) -> None:
+    """The first ask was answered once with exactly `answers`: the skipped
+    question left out."""
+    if not decisions or decisions[0].get("updatedInput", {}).get("answers") != answers:
+        raise RuntimeError(f"Claude was answered {decisions!r}")
+
+
+def replied(decisions: list[dict], words: str) -> None:
+    """The second ask was refused with the person's own words."""
+    if len(decisions) != 2 or decisions[1].get("behavior") != "deny" or decisions[1].get("message") != words:
+        raise RuntimeError(f"Claude was answered {decisions!r}")
+
+
+def asking(question: str):
+    return lambda drawn: drawn.get("ask.question", {}).get("label") == question
+
+
+def reopen_card(journey: PhoneJourney, agent_id: str, ready) -> dict:
+    """Leaves the chat for the fleet and opens it again with an ask
+    standing where the composer was, so it is read with the keyboard
+    down."""
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat" not in drawn and f"home.row.{agent_id}" in drawn, "the fleet")
+    journey.tap(f"home.row.{agent_id}")
+    return journey.wait(lambda drawn: "ask" in drawn and ready(drawn), "the chat again")
+
+
+def answer_questions(journey: PhoneJourney) -> list[str]:
+    journey.covered_hidden = True
+    journey.launch()
+    pair_by_code(journey, "desk")
+    asker = open_agent(journey, "asker")
+    send(journey, "Add a settings screen.")
+    first = asking("How should the settings screen be laid out?")
+    journey.wait(first, "the first question")
+    reopen_card(journey, asker, first)
+    journey.screen("first-question")
+    # Picked, an option shows its preview above the options.
+    journey.tap("ask.option.1")
+    journey.wait(
+        lambda drawn: drawn.get("ask.option.1", {}).get("value") == "selected" and labelled(drawn, "Palette  terminal"),
+        "Stacked's preview",
+    )
+    journey.screen("stacked-preview")
+    journey.tap("ask.next")
+    # The second is answered in the person's own words.
+    journey.wait(asking("Where should the screen open from?"), "the second question")
+    journey.tap("ask.option.other")
+    journey.wait_for("ask.other")
+    journey.type("ask.other", OTHER)
+    journey.wait(lambda drawn: drawn.get("ask.next", {}).get("enabled") is True, "an answer typed")
+    journey.tap("ask.next")
+    # The third is skipped.
+    journey.wait(lambda drawn: asking(SKIPPED)(drawn) and "ask.skip" in drawn, "the third question")
+    journey.tap("ask.skip")
+    review = journey.wait(
+        lambda drawn: "ask.send" in drawn and labelled(drawn, "Stacked") and labelled(drawn, f"“{OTHER}”")
+        and labelled(drawn, "Skipped"),
+        "the answers for review",
+    )
+    if review["ask.review.2"].get("value") != "skipped":
+        raise RuntimeError(f"the review does not hold the third question skipped: {review['ask.review.2']!r}")
+    reopen_card(journey, asker, lambda drawn: "ask.send" in drawn)
+    journey.screen("review")
+    journey.tap("ask.send")
+    done = "Thanks, I'll build it that way."
+    journey.wait(lambda drawn: "ask" not in drawn and labelled(drawn, done), "the reply")
+    journey.wait_chat("desk", "asker", lambda chat: chat["phase"] == "IDLE", "answered")
+    reopen(journey, asker, lambda drawn: labelled(drawn, done) and "chat.row.turn-end" in drawn)
+    journey.screen("answered", volatile=("chat.row.turn-end",))
+
+    # A second ask, replied to instead in the person's own words.
+    send(journey, PALETTE)
+    palette = asking("Which palette should it open in?")
+    journey.wait(lambda drawn: palette(drawn) and "ask.reply" in drawn, "the second ask")
+    journey.tap("ask.reply")
+    journey.wait_for("ask.reply.text")
+    journey.type("ask.reply.text", QUESTION_REPLY)
+    written = lambda drawn: drawn.get("ask.reply.send", {}).get("enabled") is True  # noqa: E731
+    journey.wait(written, "a reply written")
+    reopen_card(journey, asker, written)
+    journey.screen("reply-instead")
+    journey.tap("ask.reply.send")
+    later = "I'll leave the palette for later."
+    journey.wait(lambda drawn: "ask" not in drawn and labelled(drawn, later), "the reply to the reply")
+    journey.wait_chat("desk", "asker", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, PALETTE)) == 1, "replied")
+    reopen(journey, asker, lambda drawn: labelled(drawn, later) and labelled(drawn, QUESTION_REPLY))
+    journey.screen("replied", volatile=("chat.row.turn-end",))
+    decisions = control_responses(journey, "asker", "answers")
+    answered(decisions, ANSWERS)
+    replied(decisions, QUESTION_REPLY)
+    return [
+        "a picked option showed its preview above the options",
+        "a picked option, a typed answer under Something else and a skipped question showed together for review",
+        "Claude received one answer naming Stacked and the typed text, with the skipped question left out",
+        "a second ask, replied to instead, reached Claude as the question refused with the person's words",
+        negative_control(answered, decisions, {**ANSWERS, SKIPPED: "Relay"}),
+        negative_control(replied, decisions, "Pick Terminal."),
+    ]
+
+
+FORM = {"title": "Reconnect flake in e2e", "team": "FOX", "estimate": 3}
+
+
+def form_sent(decisions: list[dict], content: dict) -> None:
+    if len(decisions) != 1 or decisions[0] != {"action": "accept", "content": content}:
+        raise RuntimeError(f"Claude was answered {decisions!r}")
+
+
+def codex_results(journey: PhoneJourney, agent: str, label: str) -> list[dict]:
+    """What Codex was answered, in order."""
+    lines = [json.loads(line) for line in journey.provider_input(agent, label)]
+    return [line["result"] for line in lines if "result" in line and isinstance(line.get("id"), int)]
+
+
+def link_done(results: list[dict]) -> None:
+    """The server's tool allowed, then its link answered done, with no
+    content."""
+    if [result.get("action") for result in results] != ["accept", "accept"] or results[1].get("content") is not None:
+        raise RuntimeError(f"Codex was answered {results!r}")
+
+
+def tool_server_asks(journey: PhoneJourney) -> list[str]:
+    journey.covered_hidden = True
+    journey.launch()
+    pair_by_code(journey, "desk")
+    # A tool server's form, its fields in the order the server wrote.
+    filer = open_agent(journey, "filer")
+    send(journey, "File the reconnect flake.")
+    journey.wait_for("ask.field.title", "ask.field.team", "ask.field.estimate")
+    reopen_card(journey, filer, lambda drawn: "ask.field.title" in drawn)
+    journey.screen("form")
+    journey.type("ask.field.title", FORM["title"])
+    journey.choose(FORM["team"])
+    journey.wait(lambda drawn: drawn.get("ask.field.team", {}).get("value") == FORM["team"], "the team picked")
+    journey.type("ask.field.estimate", str(FORM["estimate"]))
+    # What goes is what the form shows.
+    journey.wait(
+        lambda drawn: drawn.get("ask.submit", {}).get("enabled") is True
+        and all(drawn.get(f"ask.field.{name}", {}).get("value") == str(value) for name, value in FORM.items()),
+        "the form filled and ready to submit",
+    )
+    journey.tap("ask.submit")
+    filed = "Filed it in Linear."
+    journey.wait(lambda drawn: "ask" not in drawn and labelled(drawn, filed), "the filed reply")
+    journey.wait_chat("desk", "filer", lambda chat: chat["phase"] == "IDLE", "filed")
+    reopen(journey, filer, lambda drawn: labelled(drawn, filed) and "chat.row.turn-end" in drawn)
+    journey.screen("form-sent", volatile=("chat.row.turn-end",))
+    decisions = control_responses(journey, "filer", "form-answer")
+    form_sent(decisions, FORM)
+    control = negative_control(form_sent, decisions, {**FORM, "team": "CORE"})
+
+    # A link: Codex asks to let the server's tool run, then the server
+    # sends a link, worded from its own message.
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+    linker = open_agent(journey, "linker")
+    send(journey, "Check the relay's error rate.")
+    card = journey.wait(lambda drawn: "ask" in drawn and labelled(drawn, "grafana"), "the tool's ask")
+    journey.tap(choice(card, "Allow"))
+    journey.wait(lambda drawn: "ask.open" in drawn and labelled(drawn, "https://grafana.example.com/login"), "the link")
+    reopen_card(journey, linker, lambda drawn: "ask.open" in drawn)
+    journey.screen("link")
+    journey.tap(choice(journey.elements(), "I’m done"))
+    reply = "I'll read the dashboards another way."
+    journey.wait(lambda drawn: "ask" not in drawn and labelled(drawn, reply), "the reply")
+    journey.wait_chat("desk", "linker", lambda chat: chat["phase"] == "IDLE", "linked")
+    results = codex_results(journey, "linker", "link-answers")
+    link_done(results)
+    reopen(journey, linker, lambda drawn: labelled(drawn, reply) and "chat.row.turn-end" in drawn)
+    journey.screen("link-done", volatile=("chat.row.turn-end",))
+    return [
+        "the form asked for title, team and estimate in the server's order and showed the answers before they went",
+        f"Claude received the form accepted with {FORM!r}",
+        control,
+        "Codex's ask to run the server's tool was allowed, then the link showed its message and address",
+        "I’m done answered the link: Codex received two accepts, the link's with no content",
+        negative_control(link_done, [results[0], {"action": "decline"}]),
+    ]
+
+
 LIVE, EXITED = 1, 2
 HELLO = "Say hello."
 BACK = "Welcome back."
@@ -1418,6 +1609,8 @@ STORIES = {
     "decide-plan-claude-sdk": lambda j: decide_plan(j, "planner", True),
     "decide-plan-claude-pty": lambda j: decide_plan(j, "planner-pty", False),
     "decide-plan-codex": decide_plan_codex,
+    "answer-questions": answer_questions,
+    "tool-server-asks": tool_server_asks,
     "keep-authority": keep_authority,
     "manage-agent": manage_agent,
     "attachment-or-review": attachment_or_review,

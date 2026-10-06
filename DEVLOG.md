@@ -1,3 +1,28 @@
+2026-10-06 — **The phone tells the question and tool server stories.**
+`answer-questions` and `tool-server-asks` now run on the phone against the
+desk's scripted flows: a preview shown for the picked option, one question
+answered by picking, one typed under Something else and one skipped, all
+reviewed and sent; a second ask replied to instead; a tool server's form
+filled and submitted; and Codex's link answered I’m done. Claude and Codex
+are checked to have received exactly those answers, each check shown to
+fail on a wrong expectation.
+
+Telling them on the phone found three things the phone did differently
+from the terminal, now fixed:
+
+- An answered questions row read "Answered 3 questions" with a blank where
+  one was skipped. It now reads "Answered 2 of 3 questions" with that one
+  "Skipped", and a reply instead lists only what was answered before it.
+- A tool server's form listed required fields first, then by name, because
+  a decoded JSON object has lost its order. Fields now come in the order
+  the server wrote them, read off the schema's text.
+- Picking from a form's menu could wipe what had been typed in another
+  field: each field wrote back a copy of the whole form taken when it was
+  drawn. A field now writes into the form as it is.
+
+Re-recorded deliberately: `ask-form` and `row-ask-questions-replied`, light
+and dark.
+
 2026-10-06 — **The phone tells the three plan stories.**
 `decide-plan-claude-sdk`, `decide-plan-claude-pty` and `decide-plan-codex`
 now run on the phone as well as in the terminal, against

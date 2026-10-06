@@ -91,15 +91,17 @@
     {
       "id": "answer-questions",
       "stage": 17,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-flows.json",
+      "phone_topology": "journeys/topologies/phone-flows.json",
       "claim": "Headless Claude asks three questions. Each option's preview shows beside the options as the selection moves; one question is answered by picking, one by typing under Something else and one is skipped, all are shown for review, and Claude receives one answer holding exactly the two answers. Asked again, the person replies instead, and Claude receives the question refused with those words."
     },
     {
       "id": "tool-server-asks",
       "stage": 17,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-flows.json",
+      "phone_topology": "journeys/topologies/phone-flows.json",
       "claim": "A tool server's form asks for its fields in the order the server wrote them and shows the answers for review before they go; Claude receives the form accepted with exactly those values. Codex asks to let a tool server's call run, then the server asks the person to sign in at a link it names; saying so answers it and Codex receives both answers."
     },
     {
