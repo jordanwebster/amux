@@ -200,7 +200,7 @@ source = "invariant"
 section = "Interpreter"
 claim = "No append after a final."
 tests = [
-  "interpret/lib::testkind::invariants::no_append_after_a_final_and_only_to_the_newest_item",
+  "interpret/lib::testkind::invariants::appends_go_to_any_open_item_and_never_after_its_final",
   "interpret/lib::testkind::invariants::a_reopened_final_item_is_a_violation",
 ]
 
@@ -450,13 +450,13 @@ tests = [
 ]
 
 [[contract]]
-id = "appends-touch-newest-item"
+id = "appends-touch-open-items"
 source = "invariant"
 section = "Session state"
-claim = "Appends touch only the newest item."
+claim = "Appends touch only items still open, not only the newest."
 tests = [
   "ui-state/spec::window::a_live_append_extends_the_held_text",
-  "interpret/lib::testkind::invariants::no_append_after_a_final_and_only_to_the_newest_item",
+  "interpret/lib::testkind::invariants::appends_go_to_any_open_item_and_never_after_its_final",
 ]
 
 [[contract]]
