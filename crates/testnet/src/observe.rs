@@ -284,7 +284,7 @@ impl Describe for InventoryEvent {
             }
             Some(inventory_event::Of::Agent(agent)) => format!(
                 "Agent {} {} on {} lifecycle={:?} phase={:?}",
-                agent.name.as_deref().unwrap_or("(unnamed)"),
+                agent.name,
                 short(&agent.agent_id),
                 short(&agent.host_id),
                 wire::Lifecycle::try_from(agent.lifecycle).unwrap_or_default(),

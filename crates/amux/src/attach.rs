@@ -473,7 +473,7 @@ mod tests {
             agent_id: vec![1; 16],
             host_id: host.to_vec(),
             kind: kind as i32,
-            name: Some("scout".into()),
+            name: "scout".into(),
             ..Agent::default()
         };
         assert_eq!(attacher.refusal(&agent([7; 16], Kind::ClaudePty)), None);

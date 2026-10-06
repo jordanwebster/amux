@@ -232,11 +232,10 @@ struct Family {
 }
 
 fn name_of(agent: &Agent) -> &str {
-    agent
-        .name
-        .as_deref()
-        .filter(|name| !name.is_empty())
-        .unwrap_or("unnamed")
+    match agent.name.as_str() {
+        "" => "unnamed",
+        name => name,
+    }
 }
 
 /// The agent as a row names it: Claude chatted with here, Claude in its
@@ -2032,7 +2031,7 @@ fn agent_lines(
     let right = if chosen {
         CLOSE.to_owned()
     } else {
-        text::age(now_ms, agent.last_activity_ms)
+        text::age(now_ms, agent.phase_since_ms)
     };
     let right_at = end.saturating_sub(text::str_width(&right));
     let fold = (entry.children > 0).then(|| {

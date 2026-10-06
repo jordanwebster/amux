@@ -70,7 +70,7 @@ pub fn agent(kind: Kind) -> wire::Agent {
         agent_id: b"agent".to_vec(),
         host_id: b"host".to_vec(),
         kind: kind as i32,
-        name: Some("worker".into()),
+        name: "worker".into(),
         lifecycle: wire::Lifecycle::Live as i32,
         phase: wire::Phase::Idle as i32,
         incarnation: 1,

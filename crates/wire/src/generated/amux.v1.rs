@@ -242,9 +242,19 @@ pub struct Snapshot {
     /// automatically.
     #[prost(string, optional, tag = "7")]
     pub working_on: ::core::option::Option<::prost::alloc::string::String>,
-    /// The interpreter's clock; the row's last activity comes from here.
+    /// The interpreter's clock when the step that produced this snapshot ran.
     #[prost(int64, tag = "8")]
     pub at_ms: i64,
+    /// The interpreter's clock when `phase` last changed; streamed output and
+    /// other changes within one phase leave it alone. The daemon copies it onto
+    /// the inventory row.
+    #[prost(int64, tag = "10")]
+    pub phase_since_ms: i64,
+    /// The branch and change totals of the agent's folder, read by the agent
+    /// process at start and at each turn end. Absent outside a repository. The
+    /// daemon copies it onto the inventory row.
+    #[prost(message, optional, tag = "11")]
+    pub git: ::core::option::Option<Git>,
 }
 impl ::prost::Name for Snapshot {
     const NAME: &'static str = "Snapshot";
@@ -254,6 +264,53 @@ impl ::prost::Name for Snapshot {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.Snapshot".into()
+    }
+}
+/// What a row says about the git repository an agent works in.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Git {
+    /// Absent on a detached head.
+    #[prost(string, optional, tag = "1")]
+    pub branch: ::core::option::Option<::prost::alloc::string::String>,
+    /// The branch a worktree amux made was made from, else the repository's
+    /// default branch; absent when neither is known.
+    #[prost(string, optional, tag = "2")]
+    pub base_branch: ::core::option::Option<::prost::alloc::string::String>,
+    /// Working tree against HEAD.
+    #[prost(message, optional, tag = "3")]
+    pub uncommitted: ::core::option::Option<ChangeTotals>,
+    /// From where the branch left its base to the working tree, so uncommitted
+    /// work counts.
+    #[prost(message, optional, tag = "4")]
+    pub on_branch: ::core::option::Option<ChangeTotals>,
+}
+impl ::prost::Name for Git {
+    const NAME: &'static str = "Git";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.Git".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.Git".into()
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ChangeTotals {
+    #[prost(uint32, tag = "1")]
+    pub files: u32,
+    #[prost(uint32, tag = "2")]
+    pub added: u32,
+    #[prost(uint32, tag = "3")]
+    pub removed: u32,
+}
+impl ::prost::Name for ChangeTotals {
+    const NAME: &'static str = "ChangeTotals";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.ChangeTotals".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.ChangeTotals".into()
     }
 }
 /// What the daemon needs to notify a parent without decoding a body. An ask
@@ -4672,8 +4729,8 @@ impl ::prost::Name for HostRemoved {
         "/amux.v1.HostRemoved".into()
     }
 }
-/// The inventory row: lifecycle from the daemon, phase and working_on copied
-/// from the snapshot envelope, never a snapshot.
+/// The inventory row: lifecycle from the daemon; phase, working_on,
+/// phase_since_ms and git copied from the snapshot envelope, never a snapshot.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Agent {
     #[prost(bytes = "vec", tag = "1")]
@@ -4682,8 +4739,9 @@ pub struct Agent {
     pub host_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(enumeration = "Kind", tag = "3")]
     pub kind: i32,
-    #[prost(string, optional, tag = "4")]
-    pub name: ::core::option::Option<::prost::alloc::string::String>,
+    /// Every agent has one: the one it was given, else one the daemon chose.
+    #[prost(string, tag = "4")]
+    pub name: ::prost::alloc::string::String,
     #[prost(string, tag = "5")]
     pub cwd: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "6")]
@@ -4698,14 +4756,17 @@ pub struct Agent {
     pub phase: i32,
     #[prost(message, optional, tag = "11")]
     pub working_on: ::core::option::Option<WorkingOn>,
-    /// The snapshot envelope's at_ms: when the agent last did anything, on the
-    /// clock of the host where it happened.
+    /// The snapshot's phase_since_ms: when the agent entered its phase, on the
+    /// clock of the host where it runs.
     #[prost(int64, tag = "12")]
-    pub last_activity_ms: i64,
+    pub phase_since_ms: i64,
     #[prost(string, tag = "14")]
     pub producer_version: ::prost::alloc::string::String,
     #[prost(uint32, tag = "15")]
     pub incarnation: u32,
+    /// The snapshot's git facts; absent outside a repository.
+    #[prost(message, optional, tag = "16")]
+    pub git: ::core::option::Option<Git>,
 }
 impl ::prost::Name for Agent {
     const NAME: &'static str = "Agent";

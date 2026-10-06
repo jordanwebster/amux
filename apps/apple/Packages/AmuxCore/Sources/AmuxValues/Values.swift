@@ -1889,7 +1889,7 @@ public struct FleetCard: Codable, Hashable, Sendable {
     public var kind: Kind
     public var attention: Attention
     public var cwd: String
-    public var lastActivityMs: Int64
+    public var phaseSinceMs: Int64
     public var host: String
     public var hostPresence: Presence
     /// Children in the fleet, and how loud the family is.
@@ -1903,13 +1903,13 @@ public struct FleetCard: Codable, Hashable, Sendable {
     public var exitCause: String?
     public var workingOn: String?
 
-    public init(agent: AgentKey, name: String, kind: Kind, attention: Attention, cwd: String, lastActivityMs: Int64, host: String, hostPresence: Presence, children: UInt32, familyAttention: Attention, members: UInt32, membersNeedYou: UInt32, exitCause: String?, workingOn: String?) {
+    public init(agent: AgentKey, name: String, kind: Kind, attention: Attention, cwd: String, phaseSinceMs: Int64, host: String, hostPresence: Presence, children: UInt32, familyAttention: Attention, members: UInt32, membersNeedYou: UInt32, exitCause: String?, workingOn: String?) {
         self.agent = agent
         self.name = name
         self.kind = kind
         self.attention = attention
         self.cwd = cwd
-        self.lastActivityMs = lastActivityMs
+        self.phaseSinceMs = phaseSinceMs
         self.host = host
         self.hostPresence = hostPresence
         self.children = children
@@ -1926,7 +1926,7 @@ public struct FleetCard: Codable, Hashable, Sendable {
         case kind
         case attention
         case cwd
-        case lastActivityMs = "last_activity_ms"
+        case phaseSinceMs = "phase_since_ms"
         case host
         case hostPresence = "host_presence"
         case children

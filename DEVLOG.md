@@ -1,3 +1,20 @@
+2026-10-06 — **The row carries a name, since-when and git facts.**
+`Agent.name` is no longer optional on the wire, and `Agent.last_activity_ms`
+is gone: field 12 is now `phase_since_ms`, when the agent entered its phase,
+which is what a fleet row's "working for 3m" counts from. The snapshot
+envelope gains `phase_since_ms` and `git` (branch, base branch, and
+uncommitted and on-branch change totals), and the row gains `git`; the daemon
+copies both from the newest snapshot onto the row and the store keeps them in
+two new columns, so a replica row carries them too. The part every
+interpreter shares stamps `phase_since_ms` only when the derived phase
+changes, so a streamed chunk or a `working_on` change within a phase keeps
+the earlier stamp; a unit test walks a turn through that. Nothing fills
+`git` yet and unnamed agents still carry an empty name; reading git facts and
+naming every agent come next. The proto baseline records the break. The
+fleet card's `last_activity_ms` follows as `phase_since_ms` and the
+generated Swift values with it; the Swift app's own uses are left for the
+phone work, so it does not build until then.
+
 2026-10-06 — **Naming a Codex thread no longer claims to make it attachable.**
 The attach section of the agent process doc, the thread-naming doc comment,
 the thread-name test's module doc and its catalog contract still said naming

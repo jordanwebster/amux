@@ -534,7 +534,7 @@ fn recent_folders(fleet: &FleetState, host: &[u8], current: &str) -> Vec<String>
         .agents()
         .filter(|agent| agent.host_id == host && !agent.cwd.is_empty())
         .collect();
-    agents.sort_by_key(|agent| std::cmp::Reverse(agent.last_activity_ms));
+    agents.sort_by_key(|agent| std::cmp::Reverse(agent.phase_since_ms));
     let mut folders = vec![current.to_owned()];
     for agent in agents {
         if !folders.contains(&agent.cwd) {

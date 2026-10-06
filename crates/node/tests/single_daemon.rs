@@ -1317,7 +1317,7 @@ fn describe_inventory(event: &InventoryEvent) -> String {
         inventory_event::Of::HostRemoved(_) => "host removed".into(),
         inventory_event::Of::Agent(agent) => format!(
             "agent {} {:?} {:?} working_on={:?}",
-            agent.name.as_deref().unwrap_or("-"),
+            agent.name,
             Lifecycle::try_from(agent.lifecycle).unwrap(),
             Phase::try_from(agent.phase).unwrap(),
             agent.working_on.as_ref().map(|w| w.text.as_str())
@@ -1344,12 +1344,25 @@ async fn the_inventory_streams_hosts_and_rows_then_caught_up_then_deltas() {
     .await;
 
     runtime.rename(agent.id, "beta").await.unwrap();
-    write_and_ingest(
-        &runtime,
-        &mut agent,
-        &[snapshot(Phase::Working, &[], 5_000)],
-    )
-    .await;
+    let git = wire::Git {
+        branch: Some("beta".into()),
+        base_branch: Some("main".into()),
+        uncommitted: Some(wire::ChangeTotals {
+            files: 1,
+            added: 4,
+            removed: 2,
+        }),
+        on_branch: Some(wire::ChangeTotals {
+            files: 3,
+            added: 40,
+            removed: 9,
+        }),
+    };
+    let mut working = snapshot(Phase::Working, &[], 5_000);
+    let envelope = working.snapshot.as_mut().unwrap();
+    envelope.phase_since_ms = 4_000;
+    envelope.git = Some(git.clone());
+    write_and_ingest(&runtime, &mut agent, &[working]).await;
     runtime.delete(agent.id).await.unwrap();
     read_inventory_until(&mut inventory, &mut seen, "the removal", |seen| {
         seen.last()
@@ -1370,9 +1383,10 @@ async fn the_inventory_streams_hosts_and_rows_then_caught_up_then_deltas() {
     );
     if let Some(inventory_event::Of::Agent(row)) = &seen[4].of {
         assert_eq!(
-            row.last_activity_ms, 5_000,
-            "last activity is the snapshot's at_ms"
+            row.phase_since_ms, 4_000,
+            "since when is the snapshot's phase_since_ms, not its at_ms"
         );
+        assert_eq!(row.git, Some(git), "git facts are the snapshot's");
     }
     println!("inventory: {described:#?}");
     crash(daemon, runtime).await;

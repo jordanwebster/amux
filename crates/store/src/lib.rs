@@ -64,6 +64,10 @@ pub struct AgentRow {
     pub working_on: Option<String>,
     /// The newest snapshot's at_ms, never commit time.
     pub last_activity: Option<i64>,
+    /// Copied from the snapshot envelope at commit: when the phase began.
+    pub phase_since: Option<i64>,
+    /// Copied from the snapshot envelope at commit.
+    pub git: Option<wire::Git>,
     pub snapshot: Option<Snapshot>,
     pub snapshot_revision: u64,
     /// Own rows: the journal offset committed through.
@@ -106,6 +110,8 @@ impl AgentRow {
             phase: wire::Phase::Starting as i32,
             working_on: None,
             last_activity: None,
+            phase_since: None,
+            git: None,
             snapshot: None,
             snapshot_revision: 0,
             ingest_cursor: 0,
@@ -169,8 +175,10 @@ pub enum SourceEvent {
     Snapshot(Snapshot),
 }
 
-/// The one write primitive for replica rows.
+/// The one write primitive for replica rows. Built per call and consumed at
+/// once, so the snapshot a reset carries is not worth boxing.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Absorb {
     /// Records that join the block above its newest row. `live` is false
     /// during a catch-up, which leaves the source cursor alone; live
@@ -620,6 +628,8 @@ impl<B: Backend> Store for B {
                         held.phase = row.phase;
                         held.working_on = row.working_on.clone();
                         held.last_activity = row.last_activity;
+                        held.phase_since = row.phase_since;
+                        held.git = row.git.clone();
                     }
                     held
                 }
@@ -876,6 +886,8 @@ fn copy_envelope(row: &mut AgentRow, snapshot: &Snapshot) {
     row.phase = snapshot.phase;
     row.working_on = snapshot.working_on.clone();
     row.last_activity = Some(snapshot.at_ms);
+    row.phase_since = Some(snapshot.phase_since_ms);
+    row.git = snapshot.git.clone();
     row.snapshot_revision = snapshot.revision;
     row.snapshot = Some(snapshot.clone());
 }

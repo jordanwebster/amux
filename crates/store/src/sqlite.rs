@@ -187,7 +187,7 @@ struct SqlTables<'a> {
 const AGENT_COLUMNS: &str = "origin_host, agent_id, kind, name, cwd, parent, parent_host, \
     lifecycle, exit_cause, phase, working_on, last_activity, snapshot, snapshot_revision, \
     ingest_cursor, next_revision, source_cursor, complete_from_order, exhausted, created_at, \
-    producer_version, incarnation, turn_open, source_generation";
+    producer_version, incarnation, turn_open, source_generation, phase_since, git";
 
 /// `crate::item_bytes`, in SQL: byte lengths, not character counts.
 const ITEM_BYTES: &str = "(length(CAST(key AS BLOB)) + length(CAST(text AS BLOB)) + length(body) \
@@ -197,7 +197,10 @@ const ITEM_BYTES: &str = "(length(CAST(key AS BLOB)) + length(CAST(text AS BLOB)
 const ITEM_COLUMNS: &str =
     "key, \"order\", revision, at_ms, producer_version, input_id, text, kind, attachments, body";
 
-fn agent_row(row: &Row<'_>) -> rusqlite::Result<(AgentRow, Option<Vec<u8>>)> {
+/// An agents row with its snapshot and git columns still encoded.
+type RawAgent = (AgentRow, Option<Vec<u8>>, Option<Vec<u8>>);
+
+fn agent_row(row: &Row<'_>) -> rusqlite::Result<RawAgent> {
     let parent: Option<Vec<u8>> = row.get(5)?;
     let parent_host: Option<Vec<u8>> = row.get(6)?;
     let snapshot: Option<Vec<u8>> = row.get(12)?;
@@ -225,9 +228,26 @@ fn agent_row(row: &Row<'_>) -> rusqlite::Result<(AgentRow, Option<Vec<u8>>)> {
             incarnation: row.get(21)?,
             turn_open: row.get::<_, i64>(22)? != 0,
             source_generation: row.get::<_, i64>(23)? as u64,
+            phase_since: row.get(24)?,
+            git: None,
         },
         snapshot,
+        row.get(25)?,
     ))
+}
+
+/// Decodes the message columns `agent_row` leaves as bytes.
+fn finish_agent((mut row, snapshot, git): RawAgent) -> Result<AgentRow, StoreError> {
+    let corrupt = |error: prost::DecodeError| StoreError::Corrupt(error.to_string());
+    row.snapshot = snapshot
+        .map(|bytes| Snapshot::decode(bytes.as_slice()))
+        .transpose()
+        .map_err(corrupt)?;
+    row.git = git
+        .map(|bytes| wire::Git::decode(bytes.as_slice()))
+        .transpose()
+        .map_err(corrupt)?;
+    Ok(row)
 }
 
 fn item_row(row: &Row<'_>, agent: &AgentKey) -> rusqlite::Result<(Item, Option<Vec<u8>>)> {
@@ -278,18 +298,11 @@ impl Tables for SqlTables<'_> {
                 agent_row,
             )
             .optional()?;
-        let Some((mut row, snapshot)) = found else {
-            return Ok(None);
-        };
-        row.snapshot = snapshot
-            .map(|bytes| Snapshot::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(|error| StoreError::Corrupt(error.to_string()))?;
-        Ok(Some(row))
+        found.map(finish_agent).transpose()
     }
 
     fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError> {
-        let placeholders = (1..=24)
+        let placeholders = (1..=26)
             .map(|n| format!("?{n}"))
             .collect::<Vec<_>>()
             .join(", ");
@@ -322,6 +335,8 @@ impl Tables for SqlTables<'_> {
                 row.incarnation,
                 i64::from(row.turn_open),
                 row.source_generation as i64,
+                row.phase_since,
+                row.git.as_ref().map(|git| git.encode_to_vec()),
             ],
         )?;
         Ok(())
@@ -593,15 +608,7 @@ impl Tables for SqlTables<'_> {
         let rows = statement
             .query_map([], agent_row)?
             .collect::<Result<Vec<_>, _>>()?;
-        rows.into_iter()
-            .map(|(mut row, snapshot)| {
-                row.snapshot = snapshot
-                    .map(|bytes| Snapshot::decode(bytes.as_slice()))
-                    .transpose()
-                    .map_err(|error| StoreError::Corrupt(error.to_string()))?;
-                Ok(row)
-            })
-            .collect()
+        rows.into_iter().map(finish_agent).collect()
     }
 
     fn agent_bytes(&self, agent: &AgentKey) -> Result<(u64, u64), StoreError> {

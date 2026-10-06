@@ -277,7 +277,7 @@ pub(crate) fn sweep_replicas(
             last_used
                 .get(&row.agent)
                 .copied()
-                .or(row.last_activity)
+                .or(row.phase_since)
                 .unwrap_or(i64::MIN),
             row.agent.clone(),
         )

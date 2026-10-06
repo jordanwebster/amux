@@ -142,7 +142,7 @@ impl ClientService for Fleet {
         }
         self.agents
             .iter()
-            .find(|agent| agent.name.as_deref() == Some(name.as_str()))
+            .find(|agent| agent.name == name)
             .cloned()
             .map(Response::new)
             .ok_or_else(|| Status::not_found(format!("{name} not found")))
@@ -373,7 +373,7 @@ fn row(id: &[u8], host: &[u8], name: &str) -> Row {
         agent_id: id.to_vec(),
         host_id: host.to_vec(),
         kind: Kind::ClaudeSdk as i32,
-        name: Some(name.to_owned()),
+        name: name.to_owned(),
         lifecycle: Lifecycle::Live as i32,
         phase: Phase::Idle as i32,
         ..Default::default()

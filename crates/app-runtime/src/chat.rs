@@ -358,7 +358,7 @@ pub(crate) fn frame(state: &SessionState, now_ms: i64, ended: Option<String>) ->
     let agent = state.agent();
     ChatFrame {
         agent: ui_state::agent_key(agent),
-        name: agent.name.clone().unwrap_or_default(),
+        name: agent.name.clone(),
         kind: state.kind(),
         phase: state.phase(),
         composer: ui_view::composer(state, now_ms),

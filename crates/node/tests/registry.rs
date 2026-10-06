@@ -276,7 +276,7 @@ async fn spawn_writes_spec_one_and_starts_the_agent_process() {
     let dir = install.agent_dir(id);
     assert_eq!(agent.lifecycle, Lifecycle::Live as i32);
     assert_eq!(agent.incarnation, 1);
-    assert_eq!(agent.name.as_deref(), Some("first"));
+    assert_eq!(agent.name, "first");
     assert!(
         node::locked(&dir),
         "the agent process holds its directory's lock"
@@ -572,11 +572,8 @@ async fn rename_changes_the_row_and_the_next_spec_never_a_written_one() {
             .unwrap(),
     );
     let renamed = runtime.rename(id, "after").await.unwrap();
-    assert_eq!(renamed.name.as_deref(), Some("after"));
-    assert_eq!(
-        runtime.agent(id).await.unwrap().name.as_deref(),
-        Some("after")
-    );
+    assert_eq!(renamed.name, "after");
+    assert_eq!(runtime.agent(id).await.unwrap().name, "after");
     assert_eq!(spec(&install.agent_dir(id), 1).name, "before");
     kill_all(&runtime).await;
     runtime.resume(id, None).await.unwrap();

@@ -22,7 +22,7 @@ fn agent(kind: Kind) -> wire::Agent {
         agent_id: b"agent".to_vec(),
         host_id: b"host".to_vec(),
         kind: kind as i32,
-        name: Some("worker".into()),
+        name: "worker".into(),
         lifecycle: wire::Lifecycle::Live as i32,
         phase: Phase::Working as i32,
         incarnation: 1,
@@ -372,14 +372,14 @@ fn fleet_row(host: &str, id: &str, phase: Phase, parent: Option<&str>, last: i64
         of: Some(wire::inventory_event::Of::Agent(wire::Agent {
             agent_id: id.as_bytes().to_vec(),
             host_id: host.as_bytes().to_vec(),
-            name: Some(id.into()),
+            name: id.into(),
             lifecycle: wire::Lifecycle::Live as i32,
             phase: phase as i32,
             parent: parent.map(|parent| wire::AgentParent {
                 host_id: host.as_bytes().to_vec(),
                 agent_id: parent.as_bytes().to_vec(),
             }),
-            last_activity_ms: last,
+            phase_since_ms: last,
             ..wire::Agent::default()
         })),
     }))

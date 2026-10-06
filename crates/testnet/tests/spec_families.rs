@@ -357,13 +357,7 @@ async fn a_spawn_by_host_name_resolves_among_trusted_hosts_and_is_forwarded() {
         let family: Vec<String> = fleet
             .family(&ui_state::agent_key(lead))
             .iter()
-            .map(|agent| {
-                format!(
-                    "{}@{}",
-                    agent.name.clone().unwrap_or_default(),
-                    short(&net, &agent.host_id)
-                )
-            })
+            .map(|agent| format!("{}@{}", agent.name.clone(), short(&net, &agent.host_id)))
             .collect();
         assert_eq!(family, ["lead@desk", "helper@box"]);
         println!("{host}'s fleet: family {family:?}");
@@ -573,10 +567,7 @@ async fn a_cascade_delete_reaches_a_reachable_child_and_orphans_an_unreachable_o
     net.wait_link("desk", "laptop", false).await.unwrap();
     let answer = net.delete_family("lead").await.unwrap();
     let names = |agents: &[wire::Agent]| -> Vec<String> {
-        agents
-            .iter()
-            .map(|agent| agent.name.clone().unwrap_or_default())
-            .collect()
+        agents.iter().map(|agent| agent.name.clone()).collect()
     };
     assert_eq!(names(&answer.removed_children), ["helper"]);
     assert_eq!(names(&answer.unreachable_children), ["scout"]);
@@ -1006,7 +997,7 @@ async fn cross_host_family_journey() {
         .map(|agent| {
             format!(
                 "{}@{} {:?}",
-                agent.name.clone().unwrap_or_default(),
+                agent.name.clone(),
                 short(&net, &agent.host_id),
                 agent.phase()
             )

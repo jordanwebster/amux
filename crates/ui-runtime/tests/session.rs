@@ -646,7 +646,7 @@ async fn the_dump_part_writes_structure_and_no_content() {
     feed.send(caught_up(3));
     let session = Arc::new(open.await.unwrap().unwrap());
     session.set_entry(wire::Agent {
-        name: Some(ENTRY.into()),
+        name: ENTRY.into(),
         cwd: format!("/Users/{ENTRY}"),
         working_on: Some(wire::WorkingOn {
             text: ENTRY.into(),

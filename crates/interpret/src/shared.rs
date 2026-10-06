@@ -409,15 +409,24 @@ impl<A: OpenAsk> Shared<A> {
     }
 
     fn snapshot_into(&mut self, emit: &mut Emit, body: Vec<u8>, force: bool) {
+        let phase = self.phase() as i32;
+        // Since when is stamped only when the phase changes; streamed output
+        // and every other change within a phase keep the earlier stamp.
+        let phase_since_ms = match &self.last_snapshot {
+            Some(last) if last.phase == phase => last.phase_since_ms,
+            _ => self.now_ms,
+        };
         let snapshot = Snapshot {
             agent: self.agent.clone(),
             revision: 0,
             queue: self.queue.entries.clone(),
             kind: self.kind.clone(),
             body,
-            phase: self.phase() as i32,
+            phase,
             working_on: self.working_on.clone(),
             at_ms: self.now_ms,
+            phase_since_ms,
+            git: None,
         };
         let changed = self.last_snapshot.as_ref().is_none_or(|last| {
             Snapshot {
@@ -1097,6 +1106,59 @@ mod tests {
         assert!(shared.turn_ended(&mut emit).is_none());
         assert!(emit.step.turn_end.is_none());
         assert_eq!(shared.phase(), Phase::Starting);
+    }
+
+    #[test]
+    fn since_when_moves_only_when_the_phase_changes() {
+        let mut shared = shared();
+        let since = |step: &Step| step.snapshot.as_ref().map(|s| (s.phase, s.phase_since_ms));
+        let first = shared.initial_step(Vec::new());
+        assert_eq!(since(&first), Some((Phase::Starting as i32, 10)));
+
+        shared.tick(20);
+        shared.provider_started();
+        let idle = shared.finish(Emit::default(), Vec::new()).step;
+        assert_eq!(since(&idle), Some((Phase::Idle as i32, 20)));
+
+        shared.tick(30);
+        shared.turn_started();
+        let mut emit = Emit::default();
+        shared.item(
+            &mut emit,
+            ItemDraft {
+                key: "t".into(),
+                text: "he".into(),
+                ..Default::default()
+            },
+        );
+        let working = shared.finish(emit, Vec::new()).step;
+        assert_eq!(since(&working), Some((Phase::Working as i32, 30)));
+
+        shared.tick(40);
+        let mut emit = Emit::default();
+        assert!(shared.append(&mut emit, "t", "llo"));
+        let chunk = shared.finish(emit, Vec::new()).step;
+        assert_eq!(chunk.appends.len(), 1);
+        assert_eq!(
+            since(&chunk),
+            None,
+            "a streamed chunk publishes no snapshot"
+        );
+
+        shared.tick(50);
+        shared.set_working_on(Some("elsewhere".into()));
+        let same_phase = shared.finish(Emit::default(), Vec::new()).step;
+        assert_eq!(
+            since(&same_phase),
+            Some((Phase::Working as i32, 30)),
+            "a snapshot within the phase keeps its stamp"
+        );
+
+        shared.tick(60);
+        let mut emit = Emit::default();
+        shared.turn_ended(&mut emit);
+        let done = shared.finish(emit, Vec::new()).step;
+        assert_eq!(since(&done), Some((Phase::Idle as i32, 60)));
     }
 
     #[test]

@@ -484,7 +484,7 @@ fn run<I: Interpreter>(events: Vec<Event>) -> (String, BTreeSet<&'static str>) {
     }
     let row = wire::Agent {
         agent_id: vec![7; 16],
-        name: Some(format!("deploy with {GITHUB_TOKEN}")),
+        name: format!("deploy with {GITHUB_TOKEN}"),
         cwd: "/Users/planted/work".to_owned(),
         working_on: Some(wire::WorkingOn {
             text: format!("mailing {EMAIL}"),

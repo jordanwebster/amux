@@ -8,7 +8,7 @@ fn row(host: &str, id: &str, phase: Phase, parent: Option<(&str, &str)>) -> Agen
         agent_id: id.as_bytes().to_vec(),
         host_id: host.as_bytes().to_vec(),
         kind: wire::Kind::ClaudeSdk as i32,
-        name: Some(id.into()),
+        name: id.into(),
         lifecycle: Lifecycle::Live as i32,
         phase: phase as i32,
         parent: parent.map(|(host, id)| AgentParent {
@@ -69,22 +69,16 @@ fn family() -> FleetState {
 fn families_follow_parent_edges_across_hosts() {
     let fleet = family();
     assert!(fleet.caught_up());
-    let roots: Vec<&str> = fleet
-        .roots()
-        .map(|agent| agent.name.as_deref().unwrap())
-        .collect();
+    let roots: Vec<&str> = fleet.roots().map(|agent| agent.name.as_str()).collect();
     assert_eq!(roots, ["loner", "parent"]);
     let members: Vec<&str> = fleet
         .family(&at("a", "parent"))
         .iter()
-        .map(|agent| agent.name.as_deref().unwrap())
+        .map(|agent| agent.name.as_str())
         .collect();
     assert_eq!(members, ["parent", "child", "grandchild"]);
     assert_eq!(fleet.root(&at("a", "grandchild")), at("a", "parent"));
-    assert_eq!(
-        fleet.parent(&at("b", "child")).unwrap().name.as_deref(),
-        Some("parent")
-    );
+    assert_eq!(fleet.parent(&at("b", "child")).unwrap().name, "parent");
 }
 
 #[test]
@@ -132,10 +126,7 @@ fn a_removed_parent_leaves_its_children_heading_their_own_family() {
         agent_id: b"parent".to_vec(),
         reason: None,
     })));
-    let roots: Vec<&str> = fleet
-        .roots()
-        .map(|agent| agent.name.as_deref().unwrap())
-        .collect();
+    let roots: Vec<&str> = fleet.roots().map(|agent| agent.name.as_str()).collect();
     assert_eq!(roots, ["loner", "child"]);
 }
 
@@ -157,10 +148,7 @@ fn a_relist_after_reconnect_drops_what_was_not_listed_again() {
         "nothing is dropped before CaughtUp"
     );
     fleet.update(caught_up());
-    let names: Vec<&str> = fleet
-        .agents()
-        .map(|agent| agent.name.as_deref().unwrap())
-        .collect();
+    let names: Vec<&str> = fleet.agents().map(|agent| agent.name.as_str()).collect();
     assert_eq!(names, ["loner", "parent"]);
     assert!(fleet.host(b"b").is_none());
 }

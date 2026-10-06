@@ -281,7 +281,7 @@ pub fn agent(kind: Kind) -> Agent {
         agent_id: b"agent-1".to_vec(),
         host_id: b"host-a".to_vec(),
         kind: kind as i32,
-        name: Some("worker".into()),
+        name: "worker".into(),
         cwd: "/src".into(),
         lifecycle: Lifecycle::Live as i32,
         phase: Phase::Idle as i32,

@@ -87,6 +87,10 @@ ALTER TABLE agents ADD COLUMN turn_open INTEGER NOT NULL DEFAULT 0;
     r#"
 ALTER TABLE agents ADD COLUMN source_generation INTEGER NOT NULL DEFAULT 0;
 "#,
+    r#"
+ALTER TABLE agents ADD COLUMN phase_since INTEGER;
+ALTER TABLE agents ADD COLUMN git BLOB;
+"#,
 ];
 
 /// The hex SHA-256 of a migration's text, as recorded when it is applied.

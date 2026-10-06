@@ -135,8 +135,36 @@ message Snapshot {
   // From the status tool call or the spawn prompt; never cleared
   // automatically.
   optional string working_on = 7;
-  // The interpreter's clock; the row's last activity comes from here.
+  // The interpreter's clock when the step that produced this snapshot ran.
   int64 at_ms = 8;
+  // The interpreter's clock when `phase` last changed; streamed output and
+  // other changes within one phase leave it alone. The daemon copies it onto
+  // the inventory row.
+  int64 phase_since_ms = 10;
+  // The branch and change totals of the agent's folder, read by the agent
+  // process at start and at each turn end. Absent outside a repository. The
+  // daemon copies it onto the inventory row.
+  optional Git git = 11;
+}
+
+// What a row says about the git repository an agent works in.
+message Git {
+  // Absent on a detached head.
+  optional string branch = 1;
+  // The branch a worktree amux made was made from, else the repository's
+  // default branch; absent when neither is known.
+  optional string base_branch = 2;
+  // Working tree against HEAD.
+  optional ChangeTotals uncommitted = 3;
+  // From where the branch left its base to the working tree, so uncommitted
+  // work counts.
+  optional ChangeTotals on_branch = 4;
+}
+
+message ChangeTotals {
+  uint32 files = 1;
+  uint32 added = 2;
+  uint32 removed = 3;
 }
 
 enum Phase {

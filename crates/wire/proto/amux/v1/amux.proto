@@ -338,13 +338,14 @@ message HostRemoved {
   bytes host_id = 1;
 }
 
-// The inventory row: lifecycle from the daemon, phase and working_on copied
-// from the snapshot envelope, never a snapshot.
+// The inventory row: lifecycle from the daemon; phase, working_on,
+// phase_since_ms and git copied from the snapshot envelope, never a snapshot.
 message Agent {
   bytes agent_id = 1;
   bytes host_id = 2;
   Kind kind = 3;
-  optional string name = 4;
+  // Every agent has one: the one it was given, else one the daemon chose.
+  string name = 4;
   string cwd = 5;
   optional AgentParent parent = 6;
   int64 created_at_ms = 7;
@@ -352,12 +353,14 @@ message Agent {
   optional string exit_cause = 9;
   Phase phase = 10;
   optional WorkingOn working_on = 11;
-  // The snapshot envelope's at_ms: when the agent last did anything, on the
-  // clock of the host where it happened.
-  int64 last_activity_ms = 12;
+  // The snapshot's phase_since_ms: when the agent entered its phase, on the
+  // clock of the host where it runs.
+  int64 phase_since_ms = 12;
   reserved 13;
   string producer_version = 14;
   uint32 incarnation = 15;
+  // The snapshot's git facts; absent outside a repository.
+  optional Git git = 16;
 }
 
 // The kind is the interpreter.

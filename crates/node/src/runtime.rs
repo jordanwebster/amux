@@ -1413,7 +1413,7 @@ impl ProfileRuntime {
                 self.fanout.publish(&key, event(of));
             }
             if envelope {
-                // Phase, working_on and last activity ride the inventory row.
+                // Phase, working_on, since-when and git ride the inventory row.
                 self.publish_row(&store, &key)?;
                 self.notifications_due.notify_one();
             }
@@ -1881,7 +1881,7 @@ pub fn to_wire(row: &AgentRow) -> Agent {
         agent_id: row.agent.agent.clone(),
         host_id: row.agent.host.clone(),
         kind: spec::kind_from_name(&row.kind) as i32,
-        name: row.name.clone(),
+        name: row.name.clone().unwrap_or_default(),
         cwd: row.cwd.clone(),
         parent: row.parent.as_ref().map(|parent| AgentParent {
             host_id: parent.host.clone(),
@@ -1895,9 +1895,12 @@ pub fn to_wire(row: &AgentRow) -> Agent {
             text: text.clone(),
             updated_at_ms: row.last_activity.unwrap_or_default(),
         }),
-        last_activity_ms: row.last_activity.unwrap_or_default(),
+        // Before its first snapshot an agent has been starting since it
+        // was created.
+        phase_since_ms: row.phase_since.unwrap_or(row.created_at),
         producer_version: row.producer_version.clone(),
         incarnation: row.incarnation,
+        git: row.git.clone(),
     }
 }
 

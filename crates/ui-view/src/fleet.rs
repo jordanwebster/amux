@@ -17,7 +17,7 @@ pub struct FleetCard {
     pub exit_cause: Option<String>,
     pub working_on: Option<String>,
     pub cwd: String,
-    pub last_activity_ms: i64,
+    pub phase_since_ms: i64,
     pub host: String,
     pub host_presence: Presence,
     /// Children in the fleet, and how loud the family is.
@@ -43,7 +43,7 @@ fn card(fleet: &FleetState, agent: &Agent) -> FleetCard {
     let host = fleet.host(&agent.host_id);
     let family = fleet.family(&at);
     FleetCard {
-        name: agent.name.clone().unwrap_or_default(),
+        name: agent.name.clone(),
         kind: agent.kind(),
         attention: ui_state::attention(agent),
         exit_cause: agent.exit_cause.clone(),
@@ -52,7 +52,7 @@ fn card(fleet: &FleetState, agent: &Agent) -> FleetCard {
             .as_ref()
             .map(|working| working.text.clone()),
         cwd: agent.cwd.clone(),
-        last_activity_ms: agent.last_activity_ms,
+        phase_since_ms: agent.phase_since_ms,
         host: host.map(|host| host.name.clone()).unwrap_or_default(),
         host_presence: host.map_or(Presence::Unspecified, |host| host.presence()),
         children: fleet.families().children(&at).count() as u32,
@@ -73,7 +73,7 @@ pub fn fleet_list(fleet: &FleetState, expand: &HashSet<Vec<u8>>) -> Vec<FleetRow
     heads.sort_by(|a, b| {
         b.family_attention
             .cmp(&a.family_attention)
-            .then(b.last_activity_ms.cmp(&a.last_activity_ms))
+            .then(b.phase_since_ms.cmp(&a.phase_since_ms))
             .then(a.agent.cmp(&b.agent))
     });
     let mut rows = Vec::new();
@@ -101,7 +101,7 @@ fn push(
         children.sort_by(|a, b| {
             b.family_attention
                 .cmp(&a.family_attention)
-                .then(b.last_activity_ms.cmp(&a.last_activity_ms))
+                .then(b.phase_since_ms.cmp(&a.phase_since_ms))
         });
         children
     } else {

@@ -146,7 +146,8 @@ One ingest pass:
    advanced cursor.
 4. Still holding the store, broadcast each committed record once on the
    agent's fan-out channel, and publish the agent's inventory row if a
-   snapshot changed its phase, `working_on` or last activity.
+   snapshot was committed: it carries the row's phase, `working_on`,
+   since-when and git facts.
 5. Reclaim segments that lie wholly below the committed cursor.
 6. At the end of the journal, the first time after each Hello, set the
    agent's CaughtUp marker and broadcast `CaughtUp`.
@@ -177,7 +178,7 @@ processes the frames in journal order, inside one transaction:
 | --- | --- |
 | Item | Assigns the agent's next revision. A key the agent already holds keeps its order; a key not held yet takes the next order above the highest committed. Upserts by key. |
 | Append | Appends the text to the held item and assigns it the next revision. The broadcast `Append` carries the item's previous revision as `base_revision`. An append naming a key the store does not hold is skipped and counted. |
-| Snapshot | Assigns the next revision, stores the snapshot on the agent row and copies `phase`, `working_on` and `at_ms` (as `last_activity`) from its envelope onto the row. |
+| Snapshot | Assigns the next revision, stores the snapshot on the agent row and copies `phase`, `working_on`, `phase_since_ms` (as `phase_since`), `git` and `at_ms` (as `last_activity`) from its envelope onto the row. |
 | Snapshot turning the phase to `NEEDS_YOU` | Inserts a `notifications` row due after the push delay. Leaving `NEEDS_YOU` deletes the agent's pending rows. |
 | `turn_end` on an agent with a parent | Inserts a `deliveries` row carrying a copy of the turn's last message. |
 
@@ -325,7 +326,7 @@ The schema is the migrations in
 | `name`, `cwd` | As the registry holds them |
 | `parent`, `parent_host` | A child records its parent as host and id, because families cross hosts |
 | `lifecycle`, `exit_cause` | Live or exited, and why. Owned by the daemon. |
-| `phase`, `working_on`, `last_activity` | Copied from the newest snapshot's envelope at commit; `last_activity` is the snapshot's `at_ms`, never commit time |
+| `phase`, `working_on`, `phase_since`, `git`, `last_activity` | Copied from the newest snapshot's envelope at commit; `last_activity` is the snapshot's `at_ms`, never commit time, and orders retention. A replica row takes `phase`, `working_on`, `phase_since` and `git` from the origin's inventory row and has no `last_activity` |
 | `snapshot`, `snapshot_revision` | The newest snapshot, body opaque |
 | `ingest_cursor` | Own rows: the journal offset committed through |
 | `next_revision` | Own rows: the revision the next record takes |

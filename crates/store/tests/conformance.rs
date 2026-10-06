@@ -302,9 +302,23 @@ fn appends_extend_text_and_carry_their_base<S: Store>(store: S) {
 fn snapshots_copy_their_envelope_onto_the_row<S: Store>(store: S) {
     let agent = own("a");
     let mut store = with_agent(store, &agent);
+    let git = wire::Git {
+        branch: Some("fix-build".into()),
+        base_branch: Some("main".into()),
+        uncommitted: Some(wire::ChangeTotals {
+            files: 2,
+            added: 10,
+            removed: 3,
+        }),
+        on_branch: None,
+    };
     let step = Step {
         items: vec![item("m1", "hi")],
-        snapshot: Some(snapshot(Phase::Working, Some("fixing the build"), 777)),
+        snapshot: Some(Snapshot {
+            phase_since_ms: 700,
+            git: Some(git.clone()),
+            ..snapshot(Phase::Working, Some("fixing the build"), 777)
+        }),
         ..Default::default()
     };
     let committed = store.commit(&agent, &[(5, step)], CLOCK).unwrap();
@@ -317,6 +331,8 @@ fn snapshots_copy_their_envelope_onto_the_row<S: Store>(store: S) {
     assert_eq!(row.phase, Phase::Working as i32);
     assert_eq!(row.working_on.as_deref(), Some("fixing the build"));
     assert_eq!(row.last_activity, Some(777));
+    assert_eq!(row.phase_since, Some(700));
+    assert_eq!(row.git, Some(git));
     assert_eq!(row.snapshot_revision, 2);
     assert_eq!(row.snapshot.as_ref(), Some(snap));
 }

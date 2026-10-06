@@ -215,8 +215,25 @@ message Item {
 ```
 
 `Snapshot` carries the same split: kind-neutral envelope fields (`revision`,
-the `queue` of `QueuedInput`s, `phase`, `working_on`, `at_ms`) and a per-kind
-`body`. `Phase` is `STARTING`, `IDLE`, `WORKING` or `NEEDS_YOU`.
+the `queue` of `QueuedInput`s, `phase`, `working_on`, `at_ms`,
+`phase_since_ms`, `git`) and a per-kind `body`. `Phase` is `STARTING`,
+`IDLE`, `WORKING` or `NEEDS_YOU`.
+
+`phase_since_ms` is the interpreter's clock when `phase` last changed. The
+part every interpreter shares stamps it, so streamed output and other changes
+within one phase leave it alone; it is what a row's "working for 3m" or "idle
+since 10:42" counts from. `git` is the branch, base branch and change totals
+of the agent's folder, absent outside a repository:
+
+```proto
+message Git {
+  optional string branch = 1;          // absent on a detached head
+  optional string base_branch = 2;     // the branch amux made the worktree from, else the default
+  optional ChangeTotals uncommitted = 3;  // working tree against HEAD
+  optional ChangeTotals on_branch = 4;    // from where the branch left its base to the working tree
+}
+message ChangeTotals { uint32 files = 1; uint32 added = 2; uint32 removed = 3; }
+```
 
 The daemon and the store read only the envelope. A `body` is bytes to them,
 stored and forwarded without decoding, so a body written by a later agent
@@ -413,12 +430,13 @@ host and every discovered candidate, `Agent` for every agent row the runtime
 holds (its own and its paired hosts'), then `CaughtUp`, then changes as they
 happen (`HostEntry`, `HostRemoved`, `Agent`, `AgentRemoved`).
 
-`Agent` is the inventory row. It carries `kind`, `name`, `cwd`, `parent` (a
-host and an id, since families cross hosts), `lifecycle` and `exit_cause`,
-`phase` and `working_on` copied from the agent's newest snapshot envelope,
-`last_activity_ms` (that snapshot's `at_ms`, on the origin host's clock),
-`producer_version` and `incarnation`. It never carries a snapshot: the fleet
-needs no per-agent subscription.
+`Agent` is the inventory row. It carries `kind`, `name` (always set),
+`cwd`, `parent` (a host and an id, since families cross hosts), `lifecycle`
+and `exit_cause`, `phase`, `working_on`, `phase_since_ms` (on the origin
+host's clock; the row's creation time until its first snapshot) and `git`
+copied from the agent's newest snapshot envelope, `producer_version` and
+`incarnation`. It never carries a snapshot: the fleet needs no per-agent
+subscription.
 
 `HostEntry` carries the host's name, version, platform and capabilities, its
 `trust` (`TRUSTED` or `CANDIDATE`), its `presence` (`ONLINE`, `OFFLINE` or
@@ -458,7 +476,10 @@ same comparison runs as the test
 runs.
 
 A deliberate break is recorded with `just proto-check --update`, which rewrites
-the baseline, committed in the same change.
+the baseline, committed in the same change. The latest: `Agent` lost
+`last_activity_ms` (field 12 is now `phase_since_ms`, when the phase began
+rather than when anything last happened) and `Agent.name` stopped being
+optional.
 
 After any edit to a `.proto`, run `just protobuf` to regenerate the committed
 Rust; `just codegen-check`, which CI runs, fails on stale output.

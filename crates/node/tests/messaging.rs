@@ -243,11 +243,11 @@ async fn an_agent_interrupts_only_its_own_children_and_manages_no_other_agent() 
     assert!(stranger.inputs().is_empty(), "nothing reached the stranger");
     let row = runtime.agent(stranger.id).await.unwrap();
     assert_eq!(
-        (row.name.as_deref(), row.lifecycle),
-        (Some("stranger"), Lifecycle::Live as i32)
+        (row.name.as_str(), row.lifecycle),
+        ("stranger", Lifecycle::Live as i32)
     );
     let row = runtime.agent(child.id).await.unwrap();
-    assert_eq!(row.name.as_deref(), Some("child"));
+    assert_eq!(row.name, "child");
 
     let answer = tools.send_input(send(&child, b"i2")).await.unwrap();
     assert_eq!(verdict(answer.get_ref()), "queued");

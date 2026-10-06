@@ -1618,7 +1618,7 @@ impl ChatView {
             && let Some(page) = &mut self.review
         {
             // Its header names the agent and where it works, as the chat's.
-            let name = state.agent().name.clone().unwrap_or_default();
+            let name = state.agent().name.clone();
             let cwd = &state.agent().cwd;
             let place = if self.local {
                 text::tilde(cwd)
@@ -1656,12 +1656,10 @@ impl ChatView {
         let pane_width = (full / 3).clamp(PANE_MIN, PANE_MAX).min(full);
         let beside = side && full.saturating_sub(pane_width) >= CHAT_MIN;
         let width = if beside { full - pane_width } else { full };
-        let name = state
-            .agent()
-            .name
-            .clone()
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "the agent".into());
+        let name = match state.agent().name.as_str() {
+            "" => "the agent".to_owned(),
+            name => name.to_owned(),
+        };
         let host = state
             .host()
             .map(|host| host.name.clone())

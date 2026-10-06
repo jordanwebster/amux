@@ -664,11 +664,11 @@ fn plain(status: &Status) -> String {
 }
 
 fn display_name(agent: &Agent) -> String {
-    agent
-        .name
-        .clone()
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| interpret::to_hex(&agent.agent_id))
+    if agent.name.is_empty() {
+        interpret::to_hex(&agent.agent_id)
+    } else {
+        agent.name.clone()
+    }
 }
 
 fn kind_name(kind: Kind) -> &'static str {

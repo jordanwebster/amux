@@ -525,8 +525,7 @@ impl App {
                     self.config.initial_chat = Some(agent.agent_id.clone());
                     self.fleet_changed();
                 } else {
-                    let name = agent.name.as_deref().unwrap_or("the agent");
-                    self.notice(format!("started {name}"), Tone::Info);
+                    self.notice(format!("started {}", agent.name), Tone::Info);
                 }
             }
             AppEvent::StartFailed(error) => {

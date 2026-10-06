@@ -1291,7 +1291,7 @@ pub(crate) fn from_wire(agent: &Agent) -> AgentRow {
         crate::spec::kind_name(kind).unwrap_or_default(),
         agent.cwd.clone(),
     );
-    row.name = agent.name.clone();
+    row.name = Some(agent.name.clone()).filter(|name| !name.is_empty());
     row.parent = agent
         .parent
         .as_ref()
@@ -1300,7 +1300,8 @@ pub(crate) fn from_wire(agent: &Agent) -> AgentRow {
     row.exit_cause = agent.exit_cause.clone();
     row.phase = agent.phase;
     row.working_on = agent.working_on.as_ref().map(|on| on.text.clone());
-    row.last_activity = (agent.last_activity_ms != 0).then_some(agent.last_activity_ms);
+    row.phase_since = Some(agent.phase_since_ms);
+    row.git = agent.git.clone();
     row.created_at = agent.created_at_ms;
     row.producer_version = agent.producer_version.clone();
     row.incarnation = agent.incarnation;

@@ -626,7 +626,7 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
     // Ages are drawn against the newest activity, so every one reads alike.
     let now = fleet
         .agents()
-        .map(|agent| agent.last_activity_ms)
+        .map(|agent| agent.phase_since_ms)
         .max()
         .unwrap()
         + 1_000;

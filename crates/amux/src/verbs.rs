@@ -72,11 +72,11 @@ pub async fn resolve(client: &mut Client, reference: &str) -> Result<Agent> {
 }
 
 pub fn display_name(agent: &Agent) -> String {
-    agent
-        .name
-        .clone()
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| short_id(&agent.agent_id))
+    if agent.name.is_empty() {
+        short_id(&agent.agent_id)
+    } else {
+        agent.name.clone()
+    }
 }
 
 fn short_id(id: &[u8]) -> String {

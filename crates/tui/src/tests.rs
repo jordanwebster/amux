@@ -1068,7 +1068,7 @@ fn agent_row(
         agent_id: id.to_vec(),
         host_id: b"a".to_vec(),
         kind: Kind::ClaudePty as i32,
-        name: Some(name.into()),
+        name: name.into(),
         lifecycle: wire::Lifecycle::Live as i32,
         phase: phase as i32,
         parent: parent.map(|parent| wire::AgentParent {
@@ -2040,7 +2040,7 @@ fn home_agent(
 ) -> wire::inventory_event::Of {
     let mut row = agent_row(id, name, phase, parent);
     if let wire::inventory_event::Of::Agent(agent) = &mut row {
-        agent.last_activity_ms = activity_ms;
+        agent.phase_since_ms = activity_ms;
         agent.cwd = "/work/amux".into();
     }
     row
