@@ -196,9 +196,14 @@ pub struct State {
     session: Option<String>,
     version: Option<String>,
     model: Option<String>,
+    /// The offered model amux last chose, which names the running one
+    /// while it stands for it.
+    #[serde(default)]
+    chosen_model: Option<String>,
     effort: Option<String>,
     permission_mode: Option<String>,
-    /// The models and commands the initialize response offers.
+    /// The models the initialize response offers and the commands Claude
+    /// last listed: the catalogue.
     #[serde(with = "serde_pb::msgs")]
     models: Vec<OfferedModel>,
     #[serde(with = "serde_pb::msgs")]
@@ -309,6 +314,7 @@ impl State {
             session: None,
             version: (!spec.provider_version.is_empty()).then(|| spec.provider_version.clone()),
             model: None,
+            chosen_model: launch_arg(&spec.provider_args, "--model"),
             // The launch argument until Claude says what it applied.
             effort: launch_arg(&spec.provider_args, "--effort"),
             permission_mode: None,
@@ -362,6 +368,12 @@ impl State {
             tasks: Some(task_list(&self.tasks)),
             context: Some(context),
             model: self.model.clone(),
+            model_name: crate::shared::model_name(
+                self.model.as_deref(),
+                self.chosen_model.as_deref(),
+                &self.models,
+                crate::claude_common::tidy_model,
+            ),
             effort: self.effort.clone(),
             permission_mode: self.permission_mode.clone(),
             active_tasks: self
@@ -379,8 +391,6 @@ impl State {
             sign_in: Some(self.sign_in.clone().unwrap_or_else(unknown::sign_in)),
             background_jobs: Some(self.shared.jobs()),
             provider_session: self.session.clone(),
-            models: self.models.clone(),
-            commands: self.commands.clone(),
         }
         .encode_to_vec()
     }
@@ -1217,14 +1227,13 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             .map(|ask| (ask.key.clone(), ask.item_key.clone()))
             .collect(),
         text: format!(
-            "asks=[{}] session={} model={} effort={} mode={} models=[{}] commands={} context={} tasks={} active=[{}] usage={} servers={} sign_in={} background={}",
+            "asks=[{}] session={} model={} model_name={} effort={} mode={} context={} tasks={} active=[{}] usage={} servers={} sign_in={} background={}",
             describe_asks(&snapshot.asks),
             snapshot.provider_session.as_deref().unwrap_or("?"),
             snapshot.model.as_deref().unwrap_or("?"),
+            crate::claude_common::describe_model_name(snapshot.model_name.as_deref()),
             snapshot.effort.as_deref().unwrap_or("?"),
             snapshot.permission_mode.as_deref().unwrap_or("?"),
-            crate::claude_common::describe_models(&snapshot.models),
-            crate::claude_common::describe_commands(&snapshot.commands),
             if context.known {
                 format!(
                     "{}/{}{}",

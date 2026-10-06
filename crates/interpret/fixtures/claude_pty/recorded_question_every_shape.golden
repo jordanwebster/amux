@@ -1,24 +1,24 @@
 ## 0 initial
-snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? context=? tasks=? background=?
+snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? model_name=? mode=? context=? tasks=? background=?
 ## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","permission_menus":{"folded":[2],"per_suggestion":[1]},"type":"launch","version":"2.1.283"}}
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
 effect follow "<TRANSCRIPT_1>"
 item boundary:1 boundary final at=1790386538450 text="" BOUNDARY_KIND_STARTED session=5ff11f0a-07f2-42ca-871e-904ef2d17080 version=2.1.283 keymap=claude-2.1
-snapshot IDLE queue=[] working_on=- at=1790386538450 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 mode=? context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1790386538450 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=? context=? tasks=? background=?
 ## 7 recorded 5: fact Transcript type=permission-mode
-snapshot IDLE queue=[] working_on=- at=1790386538745 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 mode=auto context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1790386538745 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=auto context=? tasks=? background=?
 ## 13 recorded 11: fact Transcript type=user uuid=cad3c8cb-b87d-4af2-9d23-749281561b8b
 item cad3c8cb-b87d-4af2-9d23-749281561b8b prompt final at=1790386538865 text="Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the page use?', single-select, four options Sidebar, Topbar, Grid and Stack; give every one of these four options a preview holding a small ASCII sketch of that layout. 4: header Snack, question 'Which snack do you want?', single-select, options Apple, Pretzel and Popcorn. Add nothing else. After I answer, repeat all four answers."
-snapshot WORKING queue=[] working_on=- at=1790386538848 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 mode=auto context=? tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1790386538848 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=auto context=? tasks=? background=?
 ## 37 recorded 35: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01WRvFGnY13VXqpiQcd1Vt5o
-snapshot WORKING queue=[] working_on=- at=1790386543558 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 mode=auto context=? tasks=? background=? running=toolu_01WRvFGnY13VXqpiQcd1Vt5o AskUserQuestion since=1790386543558
+snapshot WORKING queue=[] working_on=- at=1790386543558 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=auto context=? tasks=? background=? running=toolu_01WRvFGnY13VXqpiQcd1Vt5o AskUserQuestion since=1790386543558
 ## 39 recorded 37: fact Hook hook_event_name=PermissionRequest
-snapshot NEEDS_YOU queue=[] working_on=- at=1790386543579 asks=[ask:1->- question:2+other,3m+other,4,3+other] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 mode=auto context=? tasks=? background=? running=toolu_01WRvFGnY13VXqpiQcd1Vt5o AskUserQuestion since=1790386543558
+snapshot NEEDS_YOU queue=[] working_on=- at=1790386543579 asks=[ask:1->- question:2+other,3m+other,4,3+other] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=auto context=? tasks=? background=? running=toolu_01WRvFGnY13VXqpiQcd1Vt5o AskUserQuestion since=1790386543558
 ## 43 recorded 41: fact Transcript type=assistant uuid=914798c9-0971-40ea-81cc-bb90644ee933
 item toolu_01WRvFGnY13VXqpiQcd1Vt5o tool final at=1790386543731 text="" AskUserQuestion TOOL_STATE_RUNNING input="{\"questions\":[{\"header\":\"Color\",\"multiSelect\":false,\"options…"
-snapshot NEEDS_YOU queue=[] working_on=- at=1790386549709 asks=[ask:1->toolu_01WRvFGnY13VXqpiQcd1Vt5o question:2+other,3m+other,4,3+other] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 mode=auto context=41374 tasks=? background=? running=toolu_01WRvFGnY13VXqpiQcd1Vt5o AskUserQuestion since=1790386543558
+snapshot NEEDS_YOU queue=[] working_on=- at=1790386549709 asks=[ask:1->toolu_01WRvFGnY13VXqpiQcd1Vt5o question:2+other,3m+other,4,3+other] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=auto context=41374 tasks=? background=? running=toolu_01WRvFGnY13VXqpiQcd1Vt5o AskUserQuestion since=1790386543558
 ## 45 recorded 43: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01WRvFGnY13VXqpiQcd1Vt5o
-snapshot NEEDS_YOU queue=[] working_on=- at=1790386549751 asks=[ask:1->toolu_01WRvFGnY13VXqpiQcd1Vt5o question:2+other,3m+other,4,3+other] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 mode=auto context=41374 tasks=? background=?
+snapshot NEEDS_YOU queue=[] working_on=- at=1790386549751 asks=[ask:1->toolu_01WRvFGnY13VXqpiQcd1Vt5o question:2+other,3m+other,4,3+other] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=auto context=41374 tasks=? background=?
 ## 47 recorded 45: fact Transcript type=user uuid=1b79c141-0e41-48ec-8dd6-292fd3ec35cb
 item toolu_01WRvFGnY13VXqpiQcd1Vt5o tool final at=1790386543731 text="" AskUserQuestion TOOL_STATE_SUCCEEDED decision=DECISION_OUTCOME_ALLOWED elsewhere ended=1790386549966 input="{\"questions\":[{\"header\":\"Color\",\"multiSelect\":false,\"options…" out="The user answered: \"Which color do you prefer?\"=\"Blue\", \"Whi…"
-snapshot WORKING queue=[] working_on=- at=1790386549884 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 mode=auto context=41374 tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1790386549884 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=auto context=41374 tasks=? background=?

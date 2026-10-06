@@ -4,13 +4,13 @@
 use ui_state::SessionState;
 use ui_view::{ModeValue, settings};
 
-/// The model running, by the name a person reads: the display name the
-/// agent offers for exactly that model, else its id tidied into a name.
-/// An alias that stands for it ("Default (recommended)", "opus") names a
-/// choice, not the model, so the id wins over it. Before the agent reports
-/// a model, the offer's current choice by its display name or alias.
-/// None when unknown.
+/// The model running, by the name a person reads: the name the agent's
+/// snapshot gives it. Before the agent reports a model, the offer's current
+/// choice by its display name or alias. None when unknown.
 pub(crate) fn model_words(state: &SessionState) -> Option<String> {
+    if let Some(name) = &state.agent_state().model_name {
+        return Some(name.clone());
+    }
     let view = settings(state);
     let running = state.agent_state().model.as_deref().unwrap_or_default();
     if !running.is_empty() {

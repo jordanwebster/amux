@@ -199,6 +199,11 @@ pub enum Effect {
     /// item in this step references. The agent process writes it before it
     /// journals the step.
     WriteBlob { hash: Vec<u8>, bytes: Vec<u8> },
+    /// Write `bytes`, an encoded `wire::Catalogue` whose SHA-256 is `hash`,
+    /// to the agent's directory as `catalogues/<hex of hash>`: what the
+    /// agent offers now, which the snapshot in this step names. The agent
+    /// process writes it before it journals the step.
+    WriteCatalogue { hash: Vec<u8>, bytes: Vec<u8> },
     /// Claude in a terminal: a semantic input the agent process types into
     /// the PTY through the keymap it resolved for the running Claude.
     Terminal(claude_pty::TerminalInput),

@@ -215,13 +215,20 @@ pub struct State {
     effort: Option<String>,
     approval: Option<String>,
     sandbox: Option<String>,
-    /// What `model/list` and `skills/list` answered, whole.
+    /// What `model/list` and `skills/list` answered, whole: the catalogue.
     #[serde(with = "serde_pb::msgs")]
     models: Vec<OfferedModel>,
     #[serde(with = "serde_pb::msgs")]
     commands: Vec<OfferedCommand>,
     /// This server was asked what it offers.
     offers_asked: bool,
+    /// How many times `skills/list` was asked, which names each ask.
+    #[serde(default)]
+    skills_asked: u32,
+    /// Codex said its skills changed after the pending `skills/list` was
+    /// sent, so its answer may be stale: ask again once it comes.
+    #[serde(default)]
+    skills_stale: bool,
     overrides: Overrides,
     /// The turn Codex reports running.
     active_turn: Option<String>,
@@ -312,6 +319,8 @@ impl State {
             models: Vec::new(),
             commands: Vec::new(),
             offers_asked: false,
+            skills_asked: 0,
+            skills_stale: false,
             overrides: Overrides::default(),
             active_turn: None,
             turn_prompted: false,
@@ -353,6 +362,14 @@ impl State {
                 },
             }),
             model: self.model.clone(),
+            // Codex's models are offered by their ids, so the one chosen
+            // is the one whose value is the id.
+            model_name: crate::shared::model_name(
+                self.model.as_deref(),
+                None,
+                &self.models,
+                tidy_model,
+            ),
             approval_policy: self.approval.clone(),
             sandbox: self.sandbox.clone(),
             active_turn: self.active_turn.clone(),
@@ -382,8 +399,6 @@ impl State {
             }),
             effort: self.effort.clone(),
             thread_id: self.thread_id.clone(),
-            models: self.models.clone(),
-            commands: self.commands.clone(),
         }
         .encode_to_vec()
     }
@@ -1550,7 +1565,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             .map(|ask| (ask.key.clone(), ask.item_key.clone()))
             .collect(),
         text: format!(
-            "asks=[{}] thread={} turn={} model={} effort={} approval={} sandbox={} models=[{}] commands={} context={} plan={} usage={} servers={} sign_in={} background={}",
+            "asks=[{}] thread={} turn={} model={} model_name={} effort={} approval={} sandbox={} context={} plan={} usage={} servers={} sign_in={} background={}",
             snapshot
                 .asks
                 .iter()
@@ -1560,11 +1575,10 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             snapshot.thread_id.as_deref().unwrap_or("?"),
             snapshot.active_turn.as_deref().unwrap_or("-"),
             snapshot.model.as_deref().unwrap_or("?"),
+            crate::claude_common::describe_model_name(snapshot.model_name.as_deref()),
             snapshot.effort.as_deref().unwrap_or("?"),
             snapshot.approval_policy.as_deref().unwrap_or("?"),
             snapshot.sandbox.as_deref().unwrap_or("?"),
-            crate::claude_common::describe_models(&snapshot.models),
-            crate::claude_common::describe_commands(&snapshot.commands),
             if context.known {
                 format!(
                     "{}/{}",
@@ -1611,5 +1625,29 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             },
             crate::shared::describe_jobs(snapshot.background_jobs.as_ref())
         ),
+    }
+}
+
+/// A Codex model id read as a name when Codex lists no name for it:
+/// "gpt-5-codex" reads "GPT-5 Codex", "gpt-5.1-codex-max" reads
+/// "GPT-5.1 Codex Max". An id of no recognisable shape stays as it is.
+fn tidy_model(id: &str) -> String {
+    let parts: Vec<&str> = id.split('-').filter(|part| !part.is_empty()).collect();
+    let numeric = |part: &str| part.chars().all(|c| c.is_ascii_digit() || c == '.');
+    match parts.as_slice() {
+        ["gpt", version, rest @ ..] if numeric(version) => {
+            crate::shared::tidy_model_parts(id, vec![format!("GPT-{version}")], rest)
+        }
+        _ => crate::shared::tidy_model_parts(id, Vec::new(), &parts),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn codex_ids_tidy_into_names() {
+        assert_eq!(super::tidy_model("gpt-5-codex"), "GPT-5 Codex");
+        assert_eq!(super::tidy_model("gpt-5.1-codex-max"), "GPT-5.1 Codex Max");
+        assert_eq!(super::tidy_model("o3"), "o3");
     }
 }

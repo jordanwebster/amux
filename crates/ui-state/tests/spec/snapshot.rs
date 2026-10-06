@@ -235,7 +235,7 @@ fn the_chat_header_reads_the_snapshot_while_the_row_says_otherwise() {
 }
 
 #[test]
-fn the_offered_models_and_commands_ride_on_the_session_state() {
+fn what_the_fetched_catalogue_offers_shows_while_the_snapshot_names_it() {
     let models = vec![wire::OfferedModel {
         value: "sonnet".into(),
         display_name: "Sonnet".into(),
@@ -250,20 +250,39 @@ fn the_offered_models_and_commands_ride_on_the_session_state() {
         argument_hint: String::new(),
         source: "stripe".into(),
     }];
-    let sdk = wire::ClaudeSdkSnapshot {
+    let catalogue = wire::Catalogue {
+        hash: b"first".to_vec(),
         models: models.clone(),
         commands: commands.clone(),
         ..Default::default()
     };
-    let state = decode_snapshot(Kind::ClaudeSdk, &sdk.encode_to_vec());
-    assert_eq!((&state.models, &state.commands), (&models, &commands));
-    let codex = wire::CodexSnapshot {
-        models: models.clone(),
-        commands: commands.clone(),
-        ..Default::default()
-    };
-    let state = decode_snapshot(Kind::Codex, &codex.encode_to_vec());
-    assert_eq!((&state.models, &state.commands), (&models, &commands));
-    let empty = decode_snapshot(Kind::Codex, &[]);
-    assert!(empty.models.is_empty() && empty.commands.is_empty());
+    for kind in [Kind::ClaudeSdk, Kind::Codex] {
+        let naming = |revision, hash: &[u8]| {
+            let mut snap = snapshot(kind, revision, Phase::Idle, &[], &[]);
+            snap.catalogue = Some(hash.to_vec());
+            ev_snapshot(snap)
+        };
+        let mut state = SessionState::new(agent(kind), CAP);
+        apply_checked(&mut state, naming(1, b"first"));
+        assert_eq!(
+            state.agent_state().catalogue.as_deref(),
+            Some(&b"first"[..])
+        );
+        assert!(state.agent_state().models.is_empty(), "not fetched yet");
+        state.set_catalogue(catalogue.clone());
+        let offered = state.agent_state();
+        assert_eq!((&offered.models, &offered.commands), (&models, &commands));
+        apply_checked(&mut state, naming(2, b"first"));
+        assert_eq!(
+            state.agent_state().models,
+            models,
+            "the same catalogue stays"
+        );
+        apply_checked(&mut state, naming(3, b"second"));
+        let changed = state.agent_state();
+        assert!(
+            changed.models.is_empty() && changed.commands.is_empty(),
+            "a catalogue the snapshot no longer names offers nothing"
+        );
+    }
 }

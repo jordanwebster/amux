@@ -1,44 +1,44 @@
 ## 0 initial
-snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? context=? tasks=? background=?
+snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? model_name=? mode=? context=? tasks=? background=?
 ## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","permission_menus":{"folded":[2],"per_suggestion":[1]},"type":"launch","version":"2.1.283"}}
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
 effect follow "<TRANSCRIPT_1>"
 item boundary:1 boundary final at=1790386572764 text="" BOUNDARY_KIND_STARTED session=bf8b2931-3680-4250-9331-a7190453fe89 version=2.1.283 keymap=claude-2.1
-snapshot IDLE queue=[] working_on=- at=1790386572764 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=? context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1790386572764 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=? context=? tasks=? background=?
 ## 7 recorded 5: fact Transcript type=permission-mode
-snapshot IDLE queue=[] working_on=- at=1790386572903 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1790386572903 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=? tasks=? background=?
 ## 13 recorded 11: fact Transcript type=user uuid=76dc41bf-53b0-4d06-910f-4a68e1a34710
 item 76dc41bf-53b0-4d06-910f-4a68e1a34710 prompt final at=1790386573379 text="Track this work with your task tools: create three tasks named Draft, Review and Publish. Then mark Draft in progress, then mark Draft completed. Do nothing else, then stop."
-snapshot WORKING queue=[] working_on=- at=1790386573006 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=? tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1790386573006 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=? tasks=? background=?
 ## 40 recorded 38: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01Tmg9854UcvaHTAXtXVEBrK
-snapshot WORKING queue=[] working_on=- at=1790386576188 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=? tasks=? background=? running=toolu_01Tmg9854UcvaHTAXtXVEBrK ToolSearch since=1790386576188
+snapshot WORKING queue=[] working_on=- at=1790386576188 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=? tasks=? background=? running=toolu_01Tmg9854UcvaHTAXtXVEBrK ToolSearch since=1790386576188
 ## 42 recorded 40: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01Tmg9854UcvaHTAXtXVEBrK
-snapshot WORKING queue=[] working_on=- at=1790386576208 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=? tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1790386576208 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=? tasks=? background=?
 ## 44 recorded 42: fact Transcript type=assistant uuid=68fa42d7-c859-4afd-8213-7b6a74e8a80b
 item 68fa42d7-c859-4afd-8213-7b6a74e8a80b thinking final at=1790386576269 text=""
-snapshot WORKING queue=[] working_on=- at=1790386576399 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=36221 tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1790386576399 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=36221 tasks=? background=?
 ## 46 recorded 44: fact Transcript type=assistant uuid=7a0a8edb-b7a7-412b-9f3e-730b270f100e
 item toolu_01Tmg9854UcvaHTAXtXVEBrK tool final at=1790386576739 text="" ToolSearch TOOL_STATE_RUNNING search input="{\"max_results\":5,\"query\":\"select:TaskCreate,TaskUpdate\"}"
 ## 47 recorded 45: fact Transcript type=user uuid=0a6703b1-dbc8-4bc3-9881-699995a3a38f
 item toolu_01Tmg9854UcvaHTAXtXVEBrK tool final at=1790386576739 text="" ToolSearch TOOL_STATE_SUCCEEDED search ended=1790386576781 input="{\"max_results\":5,\"query\":\"select:TaskCreate,TaskUpdate\"}"
 ## 73 recorded 71: fact Transcript type=assistant uuid=42194556-0da4-4d4a-bb89-3942d514553b
 item 42194556-0da4-4d4a-bb89-3942d514553b thinking final at=1790386578402 text=""
-snapshot WORKING queue=[] working_on=- at=1790386579182 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38289 tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1790386579182 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=38289 tasks=? background=?
 ## 75 recorded 73: fact Transcript type=user uuid=ec5b80d0-f745-4a3c-bf4d-693406fe4658
-snapshot WORKING queue=[] working_on=- at=1790386579182 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38289 tasks=[1:TASK_LIST_STATUS_PENDING:"Draft"] background=?
+snapshot WORKING queue=[] working_on=- at=1790386579182 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=38289 tasks=[1:TASK_LIST_STATUS_PENDING:"Draft"] background=?
 ## 77 recorded 75: fact Transcript type=user uuid=7959c391-03d5-49c8-a987-9da551e6fa13
-snapshot WORKING queue=[] working_on=- at=1790386579182 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38289 tasks=[1:TASK_LIST_STATUS_PENDING:"Draft",2:TASK_LIST_STATUS_PENDING:"Review"] background=?
+snapshot WORKING queue=[] working_on=- at=1790386579182 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=38289 tasks=[1:TASK_LIST_STATUS_PENDING:"Draft",2:TASK_LIST_STATUS_PENDING:"Review"] background=?
 ## 80 recorded 78: fact Transcript type=user uuid=eb9aad27-473c-4931-8533-3557c0890497
-snapshot WORKING queue=[] working_on=- at=1790386579183 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38289 tasks=[1:TASK_LIST_STATUS_PENDING:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
+snapshot WORKING queue=[] working_on=- at=1790386579183 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=38289 tasks=[1:TASK_LIST_STATUS_PENDING:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
 ## 88 recorded 86: fact Transcript type=assistant uuid=295a6153-94f6-4a6a-9649-e9001eaf80d5
 item 295a6153-94f6-4a6a-9649-e9001eaf80d5 thinking final at=1790386581104 text=""
-snapshot WORKING queue=[] working_on=- at=1790386581030 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38676 tasks=[1:TASK_LIST_STATUS_PENDING:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
+snapshot WORKING queue=[] working_on=- at=1790386581030 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=38676 tasks=[1:TASK_LIST_STATUS_PENDING:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
 ## 90 recorded 88: fact Transcript type=user uuid=8b97e27a-c40f-4c50-98af-f833bf6299a1
-snapshot WORKING queue=[] working_on=- at=1790386581030 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38676 tasks=[1:TASK_LIST_STATUS_IN_PROGRESS:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
+snapshot WORKING queue=[] working_on=- at=1790386581030 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=38676 tasks=[1:TASK_LIST_STATUS_IN_PROGRESS:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
 ## 98 recorded 96: fact Transcript type=assistant uuid=8bc6c3ec-f7b7-4962-b95a-e657cebebaa9
 item 8bc6c3ec-f7b7-4962-b95a-e657cebebaa9 thinking final at=1790386582887 text=""
-snapshot WORKING queue=[] working_on=- at=1790386582682 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38856 tasks=[1:TASK_LIST_STATUS_IN_PROGRESS:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
+snapshot WORKING queue=[] working_on=- at=1790386582682 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=38856 tasks=[1:TASK_LIST_STATUS_IN_PROGRESS:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
 ## 100 recorded 98: fact Transcript type=user uuid=e23a365f-c6d4-4a44-b597-64a29a3e45cd
-snapshot WORKING queue=[] working_on=- at=1790386582682 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38856 tasks=[1:TASK_LIST_STATUS_COMPLETED:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
+snapshot WORKING queue=[] working_on=- at=1790386582682 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=38856 tasks=[1:TASK_LIST_STATUS_COMPLETED:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
 ## 104 recorded 102: fact Hook hook_event_name=Stop
-snapshot WORKING queue=[] working_on=- at=1790386584316 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38856 tasks=[1:TASK_LIST_STATUS_COMPLETED:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=[]
+snapshot WORKING queue=[] working_on=- at=1790386584316 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=38856 tasks=[1:TASK_LIST_STATUS_COMPLETED:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=[]

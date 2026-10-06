@@ -343,6 +343,10 @@ impl State {
         if let Request::Skills = request {
             if let Ok(result) = &result {
                 self.commands = skills(result);
+                self.publish_catalogue(emit);
+            }
+            if std::mem::take(&mut self.skills_stale) {
+                self.list_skills(emit);
             }
             return;
         }
@@ -476,8 +480,54 @@ impl State {
             Some(cursor) if !data.is_empty() => {
                 self.list_models(emit, number + 1, Some(cursor), listed)
             }
-            _ => self.models = listed,
+            _ => {
+                self.models = listed;
+                self.publish_catalogue(emit);
+            }
         }
+    }
+
+    /// The catalogue from what Codex last listed; written only when it
+    /// differs from the last one.
+    fn publish_catalogue(&mut self, emit: &mut Emit) {
+        self.shared.set_catalogue(
+            emit,
+            wire::Catalogue {
+                models: self.models.clone(),
+                commands: self.commands.clone(),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// Codex's skills changed: ask for the list again. While an ask is
+    /// out, one more after its answer covers every change since it was
+    /// sent.
+    fn skills_changed(&mut self, emit: &mut Emit) {
+        if self
+            .requests
+            .values()
+            .any(|request| *request == Request::Skills)
+        {
+            self.skills_stale = true;
+        } else {
+            self.list_skills(emit);
+        }
+    }
+
+    /// Asks for the skills, the same way each time.
+    fn list_skills(&mut self, emit: &mut Emit) {
+        self.skills_asked += 1;
+        let id = match self.skills_asked {
+            1 => "amux-skills".to_owned(),
+            asked => format!("amux-skills-{asked}"),
+        };
+        let skills = self.request_as(
+            id,
+            ClientRequest::SkillsList(SkillsListParams::default()),
+            Request::Skills,
+        );
+        emit.effect(Effect::ProviderWrite(skills));
     }
 
     /// Asks Codex which commands it runs in the background, the first page
@@ -557,12 +607,7 @@ impl State {
             return;
         }
         self.list_models(emit, 1, None, Vec::new());
-        let skills = self.request_as(
-            "amux-skills".into(),
-            ClientRequest::SkillsList(SkillsListParams::default()),
-            Request::Skills,
-        );
-        emit.effect(Effect::ProviderWrite(skills));
+        self.list_skills(emit);
     }
 
     /// Gives the thread the agent's name, so Codex's own app shows the name
@@ -1218,8 +1263,8 @@ impl State {
             | ServerNotification::Warning(_)
             | ServerNotification::FileChangeOutputDelta(_)
             | ServerNotification::TerminalInteraction(_) => {}
-            other
-            @ (ServerNotification::ThreadClosed(_) | ServerNotification::SkillsChanged(_)) => {
+            ServerNotification::SkillsChanged(_) => self.skills_changed(emit),
+            other @ ServerNotification::ThreadClosed(_) => {
                 self.unrecognized(emit, other.method(), "a notification amux does not read")
             }
         }
@@ -2058,6 +2103,11 @@ impl State {
 
     pub(super) fn exited(&mut self, emit: &mut Emit, cause: String) {
         self.offers_asked = false;
+        // The next server is asked afresh; this one will answer nothing.
+        self.skills_asked = 0;
+        self.skills_stale = false;
+        self.requests
+            .retain(|_, request| *request != Request::Skills);
         for ask in self.shared.close_all_asks() {
             if let Some(meta) = self.asks.remove(&ask.key) {
                 self.emit_ask(emit, &ask, meta.at_ms, Some(ask_item::dismissed()));

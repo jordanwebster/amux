@@ -295,22 +295,29 @@ fn a_prompt_with_attachments_leaves_them_to_the_agent_process() {
     assert_eq!(attachments.len(), 1);
 }
 
-/// The last snapshot a fixture's replay carries, decoded.
-fn last_snapshot(fixture: &str) -> wire::CodexSnapshot {
-    use prost::Message as _;
+/// The catalogue a fixture's replay last wrote, which its last snapshot
+/// names; None when it wrote none.
+fn last_catalogue(fixture: &str) -> Option<wire::Catalogue> {
     let replayed = interpret::replay::<Codex>(&fixtures().join(format!("{fixture}.json"))).unwrap();
-    let snapshot = replayed
+    let named = replayed
         .iter()
         .rev()
         .find_map(|frame| frame.step.snapshot.clone())
-        .expect("a snapshot");
-    wire::CodexSnapshot::decode(snapshot.body.as_slice()).unwrap()
+        .expect("a snapshot")
+        .catalogue;
+    let written = replayed.into_iter().rev().find_map(|frame| frame.catalogue);
+    assert_eq!(
+        named,
+        written.as_ref().map(|catalogue| catalogue.hash.clone()),
+        "the snapshot names the catalogue last written"
+    );
+    written
 }
 
 #[test]
 fn offered_lists_keep_what_the_server_named() {
-    let snapshot = last_snapshot("offered");
-    let astra = &snapshot.models[0];
+    let catalogue = last_catalogue("offered").expect("a catalogue");
+    let astra = &catalogue.models[0];
     assert_eq!(astra.value, "gpt-6-astra");
     assert_eq!(astra.display_name, "GPT-6-Astra");
     assert_eq!(
@@ -323,7 +330,7 @@ fn offered_lists_keep_what_the_server_named() {
     );
     assert_eq!(astra.default_effort.as_deref(), Some("medium"));
     assert_eq!(
-        snapshot
+        catalogue
             .models
             .iter()
             .map(|model| model.value.as_str())
@@ -332,7 +339,7 @@ fn offered_lists_keep_what_the_server_named() {
         "both pages, the hidden model left out"
     );
     assert_eq!(
-        snapshot
+        catalogue
             .commands
             .iter()
             .map(|command| (command.name.as_str(), command.source.as_str()))
@@ -345,12 +352,11 @@ fn offered_lists_keep_what_the_server_named() {
         "the turned-off skill left out"
     );
     assert!(
-        snapshot.commands[0]
+        catalogue.commands[0]
             .description
             .starts_with("Execute confirmed")
     );
-    let refused = last_snapshot("offered_refused");
-    assert!(refused.models.is_empty() && refused.commands.is_empty());
+    assert_eq!(last_catalogue("offered_refused"), None);
 }
 
 /// The attach tool's element in a finished agent message becomes an
@@ -652,4 +658,112 @@ fn a_command_that_prints_without_end_keeps_bounded_state() {
     );
     let open = state.shared().open_item("cmd-1").unwrap().text.len();
     assert!(open <= 2 * interpret::OUTPUT_CAP);
+}
+
+/// The `skills/list` requests a step wrote, as JSON.
+fn skills_asks(stepped: &interpret::Stepped) -> Vec<Value> {
+    stepped
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::ProviderWrite(bytes) => serde_json::from_slice::<Value>(bytes).ok(),
+            _ => None,
+        })
+        .filter(|request| request["method"] == "skills/list")
+        .collect()
+}
+
+fn catalogue_hash(stepped: &interpret::Stepped) -> Option<Vec<u8>> {
+    stepped.effects.iter().find_map(|effect| match effect {
+        Effect::WriteCatalogue { hash, .. } => Some(hash.clone()),
+        _ => None,
+    })
+}
+
+/// Codex says its skills changed with an empty notification: the
+/// interpreter asks for the list again exactly as it first did and
+/// rebuilds the catalogue from the answer, which changes its hash only when
+/// the list changed. Notices arriving while an ask is out cost one more ask
+/// after its answer, not one each.
+#[test]
+fn a_skills_changed_notice_asks_again_and_rebuilds_the_catalogue() {
+    let script = interpret::fixture_script::<Codex>(&fixtures().join("offered.json")).unwrap();
+    let (mut state, _) = Codex::initial(&script.spec, &script.producer);
+    let mut first_ask = None;
+    let mut answer = None;
+    let mut hash = None;
+    for (_, event) in script.events {
+        let Some(event) = event else { continue };
+        if let Event::Fact(fact) = &event {
+            let message: Value = serde_json::from_slice(&fact.payload).unwrap();
+            if message["id"] == "amux-skills" {
+                answer = Some(message);
+            }
+        }
+        let stepped = Codex::step(&mut state, event);
+        first_ask = first_ask.or(skills_asks(&stepped).into_iter().next());
+        hash = catalogue_hash(&stepped).or(hash);
+    }
+    let first_ask = first_ask.expect("the server is asked for its skills");
+    let mut answer = answer.expect("the fixture answers it");
+    let hash = hash.expect("a catalogue");
+    let same_ask = |ask: &Value, id: &str| {
+        assert_eq!(ask["id"], id);
+        assert_eq!(
+            ask["params"], first_ask["params"],
+            "asked as the first time"
+        );
+    };
+    let changed = || rpc(json!({"method": "skills/changed", "params": {}}));
+
+    // A skill appears: asked again, and the new list is a new catalogue.
+    let stepped = Codex::step(&mut state, changed());
+    let [ask] = skills_asks(&stepped).try_into().expect("one ask");
+    same_ask(&ask, "amux-skills-2");
+    let skills = answer["result"]["data"][0]["skills"]
+        .as_array_mut()
+        .unwrap();
+    let mut added = skills[0].clone();
+    added["name"] = json!("new-skill");
+    skills.push(added);
+    answer["id"] = json!("amux-skills-2");
+    let stepped = Codex::step(&mut state, rpc(answer.clone()));
+    let new_hash = catalogue_hash(&stepped).expect("the list changed");
+    assert_ne!(new_hash, hash);
+    assert_eq!(
+        stepped
+            .step
+            .snapshot
+            .and_then(|snapshot| snapshot.catalogue),
+        Some(new_hash),
+        "the snapshot names the new catalogue"
+    );
+
+    // Two notices while the ask is out: one ask now, one after its answer.
+    let stepped = Codex::step(&mut state, changed());
+    let [ask] = skills_asks(&stepped).try_into().expect("one ask");
+    same_ask(&ask, "amux-skills-3");
+    let stepped = Codex::step(&mut state, changed());
+    assert!(skills_asks(&stepped).is_empty(), "one ask is already out");
+    answer["id"] = json!("amux-skills-3");
+    let stepped = Codex::step(&mut state, rpc(answer.clone()));
+    assert_eq!(
+        catalogue_hash(&stepped),
+        None,
+        "the same list writes nothing"
+    );
+    let [ask] = skills_asks(&stepped).try_into().expect("asked once more");
+    same_ask(&ask, "amux-skills-4");
+    answer["id"] = json!("amux-skills-4");
+    let stepped = Codex::step(&mut state, rpc(answer));
+    assert_eq!(
+        catalogue_hash(&stepped),
+        None,
+        "the same list writes nothing"
+    );
+    assert!(skills_asks(&stepped).is_empty());
+    assert!(
+        stepped.step.snapshot.is_none(),
+        "nothing a client draws changed"
+    );
 }

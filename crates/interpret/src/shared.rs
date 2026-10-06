@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use wire::{
     AgentMessage, AgentSpec, Append, Attachment, Envelope, Input, Item, Phase, PromptInput,
@@ -376,6 +377,10 @@ pub struct Shared<A: OpenAsk> {
     /// tracked it; None until the provider says.
     #[serde(default, with = "serde_pb::opt_msg")]
     jobs: Option<wire::BackgroundJobs>,
+    /// The hash of the catalogue last written; None until the provider
+    /// says what it offers.
+    #[serde(default)]
+    catalogue: Option<Vec<u8>>,
 }
 
 impl<A: OpenAsk> Shared<A> {
@@ -400,6 +405,7 @@ impl<A: OpenAsk> Shared<A> {
             last_snapshot: None,
             git: None,
             jobs: None,
+            catalogue: None,
         };
         if let Some(initial) = &spec.initial_prompt
             && let Some(entry) = queued_from_input(initial)
@@ -473,6 +479,7 @@ impl<A: OpenAsk> Shared<A> {
             at_ms: self.now_ms,
             phase_since_ms,
             git: self.git.clone(),
+            catalogue: self.catalogue.clone(),
         };
         let changed = self.last_snapshot.as_ref().is_none_or(|last| {
             Snapshot {
@@ -506,6 +513,26 @@ impl<A: OpenAsk> Shared<A> {
     /// emits one only when they changed.
     pub fn set_git(&mut self, git: Option<wire::Git>) {
         self.git = git;
+    }
+
+    // --- catalogue -------------------------------------------------------
+
+    /// Hashes the encoded catalogue. A changed hash asks the agent process
+    /// to write the bytes before the step is journaled and publishes the
+    /// new hash on the snapshot; an unchanged one does nothing.
+    pub fn set_catalogue(&mut self, emit: &mut Emit, catalogue: wire::Catalogue) {
+        use sha2::Digest as _;
+        let bytes = wire::Catalogue {
+            hash: Vec::new(),
+            ..catalogue
+        }
+        .encode_to_vec();
+        let hash = sha2::Sha256::digest(&bytes).to_vec();
+        if self.catalogue.as_ref() == Some(&hash) {
+            return;
+        }
+        self.catalogue = Some(hash.clone());
+        emit.effect(Effect::WriteCatalogue { hash, bytes });
     }
 
     // --- background jobs -------------------------------------------------
@@ -1137,6 +1164,74 @@ pub(crate) fn json_as_written(payload: &[u8], path: &[&str]) -> Option<Vec<u8>> 
     (at.get() != "null").then(|| at.get().as_bytes().to_vec())
 }
 
+/// The running model as a person reads it: the display name of the offered
+/// model it was chosen as, when that entry stands for it; else of the
+/// offered model whose value is its id; else its id tidied by the kind.
+/// None while the model is unknown.
+pub fn model_name(
+    model: Option<&str>,
+    chosen: Option<&str>,
+    offered: &[wire::OfferedModel],
+    tidy: fn(&str) -> String,
+) -> Option<String> {
+    let model = model.filter(|model| !model.is_empty())?;
+    let named = |entry: &&wire::OfferedModel| !entry.display_name.is_empty();
+    // An alias stands for the model when it is the model, or resolves to it
+    // or to nothing it says.
+    let chosen = chosen.and_then(|chosen| {
+        offered.iter().filter(named).find(|entry| {
+            entry.value == chosen
+                && (entry.value == model
+                    || entry.resolved_model.is_empty()
+                    || entry.resolved_model == model)
+        })
+    });
+    let by_id = || {
+        offered
+            .iter()
+            .filter(named)
+            .find(|entry| entry.value == model)
+    };
+    Some(match chosen.or_else(by_id) {
+        Some(entry) => entry.display_name.clone(),
+        None => tidy(model),
+    })
+}
+
+/// A model id's parts read as a name: version numbers join with dots ("4",
+/// "1" reads "4.1"), an o-series name stays as written, other words are
+/// capitalised. `words` holds what the kind already named.
+pub fn tidy_model_parts(id: &str, mut words: Vec<String>, parts: &[&str]) -> String {
+    let numeric = |part: &str| part.chars().all(|c| c.is_ascii_digit() || c == '.');
+    for part in parts {
+        match words.last_mut() {
+            Some(last)
+                if numeric(part) && last.chars().last().is_some_and(|c| c.is_ascii_digit()) =>
+            {
+                last.push('.');
+                last.push_str(part);
+            }
+            _ if part.starts_with('o') && part[1..].chars().all(|c| c.is_ascii_digit()) => {
+                words.push((*part).to_owned())
+            }
+            _ => words.push(capitalised(part)),
+        }
+    }
+    if words.is_empty() {
+        id.to_owned()
+    } else {
+        words.join(" ")
+    }
+}
+
+fn capitalised(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use wire::{Ask, EnvelopeKind};
@@ -1389,5 +1484,53 @@ mod tests {
             json_as_written(br#"{"request":{}}"#, &["request", "x"]),
             None
         );
+    }
+
+    fn offered(value: &str, display_name: &str, resolved_model: &str) -> wire::OfferedModel {
+        wire::OfferedModel {
+            value: value.into(),
+            display_name: display_name.into(),
+            resolved_model: resolved_model.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_model_is_named_by_its_choice_then_its_id_then_tidied() {
+        let offered = [
+            offered("opus", "Opus", "claude-opus-5-5"),
+            offered("fable", "Fable", ""),
+            offered("claude-sonnet-5", "Sonnet 5 (offered)", ""),
+        ];
+        let name =
+            |model, chosen| super::model_name(model, chosen, &offered, |id| format!("tidy {id}"));
+        assert_eq!(
+            name(Some("claude-opus-5-5"), Some("opus")).as_deref(),
+            Some("Opus")
+        );
+        assert_eq!(
+            name(Some("claude-fable-5-1"), Some("fable")).as_deref(),
+            Some("Fable"),
+            "an alias that says nothing of what it resolves to stands for the model"
+        );
+        assert_eq!(
+            name(Some("claude-sonnet-5"), Some("opus")).as_deref(),
+            Some("Sonnet 5 (offered)"),
+            "a choice resolving elsewhere does not name it; the entry with its id does"
+        );
+        assert_eq!(
+            name(Some("claude-haiku-4-5"), None).as_deref(),
+            Some("tidy claude-haiku-4-5")
+        );
+        assert_eq!(name(None, Some("opus")), None);
+    }
+
+    #[test]
+    fn claude_ids_tidy_into_names() {
+        let claude = crate::claude_common::tidy_model;
+        assert_eq!(claude("claude-opus-4-1-20250805"), "Opus 4.1");
+        assert_eq!(claude("claude-opus-5[1m]"), "Opus 5");
+        assert_eq!(claude("claude-haiku-4-5-20251001"), "Haiku 4.5");
+        assert_eq!(claude("opus"), "Opus");
     }
 }

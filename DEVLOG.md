@@ -1,3 +1,22 @@
+2026-10-06 — **What an agent offers moves out of the snapshot into a catalogue written by hash.**
+Every snapshot of a headless Claude or Codex agent used to carry the full model
+and command lists (81 commands on a real Claude session), re-sent with each
+streamed change. The interpreters now build a `Catalogue` (models, commands,
+and room for the permissions and modes still to come) whenever the provider
+states or restates what it offers, hash its encoding, and when the hash
+changes have the agent process write it to `catalogues/<hash>` in the agent's
+directory before journaling the step; the snapshot names only the hash.
+Headless Claude's unasked `commands_changed` event, which the interpreter used
+to drop, now rebuilds the catalogue, and Codex's `skills/changed` notice makes
+the interpreter ask `skills/list` again, so a skill added mid-session shows up;
+an unchanged answer writes nothing. Each snapshot also names the running
+model for people ("Opus 5.5", "GPT-5.6 Luna"): the offered entry it was chosen
+as, else the entry with its id, else the id tidied, which the terminal's
+composer edge now shows. A client session shows offered models and commands
+once a fetched catalogue is handed to it with `set_catalogue`; serving and
+fetching it is the next step, so until then the settings pickers list no
+offers.
+
 2026-10-06 — **A served set shows a long command's output staying bounded.**
 The fake Codex can now print a command's output in pieces while the command
 runs (`outcome.pieces`, `{piece}` numbered in the text), each piece its own

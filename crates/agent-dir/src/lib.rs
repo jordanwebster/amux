@@ -37,6 +37,9 @@ pub const PTY: &str = "pty";
 pub const PRIVATE: &str = "private";
 /// Bytes the agent references, named by their hash.
 pub const BLOBS: &str = "blobs";
+/// What the agent offers, an encoded Catalogue named by the hex of its
+/// SHA-256; the snapshot names the current one.
+pub const CATALOGUES: &str = "catalogues";
 
 /// The directory's exclusive lock, held for the process's lifetime; the
 /// kernel releases it when the process dies.

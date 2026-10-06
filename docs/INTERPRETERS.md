@@ -174,6 +174,35 @@ and terminal Claude's `/exit` can move the session and its jobs into
 Claude's own background. Nothing reports on such jobs any more, so amux
 lists none.
 
+## The catalogue
+
+What an agent offers to pick from (models with their efforts, commands,
+permissions, modes) is its `Catalogue`, kept out of the snapshot because it
+is large and rarely changes. An interpreter builds it whenever its provider
+states or restates what it offers; the shared part encodes it, hashes the
+bytes with SHA-256, and when the hash differs from the last one emits
+`WriteCatalogue` and publishes the hash as `Snapshot.catalogue`. The agent
+process writes the bytes to `catalogues/<hex of hash>` in the agent's
+directory before it journals the step, so a snapshot never names a
+catalogue that is not on disk. An unchanged list writes nothing.
+
+- **Headless Claude** offers what its `initialize` answer lists; a plugin
+  reload's answer and Claude's unasked `commands_changed` event replace the
+  commands.
+- **Codex** offers what `model/list` and `skills/list` answer. Codex sends
+  `skills/changed` (empty params) when a skill appears or goes; the
+  interpreter asks `skills/list` again with the same parameters (ids
+  `amux-skills-<n>` after the first) and rebuilds from the answer. Notices
+  that arrive while an ask is out cost one more ask after its answer. Codex
+  says nothing when its models change, so they are asked once per server.
+- **Terminal Claude** offers no catalogue of its own.
+
+Each snapshot also states the running model's display name: the catalogue
+entry amux chose the model as, while that entry stands for the reported
+model; else the entry whose value is the model's id; else the id tidied by
+the kind's interpreter ("claude-opus-4-1-20250805" reads "Opus 4.1",
+"gpt-5-codex" reads "GPT-5 Codex").
+
 ## Redaction
 
 Dumps leave the machine, so every body in them is redacted, and only an
@@ -309,7 +338,7 @@ only for the permission menus the resolved keymap can type (its verified menu
 shapes); on any other menu the card offers allow once and deny.
 
 Terminal Claude offers no list of models, efforts or commands a program could
-read, so its snapshot offers none and it takes no model or effort input: a
+read, so it writes no catalogue and takes no model or effort input: a
 person types `/model <name>` or `/effort <level>` as a prompt and the
 command's own rows reflect it. The permission mode changes only by cycling,
 since the cycle's order depends on how Claude was launched. Its inputs are
@@ -409,8 +438,8 @@ nothing is inferred.
   an item of its own. Answers go back as control responses. A control
   request of any other subtype is answered with an error.
 - **Offers.** The answer to the agent process's `initialize` request lists
-  the models, each with its effort levels, and the slash commands; every
-  later snapshot carries them. Nothing comes from a client-side catalogue.
+  the models, each with its effort levels, and the slash commands, which
+  make the agent's catalogue; `commands_changed` rebuilds it.
 - **Inputs.** Prompt, withdraw, send now (a message at default priority,
   which joins the running turn at its next tool boundary), interrupt (a
   control request), clear (sent as `/clear`), permission mode and model
@@ -478,9 +507,10 @@ answer.
   is kept beside the windows.
 - **Offers.** Once the thread is known, the interpreter asks `model/list`
   (following `nextCursor` to the last page, leaving hidden models out) and
-  `skills/list`, once per server; the snapshot carries the models with their
-  reasoning efforts, and the skills as commands. A refused or missing answer
-  leaves its list empty.
+  `skills/list`, once per server, and asks `skills/list` again on
+  `skills/changed`; the catalogue carries the models with their reasoning
+  efforts, and the skills as commands. A refused or missing answer leaves
+  its list empty.
 - **Asks** are the server's requests:
 
   | Request | Ask |

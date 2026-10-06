@@ -305,7 +305,6 @@ fn client_uuids_are_well_formed() {
 
 #[test]
 fn the_initialize_answer_lists_models_with_efforts_and_commands_with_sources() {
-    use prost::Message as _;
     let replayed =
         interpret::replay::<ClaudeSdk>(&fixtures().join("recorded_multi_turn.json")).unwrap();
     let snapshot = replayed
@@ -313,7 +312,12 @@ fn the_initialize_answer_lists_models_with_efforts_and_commands_with_sources() {
         .rev()
         .find_map(|frame| frame.step.snapshot.clone())
         .expect("a snapshot");
-    let snapshot = wire::ClaudeSdkSnapshot::decode(snapshot.body.as_slice()).unwrap();
+    let snapshot = replayed
+        .into_iter()
+        .rev()
+        .find_map(|frame| frame.catalogue)
+        .filter(|catalogue| snapshot.catalogue.as_ref() == Some(&catalogue.hash))
+        .expect("the catalogue the last snapshot names");
     let first = &snapshot.models[0];
     assert_eq!(first.value, "default");
     assert_eq!(first.display_name, "Default (recommended)");
@@ -494,4 +498,96 @@ fn the_job_list_empties_when_headless_claude_exits() {
         (Some((true, 0)), Some((true, 0))),
         "emptied on exit, and empty in a new incarnation"
     );
+}
+
+fn initialized(commands: &[&str]) -> Value {
+    json!({
+        "type": "control_response",
+        "response": {
+            "subtype": "success",
+            "request_id": "init-1",
+            "response": {
+                "commands": commands.iter().map(|name| json!({
+                    "name": name, "description": "", "argumentHint": ""
+                })).collect::<Vec<_>>(),
+                "agents": [],
+                "output_style": "default",
+                "available_output_styles": [],
+                "models": [{
+                    "value": "opus", "displayName": "Opus", "description": "",
+                    "resolvedModel": "claude-opus-5-5"
+                }],
+                "account": {}
+            }
+        }
+    })
+}
+
+fn commands_changed(commands: &[&str]) -> Value {
+    json!({
+        "type": "system", "subtype": "commands_changed", "uuid": "c", "session_id": "s",
+        "commands": commands.iter().map(|name| json!({
+            "name": name, "description": "", "argumentHint": ""
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// The catalogue a step wrote, with its hash.
+fn written_catalogue(stepped: &interpret::Stepped) -> Option<wire::Catalogue> {
+    use prost::Message as _;
+    stepped.effects.iter().find_map(|effect| match effect {
+        interpret::Effect::WriteCatalogue { hash, bytes } => Some(wire::Catalogue {
+            hash: hash.clone(),
+            ..wire::Catalogue::decode(bytes.as_slice()).unwrap()
+        }),
+        _ => None,
+    })
+}
+
+/// Claude says its commands changed when a skill or plugin appears
+/// mid-session: the catalogue is rebuilt with them and the snapshot names
+/// the new one. The same list again writes nothing.
+#[test]
+fn a_commands_changed_event_rebuilds_the_offered_commands() {
+    use sha2::Digest as _;
+    let mut state = started();
+    let first = ClaudeSdk::step(&mut state, stream(initialized(&["compact"])));
+    let first = written_catalogue(&first).expect("the initialize answer writes a catalogue");
+    assert_eq!(first.commands.len(), 1, "the initialize answer was read");
+    let stepped = ClaudeSdk::step(
+        &mut state,
+        stream(commands_changed(&["compact", "new-skill"])),
+    );
+    let catalogue = written_catalogue(&stepped).expect("the commands changed");
+    let names: Vec<_> = catalogue
+        .commands
+        .iter()
+        .map(|command| command.name.as_str())
+        .collect();
+    assert_eq!(names, ["compact", "new-skill"]);
+    assert_eq!(catalogue.models, first.models, "the models stay");
+    let encoded = {
+        use prost::Message as _;
+        wire::Catalogue {
+            hash: Vec::new(),
+            ..catalogue.clone()
+        }
+        .encode_to_vec()
+    };
+    assert_eq!(catalogue.hash, sha2::Sha256::digest(&encoded).to_vec());
+    let snapshot = stepped
+        .step
+        .snapshot
+        .expect("the snapshot names the new catalogue");
+    assert_eq!(snapshot.catalogue, Some(catalogue.hash));
+    let again = ClaudeSdk::step(
+        &mut state,
+        stream(commands_changed(&["compact", "new-skill"])),
+    );
+    assert_eq!(
+        written_catalogue(&again),
+        None,
+        "the same list writes nothing"
+    );
+    assert!(again.step.snapshot.is_none());
 }

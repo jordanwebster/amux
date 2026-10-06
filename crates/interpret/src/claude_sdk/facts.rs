@@ -107,6 +107,7 @@ impl State {
                 }
             }
             Message::RateLimit(event) => self.rate_limit(&event.rate_limit_info),
+            Message::CommandsChanged(changed) => self.commands_changed(emit, &changed.commands),
             Message::AuthStatus(status) => {
                 self.sign_in = Some(match written_opt(status.error.as_deref()) {
                     Some(error) => SignIn {
@@ -188,6 +189,7 @@ impl State {
             }
             Message::ModelRefusalFallback(fallback) => {
                 self.model = Some(fallback.fallback_model.clone());
+                self.chosen_model = None;
                 let reason = written_opt(fallback.api_refusal_explanation.as_deref())
                     .or_else(|| written_opt(fallback.api_refusal_category.as_deref()))
                     .unwrap_or(fallback.content);
@@ -1185,6 +1187,7 @@ impl State {
         let ok = response.response.subtype == ControlOutcome::Success;
         match self.requests.remove(response.request_id()) {
             Some(Request::Model(model)) if ok => {
+                self.chosen_model.clone_from(&model);
                 self.model = model.or(self.model.take());
                 self.ask_settings(emit);
             }
@@ -1214,8 +1217,8 @@ impl State {
     /// An answer to one of the agent process's own requests.
     fn agent_answer(&mut self, emit: &mut Emit, ok: bool, response: &ControlResponse) {
         if let Some(Ok(initialized)) = response.result::<InitializationResult>() {
-            self.commands_listed(emit, ok, &initialized.commands);
             self.models = offered_models(&initialized.models);
+            self.commands_listed(emit, ok, &initialized.commands);
             let account = &initialized.account;
             self.sign_in = Some(SignIn {
                 state: SignInState::SignedIn as i32,
@@ -1252,7 +1255,21 @@ impl State {
             self.shared.provider_started();
             self.ask_settings(emit);
         }
+        self.commands_changed(emit, commands);
+    }
+
+    /// Claude listed its commands, in an answer or unasked: the catalogue
+    /// is rebuilt with them.
+    fn commands_changed(&mut self, emit: &mut Emit, commands: &[SlashCommand]) {
         self.commands = offered_commands(commands);
+        self.shared.set_catalogue(
+            emit,
+            wire::Catalogue {
+                models: self.models.clone(),
+                commands: self.commands.clone(),
+                ..Default::default()
+            },
+        );
     }
 
     fn servers_listed(&mut self, servers: &[McpServerStatus]) {

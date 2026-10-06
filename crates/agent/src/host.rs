@@ -680,14 +680,20 @@ impl<I: Interpreter> Host<I> {
         Ok(I::step(&mut self.state, event))
     }
 
-    /// Blobs first, then the journal, then the effects: a reply is sent and
-    /// a provider written to only once the step that explains it is on disk.
+    /// Blobs and catalogues first, then the journal, then the effects: a
+    /// reply is sent and a provider written to only once the step that
+    /// explains it is on disk, and a step never names bytes that are not.
     async fn apply(&mut self, stepped: Stepped) -> Result<(), AgentError> {
         let Stepped { step, effects } = stepped;
         for effect in &effects {
-            if let Effect::WriteBlob { hash, bytes } = effect {
-                dir::write_blob(&self.dir, hash, bytes).map_err(AgentError::Journal)?;
-            }
+            let written = match effect {
+                Effect::WriteBlob { hash, bytes } => dir::write_blob(&self.dir, hash, bytes),
+                Effect::WriteCatalogue { hash, bytes } => {
+                    dir::write_catalogue(&self.dir, hash, bytes)
+                }
+                _ => Ok(()),
+            };
+            written.map_err(AgentError::Journal)?;
         }
         let before = self.journal.offset();
         self.journal.append(&step).map_err(AgentError::Journal)?;
@@ -705,7 +711,7 @@ impl<I: Interpreter> Host<I> {
         }
         for effect in effects {
             match effect {
-                Effect::WriteBlob { .. } => {}
+                Effect::WriteBlob { .. } | Effect::WriteCatalogue { .. } => {}
                 Effect::Reply { input_id, verdict } => self.reply(input_id, verdict),
                 Effect::Exit { cause } => {
                     self.asked_to_exit

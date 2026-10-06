@@ -255,6 +255,10 @@ pub struct Snapshot {
     /// daemon copies it onto the inventory row.
     #[prost(message, optional, tag = "11")]
     pub git: ::core::option::Option<Git>,
+    /// The SHA-256 of the encoded Catalogue the agent offers now; absent until
+    /// its provider says what it offers. Not copied onto the row.
+    #[prost(bytes = "vec", optional, tag = "9")]
+    pub catalogue: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
 impl ::prost::Name for Snapshot {
     const NAME: &'static str = "Snapshot";
@@ -884,6 +888,87 @@ impl ::prost::Name for Unrecognized {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.Unrecognized".into()
+    }
+}
+/// What an agent offers to pick from, not what is picked: that stays in the
+/// snapshot. Fetched by hash; identical catalogues share one.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Catalogue {
+    /// The SHA-256 of this message encoded with `hash` empty, which is how the
+    /// agent stores it.
+    #[prost(bytes = "vec", tag = "1")]
+    pub hash: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, repeated, tag = "2")]
+    pub models: ::prost::alloc::vec::Vec<OfferedModel>,
+    #[prost(message, repeated, tag = "3")]
+    pub commands: ::prost::alloc::vec::Vec<OfferedCommand>,
+    /// How much the agent may do without asking.
+    #[prost(message, repeated, tag = "4")]
+    pub permissions: ::prost::alloc::vec::Vec<OfferedPermission>,
+    /// How it works; empty for Claude.
+    #[prost(message, repeated, tag = "5")]
+    pub modes: ::prost::alloc::vec::Vec<OfferedMode>,
+}
+impl ::prost::Name for Catalogue {
+    const NAME: &'static str = "Catalogue";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.Catalogue".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.Catalogue".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OfferedPermission {
+    /// What SetPermission names and the snapshot reports.
+    #[prost(string, tag = "1")]
+    pub value: ::prost::alloc::string::String,
+    /// Written by the interpreter; no provider supplies one.
+    #[prost(string, tag = "2")]
+    pub display_name: ::prost::alloc::string::String,
+    /// The provider's ordinary one; a client may leave it unsaid.
+    #[prost(bool, tag = "3")]
+    pub normal: bool,
+    /// Acts without asking; clients warn.
+    #[prost(bool, tag = "4")]
+    pub never_asks: bool,
+    /// False: only reachable in the provider's own interface.
+    #[prost(bool, tag = "5")]
+    pub settable: bool,
+    /// Empty: every model. Otherwise only these.
+    #[prost(string, repeated, tag = "6")]
+    pub models: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+impl ::prost::Name for OfferedPermission {
+    const NAME: &'static str = "OfferedPermission";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.OfferedPermission".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.OfferedPermission".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OfferedMode {
+    #[prost(string, tag = "1")]
+    pub value: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub display_name: ::prost::alloc::string::String,
+    #[prost(bool, tag = "3")]
+    pub normal: bool,
+    #[prost(bool, tag = "4")]
+    pub settable: bool,
+}
+impl ::prost::Name for OfferedMode {
+    const NAME: &'static str = "OfferedMode";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.OfferedMode".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.OfferedMode".into()
     }
 }
 /// A model the provider offers this session, as the provider lists it.
@@ -2625,6 +2710,9 @@ pub struct ClaudePtySnapshot {
     pub context: ::core::option::Option<ContextMeter>,
     #[prost(string, optional, tag = "5")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
+    /// The running model as a person reads it; absent while the model is.
+    #[prost(string, optional, tag = "15")]
+    pub model_name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
     pub permission_mode: ::core::option::Option<::prost::alloc::string::String>,
     /// Absent until SessionStart or the first system event names it.
@@ -2839,6 +2927,11 @@ pub struct ClaudeSdkSnapshot {
     pub context: ::core::option::Option<ContextMeter>,
     #[prost(string, optional, tag = "5")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
+    /// The running model as a person reads it: the catalogue entry it was set
+    /// from, else the entry whose value is its id, else its id tidied.
+    /// Absent while the model is.
+    #[prost(string, optional, tag = "18")]
+    pub model_name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
     pub effort: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "7")]
@@ -2856,11 +2949,6 @@ pub struct ClaudeSdkSnapshot {
     /// Absent until the init event names it.
     #[prost(string, optional, tag = "13")]
     pub provider_session: ::core::option::Option<::prost::alloc::string::String>,
-    /// What the initialize response offers; empty until it arrives.
-    #[prost(message, repeated, tag = "14")]
-    pub models: ::prost::alloc::vec::Vec<OfferedModel>,
-    #[prost(message, repeated, tag = "15")]
-    pub commands: ::prost::alloc::vec::Vec<OfferedCommand>,
 }
 impl ::prost::Name for ClaudeSdkSnapshot {
     const NAME: &'static str = "ClaudeSdkSnapshot";
@@ -3501,6 +3589,10 @@ pub struct CodexSnapshot {
     pub context: ::core::option::Option<ContextMeter>,
     #[prost(string, optional, tag = "4")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
+    /// The running model as a person reads it: the catalogue entry whose value
+    /// is its id, else its id tidied. Absent while the model is.
+    #[prost(string, optional, tag = "19")]
+    pub model_name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "5")]
     pub approval_policy: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
@@ -3524,12 +3616,6 @@ pub struct CodexSnapshot {
     /// Absent until the thread start response names it.
     #[prost(string, optional, tag = "14")]
     pub thread_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// What model/list offers, hidden models left out; empty until it answers.
-    #[prost(message, repeated, tag = "15")]
-    pub models: ::prost::alloc::vec::Vec<OfferedModel>,
-    /// The skills skills/list offers; empty until it answers.
-    #[prost(message, repeated, tag = "16")]
-    pub commands: ::prost::alloc::vec::Vec<OfferedCommand>,
 }
 impl ::prost::Name for CodexSnapshot {
     const NAME: &'static str = "CodexSnapshot";

@@ -145,6 +145,9 @@ message Snapshot {
   // process at start and at each turn end. Absent outside a repository. The
   // daemon copies it onto the inventory row.
   optional Git git = 11;
+  // The SHA-256 of the encoded Catalogue the agent offers now; absent until
+  // its provider says what it offers. Not copied onto the row.
+  optional bytes catalogue = 9;
 }
 
 // What a row says about the git repository an agent works in.
@@ -468,6 +471,42 @@ message Unrecognized {
 // ---------------------------------------------------------------------------
 // Snapshot pieces shared by more than one kind
 // ---------------------------------------------------------------------------
+
+// What an agent offers to pick from, not what is picked: that stays in the
+// snapshot. Fetched by hash; identical catalogues share one.
+message Catalogue {
+  // The SHA-256 of this message encoded with `hash` empty, which is how the
+  // agent stores it.
+  bytes hash = 1;
+  repeated OfferedModel models = 2;
+  repeated OfferedCommand commands = 3;
+  // How much the agent may do without asking.
+  repeated OfferedPermission permissions = 4;
+  // How it works; empty for Claude.
+  repeated OfferedMode modes = 5;
+}
+
+message OfferedPermission {
+  // What SetPermission names and the snapshot reports.
+  string value = 1;
+  // Written by the interpreter; no provider supplies one.
+  string display_name = 2;
+  // The provider's ordinary one; a client may leave it unsaid.
+  bool normal = 3;
+  // Acts without asking; clients warn.
+  bool never_asks = 4;
+  // False: only reachable in the provider's own interface.
+  bool settable = 5;
+  // Empty: every model. Otherwise only these.
+  repeated string models = 6;
+}
+
+message OfferedMode {
+  string value = 1;
+  string display_name = 2;
+  bool normal = 3;
+  bool settable = 4;
+}
 
 // A model the provider offers this session, as the provider lists it.
 message OfferedModel {

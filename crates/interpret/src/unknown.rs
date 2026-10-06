@@ -73,6 +73,7 @@ pub fn claude_pty() -> ClaudePtySnapshot {
         tasks: Some(task_list()),
         context: Some(context_meter()),
         model: None,
+        model_name: None,
         permission_mode: None,
         provider_session: None,
         usage: Some(claude_usage()),
@@ -89,6 +90,7 @@ pub fn claude_sdk() -> ClaudeSdkSnapshot {
         tasks: Some(task_list()),
         context: Some(context_meter()),
         model: None,
+        model_name: None,
         effort: None,
         permission_mode: None,
         active_tasks: Vec::new(),
@@ -97,8 +99,6 @@ pub fn claude_sdk() -> ClaudeSdkSnapshot {
         sign_in: Some(sign_in()),
         background_jobs: Some(background_jobs()),
         provider_session: None,
-        models: Vec::new(),
-        commands: Vec::new(),
     }
 }
 
@@ -107,6 +107,7 @@ pub fn codex() -> CodexSnapshot {
         asks: Vec::new(),
         context: Some(context_meter()),
         model: None,
+        model_name: None,
         approval_policy: None,
         sandbox: None,
         active_turn: None,
@@ -117,8 +118,6 @@ pub fn codex() -> CodexSnapshot {
         plan: Some(task_list()),
         effort: None,
         thread_id: None,
-        models: Vec::new(),
-        commands: Vec::new(),
     }
 }
 

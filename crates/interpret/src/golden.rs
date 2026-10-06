@@ -288,6 +288,8 @@ pub struct Replayed {
     pub input: Option<Input>,
     pub step: Step,
     pub replies: Vec<(Vec<u8>, SendInputResponse)>,
+    /// The catalogue this frame wrote, with its hash, when it wrote one.
+    pub catalogue: Option<wire::Catalogue>,
 }
 
 /// Runs one fixture through interpreter `I` and returns its emission, frame
@@ -327,11 +329,19 @@ pub fn replay<I: Interpreter>(fixture: &Path) -> Result<Vec<Replayed>, String> {
                     _ => None,
                 })
                 .collect();
+            let catalogue = frame.effects.iter().find_map(|effect| match effect {
+                Effect::WriteCatalogue { hash, bytes } => Some(wire::Catalogue {
+                    hash: hash.clone(),
+                    ..wire::Catalogue::decode(bytes.as_slice()).unwrap_or_default()
+                }),
+                _ => None,
+            });
             Replayed {
                 label: frame.label,
                 input,
                 step: frame.step,
                 replies,
+                catalogue,
             }
         })
         .collect())
@@ -631,6 +641,11 @@ fn git_of(body: &Value) -> Result<Option<wire::Git>, String> {
         uncommitted: totals(git.uncommitted),
         on_branch: totals(git.on_branch),
     }))
+}
+
+/// A hash's first four bytes, which tell catalogues apart in a golden.
+fn short_hash(hash: &[u8]) -> String {
+    crate::to_hex(&hash[..hash.len().min(4)])
 }
 
 /// A snapshot's repository facts in a golden.
@@ -1394,6 +1409,7 @@ fn render<I: Interpreter>(frames: &[Frame]) -> String {
     // Repository facts are printed when a snapshot changes them, not on
     // every snapshot that carries them on.
     let mut git: Option<&wire::Git> = None;
+    let mut catalogue: Option<&Vec<u8>> = None;
     for (index, frame) in frames.iter().enumerate() {
         let step = &frame.step;
         let pending_changed = frame.pending != pending;
@@ -1451,6 +1467,11 @@ fn render<I: Interpreter>(frames: &[Frame]) -> String {
                 git = snapshot.git.as_ref();
                 let label = git.map_or("git none".to_owned(), git_label);
                 let _ = writeln!(out, "snapshot {label}");
+            }
+            if snapshot.catalogue.as_ref() != catalogue {
+                catalogue = snapshot.catalogue.as_ref();
+                let label = catalogue.map_or("-".to_owned(), |hash| short_hash(hash));
+                let _ = writeln!(out, "snapshot catalogue {label}");
             }
             let _ = writeln!(
                 out,
@@ -1521,6 +1542,27 @@ fn render_effect(effect: &Effect) -> String {
             crate::to_hex(&hash[..hash.len().min(4)]),
             bytes.len()
         ),
+        Effect::WriteCatalogue { hash, bytes } => {
+            let catalogue = wire::Catalogue::decode(bytes.as_slice()).unwrap_or_default();
+            format!(
+                "catalogue {} models=[{}] commands={} permissions=[{}] modes=[{}]",
+                short_hash(hash),
+                crate::claude_common::describe_models(&catalogue.models),
+                crate::claude_common::describe_commands(&catalogue.commands),
+                catalogue
+                    .permissions
+                    .iter()
+                    .map(|permission| permission.value.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                catalogue
+                    .modes
+                    .iter()
+                    .map(|mode| mode.value.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
         Effect::Exit { cause } => format!("exit {}", Value::String(cause.clone())),
         Effect::Terminal(input) => format!("terminal {input}"),
         Effect::FollowTranscript { path } => format!("follow {}", Value::String(path.clone())),

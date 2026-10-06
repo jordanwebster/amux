@@ -1035,8 +1035,31 @@ fn a_host_that_revoked_trust_is_away_for_that_reason_first() {
 }
 
 fn settings_of(kind: Kind, body: Vec<u8>) -> SettingsView {
+    settings_offering(kind, body, Vec::new(), Vec::new())
+}
+
+/// Settings for an agent whose fetched catalogue offers `models` and
+/// `commands`.
+fn settings_offering(
+    kind: Kind,
+    body: Vec<u8>,
+    models: Vec<wire::OfferedModel>,
+    commands: Vec<wire::OfferedCommand>,
+) -> SettingsView {
     let mut state = SessionState::new(agent(kind), CAP);
-    state.update(snapshot(kind, Phase::Idle, body, Vec::new()));
+    state.set_catalogue(wire::Catalogue {
+        hash: b"offered".to_vec(),
+        models,
+        commands,
+        ..Default::default()
+    });
+    state.update(event(session_event::Of::Snapshot(wire::Snapshot {
+        kind: wire::kind_tag(kind).into(),
+        body,
+        phase: Phase::Idle as i32,
+        catalogue: Some(b"offered".to_vec()),
+        ..wire::Snapshot::default()
+    })));
     settings(&state)
 }
 
@@ -1060,24 +1083,24 @@ fn command(name: &str) -> wire::OfferedCommand {
 
 #[test]
 fn settings_mark_the_current_model_effort_and_mode() {
-    let view = settings_of(
+    let view = settings_offering(
         Kind::ClaudeSdk,
         wire::ClaudeSdkSnapshot {
             model: Some("sonnet".into()),
             effort: Some("high".into()),
             permission_mode: Some("plan".into()),
-            models: vec![
-                offered("default", &["low", "high"], None),
-                offered("sonnet", &["low", "medium", "high"], None),
-            ],
-            commands: vec![
-                command("compact"),
-                command("config"),
-                command("stripe:test-cards"),
-            ],
             ..Default::default()
         }
         .encode_to_vec(),
+        vec![
+            offered("default", &["low", "high"], None),
+            offered("sonnet", &["low", "medium", "high"], None),
+        ],
+        vec![
+            command("compact"),
+            command("config"),
+            command("stripe:test-cards"),
+        ],
     );
     let current: Vec<&str> = view
         .models
@@ -1124,16 +1147,17 @@ fn settings_mark_the_current_model_effort_and_mode() {
 
 #[test]
 fn a_reported_value_outside_the_offer_is_shown_as_current() {
-    let view = settings_of(
+    let view = settings_offering(
         Kind::ClaudeSdk,
         wire::ClaudeSdkSnapshot {
             model: Some("claude-haiku-4-5-20251001".into()),
             effort: Some("max".into()),
             permission_mode: Some("dontAsk".into()),
-            models: vec![offered("haiku", &[], None)],
             ..Default::default()
         }
         .encode_to_vec(),
+        vec![offered("haiku", &[], None)],
+        Vec::new(),
     );
     let last = view.models.last().unwrap();
     assert!(last.current && last.reported);
@@ -1154,17 +1178,17 @@ fn a_reported_value_outside_the_offer_is_shown_as_current() {
 #[test]
 fn codex_modes_are_presets_and_a_pair_outside_them_is_reported() {
     let codex = |approval: &str, sandbox: &str| {
-        settings_of(
+        settings_offering(
             Kind::Codex,
             wire::CodexSnapshot {
                 model: Some("gpt-a".into()),
                 approval_policy: Some(approval.into()),
                 sandbox: Some(sandbox.into()),
-                models: vec![offered("gpt-a", &["low", "medium"], Some("medium"))],
-                commands: vec![command("config")],
                 ..Default::default()
             }
             .encode_to_vec(),
+            vec![offered("gpt-a", &["low", "medium"], Some("medium"))],
+            vec![command("config")],
         )
     };
     let view = codex("never", "danger-full-access");
@@ -1218,17 +1242,18 @@ fn codex_modes_are_presets_and_a_pair_outside_them_is_reported() {
 
 #[test]
 fn an_offered_alias_is_marked_for_the_model_id_it_resolves_to() {
-    let view = settings_of(
+    let view = settings_offering(
         Kind::ClaudeSdk,
         wire::ClaudeSdkSnapshot {
             model: Some("id-sonnet".into()),
-            models: vec![
-                offered("default", &["low", "high"], None),
-                offered("sonnet", &["low", "medium", "high"], None),
-            ],
             ..Default::default()
         }
         .encode_to_vec(),
+        vec![
+            offered("default", &["low", "high"], None),
+            offered("sonnet", &["low", "medium", "high"], None),
+        ],
+        Vec::new(),
     );
     let current: Vec<(&str, bool)> = view
         .models

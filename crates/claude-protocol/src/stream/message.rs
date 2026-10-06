@@ -613,7 +613,7 @@ wire_struct!(BackgroundTask { #[serde(default="crate::absent::task_id")] pub tas
 wire_struct!(BackgroundTasksChangedMessage { #[serde(default="crate::absent::tasks",skip_serializing_if="Option::is_none")] pub tasks:Option<Vec<BackgroundTask>>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(ThinkingTokensMessage { pub estimated_tokens:u64,pub estimated_tokens_delta:u64,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(SessionStateChangedMessage { pub state:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
-wire_struct!(CommandsChangedMessage { pub commands:Vec<serde_json::Value>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
+wire_struct!(CommandsChangedMessage { pub commands:Vec<crate::stream::init::SlashCommand>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(NotificationMessage {
     pub key:String,pub text:String,pub priority:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub color:Option<String>,

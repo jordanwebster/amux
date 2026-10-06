@@ -65,6 +65,8 @@ message ClaudePtySnapshot {
   TaskList tasks = 3;
   ContextMeter context = 4;
   optional string model = 5;
+  // The running model as a person reads it; absent while the model is.
+  optional string model_name = 15;
   optional string permission_mode = 6;
   // Absent until SessionStart or the first system event names it.
   optional string provider_session = 7;
@@ -175,6 +177,10 @@ message ClaudeSdkSnapshot {
   TaskList tasks = 3;
   ContextMeter context = 4;
   optional string model = 5;
+  // The running model as a person reads it: the catalogue entry it was set
+  // from, else the entry whose value is its id, else its id tidied.
+  // Absent while the model is.
+  optional string model_name = 18;
   optional string effort = 6;
   optional string permission_mode = 7;
   repeated Task active_tasks = 8;
@@ -186,9 +192,8 @@ message ClaudeSdkSnapshot {
   BackgroundJobs background_jobs = 16;
   // Absent until the init event names it.
   optional string provider_session = 13;
-  // What the initialize response offers; empty until it arrives.
-  repeated OfferedModel models = 14;
-  repeated OfferedCommand commands = 15;
+  // What it offers is in the catalogue the Snapshot names.
+  reserved 14, 15;
 }
 
 message ClaudeSdkInput {

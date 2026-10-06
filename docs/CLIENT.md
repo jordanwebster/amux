@@ -83,8 +83,10 @@ parts:
   entry, both fed from the fleet.
 - **`AgentState`**, the newest snapshot decoded. [`body.rs`](../crates/ui-state/src/body.rs) is the thin
   per-kind layer: `decode_snapshot` reads a `ClaudePtySnapshot`, `ClaudeSdkSnapshot` or `CodexSnapshot` into one
-  shape (phase, queue, working-on, open asks, model, effort, mode, sandbox, offered models and commands, tasks,
-  context, usage, tool servers, sign-in, background jobs, running calls). A field the provider has not
+  shape (phase, queue, working-on, open asks, model and its display name, effort, mode, sandbox, the
+  catalogue's hash, tasks, context, usage, tool servers, sign-in, background jobs, running calls). The offered
+  models and commands come from the catalogue the snapshot names, once it is handed to the session with
+  `set_catalogue`. A field the provider has not
   reported stays at its explicit unknown. Open asks keep the provider's own shape as `OpenAsk::Claude` or
   `OpenAsk::Codex`.
 - **`Transcript`**, the window of items by order, and the rows that arrived above it while the reader was in

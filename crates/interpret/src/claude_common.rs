@@ -858,3 +858,32 @@ pub(crate) fn offered_commands(commands: &[SlashCommand]) -> Vec<OfferedCommand>
         })
         .collect()
 }
+
+/// A Claude model id read as a name when no offered model names it:
+/// "claude-opus-4-1-20250805" reads "Opus 4.1" and "claude-opus-5[1m]"
+/// reads "Opus 5": the family prefix, a trailing date and a bracketed
+/// variant go. An id of no recognisable shape stays as it is.
+pub(crate) fn tidy_model(id: &str) -> String {
+    let base = match id.split_once('[') {
+        Some((base, _)) if id.ends_with(']') && !base.is_empty() => base,
+        _ => id,
+    };
+    let mut parts: Vec<&str> = base.split('-').filter(|part| !part.is_empty()).collect();
+    if parts
+        .last()
+        .is_some_and(|last| last.len() == 8 && last.chars().all(|c| c.is_ascii_digit()))
+    {
+        parts.pop();
+    }
+    if parts.first() == Some(&"claude") {
+        parts.remove(0);
+    }
+    crate::shared::tidy_model_parts(id, Vec::new(), &parts)
+}
+
+/// A model's display name in a golden: quoted, or `?` while unknown.
+pub(crate) fn describe_model_name(name: Option<&str>) -> String {
+    name.map_or("?".to_owned(), |name| {
+        serde_json::Value::String(name.to_owned()).to_string()
+    })
+}

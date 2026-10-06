@@ -92,6 +92,9 @@ pub struct SessionState {
     host: Option<HostEntry>,
     state: AgentState,
     has_snapshot: bool,
+    /// The catalogue last fetched for the agent; what it offers shows while
+    /// the newest snapshot names its hash.
+    catalogue: Option<wire::Catalogue>,
     transcript: Transcript,
     /// A Reset's fresh transcript, or a re-tail that does not meet the held
     /// window, swapped in at the next CaughtUp.
@@ -215,6 +218,7 @@ impl SessionState {
             agent,
             host: None,
             has_snapshot: false,
+            catalogue: None,
             transcript: Transcript::new(kind),
             pending: None,
             retail: false,
@@ -279,9 +283,28 @@ impl SessionState {
         self.host.as_ref()
     }
 
-    /// The newest snapshot, decoded.
+    /// The newest snapshot, decoded, with what the agent offers when its
+    /// catalogue is held.
     pub fn agent_state(&self) -> &AgentState {
         &self.state
+    }
+
+    /// A catalogue fetched for the agent. Its models and commands show while
+    /// the newest snapshot names it.
+    pub fn set_catalogue(&mut self, catalogue: wire::Catalogue) {
+        self.catalogue = Some(catalogue);
+        self.offer();
+    }
+
+    fn offer(&mut self) {
+        let (models, commands) = match &self.catalogue {
+            Some(catalogue) if self.state.catalogue.as_ref() == Some(&catalogue.hash) => {
+                (catalogue.models.clone(), catalogue.commands.clone())
+            }
+            _ => Default::default(),
+        };
+        self.state.models = models;
+        self.state.commands = commands;
     }
 
     pub fn has_snapshot(&self) -> bool {
@@ -613,6 +636,7 @@ impl SessionState {
         match event {
             Of::Snapshot(snapshot) => {
                 self.state = AgentState::from_snapshot(self.kind(), &snapshot);
+                self.offer();
                 self.has_snapshot = true;
                 self.queue_moved();
                 outcome.session = true;
