@@ -34,6 +34,22 @@ impl Listen {
     }
 }
 
+/// The arguments that run Codex's own terminal app as one more client of
+/// the server on `listen`, on its live thread `thread`:
+/// `resume <thread> --remote unix://<socket>`. None over stdio, which has
+/// room for one client only.
+pub fn attach_args(thread: &str, listen: &Listen) -> Option<Vec<String>> {
+    match listen {
+        Listen::Stdio => None,
+        Listen::Unix(_) => Some(vec![
+            "resume".to_owned(),
+            thread.to_owned(),
+            "--remote".to_owned(),
+            listen.url(),
+        ]),
+    }
+}
+
 /// Starts `command` (Codex with its global arguments, folder and
 /// environment already set) as `app-server --listen <listen>`, leading a
 /// process group of its own on Unix. A socket file a killed server left at

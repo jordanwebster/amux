@@ -310,7 +310,12 @@ message a `codex_protocol` value: `initialize` (client `amux`, experimental
 API on), `initialized`, then `thread/start`, or `thread/resume` with the
 thread id from `private/provider-session` for a later incarnation, with the
 spec's working directory and model. The thread id the server answers with is written to
-`private/provider-session`. Every message the server sends the agent is a fact; the
+`private/provider-session`. Straight after, the interpreter names the thread
+with the agent's name (`thread/name/set`), and names it again when the agent
+is renamed: the daemon tells a running Codex agent with a rename input, and a
+resumed agent's spec carries its current name. A thread that has not run a
+turn has nothing on disk and cannot be joined by another client until it is
+named; named, it can, and Codex's own app shows the name amux does. Every message the server sends the agent is a fact; the
 interpreter writes every request after the handshake with ids of its own
 (`amux-<n>`). A turn whose prompt carries attachments has them appended to
 its input: an image as a local image at its blob's path, anything else as the
@@ -432,12 +437,21 @@ on disk in `pty/`:
   Claude as typed keys.
 
 **Stream mode**, for Codex, whose terminal is a view on the thread rather
-than the agent: each connection gets its own `codex resume <thread>` in a
-terminal of its own, launched with the same arguments and tool server as the
-agent's app server. The view's bytes arrive as `output` frames and are never
-retained; its TUI repaints the thread each time it starts. The view ends with
-its connection, and two connections are two views on one thread. A client
-that attaches before the thread exists is told so in a `closed` frame.
+than the agent: each connection gets its own Codex app in a terminal of its
+own, `codex resume <thread> --remote unix://<private/codex.sock>`, which joins
+the agent's app server as one more client on the live thread. It takes no
+configuration of its own; the server has the agent's. What a person does in
+it (a prompt, a steer, an interrupt, a settings change, an answer to an
+approval) reaches amux as what the server reports, and an approval either
+side is asked can be answered from either; nothing is locked. The view's
+bytes arrive as `output` frames and are never retained; its TUI repaints the
+thread each time it starts. The view ends with its connection, and two
+connections are two views on one thread. A client that attaches before the
+thread exists is told so in a `closed` frame. A thread that has not run a
+turn can be joined because the agent names it as soon as it starts (see
+[Codex](#codex)). On Windows, where the server is on stdio and has room for
+the agent alone, `amux attach` on a Codex agent says attach is not available
+and starts nothing.
 
 The last frame from the agent is `closed` with the reason, when it has one;
 end of stream means the view ended. The client side is
@@ -522,6 +536,8 @@ the system.
 | Provider hosting | `just test-crate agent -- --lib --test providers` | Each kind's child is launched, completes its handshake and a turn, continues its own session in a later incarnation, and takes agent messages through its own channel |
 | Lifecycle | `just test-crate agent -- --test lifecycle` | Grace, drain, abort, kill, a failed journal write and a provider exit, with every deadline driven by the test's clock |
 | Raw attach | `just test-crate agent -- --test attach` | Two clients share terminal Claude's one terminal; each Codex client gets its own view |
+| Codex attach | `just test-crate amux -- --test codex_attach` | Codex's own app joins a fresh agent's server; its prompt shows in amux's chat, and an approval is answered from amux, then from the app |
+| Codex thread name | `just test-crate agent -- --test codex_thread_name` | The thread is named after the agent at start and on rename |
 | Dump | `just test-crate agent -- --test dump` | The dump part carries no planted secret |
 | Tool server | `just test-crate agent -- --test tools` | Tool calls reach a stand-in daemon on `tools.sock`, retry across an update window, and come back as the items the interpreter draws |
 

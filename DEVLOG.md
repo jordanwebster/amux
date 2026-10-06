@@ -1,3 +1,17 @@
+2026-10-06 — **Codex's own app attaches to a live Codex agent.**
+`amux attach` on a Codex agent now runs `codex resume <thread> --remote
+unix://…/private/codex.sock`, so Codex's own app joins the agent's app
+server as one more client on the live thread instead of opening the thread
+from disk in a separate Codex. What a person does there reaches amux as what
+the server reports, and an approval can be answered from either side. A
+fresh agent can be attached to before its first turn, since its thread is
+named at start. On Windows, where the server is on stdio, attach to a Codex
+agent says it is not available and starts nothing. A new system test drives
+the fake Codex's app through a prompt, an approval answered from amux and
+one answered from the app; a report-only CI job says whether Codex listens
+on a Unix socket on Windows. The agent process and interpreter docs describe
+the socket, the thread's name, co-driving and attach.
+
 2026-10-06 — **Real two-client Codex recordings in the corpus.**
 The Codex spec recorder can now capture two clients sharing one server: it
 starts `codex app-server` on a Unix socket, connects amux and a second

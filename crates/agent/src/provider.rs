@@ -1139,17 +1139,19 @@ fn codex_args(spec: &AgentSpec, dir: &Path) -> Vec<String> {
     args
 }
 
-/// A Codex terminal view on the agent's thread: `codex resume <thread>`
-/// launched as the agent's own app server is, on a terminal of its own.
+/// Codex's own terminal app on the agent's live thread, on a terminal of
+/// its own: one more client of the agent's app server, so what it does
+/// reaches amux as what the server reports. It takes no configuration of
+/// its own; the server has the agent's. None where the server has no
+/// socket (Windows), which leaves no room for a second client.
 pub fn codex_view(
     spec: &AgentSpec,
     dir: &Path,
     thread: &str,
     size: pty_host::PtySize,
-) -> pty_host::PtySpawn {
-    let mut args = codex_args(spec, dir);
-    args.extend(["resume".to_owned(), thread.to_owned()]);
-    pty_host::PtySpawn {
+) -> Option<pty_host::PtySpawn> {
+    let args = codex::host::attach_args(thread, &codex_listen(dir).ok()?)?;
+    Some(pty_host::PtySpawn {
         command: PathBuf::from(&spec.provider_command),
         args,
         cwd: PathBuf::from(&spec.cwd),
@@ -1165,7 +1167,7 @@ pub fn codex_view(
             .map(Into::into)
             .collect(),
         size,
-    }
+    })
 }
 
 /// The Codex thread this agent runs, once its app server has made or

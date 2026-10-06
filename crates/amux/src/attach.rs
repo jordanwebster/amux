@@ -80,6 +80,11 @@ impl Attacher {
                 "{name} is headless Claude and has no terminal; open its chat instead: run \
                  `amux` and press enter on it"
             ))
+        } else if agent.kind() == Kind::Codex && cfg!(windows) {
+            Some(format!(
+                "attach is not available for Codex on Windows, where {name}'s Codex has room \
+                 for amux alone; open its chat instead: run `amux` and press enter on it"
+            ))
         } else {
             None
         }
@@ -472,7 +477,17 @@ mod tests {
             ..Agent::default()
         };
         assert_eq!(attacher.refusal(&agent([7; 16], Kind::ClaudePty)), None);
-        assert_eq!(attacher.refusal(&agent([7; 16], Kind::Codex)), None);
+        let codex = attacher.refusal(&agent([7; 16], Kind::Codex));
+        if cfg!(windows) {
+            let codex = codex.unwrap();
+            assert!(
+                codex.contains("not available for Codex on Windows"),
+                "{codex}"
+            );
+            assert!(codex.contains("open its chat"), "{codex}");
+        } else {
+            assert_eq!(codex, None);
+        }
         let remote = attacher.refusal(&agent([8; 16], Kind::ClaudePty)).unwrap();
         assert!(remote.contains("another host"), "{remote}");
         assert!(remote.contains("open its chat"), "{remote}");

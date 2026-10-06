@@ -9,11 +9,14 @@
 //! with whatever the interpreter types; with two clients the last resize
 //! wins.
 //!
-//! Codex's terminal is a view, not the agent: its TUI repaints the thread
-//! from the rollout each time it starts, so nothing is retained. A client
-//! is served in stream mode: its connection gets its own `codex resume` on
-//! the agent's thread, the view's bytes stream over the socket, and the
-//! view ends with the connection. Two clients are two views on one thread.
+//! Codex's terminal is a view, not the agent: Codex's own app joins the
+//! agent's app server as one more client (`codex resume <thread> --remote
+//! unix://<socket>`) and repaints the thread from it each time it starts,
+//! so nothing is retained. A client is served in stream mode: its
+//! connection gets its own view on the agent's live thread, the view's
+//! bytes stream over the socket, and the view ends with the connection.
+//! Two clients are two views on one thread. Windows runs the server on
+//! stdio, which has room for the agent alone, so a view there is refused.
 
 use std::fs::File;
 use std::io::{self, Read as _, Seek as _, SeekFrom};
@@ -176,7 +179,12 @@ async fn stream_view(stream: LocalStream, spec: &AgentSpec, dir: &Path) -> io::R
         let why = "the agent's Codex thread has not started yet";
         return send(&mut writer, pty_frame::Of::Closed(why.to_owned())).await;
     };
-    let launch = crate::provider::codex_view(spec, dir, &thread, pty_host::PtySize::default());
+    let Some(launch) =
+        crate::provider::codex_view(spec, dir, &thread, pty_host::PtySize::default())
+    else {
+        let why = "Codex's own app attaches only on macOS and Linux";
+        return send(&mut writer, pty_frame::Of::Closed(why.to_owned())).await;
+    };
     let process = match pty_host::spawn(launch) {
         Ok(process) => process,
         Err(error) => {

@@ -411,6 +411,12 @@ answer.
   reads the thread from its answer or from `thread/started`, and from then on
   writes every request with ids of its own (`amux-<n>`), so each
   acknowledgement is matched to what it acknowledges.
+- **The thread's name.** When the handshake's thread answer arrives, in
+  every incarnation, the interpreter names the thread with the agent's name
+  from the spec (`thread/name/set`, ids `amux-name-<n>`), and again on the
+  rename input the daemon sends when the agent is renamed. Naming writes a
+  fresh thread to disk, which is what lets Codex's own app join it before
+  its first turn.
 - **Offers.** Once the thread is known, the interpreter asks `model/list`
   (following `nextCursor` to the last page, leaving hidden models out) and
   `skills/list`, once per server; the snapshot carries the models with their
@@ -454,7 +460,10 @@ answer.
   way. An approval Codex resolves (`serverRequest/resolved`) without amux's
   answer was answered elsewhere: its decision is marked so and reads
   allowed or denied by how the command then ends; one resolved because amux
-  interrupted the turn is dismissed.
+  interrupted the turn is dismissed. The recordings `two_clients_prompt`,
+  `two_clients_approval` and `two_clients_steer` hold real sessions of two
+  clients on one server; each line carries the client it belongs to, and
+  the interpreter reads only amux's.
 - **Streaming.** Agent-message, plan and reasoning deltas and command output
   are appends to their open items.
 - **Agent messages** go to Codex with `thread/inject_items`. Codex reports
