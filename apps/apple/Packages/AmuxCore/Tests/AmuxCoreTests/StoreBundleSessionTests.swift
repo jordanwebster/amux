@@ -25,19 +25,19 @@ final class CaughtUpSession: OpenChat, @unchecked Sendable {
     func follow(_ following: Bool) {}
     func rows(for keys: [String], options: RowOptions?) -> [Row] { [] }
     func askCard() -> AskCard? { nil }
-    func strip() -> Strip? { nil }
+    func overview() -> Overview? { nil }
     func settings() -> SettingsView? { nil }
     func frame() -> ChatFrame? {
         ChatFrame(
             agent: agent, name: "a", kind: .claudeSdk, phase: .needsYou,
             composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: current,
-            hasOlder: false, arrivalsHeld: false, queue: [], outbox: [], askInput: nil, ended: nil,
-            waiting: nil)
+            hasOlder: false, arrivalsHeld: false, queue: [], outbox: [], askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
+            mode: nil, model: nil, permission: nil, signIn: nil, waiting: nil)
     }
     func takeChanges() -> ChatChanges { ChatChanges(keys: [], reloaded: false, session: true) }
     func send(_ draft: Draft) async -> Result<SendOutcome, RuntimeFailure> { .failure(RuntimeFailure("no")) }
     func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome? { nil }
-    func answer(_ ask: String, picks: [Pick], note: String?) async -> ActOutcome? { nil }
+    func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome? { nil }
     func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? { nil }
     func withdraw(_ input: [UInt8]) async -> ActOutcome? { nil }
     func sendNow(_ input: [UInt8]) async -> ActOutcome? { nil }
@@ -52,7 +52,7 @@ final class CaughtUpSession: OpenChat, @unchecked Sendable {
         .failure(RuntimeFailure("no"))
     }
     func blob(_ hash: [UInt8]) -> Data? { nil }
-    func review() async -> Result<FrozenReview, RuntimeFailure> { .failure(RuntimeFailure("no")) }
+    func review(_ comparison: Comparison) async -> Result<FrozenReview, RuntimeFailure> { .failure(RuntimeFailure("no")) }
 }
 
 @MainActor

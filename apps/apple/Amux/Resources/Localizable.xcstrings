@@ -325,6 +325,18 @@
         }
       }
     },
+    "%@ limit": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ limit"
+          }
+        }
+      }
+    },
     "%@ lines": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatRows.swift.",
       "extractionState": "manual",
@@ -517,6 +529,18 @@
         }
       }
     },
+    "%@ weekly limit": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ weekly limit"
+          }
+        }
+      }
+    },
     "%@ · %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Settings.swift.",
       "extractionState": "manual",
@@ -681,6 +705,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@, from %@"
+          }
+        }
+      }
+    },
+    "%@-minute limit": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@-minute limit"
           }
         }
       }
@@ -885,6 +921,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "5 minutes"
+          }
+        }
+      }
+    },
+    "5-hour limit": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "5-hour limit"
           }
         }
       }
@@ -4393,6 +4441,30 @@
         }
       }
     },
+    "Replied instead": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replied instead"
+          }
+        }
+      }
+    },
+    "Replied: %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replied: %@"
+          }
+        }
+      }
+    },
     "Report": {
       "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
       "extractionState": "manual",
@@ -6217,6 +6289,18 @@
         }
       }
     },
+    "Weekly limit": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weekly limit"
+          }
+        }
+      }
+    },
     "What is wrong here?": {
       "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
       "extractionState": "manual",
@@ -6297,6 +6381,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Working"
+          }
+        }
+      }
+    },
+    "Works in its folder, a reviewer decides when to ask": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Works in its folder, a reviewer decides when to ask"
           }
         }
       }
@@ -6565,6 +6661,18 @@
         }
       }
     },
+    "access to %@ %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "access to %@ %@"
+          }
+        }
+      }
+    },
     "agent": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/PushPayload.swift.",
       "extractionState": "manual",
@@ -6585,6 +6693,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "allowed"
+          }
+        }
+      }
+    },
+    "always %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "always %@"
+          }
+        }
+      }
+    },
+    "always %@ %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "always %@ %@"
           }
         }
       }
@@ -6933,6 +7065,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "collapsed"
+          }
+        }
+      }
+    },
+    "commands starting with %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "commands starting with %@"
           }
         }
       }
@@ -7413,6 +7557,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "network %@"
+          }
+        }
+      }
+    },
+    "network access": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "network access"
+          }
+        }
+      }
+    },
+    "network access to %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "network access to %@"
           }
         }
       }
@@ -8073,6 +8241,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "steered"
+          }
+        }
+      }
+    },
+    "switched to %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "switched to %@"
           }
         }
       }

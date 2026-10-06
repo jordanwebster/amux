@@ -14,7 +14,7 @@ final class HostsWordingTests: XCTestCase {
     ) -> HostView {
         HostView(
             hostId: studio.bytes, name: "studio", local: false, trusted: true, candidate: false,
-            presence: presence, away: away, addrs: addrs, via: via, current: true, lastDialError: nil,
+            presence: presence, away: away, addrs: addrs, via: via, current: true, providers: [], lastDialError: nil,
             platform: platform, signedIn: nil, version: nil)
     }
 

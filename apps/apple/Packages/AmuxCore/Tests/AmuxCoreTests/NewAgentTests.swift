@@ -25,7 +25,7 @@ final class NewAgentTests: XCTestCase {
         XCTAssertEqual(
             store.request,
             NewAgent(hostId: Cards.desk.bytes, kind: .claudeSdk, cwd: "/src/amux",
-                     name: "amux-2", model: nil))
+                     name: "amux-2", effort: nil, mode: nil, model: nil, newWorktree: nil, permission: nil))
     }
 
     func testAHostThatCannotListOffersWhereItsAgentsWork() {

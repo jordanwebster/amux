@@ -92,19 +92,19 @@ private final class StubChat: ChatSource, @unchecked Sendable {
         return ordered.filter { wanted.contains($0.id) }
     }
     func askCard() -> AskCard? { nil }
-    func strip() -> Strip? { nil }
+    func overview() -> Overview? { nil }
     func settings() -> SettingsView? { nil }
     func frame() -> ChatFrame? {
         ChatFrame(
             agent: AgentKey(host: [1], agent: [2]), name: "a", kind: .claudeSdk, phase: .idle,
             composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: true,
             hasOlder: hasOlder, arrivalsHeld: false, queue: [], outbox: [], askInput: nil,
-            ended: nil, waiting: nil)
+            context: nil, effort: nil, ended: nil, git: nil, mode: nil, model: nil, permission: nil, signIn: nil, waiting: nil)
     }
     func takeChanges() -> ChatChanges { ChatChanges(keys: [], reloaded: false, session: false) }
     func send(_ draft: Draft) async -> Result<SendOutcome, RuntimeFailure> { .failure(RuntimeFailure("stub")) }
     func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome? { nil }
-    func answer(_ ask: String, picks: [Pick], note: String?) async -> ActOutcome? { nil }
+    func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome? { nil }
     func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? { nil }
     func withdraw(_ input: [UInt8]) async -> ActOutcome? { nil }
     func draft(of input: [UInt8]) -> Draft? { nil }
@@ -119,5 +119,5 @@ private final class StubChat: ChatSource, @unchecked Sendable {
         .failure(RuntimeFailure("stub"))
     }
     func blob(_ hash: [UInt8]) -> Data? { nil }
-    func review() async -> Result<FrozenReview, RuntimeFailure> { .failure(RuntimeFailure("stub")) }
+    func review(_ comparison: Comparison) async -> Result<FrozenReview, RuntimeFailure> { .failure(RuntimeFailure("stub")) }
 }

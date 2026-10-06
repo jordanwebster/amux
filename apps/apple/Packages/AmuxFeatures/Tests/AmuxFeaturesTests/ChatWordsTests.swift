@@ -23,13 +23,15 @@ final class ChatWordsTests: XCTestCase {
     }
 
     func testARunSaysWhatItDidAndThatItContinuesBelow() {
-        let run = RunInfo(
-            newest: "b", oldest: "a", reads: 4, searches: 2, len: 6, anchor: "", isSummary: true,
-            openBelow: false)
+        let run = Run(
+            first: "a", last: "b", steps: 6, live: false, openBelow: false,
+            unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 4, searches: 2, subagents: 0, other: 0),
+            recent: nil)
         XCTAssertEqual(ChatWords.run(run), "4 reads · 2 searches")
-        let open = RunInfo(
-            newest: "b", oldest: "a", reads: 40, searches: 0, len: 41, anchor: "", isSummary: true,
-            openBelow: true)
+        let open = Run(
+            first: "a", last: "b", steps: 41, live: false, openBelow: true,
+            unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 40, searches: 0, subagents: 0, other: 1),
+            recent: nil)
         XCTAssertEqual(ChatWords.run(open), "40+ reads · 1+ more")
     }
 
@@ -41,20 +43,20 @@ final class ChatWordsTests: XCTestCase {
         XCTAssertEqual(words(.running, row(.stopped, attention: true)), "Wants to run")
         XCTAssertEqual(words(.running, row(.stopped)), "Running")
         XCTAssertEqual(words(.succeeded, row(.stopped)), "Ran")
-        let denied = Decision(outcome: .denied, elsewhere: false, note: "Use cargo clean", scope: nil)
+        let denied = Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean")
         XCTAssertEqual(words(.succeeded, row(.stopped, decision: denied)), "Denied")
-        let allowed = Decision(outcome: .allowed, elsewhere: false, note: nil, scope: "this session")
+        let allowed = Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil)
         XCTAssertEqual(words(.succeeded, row(.stopped, decision: allowed)), "Allowed")
         XCTAssertEqual(words(.running, row(.stopped, decision: allowed)), "Running")
         XCTAssertEqual(words(.failed, row(.stopped, decision: allowed)), "Ran")
     }
 
     func testAVerbThatNamesTheOutcomeLeavesItOutOfTheMeta() {
-        let allowed = Decision(outcome: .allowed, elsewhere: false, note: nil, scope: "this session")
+        let allowed = Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil)
         XCTAssertEqual(
             ChatWords.meta(["12s"], row(.stopped, decision: allowed), verb: "Allowed"),
             "12s · this session")
-        let denied = Decision(outcome: .denied, elsewhere: false, note: "Use cargo clean", scope: nil)
+        let denied = Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean")
         XCTAssertEqual(
             ChatWords.meta([], row(.stopped, decision: denied), verb: "Denied", note: false), "")
     }
@@ -72,19 +74,19 @@ final class ChatWordsTests: XCTestCase {
     }
 
     func testADecisionIsMetaWithScopeNoteAndWhereItWasAnswered() {
-        let allowed = Decision(outcome: .allowed, elsewhere: false, note: nil, scope: "this session")
+        let allowed = Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil)
         XCTAssertEqual(ChatWords.meta(["12s"], row(.stopped, decision: allowed)), "12s · allowed · this session")
-        let denied = Decision(outcome: .denied, elsewhere: false, note: "Use cargo clean\nplease", scope: nil)
+        let denied = Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean\nplease")
         XCTAssertEqual(
             ChatWords.meta(["denied"], row(.stopped, decision: denied), verb: "Denied"),
             "“Use cargo clean”")
-        let elsewhere = Decision(outcome: .allowed, elsewhere: true, note: nil, scope: nil)
+        let elsewhere = Decision(outcome: .allowed, elsewhere: true, granted: nil, note: nil)
         XCTAssertEqual(ChatWords.decision(elsewhere), "allowed · in the terminal")
     }
 
     func testChoicesAreStatedAsOutcomes() {
         let always = Choice(
-            outcome: .allowAlways(subjects: ["cargo test"], directories: [], mode: "", scope: .project, label: ""),
+            outcome: .allowAlways(subjects: ["cargo test"], directories: [], mode: "", modeName: "", scope: .project, label: ""),
             primary: false, takesNote: false)
         XCTAssertEqual(ChatWords.choice(always), "Always allow cargo test in this project")
         XCTAssertEqual(
@@ -160,9 +162,9 @@ final class ChatWordsTests: XCTestCase {
     }
 
     func testASecretAnswerIsNeverShown() {
-        XCTAssertEqual(ChatWords.answer(AnswerView(picked: [], hidden: true, other: nil)), "answered (hidden)")
+        XCTAssertEqual(ChatWords.answer(AnswerView(picked: [], hidden: true, note: nil, other: nil)), "answered (hidden)")
         XCTAssertEqual(
-            ChatWords.answer(AnswerView(picked: ["macOS"], hidden: false, other: "BSD")), "macOS, “BSD”")
+            ChatWords.answer(AnswerView(picked: ["macOS"], hidden: false, note: nil, other: "BSD")), "macOS, “BSD”")
     }
 
     func testFormFieldsComeFromTheSchemaAndRequiredOnesGateSubmit() {
@@ -196,14 +198,20 @@ final class ChatWordsTests: XCTestCase {
     /// The chip names the model the way the settings card lists it: by the
     /// offered display name, else the id the agent reports.
     func testTheModelChipReadsTheNameTheSettingsCardGivesTheModel() {
-        let strip = Strip(
-            failedServers: [], background: nil, context: nil, effort: nil, mode: "acceptEdits",
-            model: "claude-sonnet-5", signIn: nil, tasks: nil, usage: nil, workingOn: nil)
-        let mode = ModeChoice(value: .claude("acceptEdits"), current: true, reported: false, stopsAsking: false)
+        let frame = ChatFrame(
+            agent: AgentKey(host: [1], agent: [2]), name: "a", kind: .claudeSdk, phase: .idle,
+            composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: true,
+            hasOlder: false, arrivalsHeld: false, queue: [], outbox: [], askInput: nil,
+            context: nil, effort: nil, ended: nil, git: nil, mode: nil, model: "claude-sonnet-5",
+            permission: "acceptEdits", signIn: nil, waiting: nil)
+        let permission = PermissionChoice(
+            value: "acceptEdits", displayName: "Accept edits", current: true, reported: false,
+            normal: false, neverAsks: false, settable: true)
         func settings(_ models: [ModelChoice]) -> SettingsView {
             SettingsView(
-                models: models, efforts: [], modes: [mode], cycleMode: false, commands: [],
-                changeByTyping: nil, effortRefusal: nil, modeRefusal: nil, modelRefusal: nil)
+                models: models, efforts: [], permissions: [permission], modes: [],
+                cyclePermission: false, commands: [], changeByTyping: nil, effortRefusal: nil,
+                modelRefusal: nil, permissionRefusal: nil)
         }
         let offered = settings([
             ModelChoice(
@@ -213,10 +221,10 @@ final class ChatWordsTests: XCTestCase {
                 value: "sonnet", displayName: "Sonnet 5", description: "", efforts: [], current: true,
                 reported: false, defaultEffort: nil),
         ])
-        let chip = ChatWords.chip(strip, offered)
+        let chip = ChatWords.chip(frame, offered)
         XCTAssertEqual(chip?.model, "Sonnet 5")
         XCTAssertEqual(chip?.detail, "Accept edits")
-        var effort = strip
+        var effort = frame
         effort.effort = "high"
         XCTAssertEqual(ChatWords.chip(effort, offered)?.detail, "high", "the effort, when reported, stands for the mode")
 
@@ -225,7 +233,7 @@ final class ChatWordsTests: XCTestCase {
                 value: "claude-sonnet-5", displayName: "", description: "", efforts: [], current: true,
                 reported: true, defaultEffort: nil),
         ])
-        XCTAssertEqual(ChatWords.chip(strip, reported)?.model, "claude-sonnet-5")
-        XCTAssertEqual(ChatWords.chip(strip, nil)?.model, "claude-sonnet-5")
+        XCTAssertEqual(ChatWords.chip(frame, reported)?.model, "claude-sonnet-5")
+        XCTAssertEqual(ChatWords.chip(frame, nil)?.model, "claude-sonnet-5")
     }
 }

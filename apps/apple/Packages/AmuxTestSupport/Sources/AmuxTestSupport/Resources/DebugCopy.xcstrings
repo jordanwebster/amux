@@ -2869,6 +2869,18 @@
         }
       }
     },
+    "job %@": {
+      "comment": "Debug catalogue copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedChat.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "job %@"
+          }
+        }
+      }
+    },
     "keep the old strings for one release": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",

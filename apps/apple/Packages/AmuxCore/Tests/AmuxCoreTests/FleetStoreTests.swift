@@ -23,13 +23,13 @@ enum Cards {
             card: FleetCard(
                 agent: key(index, on: host), name: name, kind: kind, attention: attention,
                 cwd: "/Users/pat/source/\(name)",
-                lastActivityMs: Int64(now.addingTimeInterval(-60 * minutesAgo)
+                phaseSinceMs: Int64(now.addingTimeInterval(-60 * minutesAgo)
                     .timeIntervalSince1970 * 1000),
                 host: "desk", hostPresence: presence, children: children,
                 familyAttention: family ?? attention, members: members,
                 membersNeedYou: membersNeedYou ?? (attention == .needsYou ? 1 : 0),
-                exitCause: nil, workingOn: nil),
-            depth: depth, expanded: expanded)
+                branch: nil, exitCause: nil),
+            depth: depth, expanded: expanded, secondLine: .blank, loud: nil)
     }
 
     static func host(
@@ -39,7 +39,7 @@ enum Cards {
     ) -> HostView {
         HostView(
             hostId: id.bytes, name: name, local: local, trusted: trusted, candidate: candidate,
-            presence: presence, away: .plain, addrs: addrs, via: via, current: true, lastDialError: nil,
+            presence: presence, away: .plain, addrs: addrs, via: via, current: true, providers: [], lastDialError: nil,
             platform: nil, signedIn: nil, version: nil)
     }
 }

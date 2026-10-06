@@ -22,12 +22,11 @@ final class RowStateTests: XCTestCase {
             row: FleetRow(
                 card: FleetCard(
                     agent: AgentKey(host: machine, agent: UUID()), name: "refactor-auth",
-                    kind: kind, attention: attention, cwd: "~/src/amux", lastActivityMs: 0,
+                    kind: kind, attention: attention, cwd: "~/src/amux", phaseSinceMs: 0,
                     host: "Studio.local", hostPresence: presence, children: 0,
                     familyAttention: attention, members: 1,
-                    membersNeedYou: attention == .needsYou ? 1 : 0, exitCause: exitCause,
-                    workingOn: nil),
-                depth: 0, expanded: false),
+                    membersNeedYou: attention == .needsYou ? 1 : 0, branch: nil, exitCause: exitCause),
+                depth: 0, expanded: false, secondLine: .blank, loud: nil),
             unread: false)
     }
 
@@ -35,7 +34,7 @@ final class RowStateTests: XCTestCase {
         HostView(
             hostId: machine.bytes, name: "Studio.local", local: false, trusted: true,
             candidate: false, presence: presence, away: .plain, addrs: [], via: via, current: true,
-            lastDialError: nil, platform: nil, signedIn: nil, version: nil)
+            providers: [], lastDialError: nil, platform: nil, signedIn: nil, version: nil)
     }
 
     func testEachAttentionSpeaksInWords() {

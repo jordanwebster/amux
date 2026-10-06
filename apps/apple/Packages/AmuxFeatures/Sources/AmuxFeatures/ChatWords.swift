@@ -193,7 +193,7 @@ public enum ChatWords {
             } else {
                 String(localized: "always \(scope(savedTo))")
             }
-        case .session: String(localized: "for this session")
+        case .session: String(localized: "this session")
         case .commandPrefix(let words):
             String(localized: "commands starting with \(words.joined(separator: " "))")
         case .networkHosts(let hosts):
@@ -597,7 +597,7 @@ public enum ChatWords {
 
     static func scope(_ scope: Scope) -> String {
         switch scope {
-        case .session: String(localized: "for this session")
+        case .session: String(localized: "this session")
         case .project: String(localized: "in this project")
         case .projectShared: String(localized: "in this project, for everyone")
         case .user: String(localized: "in every project")

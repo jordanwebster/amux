@@ -21,7 +21,7 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     /// What each queued or sent prompt held, by input id.
     var drafts: [[UInt8]: Draft] = [:]
     var interrupts = 0
-    var facts: Strip?
+    var facts: Overview?
     var offered: SettingsView?
     var changed: [SettingChange] = []
     /// The working-tree diff the machine answers with, and how often it was
@@ -100,7 +100,7 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     }
 
     func askCard() -> AskCard? { card }
-    func strip() -> Strip? { facts }
+    func overview() -> Overview? { facts }
     func settings() -> SettingsView? { offered }
     func frame() -> ChatFrame? { current }
 
@@ -115,7 +115,7 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     }
 
     func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome? { .done }
-    func answer(_ ask: String, picks: [Pick], note: String?) async -> ActOutcome? { .done }
+    func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome? { .done }
     func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? { .done }
 
     func withdraw(_ input: [UInt8]) async -> ActOutcome? {
@@ -158,14 +158,14 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
 
     func blob(_ hash: [UInt8]) -> Data? { nil }
 
-    func review() async -> Result<FrozenReview, RuntimeFailure> {
+    func review(_ comparison: Comparison) async -> Result<FrozenReview, RuntimeFailure> {
         reviews += 1
         guard let working else { return .failure(RuntimeFailure("no machine")) }
         return .success(working)
     }
 }
 
-private func row(_ id: String, _ order: UInt64, _ text: String = "", run: RunInfo? = nil) -> Row {
+private func row(_ id: String, _ order: UInt64, _ text: String = "", run: Run? = nil) -> Row {
     Row(
         id: id, order: order, atMs: 0,
         kind: .prose(text: [.text(text.isEmpty ? id : text)], streaming: false, workingNote: false),
@@ -179,8 +179,8 @@ private func frame(
     ChatFrame(
         agent: AgentKey(host: [1], agent: [2]), name: "a", kind: kind, phase: phase,
         composer: ComposerView(mode: mode, activity: nil), connection: .live, caughtUp: caughtUp,
-        hasOlder: hasOlder, arrivalsHeld: false, queue: [], outbox: [], askInput: nil, ended: nil,
-        waiting: nil)
+        hasOlder: hasOlder, arrivalsHeld: false, queue: [], outbox: [], askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
+        mode: nil, model: nil, permission: nil, signIn: nil, waiting: nil)
 }
 
 /// Prose rows "m<first>" through "m<last>", in order.
@@ -445,9 +445,10 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testAPageIsTheUsualSizeExceptAtACollapsedRunThatContinuesBelow() async {
-        let run = RunInfo(
-            newest: "r", oldest: "q", reads: 300, searches: 0, len: 300, anchor: "", isSummary: true,
-            openBelow: true)
+        let run = Run(
+            first: "q", last: "r", steps: 300, live: false, openBelow: true,
+            unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 300, searches: 0, subagents: 0, other: 0),
+            recent: nil)
         let source = FakeChat(rows: [row("r", 5, run: run), row("s", 6)], frame: frame(hasOlder: true))
         let model = ChatModel(source: source)
         _ = model.cell(for: "r")
@@ -455,9 +456,10 @@ final class ChatModelTests: XCTestCase {
         await settle()
         XCTAssertEqual(source.paged, [300])
 
-        let huge = RunInfo(
-            newest: "r", oldest: "q", reads: 5_000, searches: 0, len: 5_000, anchor: "",
-            isSummary: true, openBelow: true)
+        let huge = Run(
+            first: "q", last: "r", steps: 5_000, live: false, openBelow: true,
+            unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 5_000, searches: 0, subagents: 0, other: 0),
+            recent: nil)
         source.ordered[0] = row("r", 5, run: huge)
         source.pending = ChatChanges(keys: ["r"], reloaded: false, session: false)
         model.woke()
@@ -546,7 +548,7 @@ final class ChatModelTests: XCTestCase {
         let pasted = DraftAttachment.text(name: "Pasted text", text: "line one\nline two\nline three")
         let patch = BlobRef(hash: [4, 2], name: "patch", mime: "text/x-diff", size: 120)
         let review = DraftAttachment.review(
-            diff: Diff(head: "abc123", base: nil, mergeBase: nil, patch: patch),
+            diff: Diff(head: "abc123", files: [], base: nil, mergeBase: nil, patch: patch),
             comments: [ReviewComment(path: "src/lib.rs", line: 12, oldLine: 0, text: "Name this.")])
         source.drafts[[7]] = Draft(text: "Look at these.", attachments: [pasted, review])
         let model = ChatModel(source: source)
@@ -590,36 +592,31 @@ final class ChatModelTests: XCTestCase {
                     current: value == current, reported: false, defaultEffort: nil)
             }
             return SettingsView(
-                models: models, efforts: [], modes: [], cycleMode: false, commands: [],
-                changeByTyping: nil, effortRefusal: nil, modeRefusal: nil, modelRefusal: nil)
-        }
-        func strip(model: String) -> Strip {
-            Strip(
-                failedServers: [], background: nil, context: nil, effort: nil, mode: nil,
-                model: model, signIn: nil, tasks: nil, usage: nil, workingOn: nil)
+                models: models, efforts: [], permissions: [], modes: [], cyclePermission: false, commands: [],
+                changeByTyping: nil, effortRefusal: nil, modelRefusal: nil, permissionRefusal: nil)
         }
         let source = FakeChat(rows: [], frame: frame())
         source.offered = offer(current: "opus")
-        source.facts = strip(model: "opus")
+        source.current.model = "opus"
         let model = ChatModel(source: source)
         model.change(.model("sonnet"))
         await settle()
         XCTAssertEqual(source.changed, [.model("sonnet")])
         XCTAssertEqual(model.settings?.models.first { $0.current }?.value, "opus", "not before the agent says so")
-        XCTAssertEqual(model.strip?.model, "opus")
+        XCTAssertEqual(model.frame?.model, "opus")
         source.offered = offer(current: "sonnet")
-        source.facts = strip(model: "sonnet")
+        source.current.model = "sonnet"
         source.pending.session = true
         model.woke()
         XCTAssertEqual(model.settings?.models.first { $0.current }?.value, "sonnet")
-        XCTAssertEqual(model.strip?.model, "sonnet")
+        XCTAssertEqual(model.frame?.model, "sonnet")
     }
 
     private func offering(_ names: [String]) -> SettingsView {
         SettingsView(
-            models: [], efforts: [], modes: [], cycleMode: false,
+            models: [], efforts: [], permissions: [], modes: [], cyclePermission: false,
             commands: names.map { CommandView(name: $0, description: "", argumentHint: "", source: "") },
-            changeByTyping: nil, effortRefusal: nil, modeRefusal: nil, modelRefusal: nil)
+            changeByTyping: nil, effortRefusal: nil, modelRefusal: nil, permissionRefusal: nil)
     }
 
     func testALeadingSlashWordListsUpToFiveMatchingCommandsAndAPickFillsTheDraft() {
@@ -716,20 +713,22 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testARunOpensByAnyOfItsKeysAndStaysOpenAsItGrows() {
-        let run = RunInfo(
-            newest: "b", oldest: "a", reads: 2, searches: 0, len: 2, anchor: "", isSummary: true,
-            openBelow: false)
+        let run = Run(
+            first: "a", last: "b", steps: 2, live: false, openBelow: false,
+            unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 2, searches: 0, subagents: 0, other: 0),
+            recent: nil)
         let source = FakeChat(rows: [row("a", 1, run: run), row("b", 2, run: run)], frame: frame())
         let model = ChatModel(source: source)
         _ = model.cell(for: "a")
         _ = model.cell(for: "b")
         model.toggle("b")
         XCTAssertTrue(model.isExpanded("b"))
-        XCTAssertEqual(model.options, RowOptions(tools: .collapseRuns(expanded: ["b"])))
+        XCTAssertEqual(model.options, RowOptions(tools: .collapse(open: ["b"])))
 
-        let grown = RunInfo(
-            newest: "c", oldest: "a", reads: 3, searches: 0, len: 3, anchor: "", isSummary: false,
-            openBelow: false)
+        let grown = Run(
+            first: "a", last: "c", steps: 3, live: false, openBelow: false,
+            unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 3, searches: 0, subagents: 0, other: 0),
+            recent: nil)
         source.ordered = [row("a", 1, run: grown), row("b", 2, run: grown), row("c", 3, run: grown)]
         source.pending = ChatChanges(keys: ["a", "b", "c"], reloaded: false, session: false)
         model.woke()
@@ -746,7 +745,8 @@ final class ChatModelTests: XCTestCase {
         func card(_ key: String) -> AskCard {
             AskCard(
                 kind: .claudeSdk, key: key, itemKey: "", position: 1, count: 1, body: .question([]),
-                choices: [], questionNote: true, state: .open)
+                choices: [], questionNote: true, questionSkip: true, questionReply: true,
+                stopsTurn: true, state: .open)
         }
         let source = FakeChat(rows: [row("a", 1)], frame: frame())
         source.card = card("ask:1")
