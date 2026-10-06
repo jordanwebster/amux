@@ -1,11 +1,4 @@
 shell |  | agents | 0,62,402,778
-home |  | signed-out | 0,62,402,778
-home.title | Agents, switch account | Agents | 60,65,165,68
-home.subtitle |  | Nothing needs you · 0 running | 60,127,279,81
-home.newAgent | New Agent |  | 345,118,44,44
-home.row.<decision-sdk> | decision-sdk, Idle, The deploy check passed., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,271,366,275
-home.row.<decision-sdk>.age.volatile | <volatile>
-home.row.<decision-sdk>.second |  |  | 31,331,208,78
 chat |  | decision-sdk | 0,62,402,778
 chat.row.boundary | Started |  | 18,176,366,58
 chat.row.prompt | Check the deployment once. |  | 18,234,366,106
@@ -23,13 +16,6 @@ chat.attach | Attach | closed | 23,779,44,44
 chat.model | claude-fake-1 · medium |  | 71,779,199,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
-hosts |  | 1 reachable | 0,62,402,778
-hosts.title |  | Hosts | 18,72,118,54
-hosts.subtitle |  | 1 reachable | 18,127,205,40
-hosts.row.<desk> | desk, macOS, reachable on this network | on-this-network | 18,230,366,108
-hosts.fact.identity | <volatile>
-hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,473,366,69
-hosts.caption.devices |  |  | 18,550,347,78
  | Back |  | 16,90,42,46
  | decision-sdk, /t/a/n/d/work · desk |  | 51,72,252,82
  | More |  | 344,91,44,44

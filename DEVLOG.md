@@ -1,3 +1,27 @@
+2026-10-06 — **A chat row's height follows the row that lands below it.**
+A step on the chat's rail leaves a shorter gap under it when the rail runs
+on into the next row than when it ends a run, so a row's height depends on
+the row below it. The phone's chat list kept each row's measured height
+until the row itself changed, so a row measured as the newest kept its
+end-of-run gap after another step landed under it: 4 pt of extra space,
+seen when a plan was sent back and the revised plan arrived in a later
+update (more often on a loaded machine). The list now remembers the rail
+join each row was measured with and measures it again when that join
+moves, and each measurement draws the row afresh rather than reusing the
+body the measurer drew for it last time.
+
+The phone stories' screens also no longer record the tab roots a pushed
+page covers. The fleet under a chat is still laid out and keeps
+re-sorting: the full verification once caught a row twice, mid-move, behind
+a permission card. The plan and flow stories already left it out; every
+story now does, and the per-story switch is gone.
+
+Re-recorded deliberately: each phone journey screen with a page over a tab
+drops the covered fleet, hosts and account rows from its element geometry
+(no pixels change apart from masked fingerprints and durations).
+`decide-plan-claude-pty/revised` had been recorded with the 4 pt gap; it
+now matches the headless story's screen.
+
 2026-10-06 — **The phone's whole verification holds the flow stories.**
 `just ios verify` now requires the eight phone stories told this week to
 report a full pass alongside the older ones: a plan decided on headless

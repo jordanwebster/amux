@@ -233,8 +233,6 @@ class PhoneJourney:
         # no longer matches is rewritten there instead.
         self.goldens = goldens or GOLDENS / self.name
         self.update = os.environ.get("UPDATE_JOURNEY_GOLDENS") == "1"
-        # Whether a screen leaves out the tab roots a pushed page covers.
-        self.covered_hidden = False
         # Whether every launch turns the app's reduce-transparency setting on,
         # so each frosted surface is drawn flat. The render server finishes
         # glass after the app has drawn, on its own schedule, and a photograph
@@ -520,7 +518,7 @@ class PhoneJourney:
         alone, so a masked region never churns."""
         self.app({"kind": "settle"})
         state = self.query()
-        elements = uncovered(state["elements"]) if self.covered_hidden else state["elements"]
+        elements = uncovered(state["elements"])
         actual = self.output / "actual"
         actual.mkdir(parents=True, exist_ok=True)
         png = actual / f"{label}.png"

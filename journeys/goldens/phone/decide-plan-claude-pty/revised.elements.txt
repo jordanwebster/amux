@@ -3,8 +3,8 @@ chat |  | planner-pty | 0,62,402,778
 chat.row.boundary | Started |  | 18,132,366,34
 chat.row.prompt | Move the journal. |  | 18,166,366,40
 chat.row.plan | Plan sent back, Check the copy before switching. | folded | 18,205,366,64
-chat.row.plan | Plan proposed, Move the journal |  | 18,271,366,185
-chat.prose.render |  | rendered | 60,310,312,134
+chat.row.plan | Plan proposed, Move the journal |  | 18,267,366,185
+chat.prose.render |  | rendered | 60,306,312,134
 chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
 chat.title | planner-pty | planner-pty | 51,72,156,38
@@ -24,5 +24,5 @@ ask.choice.2 | Send back… |  | 205,770,169,44
  | Send back… |  | 205,770,169,44
  | Started |  | 18,132,366,34
  | Move the journal. |  | 18,166,366,40
- | Plan sent back, “Check the copy before switching.” |  | 18,207,366,64
- | Plan proposed, Move the journal, Move the journal, 1., Copy the journal to the new store., 2., Check the copy against the original., 3., Point the daemon at it., 4., Keep the old journal for a week. |  | 18,271,366,185
+ | Plan sent back, “Check the copy before switching.” |  | 18,205,366,64
+ | Plan proposed, Move the journal, Move the journal, 1., Copy the journal to the new store., 2., Check the copy against the original., 3., Point the daemon at it., 4., Keep the old journal for a week. |  | 18,267,366,185

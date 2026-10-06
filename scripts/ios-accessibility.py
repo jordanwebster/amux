@@ -111,7 +111,6 @@ def main() -> int:
     directory = Path(tempfile.mkdtemp(prefix="amux-audit-", dir="/tmp"))
     log = OUTPUT / "audit.log"
     journey = PhoneJourney({"id": "accessibility"}, ROOT / manifest["topology"], udid, output=OUTPUT / "journey")
-    journey.covered_hidden = True
     test = None
     audit = None
     try:

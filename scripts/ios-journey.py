@@ -305,9 +305,6 @@ def send_back(journey: PhoneJourney, card: dict, note: str) -> None:
 
 
 def decide_plan(journey: PhoneJourney, agent: str, headless: bool) -> list[str]:
-    # The fleet under the chat holds an agent whose usage line names the
-    # clock time its limit resets; what is covered is left out of each screen.
-    journey.covered_hidden = True
     journey.launch()
     pair_by_code(journey, "desk")
     agent_id = open_agent(journey, agent)
@@ -397,7 +394,6 @@ def plan_mode(journey: PhoneJourney) -> None:
 
 def decide_plan_codex(journey: PhoneJourney) -> list[str]:
     agent = "planner-codex"
-    journey.covered_hidden = True
     journey.launch()
     pair_by_code(journey, "desk")
     agent_id = open_agent(journey, agent)
@@ -514,7 +510,6 @@ def back_to_row(journey: PhoneJourney, agent_id: str, left) -> None:
 
 
 def answer_questions(journey: PhoneJourney) -> list[str]:
-    journey.covered_hidden = True
     journey.launch()
     pair_by_code(journey, "desk")
     asker = open_agent(journey, "asker")
@@ -609,7 +604,6 @@ def link_done(results: list[dict]) -> None:
 
 
 def tool_server_asks(journey: PhoneJourney) -> list[str]:
-    journey.covered_hidden = True
     journey.launch()
     pair_by_code(journey, "desk")
     # A tool server's form, its fields in the order the server wrote.
@@ -698,7 +692,6 @@ def photograph_running(journey: PhoneJourney, label: str) -> None:
 
 
 def queue_and_steer(journey: PhoneJourney) -> list[str]:
-    journey.covered_hidden = True
     journey.launch()
     pair_by_code(journey, "desk")
     worker = open_agent(journey, "worker")
@@ -750,7 +743,6 @@ BACKUP_DONE = "Last night's backup finished with no errors."
 
 
 def send_while_away(journey: PhoneJourney) -> list[str]:
-    journey.covered_hidden = True
     journey.launch()
     pair_by_code(journey, "cabin")
     backups = open_agent(journey, "backups")
@@ -803,7 +795,6 @@ def limit_named(drawn: dict) -> bool:
 
 
 def composer_limits(journey: PhoneJourney) -> list[str]:
-    journey.covered_hidden = True
     journey.launch()
     pair_by_code(journey, "desk")
     # At a usage limit the strip over the composer names the window and

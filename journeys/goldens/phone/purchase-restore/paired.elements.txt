@@ -1,15 +1,4 @@
 shell |  | hosts | 0,62,402,778
-home |  | ready | 0,62,402,778
-home.title |  | Agents | 18,72,86,32
-home.subtitle |  | Nothing needs you · 0 running | 18,105,209,16
-home.newAgent | New Agent |  | 345,74,44,44
-home.row.<desk-work> | desk-work, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,70
-home.row.<desk-work>.age.volatile | <volatile>
-home.row.<desk-work>.detail.volatile | <volatile>
-hosts |  | 1 reachable | -23,-34,46,69
-hosts.title |  | Hosts | -5,-24,10,32
-hosts.subtitle |  | 1 reachable | -5,9,7,16
-hosts.caption.devices |  |  | -5,1037,10,714
 pair-confirm |  | trusted desk | 0,62,402,778
 pair-confirm.trusted |  | desk | 91,88,102,20
 pair-confirm.done | Done |  | 91,146,73,44

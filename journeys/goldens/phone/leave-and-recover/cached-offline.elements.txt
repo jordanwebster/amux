@@ -1,23 +1,4 @@
 shell |  | agents | 0,62,402,778
-home |  | signed-out | 0,62,402,778
-home.title | Agents, switch account | Agents | 60,65,104,46
-home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
-home.exceptions | Sign in to reach your agents from anywhere | Sign in to reach your agents from anywhere | 18,137,366,44
-home.row.<decision-pty> | decision-pty, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,221,366,70
-home.row.<decision-pty>.age.volatile | <volatile>
-home.row.<decision-pty>.detail.volatile | <volatile>
-home.row.<reviewer> | reviewer, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,292,366,70
-home.row.<reviewer>.age.volatile | <volatile>
-home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,362,366,70
-home.row.<keeper>.age.volatile | <volatile>
-home.row.<keeper>.detail.volatile | <volatile>
-home.row.<decision-codex> | decision-codex, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,432,366,70
-home.row.<decision-codex>.age.volatile | <volatile>
-home.row.<decision-codex>.detail.volatile | <volatile>
-home.row.<decision-sdk> | decision-sdk, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,503,366,70
-home.row.<decision-sdk>.age.volatile | <volatile>
-home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | keeper | 0,62,402,778
 chat.row.boundary | Started |  | 18,132,366,34
 chat.row.prompt | Remember this recovery turn. |  | 18,166,366,40

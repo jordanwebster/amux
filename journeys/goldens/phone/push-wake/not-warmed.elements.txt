@@ -1,14 +1,4 @@
 shell |  | agents | 0,62,402,778
-home |  | signed-out | 0,62,402,778
-home.title | Agents, switch account | Agents | 60,65,104,46
-home.subtitle |  | 1 need you · 2 agents | 60,105,151,16
-home.exceptions | Sign in to reach your agents from anywhere | Sign in to reach your agents from anywhere | 18,137,366,44
-home.row.<asker> | asker, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,221,366,70
-home.row.<asker>.age.volatile | <volatile>
-home.row.<asker>.detail.volatile | <volatile>
-home.row.<bystander> | bystander, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,331,366,70
-home.row.<bystander>.age.volatile | <volatile>
-home.row.<bystander>.detail.volatile | <volatile>
 chat |  | bystander | 0,62,402,778
 chat.row.boundary | Started |  | 18,132,366,34
 chat.row.prompt | Get ready. |  | 18,166,366,40
@@ -24,14 +14,6 @@ chat.attach | Attach | closed | 23,779,44,44
 chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
-hosts |  | 1 offline | 0,62,402,778
-hosts.title |  | Hosts | 18,72,69,32
-hosts.subtitle |  | 1 offline | 18,105,65,16
-hosts.row.<desk> | desk, macOS, offline for <t>, its agents’ state is unknown | offline | 18,159,366,64
-hosts.caption.offline |  | Agents on an offline host report their state as unknown. | 18,231,293,37
-hosts.fact.identity | <volatile>
-hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,354,366,46
-hosts.caption.devices |  |  | 18,408,320,18
  | Back |  | 16,68,42,46
  | bystander, desk · away |  | 51,72,102,38
  | More |  | 344,69,44,44

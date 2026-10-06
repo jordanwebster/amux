@@ -56,6 +56,33 @@ final class TranscriptListTests: XCTestCase {
 
         XCTAssertGreaterThan(after, before, "the row kept its height at the old size")
     }
+
+    func testARowLandingBelowMeasuresTheRowAboveAgain() {
+        // A step's rail runs on into a step drawn below it, with a shorter
+        // gap under it than a step that ends its run. The step above does
+        // not change when one lands under it, but its height does.
+        let chat = StubChat(rows: [row("p0", 0), step("s1", 1)], hasOlder: false)
+        let model = ChatModel(source: chat)
+        let list = FeedCoordinator(
+            model: model, environment: environment(), reported: ReportedElements())
+        list.view.frame = CGRect(x: 0, y: 0, width: 390, height: 600)
+        list.update(
+            items: model.ids.map { .row($0) }, notices: [], environment: environment(),
+            revision: model.revision, toNewest: model.toNewest, insets: EdgeInsets())
+        list.view.layoutIfNeeded()
+        let alone = list.view.layoutAttributesForItem(at: IndexPath(item: 1, section: 0))!.frame.height
+
+        chat.land(step("s2", 2))
+        model.woke()
+        list.update(
+            items: model.ids.map { .row($0) }, notices: [], environment: environment(),
+            revision: model.revision, toNewest: model.toNewest, insets: EdgeInsets())
+        list.view.layoutIfNeeded()
+        let joined = list.view.layoutAttributesForItem(at: IndexPath(item: 1, section: 0))!.frame.height
+
+        XCTAssertEqual(model.ids, ["p0", "s1", "s2"])
+        XCTAssertEqual(joined, alone - (RowGrid.afterRun - RowGrid.inRun), "the step kept the gap of a run's end")
+    }
 }
 
 private func environment(typeSize: DynamicTypeSize = .large) -> CellEnvironment {
@@ -72,19 +99,37 @@ private func row(_ id: String, _ order: UInt64, collapsed: Bool = false) -> Row 
         collapsed: collapsed, attention: false, decision: nil, parent: nil, run: nil)
 }
 
+/// A step on the rail: a finished background command.
+private func step(_ id: String, _ order: UInt64) -> Row {
+    Row(
+        id: id, order: order, atMs: 0, kind: .background(command: id, running: false, durationMs: nil),
+        collapsed: false, attention: false, decision: nil, parent: nil, run: nil)
+}
+
 /// A chat that holds its rows and answers nothing else.
 private final class StubChat: ChatSource, @unchecked Sendable {
-    let ordered: [Row]
+    private(set) var ordered: [Row]
     let hasOlder: Bool
+    private var landed: [String] = []
 
     init(rows: [Row], hasOlder: Bool) {
         ordered = rows
         self.hasOlder = hasOlder
     }
 
+    /// A row arriving after the newest, as the next wake reports it.
+    func land(_ row: Row) {
+        ordered.append(row)
+        landed.append(row.id)
+    }
+
     func keys() -> [String] { ordered.map(\.id) }
-    func keys(above newest: String) -> [String]? { nil }
-    func keys(below oldest: String) -> [String]? { nil }
+    func keys(above newest: String) -> [String]? {
+        ordered.firstIndex { $0.id == newest }.map { ordered[($0 + 1)...].map(\.id) }
+    }
+    func keys(below oldest: String) -> [String]? {
+        ordered.firstIndex { $0.id == oldest }.map { ordered[..<$0].map(\.id) }
+    }
     func oldestKey() -> String? { ordered.first?.id }
     func follow(_ following: Bool) {}
     func rows(for keys: [String], options: RowOptions?) -> [Row] {
@@ -101,7 +146,10 @@ private final class StubChat: ChatSource, @unchecked Sendable {
             hasOlder: hasOlder, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil,
             context: nil, effort: nil, ended: nil, git: nil, mode: nil, model: nil, permission: nil, signIn: nil, waiting: nil)
     }
-    func takeChanges() -> ChatChanges { ChatChanges(keys: [], reloaded: false, session: false) }
+    func takeChanges() -> ChatChanges {
+        defer { landed = [] }
+        return ChatChanges(keys: landed, reloaded: false, session: false)
+    }
     func send(_ draft: Draft) async -> Result<SendOutcome, RuntimeFailure> { .failure(RuntimeFailure("stub")) }
     func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome? { nil }
     func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome? { nil }

@@ -1,23 +1,4 @@
 shell |  | hosts | 0,62,402,778
-home |  | signed-out | 0,62,402,778
-home.title | Agents, switch account | Agents | 60,65,104,46
-home.subtitle |  | Nothing paired yet | 60,105,130,16
-home.empty.firstRun |  | No agents yet | 18,161,162,32
-home.empty.explain |  |  | 18,201,291,18
-home.offer.<desk> | desk, found, not paired | found | 18,259,366,64
-home.pair.<desk> | Pair with desk |  | 309,269,61,44
-home.empty.howToPair |  |  | 18,341,360,37
-home.empty.signIn | Sign In |  | 18,396,366,44
-home.empty.signIn.caption |  |  | 18,448,296,18
-hosts |  | 0 reachable | 0,62,402,778
-hosts.title |  | Hosts | 18,72,69,32
-hosts.subtitle |  | 0 reachable | 18,105,79,16
-hosts.offer.<desk> | desk, found, not paired | not paired | 18,159,366,64
-hosts.pair.<desk> | Pair with desk |  | 309,169,61,44
-hosts.caption.on-this-network |  | Run amux pair on one of these and enter the code it prints. | 18,231,343,37
-hosts.fact.identity | <volatile>
-hosts.fact.paired-devices | Paired Devices, 0 | 0 | 18,354,366,46
-hosts.caption.devices |  |  | 18,408,320,18
 pair-confirm |  | desk | 0,62,402,778
 pair-confirm.title |  | Pair with desk? | 18,62,179,58
 pair-confirm.name | Host | desk | 32,201,338,38

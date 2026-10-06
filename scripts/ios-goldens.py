@@ -296,7 +296,6 @@ def main() -> int:
         {"id": "goldens"}, ROOT / manifest["topology"], udid, output=output, goldens=GOLDENS
     )
     journey.update = options.update
-    journey.covered_hidden = True
     # Review captures are of the glass itself.
     journey.flat = not options.review
     goldens = Goldens(journey, manifest, wanted, options.review)

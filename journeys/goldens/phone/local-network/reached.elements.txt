@@ -1,12 +1,4 @@
 shell |  | agents | 0,62,402,778
-home |  | signed-out | 0,62,402,778
-home.title | Agents, switch account | Agents | 60,65,104,46
-home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
-home.newAgent | New Agent |  | 345,74,44,44
-home.row.<desk-work> | desk-work, Idle, The desk is reachable., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,91
-home.row.<desk-work>.age.volatile | <volatile>
-home.row.<desk-work>.second |  |  | 31,197,151,18
-home.row.<desk-work>.detail.volatile | <volatile>
 chat |  | desk-work | 0,62,402,778
 chat.row.boundary | Started |  | 18,132,366,34
 chat.row.prompt | Hello from the phone. |  | 18,166,366,40
@@ -22,13 +14,6 @@ chat.attach | Attach | closed | 23,779,44,44
 chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
-hosts |  | 1 reachable | 0,62,402,778
-hosts.title |  | Hosts | 18,72,69,32
-hosts.subtitle |  | 1 reachable | 18,105,79,16
-hosts.row.<desk> | desk, macOS, reachable on this network | on-this-network | 18,159,366,64
-hosts.fact.identity | <volatile>
-hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,310,366,46
-hosts.caption.devices |  |  | 18,363,320,18
  | Back |  | 16,68,42,46
  | desk-work, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44

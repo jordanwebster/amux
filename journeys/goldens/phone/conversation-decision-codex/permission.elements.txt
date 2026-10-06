@@ -1,25 +1,4 @@
 shell |  | agents | 0,62,402,778
-home |  | signed-out | 0,62,402,778
-home.title | Agents, switch account | Agents | 60,65,104,46
-home.subtitle |  | 1 need you · 5 agents | 60,105,151,16
-home.newAgent | New Agent |  | 345,74,44,44
-home.row.<decision-codex> | decision-codex, Needs you, Wants to run /bin/zsh -lc 'deploy --check', desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,159,366,91
-home.row.<decision-codex>.age.volatile | <volatile>
-home.row.<decision-codex>.second |  |  | 31,197,284,18
-home.row.<decision-codex>.detail.volatile | <volatile>
-home.row.<decision-pty> | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,291,366,70
-home.row.<decision-pty>.age.volatile | <volatile>
-home.row.<decision-pty>.detail.volatile | <volatile>
-home.row.<reviewer> | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,362,366,70
-home.row.<reviewer>.age.volatile | <volatile>
-home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,432,366,91
-home.row.<keeper>.age.volatile | <volatile>
-home.row.<keeper>.second |  |  | 31,470,236,18
-home.row.<keeper>.detail.volatile | <volatile>
-home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,524,366,70
-home.row.<decision-sdk>.age.volatile | <volatile>
-home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | decision-codex | 0,62,402,778
 chat.row.boundary | Started |  | 18,132,366,34
 chat.row.prompt | Check the deployment once. |  | 18,166,366,40
@@ -34,13 +13,6 @@ ask.subject | /bin/zsh -lc 'deploy --check' |  | 28,611,346,40
 ask.choice.1 | Allow for this session |  | 28,712,346,50
 ask.choice.0 | Allow |  | 28,770,169,44
 ask.deny | Deny… |  | 205,770,169,44
-hosts |  | 1 reachable | 0,62,402,778
-hosts.title |  | Hosts | 18,72,69,32
-hosts.subtitle |  | 1 reachable | 18,105,79,16
-hosts.row.<desk> | desk, macOS, reachable on this network | on-this-network | 18,159,366,64
-hosts.fact.identity | <volatile>
-hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,310,366,46
-hosts.caption.devices |  |  | 18,363,320,18
  | Back |  | 16,68,42,46
  | decision-codex, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44

@@ -222,7 +222,8 @@ final class FeedView: UICollectionView {
 /// then; a page that lands above the reader is placed from estimates and
 /// measured as the reader scrolls up to it, the list holding their place
 /// through each correction. A height is forgotten when its row's content
-/// changes, when the width changes, or when the environment does.
+/// changes, when its rail's join to the row below does, when the width
+/// changes, or when the environment does.
 final class FeedLayout: UICollectionViewLayout {
     /// How tall an unmeasured row stands.
     static let estimate: CGFloat = 60
@@ -245,6 +246,7 @@ final class FeedLayout: UICollectionViewLayout {
 
     func forget(_ item: ListItem) { heights[item] = nil }
     func forgetAll() { heights = [:] }
+    func measured(_ item: ListItem) -> Bool { heights[item] != nil }
 
     /// Whether rows were measured since the last layout pass began: the
     /// frames below them moved, and the pass is run again.
@@ -340,12 +342,15 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
     private var environment: CellEnvironment
     private var toNewest: Int?
     private var revision: Int?
+    /// The rail join each row was measured with.
+    private var joins: [String: RailJoin] = [:]
     private var insets: EdgeInsets?
     private let layout = FeedLayout()
     /// Measures a row's content at the list's width, under the list's
     /// traits: hidden in the list, so a type size or appearance change
     /// reaches it as it reaches the cells.
     private let measurer = UIHostingController<AnyView>(rootView: AnyView(EmptyView()))
+    private var measurements = 0
     /// The reader has a finger on the list or it is still moving from one.
     private var userScrolling = false
     /// Whether the bottom was in view at the last scroll: only its coming
@@ -418,8 +423,13 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
         // Measured as if photographed: a row that parses or animates its
         // way to its final shape takes it at once, which is the height the
         // cell ends up at. The hosting controller takes a new root at its
-        // next layout, so it is laid out before it is asked.
-        measurer.rootView = AnyView(content(for: item, photographed: true))
+        // next layout, so it is laid out before it is asked. Each
+        // measurement is a fresh view: the same row given again would be
+        // judged unchanged and keep the body it drew before, while what it
+        // reads from the row below it may have moved since.
+        if case .row(let id) = item { joins[id] = join(of: id) }
+        measurements += 1
+        measurer.rootView = AnyView(content(for: item, photographed: true).id(measurements))
         measurer.view.frame = CGRect(x: 0, y: 0, width: width, height: 0)
         measurer.view.setNeedsLayout()
         measurer.view.layoutIfNeeded()
@@ -497,6 +507,7 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
             remeasure = true
         }
         self.revision = revision
+        if remeasure || items != self.items, forgetMovedJoins(items) { remeasure = true }
         if items != self.items { apply(items) }
         if !reconfigure.isEmpty {
             var snapshot = dataSource.snapshot()
@@ -506,6 +517,31 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
         if remeasure { replace() }
         if let last = self.toNewest, last != toNewest { scrollToNewest() }
         self.toNewest = toNewest
+    }
+
+    /// Forgets the height of every measured row whose rail now joins the
+    /// row below differently, and says whether there was one. A rail that
+    /// runs on draws a shorter gap under its row, and what decides it is the
+    /// row below: one landing under the newest row, or going, changes the
+    /// height of a row that did not itself change.
+    private func forgetMovedJoins(_ items: [ListItem]) -> Bool {
+        var moved = false
+        var kept: [String: RailJoin] = [:]
+        for case .row(let id) in items {
+            guard let was = joins[id], layout.measured(.row(id)) else { continue }
+            if join(of: id) != was {
+                layout.forget(.row(id))
+                moved = true
+            } else {
+                kept[id] = was
+            }
+        }
+        joins = kept
+        return moved
+    }
+
+    private func join(of id: String) -> RailJoin? {
+        model.cell(for: id).row.map { RailJoin.of($0, next: model.row(below: id)) }
     }
 
     /// Rows whose heights were forgotten are measured and placed again,
