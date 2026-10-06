@@ -1,3 +1,23 @@
+2026-10-06 — **Home's sections and second line are a shared view.**
+`ui_view::fleet_view` replaces `fleet_list`: it returns home's sections
+(needs you, running, exited), each family in its loudest member's section,
+families ordered by since-when newest first and children likewise, and every
+row with its second line. The line follows the state the inventory row says
+and takes its words from the agent's session through `session_line`: the head
+ask, summarised without its diff or plan; the step it is running, which is
+the chat's activity line plus the command, file or query of the step it
+names; when idle, a sign-in problem or a spent usage window, else the first
+line of its last message; blank while starting or before its session opens;
+why it exited (finished, ended cleanly, or the failure's cause); that its host
+is away. A folded family's head that does not need the person carries the
+member that does. The card gained the branch and lost "working on", which is
+for agents finding each other and no longer reaches the fleet. Each session
+is read on its own before the fleet, so a client never holds both locks.
+`AppRuntime::fleet_rows` lays the sections end to end until the phone draws
+them; the Swift values are regenerated. A test streams text and steps into a
+working agent while the inventory re-lists it and checks no row moves until
+its state changes.
+
 2026-10-06 — **The fleet keeps one session per live agent.**
 The client library's fleet driver now holds the one session each live agent
 has, and both home and a chat read it, so an agent is subscribed to once

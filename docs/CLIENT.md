@@ -313,7 +313,8 @@ each renderer. A client may also read the state directly.
 | `queue_rows(state)`, `outbox_rows(state)` | Queued prompts (withdraw, send now) and this client's prompts still sending, not confirmed or rejected. |
 | `session_strip(state)` | The `Strip`: tasks, context, model, effort, mode, usage, failed tool servers, sign-in, background count, working-on. |
 | `settings(state)`, `setting_input(kind, change)` | What the agent offers to change (models, efforts, modes, commands), why a setting cannot change from here, and the input a pick sends. |
-| `fleet_list(fleet, expand)`, `fleet_card(fleet, agent_id)`, `family_header(fleet, agent_id)` | Fleet rows loudest family first, one agent's card, and a chat's family header. |
+| `fleet_view(fleet, lines, expand, keep)`, `session_line(state, now_ms)` | Home's sections (needs you, running, exited) with each family in its loudest member's section, newest since-when first, and every row's second line; what one session knows for that line. |
+| `fleet_card(fleet, agent_id)`, `family_header(fleet, agent_id)` | One agent's card (name, branch, host, family counts), and a chat's family header. |
 | `away(fleet, local_host, host)`, `signed_out(fleet, local_host)` | Why a host is out of reach, as far as this machine can say. |
 | `review_doc(diff, patch, comments)` | A patch parsed into files, hunks and lines, with review comments placed. |
 | `patch_head(state, key, max)`, `run_subjects(state, order, n)` | The first lines of an edit's patch, and the subjects of a run's newest members. |
@@ -404,8 +405,17 @@ only. [ATTACHMENTS.md](ATTACHMENTS.md) covers blobs, review attachments and deli
 ### The fleet
 
 `Fleet::connect` subscribes to the inventory; `FleetState` holds hosts, agent rows with their phase,
-since-when and git facts, and families. `fleet_list` ranks family heads by their loudest member, then by most
-recent activity, with expanded families' members beneath their parents.
+since-when and git facts, and families. `fleet_view` puts each family in the section of its loudest member
+(needs you, running, exited) and orders families by since-when, newest first, with expanded families' members
+beneath their parents. Since-when moves only when an agent's state does, so rows never move while an agent
+streams. A folded family whose head does not need the person carries the member that does.
+
+Each row's second line goes by the state the inventory row says, in words its session supplies: the head ask
+when it needs you; the step it is running (the chat's activity line, with the step's command or file) when
+working; when idle, why it is stuck (signed out, a spent usage window) or else the first line of what it last
+said; nothing while starting or before its session opens; why it ended once exited; and that its host is away
+when the host is out of reach. What an agent is working on is how agents find each other and is not shown.
+A client reads each session with `session_line` on its own, then the fleet, so it never holds both at once.
 
 The fleet keeps one live session per live agent, and it is the only session that agent has: home reads it for the
 row's second line, and a chat on the agent reads the same one, so one agent never has two subscriptions.

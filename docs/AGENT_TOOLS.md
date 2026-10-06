@@ -267,7 +267,7 @@ in `unreachable_children` and stays on its host as an orphan a person can
 delete.
 
 **In the clients.** The fleet groups each family under its head and ranks it
-by its loudest member (`ui_view::fleet_list`); a family can be expanded to
+by its loudest member (`ui_view::fleet_view`); a family can be expanded to
 show its children, and a chat shows its family in a header. `amux ls` lists
 children beneath their parents. A child's question to its person is answered
 in the child's own chat.

@@ -223,6 +223,23 @@ public enum ActivityKind: Codable, Hashable, Sendable {
     }
 }
 
+/// The activity line, with the subject of the step it names when the step
+/// is a held row: the command, the file, the query.
+public struct ActivityLine: Codable, Hashable, Sendable {
+    public var activity: Activity
+    public var step: String?
+
+    public init(activity: Activity, step: String?) {
+        self.activity = activity
+        self.step = step
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case activity
+        case step
+    }
+}
+
 /// A change to one agent from outside its chat.
 public enum AgentAct: Codable, Hashable, Sendable {
     case stop
@@ -766,6 +783,201 @@ public enum AskRow: Codable, Hashable, Sendable {
             try _fields.encode(reason, forKey: .reason)
             try _fields.encode(resolution, forKey: .resolution)
         }
+    }
+}
+
+public enum AskSubject: Codable, Hashable, Sendable {
+    case plan
+    case command(command: String)
+    case edit(path: String, files: UInt32, created: Bool)
+    case tool(server: String, tool: String)
+    /// The first question, and how many there are.
+    case question(question: String, count: UInt32)
+    case form(server: String, message: String)
+    case link(server: String, message: String)
+    case access(reason: String)
+    case unanswerable(reason: String)
+
+    private enum Tag: String, CodingKey {
+        case command = "Command"
+        case edit = "Edit"
+        case tool = "Tool"
+        case question = "Question"
+        case form = "Form"
+        case link = "Link"
+        case access = "Access"
+        case unanswerable = "Unanswerable"
+    }
+
+    private enum CommandKeys: String, CodingKey {
+        case command
+    }
+
+    private enum EditKeys: String, CodingKey {
+        case path
+        case files
+        case created
+    }
+
+    private enum ToolKeys: String, CodingKey {
+        case server
+        case tool
+    }
+
+    private enum QuestionKeys: String, CodingKey {
+        case question
+        case count
+    }
+
+    private enum FormKeys: String, CodingKey {
+        case server
+        case message
+    }
+
+    private enum LinkKeys: String, CodingKey {
+        case server
+        case message
+    }
+
+    private enum AccessKeys: String, CodingKey {
+        case reason
+    }
+
+    private enum UnanswerableKeys: String, CodingKey {
+        case reason
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "Plan": self = .plan
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no AskSubject is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a AskSubject names exactly one variant"))
+        }
+        switch _tag {
+        case .command:
+            let _fields = try _container.nestedContainer(
+                keyedBy: CommandKeys.self, forKey: .command)
+            self = .command(
+                command: try _fields.decode(String.self, forKey: .command))
+        case .edit:
+            let _fields = try _container.nestedContainer(
+                keyedBy: EditKeys.self, forKey: .edit)
+            self = .edit(
+                path: try _fields.decode(String.self, forKey: .path),
+                files: try _fields.decode(UInt32.self, forKey: .files),
+                created: try _fields.decode(Bool.self, forKey: .created))
+        case .tool:
+            let _fields = try _container.nestedContainer(
+                keyedBy: ToolKeys.self, forKey: .tool)
+            self = .tool(
+                server: try _fields.decode(String.self, forKey: .server),
+                tool: try _fields.decode(String.self, forKey: .tool))
+        case .question:
+            let _fields = try _container.nestedContainer(
+                keyedBy: QuestionKeys.self, forKey: .question)
+            self = .question(
+                question: try _fields.decode(String.self, forKey: .question),
+                count: try _fields.decode(UInt32.self, forKey: .count))
+        case .form:
+            let _fields = try _container.nestedContainer(
+                keyedBy: FormKeys.self, forKey: .form)
+            self = .form(
+                server: try _fields.decode(String.self, forKey: .server),
+                message: try _fields.decode(String.self, forKey: .message))
+        case .link:
+            let _fields = try _container.nestedContainer(
+                keyedBy: LinkKeys.self, forKey: .link)
+            self = .link(
+                server: try _fields.decode(String.self, forKey: .server),
+                message: try _fields.decode(String.self, forKey: .message))
+        case .access:
+            let _fields = try _container.nestedContainer(
+                keyedBy: AccessKeys.self, forKey: .access)
+            self = .access(
+                reason: try _fields.decode(String.self, forKey: .reason))
+        case .unanswerable:
+            let _fields = try _container.nestedContainer(
+                keyedBy: UnanswerableKeys.self, forKey: .unanswerable)
+            self = .unanswerable(
+                reason: try _fields.decode(String.self, forKey: .reason))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .plan:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Plan")
+        case .command(let command):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: CommandKeys.self, forKey: .command)
+            try _fields.encode(command, forKey: .command)
+        case .edit(let path, let files, let created):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: EditKeys.self, forKey: .edit)
+            try _fields.encode(path, forKey: .path)
+            try _fields.encode(files, forKey: .files)
+            try _fields.encode(created, forKey: .created)
+        case .tool(let server, let tool):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: ToolKeys.self, forKey: .tool)
+            try _fields.encode(server, forKey: .server)
+            try _fields.encode(tool, forKey: .tool)
+        case .question(let question, let count):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: QuestionKeys.self, forKey: .question)
+            try _fields.encode(question, forKey: .question)
+            try _fields.encode(count, forKey: .count)
+        case .form(let server, let message):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: FormKeys.self, forKey: .form)
+            try _fields.encode(server, forKey: .server)
+            try _fields.encode(message, forKey: .message)
+        case .link(let server, let message):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: LinkKeys.self, forKey: .link)
+            try _fields.encode(server, forKey: .server)
+            try _fields.encode(message, forKey: .message)
+        case .access(let reason):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: AccessKeys.self, forKey: .access)
+            try _fields.encode(reason, forKey: .reason)
+        case .unanswerable(let reason):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: UnanswerableKeys.self, forKey: .unanswerable)
+            try _fields.encode(reason, forKey: .reason)
+        }
+    }
+}
+
+/// The head ask, small enough for a row: what is asked, without the diff,
+/// the plan or the form that the ask card carries.
+public struct AskSummary: Codable, Hashable, Sendable {
+    public var subject: AskSubject
+    /// Asks open, the head included.
+    public var count: UInt32
+
+    public init(subject: AskSubject, count: UInt32) {
+        self.subject = subject
+        self.count = count
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case subject
+        case count
     }
 }
 
@@ -1755,6 +1967,58 @@ public enum EnvelopeKind: String, Codable, Hashable, Sendable, CaseIterable {
     case failed = "Failed"
 }
 
+/// Why an agent ended, as far as a row distinguishes: it said it was done,
+/// it was stopped or exited cleanly, or it failed with a cause.
+public enum ExitCause: Codable, Hashable, Sendable {
+    case finished
+    case ended
+    case failed(String)
+
+    private enum Tag: String, CodingKey {
+        case failed = "Failed"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "Finished": self = .finished
+            case "Ended": self = .ended
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no ExitCause is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a ExitCause names exactly one variant"))
+        }
+        switch _tag {
+        case .failed:
+            self = .failed(try _container.decode(String.self, forKey: .failed))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .finished:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Finished")
+        case .ended:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Ended")
+        case .failed(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .failed)
+        }
+    }
+}
+
 public enum ExploreVerb: String, Codable, Hashable, Sendable, CaseIterable {
     case read = "Read"
     case search = "Search"
@@ -1900,10 +2164,12 @@ public struct FleetCard: Codable, Hashable, Sendable {
     /// counts its fleet.
     public var members: UInt32
     public var membersNeedYou: UInt32
+    /// The branch of the folder the agent started in, as of its last turn
+    /// end; None on a detached head or outside a repository.
+    public var branch: String?
     public var exitCause: String?
-    public var workingOn: String?
 
-    public init(agent: AgentKey, name: String, kind: Kind, attention: Attention, cwd: String, phaseSinceMs: Int64, host: String, hostPresence: Presence, children: UInt32, familyAttention: Attention, members: UInt32, membersNeedYou: UInt32, exitCause: String?, workingOn: String?) {
+    public init(agent: AgentKey, name: String, kind: Kind, attention: Attention, cwd: String, phaseSinceMs: Int64, host: String, hostPresence: Presence, children: UInt32, familyAttention: Attention, members: UInt32, membersNeedYou: UInt32, branch: String?, exitCause: String?) {
         self.agent = agent
         self.name = name
         self.kind = kind
@@ -1916,8 +2182,8 @@ public struct FleetCard: Codable, Hashable, Sendable {
         self.familyAttention = familyAttention
         self.members = members
         self.membersNeedYou = membersNeedYou
+        self.branch = branch
         self.exitCause = exitCause
-        self.workingOn = workingOn
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1933,8 +2199,8 @@ public struct FleetCard: Codable, Hashable, Sendable {
         case familyAttention = "family_attention"
         case members
         case membersNeedYou = "members_need_you"
+        case branch
         case exitCause = "exit_cause"
-        case workingOn = "working_on"
     }
 }
 
@@ -1961,17 +2227,59 @@ public struct FleetRow: Codable, Hashable, Sendable {
     /// Zero for a family's head.
     public var depth: UInt32
     public var expanded: Bool
+    public var secondLine: SecondLine
+    /// On a folded family's head that does not itself need the person: the
+    /// member that does, which the row speaks for.
+    public var loud: LoudMember?
 
-    public init(card: FleetCard, depth: UInt32, expanded: Bool) {
+    public init(card: FleetCard, depth: UInt32, expanded: Bool, secondLine: SecondLine, loud: LoudMember?) {
         self.card = card
         self.depth = depth
         self.expanded = expanded
+        self.secondLine = secondLine
+        self.loud = loud
     }
 
     private enum CodingKeys: String, CodingKey {
         case card
         case depth
         case expanded
+        case secondLine = "second_line"
+        case loud
+    }
+}
+
+public struct FleetSection: Codable, Hashable, Sendable {
+    public var kind: SectionKind
+    /// How many families the section holds, folded or not.
+    public var families: UInt32
+    /// Each family's head, with the members of expanded families under it.
+    public var rows: [FleetRow]
+
+    public init(kind: SectionKind, families: UInt32, rows: [FleetRow]) {
+        self.kind = kind
+        self.families = families
+        self.rows = rows
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case families
+        case rows
+    }
+}
+
+/// Home's sections, computed once for every client. Empty sections are
+/// left out.
+public struct FleetView: Codable, Hashable, Sendable {
+    public var sections: [FleetSection]
+
+    public init(sections: [FleetSection]) {
+        self.sections = sections
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sections
     }
 }
 
@@ -2223,6 +2531,24 @@ public enum LineKind: String, Codable, Hashable, Sendable, CaseIterable {
     case context = "Context"
     case added = "Added"
     case removed = "Removed"
+}
+
+public struct LoudMember: Codable, Hashable, Sendable {
+    public var agent: AgentKey
+    public var name: String
+    public var secondLine: SecondLine
+
+    public init(agent: AgentKey, name: String, secondLine: SecondLine) {
+        self.agent = agent
+        self.name = name
+        self.secondLine = secondLine
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agent
+        case name
+        case secondLine = "second_line"
+    }
 }
 
 public struct ModeChoice: Codable, Hashable, Sendable {
@@ -3583,6 +3909,99 @@ public enum Scope: Codable, Hashable, Sendable {
     }
 }
 
+/// What a row says under its name, by the agent's state. What the agent is
+/// working on is a fact for agents finding each other, not for this line.
+public enum SecondLine: Codable, Hashable, Sendable {
+    /// Needs you: what it asks.
+    case ask(AskSummary)
+    /// Working: the step it is running, as the chat's activity line has it.
+    case step(ActivityLine)
+    /// Idle: the first line of what it last said.
+    case lastSaid(String)
+    /// Idle, and cannot go on until the person acts.
+    case stuck(StuckReason)
+    case exited(ExitCause)
+    /// The agent's host is out of reach; the agent is only as it last said.
+    case hostAway
+    /// Starting, or nothing known yet.
+    case blank
+
+    private enum Tag: String, CodingKey {
+        case ask = "Ask"
+        case step = "Step"
+        case lastSaid = "LastSaid"
+        case stuck = "Stuck"
+        case exited = "Exited"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "HostAway": self = .hostAway
+            case "Blank": self = .blank
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no SecondLine is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a SecondLine names exactly one variant"))
+        }
+        switch _tag {
+        case .ask:
+            self = .ask(try _container.decode(AskSummary.self, forKey: .ask))
+        case .step:
+            self = .step(try _container.decode(ActivityLine.self, forKey: .step))
+        case .lastSaid:
+            self = .lastSaid(try _container.decode(String.self, forKey: .lastSaid))
+        case .stuck:
+            self = .stuck(try _container.decode(StuckReason.self, forKey: .stuck))
+        case .exited:
+            self = .exited(try _container.decode(ExitCause.self, forKey: .exited))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .ask(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .ask)
+        case .step(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .step)
+        case .lastSaid(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .lastSaid)
+        case .stuck(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .stuck)
+        case .exited(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .exited)
+        case .hostAway:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("HostAway")
+        case .blank:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Blank")
+        }
+    }
+}
+
+/// Where a family sits: by its loudest member.
+public enum SectionKind: String, Codable, Hashable, Sendable, CaseIterable {
+    case needsYou = "NeedsYou"
+    case running = "Running"
+    case exited = "Exited"
+}
+
 /// A run of text or one attachment, in reading order. Each placeholder in
 /// the text is the next attachment, so attachments keep their positions.
 public enum Segment: Codable, Hashable, Sendable {
@@ -3894,6 +4313,65 @@ public struct Strip: Codable, Hashable, Sendable {
         case tasks
         case usage
         case workingOn = "working_on"
+    }
+}
+
+public enum StuckReason: Codable, Hashable, Sendable {
+    /// The provider is signed out, its sign-in expired, or signing in failed.
+    case signedOut(state: SignInState, account: String)
+    /// A usage window is spent; it resets at the latest spent window's reset,
+    /// when the provider says.
+    case usageLimit(resetsAtMs: Int64?)
+
+    private enum Tag: String, CodingKey {
+        case signedOut = "SignedOut"
+        case usageLimit = "UsageLimit"
+    }
+
+    private enum SignedOutKeys: String, CodingKey {
+        case state
+        case account
+    }
+
+    private enum UsageLimitKeys: String, CodingKey {
+        case resetsAtMs = "resets_at_ms"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a StuckReason names exactly one variant"))
+        }
+        switch _tag {
+        case .signedOut:
+            let _fields = try _container.nestedContainer(
+                keyedBy: SignedOutKeys.self, forKey: .signedOut)
+            self = .signedOut(
+                state: try _fields.decode(SignInState.self, forKey: .state),
+                account: try _fields.decode(String.self, forKey: .account))
+        case .usageLimit:
+            let _fields = try _container.nestedContainer(
+                keyedBy: UsageLimitKeys.self, forKey: .usageLimit)
+            self = .usageLimit(
+                resetsAtMs: try _fields.decodeIfPresent(Int64.self, forKey: .resetsAtMs))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .signedOut(let state, let account):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: SignedOutKeys.self, forKey: .signedOut)
+            try _fields.encode(state, forKey: .state)
+            try _fields.encode(account, forKey: .account)
+        case .usageLimit(let resetsAtMs):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: UsageLimitKeys.self, forKey: .usageLimit)
+            try _fields.encodeIfPresent(resetsAtMs, forKey: .resetsAtMs)
+        }
     }
 }
 

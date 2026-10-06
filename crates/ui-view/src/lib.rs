@@ -28,8 +28,9 @@ pub use composer::{
     composer, composer_tokens, outbox_rows, queue_rows, session_strip, waiting,
 };
 pub use fleet::{
-    Away, FamilyHeader, FleetCard, FleetRow, away, family_header, fleet_card, fleet_list,
-    signed_out,
+    ActivityLine, AskSubject, AskSummary, Away, ExitCause, FamilyHeader, FleetCard, FleetRow,
+    FleetSection, FleetView, LoudMember, SecondLine, SectionKind, SessionLine, StuckReason, away,
+    family_header, fleet_card, fleet_view, session_line, signed_out,
 };
 pub use review::{DiffLine, FileStatus, Hunk, LineKind, ReviewDoc, ReviewFile, review_doc};
 pub use rows::{

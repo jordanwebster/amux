@@ -128,11 +128,30 @@ impl AppRuntime {
         Ok(chat)
     }
 
-    /// The fleet as a list: families under their roots, expanded where
-    /// `expand` names the root's agent id.
+    /// The fleet as a list, home's sections one after another: families
+    /// under their roots, expanded where `expand` names the root's agent
+    /// id, each row with its second line.
     pub fn fleet_rows(&self, expand: &[Vec<u8>]) -> Vec<FleetRow> {
         let expand = expand.iter().cloned().collect();
-        ui_view::fleet_list(&self.fleet.state(), &expand)
+        let now_ms = self.clock.now_ms();
+        // Each session is read on its own, before the fleet is.
+        let lines = self
+            .fleet
+            .sessions()
+            .into_iter()
+            .map(|session| {
+                let state = session.state();
+                (
+                    ui_state::agent_key(state.agent()),
+                    ui_view::session_line(&state, now_ms),
+                )
+            })
+            .collect();
+        ui_view::fleet_view(&self.fleet.state(), &lines, &expand, &|_| true)
+            .sections
+            .into_iter()
+            .flat_map(|section| section.rows)
+            .collect()
     }
 
     pub fn fleet_card(&self, agent: &AgentKey) -> Option<FleetCard> {

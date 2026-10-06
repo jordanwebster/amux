@@ -3,7 +3,7 @@
 //! the exited composer, steering a queued prompt, an unanswerable or
 //! dismissed ask, and the strip's facts.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -367,58 +367,116 @@ fn attachments_keep_their_positions() {
     }
 }
 
-fn fleet_row(host: &str, id: &str, phase: Phase, parent: Option<&str>, last: i64) -> FleetMsg {
-    FleetMsg::Event(Box::new(wire::InventoryEvent {
-        of: Some(wire::inventory_event::Of::Agent(wire::Agent {
-            agent_id: id.as_bytes().to_vec(),
+fn fleet_entry(
+    host: &str,
+    id: &str,
+    phase: Phase,
+    parent: Option<&str>,
+    since: i64,
+) -> wire::Agent {
+    wire::Agent {
+        agent_id: id.as_bytes().to_vec(),
+        host_id: host.as_bytes().to_vec(),
+        kind: Kind::ClaudeSdk as i32,
+        name: id.into(),
+        lifecycle: wire::Lifecycle::Live as i32,
+        phase: phase as i32,
+        parent: parent.map(|parent| wire::AgentParent {
             host_id: host.as_bytes().to_vec(),
-            name: id.into(),
-            lifecycle: wire::Lifecycle::Live as i32,
-            phase: phase as i32,
-            parent: parent.map(|parent| wire::AgentParent {
-                host_id: host.as_bytes().to_vec(),
-                agent_id: parent.as_bytes().to_vec(),
-            }),
-            phase_since_ms: last,
-            ..wire::Agent::default()
-        })),
+            agent_id: parent.as_bytes().to_vec(),
+        }),
+        phase_since_ms: since,
+        ..wire::Agent::default()
+    }
+}
+
+fn listed(agent: wire::Agent) -> FleetMsg {
+    FleetMsg::Event(Box::new(wire::InventoryEvent {
+        of: Some(wire::inventory_event::Of::Agent(agent)),
     }))
 }
 
+fn fleet_row(host: &str, id: &str, phase: Phase, parent: Option<&str>, since: i64) -> FleetMsg {
+    listed(fleet_entry(host, id, phase, parent, since))
+}
+
+/// Home as names, depths and sections, in order.
+fn home(view: &FleetView) -> Vec<(SectionKind, String, u32)> {
+    view.sections
+        .iter()
+        .flat_map(|section| {
+            section
+                .rows
+                .iter()
+                .map(|row| (section.kind, row.card.name.clone(), row.depth))
+        })
+        .collect()
+}
+
+fn no_sessions() -> HashMap<AgentKey, SessionLine> {
+    HashMap::new()
+}
+
 #[test]
-fn the_fleet_ranks_families_by_their_loudest_member() {
+fn the_fleet_places_families_by_their_loudest_member_newest_first() {
     let mut fleet = FleetState::new();
     for msg in [
         fleet_row("a", "quiet", Phase::Idle, None, 900),
         fleet_row("a", "parent", Phase::Idle, None, 100),
         fleet_row("a", "child", Phase::NeedsYou, Some("parent"), 50),
+        fleet_row("a", "asker", Phase::NeedsYou, None, 40),
         fleet_row("a", "busy", Phase::Working, None, 10),
     ] {
         fleet.update(msg);
     }
-    let names = |rows: Vec<FleetRow>| {
-        rows.into_iter()
-            .map(|row| (row.card.name, row.depth))
-            .collect::<Vec<_>>()
-    };
+    let mut gone = fleet_entry("a", "gone", Phase::Idle, None, 2000);
+    gone.lifecycle = wire::Lifecycle::Exited as i32;
+    fleet.update(listed(gone));
+    use SectionKind::*;
+    let all = |_: &wire::Agent| true;
+    let view = fleet_view(&fleet, &no_sessions(), &HashSet::new(), &all);
+    // The parent's family needs you through its child, and is ordered by
+    // when the child began to: after the asker, which began later.
     assert_eq!(
-        names(fleet_list(&fleet, &HashSet::new())),
+        home(&view),
         vec![
-            ("parent".into(), 0),
-            ("busy".into(), 0),
-            ("quiet".into(), 0)
+            (NeedsYou, "parent".into(), 0),
+            (NeedsYou, "asker".into(), 0),
+            (Running, "quiet".into(), 0),
+            (Running, "busy".into(), 0),
+            (Exited, "gone".into(), 0),
         ]
+    );
+    assert_eq!(
+        view.sections
+            .iter()
+            .map(|section| section.families)
+            .collect::<Vec<_>>(),
+        vec![2, 2, 1]
+    );
+    // Folded, the parent speaks for the child that needs you.
+    let parent = &view.sections[0].rows[0];
+    let loud = parent.loud.as_ref().unwrap();
+    assert_eq!(loud.name, "child");
+    assert_eq!(
+        (&parent.second_line, &loud.second_line),
+        (&SecondLine::Blank, &SecondLine::Blank)
     );
     let expand: HashSet<Vec<u8>> = [b"parent".to_vec()].into();
+    let view = fleet_view(&fleet, &no_sessions(), &expand, &all);
     assert_eq!(
-        names(fleet_list(&fleet, &expand)),
-        vec![
-            ("parent".into(), 0),
-            ("child".into(), 1),
-            ("busy".into(), 0),
-            ("quiet".into(), 0)
+        home(&view)[..3],
+        [
+            (NeedsYou, "parent".into(), 0),
+            (NeedsYou, "child".into(), 1),
+            (NeedsYou, "asker".into(), 0),
         ]
     );
+    assert!(view.sections[0].rows[0].loud.is_none());
+    // A filter keeps a family when any member matches, folded or not.
+    let only_child = |agent: &wire::Agent| agent.name == "child";
+    let view = fleet_view(&fleet, &no_sessions(), &HashSet::new(), &only_child);
+    assert_eq!(home(&view), vec![(NeedsYou, "parent".into(), 0)]);
     let card = fleet_card(&fleet, b"parent").unwrap();
     assert_eq!(
         (card.attention, card.family_attention, card.children),
@@ -1378,4 +1436,296 @@ fn a_patch_head_keeps_hunk_lines_that_look_like_file_headers() {
             (Some(10), LineKind::Added, "b"),
         ]
     );
+}
+
+fn sdk_item(order: u64, revision: u64, kind: wire::claude_sdk_item::Kind, text: &str) -> Item {
+    Item {
+        key: format!("k{order}"),
+        order,
+        revision,
+        text: text.into(),
+        kind: wire::kind_tag(Kind::ClaudeSdk).into(),
+        body: wire::ClaudeSdkItem { kind: Some(kind) }.encode_to_vec(),
+        at_ms: order as i64 * 1000,
+        ..Item::default()
+    }
+}
+
+fn said(order: u64, revision: u64, text: &str, complete: bool) -> Item {
+    sdk_item(
+        order,
+        revision,
+        wire::claude_sdk_item::Kind::Message(wire::Text { complete }),
+        text,
+    )
+}
+
+fn running(order: u64, revision: u64, command: &str) -> Item {
+    sdk_item(
+        order,
+        revision,
+        wire::claude_sdk_item::Kind::Tool(wire::ToolCall {
+            name: "Bash".into(),
+            state: ToolState::Running as i32,
+            class: ToolClass::Consequential as i32,
+            input_json: format!(r#"{{"command":"{command}"}}"#).into_bytes(),
+            ..Default::default()
+        }),
+        "",
+    )
+}
+
+/// A caught-up session on `entry` with a headless Claude snapshot and items.
+fn session_on(
+    entry: &wire::Agent,
+    body: wire::ClaudeSdkSnapshot,
+    items: Vec<Item>,
+) -> SessionState {
+    let mut state = SessionState::new(entry.clone(), CAP);
+    state.update(snapshot(
+        Kind::ClaudeSdk,
+        entry.phase(),
+        body.encode_to_vec(),
+        vec![],
+    ));
+    for item in items {
+        state.update(event(session_event::Of::Item(item)));
+    }
+    state.update(caught_up());
+    state
+}
+
+fn second_lines(view: &FleetView) -> HashMap<String, SecondLine> {
+    view.sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .map(|row| (row.card.name.clone(), row.second_line.clone()))
+        .collect()
+}
+
+#[test]
+fn each_row_says_what_its_state_calls_for() {
+    let mut fleet = FleetState::new();
+    fleet.update(host_entry("a", None));
+    let FleetMsg::Event(mut far) = host_entry("b", None) else {
+        unreachable!()
+    };
+    if let Some(wire::inventory_event::Of::Host(entry)) = &mut far.of {
+        entry.presence = wire::Presence::Offline as i32;
+    }
+    fleet.update(FleetMsg::Event(far));
+    let entry = |id: &str, phase| fleet_entry("a", id, phase, None, 1);
+    let ended = |id: &str, cause: Option<&str>| wire::Agent {
+        lifecycle: wire::Lifecycle::Exited as i32,
+        exit_cause: cause.map(str::to_owned),
+        ..entry(id, Phase::Idle)
+    };
+    let mut branched = entry("idle", Phase::Idle);
+    branched.git = Some(wire::Git {
+        branch: Some("fix-login".into()),
+        ..Default::default()
+    });
+    let question = wire::Ask {
+        key: "q-1".into(),
+        body: Some(wire::ask::Body::Question(wire::QuestionAsk {
+            questions: vec![wire::Question {
+                question: "Which environment?".into(),
+                ..Default::default()
+            }],
+        })),
+        ..Default::default()
+    };
+    let signed_out = wire::SignIn {
+        state: wire::SignInState::Expired as i32,
+        account: "me@example.com".into(),
+        message: String::new(),
+    };
+    let spent = wire::UsageLimits {
+        state: wire::UsageState::Blocked as i32,
+        windows: vec![
+            wire::UsageWindow {
+                name: "5h".into(),
+                used_percent: 100.0,
+                resets_at_ms: Some(9_000),
+            },
+            wire::UsageWindow {
+                name: "7d".into(),
+                used_percent: 40.0,
+                resets_at_ms: Some(3_000),
+            },
+        ],
+        credits: None,
+    };
+    let rows = [
+        (
+            entry("asker", Phase::NeedsYou),
+            wire::ClaudeSdkSnapshot {
+                asks: vec![question],
+                ..Default::default()
+            },
+            vec![],
+        ),
+        (
+            entry("worker", Phase::Working),
+            wire::ClaudeSdkSnapshot::default(),
+            vec![
+                said(1, 1, "Running the tests.", true),
+                running(2, 2, "cargo test"),
+            ],
+        ),
+        (
+            branched,
+            wire::ClaudeSdkSnapshot::default(),
+            vec![said(
+                1,
+                1,
+                "\nDone: the tests pass.\nNothing else changed.",
+                true,
+            )],
+        ),
+        (
+            entry("signed-out", Phase::Idle),
+            wire::ClaudeSdkSnapshot {
+                sign_in: Some(signed_out),
+                ..Default::default()
+            },
+            vec![said(1, 1, "Done.", true)],
+        ),
+        (
+            entry("limited", Phase::Idle),
+            wire::ClaudeSdkSnapshot {
+                usage: Some(spent),
+                ..Default::default()
+            },
+            vec![],
+        ),
+        (
+            entry("starting", Phase::Starting),
+            wire::ClaudeSdkSnapshot::default(),
+            vec![],
+        ),
+        (
+            ended("finished", Some("finished")),
+            wire::ClaudeSdkSnapshot::default(),
+            vec![said(1, 1, "All done.", true)],
+        ),
+        (
+            fleet_entry("b", "far", Phase::Working, None, 1),
+            wire::ClaudeSdkSnapshot::default(),
+            vec![running(1, 1, "make")],
+        ),
+    ];
+    let mut lines = HashMap::new();
+    for (entry, body, items) in rows {
+        let state = session_on(&entry, body, items);
+        lines.insert(ui_state::agent_key(&entry), session_line(&state, 5_000));
+        fleet.update(listed(entry));
+    }
+    // Exited agents need no session to say why they ended.
+    fleet.update(listed(ended("stopped", Some("stopped"))));
+    fleet.update(listed(ended("crashed", Some("provider crashed"))));
+    // A live agent whose session has not opened says nothing yet.
+    fleet.update(listed(entry("unopened", Phase::Idle)));
+
+    let view = fleet_view(&fleet, &lines, &HashSet::new(), &|_| true);
+    let said = second_lines(&view);
+    assert_eq!(
+        said["asker"],
+        SecondLine::Ask(AskSummary {
+            subject: AskSubject::Question {
+                question: "Which environment?".into(),
+                count: 1
+            },
+            count: 1
+        })
+    );
+    let SecondLine::Step(step) = &said["worker"] else {
+        panic!("a working agent shows its step: {:?}", said["worker"]);
+    };
+    assert_eq!(step.step.as_deref(), Some("cargo test"));
+    assert_eq!(
+        step.activity.kind,
+        ui_state::ActivityKind::Running { key: "k2".into() }
+    );
+    assert_eq!(
+        said["idle"],
+        SecondLine::LastSaid("Done: the tests pass.".into())
+    );
+    assert_eq!(
+        said["signed-out"],
+        SecondLine::Stuck(StuckReason::SignedOut {
+            state: wire::SignInState::Expired,
+            account: "me@example.com".into()
+        })
+    );
+    assert_eq!(
+        said["limited"],
+        SecondLine::Stuck(StuckReason::UsageLimit {
+            resets_at_ms: Some(9_000)
+        })
+    );
+    assert_eq!(said["starting"], SecondLine::Blank);
+    assert_eq!(said["unopened"], SecondLine::Blank);
+    assert_eq!(said["finished"], SecondLine::Exited(ExitCause::Finished));
+    assert_eq!(said["stopped"], SecondLine::Exited(ExitCause::Ended));
+    assert_eq!(
+        said["crashed"],
+        SecondLine::Exited(ExitCause::Failed("provider crashed".into()))
+    );
+    assert_eq!(said["far"], SecondLine::HostAway);
+    let idle = fleet_card(&fleet, b"idle").unwrap();
+    assert_eq!(idle.branch.as_deref(), Some("fix-login"));
+    assert_eq!(fleet_card(&fleet, b"asker").unwrap().branch, None);
+}
+
+#[test]
+fn rows_hold_their_order_while_an_agent_streams() {
+    let mut fleet = FleetState::new();
+    let streamer = fleet_entry("a", "streamer", Phase::Working, None, 200);
+    for msg in [
+        fleet_row("a", "older", Phase::Idle, None, 100),
+        listed(streamer.clone()),
+        fleet_row("a", "newer", Phase::Idle, None, 300),
+        fleet_row("a", "asker", Phase::NeedsYou, None, 50),
+    ] {
+        fleet.update(msg);
+    }
+    let key = ui_state::agent_key(&streamer);
+    let mut state = session_on(&streamer, wire::ClaudeSdkSnapshot::default(), vec![]);
+    let view = |fleet: &FleetState, state: &SessionState, now: i64| {
+        let lines = HashMap::from([(key.clone(), session_line(state, now))]);
+        fleet_view(fleet, &lines, &HashSet::new(), &|_| true)
+    };
+    let before = home(&view(&fleet, &state, 0));
+    let mut steps = HashSet::new();
+    let mut text = String::new();
+    for n in 1..=24u64 {
+        // Text streams into a message, a command starts and the next
+        // message begins; the inventory re-lists the agent as it goes.
+        let order = n.div_ceil(3);
+        let item = if n % 3 == 0 {
+            running(order * 10 + 1, n, &format!("step {n}"))
+        } else {
+            text.push_str(" more");
+            said(order * 10, n, &text, false)
+        };
+        state.update(event(session_event::Of::Item(item)));
+        fleet.update(listed(streamer.clone()));
+        let now = view(&fleet, &state, n as i64 * 1_000);
+        assert_eq!(home(&now), before, "rows moved at step {n}");
+        steps.insert(format!("{:?}", second_lines(&now)["streamer"]));
+    }
+    assert!(
+        steps.len() > 1,
+        "the streaming row's second line follows it"
+    );
+
+    // When the agent's state changes, since-when moves and so does the row.
+    fleet.update(listed(wire::Agent {
+        phase: Phase::Idle as i32,
+        phase_since_ms: 400,
+        ..streamer.clone()
+    }));
+    let after = home(&view(&fleet, &state, 30_000));
+    assert_eq!(after[1].1, "streamer");
 }

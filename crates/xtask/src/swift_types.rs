@@ -43,6 +43,7 @@ pub fn definitions() -> Map<String, Value> {
         ui_view::ComposerView,
         ui_view::QueuedRow,
         ui_view::OutboxRow,
+        ui_view::FleetView,
         ui_view::FleetRow,
         ui_view::FleetCard,
         ui_view::FamilyHeader,
