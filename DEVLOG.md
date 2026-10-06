@@ -1,3 +1,10 @@
+2026-10-06 — **Codex view goldens follow the co-drive reading.**
+The view goldens still showed an approval Codex resolved without amux's
+answer as plainly dismissed; since the co-drive work it reads as answered
+elsewhere, which the interpreter goldens already held. Updated that golden
+and added view goldens for the co-drive fixture, the three two-client
+recordings and thread naming.
+
 2026-10-06 — **Codex's own app attaches before the first turn, proven live.**
 Run against the real Codex 0.160.0, attaching Codex's app to a fresh agent
 failed: the app resumes a thread without its turns and pages them from the

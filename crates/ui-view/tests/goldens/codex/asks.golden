@@ -91,7 +91,7 @@
     body Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", cwd: "/work", reason: "Reach the status API.", description: "" }
   composer Send activity=None queue=[] outbox=[]
 ## 25 fact {"channel":"rpc","json":{"method":"serverRequest/resolved","params":{"requestId":30,"threadId":"t1"}}}
-  row   10 cmd-2 Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", state: Pending, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Dismissed, scope: None, note: None, elsewhere: false }
+  row   10 cmd-2 Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", state: Pending, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Dismissed, scope: None, note: None, elsewhere: true }
   ask none
   composer Send activity=Some(Running { key: "cmd-2" }) queue=[] outbox=[]
 ## 26 fact {"channel":"rpc","json":{"id":33,"method":"item/tool/requestUserInput","params":{"itemId":"call-2","questions":[{"header":"Region","id":"region","isOther":true,"isSecret":false,"options":null,"question":"Which region?"}],"threadId":"t1","turnId":"turn-1"}}}
@@ -128,7 +128,7 @@
   composer Send activity=None queue=[] outbox=[]
 ## 33 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-1","status":"interrupted"}}}}
   row    3 cmd-1 Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Allowed, scope: Some("network"), note: None, elsewhere: false }
-  row   10 cmd-2 Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Dismissed, scope: None, note: None, elsewhere: false }
+  row   10 cmd-2 Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Dismissed, scope: None, note: None, elsewhere: true }
   row   14 cmd-3 Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Dismissed, scope: None, note: None, elsewhere: false }
   row   15 turn:1 Stopped
   ask none
@@ -142,7 +142,7 @@
      7 mcp-1 ToolCall { server: "docs", tool: "sign_in", fact: "", state: Succeeded, result: "{\"content\":[{\"text\":\"ok\",\"type\":\"text\"}]}" }
      8 ask:"elicit-1" Ask(Link { server: "docs", message: "Sign in to the docs server.", url: "https://docs.example.com/login", resolution: Answered })
      9 ask:"elicit-2" Ask(Form { server: "docs", message: "Which space?", fields: ["space"], resolution: Answered })
-    10 cmd-2 Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Dismissed, scope: None, note: None, elsewhere: false }
+    10 cmd-2 Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Dismissed, scope: None, note: None, elsewhere: true }
     11 ask:33 Ask(Questions { questions: [QuestionView { header: "Region", question: "Which region?", multi_select: false, options: [], allow_other: true, secret: false }], answers: [], note: None, resolution: Dismissed })
     12 unrecognized:2 Unrecognized { what: "account/chatgptAuthTokens/refresh", summary: "a request amux cannot answer" }
     13 cmd-4 Command { command: "/bin/zsh -lc 'touch notes.txt'", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Denied, scope: None, note: None, elsewhere: false }
