@@ -1286,7 +1286,14 @@ fn raw_attach_is_only_for_terminals_on_this_machine() {
     assert_eq!(refusal(&agent(b"a", Kind::ClaudePty)), None);
     assert_eq!(refusal(&agent(b"a", Kind::Codex)), None);
     assert!(refusal(&agent(b"a", Kind::ClaudeSdk)).is_some_and(|why| why.contains("its chat")));
-    assert!(refusal(&agent(b"b", Kind::ClaudePty)).is_some_and(|why| why.contains("its chat")));
+    // Every agent on another host opens its chat with the same notice:
+    // raw attach reads the agent's directory on this machine.
+    for kind in [Kind::ClaudePty, Kind::Codex, Kind::ClaudeSdk] {
+        assert_eq!(
+            refusal(&agent(b"b", kind)),
+            Some("its terminal is on another machine; enter opens its chat"),
+        );
+    }
 }
 
 #[test]

@@ -65,6 +65,8 @@ jobs:
         run: just docs-check
       - name: Check nothing names a removed mechanism
         run: just deletion-ledger-check
+      - name: Check the terminal client builds nothing from lesser facts
+        run: just stand-ins-check
 
   test:
     name: Test (${{ matrix.os }})

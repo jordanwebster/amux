@@ -17,7 +17,6 @@ pub mod home;
 mod hosts;
 pub(crate) mod markdown;
 pub(crate) mod panel;
-pub(crate) mod pending;
 pub(crate) mod report;
 pub mod run;
 pub mod setup;

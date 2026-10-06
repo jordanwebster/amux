@@ -1,3 +1,22 @@
+2026-10-06 — **The terminal's stand-ins are gone, and a check holds them gone.**
+The terminal client was built ahead of the protocol, with one module that
+decided what to hold back or build from lesser facts until the wire carried
+it. Every fact it waited for is real now, and the module's last function, the
+switch that kept an agent's terminal on another host closed, is deleted with
+it: such an agent opens its chat with the same notice it always did, now
+unconditionally, and a unit test pins the notice for every kind. `just
+stand-ins-check` (in `just ci` and the CI workflow) holds the end state the
+terminal's hand-off asked for: no stand-in module or its gates, no option
+lists written in clients, no tidying of model ids, no old context strip, one
+way to fold tool steps and no plan recognition in the shared views, while the
+syntax highlighter and the notice for a terminal on another host are checked
+as present. The phone's outbox row is its one row marked pending, until the
+phone follows the terminal's sending rules; a pending row that finds nothing
+fails, so the mark goes with the code. The deletion ledger gains rows for the
+stand-ins, the context strip, stretches, plan recognition and the provider
+messages the typed facts replaced. A last read of the client for notices,
+comments or tests compensating for a missing fact found nothing else.
+
 2026-10-06 — **Tool steps fold one way.**
 There were two folds: the session's runs (two or more consecutive reads and
 searches, an attribute on rows the terminal drew as "Read 6 files ·

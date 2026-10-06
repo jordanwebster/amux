@@ -256,7 +256,7 @@ fn now_ms() -> i64 {
 /// reads the agent's directory on this machine, and headless Claude has no
 /// terminal at all. Its chat is the way in either way.
 pub(crate) fn terminal_refusal(agent: &Agent, config: &TuiConfig) -> Option<&'static str> {
-    if agent.host_id != config.local_host && !crate::pending::attaches_elsewhere() {
+    if agent.host_id != config.local_host {
         Some("its terminal is on another machine; enter opens its chat")
     } else if agent.kind() == wire::Kind::ClaudeSdk {
         Some("headless Claude has no terminal; enter opens its chat")

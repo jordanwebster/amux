@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Fail when the tree still carries a mechanism amux no longer has.
 
-Each row names something the journal architecture removed and lists the names
-it went by. The check searches everything git tracks or would track (code,
-config, protos, recipes, scripts, workflows and docs) for those names and
-fails on any hit, grouped by row, so a survivor cannot come back quietly.
-DEVLOG.md is history and is not searched. It also fails when the workspace
+Each row names something amux removed and lists the names it went by. The
+check searches everything git tracks or would track (code, config, protos,
+recipes, scripts, workflows and docs) for those names and fails on any hit,
+grouped by row, so a survivor cannot come back quietly. DEVLOG.md is history
+and is not searched, nor are the checks that name removed things to hold them
+gone. It also fails when the workspace
 members list and the crates directory disagree, so a dead crate cannot linger
 outside the build.
 
@@ -253,6 +254,47 @@ ROWS = [
         ],
     ),
     Row(
+        "terminal stand-ins",
+        "the terminal's stand-in module and its gates, option lists written in clients, the terminal's tidying of model ids",
+        [
+            r"crates/tui/src/pending|(crate|super|tui)::pending::",
+            r"attaches_elsewhere|offers_worktree|declines_questions|skips_questions|models_before_start|home_summary|home_order|diff_counts|wants_diff_stat",
+            r"Held back outside",
+            r"CLAUDE_EFFORTS|CODEX_EFFORTS|CODEX_MODES|CLAUDE_MODES|CODEX_PRESETS|CLAUDE_STOPS_ASKING",
+        ],
+    ),
+    Row(
+        "context strip",
+        "the composer's strip, replaced by the overview",
+        [
+            r"pub struct Strip([^A-Za-z_]|$)|(^|[^A-Za-z_])in_strip|CONTEXT_STRIP_PERCENT",
+        ],
+    ),
+    Row(
+        "stretches",
+        "the stretch query, a second way to fold tool steps",
+        [
+            r"stretch_at|stretch_steps|StretchCache|StretchCounts|struct Stretch([^A-Za-z_]|$)",
+        ],
+    ),
+    Row(
+        "plan recognition",
+        "reading a plan-file write as the plan, and the approve and send-back answers",
+        [
+            r"is_plan_file|plan_file_row|waiting_plan",
+            r"PlanApprove|PlanSendBack",
+        ],
+    ),
+    Row(
+        "provider messages by hand",
+        "the Claude SDK module and wire messages the typed provider facts replaced",
+        [
+            r"claude::sdk",
+            r"(^|[^A-Za-z_])SetApproval([^A-Za-z_]|$)",
+            r"BackgroundProcesses|UsageLimits|message UsageWindow",
+        ],
+    ),
+    Row(
         "docs",
         "the chapter on agent messaging and remote sessions",
         [
@@ -260,6 +302,9 @@ ROWS = [
         ],
     ),
 ]
+
+# Files that name removed things on purpose, to hold them gone.
+HOLDERS = [SELF, "scripts/stand-ins-check.py", "scripts/tests/stand_ins_check_test.py"]
 
 # A hit that names a removed thing on purpose.
 EXEMPTIONS = [
@@ -274,7 +319,7 @@ EXEMPTIONS = [
 def grep(pattern: str) -> list[str]:
     result = subprocess.run(
         ["git", "grep", "--untracked", "-I", "-n", "-E", "-e", pattern, "--",
-         ".", ":!DEVLOG.md", f":!{SELF}"],
+         ".", ":!DEVLOG.md", *(f":!{path}" for path in HOLDERS)],
         cwd=ROOT, capture_output=True, text=True,
     )
     if result.returncode not in (0, 1):
