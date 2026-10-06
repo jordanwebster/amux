@@ -796,7 +796,7 @@ impl ProfileRuntime {
         };
 
         let dir = self.agent_dir(id);
-        private_dir(&dir).inspect_err(|e| eprintln!("ZZ private_dir {e}"))?;
+        private_dir(&dir)?;
         let launch = self.launch();
         let resolved = spec::resolve(&request);
         let offered = self.offered_to(kind).await;
@@ -816,7 +816,7 @@ impl ProfileRuntime {
                 offered,
             },
         );
-        spec::write(&dir, &spec).inspect_err(|e| eprintln!("ZZ spec write {e:?}"))?;
+        spec::write(&dir, &spec)?;
         let started = self.start_process(id, &dir, &launch).await;
         if started.is_ok() {
             self.recent
@@ -975,11 +975,10 @@ impl ProfileRuntime {
         dir: &Path,
         launch: &Launch,
     ) -> Result<Agent, RegistryError> {
-        let tools = self.bind_tools(id, dir).inspect_err(|e| eprintln!("ZZ bind_tools {e}"))?;
+        let tools = self.bind_tools(id, dir)?;
         let child = match spawn_agent(&launch.install_path, dir) {
             Ok(child) => child,
             Err(error) => {
-                eprintln!("ZZ spawn_agent {error}");
                 drop(tools);
                 self.mark_exited(id, CAUSE_UNSTARTED).await?;
                 return Err(error.into());
@@ -1009,7 +1008,7 @@ impl ProfileRuntime {
                 return Err(RegistryError::StartTimeout(id));
             }
         }
-        self.agent(id).await.inspect_err(|e| eprintln!("ZZ agent {e:?}"))
+        self.agent(id).await
     }
 
     /// Serves the client service on `<dir>/tools.sock` for the agent's MCP
