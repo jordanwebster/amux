@@ -85,8 +85,10 @@ parts:
   per-kind layer: `decode_snapshot` reads a `ClaudePtySnapshot`, `ClaudeSdkSnapshot` or `CodexSnapshot` into one
   shape (phase, queue, working-on, open asks, model and its display name, effort, mode, sandbox, the
   catalogue's hash, tasks, context, usage, tool servers, sign-in, background jobs, running calls). The offered
-  models and commands come from the catalogue the snapshot names, once it is handed to the session with
-  `set_catalogue`. A field the provider has not
+  models and commands come from the catalogue the snapshot names. The driver fetches it with `GetCatalogue`
+  only while a chat shows the session, never for a session held for a fleet row, and keeps every catalogue
+  it fetched by hash for the fleet's sessions, so each version is fetched once; it reaches the state as
+  `Msg::Catalogue`. A field the provider has not
   reported stays at its explicit unknown. Open asks keep the provider's own shape as `OpenAsk::Claude` or
   `OpenAsk::Codex`.
 - **`Transcript`**, the window of items by order, and the rows that arrived above it while the reader was in

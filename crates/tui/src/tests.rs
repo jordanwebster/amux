@@ -1408,6 +1408,12 @@ impl client::Client for DiffHost {
             bytes: PATCH.as_bytes().to_vec(),
         })
     }
+    async fn get_catalogue(
+        &self,
+        _: wire::GetCatalogueRequest,
+    ) -> Result<wire::Catalogue, client::RpcError> {
+        unimplemented!()
+    }
     async fn subscribe_inventory(
         &self,
     ) -> Result<client::EventStream<wire::InventoryEvent>, client::RpcError> {

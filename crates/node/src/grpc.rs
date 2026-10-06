@@ -28,6 +28,7 @@ use wire::{
 };
 
 use crate::blobs::BlobError;
+use crate::catalogue::CatalogueError;
 use crate::forward::{ForwardError, Owner};
 use crate::runtime::{AgentId, ProfileRuntime};
 
@@ -490,6 +491,45 @@ impl ClientService for ClientApi {
             .await
             .map(Response::new)
             .map_err(|error| status(error.to_wire()))
+    }
+
+    async fn get_catalogue(
+        &self,
+        request: Request<wire::GetCatalogueRequest>,
+    ) -> Result<Response<wire::Catalogue>, Status> {
+        let agent_id = match request.into_inner().of {
+            Some(wire::get_catalogue_request::Of::AgentId(agent_id)) => agent_id,
+            Some(wire::get_catalogue_request::Of::Host(_)) => {
+                return Err(status(CatalogueError::HostForm.to_wire()));
+            }
+            None => return Err(status(CatalogueError::NoTarget.to_wire())),
+        };
+        let runtime = self.runtime()?;
+        let not_held = match runtime.catalogue(&agent_id).await {
+            Err(not_held @ CatalogueError::NotHeld(_)) => not_held,
+            read => {
+                return read
+                    .map(Response::new)
+                    .map_err(|error| status(error.to_wire()));
+            }
+        };
+        // A peer's catalogue not read yet: its origin answers, and this
+        // host keeps a copy for the next reader.
+        let Some(host) = self.forward_to(&runtime, &agent_id).await? else {
+            return Err(status(not_held.to_wire()));
+        };
+        let request = wire::GetCatalogueRequest {
+            of: Some(wire::get_catalogue_request::Of::AgentId(agent_id.clone())),
+        };
+        let fetched = forwarded(&runtime, host, |mut client| async move {
+            client.get_catalogue(request).await
+        })
+        .await?;
+        runtime
+            .keep_replica_catalogue(&agent_id, fetched.get_ref())
+            .await
+            .map_err(|error| status(error.to_wire()))?;
+        Ok(fetched)
     }
 
     async fn list_repositories(

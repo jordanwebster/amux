@@ -1,3 +1,16 @@
+2026-10-06 — **Clients fetch what an agent offers once per version, and only for a chat on screen.**
+`GetCatalogue` by agent id answers on both the client and the peer service: the
+host reads the file the agent process wrote under the hash its newest snapshot
+names. A call for a paired host's agent is answered from this host's copy when
+it holds that hash, and otherwise forwarded to the agent's host like `Diff`,
+with the answer checked against its hash and kept under the replica, so it
+still answers with that host away. The client library fetches when a chat opens
+on screen or when a snapshot on screen names a new hash, never for a session
+the fleet holds only for its row, and keeps what it fetched by hash for every
+session in the fleet, so two agents offering the same are fetched once and a
+reopened chat fetches nothing. The settings pickers list the offered models
+again.
+
 2026-10-06 — **What an agent offers moves out of the snapshot into a catalogue written by hash.**
 Every snapshot of a headless Claude or Codex agent used to carry the full model
 and command lists (81 commands on a real Claude session), re-sent with each

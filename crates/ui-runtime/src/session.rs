@@ -96,6 +96,25 @@ struct Model {
 /// fleet's home is woken by.
 pub(crate) type HomeWake = Box<dyn Fn() + Send + Sync>;
 
+/// The catalogues this client fetched, by hash: one fetch per version,
+/// shared by every chat whose agent offers the same.
+#[derive(Default)]
+pub(crate) struct Catalogues(Mutex<HashMap<Vec<u8>, wire::Catalogue>>);
+
+impl Catalogues {
+    fn get(&self, hash: &[u8]) -> Option<wire::Catalogue> {
+        self.held().get(hash).cloned()
+    }
+
+    fn keep(&self, catalogue: wire::Catalogue) {
+        self.held().insert(catalogue.hash.clone(), catalogue);
+    }
+
+    fn held(&self) -> MutexGuard<'_, HashMap<Vec<u8>, wire::Catalogue>> {
+        self.0.lock().unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
 pub(crate) struct Inner {
     client: Arc<dyn Client>,
     agent_id: Vec<u8>,
@@ -111,6 +130,10 @@ pub(crate) struct Inner {
     /// The model asked for a reload: the pump reopens the stream.
     reload: Notify,
     closed: AtomicBool,
+    catalogues: Arc<Catalogues>,
+    /// The catalogue hash last fetched for; asked again only when a chat
+    /// opens anew.
+    asked: Mutex<Option<Vec<u8>>>,
 }
 
 impl Inner {
@@ -180,8 +203,11 @@ impl Inner {
 
     /// Applies one stream event, answering an Append whose base is not
     /// held with Get before the next event, so later appends meet it.
-    async fn event(&self, event: SessionEvent) -> Outcome {
+    async fn event(self: &Arc<Self>, event: SessionEvent) -> Outcome {
         let outcome = self.apply(Msg::Event(event));
+        if outcome.session {
+            self.want_catalogue();
+        }
         if let Some(key) = &outcome.need_get {
             self.note(DriverEvent::Get { key: key.clone() });
             let request = GetRequest {
@@ -201,6 +227,66 @@ impl Inner {
             }
         }
         outcome
+    }
+
+    /// On screen, fetches the catalogue the newest snapshot names unless
+    /// this client holds it; off screen nothing is fetched.
+    fn want_catalogue(self: &Arc<Self>) {
+        if !self.gathering.load(Ordering::Acquire) || self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        let (wanted, held) = {
+            let model = self.model();
+            (
+                model.state.agent_state().catalogue.clone(),
+                model.state.held_catalogue().map(<[u8]>::to_vec),
+            )
+        };
+        let Some(wanted) = wanted else {
+            return;
+        };
+        if held.as_ref() == Some(&wanted) {
+            return;
+        }
+        if let Some(catalogue) = self.catalogues.get(&wanted) {
+            self.apply(Msg::Catalogue(catalogue));
+            return;
+        }
+        {
+            let mut asked = self
+                .asked
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if asked.as_ref() == Some(&wanted) {
+                return;
+            }
+            *asked = Some(wanted.clone());
+        }
+        tokio::spawn(self.clone().fetch_catalogue(wanted));
+    }
+
+    /// Asks the runtime for the agent's catalogue now, which may already be
+    /// newer than the one wanted: it is kept by its own hash and shows once
+    /// a snapshot names it.
+    async fn fetch_catalogue(self: Arc<Self>, wanted: Vec<u8>) {
+        self.note(DriverEvent::Catalogue {
+            hash: wanted.clone(),
+        });
+        let request = wire::GetCatalogueRequest {
+            of: Some(wire::get_catalogue_request::Of::AgentId(
+                self.agent_id.clone(),
+            )),
+        };
+        match self.client.get_catalogue(request).await {
+            Ok(catalogue) => {
+                self.catalogues.keep(catalogue.clone());
+                self.apply(Msg::Catalogue(catalogue));
+            }
+            Err(error) => self.note(DriverEvent::CatalogueFailed {
+                hash: wanted,
+                error: error.to_string(),
+            }),
+        }
     }
 
     async fn send(&self, mut input: Input) -> Sent {
@@ -310,6 +396,20 @@ impl Session {
         cap: u32,
         clock: impl Clock,
     ) -> Result<Session, RpcError> {
+        Self::start(client, agent, tail, cap, clock, true, Arc::default()).await
+    }
+
+    /// Opens on screen, fetching the catalogue, or off screen, where
+    /// nothing is fetched until a chat shows it.
+    pub(crate) async fn start(
+        client: Arc<dyn Client>,
+        agent: Agent,
+        tail: u32,
+        cap: u32,
+        clock: impl Clock,
+        on_screen: bool,
+        catalogues: Arc<Catalogues>,
+    ) -> Result<Session, RpcError> {
         let state = SessionState::new(agent.clone(), cap.max(tail) as usize);
         let (changed, _) = watch::channel(());
         let inner = Arc::new(Inner {
@@ -327,9 +427,11 @@ impl Session {
             }),
             changed,
             home: OnceLock::new(),
-            gathering: AtomicBool::new(true),
+            gathering: AtomicBool::new(on_screen),
             reload: Notify::new(),
             closed: AtomicBool::new(false),
+            catalogues,
+            asked: Mutex::new(None),
         });
         let mut stream = inner.client.subscribe(inner.subscribe_request()).await?;
         inner.note(DriverEvent::Subscribed { tail });
@@ -384,6 +486,7 @@ impl Session {
                 None => ended = Some(End::Closed(None)),
             }
         }
+        inner.want_catalogue();
         let pump = tokio::spawn(pump(inner.clone(), Some(stream), ended));
         Ok(Session {
             inner,
@@ -407,11 +510,22 @@ impl Session {
             model.changes = Changes::default();
             model.changed_keys.clear();
         }
-        self.inner.gathering.store(on_screen, Ordering::Release);
+        let was_on_screen = self.inner.gathering.swap(on_screen, Ordering::AcqRel);
         if !on_screen {
             self.inner.apply(Msg::Following(true));
         }
         self.inner.apply(Msg::Window(cap.max(tail) as usize));
+        if on_screen && !was_on_screen {
+            // A chat opening anew asks again after a failed fetch.
+            *self
+                .inner
+                .asked
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()) = None;
+        }
+        if on_screen {
+            self.inner.want_catalogue();
+        }
     }
 
     /// Out of the foreground the stream is dropped, the rows stay and the
@@ -755,7 +869,11 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 }
 
 /// Reads one stream until it ends or the model asks for a reload.
-async fn read(inner: &Inner, stream: &mut EventStream<SessionEvent>, backoff: &mut Backoff) -> End {
+async fn read(
+    inner: &Arc<Inner>,
+    stream: &mut EventStream<SessionEvent>,
+    backoff: &mut Backoff,
+) -> End {
     loop {
         let next = tokio::select! {
             next = stream.next() => next,

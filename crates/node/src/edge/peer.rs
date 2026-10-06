@@ -237,6 +237,14 @@ impl PeerService for PeerApi {
         self.client.diff(request).await
     }
 
+    async fn get_catalogue(
+        &self,
+        request: Request<wire::GetCatalogueRequest>,
+    ) -> Result<Response<wire::Catalogue>, Status> {
+        caller(&request)?;
+        self.client.get_catalogue(request).await
+    }
+
     async fn list_repositories(
         &self,
         request: Request<ListRepositoriesRequest>,

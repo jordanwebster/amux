@@ -5583,6 +5583,51 @@ impl ::prost::Name for DiffRequest {
         "/amux.v1.DiffRequest".into()
     }
 }
+/// The catalogue of a running or exited agent, or of a provider on a host
+/// with no agent running.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetCatalogueRequest {
+    #[prost(oneof = "get_catalogue_request::Of", tags = "1, 2")]
+    pub of: ::core::option::Option<get_catalogue_request::Of>,
+}
+/// Nested message and enum types in `GetCatalogueRequest`.
+pub mod get_catalogue_request {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Of {
+        #[prost(bytes, tag = "1")]
+        AgentId(::prost::alloc::vec::Vec<u8>),
+        #[prost(message, tag = "2")]
+        Host(super::HostProvider),
+    }
+}
+impl ::prost::Name for GetCatalogueRequest {
+    const NAME: &'static str = "GetCatalogueRequest";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.GetCatalogueRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.GetCatalogueRequest".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HostProvider {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    /// As an agent's kind names its provider: "claude" or "codex".
+    #[prost(string, tag = "2")]
+    pub provider: ::prost::alloc::string::String,
+}
+impl ::prost::Name for HostProvider {
+    const NAME: &'static str = "HostProvider";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.HostProvider".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.HostProvider".into()
+    }
+}
 /// Host-owned discovery; the client chooses a host, never a search root.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListRepositoriesRequest {
@@ -7800,6 +7845,29 @@ pub mod client_service_client {
                 .insert(GrpcMethod::new("amux.v1.ClientService", "Diff"));
             self.inner.unary(req, path, codec).await
         }
+        /// What an agent offers now, read from its host; clients fetch it once per
+        /// hash the snapshot names.
+        pub async fn get_catalogue(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetCatalogueRequest>,
+        ) -> std::result::Result<tonic::Response<super::Catalogue>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ClientService/GetCatalogue",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ClientService", "GetCatalogue"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn list_repositories(
             &mut self,
             request: impl tonic::IntoRequest<super::ListRepositoriesRequest>,
@@ -7953,6 +8021,12 @@ pub mod client_service_server {
             &self,
             request: tonic::Request<super::DiffRequest>,
         ) -> std::result::Result<tonic::Response<super::Diff>, tonic::Status>;
+        /// What an agent offers now, read from its host; clients fetch it once per
+        /// hash the snapshot names.
+        async fn get_catalogue(
+            &self,
+            request: tonic::Request<super::GetCatalogueRequest>,
+        ) -> std::result::Result<tonic::Response<super::Catalogue>, tonic::Status>;
         async fn list_repositories(
             &self,
             request: tonic::Request<super::ListRepositoriesRequest>,
@@ -8715,6 +8789,51 @@ pub mod client_service_server {
                     };
                     Box::pin(fut)
                 }
+                "/amux.v1.ClientService/GetCatalogue" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetCatalogueSvc<T: ClientService>(pub Arc<T>);
+                    impl<
+                        T: ClientService,
+                    > tonic::server::UnaryService<super::GetCatalogueRequest>
+                    for GetCatalogueSvc<T> {
+                        type Response = super::Catalogue;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetCatalogueRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ClientService>::get_catalogue(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetCatalogueSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/amux.v1.ClientService/ListRepositories" => {
                     #[allow(non_camel_case_types)]
                     struct ListRepositoriesSvc<T: ClientService>(pub Arc<T>);
@@ -9233,6 +9352,27 @@ pub mod peer_service_client {
             req.extensions_mut().insert(GrpcMethod::new("amux.v1.PeerService", "Diff"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn get_catalogue(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetCatalogueRequest>,
+        ) -> std::result::Result<tonic::Response<super::Catalogue>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.PeerService/GetCatalogue",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.PeerService", "GetCatalogue"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn list_repositories(
             &mut self,
             request: impl tonic::IntoRequest<super::ListRepositoriesRequest>,
@@ -9372,6 +9512,10 @@ pub mod peer_service_server {
             &self,
             request: tonic::Request<super::DiffRequest>,
         ) -> std::result::Result<tonic::Response<super::Diff>, tonic::Status>;
+        async fn get_catalogue(
+            &self,
+            request: tonic::Request<super::GetCatalogueRequest>,
+        ) -> std::result::Result<tonic::Response<super::Catalogue>, tonic::Status>;
         async fn list_repositories(
             &self,
             request: tonic::Request<super::ListRepositoriesRequest>,
@@ -10075,6 +10219,51 @@ pub mod peer_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DiffSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.PeerService/GetCatalogue" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetCatalogueSvc<T: PeerService>(pub Arc<T>);
+                    impl<
+                        T: PeerService,
+                    > tonic::server::UnaryService<super::GetCatalogueRequest>
+                    for GetCatalogueSvc<T> {
+                        type Response = super::Catalogue;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetCatalogueRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as PeerService>::get_catalogue(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetCatalogueSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

@@ -86,6 +86,7 @@ failed and whether the call took effect is unknown. Codes a client meets often:
 | `PutBlob(PutBlobRequest)` | `BlobRef` | Bytes into an agent's directory |
 | `GetBlob(GetBlobRequest)` | `GetBlobResponse` | Bytes out |
 | `Diff(DiffRequest)` | `Diff` | The changed files on the owning host; the patch, stored as a blob, only when asked |
+| `GetCatalogue(GetCatalogueRequest)` | `Catalogue` | What an agent offers now, by agent id, with its hash |
 | `ListRepositories` | `ListRepositoriesResponse` | Repositories a host offers to spawn agents in |
 | `Dump(DumpRequest)` | `DumpResponse` | A debug bundle (see [debugging](DEBUGGING.md)) |
 
@@ -440,6 +441,17 @@ whether it is binary. Only `with_patch` builds the patch and stores it as one of
 that agent's blobs (`text/x-diff`), named in `patch`; without it the host writes
 nothing. An exited agent's folder is compared as it is now; another host's
 agent's diff is made on that host and forwarded.
+
+`GetCatalogue(agent_id)` answers the catalogue the agent's newest snapshot
+names: the models, commands, permissions and modes it offers, as its agent
+process wrote them to `catalogues/<hash>` in its directory, with `hash` set.
+The hash is the SHA-256 of the encoding with `hash` empty, so identical
+catalogues are one. For a paired host's agent the local runtime answers from
+its copy under `replicas/` when it holds the hash its replica names, and
+otherwise asks the origin, checks the hash and keeps the copy, so it answers
+again with the origin away. An agent that has not said what it offers is
+`NOT_FOUND`. The host form, a provider's catalogue on a host with no agent
+running, is `UNIMPLEMENTED` for now.
 
 A blob lives as long as its agent's directory. See
 [attachments](ATTACHMENTS.md) for the attachment types and lifetimes.

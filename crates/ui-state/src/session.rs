@@ -49,6 +49,8 @@ pub enum Msg {
     /// session the fleet holds off screen narrows to a few rows, trimmed at
     /// once while the reader follows.
     Window(usize),
+    /// A catalogue the driver fetched or held for the agent.
+    Catalogue(wire::Catalogue),
 }
 
 /// What one update did.
@@ -294,6 +296,14 @@ impl SessionState {
     pub fn set_catalogue(&mut self, catalogue: wire::Catalogue) {
         self.catalogue = Some(catalogue);
         self.offer();
+    }
+
+    /// The hash of the catalogue held, whether or not the newest snapshot
+    /// still names it.
+    pub fn held_catalogue(&self) -> Option<&[u8]> {
+        self.catalogue
+            .as_ref()
+            .map(|catalogue| catalogue.hash.as_slice())
     }
 
     fn offer(&mut self) {
@@ -602,6 +612,10 @@ impl SessionState {
             Msg::Window(cap) => {
                 self.cap = cap.max(1);
                 self.trim(&mut changed);
+            }
+            Msg::Catalogue(catalogue) => {
+                self.set_catalogue(catalogue);
+                outcome.session = true;
             }
             Msg::Reloading => {
                 // Every reopened stream re-tails; a reload builds apart.

@@ -214,7 +214,7 @@ impl ProfileRuntime {
     }
 
     /// The row of the agent a blob call names, own or replica.
-    async fn blob_owner(&self, agent_id: &[u8]) -> Result<AgentRow, BlobError> {
+    pub(crate) async fn blob_owner(&self, agent_id: &[u8]) -> Result<AgentRow, BlobError> {
         let store = self.store.lock().await;
         if let Ok(id) = Uuid::from_slice(agent_id)
             && let Some(row) = store.agent(&self.key(id))?
@@ -229,8 +229,14 @@ impl ProfileRuntime {
     }
 
     fn blob_path(&self, row: &AgentRow, hash: &[u8]) -> PathBuf {
+        self.files_of(row).join(agent_dir::BLOBS).join(hex(hash))
+    }
+
+    /// Where an agent's files are on this host: its own directory, or the
+    /// replica's.
+    pub(crate) fn files_of(&self, row: &AgentRow) -> PathBuf {
         let agent = Uuid::from_slice(&row.agent.agent).unwrap_or_default();
-        let dir = if row.agent.host == self.host().as_bytes() {
+        if row.agent.host == self.host().as_bytes() {
             self.agent_dir(agent)
         } else {
             let host = Uuid::from_slice(&row.agent.host).unwrap_or_default();
@@ -239,15 +245,14 @@ impl ProfileRuntime {
                 .join(host.to_string())
                 .join(AGENTS)
                 .join(agent.to_string())
-        };
-        dir.join(agent_dir::BLOBS).join(hex(hash))
+        }
     }
 }
 
 /// Writes `<dir>/<hex>` by temp-and-rename, so a reader sees the whole file
 /// or none; the name is the content's hash, so two writers are safe. A
 /// failed write removes its temporary file.
-fn write_blob(dir: &Path, hash: &[u8], bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_blob(dir: &Path, hash: &[u8], bytes: &[u8]) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let name = hex(hash);
     let path = dir.join(&name);

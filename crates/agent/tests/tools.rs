@@ -254,6 +254,12 @@ impl ClientService for Fleet {
     async fn diff(&self, _: Request<wire::DiffRequest>) -> Result<Response<wire::Diff>, Status> {
         Err(Status::unimplemented("diff"))
     }
+    async fn get_catalogue(
+        &self,
+        _: Request<wire::GetCatalogueRequest>,
+    ) -> Result<Response<wire::Catalogue>, Status> {
+        Err(Status::unimplemented("get_catalogue"))
+    }
     async fn list_repositories(
         &self,
         _: Request<wire::ListRepositoriesRequest>,

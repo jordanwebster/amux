@@ -357,3 +357,95 @@ async fn an_agent_that_exits_loses_its_session_unless_a_chat_shows_it() {
     streams.until_closed(b"c").await;
     assert!(fleet.session(&key(b"c")).is_none());
 }
+
+/// A Codex snapshot naming the catalogue `hash`.
+fn offering(revision: u64, hash: &[u8]) -> SessionEvent {
+    let mut event = snapshot(Kind::Codex, revision, &[]);
+    if let Some(wire::session_event::Of::Snapshot(snapshot)) = &mut event.of {
+        snapshot.catalogue = Some(hash.to_vec());
+    }
+    event
+}
+
+fn catalogue(hash: &[u8], model: &str) -> wire::Catalogue {
+    wire::Catalogue {
+        hash: hash.to_vec(),
+        models: vec![wire::OfferedModel {
+            value: model.into(),
+            display_name: model.into(),
+            ..wire::OfferedModel::default()
+        }],
+        ..wire::Catalogue::default()
+    }
+}
+
+fn models(session: &ui_runtime::Session) -> Vec<String> {
+    let state = session.state();
+    state
+        .agent_state()
+        .models
+        .iter()
+        .map(|model| model.value.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_chat_on_screen_fetches_its_catalogue_once_per_hash_and_home_never_does() {
+    let (fleet, mut calls, _inventory) = fleet_of(vec![named(b"a"), named(b"b")]).await;
+    let fleet = Arc::new(fleet);
+    let mut streams = Streams::default();
+    for _ in 0..2 {
+        let (agent, _) = streams.answer(&mut calls).await;
+        let feed = streams.feed(&agent);
+        feed.send(offering(1, b"first"));
+        feed.send(caught_up(1));
+    }
+    session_of(&fleet, &key(b"a")).await;
+    session_of(&fleet, &key(b"b")).await;
+    calls.none().await;
+
+    // Opening a chat fetches what the agent offers, by its id.
+    let opening = tokio::spawn({
+        let fleet = fleet.clone();
+        async move { fleet.open(&key(b"a"), CHAT).await }
+    });
+    let (request, reply) = calls.get_catalogue().await;
+    assert_eq!(
+        request.of,
+        Some(wire::get_catalogue_request::Of::AgentId(b"a".to_vec()))
+    );
+    reply.send(Ok(catalogue(b"first", "gpt-1"))).ok();
+    let chat = opening.await.unwrap().expect("the chat opens");
+    until(chat.changed(), || {
+        (models(&chat) == ["gpt-1"]).then_some(())
+    })
+    .await;
+    calls.none().await;
+
+    // Another agent offering the same is not asked again.
+    let other = fleet.open(&key(b"b"), CHAT).await.expect("b's chat opens");
+    assert_eq!(models(&other), ["gpt-1"]);
+    calls.none().await;
+
+    // The catalogue changes mid-session: the new hash is fetched once.
+    streams.feed(b"a").send(offering(2, b"second"));
+    let (_, reply) = calls.get_catalogue().await;
+    reply.send(Ok(catalogue(b"second", "gpt-2"))).ok();
+    until(chat.changed(), || {
+        (models(&chat) == ["gpt-2"]).then_some(())
+    })
+    .await;
+    calls.none().await;
+
+    // Off screen a change fetches nothing; reopening finds it cached.
+    fleet.close(&key(b"b"));
+    streams.feed(b"b").send(offering(2, b"second"));
+    until(other.changed(), || {
+        (other.state().agent_state().catalogue.as_deref() == Some(&b"second"[..])).then_some(())
+    })
+    .await;
+    calls.none().await;
+    let reopened = fleet.open(&key(b"b"), CHAT).await.expect("b reopens");
+    assert_eq!(models(&reopened), ["gpt-2"]);
+    calls.none().await;
+}

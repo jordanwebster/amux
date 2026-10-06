@@ -63,6 +63,14 @@ pub enum DriverEvent {
     Blob {
         hash: Vec<u8>,
     },
+    /// The chat on screen names a catalogue this client does not hold.
+    Catalogue {
+        hash: Vec<u8>,
+    },
+    CatalogueFailed {
+        hash: Vec<u8>,
+        error: String,
+    },
     /// The window changed: widened for a chat on screen, or narrowed to
     /// the few rows the fleet holds off screen.
     Window {

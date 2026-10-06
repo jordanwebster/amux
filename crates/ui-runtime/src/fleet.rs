@@ -21,7 +21,7 @@ use ui_state::{AgentKey, Connection, FleetMsg, FleetState};
 use wire::{Agent, DumpFile, DumpPart, InventoryEvent, Lifecycle, inventory_event};
 
 use crate::Backoff;
-use crate::session::Session;
+use crate::session::{Catalogues, Session};
 use crate::trace::{DriverEvent, DriverTrace, Ring, Structure as _, TraceEvent};
 
 /// The rows a session holds while it is off screen: enough for the fleet
@@ -88,6 +88,8 @@ struct Inner {
     /// Never locked while the model is, nor the model while this is.
     sessions: Mutex<HashMap<AgentKey, Slot>>,
     foreground: AtomicBool,
+    /// Shared by every session, so a catalogue is fetched once per hash.
+    catalogues: Arc<Catalogues>,
     me: Weak<Inner>,
 }
 
@@ -202,8 +204,16 @@ impl Inner {
         on_screen: bool,
     ) -> Result<Arc<Session>, RpcError> {
         let host = self.model().state.host(&entry.host_id).cloned();
-        let session =
-            Session::open(self.client.clone(), entry, tail, cap, self.clock.clone()).await?;
+        let session = Session::start(
+            self.client.clone(),
+            entry,
+            tail,
+            cap,
+            self.clock.clone(),
+            on_screen,
+            self.catalogues.clone(),
+        )
+        .await?;
         let session = Arc::new(session);
         if !on_screen {
             session.set_window(tail, cap, false);
@@ -321,6 +331,7 @@ impl Fleet {
             closed: AtomicBool::new(false),
             sessions: Mutex::new(HashMap::new()),
             foreground: AtomicBool::new(true),
+            catalogues: Arc::default(),
             me: me.clone(),
         });
         let mut stream = inner.client.subscribe_inventory().await?;

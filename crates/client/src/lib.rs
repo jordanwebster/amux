@@ -119,6 +119,10 @@ pub trait Client: Send + Sync + 'static {
     async fn put_blob(&self, request: PutBlobRequest) -> Result<BlobRef, RpcError>;
     async fn get_blob(&self, request: GetBlobRequest) -> Result<GetBlobResponse, RpcError>;
     async fn diff(&self, request: DiffRequest) -> Result<Diff, RpcError>;
+    async fn get_catalogue(
+        &self,
+        request: wire::GetCatalogueRequest,
+    ) -> Result<wire::Catalogue, RpcError>;
     async fn list_repositories(
         &self,
         request: ListRepositoriesRequest,
@@ -204,6 +208,13 @@ macro_rules! client_impl {
 
             async fn diff(&self, request: DiffRequest) -> Result<Diff, RpcError> {
                 Ok($call!(self, diff, request).await?.into_inner())
+            }
+
+            async fn get_catalogue(
+                &self,
+                request: wire::GetCatalogueRequest,
+            ) -> Result<wire::Catalogue, RpcError> {
+                Ok($call!(self, get_catalogue, request).await?.into_inner())
             }
 
             async fn list_repositories(

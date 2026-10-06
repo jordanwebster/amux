@@ -475,9 +475,9 @@ cargo = [
 
 [[suite]]
 name = "single-daemon-contract"
-contract = "One daemon commits journaled steps atomically, fans out and serves subscriptions without losing committed rows across crashes, failed commits and power cuts, carries inputs, messages, deliveries and notifications exactly once, stores blobs and diffs, assembles redacted dumps, and adopts, starts, stops and resumes agent processes."
+contract = "One daemon commits journaled steps atomically, fans out and serves subscriptions without losing committed rows across crashes, failed commits and power cuts, carries inputs, messages, deliveries and notifications exactly once, stores blobs, diffs and catalogues, assembles redacted dumps, and adopts, starts, stops and resumes agent processes."
 paths = ["crates/node/tests"]
-recipe = "just test -- --test single_daemon --test messaging --test push --test blobs --test diff --test registry --test dump --test agent_names"
+recipe = "just test -- --test single_daemon --test messaging --test push --test blobs --test catalogue --test diff --test registry --test dump --test agent_names"
 boundary = "Single daemon"
 oracle = "Committed rows, the stream log, failure-cut equality with a reference run, delivery and notification rows, bundle contents with every planted secret absent, and process observations."
 real = ["SQLite store", "journal files", "Unix sockets", "agent processes in the registry and messaging cases"]
@@ -487,7 +487,7 @@ capabilities = ["desktop", "Unix for the agent-process cases"]
 lane = "fast"
 evidence = ""
 update = ""
-cargo = [{ package = "node", targets = ["agent_names", "blobs", "diff", "dump", "messaging", "push", "registry", "single_daemon"], features = [] }]
+cargo = [{ package = "node", targets = ["agent_names", "blobs", "catalogue", "diff", "dump", "messaging", "push", "registry", "single_daemon"], features = [] }]
 
 [[suite]]
 name = "supervisor-update"
@@ -783,7 +783,7 @@ cargo = [
 
 [[suite]]
 name = "client-runtime-drivers"
-contract = "The session and fleet drivers paint the snapshot and held rows before returning, page below the oldest held row, reconnect on their own clock, settle uncertain inputs, fetch attachment bytes lazily, keep a bounded replayable trace, and run alike in process and over the profile socket against a real node."
+contract = "The session and fleet drivers paint the snapshot and held rows before returning, page below the oldest held row, reconnect on their own clock, settle uncertain inputs, fetch attachment bytes lazily, fetch a catalogue once per hash and only for a chat on screen, keep a bounded replayable trace, and run alike in process and over the profile socket against a real node."
 paths = ["crates/ui-runtime/tests", "crates/ui-runtime/src"]
 recipe = "just test-crate ui-runtime"
 boundary = "Store, effects, bridge"

@@ -417,6 +417,9 @@ service ClientService {
   rpc GetBlob(GetBlobRequest) returns (GetBlobResponse);
   // The changed files; with_patch also puts the patch blob on the host.
   rpc Diff(DiffRequest) returns (amux.v1.Diff);
+  // What an agent offers now, read from its host; clients fetch it once per
+  // hash the snapshot names.
+  rpc GetCatalogue(GetCatalogueRequest) returns (Catalogue);
   rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse);
   // The one bundle format.
   rpc Dump(DumpRequest) returns (DumpResponse);
@@ -440,6 +443,7 @@ service PeerService {
   rpc PutBlob(PutBlobRequest) returns (BlobRef);
   rpc GetBlob(GetBlobRequest) returns (GetBlobResponse);
   rpc Diff(DiffRequest) returns (amux.v1.Diff);
+  rpc GetCatalogue(GetCatalogueRequest) returns (Catalogue);
   rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse);
   // The host-side parts of the caller's dump for agents this host runs:
   // the bundle travels packed in the response.
@@ -598,6 +602,21 @@ message DiffRequest {
   DiffBase base = 2;
   // Also build the patch and store it as the agent's blob.
   bool with_patch = 3;
+}
+
+// The catalogue of a running or exited agent, or of a provider on a host
+// with no agent running.
+message GetCatalogueRequest {
+  oneof of {
+    bytes agent_id = 1;
+    HostProvider host = 2;
+  }
+}
+
+message HostProvider {
+  bytes host_id = 1;
+  // As an agent's kind names its provider: "claude" or "codex".
+  string provider = 2;
 }
 
 // Host-owned discovery; the client chooses a host, never a search root.
