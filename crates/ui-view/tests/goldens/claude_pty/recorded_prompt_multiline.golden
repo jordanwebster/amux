@@ -1,17 +1,17 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 11 recorded 9: fact Transcript type=user uuid=af7582ae-f400-4e98-ab15-026a7c3e08da
   row    2 af7582ae-f400-4e98-ab15-026a7c3e08da Prompt { text: [Text("Reply exactly PTY_SPEC_MULTILINE_OK and nothing else.\nThis second line is part of one prompt.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 24 recorded 22: fact Transcript type=assistant uuid=51070252-2008-4fe0-afbe-d11bb8cda4ff
   row    3 51070252-2008-4fe0-afbe-d11bb8cda4ff Thinking { text: "", open: false, duration_ms: Some(2197) }
 ## 25 recorded 23: fact Transcript type=assistant uuid=46313ce9-7131-476d-bfb5-d0710cbc6590
   row    4 46313ce9-7131-476d-bfb5-d0710cbc6590 Prose { text: [Text("PTY_SPEC_MULTILINE_OK")], streaming: false, working_note: false }
 ## 28 recorded 26: fact Transcript type=system subtype=turn_duration uuid=8ce1e7bd-28dc-4642-931f-8e3727e30eaa
   row    5 turn:1 TurnEnd { duration_ms: Some(2322), cost_usd: None, failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 af7582ae-f400-4e98-ab15-026a7c3e08da Prompt { text: [Text("Reply exactly PTY_SPEC_MULTILINE_OK and nothing else.\nThis second line is part of one prompt.")], steered: false }

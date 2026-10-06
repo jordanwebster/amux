@@ -1,9 +1,9 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 8 recorded 7: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 10 recorded 9: fact Stream type=system subtype=init uuid=bdd6a304-0c5b-4b8f-8fba-b38fffc93b71
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 22 recorded 21: fact Stream type=assistant uuid=60fd25f3-8f91-4c96-bb37-25c95ed1b217
@@ -12,10 +12,10 @@
   row    4 msg_011CfREJ4aGE46RUmqafQsPv:1 Prose { text: [Text("I'll run the background command, wait 8 seconds, and then read its output using the Monitor tool.")], streaming: false, working_note: false }
 ## 26 recorded 25: fact Stream type=assistant uuid=c5c711c5-b53e-47d2-a8e6-03cf903fced1
   row    5 toolu_01VBRzFR5g9K7VvEwbiEud4e Explore { verb: Search, subject: "select:Monitor", state: Running } run[toolu_01VBRzFR5g9K7VvEwbiEud4e..toolu_01VBRzFR5g9K7VvEwbiEud4e x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 1, subagents: 0, other: 0 }]
-  composer Send activity=Some(Running { key: "toolu_01VBRzFR5g9K7VvEwbiEud4e" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_01VBRzFR5g9K7VvEwbiEud4e" }) queue=[] underway=[] refused=[]
 ## 28 recorded 27: fact Stream type=user uuid=813f0b03-1519-4de8-bc65-1a6eb8f6f43f
   row    5 toolu_01VBRzFR5g9K7VvEwbiEud4e Explore { verb: Search, subject: "select:Monitor", state: Succeeded } run[toolu_01VBRzFR5g9K7VvEwbiEud4e..toolu_01VBRzFR5g9K7VvEwbiEud4e x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 1, subagents: 0, other: 0 }]
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 38 recorded 37: fact Stream type=assistant uuid=c247771a-37fe-4f2d-9121-77e5979e29d8
   row    6 msg_011CfREJXPZXEeiW2yMcRTkT:0 Thinking { text: "", open: false, duration_ms: Some(4594) }
 ## 40 recorded 39: fact Stream type=assistant uuid=e131be6b-a5b7-4818-a832-bb250c0df915
@@ -23,32 +23,32 @@
   row    7 msg_011CfREJXPZXEeiW2yMcRTkT:1 Prose { text: [Text("Now I'll execute the task. First, I'll start the background command:")], streaming: false, working_note: false }
 ## 42 recorded 41: fact Stream type=assistant uuid=a49dd41a-225a-4f8f-a713-88ae7e5f8cf9
   row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None } run[toolu_0197msubRxYrMAEYvpZ2dxbz..toolu_0197msubRxYrMAEYvpZ2dxbz x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 }]
-  composer Send activity=Some(Running { key: "toolu_0197msubRxYrMAEYvpZ2dxbz" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_0197msubRxYrMAEYvpZ2dxbz" }) queue=[] underway=[] refused=[]
 ## 44 recorded 43: fact Stream type=control_request
   ask 3754846d-c2d2-4486-93e8-8dd6c456bed3 -> "toolu_0197msubRxYrMAEYvpZ2dxbz" 1/1 Open
     choices AllowOnce*, Deny { stops: false }+note, DenyAndStop+note
     body Command { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", cwd: "", reason: "Contains simple_expansion", description: "Run loop that prints three ticks with 2-second delays" }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 45 recorded 44: input stdin-3
   row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None } run[toolu_0197msubRxYrMAEYvpZ2dxbz..toolu_0197msubRxYrMAEYvpZ2dxbz x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 }] decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   ask none
-  composer Send activity=Some(Running { key: "toolu_0197msubRxYrMAEYvpZ2dxbz" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_0197msubRxYrMAEYvpZ2dxbz" }) queue=[] underway=[] refused=[]
 ## 55 recorded 54: fact Stream type=assistant uuid=6a2accbb-fac8-42cf-aee0-10fbf23ea3a9
   row    9 msg_011CfREJwNwuaDJkNzqp91kH:0 Thinking { text: "", open: false, duration_ms: Some(1971) }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 57 recorded 56: fact Stream type=assistant uuid=da105f2c-eefe-4e3f-84f9-8f07de74b9b8
   row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None } run[toolu_0197msubRxYrMAEYvpZ2dxbz..toolu_0197msubRxYrMAEYvpZ2dxbz x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 }] decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   row   10 msg_011CfREJwNwuaDJkNzqp91kH:1 Prose { text: [Text("Now I'll wait 8 seconds:")], streaming: false, working_note: false }
 ## 59 recorded 58: fact Stream type=assistant uuid=901fd496-24c9-47e1-acc0-fa4de2908262
   row   11 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } run[toolu_01TfpDM8C7npd4Ff4eCUAae3..toolu_01TfpDM8C7npd4Ff4eCUAae3 x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 }]
-  composer Send activity=Some(Running { key: "toolu_01TfpDM8C7npd4Ff4eCUAae3" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_01TfpDM8C7npd4Ff4eCUAae3" }) queue=[] underway=[] refused=[]
 ## 64 recorded 63: fact Stream type=system subtype=task_updated uuid=b19f8f6a-7ddb-49d4-bb83-07117a89af00
   row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(6157) } run[toolu_0197msubRxYrMAEYvpZ2dxbz..toolu_0197msubRxYrMAEYvpZ2dxbz x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 }] decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
 ## 65 recorded 64: fact Stream type=system subtype=task_notification uuid=59e5f220-89ca-4c87-902c-b3db8d196e73 tool_use_id=toolu_0197msubRxYrMAEYvpZ2dxbz
   row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(6157) } run[toolu_0197msubRxYrMAEYvpZ2dxbz..toolu_0197msubRxYrMAEYvpZ2dxbz x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 }] decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
 ## 69 recorded 68: fact Stream type=user uuid=105a6b9c-eac8-4e97-9c7a-9e2b917f44ed
   row   11 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(8039) } run[toolu_01TfpDM8C7npd4Ff4eCUAae3..toolu_01TfpDM8C7npd4Ff4eCUAae3 x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, ot…
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 71 recorded 70: fact Stream type=assistant uuid=d5f88cc1-6a74-4847-960e-338661f7986c
   row   12 msg_011CfREKhQ6Ks8tH8G4Ptgd7:0 Thinking { text: "", open: false, duration_ms: Some(9570) }
 ## 73 recorded 72: fact Stream type=assistant uuid=da659c6e-7065-47c4-841f-c9544aeb011a
@@ -56,10 +56,10 @@
   row   13 msg_011CfREKhQ6Ks8tH8G4Ptgd7:1 Prose { text: [Text("Perfect! The background command has completed. Now I'll read its output:")], streaming: false, working_note: false }
 ## 75 recorded 74: fact Stream type=assistant uuid=e10150c4-b2ad-4d2a-a29f-eba77a45980e
   row   14 toolu_01GPY4cnmpELQxCwoakQbmGh Explore { verb: Read, subject: "<MACHINE_PATH>", state: Running } run[toolu_01GPY4cnmpELQxCwoakQbmGh..toolu_01GPY4cnmpELQxCwoakQbmGh x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 1, searches: 0, subagents: 0, other: 0 }]
-  composer Send activity=Some(Running { key: "toolu_01GPY4cnmpELQxCwoakQbmGh" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_01GPY4cnmpELQxCwoakQbmGh" }) queue=[] underway=[] refused=[]
 ## 77 recorded 76: fact Stream type=user uuid=d3636283-cc7d-4a89-a0bf-2257d065a400
   row   14 toolu_01GPY4cnmpELQxCwoakQbmGh Explore { verb: Read, subject: "<MACHINE_PATH>", state: Succeeded } run[toolu_01GPY4cnmpELQxCwoakQbmGh..toolu_01GPY4cnmpELQxCwoakQbmGh x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 1, searches: 0, subagents: 0, other: 0 }]
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 83 recorded 82: fact Stream type=assistant uuid=51c43e87-ae8b-4fa7-82fa-cb058795fb3d
   row   15 msg_011CfREKrx4wA1d2m839Aypt:0 Thinking { text: "", open: false, duration_ms: Some(1812) }
 ## 85 recorded 84: fact Stream type=assistant uuid=e47d3f70-c1ee-4dcd-9980-fa890da79dfe
@@ -71,7 +71,7 @@
   row   11 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(8039) } run[toolu_01TfpDM8C7npd4Ff4eCUAae3..toolu_01TfpDM8C7npd4Ff4eCUAae3 x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: …
   row   14 toolu_01GPY4cnmpELQxCwoakQbmGh Explore { verb: Read, subject: "<MACHINE_PATH>", state: Succeeded } run[toolu_01GPY4cnmpELQxCwoakQbmGh..toolu_01GPY4cnmpELQxCwoakQbmGh x1 recent=0 RunCounts { commands: 0, edits: 0, reads: 1, searches: 0, subagents: 0, other: 0 }]
   row   17 turn:1 TurnEnd { duration_ms: Some(26747), cost_usd: Some(0.0526671), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed.")], steered: false }

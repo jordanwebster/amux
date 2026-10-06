@@ -769,7 +769,8 @@ fn authored(kind: Kind) -> String {
         let _ = writeln!(out, "## {label}");
         let _ = writeln!(out, "  composer {:?}", composer(state, 10_000));
         let _ = writeln!(out, "  queue {:?}", queue_rows(state));
-        let _ = writeln!(out, "  outbox {:?}", outbox_rows(state));
+        let _ = writeln!(out, "  underway {:?}", prompts_underway(state, |_| false));
+        let _ = writeln!(out, "  refused {:?}", refused_prompts(state));
         match ask_card(state) {
             Some(card) => {
                 let _ = writeln!(
@@ -915,21 +916,25 @@ fn a_sent_prompt_the_queue_lists_is_drawn_once() {
         state.update(snapshot(kind, Phase::Starting, vec![], vec![]));
         state.update(caught_up());
         state.update(Msg::Send(prompt_input(kind, b"r1", "resumed")));
-        assert_eq!(outbox_rows(&state).len(), 1, "sending until it lands");
+        assert_eq!(
+            prompts_underway(&state, |_| false).len(),
+            1,
+            "sending until it lands"
+        );
         state.update(snapshot(
             kind,
             Phase::NeedsYou,
             vec![],
             vec![queued(b"r1", false, None)],
         ));
-        assert!(outbox_rows(&state).is_empty());
+        assert!(prompts_underway(&state, |_| false).is_empty());
         assert_eq!(queue_rows(&state).len(), 1);
     }
 }
 
 /// A refused Send now (terminal Claude too old to steer) leaves the prompt
 /// queued to run at turn end: its row reads queued again with Send now still
-/// offered, and nothing lands in the outbox. The reason is the press's reply.
+/// offered, and nothing is left on its way. The reason is the press's reply.
 #[test]
 fn a_refused_send_now_leaves_the_prompt_queued() {
     let kind = Kind::ClaudePty;
@@ -966,7 +971,7 @@ fn a_refused_send_now_leaves_the_prompt_queued() {
     assert!(!rows[0].steered);
     assert!(rows[0].can_send_now);
     assert!(rows[0].can_withdraw);
-    assert!(outbox_rows(&state).is_empty());
+    assert!(prompts_underway(&state, |_| false).is_empty());
 }
 
 #[test]
@@ -1978,4 +1983,73 @@ fn the_overview_holds_the_changes_it_is_given() {
         "no base branch, nothing to compare the branch with"
     );
     assert!(diff_base(&state, Comparison::Uncommitted).is_some());
+}
+
+/// A prompt on its way stays where it was first drawn: at the feed's end
+/// if the agent was idle, in the queue otherwise. While the link is down it
+/// waits for the host there; after catching up, one that never showed up
+/// may not have arrived and waits last in the queue for the person. A
+/// refused one is left for the composer.
+#[test]
+fn prompts_on_their_way_follow_the_sending_rules() {
+    let kind = Kind::Codex;
+    let mut state = SessionState::new(agent(kind), CAP);
+    state.update(snapshot(kind, Phase::Idle, vec![], vec![]));
+    state.update(caught_up());
+    assert!(sends_to_feed(&state), "an idle agent with nothing queued");
+    state.update(Msg::Send(prompt_input(kind, b"p1", "first")));
+    let feed = |id: &[u8]| id == b"p1";
+    let underway = prompts_underway(&state, feed);
+    assert_eq!(underway.len(), 1);
+    assert_eq!(underway[0].lands, Lands::Feed);
+    assert_eq!(underway[0].underway, Underway::Sending { waiting: false });
+
+    state.update(snapshot(kind, Phase::Working, vec![], vec![]));
+    assert!(!sends_to_feed(&state), "a working agent queues the next");
+    state.update(Msg::Send(prompt_input(kind, b"p2", "second")));
+    state.update(Msg::Sent(b"p1".to_vec(), InputOutcome::Lost));
+    state.update(Msg::Connection(ui_state::Connection::Reconnecting));
+    let underway = prompts_underway(&state, feed);
+    assert_eq!(
+        underway
+            .iter()
+            .map(|prompt| (prompt.input_id.as_slice(), prompt.lands, prompt.underway))
+            .collect::<Vec<_>>(),
+        vec![
+            (&b"p1"[..], Lands::Feed, Underway::Sending { waiting: true }),
+            (&b"p2"[..], Lands::Queue, Underway::Sending { waiting: true }),
+        ],
+        "both wait for the host where they were first drawn"
+    );
+
+    state.update(Msg::Send(prompt_input(kind, b"p3", "third")));
+    state.update(Msg::Sent(
+        b"p3".to_vec(),
+        InputOutcome::Reply(wire::SendInputResponse {
+            of: Some(wire::send_input_response::Of::Rejected(wire::Rejected {
+                reason: "host_unreachable".into(),
+            })),
+        }),
+    ));
+    state.update(snapshot(kind, Phase::Working, vec![], vec![]));
+    state.update(caught_up());
+    let underway = prompts_underway(&state, feed);
+    assert_eq!(
+        underway
+            .iter()
+            .map(|prompt| (prompt.input_id.as_slice(), prompt.lands, prompt.underway))
+            .collect::<Vec<_>>(),
+        vec![
+            (&b"p2"[..], Lands::Queue, Underway::Sending { waiting: false }),
+            (&b"p1"[..], Lands::Queue, Underway::MayNotHaveArrived),
+        ],
+        "caught up, the lost one may not have arrived and waits last"
+    );
+    assert_eq!(
+        refused_prompts(&state),
+        vec![RefusedPrompt {
+            input_id: b"p3".to_vec(),
+            reason: "host_unreachable".into(),
+        }]
+    );
 }

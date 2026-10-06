@@ -358,15 +358,15 @@
     },
     {
       "id": "composer.not-confirmed",
-      "shows": "A prompt sent but not confirmed by the agent, with resend and discard."
+      "shows": "A prompt that may not have arrived, waiting last in the queue with Resend and Discard."
     },
     {
       "id": "composer.rejected",
-      "shows": "A prompt the agent refused, with the reason."
+      "shows": "A refused prompt back in the composer, with why it was not sent."
     },
     {
       "id": "composer.sending",
-      "shows": "A prompt on its way to the agent."
+      "shows": "Prompts on their way into a working agent's queue: one sending, one waiting for its host."
     },
     {
       "id": "composer.resume",
@@ -495,6 +495,14 @@
     {
       "id": "chat.plan",
       "shows": "A Codex plan read whole under its heading, the decision standing in the composer's place."
+    },
+    {
+      "id": "chat.landing",
+      "shows": "A prompt sent to an idle agent, drawn at the feed's end where it will stand, reading sending."
+    },
+    {
+      "id": "chat.landing-waiting",
+      "shows": "The same prompt waiting for the agent's host while the link is down."
     },
     {
       "id": "overview.uncommitted",

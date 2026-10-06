@@ -1,22 +1,22 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 14 recorded 12: fact Transcript type=user uuid=bd910330-dbf9-4f32-8e04-5120094c7e17
   row    2 bd910330-dbf9-4f32-8e04-5120094c7e17 Prompt { text: [Text("Use the Read tool on square.png and tell me its main color in one word.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 40 recorded 38: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01HGR4w5xbprSyoZpRZAoEus
-  composer Send activity=Some(Running { key: "toolu_01HGR4w5xbprSyoZpRZAoEus" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_01HGR4w5xbprSyoZpRZAoEus" }) queue=[] underway=[] refused=[]
 ## 42 recorded 40: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01HGR4w5xbprSyoZpRZAoEus
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 44 recorded 42: fact Transcript type=assistant uuid=b6a68cb2-7864-41a8-9b95-d1cf54fd77eb
   row    3 b6a68cb2-7864-41a8-9b95-d1cf54fd77eb Thinking { text: "", open: false, duration_ms: Some(2970) }
 ## 45 recorded 43: fact Transcript type=assistant uuid=329d8b11-3dba-45b4-bed9-1d0b1a16cff1
   row    4 toolu_01HGR4w5xbprSyoZpRZAoEus Explore { verb: Read, subject: "<MACHINE_PATH>", state: Running } run[toolu_01HGR4w5xbprSyoZpRZAoEus..toolu_01HGR4w5xbprSyoZpRZAoEus x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 1, searches: 0, subagents: 0, other: 0 }]
-  composer Send activity=Some(Running { key: "toolu_01HGR4w5xbprSyoZpRZAoEus" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_01HGR4w5xbprSyoZpRZAoEus" }) queue=[] underway=[] refused=[]
 ## 46 recorded 44: fact Transcript type=user uuid=b68b7313-b85f-429e-8261-5e132c7ad77f
   row    4 toolu_01HGR4w5xbprSyoZpRZAoEus Image { image: Some(BlobRef { hash: [13, 188, 137, 79, 133, 238, 125, 12, 106, 7, 238, 253, 141, 85, 231, 43, 84, 34, 114, 38, 133, 218, 117, 229, 18, 219, 233, 73, 35, 210, 211, 35], name: "", mime: "image/png", size: 99 }), path: "<MACHINE_PATH>", generated: false } run[toolu_01HGR4w5xbprSyoZpRZAoEus..toolu_01HGR4w5xbprSyoZpRZAoEus x1 recent=0 live RunCounts {…
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 59 recorded 57: fact Transcript type=assistant uuid=74af71bc-1cea-40cd-905e-1216d8aaf986
   row    5 74af71bc-1cea-40cd-905e-1216d8aaf986 Thinking { text: "", open: false, duration_ms: Some(1961) }
 ## 60 recorded 58: fact Transcript type=assistant uuid=68ac380a-e96c-4d41-b39d-46fc7dfe4180
@@ -25,7 +25,7 @@
 ## 62 recorded 60: fact Transcript type=system subtype=turn_duration uuid=4ca5f3a8-a6ee-4c07-86cb-73199102a716
   row    4 toolu_01HGR4w5xbprSyoZpRZAoEus Image { image: Some(BlobRef { hash: [13, 188, 137, 79, 133, 238, 125, 12, 106, 7, 238, 253, 141, 85, 231, 43, 84, 34, 114, 38, 133, 218, 117, 229, 18, 219, 233, 73, 35, 210, 211, 35], name: "", mime: "image/png", size: 99 }), path: "<MACHINE_PATH>", generated: false } run[toolu_01HGR4w5xbprSyoZpRZAoEus..toolu_01HGR4w5xbprSyoZpRZAoEus x1 recent=0 RunCounts { comm…
   row    7 turn:1 TurnEnd { duration_ms: Some(5303), cost_usd: None, failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 bd910330-dbf9-4f32-8e04-5120094c7e17 Prompt { text: [Text("Use the Read tool on square.png and tell me its main color in one word.")], steered: false }

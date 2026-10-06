@@ -1,9 +1,9 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 4 recorded 3: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly HOOKS_OK and nothing else.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 8 recorded 7: fact Stream type=system subtype=init uuid=2901eadf-69fc-4a9d-8e24-ecea49c011e9
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 18 recorded 17: fact Stream type=assistant uuid=4f887b35-8fb6-48ed-84be-189daac8bc39
@@ -12,7 +12,7 @@
   row    4 msg_011CeW3WAiT9DpX3CM5acFcg:1 Prose { text: [Text("HOOKS_OK")], streaming: false, working_note: false }
 ## 26 recorded 25: fact Stream type=result subtype=success uuid=de376580-51c1-4abd-9e6b-43c134f83bca
   row    5 turn:1 TurnEnd { duration_ms: Some(1279), cost_usd: Some(0.022556999999999997), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly HOOKS_OK and nothing else.")], steered: false }

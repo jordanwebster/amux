@@ -1,19 +1,19 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 4 recorded 3: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Delegate to the `counter` subagent, then reply with exactly what it said.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=001334b5-a099-499d-90fb-35f3866b8d54
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 22 recorded 21: fact Stream type=assistant uuid=6445ce99-6033-4647-8666-130a4d784844
   row    3 msg_011CeW3XC4b5psuZgBvbF9NG:0 Thinking { text: "The user is asking me to delegate to the `counter` subagent and reply with exactly what it said. Looking at the available agent types, I can see that `counter` is listed as \"Counts to three and reports the result. (Tools: All tools)\"\n\nI'll use the Agent tool to invoke the counter agent and then return its exact response.", open: false, dura…
 ## 24 recorded 23: fact Stream type=assistant uuid=fc7328cc-764b-4f1e-ad6b-846b77998e96
   row    4 toolu_011tXt8wWZsDcqNkmr2GAzYp Subagent { description: "Count to three", running: true, tool_count: 0, last_tool: "", answer: "", duration_ms: None } run[toolu_011tXt8wWZsDcqNkmr2GAzYp..toolu_011tXt8wWZsDcqNkmr2GAzYp x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 1, other: 0 }]
-  composer Send activity=Some(Running { key: "toolu_011tXt8wWZsDcqNkmr2GAzYp" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_011tXt8wWZsDcqNkmr2GAzYp" }) queue=[] underway=[] refused=[]
 ## 28 recorded 27: fact Stream type=system subtype=task_started uuid=567d587a-8058-4769-a05a-15bb0ea6eea0 tool_use_id=toolu_011tXt8wWZsDcqNkmr2GAzYp
   row    4 toolu_011tXt8wWZsDcqNkmr2GAzYp Subagent { description: "Count to three", running: true, tool_count: 0, last_tool: "", answer: "", duration_ms: None } run[toolu_011tXt8wWZsDcqNkmr2GAzYp..toolu_011tXt8wWZsDcqNkmr2GAzYp x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 1, other: 0 }]
-  composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
+  composer Send activity=Some(Subagents { count: 1 }) queue=[] underway=[] refused=[]
 ## 44 recorded 43: fact Stream type=assistant uuid=a918bfce-cd29-4dc2-95f2-8146a3ad774e
   row    5 msg_011CeW3XPJm4JjB5UX8mmfpP:0 Thinking { text: "The counter agent is running in the background. I need to wait for it to complete and then I'll be notified of the result. The user asked me to delegate to the counter subagent and reply with exactly what it said, so I should wait for the notification.\n\nThe system indicated that I will be notified automatically when the agent completes. I sho…
 ## 46 recorded 45: fact Stream type=assistant uuid=0ee89b87-5b61-4e94-85fa-decba585cd51
@@ -22,15 +22,15 @@
 ## 48 recorded 47: fact Stream type=result subtype=success uuid=6b872f45-0001-48cb-ab82-f007edfd8deb
   row    4 toolu_011tXt8wWZsDcqNkmr2GAzYp Subagent { description: "Count to three", running: true, tool_count: 0, last_tool: "", answer: "", duration_ms: None } run[toolu_011tXt8wWZsDcqNkmr2GAzYp..toolu_011tXt8wWZsDcqNkmr2GAzYp x1 recent=0 RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 1, other: 0 }]
   row    7 turn:1 TurnEnd { duration_ms: Some(4555), cost_usd: Some(0.027954000000000003), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 50 recorded 49: fact Stream type=assistant uuid=345f828c-454b-4188-88b2-a65c27034b99
   row    8 msg_011CeW3XP29j2xERbceB6Gyz:0 Thinking { text: "The user is asking me to count to three and report the result.\n\nHowever, at the very beginning of my instructions, I see:\n\n\"Reply with exactly ONE TWO THREE and nothing else.\"\n\nThis is a clear, specific instruction that takes precedence. The user's task is to count to three and report the result, but my system instructions say to reply …
-  composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
+  composer Send activity=Some(Subagents { count: 1 }) queue=[] underway=[] refused=[]
 ## 52 recorded 51: fact Stream type=assistant uuid=54a7949c-0d9d-4e65-b3f2-ae01ef74c153
   row    9 msg_011CeW3XP29j2xERbceB6Gyz:1 Prose { text: [Text("ONE TWO THREE")], streaming: false, working_note: false }
 ## 55 recorded 54: fact Stream type=system subtype=task_updated uuid=5affb7eb-c3e8-4a74-8874-917f5b3a3bcc
   row    4 toolu_011tXt8wWZsDcqNkmr2GAzYp Subagent { description: "Count to three", running: false, tool_count: 0, last_tool: "", answer: "", duration_ms: Some(2379) } run[toolu_011tXt8wWZsDcqNkmr2GAzYp..toolu_011tXt8wWZsDcqNkmr2GAzYp x1 recent=0 RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 1, other: 0 }]
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 57 recorded 56: fact Stream type=system subtype=task_notification uuid=ed39ed13-2798-4dd5-b16d-20a62e162815 tool_use_id=toolu_011tXt8wWZsDcqNkmr2GAzYp
   row    4 toolu_011tXt8wWZsDcqNkmr2GAzYp Subagent { description: "Count to three", running: false, tool_count: 0, last_tool: "", answer: "ONE TWO THREE", duration_ms: Some(2379) } run[toolu_011tXt8wWZsDcqNkmr2GAzYp..toolu_011tXt8wWZsDcqNkmr2GAzYp x1 recent=0 RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 1, other: 0 }]
 ## 69 recorded 68: fact Stream type=assistant uuid=63f5af2d-43c4-4149-bd27-ee500a7c8a73
@@ -39,7 +39,7 @@
   row   11 msg_011CeW3XZiLBkgSpdEiS4RW8:1 Prose { text: [Text("ONE TWO THREE")], streaming: false, working_note: false }
 ## 73 recorded 72: fact Stream type=result subtype=success uuid=c4435006-66f5-4b76-8d57-838505bdf032
   row   12 turn:2 TurnEnd { duration_ms: Some(1346), cost_usd: Some(0.034572900000000004), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Delegate to the `counter` subagent, then reply with exactly what it said.")], steered: false }

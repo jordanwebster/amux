@@ -98,7 +98,7 @@ private final class StubChat: ChatSource, @unchecked Sendable {
         ChatFrame(
             agent: AgentKey(host: [1], agent: [2]), name: "a", kind: .claudeSdk, phase: .idle,
             composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: true,
-            hasOlder: hasOlder, arrivalsHeld: false, queue: [], outbox: [], askInput: nil,
+            hasOlder: hasOlder, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil,
             context: nil, effort: nil, ended: nil, git: nil, mode: nil, model: nil, permission: nil, signIn: nil, waiting: nil)
     }
     func takeChanges() -> ChatChanges { ChatChanges(keys: [], reloaded: false, session: false) }

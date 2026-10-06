@@ -369,11 +369,13 @@ public enum ChatWords {
         return String(localized: "queued")
     }
 
-    public static func outbox(_ state: OutboxState) -> String {
-        switch state {
-        case .sending: String(localized: "sending")
-        case .notConfirmed: String(localized: "not confirmed")
-        case .rejected(let reason): String(localized: "not sent · \(reason)")
+    /// How a prompt of this client's is on its way: sending, waiting for
+    /// its host while the link is down, or perhaps never arrived.
+    public static func underway(_ underway: Underway, host: String) -> String {
+        switch underway {
+        case .sending(waiting: false): String(localized: "sending")
+        case .sending(waiting: true): String(localized: "waiting for \(host)…")
+        case .mayNotHaveArrived: String(localized: "may not have arrived")
         }
     }
 

@@ -1,9 +1,9 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 8 recorded 7: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly PONG and nothing else.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 12 recorded 11: fact Stream type=system subtype=init uuid=d451a0f6-bcf0-4314-93fd-f233aa3228f9
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 14 recorded 13: fact Stream type=assistant uuid=bf60f68e-28fb-41e1-8b64-37d34ce6e1e3
@@ -12,7 +12,7 @@
   row    4 msg_011CfRELQQg25gtKNu7H9GFP:1 Prose { text: [Text("PONG")], streaming: false, working_note: false }
 ## 20 recorded 19: fact Stream type=result subtype=success uuid=eb6b9600-812e-4349-a88f-4adc6c79c199
   row    5 turn:1 TurnEnd { duration_ms: Some(1217), cost_usd: Some(0.0241884), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly PONG and nothing else.")], steered: false }

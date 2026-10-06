@@ -1,17 +1,17 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 11 recorded 9: fact Transcript type=user uuid=78a96e78-0ffc-4670-bd7b-8aef995cce04
   row    2 78a96e78-0ffc-4670-bd7b-8aef995cce04 Prompt { text: [Text("Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 22 recorded 20: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01HH38hjU7RXeC2ecXtMYUrV
-  composer Send activity=Some(Running { key: "toolu_01HH38hjU7RXeC2ecXtMYUrV" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_01HH38hjU7RXeC2ecXtMYUrV" }) queue=[] underway=[] refused=[]
 ## 24 recorded 22: fact Hook hook_event_name=PermissionRequest
   ask ask:1 -> "" 1/1 Open
     choices 
     body Question([QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }])
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 26 recorded 24: fact Transcript type=assistant uuid=334b06d7-78a5-4e91-93fd-3ec7b981ae55
   row    3 334b06d7-78a5-4e91-93fd-3ec7b981ae55 Thinking { text: "", open: false, duration_ms: Some(2023) }
 ## 27 recorded 25: fact Transcript type=assistant uuid=fa16c3a4-0a27-4906-9594-793eef933ed0
@@ -22,7 +22,7 @@
 ## 31 recorded 29: fact Transcript type=user uuid=6092997e-2ed4-4647-b41b-d6a91aa76081
   row    4 toolu_01HH38hjU7RXeC2ecXtMYUrV [Answered: Color = "a warm ochre" skipped=0] Ask(Questions { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], a…
   ask none
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 78a96e78-0ffc-4670-bd7b-8aef995cce04 Prompt { text: [Text("Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer.")], steered: false }

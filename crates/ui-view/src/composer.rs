@@ -3,7 +3,7 @@
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use ui_state::{Activity, Composer, InputState, InputWhat, SessionState, Waiting};
+use ui_state::{Activity, Composer, InputState, InputWhat, PhaseView, SessionState, Waiting};
 use wire::{Attachment, SignInState};
 
 use crate::segments::{Segment, segments};
@@ -130,50 +130,111 @@ pub fn queue_rows(state: &SessionState) -> Vec<QueuedRow> {
         .collect()
 }
 
-/// This client's prompts not yet in the transcript or the queue: sending,
-/// not confirmed (resend or discard), or rejected with the reason.
+/// Where a new prompt of this client's lands: at the feed's end, as it
+/// will stand once the agent has it, while the agent is idle with nothing
+/// queued; otherwise in the queue, behind what waits there.
+pub fn sends_to_feed(state: &SessionState) -> bool {
+    state.phase() == PhaseView::Idle && state.queue().is_empty()
+}
+
+/// Where a prompt on its way is drawn: where it was first drawn, which the
+/// client remembers, so a prompt does not jump as the agent starts work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum Lands {
+    Feed,
+    Queue,
+}
+
+/// How a prompt of this client's is on its way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum Underway {
+    /// Sent; `waiting` while the link to the agent's host is down, which
+    /// is what the prompt waits for.
+    Sending { waiting: bool },
+    /// The connection dropped before a reply, and catching up found it
+    /// neither queued nor in the transcript: only the person can say
+    /// whether to send it again or discard it.
+    MayNotHaveArrived,
+}
+
+/// A prompt of this client's on its way to the agent.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
-pub struct OutboxRow {
+pub struct SentPrompt {
     pub input_id: Vec<u8>,
     pub text: Vec<Segment>,
-    pub state: OutboxState,
+    pub lands: Lands,
+    pub underway: Underway,
 }
 
+/// A prompt the agent refused. Its words go back to the composer, with
+/// the reason, and it is forgotten.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub enum OutboxState {
-    Sending,
-    NotConfirmed,
-    Rejected(String),
+pub struct RefusedPrompt {
+    pub input_id: Vec<u8>,
+    pub reason: String,
 }
 
-pub fn outbox_rows(state: &SessionState) -> Vec<OutboxRow> {
-    // A sent prompt the agent's queue lists is drawn by its queue row: a
-    // resume's first prompt waits there when the new incarnation cannot
-    // take it yet.
-    let queued = state
+/// This client's prompts on their way, in the order they will land: those
+/// sending first, then those that may not have arrived, which wait last in
+/// the queue for the person. `in_feed` says whether a prompt was first
+/// drawn at the feed's end; a client asks [`sends_to_feed`] when it first
+/// sees one. A prompt the agent's queue lists is its queue row's to draw.
+pub fn prompts_underway(state: &SessionState, in_feed: impl Fn(&[u8]) -> bool) -> Vec<SentPrompt> {
+    let listed: Vec<&[u8]> = state
         .queue()
         .iter()
-        .map(|row| row.entry.input_id.clone())
-        .collect::<Vec<_>>();
+        .map(|row| row.entry.input_id.as_slice())
+        .collect();
+    let caught_up = state.caught_up();
+    let mut sending = Vec::new();
+    let mut unconfirmed = Vec::new();
+    for sent in state.inputs().iter() {
+        let InputWhat::Prompt { text, attachments } = &sent.what else {
+            continue;
+        };
+        if listed.contains(&sent.id.as_slice()) {
+            continue;
+        }
+        let prompt = |lands, underway| SentPrompt {
+            input_id: sent.id.clone(),
+            text: segments(text, attachments),
+            lands,
+            underway,
+        };
+        let waiting = Underway::Sending {
+            waiting: !caught_up,
+        };
+        let place = if in_feed(&sent.id) {
+            Lands::Feed
+        } else {
+            Lands::Queue
+        };
+        match &sent.state {
+            // Accepted into the queue before a snapshot lists it.
+            InputState::Queued => sending.push(prompt(Lands::Queue, waiting)),
+            InputState::Sent => sending.push(prompt(place, waiting)),
+            InputState::Uncertain if !caught_up => sending.push(prompt(place, waiting)),
+            InputState::Uncertain => {
+                unconfirmed.push(prompt(Lands::Queue, Underway::MayNotHaveArrived))
+            }
+            InputState::Rejected(_) | InputState::Settled => {}
+        }
+    }
+    sending.extend(unconfirmed);
+    sending
+}
+
+/// This client's prompts the agent refused, with why.
+pub fn refused_prompts(state: &SessionState) -> Vec<RefusedPrompt> {
     state
         .inputs()
         .iter()
-        .filter_map(|sent| {
-            let InputWhat::Prompt { text, attachments } = &sent.what else {
-                return None;
-            };
-            let state = match &sent.state {
-                InputState::Sent if queued.contains(&sent.id) => return None,
-                InputState::Sent => OutboxState::Sending,
-                InputState::Uncertain => OutboxState::NotConfirmed,
-                InputState::Rejected(reason) => OutboxState::Rejected(reason.clone()),
-                InputState::Queued | InputState::Settled => return None,
-            };
-            Some(OutboxRow {
+        .filter_map(|sent| match (&sent.what, &sent.state) {
+            (InputWhat::Prompt { .. }, InputState::Rejected(reason)) => Some(RefusedPrompt {
                 input_id: sent.id.clone(),
-                text: segments(text, attachments),
-                state,
-            })
+                reason: reason.clone(),
+            }),
+            _ => None,
         })
         .collect()
 }

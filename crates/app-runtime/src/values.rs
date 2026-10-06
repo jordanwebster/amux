@@ -10,7 +10,7 @@ use model::{AgentKey, Connection, InputState, Key, PhaseView, Waiting};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui_view::{
-    Away, ChangeTotals, ComposerView, ContextView, OutboxRow, QueuedRow, SignInView, ToolRows,
+    Away, ChangeTotals, ComposerView, ContextView, QueuedRow, RefusedPrompt, SentPrompt, SignInView, ToolRows,
 };
 use wire::{BlobRef, HostVia, Kind, Presence};
 
@@ -101,7 +101,12 @@ pub struct ChatFrame {
     /// new-activity affordance shows from this.
     pub arrivals_held: bool,
     pub queue: Vec<QueuedRow>,
-    pub outbox: Vec<OutboxRow>,
+    /// This client's prompts on their way: at the feed's end or in the
+    /// queue, sending or perhaps never arrived.
+    pub underway: Vec<SentPrompt>,
+    /// This client's prompts the agent refused, until the person takes
+    /// their words back into the composer.
+    pub refused: Vec<RefusedPrompt>,
     /// The input answering the head ask, which a card that was not
     /// confirmed resends or discards.
     pub ask_input: Option<Vec<u8>>,

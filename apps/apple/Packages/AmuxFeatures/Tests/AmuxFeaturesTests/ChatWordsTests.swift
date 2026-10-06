@@ -197,7 +197,8 @@ final class ChatWordsTests: XCTestCase {
         var steered = queued
         steered.steered = true
         XCTAssertEqual(ChatWords.queued(steered), "steered")
-        XCTAssertEqual(ChatWords.outbox(.notConfirmed), "not confirmed")
+        XCTAssertEqual(ChatWords.underway(.mayNotHaveArrived, host: "Studio"), "may not have arrived")
+        XCTAssertEqual(ChatWords.underway(.sending(waiting: true), host: "Studio"), "waiting for Studio…")
     }
 
     func testASecretAnswerIsNeverShown() {
@@ -240,7 +241,7 @@ final class ChatWordsTests: XCTestCase {
         let frame = ChatFrame(
             agent: AgentKey(host: [1], agent: [2]), name: "a", kind: .claudeSdk, phase: .idle,
             composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: true,
-            hasOlder: false, arrivalsHeld: false, queue: [], outbox: [], askInput: nil,
+            hasOlder: false, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil,
             context: nil, effort: nil, ended: nil, git: nil, mode: nil, model: "claude-sonnet-5",
             permission: "acceptEdits", signIn: nil, waiting: nil)
         let permission = PermissionChoice(

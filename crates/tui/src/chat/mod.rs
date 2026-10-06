@@ -434,50 +434,23 @@ impl ChatView {
             .into_iter()
             .map(QueueEntry::Queued)
             .collect();
-        let listed: Vec<Vec<u8>> = state
-            .queue()
-            .iter()
-            .map(|row| row.entry.input_id.clone())
-            .collect();
-        let caught_up = state.caught_up();
-        let mut unconfirmed = Vec::new();
-        for sent in state.inputs().iter() {
-            let InputWhat::Prompt { text, attachments } = &sent.what else {
-                continue;
-            };
-            if listed.contains(&sent.id) {
+        let underway = ui_view::prompts_underway(state, |id| self.in_feed(state, id));
+        for prompt in underway {
+            if prompt.lands != ui_view::Lands::Queue {
                 continue;
             }
-            let words = || ui_view::composer_tokens(text, attachments);
-            let in_feed = self.in_feed(state, &sent.id);
-            let waiting = (!caught_up).then(|| host.to_owned());
-            match &sent.state {
-                // Accepted into the queue before a snapshot lists it.
-                InputState::Queued => entries.push(QueueEntry::Sending {
-                    input_id: sent.id.clone(),
-                    text: words(),
-                    waiting,
-                }),
-                InputState::Sent if !in_feed => entries.push(QueueEntry::Sending {
-                    input_id: sent.id.clone(),
-                    text: words(),
-                    waiting,
-                }),
-                InputState::Uncertain if !caught_up && !in_feed => {
-                    entries.push(QueueEntry::Sending {
-                        input_id: sent.id.clone(),
-                        text: words(),
-                        waiting,
-                    });
-                }
-                InputState::Uncertain if caught_up => unconfirmed.push(QueueEntry::Unconfirmed {
-                    input_id: sent.id.clone(),
-                    text: words(),
-                }),
-                _ => {}
-            }
+            entries.push(match prompt.underway {
+                ui_view::Underway::Sending { waiting } => QueueEntry::Sending {
+                    input_id: prompt.input_id,
+                    text: prompt.text,
+                    waiting: waiting.then(|| host.to_owned()),
+                },
+                ui_view::Underway::MayNotHaveArrived => QueueEntry::Unconfirmed {
+                    input_id: prompt.input_id,
+                    text: prompt.text,
+                },
+            });
         }
-        entries.extend(unconfirmed);
         entries
     }
 
@@ -487,14 +460,14 @@ impl ChatView {
     fn in_feed(&self, state: &SessionState, id: &[u8]) -> bool {
         self.sending
             .get(id)
-            .map_or_else(|| sends_to_feed(state), |sending| sending.in_feed)
+            .map_or_else(|| ui_view::sends_to_feed(state), |sending| sending.in_feed)
     }
 
     /// Notes this client's prompts as the frame first sees them: where a
     /// prompt on its way draws, and, for one the agent refused, its words
     /// back in the composer (after any draft) and why on the box's edge.
     fn note_sent(&mut self, state: &SessionState, now_ms: i64) {
-        let to_feed = sends_to_feed(state);
+        let to_feed = ui_view::sends_to_feed(state);
         for sent in state.inputs().iter() {
             let InputWhat::Prompt { text, attachments } = &sent.what else {
                 continue;
@@ -1811,37 +1784,22 @@ impl ChatView {
         // with it: a prompt on its way while the agent was idle, then what
         // the agent is doing, where "Worked 6m" stands once the turn ends.
         let mut tail: Vec<Line<'static>> = Vec::new();
-        for sent in state.inputs().iter() {
-            let InputWhat::Prompt { text, attachments } = &sent.what else {
-                continue;
-            };
-            let Some(seen) = self.sending.get(&sent.id).filter(|seen| seen.in_feed) else {
-                continue;
-            };
-            let shows = match sent.state {
-                InputState::Sent => true,
-                InputState::Uncertain => !state.caught_up(),
-                _ => false,
-            };
-            if !shows
-                || state
-                    .queue()
-                    .iter()
-                    .any(|row| row.entry.input_id == sent.id)
-            {
+        for prompt in ui_view::prompts_underway(state, |id| self.in_feed(state, id)) {
+            if prompt.lands != ui_view::Lands::Feed {
                 continue;
             }
-            let when = if state.caught_up() {
-                feed::clock(seen.at_ms)
-            } else {
-                format!("waiting for {host}…")
+            let ui_view::Underway::Sending { waiting } = prompt.underway else {
+                continue;
             };
-            tail.extend(feed::pending_prompt(
-                &ui_view::composer_tokens(text, attachments),
-                &when,
-                width,
-                theme,
-            ));
+            let Some(seen) = self.sending.get(&prompt.input_id) else {
+                continue;
+            };
+            let when = if waiting {
+                format!("waiting for {host}…")
+            } else {
+                feed::clock(seen.at_ms)
+            };
+            tail.extend(feed::pending_prompt(&prompt.text, &when, width, theme));
         }
         if let Some(activity) = &view.activity {
             tail.push(quiet_activity(activity, width, theme));
@@ -2910,10 +2868,6 @@ fn sign_in_lines(
 /// Whether a prompt sent now draws in the feed, as the turn it starts: the
 /// agent is idle with nothing queued. Otherwise it waits in the queue
 /// block.
-fn sends_to_feed(state: &SessionState) -> bool {
-    state.phase() == PhaseView::Idle && state.queue().is_empty()
-}
-
 /// Why the composer cannot send while the link to the agent's host is
 /// down, for the box's edge; None when it can.
 fn waiting_words(composer: &Composer, host: &str, away: Away) -> Option<String> {

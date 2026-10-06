@@ -70,7 +70,6 @@ ROWS = [
         "the phone's outbox row",
         r"fn outbox_rows|OutboxRow",
         ["crates", "apps"],
-        pending="the phone still draws its own outbox rather than following the terminal's sending rules",
     ),
     Row("a second way to fold tool steps", r"struct RunInfo|fn stretch_at", ["crates"]),
     Row("the one way to fold tool steps", r"pub struct Run \{", ["crates/ui-view/src"], present=True),

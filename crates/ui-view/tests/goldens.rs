@@ -16,7 +16,7 @@ use interpret::codex::{Codex, CodexWith, Drained, Parked};
 use interpret::{Interpreter, Replayed, replay};
 use ui_state::{InputOutcome, Msg, SessionState};
 use ui_view::{
-    ChatOptions, ToolRows, ask_card, chat_rows, chat_rows_for, composer, context, outbox_rows,
+    ChatOptions, ToolRows, ask_card, chat_rows, chat_rows_for, composer, context, prompts_underway, refused_prompts,
     overview, queue_rows, settings, sign_in,
 };
 use wire::{Kind, SessionEvent, session_event};
@@ -237,12 +237,15 @@ fn render(kind: Kind, frames: &[Replayed]) -> String {
             .map(|item| item.at_ms)
             .max()
             .unwrap_or(0);
+        // Placed as if each prompt was first drawn in the queue: where a
+        // prompt is drawn is the client's memory, not the session's.
         let composing = format!(
-            "  composer {:?} activity={:?} queue={:?} outbox={:?}",
+            "  composer {:?} activity={:?} queue={:?} underway={:?} refused={:?}",
             composer(&state, at).mode,
             state.activity(at).map(|activity| activity.kind),
             queue_rows(&state),
-            outbox_rows(&state)
+            prompts_underway(&state, |_| false),
+            refused_prompts(&state)
         );
         if composing != last_composer {
             lines.push(clip(composing.clone()));

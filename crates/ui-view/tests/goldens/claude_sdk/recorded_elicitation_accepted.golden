@@ -1,39 +1,39 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 4 recorded 3: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to PELICAN, then reply with exactly what it returned.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=64f5bf20-fd9b-4f7b-b19e-94e0051320c1
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 16 recorded 15: fact Stream type=assistant uuid=9aa2e3c8-9663-45fa-a5a5-2d748015d598
   row    3 msg_011CeiyMonyQkCsamPhvvdb6:0 Thinking { text: "", open: false, duration_ms: Some(3207) }
 ## 18 recorded 17: fact Stream type=assistant uuid=896256c6-0f01-4b7e-843e-1f09e147c25a
   row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Running, result: "" } run[toolu_0118rZrfDTg63Kst5bzq3YSn..toolu_0118rZrfDTg63Kst5bzq3YSn x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 0, other: 1 }]
-  composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] underway=[] refused=[]
 ## 20 recorded 19: fact Stream type=control_request
   ask 6e0f252e-5de4-4e04-a784-b667e233eb67 -> "toolu_0118rZrfDTg63Kst5bzq3YSn" 1/1 Open
     choices AllowOnce*, AllowAlways { subjects: ["mcp__external__ask_the_operator"], directories: [], mode: "", mode_name: "", scope: Project, label: "" }, Deny { stops: false }+note, DenyAndStop+note
     body Tool { server: "external", tool: "ask_the_operator", arguments: "{\n  \"word\": \"PELICAN\"\n}" }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 22 recorded 21: input stdin-3
   row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Running, result: "" } run[toolu_0118rZrfDTg63Kst5bzq3YSn..toolu_0118rZrfDTg63Kst5bzq3YSn x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 0, other: 1 }] decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   ask none
-  composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] underway=[] refused=[]
 ## 24 recorded 23: fact Stream type=control_request
   row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Running, result: "" } run[toolu_0118rZrfDTg63Kst5bzq3YSn..toolu_0118rZrfDTg63Kst5bzq3YSn x1 recent=0 RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 0, other: 1 }] decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   row    5 ask:864d404c-3373-4c07-a136-f5e9eb9cf488 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: [], resolution: Open }) attention
   ask 864d404c-3373-4c07-a136-f5e9eb9cf488 -> "ask:864d404c-3373-4c07-a136-f5e9eb9cf488" 1/1 Open
     choices Submit*, Decline
     body Form { server: "external", message: "Confirm the word PELICAN.", schema_json: "{\"properties\":{\"confirmed\":{\"type\":\"string\"}},\"required\":[\"confirmed\"],\"type\":\"object\"}" }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 26 recorded 25: input stdin-4
   row    5 ask:864d404c-3373-4c07-a136-f5e9eb9cf488 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: ["confirmed"], resolution: Answered })
   ask none
-  composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] outbox=[]
+  composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] underway=[] refused=[]
 ## 28 recorded 27: fact Stream type=user uuid=46a508ed-77b9-4fa8-957b-b1a9632d830a
   row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Succeeded, result: "PELICAN" } run[toolu_0118rZrfDTg63Kst5bzq3YSn..toolu_0118rZrfDTg63Kst5bzq3YSn x1 recent=0 RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 0, other: 1 }] decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 30 recorded 29: fact Stream type=assistant uuid=5f1da508-b38f-4af8-a02d-f57de2c86ab4
   row    6 msg_011CeiyN1wiM3Dzg9UpjPo5J:0 Thinking { text: "", open: false, duration_ms: Some(1058) }
 ## 32 recorded 31: fact Stream type=assistant uuid=382445fc-a798-4979-8b42-270379ae497b
@@ -41,7 +41,7 @@
 ## 36 recorded 35: fact Stream type=result subtype=success uuid=e3dade6a-329b-4f67-9baf-e251bb864ad5
   row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Succeeded, result: "PELICAN" } run[toolu_0118rZrfDTg63Kst5bzq3YSn..toolu_0118rZrfDTg63Kst5bzq3YSn x1 recent=0 RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 0, other: 1 }] decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   row    8 turn:1 TurnEnd { duration_ms: Some(4112), cost_usd: Some(0.055543), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to PELICAN, then reply with exactly what it returned.")], steered: false }

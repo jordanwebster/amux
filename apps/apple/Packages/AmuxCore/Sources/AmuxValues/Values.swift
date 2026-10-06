@@ -1446,7 +1446,12 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     /// new-activity affordance shows from this.
     public var arrivalsHeld: Bool
     public var queue: [QueuedRow]
-    public var outbox: [OutboxRow]
+    /// This client's prompts on their way: at the feed's end or in the
+    /// queue, sending or perhaps never arrived.
+    public var underway: [SentPrompt]
+    /// This client's prompts the agent refused, until the person takes
+    /// their words back into the composer.
+    public var refused: [RefusedPrompt]
     /// The input answering the head ask, which a card that was not
     /// confirmed resends or discards.
     public var askInput: [UInt8]?
@@ -1466,7 +1471,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     public var signIn: SignInView?
     public var waiting: Waiting?
 
-    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], outbox: [OutboxRow], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, git: GitView?, mode: String?, model: String?, permission: String?, signIn: SignInView?, waiting: Waiting?) {
+    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], underway: [SentPrompt], refused: [RefusedPrompt], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, git: GitView?, mode: String?, model: String?, permission: String?, signIn: SignInView?, waiting: Waiting?) {
         self.agent = agent
         self.name = name
         self.kind = kind
@@ -1477,7 +1482,8 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         self.hasOlder = hasOlder
         self.arrivalsHeld = arrivalsHeld
         self.queue = queue
-        self.outbox = outbox
+        self.underway = underway
+        self.refused = refused
         self.askInput = askInput
         self.context = context
         self.effort = effort
@@ -1501,7 +1507,8 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         case hasOlder = "has_older"
         case arrivalsHeld = "arrivals_held"
         case queue
-        case outbox
+        case underway
+        case refused
         case askInput = "ask_input"
         case context
         case effort
@@ -2779,6 +2786,13 @@ public enum Kind: String, Codable, Hashable, Sendable, CaseIterable {
     case codex = "Codex"
 }
 
+/// Where a prompt on its way is drawn: where it was first drawn, which the
+/// client remembers, so a prompt does not jump as the agent starts work.
+public enum Lands: String, Codable, Hashable, Sendable, CaseIterable {
+    case feed = "Feed"
+    case queue = "Queue"
+}
+
 public enum LineKind: String, Codable, Hashable, Sendable, CaseIterable {
     case context = "Context"
     case added = "Added"
@@ -3041,76 +3055,6 @@ public struct OptionView: Codable, Hashable, Sendable {
         case description
         case preview
         case recommended
-    }
-}
-
-/// This client's prompts not yet in the transcript or the queue: sending,
-/// not confirmed (resend or discard), or rejected with the reason.
-public struct OutboxRow: Codable, Hashable, Sendable {
-    public var inputId: [UInt8]
-    public var text: [Segment]
-    public var state: OutboxState
-
-    public init(inputId: [UInt8], text: [Segment], state: OutboxState) {
-        self.inputId = inputId
-        self.text = text
-        self.state = state
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case inputId = "input_id"
-        case text
-        case state
-    }
-}
-
-public enum OutboxState: Codable, Hashable, Sendable {
-    case sending
-    case notConfirmed
-    case rejected(String)
-
-    private enum Tag: String, CodingKey {
-        case rejected = "Rejected"
-    }
-
-    public init(from decoder: any Decoder) throws {
-        if let _single = try? decoder.singleValueContainer(),
-           let _name = try? _single.decode(String.self)
-        {
-            switch _name {
-            case "Sending": self = .sending
-            case "NotConfirmed": self = .notConfirmed
-            default:
-                throw DecodingError.dataCorruptedError(
-                    in: _single, debugDescription: "no OutboxState is named \(_name)")
-            }
-            return
-        }
-        let _container = try decoder.container(keyedBy: Tag.self)
-        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
-            throw DecodingError.dataCorrupted(
-                .init(
-                    codingPath: decoder.codingPath,
-                    debugDescription: "a OutboxState names exactly one variant"))
-        }
-        switch _tag {
-        case .rejected:
-            self = .rejected(try _container.decode(String.self, forKey: .rejected))
-        }
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        switch self {
-        case .sending:
-            var _container = encoder.singleValueContainer()
-            try _container.encode("Sending")
-        case .notConfirmed:
-            var _container = encoder.singleValueContainer()
-            try _container.encode("NotConfirmed")
-        case .rejected(let _value):
-            var _container = encoder.container(keyedBy: Tag.self)
-            try _container.encode(_value, forKey: .rejected)
-        }
     }
 }
 
@@ -3689,6 +3633,23 @@ public struct QueuedRow: Codable, Hashable, Sendable {
         case canWithdraw = "can_withdraw"
         case canSendNow = "can_send_now"
         case fromAgent = "from_agent"
+    }
+}
+
+/// A prompt the agent refused. Its words go back to the composer, with
+/// the reason, and it is forgotten.
+public struct RefusedPrompt: Codable, Hashable, Sendable {
+    public var inputId: [UInt8]
+    public var reason: String
+
+    public init(inputId: [UInt8], reason: String) {
+        self.inputId = inputId
+        self.reason = reason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case inputId = "input_id"
+        case reason
     }
 }
 
@@ -4650,6 +4611,28 @@ public enum SendState: String, Codable, Hashable, Sendable, CaseIterable {
     case sent = "Sent"
 }
 
+/// A prompt of this client's on its way to the agent.
+public struct SentPrompt: Codable, Hashable, Sendable {
+    public var inputId: [UInt8]
+    public var text: [Segment]
+    public var lands: Lands
+    public var underway: Underway
+
+    public init(inputId: [UInt8], text: [Segment], lands: Lands, underway: Underway) {
+        self.inputId = inputId
+        self.text = text
+        self.lands = lands
+        self.underway = underway
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case inputId = "input_id"
+        case text
+        case lands
+        case underway
+    }
+}
+
 public struct ServerView: Codable, Hashable, Sendable {
     public var name: String
     public var error: String
@@ -5041,6 +5024,65 @@ public enum ToolStateView: String, Codable, Hashable, Sendable, CaseIterable {
     case failed = "Failed"
     case denied = "Denied"
     case cancelled = "Cancelled"
+}
+
+/// How a prompt of this client's is on its way.
+public enum Underway: Codable, Hashable, Sendable {
+    /// Sent; `waiting` while the link to the agent's host is down, which
+    /// is what the prompt waits for.
+    case sending(waiting: Bool)
+    /// The connection dropped before a reply, and catching up found it
+    /// neither queued nor in the transcript: only the person can say
+    /// whether to send it again or discard it.
+    case mayNotHaveArrived
+
+    private enum Tag: String, CodingKey {
+        case sending = "Sending"
+    }
+
+    private enum SendingKeys: String, CodingKey {
+        case waiting
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "MayNotHaveArrived": self = .mayNotHaveArrived
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no Underway is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a Underway names exactly one variant"))
+        }
+        switch _tag {
+        case .sending:
+            let _fields = try _container.nestedContainer(
+                keyedBy: SendingKeys.self, forKey: .sending)
+            self = .sending(
+                waiting: try _fields.decode(Bool.self, forKey: .waiting))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .sending(let waiting):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: SendingKeys.self, forKey: .sending)
+            try _fields.encode(waiting, forKey: .waiting)
+        case .mayNotHaveArrived:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("MayNotHaveArrived")
+        }
+    }
 }
 
 /// Which limit a usage window is, for a client to word.

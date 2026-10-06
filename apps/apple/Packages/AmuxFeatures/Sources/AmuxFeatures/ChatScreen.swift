@@ -321,7 +321,16 @@ public struct ChatScreen: View {
     /// and keeps the bottom while they follow. The rows it hosts are the
     /// SwiftUI views below.
     private var feed: some View {
-        TranscriptList(model: model, notices: notices)
+        TranscriptList(model: model, notices: notices, landings: landings)
+    }
+
+    /// After the newest row: this client's prompts that land there.
+    private var landings: [FeedLanding] {
+        model.landingInFeed.enumerated().map { index, prompt in
+            FeedLanding(
+                id: "chat.landing.\(index)", text: prompt.text,
+                state: ChatWords.underway(prompt.underway, host: subject.host))
+        }
     }
 
     /// Above the oldest row: older history on its way or out of reach, or
@@ -369,6 +378,32 @@ struct FeedNotice: Hashable, Sendable {
     let id: String
     let text: String
     let value: String
+}
+
+/// A prompt of this client's on its way, drawn at the feed's end as it
+/// will stand once the agent has it, with how it is on its way under it.
+struct FeedLanding: Hashable, Sendable {
+    let id: String
+    let text: [Segment]
+    let state: String
+}
+
+struct FeedLandingView: View {
+    @Environment(\.design) private var design
+    let landing: FeedLanding
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            PromptBubble(text: landing.text)
+            Text(landing.state)
+                .designFont(.caption, design)
+                .foregroundStyle(design.inkFaint.color)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.bottom, RowGrid.prose)
+        .accessibilityElement(children: .combine)
+        .identified(landing.id, label: ChatWords.text(of: landing.text), value: landing.state)
+    }
 }
 
 struct FeedNoticeView: View {
@@ -492,7 +527,9 @@ public struct ChatStanding: View {
     @ViewBuilder
     private var composerStack: some View {
         if showing != .plus {
-            ChatDock(model: model, children: children, expanded: dockExpanded) { actions(.open($0)) }
+            ChatDock(model: model, children: children, host: subject.host, expanded: dockExpanded) {
+                actions(.open($0))
+            }
             if let overview = model.overview {
                 StripLine(context: model.frame?.context, overview: overview, open: openOverview)
             }

@@ -447,12 +447,18 @@ struct ChatDock: View {
     let model: ChatModel
     /// The agents this one started.
     let children: [FleetCard]
+    /// The agent's host, which a prompt waits for while the link is down.
+    let host: String
     let open: (AgentKey) -> Void
     @State private var expanded: Bool
 
-    init(model: ChatModel, children: [FleetCard], expanded: Bool = false, open: @escaping (AgentKey) -> Void) {
+    init(
+        model: ChatModel, children: [FleetCard], host: String = "", expanded: Bool = false,
+        open: @escaping (AgentKey) -> Void
+    ) {
         self.model = model
         self.children = children
+        self.host = host
         self.open = open
         _expanded = State(initialValue: expanded)
     }
@@ -460,9 +466,9 @@ struct ChatDock: View {
     var body: some View {
         let tasks = model.overview?.tasks
         let queue = model.frame?.queue ?? []
-        let outbox = model.frame?.outbox ?? []
+        let underway = model.landingInQueue
         let head = tasks != nil || !children.isEmpty
-        if head || !queue.isEmpty || !outbox.isEmpty {
+        if head || !queue.isEmpty || !underway.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 if head {
                     if expanded {
@@ -481,9 +487,9 @@ struct ChatDock: View {
                     if head || index > 0 { rule }
                     queued(row, index: index)
                 }
-                ForEach(Array(outbox.enumerated()), id: \.offset) { index, row in
+                ForEach(Array(underway.enumerated()), id: \.offset) { index, prompt in
                     if head || !queue.isEmpty || index > 0 { rule }
-                    unconfirmed(row, index: index)
+                    onItsWay(prompt, index: index)
                 }
             }
             .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
@@ -638,31 +644,28 @@ struct ChatDock: View {
         }
     }
 
-    private func unconfirmed(_ row: OutboxRow, index: Int) -> some View {
-        let id = "chat.outbox.\(index)"
+    /// A prompt of this client's waiting in the queue: sending, or, when
+    /// it may not have arrived, with Resend and Discard.
+    private func onItsWay(_ prompt: SentPrompt, index: Int) -> some View {
+        let id = "chat.underway.\(index)"
+        let lost = prompt.underway == .mayNotHaveArrived
         return trayRow(
-            text: ChatWords.text(of: row.text), state: ChatWords.outbox(row.state),
-            warn: row.state != .sending, id: id
+            text: ChatWords.text(of: prompt.text), state: ChatWords.underway(prompt.underway, host: host),
+            warn: lost, id: id
         ) {
-            if row.state == .sending {
-                Image(systemName: "paperplane")
-                    .font(.system(size: 13))
-                    .foregroundStyle(design.inkMuted.color)
-            } else {
+            if lost {
                 Image(systemName: "exclamationmark.circle")
                     .font(.system(size: 14))
                     .foregroundStyle(design.accent.color)
+            } else {
+                Image(systemName: "paperplane")
+                    .font(.system(size: 13))
+                    .foregroundStyle(design.inkMuted.color)
             }
         } actions: {
-            switch row.state {
-            case .sending:
-                EmptyView()
-            case .notConfirmed:
-                icon("arrow.clockwise", String(localized: "Resend"), id: "\(id).resend") { model.resend(row.inputId) }
-                icon("xmark", String(localized: "Discard"), id: "\(id).discard") { model.discard(row.inputId) }
-            case .rejected:
-                icon("pencil", String(localized: "Edit"), id: "\(id).edit") { model.edit(row) }
-                icon("xmark", String(localized: "Discard"), id: "\(id).discard") { model.discard(row.inputId) }
+            if lost {
+                icon("arrow.clockwise", String(localized: "Resend"), id: "\(id).resend") { model.resend(prompt.inputId) }
+                icon("xmark", String(localized: "Discard"), id: "\(id).discard") { model.discard(prompt.inputId) }
             }
         }
     }

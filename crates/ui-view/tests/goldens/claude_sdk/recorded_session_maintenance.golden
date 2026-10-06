@@ -1,9 +1,9 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 4 recorded 3: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly MAINTENANCE_OK and nothing else.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 25 recorded 24: fact Stream type=system subtype=init uuid=4e2adb42-8d28-4a21-86cb-96cef100f8c3
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 37 recorded 36: fact Stream type=assistant uuid=66f8868d-6013-46c8-a3e3-135cfc74d30c
@@ -12,7 +12,7 @@
   row    4 msg_011CeW3rvQpCUmmycA12PXsr:1 Prose { text: [Text("MAINTENANCE_OK")], streaming: false, working_note: false }
 ## 41 recorded 40: fact Stream type=result subtype=success uuid=a7ea334e-1dfd-45da-ae84-c2f8908ae444
   row    5 turn:1 TurnEnd { duration_ms: Some(1682), cost_usd: Some(0.022547), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly MAINTENANCE_OK and nothing else.")], steered: false }

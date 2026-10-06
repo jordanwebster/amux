@@ -3865,6 +3865,18 @@
         }
       }
     },
+    "Not sent: %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not sent: %@"
+          }
+        }
+      }
+    },
     "Not signed in": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
       "extractionState": "manual",
@@ -8101,6 +8113,30 @@
         }
       }
     },
+    "it had exited": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "it had exited"
+          }
+        }
+      }
+    },
+    "it is shutting down": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "it is shutting down"
+          }
+        }
+      }
+    },
     "it no longer trusts this phone, pair again to reach it": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
       "extractionState": "manual",
@@ -8109,6 +8145,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "it no longer trusts this phone, pair again to reach it"
+          }
+        }
+      }
+    },
+    "it was exiting": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "it was exiting"
           }
         }
       }
@@ -8133,6 +8181,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "limit reached"
+          }
+        }
+      }
+    },
+    "may not have arrived": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "may not have arrived"
           }
         }
       }
@@ -9241,6 +9301,18 @@
         }
       }
     },
+    "this agent can’t take it": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "this agent can’t take it"
+          }
+        }
+      }
+    },
     "this phone’s runtime did not start": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/RuntimeCoordinator.swift.",
       "extractionState": "manual",
@@ -9417,6 +9489,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "waiting"
+          }
+        }
+      }
+    },
+    "waiting for %@…": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "waiting for %@…"
           }
         }
       }

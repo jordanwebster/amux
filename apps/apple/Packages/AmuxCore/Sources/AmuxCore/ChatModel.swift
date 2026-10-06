@@ -391,7 +391,11 @@ public final class ChatModel {
     /// frame, a card and a strip that did not move.
     private func readSession() {
         let before = frame
-        let frame = source.frame()
+        var frame = source.frame()
+        if let refused = frame?.refused, !refused.isEmpty {
+            refused.forEach(takeBack)
+            frame = source.frame()
+        }
         if self.frame != frame { self.frame = frame }
         let ask = source.askCard()
         if self.ask != ask { self.ask = ask }
@@ -796,11 +800,35 @@ public final class ChatModel {
         woke()
     }
 
-    /// A rejected prompt back into the draft, words and attachments, to
-    /// change and send again.
-    public func edit(_ outbox: OutboxRow) {
-        if let sent = source.draft(of: outbox.inputId) { restore(sent) }
-        discard(outbox.inputId)
+    /// A prompt the agent refused, back into the draft with the reason
+    /// said: its words and attachments to change and send again.
+    private func takeBack(_ refused: RefusedPrompt) {
+        if let sent = source.draft(of: refused.inputId) { restore(sent) }
+        notice = Self.notSent(refused.reason)
+        source.discard(refused.inputId)
+    }
+
+    /// Why a prompt was not sent, from the reason the agent's host gave.
+    static func notSent(_ reason: String) -> String {
+        let why = switch reason {
+        case "exited": String(localized: "it had exited")
+        case "exiting": String(localized: "it was exiting")
+        case "draining": String(localized: "it is shutting down")
+        case "unsupported": String(localized: "this agent can’t take it")
+        default: reason.replacingOccurrences(of: "_", with: " ")
+        }
+        return String(localized: "Not sent: \(why)")
+    }
+
+    /// This client's prompts on their way that are drawn at the feed's
+    /// end, as they will stand once the agent has them.
+    public var landingInFeed: [SentPrompt] {
+        (frame?.underway ?? []).filter { $0.lands == .feed }
+    }
+
+    /// Those waiting in the queue, behind the agent's own queue.
+    public var landingInQueue: [SentPrompt] {
+        (frame?.underway ?? []).filter { $0.lands == .queue }
     }
 
     /// Stop: the interrupt. The turn ends, an open ask is dismissed, and the

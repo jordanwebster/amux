@@ -20,6 +20,7 @@
 		0848A91040A67E557F383FAC /* components.composer-sending-light.png in Resources */ = {isa = PBXBuildFile; fileRef = B12154918323E6A8E9DA9131 /* components.composer-sending-light.png */; };
 		08A81513DFEF3EE1567A6A5E /* VisibleTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8CE78DF417F5614935595CA /* VisibleTree.swift */; };
 		09083F880404DCFA99E52249 /* components.row-run-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = E2025163293E0667EB5E4966 /* components.row-run-dark.png */; };
+		097F2AEE92C3DC160F4B84A0 /* components.chat-landing-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 0517CD11A840D45277EE5E94 /* components.chat-landing-light.png */; };
 		0DEED59B036D04FE2F3ACFD0 /* components.composer-review-token-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 73DF47D854C69950E20D508B /* components.composer-review-token-light.png */; };
 		0E2CA1E6A3F7F07FFD5CAF31 /* components.composer-draft-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = EC616EC62C36150913B6B33C /* components.composer-draft-dark.png */; };
 		0EA3AAED32D0E7A84DCF0D07 /* components.composer-strip-light.png in Resources */ = {isa = PBXBuildFile; fileRef = FCBAD8BFA64DDC92C329DAC0 /* components.composer-strip-light.png */; };
@@ -98,6 +99,7 @@
 		580061FCFED1747212D8F3ED /* components.row-turn-end-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 6EDCE9C2C4C3BE997EE79B52 /* components.row-turn-end-light.png */; };
 		58E4F16CE6711CDC676E97E2 /* components.row-command-allowed-prefix-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 51CFA1195070C7B0B942A896 /* components.row-command-allowed-prefix-light.png */; };
 		58EF6D23E8FBE317071A94FE /* components.ask-codex-command-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 771394A0DB198CE32C0953CD /* components.ask-codex-command-light.png */; };
+		5A45A9FD9E71580AD0CD9CF6 /* components.chat-landing-waiting-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 49B830B877B1BF8DA3F666A1 /* components.chat-landing-waiting-dark.png */; };
 		5B5E346F02D2E96EBD80C060 /* components.row-thinking-open-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 111B70DFC2419E9AC1FA227E /* components.row-thinking-open-dark.png */; };
 		5C3E9C28DB993391640A3D28 /* components.row-prompt-steered-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = E3C49B4947DF9FE74B11419B /* components.row-prompt-steered-dark.png */; };
 		5D56316A5606AD5B3B358965 /* components.ask-question-reply-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 0F452A150D611B8A88D8251A /* components.ask-question-reply-dark.png */; };
@@ -114,6 +116,7 @@
 		6805234D9DC817A50B5F83BD /* AmuxDesign in Frameworks */ = {isa = PBXBuildFile; productRef = C0C0812086F76FDC86EC6F93 /* AmuxDesign */; };
 		687D6AFC158EA02B38F25433 /* SnapshotTesting in Frameworks */ = {isa = PBXBuildFile; productRef = 452D6B5733E5F7617EFF32B3 /* SnapshotTesting */; };
 		6B0E85DB1DB5AC0F55A2B0EC /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 945602D9376D08934B80A0F1 /* manifest.json */; };
+		6B218FD2E4E9170E534D5ADB /* components.chat-landing-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = FE8BCB7C4EF05F5D63CEAEE2 /* components.chat-landing-dark.png */; };
 		6D9A21635B9E0A9376F58940 /* components.review-folded-light.png in Resources */ = {isa = PBXBuildFile; fileRef = E32B3EBC99E143C2F8AF9920 /* components.review-folded-light.png */; };
 		6E69841EDA04D4895B357693 /* components.review-selection-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = C839E4964A504CC0A88672A2 /* components.review-selection-dark.png */; };
 		6F22A1F3C365E383E85D3CA5 /* components.row-ask-unanswerable-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 253C10E399D04F37057DDF0A /* components.row-ask-unanswerable-light.png */; };
@@ -157,6 +160,7 @@
 		8829C33B884112BAABE512D0 /* components.row-agent-message-rejected-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 814326FADBA73ACF44C23D06 /* components.row-agent-message-rejected-light.png */; };
 		894FA032EAF19BFC5E92664F /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4FC885DCA537FD2ABD0FD /* Trace.swift */; };
 		89899A9DDE7E4FD6455A9FE8 /* components.row-run-open-below-light.png in Resources */ = {isa = PBXBuildFile; fileRef = BCD6B5DF44428C9C7B9BD6C0 /* components.row-run-open-below-light.png */; };
+		89C1F2B566ADBAAAE0B2AB91 /* components.chat-landing-waiting-light.png in Resources */ = {isa = PBXBuildFile; fileRef = A2A999A474D6E9D020915D35 /* components.chat-landing-waiting-light.png */; };
 		89DB8C972ACE78A407C5C93B /* components.row-command-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 1B305E080807AAF5B237E828 /* components.row-command-dark.png */; };
 		8A187B64F3E1399D5A969A78 /* components.composer-strip-trouble-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = BAE6C22D8CB6ED67167E1062 /* components.composer-strip-trouble-dark.png */; };
 		8A7DB8DD358BD12A81A655F2 /* components.overview-uncommitted-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = B01989E465063A95F471FFEB /* components.overview-uncommitted-dark.png */; };
@@ -336,6 +340,7 @@
 		025D6F623FD9232330F39965 /* components.row-subagent-running-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-subagent-running-dark.png"; sourceTree = "<group>"; };
 		02C93881E6BA3503EA1CE005 /* components.composer-retrying-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-retrying-dark.png"; sourceTree = "<group>"; };
 		03CB11BE8186B9B3BB3A02C2 /* ReportTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportTools.swift; sourceTree = "<group>"; };
+		0517CD11A840D45277EE5E94 /* components.chat-landing-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-landing-light.png"; sourceTree = "<group>"; };
 		0603291B22F44898397375CF /* components.row-explore-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-explore-light.png"; sourceTree = "<group>"; };
 		065D3F4D7B629AB06EA6EDBF /* components.new-agent-signed-out-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.new-agent-signed-out-light.png"; sourceTree = "<group>"; };
 		068E67CC97AD687C742CD825 /* DesignVariant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignVariant.swift; sourceTree = "<group>"; };
@@ -423,6 +428,7 @@
 		46FEE2E93F15F978E77767F6 /* components.ask-link-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-link-light.png"; sourceTree = "<group>"; };
 		487EECCEF2A57670F0A7C120 /* components.ask-question-other-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-question-other-light.png"; sourceTree = "<group>"; };
 		48E1F0310CDECC2DE70B3C52 /* components.composer-dictation-listening-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-dictation-listening-dark.png"; sourceTree = "<group>"; };
+		49B830B877B1BF8DA3F666A1 /* components.chat-landing-waiting-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-landing-waiting-dark.png"; sourceTree = "<group>"; };
 		4B1C9C4E468079FA7B4E07BC /* components.row-ask-questions-replied-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-ask-questions-replied-dark.png"; sourceTree = "<group>"; };
 		4E5C2B55CFA2B1D3BF42907F /* RoundingImageDiff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundingImageDiff.swift; sourceTree = "<group>"; };
 		51831ABD1FCC34AD4E0D103B /* components.chat-away-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-away-light.png"; sourceTree = "<group>"; };
@@ -514,6 +520,7 @@
 		9D55DE577D6C070E0C9C7632 /* components.composer-retrying-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-retrying-light.png"; sourceTree = "<group>"; };
 		9F5CB3619E7C3A489C1D92DF /* DoorTargetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorTargetTests.swift; sourceTree = "<group>"; };
 		A195BC9ED41E72067287EBA0 /* components.chat-changes-on-branch-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-changes-on-branch-dark.png"; sourceTree = "<group>"; };
+		A2A999A474D6E9D020915D35 /* components.chat-landing-waiting-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-landing-waiting-light.png"; sourceTree = "<group>"; };
 		A2E0256EE187695B50A4D052 /* components.chat-new-activity-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-new-activity-light.png"; sourceTree = "<group>"; };
 		A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorWindow.swift; sourceTree = "<group>"; };
 		A644A0F05DA455C5891F937C /* components.row-auto-review-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-auto-review-dark.png"; sourceTree = "<group>"; };
@@ -627,6 +634,7 @@
 		FD6F02E0313D950B3CA7B4F0 /* components.ask-unanswerable-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-unanswerable-light.png"; sourceTree = "<group>"; };
 		FD8862EBE5F892D7BDBE54D4 /* components.row-agent-message-rejected-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-agent-message-rejected-dark.png"; sourceTree = "<group>"; };
 		FDE836A6BF08FDA28D308E98 /* components.row-file-change-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-file-change-dark.png"; sourceTree = "<group>"; };
+		FE8BCB7C4EF05F5D63CEAEE2 /* components.chat-landing-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-landing-dark.png"; sourceTree = "<group>"; };
 		FEA374A5D13995CA29C15CDA /* components.row-ask-questions-replied-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-ask-questions-replied-light.png"; sourceTree = "<group>"; };
 		FEB926913E32606832EB325E /* components.row-command-elsewhere-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-command-elsewhere-dark.png"; sourceTree = "<group>"; };
 		FF0ABB23B2C6EAB3B8D4148C /* AmuxComponentSnapshotTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxComponentSnapshotTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -825,6 +833,10 @@
 				B351A86A8655E09F54A6EF7F /* components.chat-detached-light.png */,
 				3C8BA47CCA06C0BC12FAD068 /* components.chat-family-dark.png */,
 				71A6007C075ED640DAE0FD1E /* components.chat-family-light.png */,
+				FE8BCB7C4EF05F5D63CEAEE2 /* components.chat-landing-dark.png */,
+				0517CD11A840D45277EE5E94 /* components.chat-landing-light.png */,
+				49B830B877B1BF8DA3F666A1 /* components.chat-landing-waiting-dark.png */,
+				A2A999A474D6E9D020915D35 /* components.chat-landing-waiting-light.png */,
 				8517F47786CFC94BE0029FBC /* components.chat-loading-dark.png */,
 				732DCD39627E1E7E2A7611EE /* components.chat-loading-light.png */,
 				6013EA2776CE3161F61C3D4D /* components.chat-new-activity-dark.png */,
@@ -1311,6 +1323,10 @@
 				7D31A5DC183CDE7595F5B47A /* components.chat-detached-light.png in Resources */,
 				DDC6788FF145AB495916AFFB /* components.chat-family-dark.png in Resources */,
 				86121428B668E6D6F32E7AE8 /* components.chat-family-light.png in Resources */,
+				6B218FD2E4E9170E534D5ADB /* components.chat-landing-dark.png in Resources */,
+				097F2AEE92C3DC160F4B84A0 /* components.chat-landing-light.png in Resources */,
+				5A45A9FD9E71580AD0CD9CF6 /* components.chat-landing-waiting-dark.png in Resources */,
+				89C1F2B566ADBAAAE0B2AB91 /* components.chat-landing-waiting-light.png in Resources */,
 				ED53F0AC24C5154F7CE11DAB /* components.chat-loading-dark.png in Resources */,
 				31A1FBCB7EA89BF134D4FCF6 /* components.chat-loading-light.png in Resources */,
 				EC4038C3EF82DC521B2FC6A4 /* components.chat-new-activity-dark.png in Resources */,

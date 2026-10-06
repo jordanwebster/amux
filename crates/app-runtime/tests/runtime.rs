@@ -402,7 +402,7 @@ async fn collapsed_runs_and_the_frame_read_as_the_views_say() {
     let frame = chat.frame();
     assert_eq!(frame.name, "worker");
     assert_eq!(frame.agent, worker(&net));
-    assert!(frame.queue.is_empty() && frame.outbox.is_empty());
+    assert!(frame.queue.is_empty() && frame.underway.is_empty() && frame.refused.is_empty());
     let keys = chat.keys();
     let hidden = chat.rows_for(
         &keys,

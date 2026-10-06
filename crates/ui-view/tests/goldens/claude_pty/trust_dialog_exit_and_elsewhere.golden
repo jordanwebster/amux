@@ -1,5 +1,5 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 2 fact {"channel":"agent","json":{"type":"trust_dialog"}}
   row    1 ask:ask:1 [Open:  skipped=0] Ask(Questions { questions: [QuestionView { header: "Folder", question: "Do you trust the files in this folder?", multi_select: false, options: [OptionView { label: "Trust this folder", description: "Claude can read, edit and run files here", preview: "", recommended: false }, OptionView { label: "Exit", description: "Claude exits without starting", preview: "", re…
   ask ask:1 -> "ask:ask:1" 1/1 Open

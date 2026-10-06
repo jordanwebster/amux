@@ -2,6 +2,7 @@
 //! the fleet and widened while the chat is open, its changes gathered for
 //! the host's next turn, and the views the host asks for by row key.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use model::AgentKey;
@@ -34,6 +35,9 @@ pub struct Chat {
     clock: Arc<dyn client::Clock>,
     /// The changed files the overview last fetched.
     changed_files: Mutex<Option<wire::Diff>>,
+    /// Where each of this client's prompts was first drawn: true at the
+    /// feed's end. A prompt stays where it was first drawn until it lands.
+    first_drawn: Mutex<HashMap<Vec<u8>, bool>>,
 }
 
 impl Chat {
@@ -59,6 +63,7 @@ impl Chat {
             watcher: OnceLock::new(),
             clock,
             changed_files: Mutex::new(None),
+            first_drawn: Mutex::new(HashMap::new()),
         });
         // Spawned once the chat exists, so every change it sees finds the
         // chat; it ends when the chat is dropped or the session ends.
@@ -200,7 +205,9 @@ impl Chat {
     pub fn frame(&self) -> ChatFrame {
         let ended = self.session.ended().map(|error| error.to_string());
         let state = self.session.state();
-        frame(&state, self.clock.now_ms(), ended)
+        let mut first_drawn = self.first_drawn.lock().unwrap();
+        note_drawn(&state, &mut first_drawn);
+        frame(&state, self.clock.now_ms(), ended, &first_drawn)
     }
 
     /// Everything that changed since the last take; the next change wakes
@@ -431,7 +438,31 @@ impl Drop for Chat {
     }
 }
 
-pub(crate) fn frame(state: &SessionState, now_ms: i64, ended: Option<String>) -> ChatFrame {
+/// Notes where each prompt on its way is drawn as a frame first sees it,
+/// and forgets the ones no longer on their way.
+fn note_drawn(state: &SessionState, first_drawn: &mut HashMap<Vec<u8>, bool>) {
+    let to_feed = ui_view::sends_to_feed(state);
+    let mut underway = HashSet::new();
+    for sent in state.inputs().iter() {
+        if matches!(
+            sent.state,
+            InputState::Sent | InputState::Queued | InputState::Uncertain
+        ) {
+            underway.insert(sent.id.clone());
+            first_drawn
+                .entry(sent.id.clone())
+                .or_insert(to_feed && sent.state != InputState::Queued);
+        }
+    }
+    first_drawn.retain(|id, _| underway.contains(id));
+}
+
+pub(crate) fn frame(
+    state: &SessionState,
+    now_ms: i64,
+    ended: Option<String>,
+    first_drawn: &HashMap<Vec<u8>, bool>,
+) -> ChatFrame {
     let agent = state.agent();
     ChatFrame {
         agent: ui_state::agent_key(agent),
@@ -452,7 +483,10 @@ pub(crate) fn frame(state: &SessionState, now_ms: i64, ended: Option<String>) ->
         has_older: state.transcript().has_older(),
         arrivals_held: state.arrivals_held(),
         queue: ui_view::queue_rows(state),
-        outbox: ui_view::outbox_rows(state),
+        underway: ui_view::prompts_underway(state, |id| {
+            first_drawn.get(id).copied().unwrap_or(false)
+        }),
+        refused: ui_view::refused_prompts(state),
         ask_input: ui_view::ask_card(state)
             .and_then(|card| state.answering(&card.key).map(|sent| sent.id.clone())),
         ended,
@@ -485,4 +519,71 @@ fn acted(result: Result<(), InputError>) -> ActOutcome {
 
 fn moved_on() -> ActOutcome {
     ActOutcome::Rejected("that ask is no longer the one waiting".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ui_state::Msg;
+    use wire::{Kind, Phase, SessionEvent, session_event};
+
+    fn snapshot(phase: Phase) -> Msg {
+        Msg::Event(SessionEvent {
+            of: Some(session_event::Of::Snapshot(wire::Snapshot {
+                kind: wire::kind_tag(Kind::Codex).into(),
+                phase: phase as i32,
+                ..wire::Snapshot::default()
+            })),
+        })
+    }
+
+    fn prompt(id: &[u8]) -> Msg {
+        Msg::Send(wire::Input {
+            input_id: id.to_vec(),
+            of: Some(wire::input::Of::Codex(wire::CodexInput {
+                of: Some(wire::codex_input::Of::Prompt(wire::PromptInput {
+                    text: "go".into(),
+                    attachments: vec![],
+                })),
+            })),
+        })
+    }
+
+    /// A prompt sent to an idle agent is drawn at the feed's end and stays
+    /// there once the agent starts work; one sent while it works waits in
+    /// the queue.
+    #[test]
+    fn a_prompt_stays_where_it_was_first_drawn() {
+        let agent = wire::Agent {
+            agent_id: b"agent".to_vec(),
+            host_id: b"host".to_vec(),
+            kind: Kind::Codex as i32,
+            lifecycle: wire::Lifecycle::Live as i32,
+            incarnation: 1,
+            ..wire::Agent::default()
+        };
+        let mut state = SessionState::new(agent, 50);
+        state.update(snapshot(Phase::Idle));
+        state.update(Msg::Event(SessionEvent {
+            of: Some(session_event::Of::CaughtUp(wire::CaughtUp { revision: 0 })),
+        }));
+        let mut first_drawn = HashMap::new();
+        state.update(prompt(b"p1"));
+        note_drawn(&state, &mut first_drawn);
+        state.update(snapshot(Phase::Working));
+        state.update(prompt(b"p2"));
+        note_drawn(&state, &mut first_drawn);
+        let lands: Vec<(Vec<u8>, ui_view::Lands)> = frame(&state, 0, None, &first_drawn)
+            .underway
+            .into_iter()
+            .map(|prompt| (prompt.input_id, prompt.lands))
+            .collect();
+        assert_eq!(
+            lands,
+            vec![
+                (b"p1".to_vec(), ui_view::Lands::Feed),
+                (b"p2".to_vec(), ui_view::Lands::Queue),
+            ]
+        );
+    }
 }

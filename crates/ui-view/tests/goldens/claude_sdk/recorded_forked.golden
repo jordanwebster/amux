@@ -1,9 +1,9 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 4 recorded 3: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 8 recorded 7: fact Stream type=system subtype=init uuid=18a86f4b-07ed-4170-ad53-941f3957ca82
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 24 recorded 23: fact Stream type=assistant uuid=f3a4b6ee-413e-4034-83d8-c83334979779
@@ -12,10 +12,10 @@
   row    4 msg_011CeW3ZnutMUX3RhuixDvsg:1 Prose { text: [Text("REMEMBERED.")], streaming: false, working_note: false }
 ## 28 recorded 27: fact Stream type=result subtype=success uuid=739e4f55-47a6-4a8d-bca5-2a4c5c351e14
   row    5 turn:1 TurnEnd { duration_ms: Some(2335), cost_usd: Some(0.022981), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 30 recorded 29: input stdin-4
   row    6 73746469-6e2d-4400-8000-000000000000 Prompt { text: [Text("What word did I ask you to remember? Reply with just that word.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 31 recorded 30: fact Stream type=system subtype=init uuid=e4edb38b-8199-4b71-80e1-0d7b3ef76bdd
   row    7 boundary:2 Boundary { kind: Forked, cause: "" }
 ## 36 recorded 35: fact Stream type=assistant uuid=92e5fe46-e56f-40b7-bbe1-3da507dcd5b7
@@ -24,7 +24,7 @@
   row    9 msg_011CeW3a4ns6SjojyajT2Ggc:1 Prose { text: [Text("ALBATROSS")], streaming: false, working_note: false }
 ## 39 recorded 38: fact Stream type=result subtype=success uuid=4f0d1638-401b-4888-86b7-e7303b5b7ed0
   row   10 turn:2 TurnEnd { duration_ms: Some(1316), cost_usd: Some(0.0034633000000000003), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }

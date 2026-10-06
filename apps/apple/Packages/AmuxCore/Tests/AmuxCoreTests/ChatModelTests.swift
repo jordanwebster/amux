@@ -156,7 +156,11 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
 
     func sendNow(_ input: [UInt8]) async -> ActOutcome? { .done }
     func resend(_ input: [UInt8]) async -> SendOutcome? { nil }
-    func discard(_ input: [UInt8]) { discarded.append(input) }
+    func discard(_ input: [UInt8]) {
+        discarded.append(input)
+        current.underway.removeAll { $0.inputId == input }
+        current.refused.removeAll { $0.inputId == input }
+    }
     func draft(of input: [UInt8]) -> Draft? { drafts[input] }
 
     func interrupt() async -> ActOutcome? {
@@ -218,7 +222,7 @@ private func frame(
     ChatFrame(
         agent: AgentKey(host: [1], agent: [2]), name: "a", kind: kind, phase: phase,
         composer: ComposerView(mode: mode, activity: nil), connection: .live, caughtUp: caughtUp,
-        hasOlder: hasOlder, arrivalsHeld: false, queue: [], outbox: [], askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
+        hasOlder: hasOlder, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
         mode: nil, model: nil, permission: nil, signIn: nil, waiting: nil)
 }
 
@@ -606,21 +610,35 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(model.attachments, [pasted, review])
     }
 
-    /// Editing a rejected prompt gives back its words and its photo, and
-    /// forgets the rejected input.
-    func testEditingARejectedPromptGivesBackItsPhoto() async {
-        let source = FakeChat(rows: [], frame: frame())
+    /// A refused prompt comes back into the composer on its own, words and
+    /// photo, with why it was not sent, and is forgotten.
+    func testARefusedPromptReturnsToTheComposerWithTheReason() async {
+        var refusing = frame()
+        refusing.refused = [RefusedPrompt(inputId: [8], reason: "host_unreachable")]
+        let source = FakeChat(rows: [], frame: refusing)
         let photo = BlobRef(hash: [5], name: "screen.png", mime: "image/png", size: 2048)
         source.drafts[[8]] = Draft(text: "What is this?", attachments: [.image(photo)])
         let model = ChatModel(source: source)
-        let rejected = OutboxRow(
-            inputId: [8], text: [.text("What is this?"), .attachment(.image(photo))],
-            state: .rejected("the agent is busy"))
-        model.edit(rejected)
         await settle()
         XCTAssertEqual(model.draft, "What is this?")
         XCTAssertEqual(model.attachments, [.image(photo)])
+        XCTAssertEqual(model.notice, "Not sent: host unreachable")
         XCTAssertEqual(source.discarded, [[8]])
+        XCTAssertEqual(model.frame?.refused, [], "taken back once")
+    }
+
+    /// Prompts on their way split by where they land: the feed's end or
+    /// the queue.
+    func testPromptsOnTheirWayAreDrawnWhereTheyLand() async {
+        var sending = frame()
+        sending.underway = [
+            SentPrompt(inputId: [1], text: [.text("now")], lands: .feed, underway: .sending(waiting: false)),
+            SentPrompt(inputId: [2], text: [.text("later")], lands: .queue, underway: .mayNotHaveArrived),
+        ]
+        let model = ChatModel(source: FakeChat(rows: [], frame: sending))
+        await settle()
+        XCTAssertEqual(model.landingInFeed.map(\.inputId), [[1]])
+        XCTAssertEqual(model.landingInQueue.map(\.inputId), [[2]])
     }
 
     func testAPickIsSentAndTheCurrentValueMovesOnlyWhenTheAgentReportsIt() async {

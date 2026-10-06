@@ -1,23 +1,23 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 8 recorded 7: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly PONG and nothing else.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 10 recorded 9: fact Stream type=system subtype=init uuid=cc599307-55a0-4f90-82ad-d756cd24887f
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 12 recorded 11: fact Stream type=system subtype=api_retry uuid=d85ab0c7-bfef-4a0f-994b-61ad4b774f54
   row    3 d85ab0c7-bfef-4a0f-994b-61ad4b774f54 Error { error_kind: "authentication_failed", message: "authentication_failed (401)", attempts: 1, gave_up: false }
-  composer Send activity=Some(Retrying { attempt: 1, max_attempts: 2, retry_at_ms: Some(1790388860326) }) queue=[] outbox=[]
+  composer Send activity=Some(Retrying { attempt: 1, max_attempts: 2, retry_at_ms: Some(1790388860326) }) queue=[] underway=[] refused=[]
 ## 14 recorded 13: fact Stream type=system subtype=api_retry uuid=2d7d9687-a10d-4df3-a987-e4d08ae2bd5a
   row    4 2d7d9687-a10d-4df3-a987-e4d08ae2bd5a Error { error_kind: "authentication_failed", message: "authentication_failed (401)", attempts: 2, gave_up: false }
-  composer Send activity=Some(Retrying { attempt: 2, max_attempts: 2, retry_at_ms: Some(1790388861781) }) queue=[] outbox=[]
+  composer Send activity=Some(Retrying { attempt: 2, max_attempts: 2, retry_at_ms: Some(1790388861781) }) queue=[] underway=[] refused=[]
 ## 16 recorded 15: fact Stream type=assistant uuid=8f0f7a3e-1a84-4841-941a-7c5805737e84
   row    5 8f0f7a3e-1a84-4841-941a-7c5805737e84 Error { error_kind: "authentication_failed", message: "Failed to authenticate. API Error: 401 API key is invalid.", attempts: 0, gave_up: true } attention
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 18 recorded 17: fact Stream type=result subtype=success uuid=22cb37c7-0bd8-4e34-9a82-d6aa579513cb
   row    6 turn:1 TurnEnd { duration_ms: Some(2552), cost_usd: Some(0.0), failed: true }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly PONG and nothing else.")], steered: false }

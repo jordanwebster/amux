@@ -1,15 +1,15 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 11 recorded 9: fact Transcript type=user uuid=fb089f1b-6208-4df7-a30a-9391d3cd5dd3
   row    2 fb089f1b-6208-4df7-a30a-9391d3cd5dd3 Prompt { text: [Text("Use AskUserQuestion to ask one multi-select question with header Tools and options Hammer, Saw, and Drill. Then repeat my answer.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 22 recorded 20: fact Hook hook_event_name=PermissionRequest
   ask ask:1 -> "" 1/1 Open
     choices 
     body Question([QuestionView { header: "Tools", question: "Which tools would you like to use?", multi_select: true, options: [OptionView { label: "Hammer", description: "A tool for driving nails and general striking", preview: "", recommended: false }, OptionView { label: "Saw", description: "A tool for cutting wood and other materials", preview: "", recommended: false }, OptionView { label: "Drill", de…
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 24 recorded 22: fact Transcript type=assistant uuid=acabbbda-47af-4884-9f22-fd24dd342ef3
   row    3 acabbbda-47af-4884-9f22-fd24dd342ef3 Thinking { text: "", open: false, duration_ms: Some(2448) }
 ## 25 recorded 23: fact Transcript type=assistant uuid=f0d3a30f-71ef-4197-836f-8a0820dfce08
@@ -20,7 +20,7 @@
 ## 27 recorded 25: fact Transcript type=user uuid=fb9ebb3e-92b4-4e9b-9c6b-de0744a0a91e
   row    4 toolu_01BjHjS7UjeG6pCt2sMcY2oY [Answered: Tools = Hammer, Saw, "Torque wrench" skipped=0] Ask(Questions { questions: [QuestionView { header: "Tools", question: "Which tools would you like to use?", multi_select: true, options: [OptionView { label: "Hammer", description: "A tool for driving nails and general striking", preview: "", recommended: false }, OptionView { label: "Saw", description: …
   ask none
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 fb089f1b-6208-4df7-a30a-9391d3cd5dd3 Prompt { text: [Text("Use AskUserQuestion to ask one multi-select question with header Tools and options Hammer, Saw, and Drill. Then repeat my answer.")], steered: false }

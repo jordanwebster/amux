@@ -1,9 +1,9 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 4 recorded 3: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=3f931560-8e2e-4519-bf7b-15207bb06ec0
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 22 recorded 21: fact Stream type=assistant uuid=3f4f9f91-baad-46ff-8c37-9a491181447c
@@ -12,17 +12,17 @@
   row    4 msg_011CeW3FrFoj3phfnaViDk1b:1 Prose { text: [Text("REMEMBERED")], streaming: false, working_note: false }
 ## 26 recorded 25: fact Stream type=result subtype=success uuid=00fa741b-bf79-4039-98a7-37477097d94c
   row    5 turn:1 TurnEnd { duration_ms: Some(1556), cost_usd: Some(0.022695), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 28 recorded 27: input stdin-3
   row    6 73746469-6e2d-4300-8000-000000000000 Prompt { text: [Text("What word did I ask you to remember? Reply with just that word.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 42 recorded 41: fact Stream type=assistant uuid=b8930adc-4558-46ec-8062-49962d067aad
   row    7 msg_011CeW3FxowpDKEe7YP46nJR:0 Thinking { text: "The user is asking me to recall the word they asked me to remember in the previous message. They asked me to remember the word \"ALBATROSS\" and to reply with exactly \"REMEMBERED\", which I did.\n\nNow they're asking what word they asked me to remember, and they want me to reply with just that word.\n\nThe answer is: ALBATROSS", open: false, d…
 ## 44 recorded 43: fact Stream type=assistant uuid=4af584e7-3095-4311-84f3-ed7b108b32f0
   row    8 msg_011CeW3FxowpDKEe7YP46nJR:1 Prose { text: [Text("ALBATROSS")], streaming: false, working_note: false }
 ## 46 recorded 45: fact Stream type=result subtype=success uuid=ffc0f667-b65b-4824-8727-67c8887694cc
   row    9 turn:2 TurnEnd { duration_ms: Some(1765), cost_usd: Some(0.02622), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }

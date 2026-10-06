@@ -1,15 +1,15 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 10 recorded 8: fact Transcript type=user uuid=d22bb2a7-726c-4ebf-958d-67d6732ef09d
   row    2 d22bb2a7-726c-4ebf-958d-67d6732ef09d Prompt { text: [Text("Use the Bash tool to run exactly: printf allow-scoped > allow-scoped.txt; printf allow-scoped. Then stop.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 20 recorded 18: fact Hook hook_event_name=PermissionRequest
   ask ask:1 -> "" 1/1 Open
     choices AllowOnce*, AllowAlways { subjects: [], directories: ["<MACHINE_PATH>"], mode: "", mode_name: "", scope: Session, label: "" }, Deny { stops: true }+note
     body Command { command: "printf allow-scoped > allow-scoped.txt; printf allow-scoped", cwd: "", reason: "", description: "Create file and print content as requested" }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 22 recorded 20: fact Transcript type=assistant uuid=5add42fe-53cd-41b5-b1cb-6673595143b7
   row    3 5add42fe-53cd-41b5-b1cb-6673595143b7 Thinking { text: "", open: false, duration_ms: Some(2423) }
 ## 23 recorded 21: fact Transcript type=assistant uuid=72eafc06-9389-449d-8818-c1ae42056c79
@@ -20,7 +20,7 @@
 ## 24 recorded 22: fact Transcript type=user uuid=dd979c0a-c2a5-49cb-bcb5-57784a4d8a50
   row    4 toolu_01QMearN6kQdqbAdp2iEYZpc Command { command: "printf allow-scoped > allow-scoped.txt; printf allow-scoped", state: Succeeded, exit_code: None, output_head: ["allow-scoped"], more_lines: 0, output_tail: ["allow-scoped"], duration_ms: Some(512) } run[toolu_01QMearN6kQdqbAdp2iEYZpc..toolu_01QMearN6kQdqbAdp2iEYZpc x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, sub…
   ask none
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 d22bb2a7-726c-4ebf-958d-67d6732ef09d Prompt { text: [Text("Use the Bash tool to run exactly: printf allow-scoped > allow-scoped.txt; printf allow-scoped. Then stop.")], steered: false }

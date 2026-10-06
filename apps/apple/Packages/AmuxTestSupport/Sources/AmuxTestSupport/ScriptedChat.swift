@@ -53,14 +53,14 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     public static func frame(
         name: String = "refactor-auth", kind: Kind = .claudeSdk, phase: PhaseView = .idle,
         mode: Composer = .send, activity: Activity? = nil, caughtUp: Bool = true,
-        hasOlder: Bool = false, queue: [QueuedRow] = [], outbox: [OutboxRow] = [],
-        waiting: Waiting? = nil
+        hasOlder: Bool = false, queue: [QueuedRow] = [], underway: [SentPrompt] = [],
+        refused: [RefusedPrompt] = [], waiting: Waiting? = nil
     ) -> ChatFrame {
         ChatFrame(
             agent: agent, name: name, kind: kind, phase: phase,
             composer: ComposerView(mode: mode, activity: activity), connection: .live,
             caughtUp: caughtUp, hasOlder: hasOlder, arrivalsHeld: false, queue: queue,
-            outbox: outbox, askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
+            underway: underway, refused: refused, askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
             mode: nil, model: nil, permission: nil, signIn: nil, waiting: waiting)
     }
 
@@ -250,14 +250,25 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     public func withdraw(_ input: [UInt8]) async -> ActOutcome? { .done }
     public func sendNow(_ input: [UInt8]) async -> ActOutcome? { .done }
     public func resend(_ input: [UInt8]) async -> SendOutcome? { nil }
-    public func discard(_ input: [UInt8]) {}
+    /// Forgets a prompt on its way or refused, as the session does.
+    public func discard(_ input: [UInt8]) {
+        lock.withLock {
+            current.underway.removeAll { $0.inputId == input }
+            current.refused.removeAll { $0.inputId == input }
+        }
+    }
 
-    /// The words of the queued or outbox row with this id; a scripted chat
-    /// holds no attachments behind its rows.
+    /// The words of a refused prompt, by its id: what a session keeps of
+    /// what it sent.
+    public var refusedWords: [[UInt8]: String] = [:]
+
+    /// The words of the queued, underway or refused prompt with this id; a
+    /// scripted chat holds no attachments behind its rows.
     public func draft(of input: [UInt8]) -> Draft? {
         let frame = lock.withLock { current }
+        if let words = refusedWords[input] { return Draft(text: words, attachments: nil) }
         let text = frame.queue.first { $0.inputId == input }?.text
-            ?? frame.outbox.first { $0.inputId == input }?.text
+            ?? frame.underway.first { $0.inputId == input }?.text
         return text.map { segments in
             let words = segments.compactMap { segment -> String? in
                 if case .text(let text) = segment { text } else { nil }

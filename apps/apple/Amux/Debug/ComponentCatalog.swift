@@ -331,20 +331,21 @@ enum ComponentCatalog {
         _ id: String, height: CGFloat = 260, rows: [Row] = [], frame: ChatFrame,
         strip: ScriptedChat.Surroundings = ScriptedChat.strip(model: "opus 4.6", effort: "high"), draft: String = "",
         settings: SettingsView? = nil, showing: ChatOverlay? = nil, children: [FleetCard] = [],
-        dockExpanded: Bool = false,
+        dockExpanded: Bool = false, refusedWords: [[UInt8]: String] = [:],
         subject: ChatSubject = CatalogFixtures.subject, setUp: @escaping @MainActor (ChatModel) -> Void = { _ in }
     ) -> ComponentExample {
         ComponentExample(
             id: "composer.\(id)", family: .composer, canvas: CGSize(width: 390, height: height)
         ) {
-            CatalogChat(source: ScriptedChat(
-                rows: rows, frame: frame, strip: strip, settings: settings, images: CatalogFixtures.images
-            )) { model in
+            let source = ScriptedChat(
+                rows: rows, frame: frame, strip: strip, settings: settings, images: CatalogFixtures.images)
+            let _ = source.refusedWords = refusedWords
+            CatalogChat(source: source) { model in
                 ChatStanding(
                     model: model, subject: subject, children: children, dockExpanded: dockExpanded,
                     showing: .constant(showing))
                     .onAppear {
-                        model.draft = draft
+                        if !draft.isEmpty { model.draft = draft }
                         setUp(model)
                     }
             }
@@ -376,15 +377,18 @@ enum ComponentCatalog {
                     QueuedRow(inputId: [2], text: [.text("Use the new error table instead.")], mine: true, steered: true, canWithdraw: false, canSendNow: false, fromAgent: nil),
                     QueuedRow(inputId: [3], text: [.text("worker-2 finished the specs.")], mine: false, steered: false, canWithdraw: false, canSendNow: true, fromAgent: "worker-2"),
                 ])),
-            composer("not-confirmed", height: 280, frame: ScriptedChat.frame(outbox: [
-                OutboxRow(inputId: [4], text: [.text("Run the focused tests.")], state: .notConfirmed),
+            composer("not-confirmed", height: 280, frame: ScriptedChat.frame(underway: [
+                SentPrompt(inputId: [4], text: [.text("Run the focused tests.")], lands: .queue, underway: .mayNotHaveArrived),
             ])),
-            composer("rejected", height: 280, frame: ScriptedChat.frame(outbox: [
-                OutboxRow(inputId: [5], text: [.text("Run the focused tests.")], state: .rejected("the agent is not taking prompts")),
-            ])),
-            composer("sending", height: 240, frame: ScriptedChat.frame(outbox: [
-                OutboxRow(inputId: [6], text: [.text("Run the focused tests.")], state: .sending),
-            ])),
+            composer("rejected", height: 240, frame: ScriptedChat.frame(refused: [
+                RefusedPrompt(inputId: [5], reason: "host_unreachable"),
+            ]), refusedWords: [[5]: "Run the focused tests."]),
+            composer("sending", height: 280, frame: ScriptedChat.frame(
+                phase: .working, activity: Activity(kind: .working, sinceMs: 0, elapsedMs: 4_000),
+                underway: [
+                    SentPrompt(inputId: [6], text: [.text("Run the focused tests.")], lands: .queue, underway: .sending(waiting: false)),
+                    SentPrompt(inputId: [7], text: [.text("Then the Windows check.")], lands: .queue, underway: .sending(waiting: true)),
+                ])),
             composer("resume", height: 200, frame: ScriptedChat.frame(phase: .exited(cause: "code 1"), mode: .resume),
                      draft: "Pick up where you left off and rerun the tests."),
             composer("detached", height: 180, frame: ScriptedChat.frame(mode: .disabled(.detached), caughtUp: false, waiting: .detached),
@@ -546,6 +550,18 @@ enum ComponentCatalog {
                 ScriptedChat(
                     rows: F.planned, frame: ScriptedChat.frame(kind: .codex, phase: .needsYou),
                     card: F.card(.codex, .plan(plan: F.plan), F.codexPlanChoices))
+            }),
+            chat("landing", chat: {
+                ScriptedChat(
+                    rows: F.conversation, frame: ScriptedChat.frame(phase: .idle, underway: [
+                        SentPrompt(inputId: [8], text: [.text("Now run the Windows check.")], lands: .feed, underway: .sending(waiting: false)),
+                    ]))
+            }),
+            chat("landing-waiting", chat: {
+                ScriptedChat(
+                    rows: F.conversation, frame: ScriptedChat.frame(phase: .idle, underway: [
+                        SentPrompt(inputId: [8], text: [.text("Now run the Windows check.")], lands: .feed, underway: .sending(waiting: true)),
+                    ]))
             }),
             chat("rename", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .rename),
             chat("delete", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .delete),

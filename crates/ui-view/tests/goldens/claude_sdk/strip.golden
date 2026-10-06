@@ -1,5 +1,5 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 1 fact {"channel":"stream","json":{"claude_code_version":"2.1.282","mcp_servers":[{"name":"github","status":"connected"},{"name":"db","status":"failed"}],"model":"claude-opus-5-5","permissionMode":"default","session_id":"s1","subtype":"init","type":"system","uuid":"init-s1"}}
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 == chat

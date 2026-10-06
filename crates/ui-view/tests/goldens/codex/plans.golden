@@ -1,10 +1,10 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 1 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","collaborationMode":{"mode":"plan","settings":{"model":"gpt-5.6-luna","reasoning_effort":null}},"model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.160.0","id":"t1","turns":[]}}}}
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 2 input {"id":"p1","prompt":{"text":"Plan the colour change."}}
   row    2 prompt:7031 Prompt { text: [Text("Plan the colour change.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 6 fact {"channel":"rpc","json":{"method":"item/started","params":{"item":{"id":"turn-1-plan","text":"","type":"plan"},"threadId":"t1","turnId":"turn-1"}}}
   row    3 turn-1-plan Ask(Plan { plan: "", verdict: Open, note: None, writing: true })
 ## 7 fact {"channel":"rpc","json":{"method":"item/plan/delta","params":{"delta":"## Write the colour\n\n- Write `Blue` to `co","itemId":"turn-1-plan","threadId":"t1","turnId":"turn-1"}}}
@@ -18,18 +18,18 @@
   ask plan:turn-1-plan -> "turn-1-plan" 1/1 Open
     choices ApprovePlan { auto_accept_edits: false }*, SendBack+note
     body Plan { plan: "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n" }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 11 input {"answer":{"answer":{"plan":{"choice":"start"}},"ask":"plan:turn-1-plan"},"id":"a1"}
   row    3 turn-1-plan Ask(Plan { plan: "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n", verdict: Approved, note: None, writing: false })
   row    5 prompt:6131 Prompt { text: [Text("Implement the plan.")], steered: false }
   ask none
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 15 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-2","status":"completed"}}}}
   row    6 turn:2 TurnEnd { duration_ms: Some(0), cost_usd: None, failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 17 input {"id":"p2","prompt":{"text":"Plan the README too."}}
   row    7 prompt:7032 Prompt { text: [Text("Plan the README too.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 21 fact {"channel":"rpc","json":{"method":"item/started","params":{"item":{"id":"turn-3-plan","text":"","type":"plan"},"threadId":"t1","turnId":"turn-3"}}}
   row    8 turn-3-plan Ask(Plan { plan: "", verdict: Open, note: None, writing: true })
 ## 22 fact {"channel":"rpc","json":{"method":"item/plan/delta","params":{"delta":"## Write the colour and the README\n\n- Write `B","itemId":"turn-3-plan","threadId":"t1","turnId":"turn-3"}}}
@@ -43,12 +43,12 @@
   ask plan:turn-3-plan -> "turn-3-plan" 1/1 Open
     choices ApprovePlan { auto_accept_edits: false }*, SendBack+note
     body Plan { plan: "## Write the colour and the README\n\n- Write `Blue` to `color.txt`.\n- Say so in `README.md`.\n" }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 26 input {"answer":{"answer":{"plan":{"choice":"keep_planning","note":"Leave the README alone."}},"ask":"plan:turn-3-plan"},"id":"a2"}
   row    8 turn-3-plan Ask(Plan { plan: "## Write the colour and the README\n\n- Write `Blue` to `color.txt`.\n- Say so in `README.md`.\n", verdict: SentBack, note: Some("Leave the README alone."), writing: false })
   row   10 prompt:6132 Prompt { text: [Text("Leave the README alone.")], steered: false }
   ask none
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 30 fact {"channel":"rpc","json":{"method":"item/started","params":{"item":{"id":"turn-4-plan","text":"","type":"plan"},"threadId":"t1","turnId":"turn-4"}}}
   row   11 turn-4-plan Ask(Plan { plan: "", verdict: Open, note: None, writing: true })
 ## 31 fact {"channel":"rpc","json":{"method":"item/plan/delta","params":{"delta":"## Write the colour\n\n- Write `Blue` to `co","itemId":"turn-4-plan","threadId":"t1","turnId":"turn-4"}}}
@@ -62,13 +62,13 @@
   ask plan:turn-4-plan -> "turn-4-plan" 1/1 Open
     choices ApprovePlan { auto_accept_edits: false }*, SendBack+note
     body Plan { plan: "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n" }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 35 input {"answer":{"answer":{"plan":{"choice":"keep_planning"}},"ask":"plan:turn-4-plan"},"id":"a3"}
   row   11 turn-4-plan Ask(Plan { plan: "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n", verdict: SentBack, note: None, writing: false })
   ask none
 ## 36 input {"id":"p3","prompt":{"text":"One more pass on the plan."}}
   row   13 prompt:7033 Prompt { text: [Text("One more pass on the plan.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 40 fact {"channel":"rpc","json":{"method":"item/started","params":{"item":{"id":"turn-5-plan","text":"","type":"plan"},"threadId":"t1","turnId":"turn-5"}}}
   row   14 turn-5-plan Ask(Plan { plan: "", verdict: Open, note: None, writing: true })
 ## 41 fact {"channel":"rpc","json":{"method":"item/plan/delta","params":{"delta":"## Write the colour\n\n- Write `Blue` to `co","itemId":"turn-5-plan","threadId":"t1","turnId":"turn-5"}}}
@@ -82,12 +82,12 @@
   ask plan:turn-5-plan -> "turn-5-plan" 1/1 Open
     choices ApprovePlan { auto_accept_edits: false }*, SendBack+note
     body Plan { plan: "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n" }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 45 input {"id":"p4","prompt":{"text":"Forget the plan; just write Blue."}}
   row   14 turn-5-plan Ask(Plan { plan: "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n", verdict: Dismissed, note: None, writing: false })
   row   16 prompt:7034 Prompt { text: [Text("Forget the plan; just write Blue.")], steered: false }
   ask none
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 prompt:7031 Prompt { text: [Text("Plan the colour change.")], steered: false }

@@ -1,14 +1,14 @@
 ## 0 initial
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 ## 4 recorded 3: input stdin-2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Think briefly about the number seven, then reply with exactly SEVEN.")], steered: false }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=23098e8a-fc62-4211-889c-df512fe06fd2
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 14 recorded 13: fact Stream type=stream_event uuid=4282513d-d73b-4da7-a652-d5e253366aa0
   row    3 msg_011CeW3Epe3BZoTMYGXSxojn:0 Thinking { text: "", open: true, duration_ms: None }
-  composer Send activity=Some(Thinking) queue=[] outbox=[]
+  composer Send activity=Some(Thinking) queue=[] underway=[] refused=[]
 ## 17 recorded 16: fact Stream type=stream_event uuid=7875464b-7dc9-459b-bfce-bcc78fac4342
   row    3 msg_011CeW3Epe3BZoTMYGXSxojn:0 Thinking { text: "The user is asking", open: true, duration_ms: None }
 ## 21 recorded 20: fact Stream type=stream_event uuid=9029ef04-d4e2-41b4-b76b-c1113a0e054e
@@ -19,7 +19,7 @@
   row    3 msg_011CeW3Epe3BZoTMYGXSxojn:0 Thinking { text: "The user is asking me to think briefly about the number seven, then reply with exactly SEVEN.\n\nThis is a straightforward request. Let me think about the number seven:\n- It's a prime number\n- It has cultural significance in many traditions\n- It's between 6 and 8\n- etc.\n\nNow I need to reply with exactly SEVEN.", open: true, duration_ms: N…
 ## 34 recorded 33: fact Stream type=assistant uuid=344fa56e-942c-4733-8d86-7163f9d64915
   row    3 msg_011CeW3Epe3BZoTMYGXSxojn:0 Thinking { text: "The user is asking me to think briefly about the number seven, then reply with exactly SEVEN.\n\nThis is a straightforward request. Let me think about the number seven:\n- It's a prime number\n- It has cultural significance in many traditions\n- It's between 6 and 8\n- etc.\n\nNow I need to reply with exactly SEVEN.", open: false, duration_ms: …
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 37 recorded 36: fact Stream type=stream_event uuid=90e7015c-ee14-4791-a23d-3d7e42a239f1
   row    4 msg_011CeW3Epe3BZoTMYGXSxojn:1 Prose { text: [], streaming: true, working_note: false }
 ## 38 recorded 37: fact Stream type=stream_event uuid=deff18cb-01a6-45f1-b595-1aca1ca6fd6b
@@ -28,7 +28,7 @@
   row    4 msg_011CeW3Epe3BZoTMYGXSxojn:1 Prose { text: [Text("SEVEN")], streaming: false, working_note: false }
 ## 47 recorded 46: fact Stream type=result subtype=success uuid=560a5bf0-46bc-427e-ba16-a6d8558c4e56
   row    5 turn:1 TurnEnd { duration_ms: Some(1619), cost_usd: Some(0.022754999999999997), failed: false }
-  composer Send activity=None queue=[] outbox=[]
+  composer Send activity=None queue=[] underway=[] refused=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Think briefly about the number seven, then reply with exactly SEVEN.")], steered: false }

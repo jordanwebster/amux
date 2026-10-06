@@ -1,3 +1,16 @@
+2026-10-06 — **The phone follows the terminal's sending rules.**
+Where a prompt on its way is drawn is now one rule in the shared views, used
+by both clients: a prompt sent while the agent is idle with nothing queued
+lands in the feed, at the bottom, under a "sending" caption ("waiting for
+<host>…" until the chat catches up); one sent while the agent is busy waits
+in the queue strip above the composer. A prompt stays where it was first
+drawn while it is on its way, so it does not jump between feed and strip as
+the agent's state moves. A prompt the host refused comes back into the
+composer with "Not sent: <reason>", and one the host may not have received
+once the chat has caught up reads "may not have arrived" with Resend and
+Discard. The phone's own outbox row, and its edit action, are gone; the
+chat frame carries the prompts on their way and the refused ones instead.
+
 2026-10-06 — **The phone's pickers, plans, questions and new-agent screen read the catalogue.**
 A chat's settings card lists only what the agent's catalogue offers: the
 permissions a pick can set (the hand-written table of what each permission

@@ -27,6 +27,8 @@ struct TranscriptList: View {
     let model: ChatModel
     /// What stands above the oldest row.
     let notices: [FeedNotice]
+    /// This client's prompts on their way, after the newest row.
+    var landings: [FeedLanding] = []
 
     var body: some View {
         // The list fills the space under the header and the standing card
@@ -34,7 +36,7 @@ struct TranscriptList: View {
         // its bottom is the bottom the reader sees.
         GeometryReader { proxy in
             ListView(
-                model: model, items: items, notices: notices,
+                model: model, items: items, notices: notices, landings: landings,
                 environment: CellEnvironment(
                     design: design, photographed: photographed, reducesMotion: reducesMotion,
                     reducesTransparency: reducesTransparency, hidesNeedsYouDot: hidesNeedsYouDot,
@@ -51,6 +53,7 @@ struct TranscriptList: View {
         // `sequence` is what the list watches; `ids` is read, not watched.
         _ = model.sequence
         return notices.map { .notice($0.id) } + model.ids.map { .row($0) }
+            + landings.map { .landing($0.id) }
     }
 }
 
@@ -58,6 +61,8 @@ struct TranscriptList: View {
 enum ListItem: Hashable {
     case notice(String)
     case row(String)
+    /// A prompt on its way, drawn where it will stand once the agent has it.
+    case landing(String)
 }
 
 /// The environment the screen's rows read, carried into each hosted cell:
@@ -105,6 +110,7 @@ private struct ListView: UIViewRepresentable {
     let model: ChatModel
     let items: [ListItem]
     let notices: [FeedNotice]
+    let landings: [FeedLanding]
     let environment: CellEnvironment
     let revision: Int
     let toNewest: Int
@@ -121,8 +127,8 @@ private struct ListView: UIViewRepresentable {
 
     func updateUIView(_ view: FeedView, context: Context) {
         context.coordinator.update(
-            items: items, notices: notices, environment: environment, revision: revision,
-            toNewest: toNewest, insets: insets)
+            items: items, notices: notices, landings: landings, environment: environment,
+            revision: revision, toNewest: toNewest, insets: insets)
     }
 }
 
@@ -330,6 +336,7 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
     private var dataSource: UICollectionViewDiffableDataSource<Int, ListItem>!
     private var items: [ListItem] = []
     private var notices: [String: FeedNotice] = [:]
+    private var landings: [String: FeedLanding] = [:]
     private var environment: CellEnvironment
     private var toNewest: Int?
     private var revision: Int?
@@ -399,7 +406,8 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
     private func content(for item: ListItem, photographed: Bool? = nil) -> some View {
         var environment = self.environment
         if let photographed { environment.photographed = photographed }
-        return CellContent(model: model, item: item, notice: notice(for: item))
+        return CellContent(
+            model: model, item: item, notice: notice(for: item), landing: landing(for: item))
             .padding(.horizontal, environment.design.metrics.gutter)
             .cellEnvironment(environment)
     }
@@ -440,11 +448,16 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
         return nil
     }
 
+    private func landing(for item: ListItem) -> FeedLanding? {
+        if case .landing(let id) = item { return landings[id] }
+        return nil
+    }
+
     // MARK: - What the screen hands down
 
     func update(
-        items: [ListItem], notices: [FeedNotice], environment: CellEnvironment, revision: Int,
-        toNewest: Int, insets: EdgeInsets
+        items: [ListItem], notices: [FeedNotice], landings: [FeedLanding] = [],
+        environment: CellEnvironment, revision: Int, toNewest: Int, insets: EdgeInsets
     ) {
         if self.insets != insets {
             self.insets = insets
@@ -468,6 +481,13 @@ final class FeedCoordinator: NSObject, UICollectionViewDelegate {
             remeasure = true
         }
         self.notices = byId
+        let landingById = Dictionary(uniqueKeysWithValues: landings.map { ($0.id, $0) })
+        for (id, landing) in landingById where self.landings[id] != nil && self.landings[id] != landing {
+            reconfigure.append(.landing(id))
+            layout.forget(.landing(id))
+            remeasure = true
+        }
+        self.landings = landingById
         if let last = self.revision, last != revision {
             // Every row read since the last layout, however many wakes
             // that took: the model stamps each cell as it reads it.
@@ -688,6 +708,7 @@ private struct CellContent: View {
     let model: ChatModel
     let item: ListItem
     let notice: FeedNotice?
+    let landing: FeedLanding?
 
     var body: some View {
         switch item {
@@ -695,6 +716,8 @@ private struct CellContent: View {
             RowCellView(cell: model.cell(for: id), model: model)
         case .notice:
             if let notice { FeedNoticeView(notice: notice) }
+        case .landing:
+            if let landing { FeedLandingView(landing: landing) }
         }
     }
 }
