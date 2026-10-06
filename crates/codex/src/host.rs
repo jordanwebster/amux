@@ -431,12 +431,22 @@ mod tests {
     async fn a_tethered_server_finishes_when_its_starter_dies() {
         let folder = tempfile::tempdir().unwrap();
         let listen = Listen::Unix(folder.path().join("codex.sock"));
+        let started = folder.path().join("started");
         let mut command = Command::new("/bin/sh");
         // A child in the group that would outlive the server alone.
-        command.args(["-c", "sleep 30 & wait", "sh"]);
+        command.args(["-c", r#"sleep 30 & : > "$1"; wait"#, "sh"]);
+        command.arg(&started);
         let mut server = spawn_server(command, &listen).unwrap();
         let group = server.id().unwrap() as i32;
         let tether = Tether::new(&server).unwrap();
+        // A signal sent while a process forks can miss the new child.
+        tokio::time::timeout(WAIT, async {
+            while !started.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the server's child starts");
         // The starter dying is its end of the pipe closing.
         let Tether { mut shell } = tether;
         drop(shell.stdin.take());
