@@ -356,7 +356,7 @@ impl Default for AgentSettings {
 }
 
 /// What a new agent starts with when a person starts one: per agent, the
-/// model, reasoning effort and mode. Shipped with real values, so a new
+/// model, reasoning effort and permission. Shipped with real values, so a new
 /// agent always shows what it will run; onboarding and settings change
 /// them, and starting one beside a running chat copies that chat's instead.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,15 +366,15 @@ pub struct NewAgentSettings {
     pub codex: NewAgentDefaults,
 }
 
-/// One agent's starting model, effort and mode, in the agent's own words:
-/// a Claude alias or a Codex model id, the effort as the agent names it,
-/// and the mode as Claude's permission mode or Codex's preset.
+/// One agent's starting model, effort and permission, in the agent's own
+/// words: a Claude alias or a Codex model id, the effort as the agent names
+/// it, and the permission by the value the agent's catalogue gives it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NewAgentDefaults {
     pub model: String,
     pub effort: String,
-    pub mode: String,
+    pub permission: String,
 }
 
 impl Default for NewAgentSettings {
@@ -383,12 +383,12 @@ impl Default for NewAgentSettings {
             claude: NewAgentDefaults {
                 model: "opus".into(),
                 effort: "high".into(),
-                mode: "default".into(),
+                permission: "default".into(),
             },
             codex: NewAgentDefaults {
                 model: "gpt-6.1-sol".into(),
                 effort: "medium".into(),
-                mode: "default".into(),
+                permission: "default".into(),
             },
         }
     }

@@ -118,7 +118,7 @@
       "stage": 17,
       "clients": ["terminal"],
       "topology": "journeys/topologies/terminal-flows.json",
-      "claim": "For someone who chats in each agent's own terminal, a new agent starts from a form. Started on this machine, the terminal is handed to the new Claude and what is typed there reaches it once, and the leader's s comes back home; started on another machine, the agent runs there and its chat opens, saying its terminal is elsewhere."
+      "claim": "For someone who chats in each agent's own terminal, a new agent starts from a form. Started on this machine, the terminal is handed to the new Claude and what is typed there reaches it once, and the leader's s comes back home; started on another machine, the agent runs there and its chat opens, saying its terminal is elsewhere. On a host whose providers are signed out, the form says so on each agent."
     },
     {
       "id": "report-a-problem",

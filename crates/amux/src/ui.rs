@@ -80,7 +80,7 @@ async fn open(
             let of = |agent: &settings::NewAgentDefaults| tui::setup::AgentDefaults {
                 model: agent.model.clone(),
                 effort: agent.effort.clone(),
-                mode: agent.mode.clone(),
+                permission: agent.permission.clone(),
             };
             tui::setup::Defaults {
                 claude: of(&config.new_agent.claude),

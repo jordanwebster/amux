@@ -297,6 +297,22 @@ impl Home {
         self.draft.open = true;
     }
 
+    /// The new agent's setup while its screen is open, made from the
+    /// defaults when it first shows.
+    pub fn open_setup(&mut self, place: &Place<'_>) -> Option<&mut Setup> {
+        if !self.draft.open {
+            return None;
+        }
+        Some(self.draft.setup.get_or_insert_with(|| {
+            Setup::defaults(
+                place.chat_in,
+                place.working_dir,
+                place.local_host,
+                place.defaults,
+            )
+        }))
+    }
+
     /// The hosts modal, from a chat's `<leader> h`.
     pub fn open_hosts(&mut self) {
         self.draft.open = false;
@@ -713,6 +729,7 @@ impl Home {
                 KeyCode::Char('n') => Some(Setting::Name),
                 KeyCode::Char('m') => Some(Setting::Model),
                 KeyCode::Char('e') => Some(Setting::Effort),
+                KeyCode::Char('p') => Some(Setting::Permission),
                 KeyCode::Char('d') => Some(Setting::Folder),
                 KeyCode::Char('h') => Some(Setting::Host),
                 KeyCode::Char('w') if crate::pending::offers_worktree() => Some(Setting::Worktree),
@@ -729,7 +746,7 @@ impl Home {
             KeyCode::Char('s') if ctrl => self.draft.prefix = true,
             KeyCode::BackTab => {
                 if let Some(setup) = &mut self.draft.setup {
-                    setup.next_permission();
+                    setup.next_control();
                 }
             }
             KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -775,6 +792,7 @@ impl Home {
             Setting::Model => "Model",
             Setting::Effort => "Effort",
             Setting::Permission => "Permission",
+            Setting::Mode => "Mode",
             Setting::Folder => "Folder",
             Setting::Host => "Host",
             Setting::Worktree => "Worktree",
@@ -953,14 +971,7 @@ impl Home {
         let mut cursor;
         // Where the new agent's composer box starts, for its flyover.
         let mut box_top = None;
-        if self.draft.open && self.draft.setup.is_none() {
-            self.draft.setup = Some(Setup::defaults(
-                place.chat_in,
-                place.working_dir,
-                place.local_host,
-                place.defaults,
-            ));
-        }
+        self.open_setup(place);
         // An agent used in its own terminal starts from a modal over home;
         // one chatted with in amux, from its own composer.
         let modal = self.draft.open
@@ -1495,9 +1506,10 @@ impl Home {
                 .sum::<usize>()
                 + 3 * groups.len().saturating_sub(1)
         };
-        // Too long for the edge: the mode drops, then the model (ctrl+s
-        // still reaches them), then the folder shortens in the middle.
-        for dropped in [Setting::Permission, Setting::Model] {
+        // Too long for the edge: the mode drops, then the permission, then
+        // the model (ctrl+s or shift+tab still reach them), then the folder
+        // shortens in the middle.
+        for dropped in [Setting::Mode, Setting::Permission, Setting::Model] {
             if measure(&groups) > room {
                 for group in &mut groups {
                     group.retain(|(item, _)| *item != dropped);
@@ -1612,6 +1624,7 @@ impl Home {
                     ("n", "name", key(KeyCode::Char('n'))),
                     ("m", "model", key(KeyCode::Char('m'))),
                     ("e", "effort", key(KeyCode::Char('e'))),
+                    ("p", "permission", key(KeyCode::Char('p'))),
                     ("d", "folder", key(KeyCode::Char('d'))),
                     ("h", "host", key(KeyCode::Char('h'))),
                     ("w", "worktree", key(KeyCode::Char('w'))),
@@ -1628,7 +1641,14 @@ impl Home {
                         "settings",
                         Hit::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
                     ),
-                    ("shift+tab", "permission", key(KeyCode::BackTab)),
+                    (
+                        "shift+tab",
+                        self.draft
+                            .setup
+                            .as_ref()
+                            .map_or("permission", |setup| setup.cycles()),
+                        key(KeyCode::BackTab),
+                    ),
                     ("esc", "back", key(KeyCode::Esc)),
                 ],
             },

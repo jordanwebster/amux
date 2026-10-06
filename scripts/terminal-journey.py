@@ -868,7 +868,13 @@ def new_agent_terminal(journey: TerminalJourney) -> list[str]:
     journey.type(pane, "desk-notes")
     journey.keys(pane, "Down", "Down", "Down")
     journey.wait_terms(pane, "←→ choose")
-    journey.keys(pane, "Left")
+    # The cabin's providers are signed out: asked what it offers, the
+    # cabin says so, and the form names it on each agent.
+    journey.keys(pane, "Left", "Left")
+    journey.wait_terms(pane, "Claude · not signed in", "Codex · not signed in")
+    journey.frame(pane, "signed-out-form")
+    journey.keys(pane, "Right")
+    journey.wait(pane, lambda frame: "not signed in" not in frame, "the desk's signed-in agents")
     journey.frame(pane, "remote-form")
     journey.keys(pane, "Enter")
     journey.wait(pane, lambda frame: chat_of(frame) == "desk-notes" and "its terminal is on another machine" in frame, "desk-notes' chat")
@@ -881,6 +887,7 @@ def new_agent_terminal(journey: TerminalJourney) -> list[str]:
     return [
         "for someone who chats in each agent's own terminal, n opened the New Agent form",
         "Start on this machine handed the terminal to the new Claude; what was typed there reached it once; leader s came back home",
+        "on the cabin, whose providers are signed out, the form said so on Claude and Codex; on the desk it did not",
         "Start on the desk created the agent there and opened its chat, saying its terminal is on another machine",
         "the client exited 0",
     ]

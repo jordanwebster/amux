@@ -63,6 +63,19 @@ impl FleetView {
         self.home.select(agent);
     }
 
+    /// The new agent's setup while its screen is open.
+    pub fn open_setup(&mut self) -> Option<&mut crate::setup::Setup> {
+        let place = home::Place {
+            local_host: &self.local_host,
+            version: &self.version,
+            working_dir: &self.working_dir,
+            attach: self.attach,
+            chat_in: self.chat_in,
+            defaults: &self.defaults,
+        };
+        self.home.open_setup(&place)
+    }
+
     /// Whether a text field has the keys and holds something, for Ctrl+C.
     pub fn field_text(&self) -> bool {
         self.home.field_text()

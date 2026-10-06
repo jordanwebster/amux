@@ -2256,7 +2256,7 @@ fn defaults() -> crate::setup::Defaults {
     let of = |model: &str, effort: &str| crate::setup::AgentDefaults {
         model: model.into(),
         effort: effort.into(),
-        mode: "default".into(),
+        permission: "default".into(),
     };
     crate::setup::Defaults {
         claude: of("opus", "high"),
@@ -2466,6 +2466,16 @@ fn a_new_agent_starts_from_a_draft_with_its_first_prompt() {
         screen.contains("What should the new agent work on?"),
         "{screen}"
     );
+    // Until the host says what Claude offers there, the settings' own
+    // words; then the catalogue's.
+    assert!(
+        screen.contains("Claude · opus (high) · default │ ~/work/amux"),
+        "{screen}"
+    );
+    home.open_setup(&HOME_PLACE)
+        .unwrap()
+        .offer(b"a", "claude", &claude_offer());
+    let screen = home_screen(&mut home, &fleet, theme());
     assert!(
         screen.contains("Claude · Opus (high) · ask │ ~/work/amux"),
         "{screen}"
@@ -2489,6 +2499,305 @@ fn a_new_agent_starts_from_a_draft_with_its_first_prompt() {
     assert_eq!(home.draft.editor.text(), "fix it");
     home.started();
     assert!(home.draft.editor.is_empty());
+}
+
+/// What a host offers for Claude, as headless Claude says.
+fn claude_offer() -> wire::Catalogue {
+    let permission = |value: &str, display_name: &str| wire::OfferedPermission {
+        value: value.into(),
+        display_name: display_name.into(),
+        settable: true,
+        ..Default::default()
+    };
+    wire::Catalogue {
+        hash: vec![1; 32],
+        models: vec![wire::OfferedModel {
+            value: "opus".into(),
+            display_name: "Opus".into(),
+            efforts: vec!["low".into(), "medium".into(), "high".into()],
+            ..Default::default()
+        }],
+        permissions: vec![
+            wire::OfferedPermission {
+                normal: true,
+                ..permission("default", "Ask")
+            },
+            permission("acceptEdits", "Accept edits"),
+            permission("plan", "Plan"),
+            wire::OfferedPermission {
+                never_asks: true,
+                ..permission("bypassPermissions", "Never ask")
+            },
+        ],
+        ..Default::default()
+    }
+}
+
+/// What a host offers for Codex, as its app server says.
+fn codex_offer() -> wire::Catalogue {
+    let permission = |value: &str, display_name: &str| wire::OfferedPermission {
+        value: value.into(),
+        display_name: display_name.into(),
+        settable: true,
+        ..Default::default()
+    };
+    let mode = |value: &str, display_name: &str| wire::OfferedMode {
+        value: value.into(),
+        display_name: display_name.into(),
+        normal: value == "default",
+        settable: true,
+    };
+    wire::Catalogue {
+        hash: vec![2; 32],
+        models: vec![
+            wire::OfferedModel {
+                value: "gpt-6.1-sol".into(),
+                display_name: "GPT-6.1 Sol".into(),
+                efforts: vec!["low".into(), "medium".into(), "high".into(), "xhigh".into()],
+                default_effort: Some("medium".into()),
+                ..Default::default()
+            },
+            wire::OfferedModel {
+                value: "gpt-6-mini".into(),
+                display_name: "GPT-6 mini".into(),
+                efforts: vec!["low".into(), "high".into()],
+                default_effort: Some("low".into()),
+                ..Default::default()
+            },
+        ],
+        permissions: vec![
+            permission("read-only", "Read only"),
+            wire::OfferedPermission {
+                normal: true,
+                ..permission("default", "Default")
+            },
+            permission("auto", "Auto"),
+            wire::OfferedPermission {
+                never_asks: true,
+                ..permission("full-access", "Full access")
+            },
+        ],
+        modes: vec![mode("default", "Default"), mode("plan", "Plan")],
+        ..Default::default()
+    }
+}
+
+/// The labels of a setting's choices, "label · detail ✓" for the current.
+fn choice_words(
+    home: &mut crate::home::Home,
+    fleet: &FleetState,
+    item: crate::setup::Item,
+) -> Vec<String> {
+    let setup = home.open_setup(&HOME_PLACE).unwrap();
+    setup
+        .choices(item, fleet)
+        .into_iter()
+        .map(|choice| {
+            let mut words = choice.label;
+            if !choice.detail.is_empty() {
+                words.push_str(&format!(" · {}", choice.detail));
+            }
+            if choice.current {
+                words.push_str(" ✓");
+            }
+            words
+        })
+        .collect()
+}
+
+/// A new Codex agent offers the models, efforts, permissions and modes its
+/// host's catalogue lists, and Shift+Tab steps its mode.
+#[test]
+fn a_new_agent_offers_what_its_host_offers() {
+    use crate::setup::Item;
+    let fleet = home_fleet();
+    let mut home = crate::home::Home::default();
+    home.key(&fleet, key(KeyCode::Char('n')), false);
+    home_screen(&mut home, &fleet, theme());
+    home.open_setup(&HOME_PLACE).unwrap().pick(Item::Kind, "1");
+    // Before the host says, a model can only be named.
+    assert!(
+        home.open_setup(&HOME_PLACE)
+            .unwrap()
+            .takes_typed(Item::Model)
+    );
+    assert_eq!(choice_words(&mut home, &fleet, Item::Effort), ["medium ✓"]);
+    // What another host offers is not this one's.
+    home.open_setup(&HOME_PLACE)
+        .unwrap()
+        .offer(b"b", "codex", &codex_offer());
+    assert!(home.open_setup(&HOME_PLACE).unwrap().offered.is_none());
+    home.open_setup(&HOME_PLACE)
+        .unwrap()
+        .offer(b"a", "codex", &codex_offer());
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        screen.contains("Codex · GPT-6.1 Sol (medium) · default │ ~/work/amux"),
+        "{screen}"
+    );
+    assert!(screen.contains("shift+tab mode"), "{screen}");
+    assert!(
+        !home
+            .open_setup(&HOME_PLACE)
+            .unwrap()
+            .takes_typed(Item::Model)
+    );
+    assert_eq!(
+        choice_words(&mut home, &fleet, Item::Model),
+        ["GPT-6.1 Sol ✓", "GPT-6 mini"]
+    );
+    assert_eq!(
+        choice_words(&mut home, &fleet, Item::Effort),
+        ["low", "medium · default ✓", "high", "xhigh"]
+    );
+    assert_eq!(
+        choice_words(&mut home, &fleet, Item::Permission),
+        [
+            "read only",
+            "default ✓",
+            "auto",
+            "full access · acts without asking"
+        ]
+    );
+    assert_eq!(
+        choice_words(&mut home, &fleet, Item::Mode),
+        ["default ✓", "plan"]
+    );
+
+    // A model that does not take the chosen effort starts at its own
+    // default.
+    home.open_setup(&HOME_PLACE)
+        .unwrap()
+        .pick(Item::Model, "gpt-6-mini");
+    assert_eq!(
+        choice_words(&mut home, &fleet, Item::Effort),
+        ["low · default ✓", "high"]
+    );
+    // Shift+Tab steps the mode, which the edge names once it is not the
+    // normal one.
+    home.key(&fleet, key(KeyCode::BackTab), false);
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        screen.contains("Codex · GPT-6 mini (low) · default · plan │"),
+        "{screen}"
+    );
+    let request = home
+        .open_setup(&HOME_PLACE)
+        .unwrap()
+        .request(b"id".to_vec(), None);
+    let Some(wire::create_agent_request::Config::Codex(config)) = request.config else {
+        panic!("{request:?}");
+    };
+    assert_eq!(
+        (config.model.as_deref(), config.effort.as_deref()),
+        (Some("gpt-6-mini"), Some("low"))
+    );
+    assert_eq!(
+        (config.permission.as_deref(), config.mode.as_deref()),
+        (Some("default"), Some("plan"))
+    );
+    // Another agent is another provider's catalogue, asked afresh.
+    home.open_setup(&HOME_PLACE).unwrap().pick(Item::Kind, "0");
+    assert!(home.open_setup(&HOME_PLACE).unwrap().offered.is_none());
+}
+
+/// Claude's Shift+Tab steps the permissions that still ask, as in a chat.
+#[test]
+fn a_new_claude_steps_the_permissions_that_still_ask() {
+    let fleet = home_fleet();
+    let mut home = crate::home::Home::default();
+    home.key(&fleet, key(KeyCode::Char('n')), false);
+    home_screen(&mut home, &fleet, theme());
+    home.open_setup(&HOME_PLACE)
+        .unwrap()
+        .offer(b"a", "claude", &claude_offer());
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        home.key(&fleet, key(KeyCode::BackTab), false);
+        seen.push(
+            home.open_setup(&HOME_PLACE)
+                .unwrap()
+                .permission
+                .clone()
+                .unwrap(),
+        );
+    }
+    assert_eq!(seen, ["acceptEdits", "plan", "default", "acceptEdits"]);
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        screen.contains("Claude · Opus (high) · accept edits │"),
+        "{screen}"
+    );
+    assert!(screen.contains("shift+tab permission"), "{screen}");
+}
+
+/// A provider its host says is signed out is named so where it is chosen.
+#[test]
+fn a_new_agent_says_when_its_provider_is_not_signed_in() {
+    use crate::setup::Item;
+    let mut fleet = home_fleet();
+    let mut studio = host(b"a", "studio", wire::Trust::Trusted, wire::Presence::Online);
+    if let wire::inventory_event::Of::Host(entry) = &mut studio {
+        entry.providers = vec![
+            wire::ProviderOnHost {
+                provider: "claude".into(),
+                catalogue: Some(vec![1; 32]),
+                signed_in: true,
+            },
+            wire::ProviderOnHost {
+                provider: "codex".into(),
+                catalogue: Some(vec![2; 32]),
+                signed_in: false,
+            },
+        ];
+    }
+    inventory(&mut fleet, studio);
+    let mut home = crate::home::Home::default();
+    home.key(&fleet, key(KeyCode::Char('n')), false);
+    home_screen(&mut home, &fleet, theme());
+    assert_eq!(
+        choice_words(&mut home, &fleet, Item::Kind),
+        ["Claude ✓", "Codex · not signed in"]
+    );
+    home.open_setup(&HOME_PLACE).unwrap().pick(Item::Kind, "1");
+    let screen = home_screen(&mut home, &fleet, theme());
+    assert!(
+        screen.contains("Codex (not signed in) · gpt-6.1-sol"),
+        "{screen}"
+    );
+
+    // The form for an agent used in its own terminal says it on the chip.
+    let place = crate::home::Place {
+        local_host: HOME_PLACE.local_host,
+        version: HOME_PLACE.version,
+        working_dir: HOME_PLACE.working_dir,
+        attach: false,
+        chat_in: crate::setup::ChatIn::Terminal,
+        defaults: HOME_PLACE.defaults,
+    };
+    let mut home = crate::home::Home::default();
+    home.key(&fleet, key(KeyCode::Char('n')), false);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            home.draw(
+                frame,
+                area,
+                &fleet,
+                &HashMap::new(),
+                None,
+                now(),
+                theme(),
+                &place,
+            );
+        })
+        .unwrap();
+    let screen = text(terminal.backend().buffer());
+    assert!(
+        screen.contains(" Claude   Codex · not signed in "),
+        "{screen}"
+    );
 }
 
 #[test]

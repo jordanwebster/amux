@@ -2,7 +2,7 @@
   "hosts": [
     {"name": "desk"},
     {"name": "laptop", "script": {"steps": [{"text": {"chunks": ["Ready to write the release notes."]}}, "turn_end"]}},
-    {"name": "cabin"}
+    {"name": "cabin", "script": {"signed_out": true, "steps": []}}
   ],
   "links": [{"a": "desk", "b": "laptop"}, {"a": "cabin", "b": "laptop"}],
   "settle": true,

@@ -19,6 +19,16 @@ pub(crate) fn model_words(state: &SessionState) -> Option<String> {
     Some(current.value.clone()).filter(|value| !value.is_empty())
 }
 
+/// An offered model by the name a person reads: the catalogue's name, else
+/// its value.
+pub(crate) fn named_model(model: &wire::OfferedModel) -> String {
+    if model.display_name.is_empty() {
+        model.value.clone()
+    } else {
+        model.display_name.clone()
+    }
+}
+
 /// A permission or mode by the name a person reads, lowercase as the
 /// terminal's own words are: the catalogue's name, else the provider's
 /// value as it is.

@@ -1,0 +1,34 @@
+
+  amux
+
+  + New Agent
+
+
+  ▾ Running 10 ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  › ○ release-notes╭─ New Agent ──────────────────────────────────────────────────────────╮            [x]
+      Ready to writ│                                                                      │
+                   │  Name      desk-notes                                                │
+    ○ backups  Clau│  Agent      Claude · not signed in   Codex · not signed in           │            now
+                   │  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work                │
+    ○ expired  Clau│  Host       cabin   desk   laptop                                    │            now
+      Tidied.      │                                                                      │
+                   │  [Start]  [Cancel]                                                   │
+    ○ limited  Clau│  enter start   ←→ choose   ↑↓ move   esc cancel                      │            now
+      usage limit r╰──────────────────────────────────────────────────────────────────────╯
+
+    ○ worker  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                 now
+
+    ○ linker  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
+
+    ○ filer  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
+
+    ○ asker  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
+
+    ○ planner-pty  Claude (terminal) · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                 now
+
+    ○ planner  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                now
+
+
+
+

@@ -1,5 +1,7 @@
 //! A new agent's settings before it exists: its name, which agent, its
-//! model, effort and mode, where it works and on which machine. The
+//! model, effort, permission and mode, where it works and on which machine.
+//! What there is to pick comes from the chosen host's catalogue for the
+//! chosen agent, asked of that host before any agent runs there. The
 //! flyover that changes one of them, which a running chat also uses for its
 //! model and effort. And the short form that starts an agent to be used in
 //! its own terminal.
@@ -65,17 +67,38 @@ impl Agent {
             _ => Agent::Claude,
         }
     }
+
+    /// The provider a host's catalogue is asked for, as a host names it.
+    pub fn provider(self) -> &'static str {
+        match self {
+            Agent::Claude => "claude",
+            Agent::Codex => "codex",
+        }
+    }
 }
 
-/// What a new agent starts with, per agent: model, effort and mode, from
-/// the installation's settings (shipped with real values), so the new agent
-/// always shows what it will run.
+/// Every provider a host can be asked about, as the host names them.
+pub const PROVIDERS: [&str; 2] = ["claude", "codex"];
+
+/// Whether `provider` is signed in on `host`, once the host has said.
+pub fn signed_in(fleet: &FleetState, host: &[u8], provider: &str) -> Option<bool> {
+    fleet
+        .host(host)?
+        .providers
+        .iter()
+        .find(|offer| offer.provider == provider)
+        .map(|offer| offer.signed_in)
+}
+
+/// What a new agent starts with, per agent: model, effort and permission,
+/// from the installation's settings (shipped with real values), so the new
+/// agent always shows what it will run.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentDefaults {
     pub model: String,
     pub effort: String,
-    /// Claude's permission mode, or Codex's preset ("default").
-    pub mode: String,
+    /// A permission by its catalogue value.
+    pub permission: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -93,22 +116,6 @@ impl Defaults {
     }
 }
 
-const CLAUDE_EFFORTS: [&str; 3] = ["low", "medium", "high"];
-const CODEX_EFFORTS: [&str; 4] = ["minimal", "low", "medium", "high"];
-
-/// The permissions shift+tab moves through, value and words: those that
-/// still ask before acting.
-const CLAUDE_MODES: [(&str, &str); 3] = [
-    ("default", "ask"),
-    ("acceptEdits", "accept edits"),
-    ("plan", "plan"),
-];
-const CODEX_MODES: [(&str, &str); 3] = [
-    ("default", "default"),
-    ("read-only", "read only"),
-    ("full-access", "full access"),
-];
-
 /// One of the settings, as the composer's edge shows it and a flyover
 /// changes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,6 +125,7 @@ pub enum Item {
     Model,
     Effort,
     Permission,
+    Mode,
     Folder,
     Worktree,
     Host,
@@ -135,6 +143,10 @@ pub struct Setup {
     pub effort: Option<String>,
     /// The permission by its value.
     pub permission: Option<String>,
+    /// The mode by its value; None starts in the agent's normal one.
+    pub mode: Option<String>,
+    /// What the chosen host offers for the chosen agent, once it has said.
+    pub offered: Option<wire::Catalogue>,
     /// Where it works, as the request names it.
     pub folder: String,
     pub host: Vec<u8>,
@@ -160,6 +172,8 @@ impl Setup {
             model: None,
             effort: None,
             permission: None,
+            mode: None,
+            offered: None,
             folder: working_dir.to_owned(),
             host: local_host.to_vec(),
             worktree: false,
@@ -174,7 +188,8 @@ impl Setup {
         let defaults = self.defaults.of(self.agent).clone();
         self.model = Some(defaults.model);
         self.effort = Some(defaults.effort);
-        self.permission = Some(defaults.mode);
+        self.permission = Some(defaults.permission);
+        self.mode = None;
     }
 
     /// A running agent's settings, to start a sibling where the person
@@ -182,11 +197,72 @@ impl Setup {
     pub fn sibling(mut self, kind: Kind, chat_in: ChatIn) -> Setup {
         self.agent = Agent::of(kind);
         self.chat_in = chat_in;
+        self.offered = None;
         let defaults = self.defaults.of(self.agent).clone();
         self.model.get_or_insert(defaults.model);
         self.effort.get_or_insert(defaults.effort);
-        self.permission.get_or_insert(defaults.mode);
+        self.permission.get_or_insert(defaults.permission);
         self
+    }
+
+    /// Takes what `host` offers for `provider`, when that is what this
+    /// setup is for; the choices already made stay, offered or not.
+    pub fn offer(&mut self, host: &[u8], provider: &str, catalogue: &wire::Catalogue) {
+        if host == self.host && provider == self.agent.provider() {
+            self.offered = Some(catalogue.clone());
+        }
+    }
+
+    /// The hash of what this setup holds from its host, if anything.
+    pub fn offered_hash(&self) -> Option<&[u8]> {
+        self.offered.as_ref().map(|offered| offered.hash.as_slice())
+    }
+
+    /// The chosen model as the catalogue offers it: by value, else by the
+    /// id an alias stands for.
+    fn offered_model(&self) -> Option<&wire::OfferedModel> {
+        let model = self.model.as_deref()?;
+        let models = &self.offered.as_ref()?.models;
+        models
+            .iter()
+            .find(|offered| offered.value == model)
+            .or_else(|| {
+                models
+                    .iter()
+                    .find(|offered| offered.resolved_model == model)
+            })
+    }
+
+    /// The permissions the chosen model takes, as the catalogue offers
+    /// them to be set.
+    fn offered_permissions(&self) -> Vec<&wire::OfferedPermission> {
+        let model = self.offered_model().map(|model| model.value.as_str());
+        self.offered
+            .iter()
+            .flat_map(|offered| &offered.permissions)
+            .filter(|permission| {
+                permission.settable
+                    && (permission.models.is_empty()
+                        || model.is_some_and(|model| permission.models.iter().any(|m| m == model)))
+            })
+            .collect()
+    }
+
+    fn offered_modes(&self) -> Vec<&wire::OfferedMode> {
+        self.offered
+            .iter()
+            .flat_map(|offered| &offered.modes)
+            .filter(|mode| mode.settable)
+            .collect()
+    }
+
+    /// The mode it starts in: the chosen one, else the normal one.
+    fn mode_in_force(&self) -> Option<&wire::OfferedMode> {
+        let modes = self.offered_modes();
+        match &self.mode {
+            Some(chosen) => modes.into_iter().find(|mode| mode.value == *chosen),
+            None => modes.into_iter().find(|mode| mode.normal),
+        }
     }
 
     /// What runs it, as the request names it.
@@ -203,8 +279,10 @@ impl Setup {
     /// worktree" shows only when it is on.
     pub fn edge(&self, fleet: &FleetState) -> Vec<Vec<(Item, String)>> {
         // Always the values it will start with, the permission too: here it
-        // is a setting to pick, so even the normal one is named.
-        let mut model = self.model.as_deref().map(model_label).unwrap_or_default();
+        // is a setting to pick, so even the normal one is named. The mode,
+        // which Shift+Tab steps, speaks only when it is not the normal one,
+        // as in a chat.
+        let mut model = self.model_words();
         if let Some(effort) = &self.effort {
             model.push_str(&format!(" ({effort})"));
         }
@@ -213,6 +291,21 @@ impl Setup {
             .as_deref()
             .map(|value| self.permission_words(value))
             .unwrap_or_default();
+        let mut agent = self.agent.name().to_owned();
+        if signed_in(fleet, &self.host, self.agent.provider()) == Some(false) {
+            agent.push_str(" (not signed in)");
+        }
+        let mut runs = vec![
+            (Item::Kind, agent),
+            (Item::Model, model),
+            (Item::Permission, permission),
+        ];
+        if let Some(mode) = self.mode_in_force().filter(|mode| !mode.normal) {
+            runs.push((
+                Item::Mode,
+                crate::words::named(&mode.display_name, &mode.value),
+            ));
+        }
         let mut place = vec![(Item::Folder, text::tilde(&self.folder))];
         if self.worktree {
             place.push((Item::Worktree, "new worktree".to_owned()));
@@ -220,11 +313,7 @@ impl Setup {
         let name = self.name.clone().unwrap_or_else(|| "+ Name".to_owned());
         vec![
             vec![(Item::Name, name)],
-            vec![
-                (Item::Kind, self.agent.name().to_owned()),
-                (Item::Model, model),
-                (Item::Permission, permission),
-            ],
+            runs,
             place,
             vec![(Item::Host, host_name(fleet, &self.host))],
         ]
@@ -243,8 +332,9 @@ impl Setup {
             Item::Kind => AGENTS
                 .iter()
                 .enumerate()
-                .map(|(at, agent)| {
-                    choice(
+                .map(|(at, agent)| Choice {
+                    detail: not_signed_in(fleet, &self.host, *agent),
+                    ..choice(
                         agent.name().to_owned(),
                         at.to_string(),
                         *agent == self.agent,
@@ -252,52 +342,93 @@ impl Setup {
                 })
                 .collect(),
             Item::Model => {
-                let configured = &self.defaults.of(self.agent).model;
-                let (mut models, _) = crate::pending::models_before_start(self.agent, configured);
-                // A model from a chat, or typed, that the list lacks is
-                // still offered, as the current one.
+                let mut models: Vec<Choice> = self
+                    .offered
+                    .iter()
+                    .flat_map(|offered| &offered.models)
+                    .map(|model| Choice {
+                        // The provider's own line on it, which also says
+                        // what an alias such as Default stands for.
+                        detail: model.description.clone(),
+                        ..choice(
+                            crate::words::named_model(model),
+                            model.value.clone(),
+                            self.offered_model().is_some_and(|m| m.value == model.value),
+                        )
+                    })
+                    .collect();
+                // A model from the settings, a chat, or typed, that the host
+                // does not offer is still there, as the current one.
                 if let Some(current) = self.model.as_deref()
-                    && !models.iter().any(|model| model == current)
+                    && !models.iter().any(|model| model.current)
                 {
-                    models.insert(0, current.to_owned());
+                    models.insert(0, choice(current.to_owned(), current.to_owned(), true));
                 }
                 models
-                    .into_iter()
-                    .map(|model| {
-                        let current = self.model.as_deref() == Some(model.as_str());
-                        choice(model_label(&model), model, current)
-                    })
-                    .collect()
             }
             Item::Effort => {
-                let efforts: &[&str] = if self.claude() {
-                    &CLAUDE_EFFORTS
-                } else {
-                    &CODEX_EFFORTS
-                };
-                efforts
+                let model = self.offered_model();
+                let default = model.and_then(|model| model.default_effort.as_deref());
+                let mut efforts: Vec<Choice> = model
                     .iter()
-                    .map(|effort| {
+                    .flat_map(|model| &model.efforts)
+                    .map(|effort| Choice {
+                        detail: if default == Some(effort.as_str()) {
+                            "default".into()
+                        } else {
+                            String::new()
+                        },
+                        ..choice(
+                            effort.clone(),
+                            effort.clone(),
+                            self.effort.as_deref() == Some(effort.as_str()),
+                        )
+                    })
+                    .collect();
+                if let Some(current) = self.effort.as_deref()
+                    && !efforts.iter().any(|effort| effort.current)
+                {
+                    efforts.push(choice(current.to_owned(), current.to_owned(), true));
+                }
+                efforts
+            }
+            Item::Permission => {
+                let mut permissions: Vec<Choice> = self
+                    .offered_permissions()
+                    .into_iter()
+                    .map(|permission| Choice {
+                        detail: if permission.never_asks {
+                            "acts without asking".into()
+                        } else {
+                            String::new()
+                        },
+                        ..choice(
+                            crate::words::named(&permission.display_name, &permission.value),
+                            permission.value.clone(),
+                            self.permission.as_deref() == Some(permission.value.as_str()),
+                        )
+                    })
+                    .collect();
+                if let Some(current) = self.permission.as_deref()
+                    && !permissions.iter().any(|permission| permission.current)
+                {
+                    permissions.push(choice(current.to_owned(), current.to_owned(), true));
+                }
+                permissions
+            }
+            Item::Mode => {
+                let current = self.mode_in_force().map(|mode| mode.value.clone());
+                self.offered_modes()
+                    .into_iter()
+                    .map(|mode| {
                         choice(
-                            (*effort).to_owned(),
-                            (*effort).to_owned(),
-                            self.effort.as_deref() == Some(*effort),
+                            crate::words::named(&mode.display_name, &mode.value),
+                            mode.value.clone(),
+                            current.as_deref() == Some(mode.value.as_str()),
                         )
                     })
                     .collect()
             }
-            Item::Permission => self
-                .permissions()
-                .iter()
-                .enumerate()
-                .map(|(at, (value, words))| {
-                    let current = match &self.permission {
-                        Some(chosen) => chosen == value,
-                        None => at == 0,
-                    };
-                    choice((*words).to_owned(), (*value).to_owned(), current)
-                })
-                .collect(),
             Item::Folder => recent_folders(fleet, &self.host, &self.folder)
                 .into_iter()
                 .map(|folder| {
@@ -311,49 +442,78 @@ impl Setup {
     }
 
     /// Whether the flyover for `item` takes a typed value as a choice of
-    /// its own: a folder's path, or a model by name where the list is not
-    /// the agent's own.
+    /// its own: a folder's path, or a model by name until the host has said
+    /// which it offers.
     pub fn takes_typed(&self, item: Item) -> bool {
         match item {
             Item::Folder => true,
-            Item::Model => {
-                crate::pending::models_before_start(self.agent, &self.defaults.of(self.agent).model)
-                    .1
-            }
+            Item::Model => self.offered.is_none(),
             _ => false,
         }
     }
 
-    /// The permissions shift+tab and the permission flyover move through.
-    fn permissions(&self) -> &'static [(&'static str, &'static str)] {
-        if self.claude() {
-            &CLAUDE_MODES
-        } else {
-            &CODEX_MODES
+    /// The chosen model by its catalogue name, else as the settings or the
+    /// person wrote it.
+    fn model_words(&self) -> String {
+        match self.offered_model() {
+            Some(model) => crate::words::named_model(model),
+            None => self.model.clone().unwrap_or_default(),
         }
     }
 
-    /// A permission by the words a person reads; one outside the list keeps
-    /// its value.
+    /// A permission by its catalogue name; one the host does not offer
+    /// keeps its value.
     fn permission_words(&self, value: &str) -> String {
-        self.permissions()
+        self.offered
             .iter()
-            .find(|(offered, _)| *offered == value)
-            .map_or(value, |(_, words)| words)
-            .to_owned()
+            .flat_map(|offered| &offered.permissions)
+            .find(|permission| permission.value == value)
+            .map_or_else(
+                || value.to_owned(),
+                |permission| crate::words::named(&permission.display_name, &permission.value),
+            )
     }
 
-    /// Shift+Tab: the next permission.
-    pub fn next_permission(&mut self) {
-        let permissions = self.permissions();
-        let at = self
-            .permission
-            .as_deref()
-            .and_then(|chosen| permissions.iter().position(|(value, _)| *value == chosen))
+    /// What Shift+Tab steps, as its hint names it: the mode when the agent
+    /// offers modes, else the permission.
+    pub fn cycles(&self) -> &'static str {
+        if self.offered_modes().len() >= 2 {
+            "mode"
+        } else {
+            "permission"
+        }
+    }
+
+    /// Shift+Tab, as in a chat: the next mode when the agent offers modes,
+    /// otherwise the next permission that still asks before acting.
+    pub fn next_control(&mut self) {
+        let modes = self.offered_modes();
+        if modes.len() >= 2 {
+            let current = self.mode_in_force().map(|mode| mode.value.clone());
+            let at = modes
+                .iter()
+                .position(|mode| Some(&mode.value) == current.as_ref())
+                .map_or(0, |at| at + 1);
+            self.mode = Some(modes[at % modes.len()].value.clone());
+            return;
+        }
+        let chosen = self.permission.clone();
+        let permissions: Vec<&wire::OfferedPermission> = self
+            .offered_permissions()
+            .into_iter()
+            .filter(|permission| {
+                !permission.never_asks || chosen.as_ref() == Some(&permission.value)
+            })
+            .collect();
+        if permissions.len() < 2 {
+            return;
+        }
+        let at = permissions
+            .iter()
+            .position(|permission| chosen.as_ref() == Some(&permission.value))
+            .or_else(|| permissions.iter().position(|permission| permission.normal))
             .unwrap_or(0);
-        self.permission = permissions
-            .get((at + 1) % permissions.len().max(1))
-            .map(|(value, _)| (*value).to_owned());
+        self.permission = Some(permissions[(at + 1) % permissions.len()].value.clone());
     }
 
     /// Takes a picked value for `item`. Another agent starts its model,
@@ -367,20 +527,38 @@ impl Setup {
                     && *agent != self.agent
                 {
                     self.agent = *agent;
+                    self.offered = None;
                     self.start_from_defaults();
                 }
             }
-            Item::Model => self.model = some(value).or(self.model.take()),
+            Item::Model => {
+                self.model = some(value).or(self.model.take());
+                // An effort the new model does not take gives way to its
+                // default.
+                if let Some(model) = self.offered_model()
+                    && !model.efforts.is_empty()
+                    && !self
+                        .effort
+                        .as_ref()
+                        .is_some_and(|effort| model.efforts.contains(effort))
+                {
+                    self.effort = model.default_effort.clone();
+                }
+            }
             Item::Effort => self.effort = some(value).or(self.effort.take()),
             Item::Permission => self.permission = some(value),
+            Item::Mode => self.mode = some(value),
             Item::Folder => {
                 if !value.trim().is_empty() {
                     self.folder = expand_tilde(value.trim());
                 }
             }
             Item::Host => {
-                if let Some(host) = host_of_value(value) {
+                if let Some(host) = host_of_value(value)
+                    && host != self.host
+                {
                     self.host = host;
+                    self.offered = None;
                 }
             }
             Item::Worktree => {
@@ -396,6 +574,7 @@ impl Setup {
         let permission = if own { None } else { self.permission.clone() };
         let model = if own { None } else { self.model.clone() };
         let effort = if own { None } else { self.effort.clone() };
+        let mode = if own { None } else { self.mode.clone() };
         let config = if self.claude() {
             wire::create_agent_request::Config::Claude(ClaudeCreateConfig {
                 args: Vec::new(),
@@ -407,7 +586,7 @@ impl Setup {
             wire::create_agent_request::Config::Codex(CodexCreateConfig {
                 model,
                 permission,
-                mode: None,
+                mode,
                 effort,
                 resume_thread_id: None,
             })
@@ -425,17 +604,12 @@ impl Setup {
     }
 }
 
-/// A model by the name a person reads: an alias capitalised, an id as the
-/// provider writes it.
-fn model_label(model: &str) -> String {
-    if model.chars().all(|c| c.is_ascii_lowercase()) {
-        let mut chars = model.chars();
-        return chars
-            .next()
-            .map(|first| first.to_ascii_uppercase().to_string() + chars.as_str())
-            .unwrap_or_default();
+/// "not signed in" when the host has said `agent` is signed out there.
+fn not_signed_in(fleet: &FleetState, host: &[u8], agent: Agent) -> String {
+    match signed_in(fleet, host, agent.provider()) {
+        Some(false) => "not signed in".to_owned(),
+        _ => String::new(),
     }
-    model.to_owned()
 }
 
 fn host_name(fleet: &FleetState, host: &[u8]) -> String {
@@ -1224,9 +1398,14 @@ impl Form {
                 }
                 Field::Kind => {
                     for (at, agent) in AGENTS.iter().enumerate() {
+                        let mut words = agent.name().to_owned();
+                        let why = not_signed_in(fleet, &setup.host, *agent);
+                        if !why.is_empty() {
+                            words.push_str(&format!(" · {why}"));
+                        }
                         chip(
                             &mut line,
-                            agent.name().to_owned(),
+                            words,
                             *agent == setup.agent,
                             false,
                             FormHit::Agent(at),

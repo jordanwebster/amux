@@ -3,7 +3,7 @@
 //! tasks against the drivers and report back as [`AppEvent`]s, so the
 //! loop never waits on the network with a key in hand.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -185,7 +185,16 @@ pub enum AppEvent {
         key: crate::chat::FetchKey,
         diff: Diff,
     },
+    /// What a host offers for a provider, for a new agent there.
+    HostOffer {
+        host: Vec<u8>,
+        provider: &'static str,
+        catalogue: wire::Catalogue,
+    },
 }
+
+/// A host, a provider, and the catalogue hash the host named when asked.
+type OfferAsked = (Vec<u8>, &'static str, Option<Vec<u8>>);
 
 /// What the loop does after a key.
 #[derive(Debug, PartialEq)]
@@ -230,6 +239,10 @@ pub struct App {
     /// A report asked for: the next frame drawn is the one it freezes.
     report_asked: bool,
     report: Option<crate::report::Report>,
+    /// What hosts offer per provider, by hash, as asked for new agents.
+    host_offers: HashMap<Vec<u8>, wire::Catalogue>,
+    /// Each host's provider asked once per hash the host named.
+    offers_asked: HashSet<OfferAsked>,
     events: mpsc::UnboundedSender<AppEvent>,
     pub receiver: mpsc::UnboundedReceiver<AppEvent>,
 }
@@ -288,6 +301,8 @@ impl App {
             opening: None,
             report_asked: false,
             report: None,
+            host_offers: HashMap::new(),
+            offers_asked: HashSet::new(),
             events,
             receiver,
         }
@@ -472,6 +487,16 @@ impl App {
                 {
                     chat.view.changes_fetched(key, diff);
                 }
+            }
+            AppEvent::HostOffer {
+                host,
+                provider,
+                catalogue,
+            } => {
+                if let Some(setup) = self.fleet_view.open_setup() {
+                    setup.offer(&host, provider, &catalogue);
+                }
+                self.host_offers.insert(catalogue.hash.clone(), catalogue);
             }
             AppEvent::Started {
                 agent,
@@ -1098,6 +1123,7 @@ impl App {
             self.notice(format!("the chat closed: {error}"), Tone::Warn);
             return;
         }
+        self.ask_host_offers();
         let Some(chat) = &mut self.chat else {
             return;
         };
@@ -1117,6 +1143,75 @@ impl App {
                     key,
                     diff,
                 })
+            });
+        }
+    }
+
+    /// While a new agent is being set up: what its host offers for each
+    /// provider, asked once per version the host names, which also tells
+    /// whether each is signed in there; the chosen provider's goes to the
+    /// setup.
+    fn ask_host_offers(&mut self) {
+        let fleet = self.fleet.state();
+        let Some(setup) = self.fleet_view.open_setup() else {
+            return;
+        };
+        let host = setup.host.clone();
+        let chosen = setup.agent.provider();
+        let mut asks = Vec::new();
+        for provider in crate::setup::PROVIDERS {
+            let named = fleet
+                .host(&host)
+                .and_then(|entry| {
+                    entry
+                        .providers
+                        .iter()
+                        .find(|offer| offer.provider == provider)
+                })
+                .and_then(|offer| offer.catalogue.clone());
+            if let Some(held) = named.as_ref().and_then(|hash| self.host_offers.get(hash)) {
+                if setup.offered_hash() != Some(held.hash.as_slice()) {
+                    setup.offer(&host, provider, held);
+                }
+                continue;
+            }
+            if self
+                .offers_asked
+                .insert((host.clone(), provider, named.clone()))
+            {
+                asks.push((provider, provider == chosen));
+            }
+        }
+        let host_name = fleet
+            .host(&host)
+            .map(|entry| entry.name.clone())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "this machine".to_owned());
+        drop(fleet);
+        for (provider, chosen) in asks {
+            let client = self.client.clone();
+            let host = host.clone();
+            let host_name = host_name.clone();
+            self.spawn(async move {
+                let request = wire::GetCatalogueRequest {
+                    of: Some(wire::get_catalogue_request::Of::Host(wire::HostProvider {
+                        host_id: host.clone(),
+                        provider: provider.to_owned(),
+                    })),
+                };
+                match client.get_catalogue(request).await {
+                    Ok(catalogue) => Some(AppEvent::HostOffer {
+                        host,
+                        provider,
+                        catalogue,
+                    }),
+                    // Only the agent being set up is worth a word.
+                    Err(error) if chosen => Some(AppEvent::Notice(
+                        format!("could not ask {host_name} what {provider} offers: {error}"),
+                        Tone::Warn,
+                    )),
+                    Err(_) => None,
+                }
             });
         }
     }
@@ -1283,8 +1378,8 @@ impl App {
 /// chat. "b" for bug: "report" and "problem" hold letters that are taken.
 const REPORT_KEY: char = 'b';
 
-/// A new agent's settings copied from a chat: its model, effort, mode,
-/// folder and host ([`crate::setup::Setup::sibling`] then sets the agent and
+/// A new agent's settings copied from a chat: its model, effort,
+/// permission, mode, folder and host ([`crate::setup::Setup::sibling`] then sets the agent and
 /// where the person chats). Never a name, and never a new worktree: a chat
 /// already working in a worktree's folder starts its sibling there.
 fn sibling_setup(
@@ -1312,6 +1407,12 @@ fn sibling_setup(
             .iter()
             .find(|permission| permission.current && !permission.value.is_empty())
             .map(|permission| permission.value.clone()),
+        mode: view
+            .modes
+            .iter()
+            .find(|mode| mode.current && !mode.reported)
+            .map(|mode| mode.value.clone()),
+        offered: None,
         folder: agent.map(|agent| agent.cwd.clone()).unwrap_or_default(),
         host: agent.map(|agent| agent.host_id.clone()).unwrap_or_default(),
         worktree: false,

@@ -1,3 +1,22 @@
+2026-10-06 — **A new agent is configured from what its host offers.**
+The new-agent screen held its own lists: three Claude efforts, four Codex
+efforts, three permissions each, Claude's model aliases and, for Codex, only
+the model in the settings. All are gone. While the screen is open the client
+asks the chosen host what each provider offers there, once per catalogue the
+host names (the host entry then says whether each is signed in), and the
+chosen provider's catalogue fills the model, effort, permission and mode
+lists, on this host or another, before any agent runs there. A value the
+settings or a chat gave that the host does not offer stays, as the current
+one; a model whose efforts do not include the chosen one starts at its own
+default. Until the host answers a model can be typed by name. Codex gains a
+mode, which Shift+Tab steps as in a chat and the create request now carries;
+for Claude Shift+Tab steps the permissions that still ask. Ctrl+S then p opens
+the permissions. A provider the host says is signed out reads "not signed in"
+on the edge, in the agent picker and on the own-terminal form's chips; the
+new-agent-terminal story's topology signs the cabin's providers out and shows
+the form saying so. The settings' `new_agent.<agent>.mode` is now
+`permission`, which is what it always held.
+
 2026-10-06 — **The terminal reads permissions and modes from what the agent offers.**
 The shared settings view held its own lists: Claude's permission modes and
 three Codex presets as approval-and-sandbox pairs, and the terminal tidied

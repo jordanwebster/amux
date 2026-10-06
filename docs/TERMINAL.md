@@ -80,19 +80,23 @@ chats with their agents, the installation's `ui.chat_in`:
 
 - **In amux** (`amux`, the default): the composer, first. Type what the new agent should work on and Enter starts
   it and opens its chat (Ctrl+Enter starts it and stays home). The composer's bottom edge is the settings:
-  `+ Name │ Claude · Opus (high) · default │ ~/source/amux │ laptop`, that is the name (named automatically
-  unless given one), the agent with its model, effort and permission, the folder and the host. `ctrl+s` then a letter
-  opens one in a small panel rising from its place on the edge: `n` name, `m` model, `e` effort, `d` folder, `h`
-  host, `a` agent (Claude or Codex); clicking an item does the same. Long lists filter as you type; the folder's
-  panel lists that host's recent folders and takes a typed path; hosts that are away cannot be picked. Shift+Tab
-  steps the permission. Claude runs headless here, Codex on its app server.
+  `+ Name │ Claude · Opus (high) · ask │ ~/source/amux │ laptop`, that is the name (named automatically
+  unless given one), the agent with its model, effort and permission (and Codex's mode when it is not the default),
+  the folder and the host. `ctrl+s` then a letter opens one in a small panel rising from its place on the edge: `n`
+  name, `m` model, `e` effort, `p` permission, `d` folder, `h` host, `a` agent (Claude or Codex); clicking an item
+  does the same. The models, efforts, permissions and modes are what the chosen host says that agent offers there,
+  asked of the host before any agent runs on it; until it answers a model can be typed by name. A provider the host
+  says is signed out reads `Codex (not signed in)`. Long lists filter as you type; the folder's panel lists that
+  host's recent folders and takes a typed path; hosts that are away cannot be picked. Shift+Tab steps Codex's mode,
+  or Claude's permissions that still ask, as in a chat. Claude runs headless here, Codex on its app server.
 - **In each agent's own terminal** (`terminal`): a small window over home with the name, the agent (Claude or
-  Codex), the folder and the host, and no prompt or model, which the agent's own terminal sets. Enter moves from
-  row to row and starts the agent from the last; ←/→ change a choice. Started on this machine, the terminal is
+  Codex, each marked `not signed in` where the chosen host says so), the folder and the host, and no prompt or model,
+  which the agent's own terminal sets. Enter moves from row to row and starts the agent from the last; ←/→ change
+  a choice. Started on this machine, the terminal is
   handed straight to the new agent (see [raw attach](#raw-attach)); started on another machine its chat opens
   instead, and says why.
 
-A new agent always shows the values it will start with: each agent's model, effort and mode come from the
+A new agent always shows the values it will start with: each agent's model, effort and permission come from the
 installation's `new_agent.claude` and `new_agent.codex`, and the leader then `n` from a chat starts from that
 chat's agent, folder and host instead.
 
@@ -278,8 +282,8 @@ ui:
   color: auto         # auto, truecolor or ansi
   chat_in: amux       # amux, or terminal: chat in each agent's own terminal
 new_agent:
-  claude: { model: opus, effort: high, mode: default }
-  codex: { model: gpt-6.1-sol, effort: medium, mode: default }
+  claude: { model: opus, effort: high, permission: default }
+  codex: { model: gpt-6.1-sol, effort: medium, permission: default }
 ```
 
 `theme: terminal` asks the terminal for its own colours at startup and derives the palette from them, falling back
