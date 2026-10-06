@@ -18,10 +18,10 @@
   row    4 rs_066e4e030cd39ae8016ab72f0862d087d2b5a38d3ca13223e3 Thinking { text: "", open: false, duration_ms: Some(2292) }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 39 recorded 38: fact Rpc method=item/started
-  row    5 exec-a766b7c8-6964-4867-9775-91e7ed3770bf Subagent { description: "reply with exactly CODEX_SPEC_CHILD", running: true, tool_count: 0, last_tool: "spawnAgent", answer: "", duration_ms: None }
+  row    5 exec-a766b7c8-6964-4867-9775-91e7ed3770bf Subagent { description: "reply with exactly CODEX_SPEC_CHILD", running: true, tool_count: 0, last_tool: "spawnAgent", answer: "", duration_ms: None } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-a766b7c8-6964-4867-9775-91e7ed3770bf x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 1, other: 0 }]
   composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
 ## 44 recorded 43: fact Rpc method=item/completed
-  row    5 exec-a766b7c8-6964-4867-9775-91e7ed3770bf Subagent { description: "reply with exactly CODEX_SPEC_CHILD", running: false, tool_count: 0, last_tool: "spawnAgent", answer: "", duration_ms: Some(31) }
+  row    5 exec-a766b7c8-6964-4867-9775-91e7ed3770bf Subagent { description: "reply with exactly CODEX_SPEC_CHILD", running: false, tool_count: 0, last_tool: "spawnAgent", answer: "", duration_ms: Some(31) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-a766b7c8-6964-4867-9775-91e7ed3770bf x1 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 1, other: 0 }]
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 55 recorded 54: fact Rpc method=item/started
   row    6 rs_066e4e030cd39ae8016ab72f0a522487d2a5d186fba9d71d44 Thinking { text: "", open: true, duration_ms: None }
@@ -30,12 +30,17 @@
   row    6 rs_066e4e030cd39ae8016ab72f0a522487d2a5d186fba9d71d44 Thinking { text: "", open: false, duration_ms: Some(979) }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 85 recorded 84: fact Rpc method=item/started
-  row    7 exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 Subagent { description: "", running: true, tool_count: 0, last_tool: "wait", answer: "", duration_ms: None }
+  row    5 exec-a766b7c8-6964-4867-9775-91e7ed3770bf Subagent { description: "reply with exactly CODEX_SPEC_CHILD", running: false, tool_count: 0, last_tool: "spawnAgent", answer: "", duration_ms: Some(31) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 recent=1 live]
+  row    6 rs_066e4e030cd39ae8016ab72f0a522487d2a5d186fba9d71d44 Thinking { text: "", open: false, duration_ms: Some(979) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 live] collapsed
+  row    7 exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 Subagent { description: "", running: true, tool_count: 0, last_tool: "wait", answer: "", duration_ms: None } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 2, other: 0 }]
   composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
 ## 87 recorded 86: fact Rpc method=item/completed
-  row    7 exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 Subagent { description: "", running: false, tool_count: 0, last_tool: "wait", answer: "", duration_ms: Some(0) }
+  row    7 exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 Subagent { description: "", running: false, tool_count: 0, last_tool: "wait", answer: "", duration_ms: Some(0) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 recent=0 live RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 2, other: 0 }]
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 92 recorded 91: fact Rpc method=item/started
+  row    5 exec-a766b7c8-6964-4867-9775-91e7ed3770bf Subagent { description: "reply with exactly CODEX_SPEC_CHILD", running: false, tool_count: 0, last_tool: "spawnAgent", answer: "", duration_ms: Some(31) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 recent=1] collapsed
+  row    6 rs_066e4e030cd39ae8016ab72f0a522487d2a5d186fba9d71d44 Thinking { text: "", open: false, duration_ms: Some(979) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2] collapsed
+  row    7 exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 Subagent { description: "", running: false, tool_count: 0, last_tool: "wait", answer: "", duration_ms: Some(0) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 recent=0 RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 2, other: 0 }]
   row    8 msg_066e4e030cd39ae8016ab72f0df6d887d2af98d5e127b3e528 Prose { text: [], streaming: true, working_note: false }
 ## 94 recorded 93: fact Rpc method=item/agentMessage/delta
   row    8 msg_066e4e030cd39ae8016ab72f0df6d887d2af98d5e127b3e528 Prose { text: [Text("CODE")], streaming: true, working_note: false }
@@ -48,6 +53,8 @@
 ## 102 recorded 101: fact Rpc method=item/completed
   row    8 msg_066e4e030cd39ae8016ab72f0df6d887d2af98d5e127b3e528 Prose { text: [Text("CODEX_SPEC_CHILD")], streaming: false, working_note: false }
 ## 110 recorded 109: fact Rpc method=turn/completed
+  row    5 exec-a766b7c8-6964-4867-9775-91e7ed3770bf Subagent { description: "reply with exactly CODEX_SPEC_CHILD", running: false, tool_count: 0, last_tool: "spawnAgent", answer: "", duration_ms: Some(31) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 recent=1] collapsed
+  row    7 exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 Subagent { description: "", running: false, tool_count: 0, last_tool: "wait", answer: "", duration_ms: Some(0) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 recent=0 RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 2, other: 0 }]
   row    9 turn:1 TurnEnd { duration_ms: Some(10949), cost_usd: None, failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
@@ -55,9 +62,9 @@
      2 prompt:737464696e2d34 Prompt { text: [Text("Call your spawn_agent tool directly, without reading any file or using any skill, to start exactly one agent whose task is: reply with exactly CODEX_SPEC_CHILD. Then wait for it to finish and reply with what it answered.")], steered: false }
      3 rs_066e4e030cd39ae8016ab72f0621d487d2857a65413f4d185b Thinking { text: "", open: false, duration_ms: Some(2944) }
      4 rs_066e4e030cd39ae8016ab72f0862d087d2b5a38d3ca13223e3 Thinking { text: "", open: false, duration_ms: Some(2292) }
-     5 exec-a766b7c8-6964-4867-9775-91e7ed3770bf Subagent { description: "reply with exactly CODEX_SPEC_CHILD", running: false, tool_count: 0, last_tool: "spawnAgent", answer: "", duration_ms: Some(31) }
-     6 rs_066e4e030cd39ae8016ab72f0a522487d2a5d186fba9d71d44 Thinking { text: "", open: false, duration_ms: Some(979) }
-     7 exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 Subagent { description: "", running: false, tool_count: 0, last_tool: "wait", answer: "", duration_ms: Some(0) }
+     5 exec-a766b7c8-6964-4867-9775-91e7ed3770bf Subagent { description: "reply with exactly CODEX_SPEC_CHILD", running: false, tool_count: 0, last_tool: "spawnAgent", answer: "", duration_ms: Some(31) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 recent=1] collapsed
+     6 rs_066e4e030cd39ae8016ab72f0a522487d2a5d186fba9d71d44 Thinking { text: "", open: false, duration_ms: Some(979) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2] collapsed
+     7 exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 Subagent { description: "", running: false, tool_count: 0, last_tool: "wait", answer: "", duration_ms: Some(0) } run[exec-a766b7c8-6964-4867-9775-91e7ed3770bf..exec-0f49646b-0023-4ae8-a610-ce8d2b5ac385 x2 recent=0 RunCounts { commands: 0, edits: 0, reads: 0, searches: 0, subagents: 2, other: 0 }]
      8 msg_066e4e030cd39ae8016ab72f0df6d887d2af98d5e127b3e528 Prose { text: [Text("CODEX_SPEC_CHILD")], streaming: false, working_note: false }
      9 turn:1 TurnEnd { duration_ms: Some(10949), cost_usd: None, failed: false }
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }

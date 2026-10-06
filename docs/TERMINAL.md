@@ -32,7 +32,7 @@ notice. See [the two draw loops](CLIENT.md#the-two-draw-loops).
 
 Every screen has a top line, its content and a line of keys. A margin of two columns runs down each side, and
 every edge sits on it: tinted blocks (your messages, the highlighted row on home), the composer's box, the header,
-the key line and the arrows of sections and stretches. Text inside a block, the agent's text, labels and marks sit
+the key line and the arrows of sections and runs. Text inside a block, the agent's text, labels and marks sit
 two columns further in. One blank line sits above the top line and one below it. A block's half line of padding
 is drawn only while its words are on screen, so a block scrolled half off leaves no band behind.
 
@@ -134,15 +134,15 @@ Enter on a row opens its chat. From top to bottom:
     message takes the pin. Clicking it scrolls to the message;
   - everything the agent wrote is in one reading ink, at most 100 columns a line; code and paths wear the
     terminal's cyan, and code blocks are highlighted in its palette. Thinking is never drawn;
-  - each stretch of tool steps between two pieces of its text folds to one faint line of what the steps did
+  - each run of tool steps between two pieces of its text folds to one faint line of what the steps did
     (`▸ 3 commands · 2 edits · 4 reads`). Clicking it, or the leader then `o`, opens it to one line per step,
     verb first (`Ran just lint · exit 1 · 22s`, `Edited session.rs · +0 −1`); clicking a step opens its detail: a
     command's last lines of output, an edit's patch, a call's result;
-  - a failure the turn ended without fixing stays under its folded stretch in red; one fixed later in the turn
-    folds away with the rest;
-  - while the agent is at a stretch, its newest three steps show as they happen, the current one bright, and the
+  - a failure the turn ended without fixing stays in view in red where it ran, above its folded run's line; one
+    fixed later in the turn folds away with the rest;
+  - while the agent is at a run, its newest three steps show as they happen, the current one bright, and the
     running turn ends in `Working · 33s`, which becomes a faint `Worked 6m` when the turn ends;
-  - a plan is drawn as the agent's text under a landmark that folds like a stretch (`▾ Plan · Move the
+  - a plan is drawn as the agent's text under a landmark that folds like a run (`▾ Plan · Move the
     journal`), and once decided folds to `▸ Plan · Move the journal · approved` or `· sent back` with the note
     under it;
   - session boundaries (`started`, `resumed`, `exited · crashed`) read like home's headings: faint words and a
@@ -403,7 +403,7 @@ clicked.
 | `<leader> r` | Review the working tree; comments go in the draft |
 | `<leader> a` | Attach to the agent's own terminal, when it is on this machine |
 | `<leader> k`, `<leader> j` | Focus an older or newer row |
-| `<leader> o` | Open or close the focused row or stretch |
+| `<leader> o` | Open or close the focused row or run |
 | `<leader> y` | Copy the focused row (through the terminal's OSC 52 clipboard) |
 
 During raw attach the leader is read out of the bytes you type: `<leader> d` detaches to the shell, `<leader> s`

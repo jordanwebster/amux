@@ -38,7 +38,7 @@
 ## 51 recorded 50: fact Rpc method=item/completed
   row    4 msg_073bfcd196c14513016a934843be8887d2b5dc2bf12506562f Prose { text: [Text("I need filesystem write approval to run that exact command.")], streaming: false, working_note: true }
 ## 56 recorded 55: fact Rpc method=item/started
-  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
+  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } run[exec-5509f507-4aa7-4fac-aa66-d088ac31060f..exec-5509f507-4aa7-4fac-aa66-d088ac31060f x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other:…
   composer Send activity=Some(Running { key: "exec-5509f507-4aa7-4fac-aa66-d088ac31060f" }) queue=[] outbox=[]
 ## 57 recorded 56: fact Rpc method=item/commandExecution/requestApproval
   ask 0 -> "exec-5509f507-4aa7-4fac-aa66-d088ac31060f" 1/1 Open
@@ -46,13 +46,14 @@
     body Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", cwd: "<MACHINE_PATH>", reason: "Allow the exact requested command to create the file?", description: "" }
   composer Send activity=None queue=[] outbox=[]
 ## 59 recorded 58: input stdin-5
-  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, granted: None, note: None, elsewhere: false }
+  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } run[exec-5509f507-4aa7-4fac-aa66-d088ac31060f..exec-5509f507-4aa7-4fac-aa66-d088ac31060f x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other:…
   ask none
   composer Send activity=Some(Running { key: "exec-5509f507-4aa7-4fac-aa66-d088ac31060f" }) queue=[] outbox=[]
 ## 61 recorded 60: fact Rpc method=item/completed
-  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2) } decision=Decision { outcome: Denied, granted: None, note: None, elsewhere: false }
+  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2) } run[exec-5509f507-4aa7-4fac-aa66-d088ac31060f..exec-5509f507-4aa7-4fac-aa66-d088ac31060f x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, othe…
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 68 recorded 67: fact Rpc method=item/started
+  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2) } run[exec-5509f507-4aa7-4fac-aa66-d088ac31060f..exec-5509f507-4aa7-4fac-aa66-d088ac31060f x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 …
   row    6 msg_073bfcd196c14513016a93484730dc87d2a9020fd7e4998c63 Prose { text: [], streaming: true, working_note: false }
 ## 70 recorded 69: fact Rpc method=item/agentMessage/delta
   row    6 msg_073bfcd196c14513016a93484730dc87d2a9020fd7e4998c63 Prose { text: [Text("Unable")], streaming: true, working_note: false }
@@ -81,6 +82,7 @@
 ## 94 recorded 93: fact Rpc method=item/completed
   row    6 msg_073bfcd196c14513016a93484730dc87d2a9020fd7e4998c63 Prose { text: [Text("Unable to run the command because filesystem-write approval was denied.")], streaming: false, working_note: false }
 ## 100 recorded 99: fact Rpc method=turn/completed
+  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2) } run[exec-5509f507-4aa7-4fac-aa66-d088ac31060f..exec-5509f507-4aa7-4fac-aa66-d088ac31060f x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 …
   row    7 turn:1 TurnEnd { duration_ms: Some(7991), cost_usd: None, failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
@@ -88,7 +90,7 @@
      2 prompt:737464696e2d34 Prompt { text: [Text("Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE.")], steered: false }
      3 rs_073bfcd196c14513016a934842bacc87d2b7e2649e44dbc391 Thinking { text: "", open: false, duration_ms: Some(3221) }
      4 msg_073bfcd196c14513016a934843be8887d2b5dc2bf12506562f Prose { text: [Text("I need filesystem write approval to run that exact command.")], streaming: false, working_note: true }
-     5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2) } decision=Decision { outcome: Denied, granted: None, note: None, elsewhere: false }
+     5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2) } run[exec-5509f507-4aa7-4fac-aa66-d088ac31060f..exec-5509f507-4aa7-4fac-aa66-d088ac31060f x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 …
      6 msg_073bfcd196c14513016a93484730dc87d2a9020fd7e4998c63 Prose { text: [Text("Unable to run the command because filesystem-write approval was denied.")], streaming: false, working_note: false }
      7 turn:1 TurnEnd { duration_ms: Some(7991), cost_usd: None, failed: false }
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }

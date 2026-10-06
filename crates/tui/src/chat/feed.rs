@@ -1,12 +1,13 @@
 //! The chat's feed, one turn at a time: your message as a tinted block, the
-//! agent's text in the reading ink, and each stretch of its tool steps
-//! folded to one faint line between them. A stretch opens to its steps, one
-//! line each, and a step opens to its detail. A stretch still under way
-//! shows its newest steps as they happen, so the person sees the agent
-//! working, and folds once the agent speaks again.
+//! agent's text in the reading ink, and each run of its tool steps folded
+//! to one faint line between them, keeping in view a failure its turn left
+//! unresolved. A run opens to its steps, one line each, and a step opens to
+//! its detail. A run still under way shows its newest steps as they happen,
+//! so the person sees the agent working, and folds once the agent speaks
+//! again.
 //!
 //! Two columns carry everything, as on home: markers and the rail that joins
-//! a stretch's steps sit on the left edge, words on the column after it.
+//! a run's steps sit on the left edge, words on the column after it.
 //! Rows that are neither text nor a step (asks, errors, boundaries) keep
 //! their own drawing from [`super::rows`].
 
@@ -15,7 +16,7 @@ use ratatui::text::{Line, Span};
 use ui_state::Key;
 use ui_view::{
     AnswerView, AskRow, AttachmentView, DecisionView, FileChangeView, PlanVerdict, QuestionView,
-    Resolution, Row, RowKind, RunInfo, Segment, Stretch, StretchCounts, ToolStateView,
+    Resolution, Row, RowKind, Run, RunCounts, Segment, ToolStateView,
 };
 
 use super::rows::{
@@ -25,9 +26,7 @@ use super::rows::{
 use crate::text::{self, first_line, pad_to, push, push_right};
 use crate::theme::Theme;
 
-/// A stretch under way shows at most this many of its newest steps.
-pub const LIVE_STEPS: usize = 3;
-/// The left edge: markers, and the rail joining a stretch's steps.
+/// The left edge: markers, and the rail joining a run's steps.
 const EDGE: usize = 2;
 /// Where words start.
 pub(crate) const WORDS: usize = 4;
@@ -41,8 +40,8 @@ const DETAIL_LINES: usize = 12;
 /// What a click on a feed line does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FeedHit {
-    /// Fold or unfold the stretch whose oldest step this is.
-    Stretch(Key),
+    /// Fold or unfold the run with this id.
+    Run(Key),
     /// Open or close a step's detail.
     Step(Key),
     /// Open a link in the agent's text.
@@ -53,35 +52,36 @@ pub enum FeedHit {
 /// line.
 pub type LineHits = Vec<(Option<(usize, usize)>, FeedHit)>;
 
-/// Where a row sits among the stretches.
+/// Where a row sits among the runs.
 #[derive(Clone, Debug)]
 pub enum Placement {
-    /// Not in a stretch.
+    /// Not in a run.
     Plain,
-    /// The one line a folded stretch draws, on its newest step.
-    Folded {
-        stretch: Stretch,
-        unresolved: Vec<Row>,
-    },
+    /// The one line a folded run draws, on its newest step; that step
+    /// follows on its own line when its turn left it failed.
+    Folded { run: Run },
+    /// A failed step its turn left unresolved, in view in a folded run.
+    Failed,
     /// A step drawn on its own line.
     Step {
-        /// The stretch's line drawn above this, its first drawn step.
+        /// The run's line drawn above this, its first drawn step.
         header: Option<Header>,
-        /// Another step of the stretch follows.
+        /// Another step of the run follows.
         joined: bool,
         /// The step under way right now.
         current: bool,
     },
 }
 
-/// The line above an open or live stretch's first drawn step.
+/// The line above an open or live run's first drawn step.
 #[derive(Clone, Debug)]
 pub struct Header {
-    pub stretch: Stretch,
-    /// Open: it folds the stretch again. Otherwise the stretch is under way
-    /// and `earlier` of its steps are not drawn.
-    pub open: bool,
-    pub earlier: usize,
+    pub run: Run,
+    /// Open: what the run's steps did, from its newest step, and the line
+    /// folds the run again. Otherwise the run is under way and `earlier` of
+    /// its steps are not drawn.
+    pub counts: Option<RunCounts>,
+    pub earlier: u32,
 }
 
 /// One row's lines and, for each line, what clicking along it does.
@@ -108,7 +108,7 @@ impl Drawn {
 }
 
 /// "3 commands · 2 edits · 4 reads".
-pub fn counts_words(counts: &StretchCounts, open_below: bool) -> String {
+pub fn counts_words(counts: &RunCounts, steps: u32, open_below: bool) -> String {
     let plus = if open_below { "+" } else { "" };
     let mut parts = Vec::new();
     let mut part = |n: u32, one: &str, many: &str| {
@@ -123,7 +123,7 @@ pub fn counts_words(counts: &StretchCounts, open_below: bool) -> String {
     part(counts.subagents, "subagent", "subagents");
     part(counts.other, "call", "calls");
     if parts.is_empty() {
-        parts.push(format!("{}{plus} steps", counts.steps));
+        parts.push(format!("{steps}{plus} steps"));
     }
     parts.join(" · ")
 }
@@ -139,12 +139,15 @@ pub fn row_lines(
 ) -> Option<Drawn> {
     let mut drawn = Drawn::default();
     match placement {
-        Placement::Folded {
-            stretch,
-            unresolved,
-        } => {
-            folded(&mut drawn, stretch, unresolved, width, theme);
+        Placement::Folded { run } => {
+            folded(&mut drawn, run, width, theme);
+            if run.unresolved_failure {
+                failure(&mut drawn, row, width, theme);
+            }
             drawn.blank();
+        }
+        Placement::Failed => {
+            failure(&mut drawn, row, width, theme);
         }
         Placement::Step {
             header,
@@ -308,7 +311,7 @@ pub fn row_lines(
                 drawn.line(line);
                 drawn.blank();
             }
-            // A step outside any stretch, as one whose stretch cannot be
+            // A step outside any run, as one whose run cannot be
             // read: drawn as a step on its own.
             _ if is_step(row) => {
                 step(&mut drawn, row, expanded, false, facts, width, theme)?;
@@ -694,7 +697,7 @@ fn plan_title(text: &str, writing: bool) -> Option<(Option<String>, &str)> {
 }
 
 /// A plan the agent proposed, set apart by a landmark that folds like a
-/// stretch: the marker in the gutter, "Plan", its title, how it was decided,
+/// run: the marker in the gutter, "Plan", its title, how it was decided,
 /// and a hairline to the margin. Waiting on the person it is open (the
 /// composer's box asks); decided it folds to that line, with what the
 /// person said when they sent it back. `toggled` is the reader's click,
@@ -908,54 +911,57 @@ fn answer_words(answer: &AnswerView) -> String {
     picks.join(", ")
 }
 
-/// A folded stretch: its counts, then any failure it left unresolved.
-fn folded(drawn: &mut Drawn, stretch: &Stretch, unresolved: &[Row], width: usize, theme: Theme) {
+/// A folded run: what its steps did.
+fn folded(drawn: &mut Drawn, run: &Run, width: usize, theme: Theme) {
     let mut line = Line::default();
     pad_to(&mut line, EDGE);
     push(&mut line, "▸", theme.faint(), width);
     pad_to(&mut line, WORDS);
+    let counts = run.counts.clone().unwrap_or_default();
     push(
         &mut line,
-        counts_words(&stretch.counts, stretch.open_below),
+        counts_words(&counts, run.steps, run.open_below),
         theme.faint(),
         width,
     );
-    drawn.hit_line(line, FeedHit::Stretch(stretch.oldest.clone()));
-    for row in unresolved {
-        let mut line = Line::default();
-        pad_to(&mut line, EDGE);
-        push(&mut line, "✗", theme.error(), width);
-        pad_to(&mut line, WORDS);
-        let (verb, subject, meta) = step_words(row, false);
-        push(&mut line, verb.clone(), theme.error(), width);
-        if !subject.is_empty() {
-            if !verb.is_empty() {
-                push(&mut line, " ", theme.error(), width);
-            }
-            push(
-                &mut line,
-                subject,
-                theme.error(),
-                width.saturating_sub(meta.len() + 3),
-            );
-        }
-        if !meta.is_empty() {
-            push(&mut line, format!(" · {meta}"), theme.faint(), width);
-        }
-        drawn.hit_line(line, FeedHit::Step(row.id.clone()));
-    }
+    drawn.hit_line(line, FeedHit::Run(run.id.clone()));
 }
 
-/// The line above an open or live stretch's steps.
+/// A failed step a folded run keeps in view.
+fn failure(drawn: &mut Drawn, row: &Row, width: usize, theme: Theme) {
+    let mut line = Line::default();
+    pad_to(&mut line, EDGE);
+    push(&mut line, "✗", theme.error(), width);
+    pad_to(&mut line, WORDS);
+    let (verb, subject, meta) = step_words(row);
+    push(&mut line, verb.clone(), theme.error(), width);
+    if !subject.is_empty() {
+        if !verb.is_empty() {
+            push(&mut line, " ", theme.error(), width);
+        }
+        push(
+            &mut line,
+            subject,
+            theme.error(),
+            width.saturating_sub(meta.len() + 3),
+        );
+    }
+    if !meta.is_empty() {
+        push(&mut line, format!(" · {meta}"), theme.faint(), width);
+    }
+    drawn.hit_line(line, FeedHit::Step(row.id.clone()));
+}
+
+/// The line above an open or live run's steps.
 fn header_line(drawn: &mut Drawn, header: &Header, width: usize, theme: Theme) {
     let mut line = Line::default();
     pad_to(&mut line, EDGE);
-    if header.open {
+    if let Some(counts) = &header.counts {
         push(&mut line, "▾", theme.faint(), width);
         pad_to(&mut line, WORDS);
         push(
             &mut line,
-            counts_words(&header.stretch.counts, header.stretch.open_below),
+            counts_words(counts, header.run.steps, header.run.open_below),
             theme.faint(),
             width,
         );
@@ -973,12 +979,11 @@ fn header_line(drawn: &mut Drawn, header: &Header, width: usize, theme: Theme) {
             width,
         );
     }
-    drawn.hit_line(line, FeedHit::Stretch(header.stretch.oldest.clone()));
+    drawn.hit_line(line, FeedHit::Run(header.run.id.clone()));
 }
 
-/// A step's verb, subject and meta, in words. A closed run's summary
-/// speaks for the run; `open`, it is one read among the others.
-fn step_words(row: &Row, open: bool) -> (String, String, String) {
+/// A step's verb, subject and meta, in words.
+fn step_words(row: &Row) -> (String, String, String) {
     match &row.kind {
         RowKind::Command {
             command,
@@ -1006,9 +1011,6 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
             subject,
             state,
         } => {
-            if let Some(run) = row.run.as_ref().filter(|run| run.is_summary && !open) {
-                return (run_words(run), String::new(), String::new());
-            }
             let meta = decided(state_meta(*state).unwrap_or_default().to_owned(), row, "");
             (explore_verb(*verb).to_owned(), subject.clone(), meta)
         }
@@ -1158,37 +1160,6 @@ fn decided(meta: String, row: &Row, verb: &str) -> String {
     parts.join(" · ")
 }
 
-/// "Read 4 files · searched 2".
-fn run_words(run: &RunInfo) -> String {
-    let plus = if run.open_below { "+" } else { "" };
-    let mut parts = Vec::new();
-    if run.reads > 0 {
-        parts.push(format!(
-            "Read {}{plus} file{}",
-            run.reads,
-            if run.reads == 1 { "" } else { "s" }
-        ));
-    }
-    if run.searches > 0 {
-        let lead = if parts.is_empty() {
-            "Searched"
-        } else {
-            "searched"
-        };
-        parts.push(format!("{lead} {}{plus}", run.searches));
-    }
-    let other = run.len.saturating_sub(run.reads + run.searches);
-    if other > 0 || parts.is_empty() {
-        let lead = if parts.is_empty() {
-            "Explored"
-        } else {
-            "explored"
-        };
-        parts.push(format!("{lead} {other}{plus} more"));
-    }
-    parts.join(" · ")
-}
-
 fn failed(row: &Row) -> bool {
     match &row.kind {
         RowKind::Command {
@@ -1213,7 +1184,7 @@ fn step(
     width: usize,
     theme: Theme,
 ) -> Option<()> {
-    let (verb, subject, meta) = step_words(row, expanded);
+    let (verb, subject, meta) = step_words(row);
     if verb.is_empty() && subject.is_empty() {
         return None;
     }

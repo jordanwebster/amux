@@ -4,7 +4,9 @@
 #![allow(dead_code)]
 
 use prost::Message;
-use ui_state::{Connection, InputOutcome, Msg, Outcome, RunIndex, SessionState, Transcript};
+use ui_state::{
+    Connection, InputOutcome, ItemClass, Msg, Outcome, RunIndex, SessionState, Transcript,
+};
 use wire::{
     Agent, Ask, CodexAsk, Input, Item, Kind, Lifecycle, Phase, QueuedInput, SendInputResponse,
     SessionEvent, Snapshot, ToolClass, ToolState, session_event,
@@ -236,6 +238,14 @@ pub fn grep(kind: Kind, order: u64, revision: u64) -> Item {
             subagent: false,
         },
     )
+}
+
+pub fn thinking(kind: Kind, order: u64, revision: u64) -> Item {
+    item(kind, order, revision, "", Body::Thinking { complete: true })
+}
+
+pub fn turn(kind: Kind, order: u64, revision: u64) -> Item {
+    item(kind, order, revision, "", Body::Turn)
 }
 
 pub fn command(kind: Kind, order: u64, revision: u64, state: ToolState) -> Item {
@@ -486,7 +496,14 @@ pub fn projection(transcript: &Transcript) -> Vec<(String, String)> {
     transcript
         .iter()
         .map(|held| {
-            let row = format!("{:?}|{:?}", held, transcript.run_at(held.item.order));
+            // A step reads differently once its turn has ended.
+            let ended = matches!(held.class, ItemClass::Tool(_))
+                && transcript.turn_ended_after(held.item.order);
+            let row = format!(
+                "{:?}|{:?}|{ended}",
+                held,
+                transcript.run_at(held.item.order)
+            );
             (held.item.key.clone(), row)
         })
         .collect()
@@ -539,7 +556,7 @@ pub fn describe(state: &SessionState) -> String {
     for held in transcript.iter() {
         let run = transcript
             .run_at(held.item.order)
-            .map(|run| format!(" run[{}..{} x{}]", run.oldest, run.newest, run.len))
+            .map(|run| format!(" run[{}..{} x{}]", run.oldest, run.newest, run.steps))
             .unwrap_or_default();
         out.push_str(&format!(
             "    {:>3} {} r{} {:?} {:?}{run}\n",

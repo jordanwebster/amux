@@ -2967,7 +2967,7 @@ fn click(view: &mut ChatView, state: &SessionState, screen: &str, words: &str) -
 /// Tool steps between two replies fold to one line of counts, which opens
 /// to the steps; a step opens in turn.
 #[test]
-fn a_stretch_folds_to_its_counts_and_opens_to_its_steps() {
+fn a_run_folds_to_its_counts_and_opens_to_its_steps() {
     let mut items = replies(1, 1);
     items.extend((2..=4).map(|order| item(order, Some(&format!("src/file{order}.rs")))));
     items.extend(replies(5, 5));
@@ -2987,16 +2987,16 @@ fn a_stretch_folds_to_its_counts_and_opens_to_its_steps() {
         assert!(screen.contains(&format!("src/file{order}.rs")), "{screen}");
     }
 
-    // And the stretch folds again from its line.
+    // And the run folds again from its line.
     click(&mut view, &state, &screen, "3 reads");
     let (screen, _) = feed(&mut view, &state);
     assert!(screen.contains("▸ 3 reads"), "{screen}");
 }
 
-/// A stretch the agent is still at shows its newest steps, with a line for
-/// the ones above them, until its text follows.
+/// A run the agent is still at shows its newest steps, with a line for the
+/// ones above them, until its text follows.
 #[test]
-fn a_stretch_under_way_shows_its_newest_steps() {
+fn a_run_under_way_shows_its_newest_steps() {
     let mut items = replies(1, 1);
     items.extend((2..=6).map(|order| item(order, Some(&format!("src/file{order}.rs")))));
     let mut state = chat(items);
@@ -3008,11 +3008,66 @@ fn a_stretch_under_way_shows_its_newest_steps() {
     }
     assert!(!screen.contains("src/file3.rs"), "{screen}");
 
-    // The agent speaks: the stretch folds.
+    // The agent speaks: the run folds.
     state.update(event(session_event::Of::Item(item(7, None))));
     let (screen, _) = feed(&mut view, &state);
     assert!(screen.contains("▸ 5 reads"), "{screen}");
     assert!(!screen.contains("src/file6.rs"), "{screen}");
+}
+
+/// A failed command its turn left unresolved stays in view where it ran
+/// when its run folds; one the agent redid folds with the rest.
+#[test]
+fn a_folded_run_keeps_a_failure_its_turn_left_unresolved() {
+    use wire::claude_sdk_item::Kind as K;
+    let command = |order: u64, line: &str, exit: i32| {
+        let mut item = item(order, Some("unused"));
+        item.body = wire::ClaudeSdkItem {
+            kind: Some(K::Tool(wire::ToolCall {
+                name: "Bash".into(),
+                state: ToolState::Succeeded as i32,
+                class: ToolClass::Consequential as i32,
+                input_json: format!(r#"{{"command":"{line}"}}"#).into_bytes(),
+                exit_code: Some(exit),
+                ..Default::default()
+            })),
+        }
+        .encode_to_vec();
+        item
+    };
+    let turn_end = |order: u64| {
+        let mut item = item(order, None);
+        item.text = String::new();
+        item.body = wire::ClaudeSdkItem {
+            kind: Some(K::Turn(wire::Turn::default())),
+        }
+        .encode_to_vec();
+        item
+    };
+    let mut items = replies(1, 1);
+    items.push(command(2, "just lint", 1));
+    items.push(command(3, "just lint", 0));
+    items.push(command(4, "just docs-check", 1));
+    items.push(item(5, Some("docs/a.md")));
+    items.extend(replies(6, 6));
+    let mut state = chat(items);
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(screen.contains("▸ 3 commands · 1 read"), "{screen}");
+    assert!(
+        !screen.contains("just docs-check"),
+        "until the turn ends the agent may fix it\n{screen}"
+    );
+
+    state.update(event(session_event::Of::Item(turn_end(7))));
+    let (screen, _) = feed(&mut view, &state);
+    assert!(
+        screen.contains("✗ Ran just docs-check · exit 1"),
+        "{screen}"
+    );
+    assert!(!screen.contains("just lint"), "{screen}");
+    let failure = row_of(&screen, "just docs-check");
+    assert!(failure < row_of(&screen, "3 commands"), "{screen}");
 }
 
 /// The header names the agent under one blank line, and the composer is

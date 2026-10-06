@@ -2,42 +2,28 @@
 //! known width until the feed is full, so heights are exact before
 //! anything is painted and the cost is the rows on screen, not the window.
 //!
-//! Rows come from ui-view one item at a time. An item outside any run
-//! asks `chat_rows` for its own order; a run member asks `chat_rows_for`
-//! by key, because `chat_rows` widens a range across a whole run and a run
-//! can be thousands of calls long. Members of a collapsed run other than
-//! its summary are skipped here before any row is built.
+//! Rows come from ui-view one item at a time, each carrying its place in
+//! its run of tool steps; what a run's rows draw follows from it: open,
+//! every step; under way, its newest few; folded, one line on its newest
+//! step and any failure its turn left unresolved.
 
-use std::cell::RefCell;
 use std::collections::HashSet;
-use std::ops::RangeInclusive;
 
 use ratatui::text::Line;
-use ui_state::{Key, SessionState};
-use ui_view::{ChatOptions, Row, Stretch, ToolRows, chat_rows, chat_rows_for, stretch_at};
+use ui_state::{Fold, ItemClass, Key, SessionState};
+use ui_view::{ChatOptions, LIVE_STEPS, Row, RunCounts, ToolRows, chat_rows_for};
 
-use super::feed::{self, Header, LIVE_STEPS, LineHits, Placement};
+use super::feed::{self, Header, LineHits, Placement};
 use super::rows::{OPEN_LINES, PATCH_HEAD_LINES, RowFacts, RowState, on_rail, row_lines};
 use crate::theme::Theme;
-
-/// The stretches one layout pass has read, with their steps' orders, so a
-/// stretch is walked once per frame however many of its rows draw.
-#[derive(Debug, Default)]
-pub struct StretchCache(RefCell<Vec<(Stretch, Vec<u64>)>>);
-
-impl StretchCache {
-    pub fn clear(&self) {
-        self.0.borrow_mut().clear();
-    }
-}
 
 /// What a block's toggle key opens or closes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Toggle {
-    /// The row itself, or its run: the old rule.
+    /// The row itself.
     Row,
-    /// A stretch, by its oldest step.
-    Stretch(Key),
+    /// A run, by its id.
+    Run(Key),
     /// A step's detail.
     Step(Key),
 }
@@ -108,9 +94,8 @@ pub struct Frame<'a> {
     pub height: usize,
     pub theme: Theme,
     pub leader: char,
-    /// Stretches the reader opened, by their oldest step.
-    pub stretches: &'a HashSet<Key>,
-    pub cache: &'a StretchCache,
+    /// Runs the reader opened, by their ids.
+    pub open_runs: &'a HashSet<Key>,
     /// The step an ask in the composer's box points at: the box shows it,
     /// so the feed does not draw it twice.
     pub asking: Option<&'a Key>,
@@ -121,44 +106,11 @@ pub struct Frame<'a> {
 }
 
 impl Frame<'_> {
-    /// The spans of runs the reader expanded.
-    fn expanded_runs(&self, state: &SessionState) -> Vec<RangeInclusive<u64>> {
-        let transcript = state.transcript();
-        self.expanded
-            .iter()
-            .filter_map(|key| transcript.get(key))
-            .filter_map(|held| transcript.run_at(held.item.order))
-            .map(|run| run.oldest..=run.newest)
-            .collect()
-    }
-
     /// The row drawn at one held order, as shown, with whether its subagent
     /// parent is open; None when it draws nothing here.
-    fn shown(
-        &self,
-        state: &SessionState,
-        order: u64,
-        runs: &[RangeInclusive<u64>],
-    ) -> Option<(Row, bool)> {
-        let transcript = state.transcript();
-        let held = transcript.at(order)?;
-        let opts = ChatOptions {
-            tools: ToolRows::CollapseRuns {
-                expanded: self.expanded,
-            },
-        };
-        let row = match transcript.run_at(order) {
-            Some(run) => {
-                let open = runs.iter().any(|span| span.contains(&order));
-                if !open && run.newest != order {
-                    return None;
-                }
-                chat_rows_for(state, std::slice::from_ref(&held.item.key), &opts).pop()?
-            }
-            None => chat_rows(state, order..=order, &opts)
-                .into_iter()
-                .find(|row| row.order == order)?,
-        };
+    fn shown(&self, state: &SessionState, order: u64) -> Option<(Row, bool)> {
+        let held = state.transcript().at(order)?;
+        let row = chat_rows_for(state, std::slice::from_ref(&held.item.key), &EVERYTHING).pop()?;
         let child_open = row
             .parent
             .as_ref()
@@ -175,14 +127,8 @@ impl Frame<'_> {
 
     /// Whether the nearest row drawn beside `order`, older or newer, is a
     /// tool row.
-    fn tool_beside(
-        &self,
-        state: &SessionState,
-        order: u64,
-        runs: &[RangeInclusive<u64>],
-        older: bool,
-    ) -> bool {
-        let beside = |held: &ui_state::Held| self.shown(state, held.item.order, runs);
+    fn tool_beside(&self, state: &SessionState, order: u64, older: bool) -> bool {
+        let beside = |held: &ui_state::Held| self.shown(state, held.item.order);
         let row = if older {
             before(state, order).rev().find_map(beside)
         } else {
@@ -192,44 +138,27 @@ impl Frame<'_> {
     }
 
     /// The row for one held order, or None when it draws nothing here.
-    fn block(
-        &self,
-        state: &SessionState,
-        order: u64,
-        runs: &[RangeInclusive<u64>],
-    ) -> Option<Block> {
-        self.feed_block(state, order, runs)
+    fn block(&self, state: &SessionState, order: u64) -> Option<Block> {
+        self.feed_block(state, order)
     }
 
     /// A row drawn on its own, outside the feed's turns: asks closed long
     /// ago, errors, boundaries and the other kinds the feed leaves as rows.
-    fn row_block(
-        &self,
-        state: &SessionState,
-        order: u64,
-        runs: &[RangeInclusive<u64>],
-    ) -> Option<Block> {
-        let (shown, child_open) = self.shown(state, order, runs)?;
-        let expanded = self.expanded.contains(&shown.id)
-            || shown
-                .run
-                .as_ref()
-                .is_some_and(|_| runs.iter().any(|span| span.contains(&order)));
+    fn row_block(&self, state: &SessionState, order: u64) -> Option<Block> {
+        let (shown, child_open) = self.shown(state, order)?;
+        let expanded = self.expanded.contains(&shown.id);
         let tool = on_rail(&shown);
-        let joined = tool && self.tool_beside(state, order, runs, false);
+        let joined = tool && self.tool_beside(state, order, false);
         let row_state = RowState {
             focused: self.focus == Some(&shown.id),
             expanded,
-            rail: joined || (tool && self.tool_beside(state, order, runs, true)),
+            rail: joined || (tool && self.tool_beside(state, order, true)),
             joined,
         };
         let mut facts = RowFacts {
             leader: self.leader,
             ..RowFacts::default()
         };
-        if shown.run.as_ref().is_some_and(|run| run.is_summary) && !expanded {
-            facts.run_subjects = ui_view::run_subjects(state, order, 2);
-        }
         if matches!(shown.kind, ui_view::RowKind::FileChange { .. }) {
             let lines = if expanded {
                 OPEN_LINES
@@ -258,134 +187,81 @@ impl Frame<'_> {
         })
     }
 
-    /// The stretch holding `order` and its steps' orders, read once a frame.
-    fn stretch(&self, state: &SessionState, order: u64) -> Option<(Stretch, Vec<u64>)> {
-        if let Some(found) = self
-            .cache
-            .0
-            .borrow()
-            .iter()
-            .find(|(stretch, _)| (stretch.oldest_order..=stretch.newest_order).contains(&order))
-        {
-            return Some(found.clone());
-        }
-        let stretch = stretch_at(state, order)?;
-        if !(stretch.oldest_order..=stretch.newest_order).contains(&order) {
-            return None;
-        }
-        let steps = ui_view::stretch_steps(state, &stretch);
-        self.cache
-            .0
-            .borrow_mut()
-            .push((stretch.clone(), steps.clone()));
-        Some((stretch, steps))
-    }
-
-    /// A row of the feed. Inside a stretch, what draws depends on
-    /// whether the stretch is open, under way or folded; outside one, text
-    /// and turn ends draw from [`feed`], and the rest keeps its own drawing.
-    fn feed_block(
-        &self,
-        state: &SessionState,
-        order: u64,
-        runs: &[RangeInclusive<u64>],
-    ) -> Option<Block> {
-        let everything = ChatOptions {
-            tools: ToolRows::ShowAll,
-        };
+    /// A row of the feed. Inside a run, what draws depends on whether the
+    /// run is open, under way or folded; outside one, text and turn ends
+    /// draw from [`feed`], and the rest keeps its own drawing.
+    fn feed_block(&self, state: &SessionState, order: u64) -> Option<Block> {
         let transcript = state.transcript();
         let held = transcript.at(order)?;
         if self.asking == Some(&held.item.key) {
             return None;
         }
-        let (placement, row, toggle) = match self.stretch(state, order) {
-            Some((stretch, steps)) => {
-                let is_step = steps.binary_search(&order).is_ok();
-                // The stretch's last step drawn: its newest, unless that is
-                // the one the composer's box is asking about.
-                let newest = steps
-                    .iter()
-                    .rev()
-                    .copied()
-                    .find(|step| {
-                        transcript
-                            .at(*step)
-                            .is_none_or(|held| self.asking != Some(&held.item.key))
-                    })
-                    .unwrap_or(stretch.newest_order);
-                let open = self.stretches.contains(&stretch.oldest);
-                if open {
-                    if !is_step {
-                        return None;
-                    }
-                    // Opened, a stretch lists every step on its own line:
-                    // merging its reads would only repeat its folded line.
-                    let row = flat_step(state, order)?;
-                    let first = steps
-                        .iter()
-                        .copied()
-                        .find(|step| flat_step(state, *step).is_some())
-                        == Some(order);
+        let in_run = chat_rows_for(state, std::slice::from_ref(&held.item.key), &EVERYTHING)
+            .pop()
+            .filter(|row| row.run.is_some());
+        let (placement, row, toggle) = match in_run {
+            Some(row) => {
+                // Inside a run only its steps draw.
+                if held.class.fold() != Fold::Step
+                    || row.collapsed
+                    || matches!(row.kind, ui_view::RowKind::Hidden)
+                {
+                    return None;
+                }
+                let run = row.run.clone()?;
+                // The run's last step drawn: its newest, unless that is the
+                // one the composer's box is asking about.
+                let last =
+                    run.is_last() || (run.recent == Some(1) && self.asking == Some(&run.last));
+                let running =
+                    matches!(&held.class, ItemClass::Tool(tool) if tool.in_flight) && run.is_last();
+                if self.open_runs.contains(&run.id) {
+                    // Opened, a run lists every step on its own line.
+                    let header = (row.id == run.id).then(|| Header {
+                        counts: Some(self.counts(state, &run.last)),
+                        run: run.clone(),
+                        earlier: 0,
+                    });
                     let placement = Placement::Step {
-                        header: first.then(|| Header {
-                            stretch: stretch.clone(),
-                            open: true,
-                            earlier: 0,
-                        }),
-                        joined: order != newest,
+                        header,
+                        joined: !last,
                         // Opened while under way, the step running now is
                         // still the bright one, as it is folded.
-                        current: !stretch.closed
-                            && order == stretch.newest_order
-                            && stretch.running,
+                        current: run.live && running,
                     };
                     let toggle = Toggle::Step(row.id.clone());
                     (placement, row, toggle)
-                } else if !stretch.closed {
+                } else if run.live {
                     // Under way: the newest few steps, the newest bright
                     // while it runs.
-                    let shown_from = steps.len().saturating_sub(LIVE_STEPS);
-                    let at = steps.iter().position(|step| *step == order)?;
-                    if at < shown_from {
+                    if !run.shows_live() {
                         return None;
                     }
-                    let mut row =
-                        chat_rows_for(state, std::slice::from_ref(&held.item.key), &everything)
-                            .pop()?;
-                    // Live, each read is its own step: the motion is the point.
-                    row.run = None;
+                    let earlier = run.steps.saturating_sub(LIVE_STEPS);
+                    let first = run.recent == Some(run.steps.min(LIVE_STEPS) - 1);
                     let placement = Placement::Step {
-                        header: (at == shown_from && shown_from > 0).then(|| Header {
-                            stretch: stretch.clone(),
-                            open: false,
-                            earlier: shown_from,
+                        header: (first && earlier > 0).then(|| Header {
+                            run: run.clone(),
+                            counts: None,
+                            earlier,
                         }),
-                        joined: order != newest,
-                        current: order == stretch.newest_order && stretch.running,
+                        joined: !last,
+                        current: running,
                     };
                     let toggle = Toggle::Step(row.id.clone());
                     (placement, row, toggle)
+                } else if run.is_last() {
+                    let toggle = Toggle::Run(run.id.clone());
+                    (Placement::Folded { run }, row, toggle)
+                } else if run.unresolved_failure {
+                    let toggle = Toggle::Step(row.id.clone());
+                    (Placement::Failed, row, toggle)
                 } else {
-                    if order != stretch.newest_order {
-                        return None;
-                    }
-                    let row =
-                        chat_rows_for(state, std::slice::from_ref(&held.item.key), &everything)
-                            .pop()?;
-                    let unresolved = chat_rows_for(state, &stretch.unresolved, &everything);
-                    let toggle = Toggle::Stretch(stretch.oldest.clone());
-                    (
-                        Placement::Folded {
-                            stretch,
-                            unresolved,
-                        },
-                        row,
-                        toggle,
-                    )
+                    return None;
                 }
             }
             None => {
-                let (row, _) = self.shown(state, order, runs)?;
+                let (row, _) = self.shown(state, order)?;
                 if !matches!(
                     row.kind,
                     ui_view::RowKind::Prompt { .. }
@@ -397,17 +273,13 @@ impl Frame<'_> {
                 ) && !feed::is_step(&row)
                 {
                     // Errors, boundaries and the rest draw as rows.
-                    return self.row_block(state, order, runs);
+                    return self.row_block(state, order);
                 }
                 let toggle = Toggle::Step(row.id.clone());
                 (Placement::Plain, row, toggle)
             }
         };
-        let expanded = self.expanded.contains(&row.id)
-            || row
-                .run
-                .as_ref()
-                .is_some_and(|_| runs.iter().any(|span| span.contains(&order)));
+        let expanded = self.expanded.contains(&row.id);
         let mut facts = RowFacts {
             leader: self.leader,
             ..RowFacts::default()
@@ -440,8 +312,8 @@ impl Frame<'_> {
     }
 
     /// Held rows that would draw below `top`: every held order above the
-    /// oldest, less the hidden members of collapsed runs.
-    fn held_above(&self, state: &SessionState, top: u64, runs: &[RangeInclusive<u64>]) -> u64 {
+    /// oldest, less the members of folded runs that do not draw.
+    fn held_above(&self, state: &SessionState, top: u64) -> u64 {
         let transcript = state.transcript();
         let Some(oldest) = transcript.oldest_held() else {
             return 0;
@@ -451,11 +323,14 @@ impl Frame<'_> {
             if *span.start() >= top {
                 break;
             }
-            if runs.iter().any(|open| open.contains(span.start())) {
+            let open = transcript
+                .at(*span.start())
+                .is_some_and(|held| self.open_runs.contains(&held.item.key));
+            if open {
                 continue;
             }
             let end = (*span.end()).min(top.saturating_sub(1));
-            // A run's members above its summary do not draw.
+            // A run's members above its newest step do not draw.
             let hidden = if *span.end() < top {
                 span.end() - span.start()
             } else {
@@ -466,9 +341,16 @@ impl Frame<'_> {
         count
     }
 
+    /// What the run whose newest step is `last` did.
+    fn counts(&self, state: &SessionState, last: &Key) -> RunCounts {
+        chat_rows_for(state, std::slice::from_ref(last), &EVERYTHING)
+            .pop()
+            .and_then(|row| row.run)
+            .and_then(|run| run.counts)
+            .unwrap_or_default()
+    }
+
     pub fn layout(&self, state: &SessionState) -> Laid {
-        self.cache.clear();
-        let runs = self.expanded_runs(state);
         let transcript = state.transcript();
         let (Some(oldest), Some(head)) = (transcript.oldest_held(), transcript.head()) else {
             return Laid {
@@ -487,19 +369,19 @@ impl Frame<'_> {
         };
         let mut laid = match anchored {
             Some((order, offset)) => self
-                .downward(state, order, offset, &runs)
-                .unwrap_or_else(|| self.upward(state, head, &runs)),
-            None => self.upward(state, head, &runs),
+                .downward(state, order, offset)
+                .unwrap_or_else(|| self.upward(state, head)),
+            None => self.upward(state, head),
         };
         let top = laid.blocks.first().map_or(oldest, |block| block.order);
-        laid.held_above = self.held_above(state, top, &runs);
+        laid.held_above = self.held_above(state, top);
         if laid.held_above < LOOKAHEAD && transcript.has_older() {
             let run_page = laid
                 .blocks
                 .first()
                 .and_then(|block| block.row.run.as_ref())
-                .filter(|run| run.is_summary && run.open_below)
-                .map(|run| run.len.clamp(PAGE, RUN_PAGE_CAP));
+                .filter(|run| run.open_below)
+                .map(|run| run.steps.clamp(PAGE, RUN_PAGE_CAP));
             // Following, a page brings only what fits under the cap, so the
             // next live row never trims what it fetched.
             let room = state
@@ -512,7 +394,7 @@ impl Frame<'_> {
     }
 
     /// Fills the feed upward from `from`, newest at the bottom.
-    fn upward(&self, state: &SessionState, from: u64, runs: &[RangeInclusive<u64>]) -> Laid {
+    fn upward(&self, state: &SessionState, from: u64) -> Laid {
         let mut blocks = Vec::new();
         let mut total = self.tail.len();
         let mut order = Some(from);
@@ -520,7 +402,7 @@ impl Frame<'_> {
             if total >= self.height {
                 break;
             }
-            if let Some(block) = self.block(state, at, runs) {
+            if let Some(block) = self.block(state, at) {
                 total += block.lines.len();
                 blocks.push(block);
             }
@@ -561,20 +443,14 @@ impl Frame<'_> {
 
     /// Fills the feed downward from the anchor row; None when what lies
     /// below it does not fill the feed, so the reader is at the bottom.
-    fn downward(
-        &self,
-        state: &SessionState,
-        from: u64,
-        offset: usize,
-        runs: &[RangeInclusive<u64>],
-    ) -> Option<Laid> {
+    fn downward(&self, state: &SessionState, from: u64, offset: usize) -> Option<Laid> {
         let transcript = state.transcript();
         let head = transcript.head()?;
         let mut blocks = Vec::new();
         let mut total = 0usize;
         let mut reached_head = true;
         for held in transcript.range(from..=head) {
-            if let Some(block) = self.block(state, held.item.order, runs) {
+            if let Some(block) = self.block(state, held.item.order) {
                 total += block.lines.len();
                 blocks.push(block);
             }
@@ -622,8 +498,6 @@ impl Frame<'_> {
     /// The anchor `lines` above (negative) or below the top of `laid`;
     /// Bottom once it would pass the newest row.
     pub fn scrolled(&self, state: &SessionState, laid: &Laid, delta: isize) -> Anchor {
-        self.cache.clear();
-        let runs = self.expanded_runs(state);
         let transcript = state.transcript();
         let Some(first) = laid.blocks.first() else {
             return Anchor::Bottom;
@@ -634,7 +508,7 @@ impl Frame<'_> {
         while offset < 0 {
             let above = before(state, order)
                 .rev()
-                .find_map(|held| self.block(state, held.item.order, &runs));
+                .find_map(|held| self.block(state, held.item.order));
             let Some(block) = above else {
                 offset = 0;
                 break;
@@ -644,8 +518,7 @@ impl Frame<'_> {
             offset += height;
         }
         while offset >= height {
-            let below =
-                after(state, order).find_map(|held| self.block(state, held.item.order, &runs));
+            let below = after(state, order).find_map(|held| self.block(state, held.item.order));
             let Some(block) = below else {
                 return Anchor::Bottom;
             };
@@ -667,10 +540,7 @@ impl Frame<'_> {
             anchor: &anchor,
             ..*self
         };
-        if probe
-            .downward(state, order, offset as usize, &runs)
-            .is_none()
-        {
+        if probe.downward(state, order, offset as usize).is_none() {
             return Anchor::Bottom;
         }
         anchor
@@ -702,17 +572,7 @@ fn after(state: &SessionState, order: u64) -> impl DoubleEndedIterator<Item = &u
         .filter(move |_| !empty)
 }
 
-/// One step of a stretch as its own row, never merged into a run: how an
-/// opened stretch draws each step. None when the step draws nothing.
-fn flat_step(state: &SessionState, order: u64) -> Option<Row> {
-    let held = state.transcript().at(order)?;
-    let everything = ChatOptions {
-        tools: ToolRows::ShowAll,
-    };
-    let mut row = chat_rows_for(state, std::slice::from_ref(&held.item.key), &everything).pop()?;
-    if row.collapsed || matches!(row.kind, ui_view::RowKind::Hidden) {
-        return None;
-    }
-    row.run = None;
-    Some(row)
-}
+/// Every row whole: the layout decides what of a run draws.
+const EVERYTHING: ChatOptions<'static> = ChatOptions {
+    tools: ToolRows::ShowAll,
+};

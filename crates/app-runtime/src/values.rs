@@ -115,27 +115,26 @@ pub enum ToolRowsOption {
     #[default]
     ShowAll,
     Hide,
-    /// A run collapses into its newest member unless one of its keys is
-    /// here.
-    CollapseRuns {
-        expanded: Vec<Key>,
+    /// Each run folds to its newest step unless its id is here.
+    Collapse {
+        open: Vec<Key>,
     },
 }
 
 impl RowOptions {
-    /// The expanded set a collapsing view borrows, when there is one.
-    pub fn expanded(&self) -> HashSet<Key> {
+    /// The open runs a folding view borrows, when there are any.
+    pub fn open(&self) -> HashSet<Key> {
         match &self.tools {
-            ToolRowsOption::CollapseRuns { expanded } => expanded.iter().cloned().collect(),
+            ToolRowsOption::Collapse { open } => open.iter().cloned().collect(),
             ToolRowsOption::ShowAll | ToolRowsOption::Hide => HashSet::new(),
         }
     }
 
-    pub fn tool_rows<'a>(&self, expanded: &'a HashSet<Key>) -> ToolRows<'a> {
+    pub fn tool_rows<'a>(&self, open: &'a HashSet<Key>) -> ToolRows<'a> {
         match &self.tools {
             ToolRowsOption::ShowAll => ToolRows::ShowAll,
             ToolRowsOption::Hide => ToolRows::Hide,
-            ToolRowsOption::CollapseRuns { .. } => ToolRows::CollapseRuns { expanded },
+            ToolRowsOption::Collapse { .. } => ToolRows::Collapse { open },
         }
     }
 }

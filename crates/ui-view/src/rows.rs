@@ -1,5 +1,5 @@
-//! Chat rows: one row per item, the row id the item key. A run is an
-//! attribute on its members; the newest member is the visible summary.
+//! Chat rows: one row per item, the row id the item key. A run of tool
+//! steps is an attribute on its members (see [`crate::run`]).
 
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
@@ -14,6 +14,7 @@ use wire::{
 };
 
 use crate::ask::{QuestionView, Scope, lift_rule, lifted, question, scope_of};
+use crate::run::Run;
 use crate::segments::{Segment, segments};
 
 /// How many lines of a command's output a row carries.
@@ -27,8 +28,8 @@ pub struct Row {
     pub order: u64,
     pub at_ms: i64,
     pub kind: RowKind,
-    pub run: Option<RunInfo>,
-    /// The client skips a collapsed row: an older run member, or a tool row
+    pub run: Option<Run>,
+    /// The client skips a collapsed row: inside a folded run, or a tool row
     /// when tool rows are hidden, or a row that carries nothing to draw.
     pub collapsed: bool,
     /// A permission decision, meta on the tool call's own row.
@@ -40,29 +41,17 @@ pub struct Row {
     pub parent: Option<Key>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct RunInfo {
-    pub newest: Key,
-    pub oldest: Key,
-    pub reads: u32,
-    pub searches: u32,
-    pub len: u32,
-    /// What the summary names: the newest member's subject.
-    pub anchor: String,
-    pub is_summary: bool,
-    /// The run starts at the oldest held row and older history exists, so it
-    /// may continue below: the summary reads "40+".
-    pub open_below: bool,
-}
-
-/// Whether tool rows show, hide, or collapse into their runs.
+/// Whether tool steps show, hide, or fold into their runs.
 #[derive(Clone, Copy, Debug)]
 pub enum ToolRows<'a> {
     ShowAll,
+    /// Every step hidden but a failure its turn left unresolved.
     Hide,
-    /// A run is expanded if any member key is in the set.
-    CollapseRuns {
-        expanded: &'a HashSet<Key>,
+    /// Each run folds to its newest step, where its one line goes, keeping
+    /// a failure its turn left unresolved; under way it shows its newest
+    /// few steps. A run whose id is in `open` shows every step.
+    Collapse {
+        open: &'a HashSet<Key>,
     },
 }
 
@@ -402,24 +391,15 @@ pub enum DecisionView {
     Dismissed,
 }
 
-/// Rows for the held items whose order falls in `range`, extended outward
-/// across a run at either edge so its summary is always included: the
-/// terminal's call, for what is on screen.
+/// Rows for the held items whose order falls in `range`: the terminal's
+/// call, for what is on screen.
 pub fn chat_rows(state: &SessionState, range: RangeInclusive<u64>, opts: &ChatOptions) -> Vec<Row> {
-    let transcript = state.transcript();
-    let mut lo = *range.start();
-    let mut hi = *range.end();
-    if let Some(run) = transcript.run_at(lo) {
-        lo = lo.min(run.oldest);
-    }
-    if let Some(run) = transcript.run_at(hi) {
-        hi = hi.max(run.newest);
-    }
-    if lo > hi {
+    if range.start() > range.end() {
         return Vec::new();
     }
-    transcript
-        .range(lo..=hi)
+    state
+        .transcript()
+        .range(range)
         .map(|held| row(state, held, opts))
         .collect()
 }
@@ -439,20 +419,7 @@ pub fn chat_rows_for(state: &SessionState, keys: &[Key], opts: &ChatOptions) -> 
 fn row(state: &SessionState, held: &Held, opts: &ChatOptions) -> Row {
     let item = &held.item;
     let (kind, decision, failed) = kind_of(state, held);
-    let transcript = state.transcript();
-    let run = transcript.run_at(item.order).map(|run| RunInfo {
-        is_summary: run.newest == item.order,
-        anchor: transcript
-            .at(run.newest)
-            .map(subject_of)
-            .unwrap_or_default(),
-        newest: run.newest_key,
-        oldest: run.oldest_key,
-        reads: run.reads,
-        searches: run.searches,
-        len: run.len,
-        open_below: run.open_below,
-    });
+    let run = crate::run::run_of(state, held, &kind, failed);
     let is_tool = matches!(
         kind,
         RowKind::Explore { .. }
@@ -461,13 +428,19 @@ fn row(state: &SessionState, held: &Held, opts: &ChatOptions) -> Row {
             | RowKind::FileChange { .. }
             | RowKind::Background { .. }
     );
+    let kept = run.as_ref().is_some_and(|run| run.unresolved_failure);
     let collapsed = matches!(kind, RowKind::Hidden)
         || match opts.tools {
             ToolRows::ShowAll => false,
-            ToolRows::Hide => is_tool,
-            ToolRows::CollapseRuns { expanded } => run
-                .as_ref()
-                .is_some_and(|run| !run.is_summary && !run_expanded(state, item.order, expanded)),
+            ToolRows::Hide => is_tool && !kept,
+            ToolRows::Collapse { open } => run.as_ref().is_some_and(|run| {
+                let shown = if run.live {
+                    run.shows_live()
+                } else {
+                    run.is_last() || kept
+                };
+                !shown && !open.contains(&run.id)
+            }),
         };
     let asked = state
         .open_asks()
@@ -501,21 +474,7 @@ pub(crate) fn parent_of(held: &Held) -> Option<Key> {
     }
 }
 
-fn run_expanded(state: &SessionState, order: u64, expanded: &HashSet<Key>) -> bool {
-    let transcript = state.transcript();
-    let Some(run) = transcript.run_at(order) else {
-        return false;
-    };
-    // The expansion set is a handful of keys and a run can be thousands of
-    // calls long: look each key up rather than walking the run.
-    expanded.iter().any(|key| {
-        transcript
-            .get(key)
-            .is_some_and(|held| (run.oldest..=run.newest).contains(&held.item.order))
-    })
-}
-
-/// What a run's summary names: the newest member's subject.
+/// What a step acted on: a redo of a failed step acts on the same.
 pub(crate) fn subject_of(held: &Held) -> String {
     match &held.body {
         ItemBody::ClaudePty(wire::claude_pty_item::Kind::Tool(tool))
@@ -1065,7 +1024,7 @@ fn claude_tool(
                 }
             }
             "Agent" | "Task" => subagent(held, tool, &input),
-            name if is_task_tool(name) => RowKind::Hidden,
+            name if ui_state::is_task_tool(name) => RowKind::Hidden,
             name => RowKind::ToolCall {
                 server: String::new(),
                 tool: name.to_owned(),
@@ -1076,14 +1035,6 @@ fn claude_tool(
         }
     };
     (kind, decision, failed)
-}
-
-/// The task-list tools feed the strip, not the chat.
-fn is_task_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "TodoWrite" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet"
-    )
 }
 
 fn in_flight(view: ToolStateView) -> bool {
@@ -1480,24 +1431,4 @@ fn unified_lines(patch: &str) -> Vec<PatchLine> {
         lines.push(numbered(line, &mut old, &mut new));
     }
     lines
-}
-
-/// The subjects of the newest `n` members of the run whose summary sits at
-/// `order`, newest first: what a collapsed run names beside its counts.
-pub fn run_subjects(state: &SessionState, order: u64, n: usize) -> Vec<String> {
-    let transcript = state.transcript();
-    let Some(run) = transcript.run_at(order) else {
-        return Vec::new();
-    };
-    let mut subjects: Vec<String> = Vec::new();
-    for held in transcript.range(run.oldest..=run.newest).rev() {
-        let subject = subject_of(held);
-        if !subject.is_empty() && !subjects.contains(&subject) {
-            subjects.push(subject);
-        }
-        if subjects.len() == n {
-            break;
-        }
-    }
-    subjects
 }

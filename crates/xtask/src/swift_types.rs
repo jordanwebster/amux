@@ -773,11 +773,6 @@ mod tests {
             // draws: ui_view::patch_head is called by no bridge function.
             "PatchHead",
             "PatchLine",
-            // A run of tool steps folded to one line, which only the
-            // terminal draws: ui_view::stretch is called by no bridge
-            // function.
-            "Stretch",
-            "StretchCounts",
             // What a session knows for its fleet row: the runtime reads it
             // and hands it to ui_view::fleet_view, which returns the cards
             // the phone draws.

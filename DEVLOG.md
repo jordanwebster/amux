@@ -1,3 +1,29 @@
+2026-10-06 — **Tool steps fold one way.**
+There were two folds: the session's runs (two or more consecutive reads and
+searches, an attribute on rows the terminal drew as "Read 6 files ·
+searched 2") and the shared views' stretches (every tool step between two
+pieces of agent text, which the terminal asked for by position each frame
+and the phone never had). One remains, with the stretch's meaning and the
+run's delivery: a run is every tool step between two pieces of what the
+agent or the person put in the transcript, kept by the session's run index
+on every message and stated on each member row, so the phone gets it with
+the rows it already fetches. The session classifies each item for this
+(steps; thinking, retries, a subagent's own steps and items no client
+draws pass through; everything else ends a run), and a turn's end marks
+its steps changed, since that is when a failure nothing redid becomes
+unresolved. A row's `Run` carries the run's id (its oldest step), its last
+step, the step count, whether it is live, how many steps follow one of its
+newest few, whether this step is an unresolved failure, and on the newest
+step what the steps did. `ToolRows::Collapse { open }` folds a run to its
+newest step, keeps an unresolved failure, shows the newest three while
+live and everything for an open run; `Hide` keeps unresolved failures too.
+`stretch_at`, `stretch_steps`, `run_subjects` and the read-and-search
+summary are gone. The terminal draws from the attribute; a failure its
+turn left unresolved now stays in view where it ran, above the folded
+line, instead of under it. Its only golden change is the explore
+component losing the old summary row; every terminal story passes
+unchanged.
+
 2026-10-06 — **A new agent can start in a new worktree from the terminal.**
 The new agent's screen offers the worktree under Ctrl+S w (the edge then
 says "new worktree"), and the form for an agent used in its own terminal has

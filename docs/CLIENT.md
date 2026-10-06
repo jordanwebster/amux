@@ -322,8 +322,7 @@ each renderer. A client may also read the state directly.
 | `fleet_card(fleet, agent_id)`, `family_header(fleet, agent_id)` | One agent's card (name, branch, host, family counts), and a chat's family header. |
 | `away(fleet, local_host, host)`, `signed_out(fleet, local_host)` | Why a host is out of reach, as far as this machine can say. |
 | `review_doc(diff, patch, comments)` | A patch parsed into files, hunks and lines, with review comments placed. |
-| `patch_head(state, key, max)`, `run_subjects(state, order, n)` | The first lines of an edit's patch, and the subjects of a run's newest members. |
-| `stretch_at(state, order)`, `stretch_steps(state, stretch)` | The stretch of tool steps between two pieces of the agent's text that holds an item: its steps counted by what they did, whether a step still runs, whether text or the turn's end has closed it, and the failures its ended turn left unresolved; and its steps' orders. Thinking, retries, a subagent's own steps and items that draw nothing pass through a stretch. |
+| `patch_head(state, key, max)` | The first lines of an edit's patch. |
 
 A few facts exist so that a client can say what happened without reading further: an edit's ask says whether it
 `created` the file (so it reads "Wants to create"); a plan's row carries `edits_accepted` (approved with edits
@@ -332,18 +331,24 @@ a sent message can show what was pasted in place of the chip; a command's row ke
 head, for a step opened to show how it ended; and a background command's row its `duration_ms` once it has ended.
 
 **Rows are items.** `chat_rows` emits exactly one [`Row`](../crates/ui-view/src/rows.rs) per item, and the row id
-is always the item key. A `Row` carries its `kind` (a `RowKind`), its `run` (`RunInfo`, when it is in one), a
+is always the item key. A `Row` carries its `kind` (a `RowKind`), its `run` (a `Run`, when it is in one), a
 `collapsed` flag the client skips, the permission `decision` drawn on a tool call's own row, `attention` (an open
 ask points at it, or it failed) and a `parent` for a subagent's own step, which collapses under the subagent's
 row. The row kinds and what each draws are in [CHAT_VOCABULARY.md](CHAT_VOCABULARY.md).
 
-**Runs are attributes.** Grouping is neither in the state nor a row of its own. `RunInfo` on each member names
-the run's newest and oldest keys, its read and search counts, its length, the anchor subject, whether this row
-is the summary (the newest member), and `open_below`. `ChatOptions { tools }` chooses `ShowAll`, `Hide` or
-`CollapseRuns { expanded }`; both clients use the last, and a run is expanded if any member key is in the set, so
-expansion survives merges and growth. When a page merges eight more reads into a run of two, the summary row the
-reader is looking at keeps its id and grows its count while the older members insert above it; when a live call
-extends a run at the bottom, the summary moves to the newest item, where nothing is anchored.
+**Runs are attributes.** There is one fold for tool steps: a run is every tool step between two pieces of what
+the agent or the person put in the transcript. Thinking, retry notices, a subagent's own steps and items that draw
+nothing pass through a run; an ask, the agent's text, a prompt or a turn's end ends it. The session's run index
+keeps membership current on every message (and marks every member changed when its run moves), and `Run` on each
+member row says it: the run's `id` (its oldest held step, what a client holds to keep it open), its `last` step,
+`steps`, `live` (nothing has ended it yet), `open_below`, `recent` (for one of its newest few steps, how many
+follow), `unresolved_failure` (this step failed, its turn has ended and nothing later in the turn with the same
+subject succeeded) and, on the newest step's row only, `counts` of what its steps did. `ChatOptions { tools }`
+chooses `ShowAll`, `Hide` (every step hidden but an unresolved failure) or `Collapse { open }`: a run folds to its
+newest step, where a client draws its one line, keeping an unresolved failure; while live it shows its newest
+`LIVE_STEPS` steps; a run whose id is in `open` shows every step. When a page merges older steps into a run, the
+newest step the reader is looking at keeps its id and the run grows its count; when a live step extends a run, the
+newest step moves to it, where nothing is anchored.
 
 Three guarantees follow, and any list technique, including the inverted list chat apps use, can rely on them:
 row ids never move; the window changes only at its two edges; appends touch only items still open.

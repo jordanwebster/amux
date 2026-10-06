@@ -17,7 +17,7 @@ mod session;
 mod transcript;
 
 pub use body::{
-    AgentState, Explore, ItemBody, ItemClass, OpenAsk, ToolFacts, Usage, decode_snapshot,
+    AgentState, Fold, ItemBody, ItemClass, OpenAsk, ToolFacts, Usage, decode_snapshot, is_task_tool,
 };
 pub use fleet::{
     AgentKey, Attention, Families, FleetMsg, FleetState, HostId, agent_key, attention, parent_key,

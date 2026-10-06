@@ -18,7 +18,7 @@ use ui_view::{
     AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CardState, Choice, ChoiceOutcome,
     Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, LineKind, OptionView,
     PatchHead, PatchLine, PermissionGrant, PlanVerdict, QuestionView, QueuedRow, Resolution, Row,
-    RowKind, RunInfo, Scope, Segment, ToolStateView,
+    RowKind, Scope, Segment, ToolStateView,
 };
 use wire::{BlobRef, BoundaryKind, EnvelopeKind, SendState};
 
@@ -153,7 +153,7 @@ pub fn components(theme: Theme) -> Vec<Component> {
     out
 }
 
-/// A row as the feed draws it outside a stretch: the agent's and the
+/// A row as the feed draws it outside a run: the agent's and the
 /// person's words, turn ends, asks and steps in the feed's own drawing
 /// (thinking draws nothing), everything else as a row; a focused one with
 /// its bar.
@@ -638,16 +638,10 @@ const FOCUSED: RowState = RowState {
     joined: false,
 };
 
-/// What the layout would look up for an authored row: a collapsed run's
-/// newest subjects, and the first edit's landed patch.
+/// What the layout would look up for an authored row: the first edit's
+/// landed patch.
 fn facts(row: &Row) -> RowFacts {
     let mut facts = RowFacts::default();
-    if row.run.as_ref().is_some_and(|run| run.is_summary) {
-        facts.run_subjects = vec![
-            "crates/store/src/lib.rs".into(),
-            "crates/tui/src/app.rs".into(),
-        ];
-    }
     if let RowKind::FileChange { files, state } = &row.kind
         && *state == ToolStateView::Succeeded
         && files
@@ -745,21 +739,6 @@ fn row_sets() -> Vec<RowSet> {
         hidden: false,
         note: None,
     };
-    let mut run_summary = row(RowKind::Explore {
-        verb: ExploreVerb::Read,
-        subject: "crates/store/src/lib.rs".into(),
-        state: ToolStateView::Succeeded,
-    });
-    run_summary.run = Some(RunInfo {
-        newest: "k".into(),
-        oldest: "k0".into(),
-        reads: 6,
-        searches: 2,
-        len: 8,
-        anchor: "crates/store/src/lib.rs".into(),
-        is_summary: true,
-        open_below: false,
-    });
     let mut attention = row(RowKind::Prose {
         text: text("Waiting on you above."),
         streaming: false,
@@ -1066,7 +1045,7 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_explore",
-            "Exploration steps: a read, a search, a listing, a fetch and a web search, then a collapsed run's summary with its counts.",
+            "Exploration steps: a read, a search, a listing, a fetch and a web search.",
             vec![
                 (
                     row(RowKind::Explore {
@@ -1108,7 +1087,6 @@ fn row_sets() -> Vec<RowSet> {
                     }),
                     CLOSED,
                 ),
-                (run_summary, CLOSED),
             ],
         ),
         (

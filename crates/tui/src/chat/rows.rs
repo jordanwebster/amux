@@ -7,7 +7,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_view::{
     AnswerView, AskRow, AttachmentView, Decision, DecisionView, ExploreVerb, FileChangeView,
-    LineKind, PatchHead, PlanVerdict, QuestionView, Resolution, Row, RowKind, RunInfo, Segment,
+    LineKind, PatchHead, PlanVerdict, QuestionView, Resolution, Row, RowKind, Segment,
     ToolStateView,
 };
 use wire::{BoundaryKind, EnvelopeKind, SendState};
@@ -38,8 +38,6 @@ pub struct RowState {
 /// What a row shows beyond its own view value, looked up by the layout.
 #[derive(Clone, Debug)]
 pub struct RowFacts {
-    /// A collapsed run's newest subjects, newest first.
-    pub run_subjects: Vec<String>,
     /// A landed file change's patch head.
     pub patch: Option<PatchHead>,
     /// The leader key, for the keys a row names.
@@ -49,7 +47,6 @@ pub struct RowFacts {
 impl Default for RowFacts {
     fn default() -> Self {
         RowFacts {
-            run_subjects: Vec::new(),
             patch: None,
             leader: 'a',
         }
@@ -414,30 +411,6 @@ pub(crate) fn with_decision_after(meta: String, row: &Row, verb: &str) -> String
     }
 }
 
-fn run_summary(run: &RunInfo) -> String {
-    let mut parts = Vec::new();
-    let plus = if run.open_below { "+" } else { "" };
-    if run.reads > 0 {
-        parts.push(format!(
-            "{}{plus} read{}",
-            run.reads,
-            if run.reads == 1 { "" } else { "s" }
-        ));
-    }
-    if run.searches > 0 {
-        parts.push(format!(
-            "{}{plus} search{}",
-            run.searches,
-            if run.searches == 1 { "" } else { "es" }
-        ));
-    }
-    let other = run.len.saturating_sub(run.reads + run.searches);
-    if other > 0 || parts.is_empty() {
-        parts.push(format!("{other}{plus} more"));
-    }
-    parts.join(" · ")
-}
-
 pub(crate) fn explore_verb(verb: ExploreVerb) -> &'static str {
     match verb {
         ExploreVerb::Read => "Read",
@@ -489,29 +462,6 @@ fn body(
         return Vec::new();
     }
     let open = state.expanded;
-    if let Some(run) = row.run.as_ref().filter(|run| run.is_summary && !open) {
-        // "⌄ 2 reads · 1 search · sync/config.rs, sync/client.rs · C-a o expand"
-        let mut line = Line::from(Span::raw("  "));
-        push(&mut line, "⌄ ", theme.muted(), width);
-        push(&mut line, run_summary(run), theme.text(), width);
-        let hint = format!(" · ctrl+{} o expand", facts.leader);
-        let room = width.saturating_sub(text::str_width(&hint));
-        let mut subjects: Vec<String> = facts
-            .run_subjects
-            .iter()
-            .rev()
-            .map(|subject| tail(subject, 40))
-            .collect();
-        if subjects.is_empty() && !run.anchor.is_empty() {
-            subjects.push(tail(&run.anchor, 40));
-        }
-        if !subjects.is_empty() {
-            push(&mut line, " · ", theme.muted(), room);
-            push(&mut line, subjects.join(", "), theme.code(), room);
-        }
-        push(&mut line, hint, theme.muted(), width);
-        return vec![line];
-    }
     match &row.kind {
         RowKind::Prompt { text, steered } => {
             let mut lines = Vec::new();
@@ -721,25 +671,14 @@ fn body(
             state: tool_state,
         } => {
             let meta = with_decision(state_meta(*tool_state).unwrap_or_default().to_owned(), row);
-            let mut lines = vec![head(
+            vec![head(
                 state_glyph(*tool_state, "·", theme),
                 explore_verb(*verb),
                 subject,
                 &meta,
                 width,
                 theme,
-            )];
-            if let Some(run) = row.run.as_ref().filter(|run| run.is_summary && open) {
-                let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
-                push(
-                    &mut line,
-                    format!("⌃ {}", run_summary(run)),
-                    theme.muted(),
-                    width,
-                );
-                lines.push(line);
-            }
-            lines
+            )]
         }
         RowKind::Subagent {
             description,

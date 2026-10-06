@@ -56,7 +56,7 @@ kind is the [`ui_view::RowKind`](../crates/ui-view/src/rows.rs) variant the view
 
 | Item | Row kind | How it is drawn | claude_pty | claude_sdk | codex |
 |---|---|---|---|---|---|
-| Exploring | `Explore { verb, subject, state }` with `RunInfo` | Reads, searches, listings, fetches and web searches. Two or more in a row collapse into one summary, "4 reads · 2 searches", on the newest member; each stays its own item. | full | full | partial: web search is its own item; reads and searches are shell commands Codex labels |
+| Exploring | `Explore { verb, subject, state }` | Reads, searches, listings, fetches and web searches; each is a step of its run and folds with it. | full | full | partial: web search is its own item; reads and searches are shell commands Codex labels |
 | Command | `Command { command, state, exit_code, output_head, more_lines, duration_ms }` | "Ran cmd · time" with the output's first lines (`OUTPUT_HEAD_LINES` = 3), opening to the full output. A failure shows its exit code where the provider gives one. | partial: failed flag, no exit code | partial | full: exit code, duration, streamed output |
 | File edit | `FileChange { files, state }` | Each `FileRow` as path +N −N, opening that file's diff. | full: exact patch and counts | full | partial: per-file diff |
 | File created, deleted, moved | `FileChange` with `Created { lines }`, `Deleted`, `Moved { to }` | "Created path · 38 lines", "Deleted path", "Moved a → b". | partial: create and overwrite only | partial | full |

@@ -61,12 +61,8 @@ impl ItemBody {
                 Pty::ApiError(error) => api_error(error),
                 Pty::Boundary(_) => ItemClass::Boundary,
                 Pty::AgentMessage(_) => ItemClass::AgentMessage,
-                Pty::Compaction(_)
-                | Pty::CompactSummary(_)
-                | Pty::Task(_)
-                | Pty::Interruption(_)
-                | Pty::Slash(_)
-                | Pty::Unrecognized(_) => ItemClass::Other,
+                Pty::CompactSummary(_) | Pty::Task(_) | Pty::Interruption(_) => ItemClass::Silent,
+                Pty::Compaction(_) | Pty::Slash(_) | Pty::Unrecognized(_) => ItemClass::Other,
                 Pty::Ask(_) | Pty::Plan(_) => ItemClass::Ask,
             },
             ItemBody::ClaudeSdk(kind) => match kind {
@@ -84,8 +80,8 @@ impl ItemBody {
                 Sdk::Boundary(_) => ItemClass::Boundary,
                 Sdk::AgentMessage(_) => ItemClass::AgentMessage,
                 Sdk::Status(status) if status.status == "compacting" => ItemClass::Compacting,
-                Sdk::Status(_)
-                | Sdk::Task(_)
+                Sdk::Status(_) => ItemClass::Silent,
+                Sdk::Task(_)
                 | Sdk::Slash(_)
                 | Sdk::Unrecognized(_)
                 | Sdk::ModelSwitch(_)
@@ -106,11 +102,8 @@ impl ItemBody {
                 Codex::Error(error) => api_error(error),
                 Codex::Boundary(_) => ItemClass::Boundary,
                 Codex::AgentMessage(_) => ItemClass::AgentMessage,
-                Codex::McpStartup(_)
-                | Codex::Reroute(_)
-                | Codex::Unrecognized(_)
-                | Codex::TurnDiff(_)
-                | Codex::Verdict(_) => ItemClass::Other,
+                Codex::McpStartup(_) | Codex::TurnDiff(_) => ItemClass::Silent,
+                Codex::Reroute(_) | Codex::Unrecognized(_) | Codex::Verdict(_) => ItemClass::Other,
                 Codex::Ask(_) | Codex::Plan(_) => ItemClass::Ask,
             },
             ItemBody::Undecodable => ItemClass::Other,
@@ -145,15 +138,34 @@ pub enum ItemClass {
     /// decision, not activity: the activity line reads past it to the work
     /// it interrupted.
     Ask,
+    /// Drawn by no client: Claude's status and task bookkeeping, Codex's
+    /// tool-server start-up and turn diffs.
+    Silent,
     Other,
 }
 
+/// How an item stands toward a run of tool steps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+    /// A tool step: it is what a run is made of.
+    Step,
+    /// Inside a run it neither counts nor ends it: thinking, a retry
+    /// notice, a subagent's own step, anything drawn by no client.
+    Through,
+    /// Anything else the agent or the person put in the transcript ends a
+    /// run: its text, an ask, a prompt, a turn's end.
+    Break,
+}
+
 impl ItemClass {
-    /// The exploration kind when this item can join a run.
-    pub fn explore(&self) -> Option<Explore> {
+    pub fn fold(&self) -> Fold {
         match self {
-            ItemClass::Tool(tool) => tool.explore,
-            _ => None,
+            ItemClass::Tool(tool) if tool.child || tool.hidden => Fold::Through,
+            ItemClass::Tool(_) => Fold::Step,
+            ItemClass::Thinking { .. } | ItemClass::Retrying { .. } | ItemClass::Silent => {
+                Fold::Through
+            }
+            _ => Fold::Break,
         }
     }
 }
@@ -164,16 +176,19 @@ pub struct ToolFacts {
     pub in_flight: bool,
     /// A subagent call whose child has not finished.
     pub subagent: bool,
-    /// Set from the interpreter's exploration class, never from text.
-    pub explore: Option<Explore>,
+    /// A subagent's own step, drawn under its subagent's call.
+    pub child: bool,
+    /// Claude's task-list bookkeeping, drawn by no client: the task list
+    /// shows what it did.
+    pub hidden: bool,
 }
 
-/// What an exploration call did, for a run's counts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Explore {
-    Read,
-    Search,
-    Other,
+/// Claude's task-list tools, whose calls the task list stands for.
+pub fn is_task_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "TodoWrite" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet"
+    )
 }
 
 fn in_flight(state: i32) -> bool {
@@ -183,20 +198,7 @@ fn in_flight(state: i32) -> bool {
     )
 }
 
-/// What a call of this class did, if it only looked.
-fn explore(class: i32) -> Option<Explore> {
-    match wire::ToolClass::try_from(class) {
-        Ok(wire::ToolClass::Read) => Some(Explore::Read),
-        Ok(wire::ToolClass::Search | wire::ToolClass::WebSearch) => Some(Explore::Search),
-        Ok(wire::ToolClass::List | wire::ToolClass::Fetch | wire::ToolClass::Look) => {
-            Some(Explore::Other)
-        }
-        Ok(wire::ToolClass::Unspecified | wire::ToolClass::Consequential) | Err(_) => None,
-    }
-}
-
 fn claude_tool(tool: &wire::ToolCall) -> ItemClass {
-    let explore = explore(tool.class);
     ItemClass::Tool(ToolFacts {
         in_flight: in_flight(tool.state),
         subagent: tool
@@ -204,17 +206,18 @@ fn claude_tool(tool: &wire::ToolCall) -> ItemClass {
             .as_ref()
             .is_some_and(|progress| !progress.finished)
             && in_flight(tool.state),
-        explore,
+        child: !tool.parent_key.is_empty(),
+        hidden: is_task_tool(&tool.name),
     })
 }
 
 fn codex_work(work: &wire::Work) -> ItemClass {
     use wire::work::Of;
-    let explore = explore(work.class);
     ItemClass::Tool(ToolFacts {
         in_flight: in_flight(work.state),
         subagent: matches!(work.of, Some(Of::Collab(_))) && in_flight(work.state),
-        explore,
+        child: false,
+        hidden: false,
     })
 }
 

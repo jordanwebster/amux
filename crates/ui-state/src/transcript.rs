@@ -6,7 +6,7 @@ use std::ops::RangeInclusive;
 use wire::{Append, Item, Kind};
 
 use crate::Key;
-use crate::body::{Explore, ItemBody, ItemClass};
+use crate::body::{Fold, ItemBody, ItemClass};
 
 /// One held item, decoded once per revision.
 #[derive(Clone, Debug, PartialEq)]
@@ -128,6 +128,15 @@ impl Transcript {
         self.runs.run_at(order, self)
     }
 
+    /// Whether the turn the item at `order` belongs to has ended: the
+    /// first prompt, steer or turn end held after it is a turn end.
+    pub fn turn_ended_after(&self, order: u64) -> bool {
+        self.items
+            .range(order + 1..)
+            .find(|(_, held)| bounds_turn(&held.class))
+            .is_some_and(|(_, held)| held.class == ItemClass::Turn)
+    }
+
     /// Applies one full item under the window rules and returns the keys whose
     /// rows may differ.
     pub(crate) fn upsert(&mut self, item: Item, changed: &mut Changed) {
@@ -185,9 +194,9 @@ impl Transcript {
         if exhausted && !self.exhausted {
             // Ruling out older history clears the open-below mark of the run
             // at the low edge.
-            let before = self.oldest_held().and_then(|oldest| self.run_at(oldest));
+            let before = self.runs.first(self);
             self.exhausted = true;
-            let after = self.oldest_held().and_then(|oldest| self.run_at(oldest));
+            let after = self.runs.first(self);
             if before != after
                 && let Some(run) = after
             {
@@ -222,6 +231,7 @@ impl Transcript {
         if self.items.len() <= cap {
             return;
         }
+        let first_before = self.runs.first(self);
         while self.items.len() > cap {
             let Some((_, held)) = self.items.pop_first() else {
                 break;
@@ -243,7 +253,7 @@ impl Transcript {
         let cut_run = self
             .runs
             .containing(oldest)
-            .filter(|(start, segment)| **start < oldest && segment.len >= 2)
+            .filter(|(start, _)| **start < oldest)
             .map(|(_, segment)| segment.end);
         let mut runs = std::mem::take(&mut self.runs);
         runs.cut_below(oldest, self);
@@ -253,8 +263,15 @@ impl Transcript {
                 changed.key(&held.item.key);
             }
         }
-        if let Some(run) = self.run_at(oldest) {
-            self.runs.members(&run, self, changed);
+        if let Some(run) = self.runs.first(self) {
+            // The same run is the one ending at the same step; any other was
+            // ended below by something the cut took.
+            let was_open = first_before
+                .filter(|before| before.newest == run.newest)
+                .is_some_and(|before| before.open_below);
+            if run.open_below != was_open {
+                self.runs.members(&run, self, changed);
+            }
         }
     }
 
@@ -297,7 +314,11 @@ impl Transcript {
     fn insert(&mut self, item: Item, changed: &mut Changed) {
         let order = item.order;
         let held = Held::new(self.kind, item);
-        let before = self.runs.capture(order, self);
+        // What passes through a run, arriving at the head, moves none.
+        let quiet =
+            held.class.fold() == Fold::Through && self.head().is_none_or(|head| order > head);
+        let turns = bounds_turn(&held.class).then(|| self.turn_steps(order));
+        let before = (!quiet).then(|| self.runs.capture(order, self));
         self.by_key.insert(held.item.key.clone(), order);
         if !held.item.input_id.is_empty() {
             self.by_input
@@ -305,8 +326,39 @@ impl Transcript {
         }
         changed.key(&held.item.key);
         self.items.insert(order, held);
-        self.reindex(order, true);
-        self.runs.compare(before, self, changed);
+        if let Some(before) = before {
+            self.reindex(order, true);
+            self.runs.compare(before, self, changed);
+        }
+        if let Some(turns) = turns {
+            self.turn_steps_moved(turns, changed);
+        }
+    }
+
+    /// The steps before `order` back to the prompt, steer or turn end before
+    /// it, each with whether its turn has ended: what an item bounding
+    /// turns at `order` can change.
+    fn turn_steps(&self, order: u64) -> Vec<(u64, bool)> {
+        let mut steps = Vec::new();
+        for held in self.range(0..=order.saturating_sub(1)).rev() {
+            if bounds_turn(&held.class) {
+                break;
+            }
+            if matches!(held.class, ItemClass::Tool(_)) {
+                steps.push((held.item.order, self.turn_ended_after(held.item.order)));
+            }
+        }
+        steps
+    }
+
+    /// A turn's end settles which of its failed steps nothing redid: the
+    /// steps whose turn now reads ended, or no longer does.
+    fn turn_steps_moved(&self, before: Vec<(u64, bool)>, changed: &mut Changed) {
+        for (order, ended) in before {
+            if self.turn_ended_after(order) != ended {
+                changed.key(&self.items[&order].item.key);
+            }
+        }
     }
 
     fn replace(&mut self, order: u64, item: Item, changed: &mut Changed) {
@@ -319,9 +371,12 @@ impl Transcript {
             self.by_input
                 .insert(held.item.input_id.clone(), held.item.key.clone());
         }
-        let explore_moved = old.class.explore() != held.class.explore();
+        let fold_moved = old.class.fold() != held.class.fold();
+        let turns = (old.class != held.class
+            && (bounds_turn(&old.class) || bounds_turn(&held.class)))
+        .then(|| self.turn_steps(order));
         changed.key(&held.item.key);
-        if explore_moved {
+        if fold_moved {
             let before = self.runs.capture(order, self);
             self.items.insert(order, held);
             self.reindex(order, false);
@@ -329,7 +384,18 @@ impl Transcript {
         } else {
             self.items.insert(order, held);
         }
+        if let Some(turns) = turns {
+            self.turn_steps_moved(turns, changed);
+        }
     }
+}
+
+/// A prompt, a steer or a turn's end: what says where a turn ends.
+fn bounds_turn(class: &ItemClass) -> bool {
+    matches!(
+        class,
+        ItemClass::Prompt | ItemClass::Steer | ItemClass::Turn
+    )
 }
 
 /// Keys whose rows may differ, in first-touched order, without repeats.
@@ -351,33 +417,36 @@ impl Changed {
     }
 }
 
-/// A run: two or more consecutive held exploration calls. The newest member
-/// is the visible summary. `open_below` marks a run that starts at the
-/// oldest held item while older history exists, so it may continue below.
+/// A run: the tool steps between two pieces of what the agent or the
+/// person put in the transcript, with whatever passes through between them
+/// (see [`Fold`]). Every held item from its oldest step to its newest is in
+/// it. `open_below` marks a run that may continue below the window: older
+/// history exists and nothing below its oldest step ends it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Run {
     pub oldest: u64,
     pub newest: u64,
     pub oldest_key: Key,
     pub newest_key: Key,
-    pub len: u32,
-    pub reads: u32,
-    pub searches: u32,
+    pub steps: u32,
+    /// Something that ends a run follows its newest step.
+    pub closed: bool,
     pub open_below: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Segment {
+    /// The newest step.
     end: u64,
-    len: u32,
-    reads: u32,
-    searches: u32,
+    steps: u32,
+    closed: bool,
 }
 
 /// Run membership, derived from the transcript and kept current on each
-/// message: maximal segments of consecutive held exploration items, keyed by
-/// their oldest order. A head append extends the last segment in place; a
-/// change inside the window rebuilds only the segments around it.
+/// message: one segment per run, keyed by its oldest step. A step at the
+/// head extends the last open run or starts one, and anything ending a run
+/// closes it, in place; a change inside the window rescans only the runs
+/// around it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RunIndex {
     segments: BTreeMap<u64, Segment>,
@@ -393,31 +462,41 @@ impl RunIndex {
     /// upkeep is tested against.
     pub fn rebuild(transcript: &Transcript) -> RunIndex {
         let mut index = RunIndex::default();
-        if let (Some(lo), Some(hi)) = (transcript.oldest_held(), transcript.head()) {
-            index.scan(lo..=hi, transcript);
+        if let Some(lo) = transcript.oldest_held() {
+            index.scan(lo, u64::MAX, transcript);
         }
         index
     }
 
     pub fn run_at(&self, order: u64, transcript: &Transcript) -> Option<Run> {
         let (&start, segment) = self.containing(order)?;
-        (segment.len >= 2).then(|| Run {
+        let oldest_held = transcript.oldest_held()?;
+        let open_below = transcript.has_older()
+            && transcript
+                .items
+                .range(oldest_held..start)
+                .all(|(_, held)| held.class.fold() != Fold::Break);
+        Some(Run {
             oldest: start,
             newest: segment.end,
             oldest_key: transcript.items[&start].item.key.clone(),
             newest_key: transcript.items[&segment.end].item.key.clone(),
-            len: segment.len,
-            reads: segment.reads,
-            searches: segment.searches,
-            open_below: transcript.oldest_held() == Some(start) && transcript.has_older(),
+            steps: segment.steps,
+            closed: segment.closed,
+            open_below,
         })
     }
 
-    /// Every run, oldest first, as (oldest order, newest order).
+    /// The oldest held run: the one that may read open below.
+    fn first(&self, transcript: &Transcript) -> Option<Run> {
+        let (&start, _) = self.segments.iter().next()?;
+        self.run_at(start, transcript)
+    }
+
+    /// Every run, oldest first, as (oldest step, newest step).
     pub fn spans(&self) -> impl Iterator<Item = RangeInclusive<u64>> + '_ {
         self.segments
             .iter()
-            .filter(|(_, segment)| segment.len >= 2)
             .map(|(&start, segment)| start..=segment.end)
     }
 
@@ -428,121 +507,123 @@ impl RunIndex {
             .filter(|(_, segment)| segment.end >= order)
     }
 
-    /// The span a change at `order` can affect: the segments of its held
-    /// neighbours and of the order itself.
-    fn span(&self, order: u64, transcript: &Transcript) -> RangeInclusive<u64> {
-        let below = transcript.items.range(..order).next_back().map(|(&o, _)| o);
-        let above = transcript.items.range(order + 1..).next().map(|(&o, _)| o);
-        let mut lo = below.unwrap_or(order).min(order);
-        let mut hi = above.unwrap_or(order).max(order);
-        for probe in [below, Some(order), above].into_iter().flatten() {
-            if let Some((&start, segment)) = self.containing(probe) {
-                lo = lo.min(start);
-                hi = hi.max(segment.end);
-            }
-        }
+    /// Where a change at `order` can move runs: from the oldest step of the
+    /// run at or before it to the newest step of the run after it.
+    fn span(&self, order: u64) -> RangeInclusive<u64> {
+        let before = self.segments.range(..=order).next_back();
+        let after = self.segments.range(order + 1..).next();
+        let lo = before.map_or(order, |(&start, _)| start);
+        let hi = [
+            Some(order),
+            before.map(|(_, segment)| segment.end),
+            after.map(|(_, segment)| segment.end),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(order);
         lo..=hi
     }
 
     fn capture(&self, order: u64, transcript: &Transcript) -> Captured {
-        let span = self.span(order, transcript);
         let runs = transcript
             .items
-            .range(span.clone())
+            .range(self.span(order))
             .map(|(&o, _)| (o, self.run_at(o, transcript)))
             .collect();
         Captured { runs }
     }
 
     fn reindex(&mut self, order: u64, inserted: bool, transcript: &Transcript) {
-        // Fast path: a new head item that continues or starts the last run.
+        // Fast path: a new head item extends, starts or closes the last run.
         if inserted && transcript.head() == Some(order) {
-            let below = transcript.items.range(..order).next_back().map(|(&o, _)| o);
-            let explore = transcript.items[&order].class.explore();
             let last = self.segments.iter_mut().next_back();
-            match (explore, last) {
-                (None, _) => return,
-                (Some(kind), Some((_, segment))) if Some(segment.end) == below => {
+            match (transcript.items[&order].class.fold(), last) {
+                (Fold::Through, _) => {}
+                (Fold::Step, Some((_, segment))) if !segment.closed => {
                     segment.end = order;
-                    segment.len += 1;
-                    count(segment, kind, 1);
-                    return;
+                    segment.steps += 1;
                 }
-                (Some(kind), _) => {
-                    let mut segment = Segment {
+                (Fold::Step, _) => {
+                    let segment = Segment {
                         end: order,
-                        len: 1,
-                        reads: 0,
-                        searches: 0,
+                        steps: 1,
+                        closed: false,
                     };
-                    count(&mut segment, kind, 1);
                     self.segments.insert(order, segment);
-                    return;
                 }
+                (Fold::Break, Some((_, segment))) => segment.closed = true,
+                (Fold::Break, None) => {}
             }
+            return;
         }
-        let span = self.span(order, transcript);
-        self.scan(span, transcript);
+        let span = self.span(order);
+        self.scan(*span.start(), *span.end(), transcript);
     }
 
-    /// Forgets rows below `oldest`: segments that started there go, and one
+    /// Forgets rows below `oldest`: runs that started there go, and one
     /// that reached past it is scanned again from `oldest`.
     fn cut_below(&mut self, oldest: u64, transcript: &Transcript) {
-        let cut: Vec<u64> = self
+        let cut: Vec<(u64, Segment)> = self
             .segments
             .range(..oldest)
-            .map(|(&start, _)| start)
+            .map(|(&start, segment)| (start, *segment))
             .collect();
-        for start in cut {
-            if let Some(segment) = self.segments.remove(&start)
-                && segment.end >= oldest
-            {
-                self.scan(oldest..=segment.end, transcript);
+        for (start, segment) in cut {
+            self.segments.remove(&start);
+            if segment.end >= oldest {
+                self.scan(oldest, segment.end, transcript);
             }
         }
     }
 
-    /// Replaces every segment inside `span` with a fresh scan of it.
-    fn scan(&mut self, span: RangeInclusive<u64>, transcript: &Transcript) {
-        let starts: Vec<u64> = self
-            .segments
-            .range(span.clone())
-            .map(|(&start, _)| start)
-            .collect();
-        for start in starts {
-            self.segments.remove(&start);
-        }
+    /// Scans from `lo` up to the first item at or past `through` that ends
+    /// a run, or the head, and replaces every run starting in what it read.
+    fn scan(&mut self, lo: u64, through: u64, transcript: &Transcript) {
+        let mut found = Vec::new();
         let mut open: Option<(u64, Segment)> = None;
-        for (&order, held) in transcript.items.range(span) {
-            match held.class.explore() {
-                Some(kind) => {
+        let mut read = lo;
+        for (&order, held) in transcript.items.range(lo..) {
+            read = order;
+            match held.class.fold() {
+                Fold::Step => {
                     let (_, segment) = open.get_or_insert((
                         order,
                         Segment {
                             end: order,
-                            len: 0,
-                            reads: 0,
-                            searches: 0,
+                            steps: 0,
+                            closed: false,
                         },
                     ));
                     segment.end = order;
-                    segment.len += 1;
-                    count(segment, kind, 1);
+                    segment.steps += 1;
                 }
-                None => {
-                    if let Some((start, segment)) = open.take() {
-                        self.segments.insert(start, segment);
+                Fold::Through => {}
+                Fold::Break => {
+                    if let Some((start, mut segment)) = open.take() {
+                        segment.closed = true;
+                        found.push((start, segment));
+                    }
+                    if order >= through {
+                        break;
                     }
                 }
             }
         }
-        if let Some((start, segment)) = open {
-            self.segments.insert(start, segment);
+        found.extend(open);
+        let stale: Vec<u64> = self
+            .segments
+            .range(lo..=read)
+            .map(|(&start, _)| start)
+            .collect();
+        for start in stale {
+            self.segments.remove(&start);
         }
+        self.segments.extend(found);
     }
 
     /// Every row whose run changed. A change at one order only touches the
-    /// segments of that order and its held neighbours, all captured before it.
+    /// runs beside it, all captured before it.
     fn compare(&self, before: Captured, transcript: &Transcript, changed: &mut Changed) {
         for (order, run) in &before.runs {
             if transcript.items.contains_key(order) && self.run_at(*order, transcript) != *run {
@@ -555,13 +636,5 @@ impl RunIndex {
         for held in transcript.range(run.oldest..=run.newest) {
             changed.key(&held.item.key);
         }
-    }
-}
-
-fn count(segment: &mut Segment, kind: Explore, by: u32) {
-    match kind {
-        Explore::Read => segment.reads += by,
-        Explore::Search => segment.searches += by,
-        Explore::Other => {}
     }
 }

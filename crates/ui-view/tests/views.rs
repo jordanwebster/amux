@@ -169,11 +169,9 @@ fn row_ids_never_move_and_rows_by_keys_equal_rows_by_range() {
             let mut head = start;
             state.update(event(session_event::Of::Item(read(kind, head, 1))));
             state.update(caught_up());
-            let expanded = HashSet::new();
+            let open = HashSet::new();
             let opts = ChatOptions {
-                tools: ToolRows::CollapseRuns {
-                    expanded: &expanded,
-                },
+                tools: ToolRows::Collapse { open: &open },
             };
             for revision in 2..60u64 {
                 let before: Vec<Key> = all_rows(&state, &opts)
@@ -233,17 +231,18 @@ fn row_ids_never_move_and_rows_by_keys_equal_rows_by_range() {
                     .cloned()
                     .collect();
                 assert_eq!(by_keys, by_range);
-                // open_below only where a run starts at the oldest held row
-                // and older history exists.
+                // open_below only for the oldest run, and only while older
+                // history exists.
                 let transcript = state.transcript();
+                let first = rows
+                    .iter()
+                    .find_map(|row| row.run.as_ref())
+                    .map(|run| &run.id);
                 for row in &rows {
                     if let Some(run) = &row.run
                         && run.open_below
                     {
-                        assert_eq!(
-                            transcript.get(&run.oldest).unwrap().item.order,
-                            transcript.oldest_held().unwrap()
-                        );
+                        assert_eq!(Some(&run.id), first);
                         assert!(transcript.has_older());
                     }
                 }
@@ -253,7 +252,7 @@ fn row_ids_never_move_and_rows_by_keys_equal_rows_by_range() {
 }
 
 #[test]
-fn a_range_extends_across_a_run_at_either_edge() {
+fn a_folded_run_draws_at_its_newest_step_and_opens_by_its_id() {
     for kind in KINDS {
         let mut state = SessionState::new(agent(kind), CAP);
         state.update(snapshot(kind, Phase::Working, vec![], vec![]));
@@ -266,30 +265,24 @@ fn a_range_extends_across_a_run_at_either_edge() {
             state.update(event(session_event::Of::Item(read(kind, order, order))));
         }
         state.update(event(session_event::Of::Item(item(kind, 9, 9, None))));
-        let expanded = HashSet::new();
+        let none = HashSet::new();
         let opts = ChatOptions {
-            tools: ToolRows::CollapseRuns {
-                expanded: &expanded,
-            },
+            tools: ToolRows::Collapse { open: &none },
         };
         let rows = chat_rows(&state, 2..=5, &opts);
         let orders: Vec<u64> = rows.iter().map(|row| row.order).collect();
-        assert_eq!(
-            orders,
-            vec![2, 3, 4, 5, 6, 7, 8],
-            "the summary at 8 is always included"
-        );
-        let summary = rows.last().unwrap();
-        let run = summary.run.as_ref().unwrap();
-        assert!(run.is_summary && !summary.collapsed);
-        assert_eq!((run.len, run.reads), (5, 5));
-        assert!(rows[2..6].iter().all(|row| row.collapsed));
-        // Expanded by any member key.
-        let expanded: HashSet<Key> = ["k5".to_owned()].into();
+        assert_eq!(orders, vec![2, 3, 4, 5], "a range is its own rows");
+        let rows = chat_rows(&state, 1..=9, &opts);
+        let last = rows.iter().find(|row| row.order == 8).unwrap();
+        let run = last.run.as_ref().unwrap();
+        assert!(run.is_last() && !last.collapsed);
+        assert_eq!((run.id.as_str(), run.steps), ("k4", 5));
+        assert_eq!(run.counts.as_ref().unwrap().reads, 5);
+        assert!(rows[3..7].iter().all(|row| row.collapsed));
+        // Opened by its id.
+        let open: HashSet<Key> = ["k4".to_owned()].into();
         let opts = ChatOptions {
-            tools: ToolRows::CollapseRuns {
-                expanded: &expanded,
-            },
+            tools: ToolRows::Collapse { open: &open },
         };
         assert!(
             chat_rows(&state, 4..=8, &opts)
@@ -1528,7 +1521,6 @@ fn a_landed_edit_shows_its_numbered_patch_head_and_a_run_its_newest_subjects() {
         "still running"
     );
     assert_eq!(patch_head(&state, &"k1".to_owned(), 3), None, "not an edit");
-    assert_eq!(run_subjects(&state, 3, 2), vec!["src/c.rs", "src/b.rs"]);
 
     // Codex's patch is a unified diff, numbered from its hunk header.
     let mut codex = SessionState::new(agent(Kind::Codex), CAP);

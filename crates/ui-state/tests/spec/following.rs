@@ -99,7 +99,7 @@ fn a_trim_clears_the_exhausted_mark_and_opens_the_low_run_below() {
         let outcome = apply_block(&mut state, ev_item(read(kind, 7, 7)));
         assert!(state.transcript().has_older());
         let run = state.transcript().run_at(4).unwrap();
-        assert_eq!((run.oldest, run.newest, run.len), (4, 7, 4));
+        assert_eq!((run.oldest, run.newest, run.steps), (4, 7, 4));
         assert!(
             run.open_below,
             "the run at the new low edge reads open below"

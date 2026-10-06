@@ -5,8 +5,8 @@
 //! theme and animation belong to each renderer.
 //!
 //! Rows are items: the row id is the item key and never moves, and a run of
-//! exploration calls is an attribute on its members, so paging and
-//! streaming only ever add ids at the two edges.
+//! tool steps is an attribute on its members, so paging and streaming only
+//! ever add ids at the two edges.
 
 mod ask;
 mod composer;
@@ -14,9 +14,9 @@ mod fleet;
 mod overview;
 mod review;
 mod rows;
+mod run;
 mod segments;
 mod settings;
-mod stretch;
 
 pub use ask::{
     Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, OptionView, Pick, QuestionResponse,
@@ -40,12 +40,11 @@ pub use review::{DiffLine, FileStatus, Hunk, LineKind, ReviewDoc, ReviewFile, re
 pub use rows::{
     AnswerView, AskRow, ChatOptions, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow,
     Granted, OUTPUT_HEAD_LINES, PatchHead, PatchLine, PermissionGrant, PlanVerdict, Resolution,
-    Row, RowKind, RunInfo, ToolRows, ToolStateView, chat_rows, chat_rows_for, patch_head,
-    run_subjects,
+    Row, RowKind, ToolRows, ToolStateView, chat_rows, chat_rows_for, patch_head,
 };
+pub use run::{LIVE_STEPS, Run, RunCounts};
 pub use segments::{AttachmentView, Segment, segments};
 pub use settings::{
     CommandView, EffortChoice, ModeChoice, ModelChoice, PermissionChoice, SettingChange,
     SettingsView, effort_in_force, setting_input, settings,
 };
-pub use stretch::{Stretch, StretchCounts, stretch_at, stretch_steps};

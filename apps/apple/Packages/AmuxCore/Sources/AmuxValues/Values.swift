@@ -557,8 +557,10 @@ public struct AskCard: Codable, Hashable, Sendable {
     /// A note may go out with each question's answer. Terminal Claude has
     /// no place to type one, so it takes none.
     public var questionNote: Bool
-    /// A question may be left unanswered. Terminal Claude's menu takes an
-    /// answer to every question.
+    /// A question may be left unanswered. Terminal Claude's form takes one
+    /// only when it asks several questions: it then ends in Claude's review
+    /// screen, which submits with some unanswered, while a lone question is
+    /// submitted by answering it.
     public var questionSkip: Bool
     /// The person may reply in their own words instead of answering the
     /// questions. Not for the provider's own dialogs, outside any turn.
@@ -3609,7 +3611,7 @@ public struct Row: Codable, Hashable, Sendable {
     public var order: UInt64
     public var atMs: Int64
     public var kind: RowKind
-    /// The client skips a collapsed row: an older run member, or a tool row
+    /// The client skips a collapsed row: inside a folded run, or a tool row
     /// when tool rows are hidden, or a row that carries nothing to draw.
     public var collapsed: Bool
     /// Drawn in the attention ink: an open ask points at it, or it failed.
@@ -3619,9 +3621,9 @@ public struct Row: Codable, Hashable, Sendable {
     /// A subagent's own step: collapsed under the subagent's row, which
     /// opens to it.
     public var parent: String?
-    public var run: RunInfo?
+    public var run: Run?
 
-    public init(id: String, order: UInt64, atMs: Int64, kind: RowKind, collapsed: Bool, attention: Bool, decision: Decision?, parent: String?, run: RunInfo?) {
+    public init(id: String, order: UInt64, atMs: Int64, kind: RowKind, collapsed: Bool, attention: Bool, decision: Decision?, parent: String?, run: Run?) {
         self.id = id
         self.order = order
         self.atMs = atMs
@@ -4141,39 +4143,77 @@ public struct RowOptions: Codable, Hashable, Sendable {
     }
 }
 
-public struct RunInfo: Codable, Hashable, Sendable {
-    public var newest: String
-    public var oldest: String
-    public var reads: UInt32
-    public var searches: UInt32
-    public var len: UInt32
-    /// What the summary names: the newest member's subject.
-    public var anchor: String
-    public var isSummary: Bool
-    /// The run starts at the oldest held row and older history exists, so it
-    /// may continue below: the summary reads "40+".
+/// A row's place in its run.
+public struct Run: Codable, Hashable, Sendable {
+    /// The run's oldest held step: what a client holds to keep it open.
+    public var id: String
+    /// Its newest step, where a folded run draws its one line.
+    public var last: String
+    public var steps: UInt32
+    /// Nothing but steps follows it yet: the agent is still at it.
+    public var live: Bool
+    /// It starts at the oldest held rows and older history exists, so it may
+    /// continue below: its counts are a floor.
     public var openBelow: Bool
+    /// This step failed and nothing later in its turn redid it, and the
+    /// turn has ended: it stays in view when the run folds.
+    public var unresolvedFailure: Bool
+    /// What the run's steps did, on its newest step's row only.
+    public var counts: RunCounts?
+    /// For one of the run's newest steps, how many steps follow it (none for
+    /// the newest); absent for the rest.
+    public var recent: UInt32?
 
-    public init(newest: String, oldest: String, reads: UInt32, searches: UInt32, len: UInt32, anchor: String, isSummary: Bool, openBelow: Bool) {
-        self.newest = newest
-        self.oldest = oldest
-        self.reads = reads
-        self.searches = searches
-        self.len = len
-        self.anchor = anchor
-        self.isSummary = isSummary
+    public init(id: String, last: String, steps: UInt32, live: Bool, openBelow: Bool, unresolvedFailure: Bool, counts: RunCounts?, recent: UInt32?) {
+        self.id = id
+        self.last = last
+        self.steps = steps
+        self.live = live
         self.openBelow = openBelow
+        self.unresolvedFailure = unresolvedFailure
+        self.counts = counts
+        self.recent = recent
     }
 
     private enum CodingKeys: String, CodingKey {
-        case newest
-        case oldest
+        case id
+        case last
+        case steps
+        case live
+        case openBelow = "open_below"
+        case unresolvedFailure = "unresolved_failure"
+        case counts
+        case recent
+    }
+}
+
+/// What a run's steps did.
+public struct RunCounts: Codable, Hashable, Sendable {
+    public var commands: UInt32
+    /// Files changed, counting each file of a multi-file change.
+    public var edits: UInt32
+    public var reads: UInt32
+    public var searches: UInt32
+    public var subagents: UInt32
+    /// Tool-server calls, fetches, listings and the rest.
+    public var other: UInt32
+
+    public init(commands: UInt32, edits: UInt32, reads: UInt32, searches: UInt32, subagents: UInt32, other: UInt32) {
+        self.commands = commands
+        self.edits = edits
+        self.reads = reads
+        self.searches = searches
+        self.subagents = subagents
+        self.other = other
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case commands
+        case edits
         case reads
         case searches
-        case len
-        case anchor
-        case isSummary = "is_summary"
-        case openBelow = "open_below"
+        case subagents
+        case other
     }
 }
 
@@ -4724,16 +4764,15 @@ public struct TasksView: Codable, Hashable, Sendable {
 public enum ToolRowsOption: Codable, Hashable, Sendable {
     case showAll
     case hide
-    /// A run collapses into its newest member unless one of its keys is
-    /// here.
-    case collapseRuns(expanded: [String])
+    /// Each run folds to its newest step unless its id is here.
+    case collapse(open: [String])
 
     private enum Tag: String, CodingKey {
-        case collapseRuns = "CollapseRuns"
+        case collapse = "Collapse"
     }
 
-    private enum CollapseRunsKeys: String, CodingKey {
-        case expanded
+    private enum CollapseKeys: String, CodingKey {
+        case open
     }
 
     public init(from decoder: any Decoder) throws {
@@ -4757,11 +4796,11 @@ public enum ToolRowsOption: Codable, Hashable, Sendable {
                     debugDescription: "a ToolRowsOption names exactly one variant"))
         }
         switch _tag {
-        case .collapseRuns:
+        case .collapse:
             let _fields = try _container.nestedContainer(
-                keyedBy: CollapseRunsKeys.self, forKey: .collapseRuns)
-            self = .collapseRuns(
-                expanded: try _fields.decode([String].self, forKey: .expanded))
+                keyedBy: CollapseKeys.self, forKey: .collapse)
+            self = .collapse(
+                open: try _fields.decode([String].self, forKey: .open))
         }
     }
 
@@ -4773,10 +4812,10 @@ public enum ToolRowsOption: Codable, Hashable, Sendable {
         case .hide:
             var _container = encoder.singleValueContainer()
             try _container.encode("Hide")
-        case .collapseRuns(let expanded):
+        case .collapse(let open):
             var _container = encoder.container(keyedBy: Tag.self)
-            var _fields = _container.nestedContainer(keyedBy: CollapseRunsKeys.self, forKey: .collapseRuns)
-            try _fields.encode(expanded, forKey: .expanded)
+            var _fields = _container.nestedContainer(keyedBy: CollapseKeys.self, forKey: .collapse)
+            try _fields.encode(open, forKey: .open)
         }
     }
 }

@@ -29,16 +29,18 @@
 ## 52 recorded 48: fact Transcript type=assistant uuid=babb0fd4-46ee-43c0-a44c-b5d929f8a9ad
   row   11 babb0fd4-46ee-43c0-a44c-b5d929f8a9ad Thinking { text: "", open: false, duration_ms: Some(1455) }
 ## 54 recorded 50: fact Transcript type=assistant uuid=024bb248-7211-4c68-b7c3-7af04d70a3a0
-  row   12 toolu_013jKhDLNrgrMEgFPXnugyHG Command { command: "sleep 3", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
+  row   12 toolu_013jKhDLNrgrMEgFPXnugyHG Command { command: "sleep 3", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } run[toolu_013jKhDLNrgrMEgFPXnugyHG..toolu_013jKhDLNrgrMEgFPXnugyHG x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: 0 }]
   composer Send activity=Some(Running { key: "toolu_013jKhDLNrgrMEgFPXnugyHG" }) queue=[] outbox=[]
 ## 56 recorded 52: fact Transcript type=user uuid=d98ca0de-ef5b-48c7-8e78-d97d98b672bb
-  row   12 toolu_013jKhDLNrgrMEgFPXnugyHG Command { command: "sleep 3", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(3511) }
+  row   12 toolu_013jKhDLNrgrMEgFPXnugyHG Command { command: "sleep 3", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(3511) } run[toolu_013jKhDLNrgrMEgFPXnugyHG..toolu_013jKhDLNrgrMEgFPXnugyHG x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, ot…
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 64 recorded 60: fact Transcript type=assistant uuid=d2d590ca-ada1-4446-9283-9a90e27caa78
   row   13 d2d590ca-ada1-4446-9283-9a90e27caa78 Thinking { text: "", open: false, duration_ms: Some(4999) }
 ## 66 recorded 62: fact Transcript type=assistant uuid=1fa304dd-838d-48a8-bc36-dec87025c783
+  row   12 toolu_013jKhDLNrgrMEgFPXnugyHG Command { command: "sleep 3", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(3511) } run[toolu_013jKhDLNrgrMEgFPXnugyHG..toolu_013jKhDLNrgrMEgFPXnugyHG x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: …
   row   14 1fa304dd-838d-48a8-bc36-dec87025c783 Prose { text: [Text("BUSY_DONE")], streaming: false, working_note: false }
 ## 70 recorded 66: fact Transcript type=system subtype=turn_duration uuid=2cca810f-615d-494c-a372-0455bd4c9708
+  row   12 toolu_013jKhDLNrgrMEgFPXnugyHG Command { command: "sleep 3", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(3511) } run[toolu_013jKhDLNrgrMEgFPXnugyHG..toolu_013jKhDLNrgrMEgFPXnugyHG x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: …
   row   15 turn:3 TurnEnd { duration_ms: Some(6602), cost_usd: None, failed: false }
   composer Send activity=None queue=[] outbox=[]
 ## 72 recorded 68: fact Transcript type=user uuid=fab2d431-bbc0-457f-9613-04d4050d004f
@@ -55,7 +57,7 @@
      9 turn:2 TurnEnd { duration_ms: Some(5258), cost_usd: None, failed: false }
     10 0a501bda-51f2-49be-a643-b0dcbc2053de Prompt { text: [Text("Use the Bash tool to run exactly: sleep 3. Then reply exactly BUSY_DONE.")], steered: false }
     11 babb0fd4-46ee-43c0-a44c-b5d929f8a9ad Thinking { text: "", open: false, duration_ms: Some(1455) }
-    12 toolu_013jKhDLNrgrMEgFPXnugyHG Command { command: "sleep 3", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(3511) }
+    12 toolu_013jKhDLNrgrMEgFPXnugyHG Command { command: "sleep 3", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(3511) } run[toolu_013jKhDLNrgrMEgFPXnugyHG..toolu_013jKhDLNrgrMEgFPXnugyHG x1 recent=0 RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, other: …
     13 d2d590ca-ada1-4446-9283-9a90e27caa78 Thinking { text: "", open: false, duration_ms: Some(4999) }
     14 1fa304dd-838d-48a8-bc36-dec87025c783 Prose { text: [Text("BUSY_DONE")], streaming: false, working_note: false }
     15 turn:3 TurnEnd { duration_ms: Some(6602), cost_usd: None, failed: false }

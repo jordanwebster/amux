@@ -118,14 +118,24 @@ fn describe_row(row: &ui_view::Row) -> String {
     if let Some(run) = &row.run {
         let _ = write!(
             line,
-            " run[{}..{} x{} reads={} searches={}{}{}]",
-            run.oldest,
-            run.newest,
-            run.len,
-            run.reads,
-            run.searches,
-            if run.is_summary { " summary" } else { "" },
-            if run.open_below { " open_below" } else { "" }
+            " run[{}..{} x{}{}{}{}{}{}]",
+            run.id,
+            run.last,
+            run.steps,
+            run.recent
+                .map(|after| format!(" recent={after}"))
+                .unwrap_or_default(),
+            if run.live { " live" } else { "" },
+            if run.open_below { " open_below" } else { "" },
+            if run.unresolved_failure {
+                " unresolved"
+            } else {
+                ""
+            },
+            run.counts
+                .as_ref()
+                .map(|counts| format!(" {counts:?}"))
+                .unwrap_or_default(),
         );
     }
     if let Some(decision) = &row.decision {
@@ -176,11 +186,9 @@ fn render(kind: Kind, frames: &[Replayed]) -> String {
     let mut state = SessionState::new(agent(kind), support::CAP);
     let mut committer = Committer::default();
     let mut out = String::new();
-    let expanded = HashSet::new();
+    let open = HashSet::new();
     let opts = ChatOptions {
-        tools: ToolRows::CollapseRuns {
-            expanded: &expanded,
-        },
+        tools: ToolRows::Collapse { open: &open },
     };
     let mut last_card = None;
     let mut last_composer = String::new();

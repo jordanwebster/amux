@@ -140,9 +140,9 @@ impl Chat {
 
     /// Rows for these keys, in order, skipping keys not held.
     pub fn rows_for(&self, keys: &[Key], options: &RowOptions) -> Vec<Row> {
-        let expanded = options.expanded();
+        let open = options.open();
         let opts = ChatOptions {
-            tools: options.tool_rows(&expanded),
+            tools: options.tool_rows(&open),
         };
         ui_view::chat_rows_for(&self.session.state(), keys, &opts)
     }

@@ -1,5 +1,6 @@
-//! Run membership: two or more consecutive exploration calls, kept current
-//! on every message and equal to a rebuild from the transcript.
+//! Run membership: every tool step between two pieces of what the agent or
+//! the person said, kept current on every message and equal to a rebuild
+//! from the transcript.
 
 use ui_state::{Run, SessionState};
 use wire::{Kind, Phase, ToolState};
@@ -20,36 +21,87 @@ fn run_of(state: &SessionState, order: u64) -> Option<Run> {
 }
 
 #[test]
-fn a_run_needs_two_consecutive_exploration_calls() {
+fn a_run_is_every_tool_step_between_two_pieces_of_text() {
     for kind in KINDS {
         let mut state = open(kind);
         apply_checked(&mut state, ev_item(text(kind, 10, 1, "looking")));
+        assert_eq!(run_of(&state, 10), None, "text is in no run");
         apply_checked(&mut state, ev_item(read(kind, 11, 2)));
-        assert_eq!(run_of(&state, 11), None, "one call is not a run");
-        let outcome = apply_checked(&mut state, ev_item(grep(kind, 12, 3)));
-        assert_eq!(outcome.changed, vec!["k12", "k11"]);
         let run = run_of(&state, 11).unwrap();
-        assert_eq!(
-            (run.oldest, run.newest, run.len, run.reads, run.searches),
-            (11, 12, 2, 1, 1)
-        );
-        assert_eq!(run.newest_key, "k12");
-        apply_checked(
+        assert_eq!((run.oldest, run.newest, run.steps), (11, 11, 1));
+        assert!(!run.closed, "nothing follows it yet");
+        let outcome = apply_checked(
             &mut state,
-            ev_item(command(kind, 13, 4, ToolState::Succeeded)),
+            ev_item(command(kind, 12, 3, ToolState::Succeeded)),
         );
+        assert_eq!(outcome.changed, vec!["k12", "k11"]);
+        apply_checked(&mut state, ev_item(grep(kind, 13, 4)));
+        let run = run_of(&state, 12).unwrap();
+        assert_eq!((run.oldest, run.newest, run.steps), (11, 13, 3));
         assert_eq!(
-            run_of(&state, 13),
-            None,
-            "a consequential call ends the run"
+            (run.oldest_key.as_str(), run.newest_key.as_str()),
+            ("k11", "k13")
         );
-        apply_checked(&mut state, ev_item(read(kind, 14, 5)));
-        assert_eq!(run_of(&state, 14), None);
+        // The agent speaks: the run ends, and the next step starts another.
+        let outcome = apply_checked(&mut state, ev_item(text(kind, 14, 5, "found it")));
+        assert_eq!(outcome.changed, vec!["k14", "k11", "k12", "k13"]);
+        assert!(run_of(&state, 13).unwrap().closed);
+        apply_checked(&mut state, ev_item(read(kind, 15, 6)));
+        assert_eq!(run_of(&state, 15).unwrap().oldest, 15);
+        assert_eq!(run_of(&state, 13).unwrap().steps, 3);
     }
 }
 
 #[test]
-fn the_summary_moves_to_the_newest_member_while_every_row_id_stays() {
+fn thinking_and_retries_pass_through_a_run_and_a_turn_end_closes_it() {
+    for kind in KINDS {
+        let mut state = open(kind);
+        apply_checked(&mut state, ev_item(read(kind, 1, 1)));
+        let outcome = apply_checked(&mut state, ev_item(thinking(kind, 2, 2)));
+        assert_eq!(outcome.changed, vec!["k2"], "thinking moves no run");
+        apply_checked(
+            &mut state,
+            ev_item(item(kind, 3, 3, "", Body::Retry { attempt: 1, max: 3 })),
+        );
+        apply_checked(&mut state, ev_item(command(kind, 4, 4, ToolState::Failed)));
+        let run = run_of(&state, 2).unwrap();
+        assert_eq!((run.oldest, run.newest, run.steps), (1, 4, 2));
+        let outcome = apply_checked(&mut state, ev_item(turn(kind, 5, 5)));
+        assert!(run_of(&state, 4).unwrap().closed);
+        assert_eq!(run_of(&state, 5), None);
+        let mut changed = outcome.changed.clone();
+        changed.sort();
+        assert_eq!(changed, vec!["k1", "k2", "k3", "k4", "k5"]);
+        assert!(state.transcript().turn_ended_after(4));
+    }
+}
+
+#[test]
+fn a_turn_end_settles_the_steps_of_runs_the_agent_spoke_after() {
+    for kind in KINDS {
+        let mut state = open(kind);
+        apply_checked(
+            &mut state,
+            ev_item(prompt(kind, 1, 1, "fix the lint", b"p")),
+        );
+        apply_checked(&mut state, ev_item(command(kind, 2, 2, ToolState::Failed)));
+        apply_checked(&mut state, ev_item(text(kind, 3, 3, "one more try")));
+        apply_checked(
+            &mut state,
+            ev_item(command(kind, 4, 4, ToolState::Succeeded)),
+        );
+        apply_checked(&mut state, ev_item(text(kind, 5, 5, "done")));
+        assert!(!state.transcript().turn_ended_after(2));
+        let outcome = apply_checked(&mut state, ev_item(turn(kind, 6, 6)));
+        let mut changed = outcome.changed.clone();
+        changed.sort();
+        assert_eq!(changed, vec!["k2", "k4", "k6"]);
+        assert!(state.transcript().turn_ended_after(2));
+    }
+}
+
+#[test]
+fn the_newest_step_moves_while_every_row_id_stays() {
     for kind in KINDS {
         let mut state = open(kind);
         for order in 1..=3 {
@@ -60,7 +112,7 @@ fn the_summary_moves_to_the_newest_member_while_every_row_id_stays() {
         assert_eq!(
             outcome.changed,
             vec!["k4", "k1", "k2", "k3"],
-            "every member's run attributes moved"
+            "every member's run moved"
         );
         assert_eq!(run_of(&state, 1).unwrap().newest_key, "k4");
         let after: Vec<String> = state.transcript().keys().cloned().collect();
@@ -84,26 +136,37 @@ fn a_page_merging_into_a_run_at_the_edge_keeps_ids_and_grows_the_count() {
         );
         let items = (12..=19)
             .rev()
-            .map(|order| read(kind, order, order))
+            .map(|order| {
+                if order % 2 == 0 {
+                    read(kind, order, order)
+                } else {
+                    command(kind, order, order, ToolState::Succeeded)
+                }
+            })
             .collect();
         apply_page(&mut state, items, false);
         let run = run_of(&state, 21).unwrap();
-        assert_eq!((run.oldest, run.newest, run.len), (12, 21, 10));
+        assert_eq!((run.oldest, run.newest, run.steps), (12, 21, 10));
         assert_eq!(
             run.newest_key, "k21",
-            "the summary the reader looks at keeps its id"
+            "the step the reader looks at keeps its id"
         );
         assert!(run.open_below);
-        apply_page(&mut state, vec![text(kind, 11, 11, "earlier")], false);
+        apply_page(&mut state, vec![thinking(kind, 11, 11)], false);
+        assert!(
+            run_of(&state, 21).unwrap().open_below,
+            "thinking below does not end it"
+        );
+        apply_page(&mut state, vec![text(kind, 10, 10, "earlier")], false);
         assert!(
             !run_of(&state, 21).unwrap().open_below,
-            "a non-member below closes it"
+            "text below closes it"
         );
     }
 }
 
 #[test]
-fn open_below_is_set_only_at_the_oldest_held_item_with_older_history() {
+fn open_below_is_set_only_for_the_run_nothing_below_ends() {
     for kind in KINDS {
         let mut state = open(kind);
         for order in 5..=6 {
@@ -130,20 +193,17 @@ fn a_revision_that_changes_an_items_class_splits_or_merges_runs() {
     for kind in KINDS {
         let mut state = open(kind);
         apply_checked(&mut state, ev_item(read(kind, 1, 1)));
-        apply_checked(&mut state, ev_item(command(kind, 2, 2, ToolState::Running)));
+        apply_checked(&mut state, ev_item(streaming(kind, 2, 2, "hm")));
         apply_checked(&mut state, ev_item(read(kind, 3, 3)));
-        assert_eq!(run_of(&state, 1), None);
-        // The middle call is revised into an exploration call: one run of three.
-        let outcome = apply_checked(&mut state, ev_item(grep(kind, 2, 4)));
+        assert_eq!(run_of(&state, 1).unwrap().steps, 1);
+        // The text between is revised into a call: one run of three.
+        let outcome = apply_checked(&mut state, ev_item(command(kind, 2, 4, ToolState::Running)));
         assert_eq!(outcome.changed.len(), 3);
-        assert_eq!(run_of(&state, 3).unwrap().len, 3);
+        assert_eq!(run_of(&state, 3).unwrap().steps, 3);
         // And back: split.
-        apply_checked(
-            &mut state,
-            ev_item(command(kind, 2, 5, ToolState::Succeeded)),
-        );
-        assert_eq!(run_of(&state, 1), None);
-        assert_eq!(run_of(&state, 3), None);
+        apply_checked(&mut state, ev_item(text(kind, 2, 5, "hm")));
+        assert_eq!(run_of(&state, 1).unwrap().steps, 1);
+        assert_eq!(run_of(&state, 3).unwrap().oldest, 3);
     }
 }
 
@@ -188,10 +248,11 @@ fn the_run_index_equals_a_rebuild_after_every_message() {
 }
 
 fn random_item(kind: Kind, rng: &mut Rng, order: u64, revision: u64) -> wire::Item {
-    match rng.below(4) {
+    match rng.below(6) {
         0 => read(kind, order, revision),
-        1 => grep(kind, order, revision),
+        1 => thinking(kind, order, revision),
         2 => command(kind, order, revision, ToolState::Succeeded),
+        3 => turn(kind, order, revision),
         _ => text(kind, order, revision, "prose"),
     }
 }

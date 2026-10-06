@@ -36,7 +36,7 @@ use wire::{Attachment, attachment};
 use self::ask::{AskAction, AskUi};
 use self::composer::{COMPOSER_LINES, QueueEntry, edge_row, editor_lines, placeholder};
 use self::feed::FeedHit;
-use self::layout::{Anchor, Frame, Laid, StretchCache, Toggle};
+use self::layout::{Anchor, Frame, Laid, Toggle};
 use self::review::{ReviewAction, ReviewPage};
 use crate::clipboard::ClipboardContent;
 use crate::editor::{Edit, Editor};
@@ -223,8 +223,8 @@ pub struct ChatView {
     pub away: Away,
     /// The leader key, for the keys the chat names.
     pub leader: char,
-    /// Stretches of steps the reader opened, by their oldest step.
-    pub stretches: HashSet<Key>,
+    /// Runs of steps the reader opened, by their ids.
+    pub open_runs: HashSet<Key>,
     /// Whether the agent runs on this machine; the header names its host
     /// only when it does not.
     pub local: bool,
@@ -314,7 +314,6 @@ pub struct ChatView {
     picker: Option<crate::setup::Picker>,
     /// The picker's flyover as last drawn, for clicks.
     flyover: crate::setup::Flyover,
-    stretch_cache: StretchCache,
     /// Where the feed's first line was drawn, for clicks.
     feed_origin: (u16, u16),
     epoch: u64,
@@ -342,7 +341,7 @@ impl ChatView {
             attach,
             away: Away::Plain,
             leader: 'a',
-            stretches: HashSet::new(),
+            open_runs: HashSet::new(),
             local: true,
             comparison: Comparison::Uncommitted,
             changes: None,
@@ -384,7 +383,6 @@ impl ChatView {
             setting_prefix: false,
             picker: None,
             flyover: crate::setup::Flyover::default(),
-            stretch_cache: StretchCache::default(),
             feed_origin: (0, 0),
             epoch: 0,
             opened_at_ms: now_ms,
@@ -404,8 +402,7 @@ impl ChatView {
             height: self.feed.1,
             theme,
             leader: self.leader,
-            stretches: &self.stretches,
-            cache: &self.stretch_cache,
+            open_runs: &self.open_runs,
             asking: self.asking.as_ref(),
             tail: &self.feed_tail,
         }
@@ -1111,13 +1108,14 @@ impl ChatView {
             .is_some_and(|rect| rect.contains(Position::new(event.column, event.row)))
     }
 
-    /// Scrolls the chat to a step and opens it, and the stretch it sits in.
+    /// Scrolls the chat to a step and opens it, and the run it sits in.
     fn reveal_step(&mut self, state: &SessionState, key: &Key) {
-        let Some(order) = state.transcript().get(key).map(|held| held.item.order) else {
+        let transcript = state.transcript();
+        let Some(order) = transcript.get(key).map(|held| held.item.order) else {
             return;
         };
-        if let Some(stretch) = ui_view::stretch_at(state, order) {
-            self.stretches.insert(stretch.oldest);
+        if let Some(run) = transcript.run_at(order) {
+            self.open_runs.insert(run.oldest_key);
         }
         self.expanded.insert(key.clone());
         self.anchor = Anchor::Top {
@@ -1432,7 +1430,7 @@ impl ChatView {
         // where it is: the feed holds its top line, so an opened fold grows
         // downward from the line that was clicked. Following the newest row,
         // it keeps following.
-        if matches!(hit, FeedHit::Stretch(_) | FeedHit::Step(_))
+        if matches!(hit, FeedHit::Run(_) | FeedHit::Step(_))
             && self.anchor != Anchor::Bottom
             && let Some(top) = self.laid.blocks.first()
         {
@@ -1443,9 +1441,9 @@ impl ChatView {
         }
         match hit {
             FeedHit::Link(url) => return vec![ChatEffect::OpenUrl(url)],
-            FeedHit::Stretch(oldest) => {
-                if !self.stretches.remove(&oldest) {
-                    self.stretches.insert(oldest);
+            FeedHit::Run(id) => {
+                if !self.open_runs.remove(&id) {
+                    self.open_runs.insert(id);
                 }
             }
             FeedHit::Step(key) => {
@@ -1514,8 +1512,8 @@ impl ChatView {
         self.focus = Some(key);
     }
 
-    /// `<leader> o`: a folded stretch opens, an open stretch's first step
-    /// folds it again, and any other step opens its detail.
+    /// `<leader> o`: a folded run opens, an open run's first step folds it
+    /// again, and any other step opens its detail.
     pub fn toggle_expanded(&mut self, state: &SessionState) {
         let Some(key) = self.focus.clone() else {
             return;
@@ -1523,8 +1521,8 @@ impl ChatView {
         if let Some(block) = self.laid.blocks.iter().find(|block| block.key == key) {
             match block.toggle.clone() {
                 Toggle::Row => {}
-                Toggle::Stretch(oldest) => {
-                    self.feed_hit(state, FeedHit::Stretch(oldest));
+                Toggle::Run(id) => {
+                    self.feed_hit(state, FeedHit::Run(id));
                     return;
                 }
                 Toggle::Step(step) => {
@@ -1534,11 +1532,11 @@ impl ChatView {
                             .first()
                             .and_then(|hits| hits.first())
                             .and_then(|(_, hit)| match hit {
-                                FeedHit::Stretch(oldest) => Some(oldest.clone()),
+                                FeedHit::Run(id) => Some(id.clone()),
                                 _ => None,
                             });
                     match header {
-                        Some(oldest) => self.feed_hit(state, FeedHit::Stretch(oldest)),
+                        Some(id) => self.feed_hit(state, FeedHit::Run(id)),
                         None => self.feed_hit(state, FeedHit::Step(step)),
                     };
                     return;
