@@ -435,7 +435,7 @@ section = "Session state"
 claim = "Row ids never move."
 tests = [
   "ui-view/views::row_ids_never_move_and_rows_by_keys_equal_rows_by_range",
-  "ui-state/spec::runs::the_summary_moves_to_the_newest_member_while_every_row_id_stays",
+  "ui-state/spec::runs::the_newest_step_moves_while_every_row_id_stays",
   "ui-state/spec::runs::a_page_merging_into_a_run_at_the_edge_keeps_ids_and_grows_the_count",
 ]
 
