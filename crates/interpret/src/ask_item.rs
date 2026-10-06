@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use serde::Deserialize;
 use serde_json::Value;
 use wire::{
     AnsweredQuestion, AskClosed, AskItem, AskOutcome, FormAction, FormAnswer, GrantAnswer,
@@ -181,20 +182,65 @@ fn claude_parts(question: &Question, text: &str) -> (Vec<String>, Option<String>
     (picked, (!rest.is_empty()).then(|| rest.to_owned()))
 }
 
-/// A form answered: sent with its field names, declined or cancelled.
-pub(crate) fn form_sent(form: &FormAnswer) -> AskClosed {
+/// A form answered: sent with its field names, declined or cancelled. The
+/// names follow the order `schema` asks for them in; the values are not
+/// kept.
+pub(crate) fn form_sent(form: &FormAnswer, schema: &[u8]) -> AskClosed {
     let mut closed = link_answered(form.action);
     if closed.outcome == AskOutcome::Answered as i32 {
-        closed.fields = serde_json::from_slice::<Value>(&form.content_json)
+        let sent = serde_json::from_slice::<Value>(&form.content_json)
             .ok()
-            .and_then(|content| {
-                content
-                    .as_object()
-                    .map(|fields| fields.keys().cloned().collect())
+            .and_then(|content| match content {
+                Value::Object(fields) => Some(fields),
+                _ => None,
             })
             .unwrap_or_default();
+        let asked = serde_json::from_slice::<FormSchema>(schema)
+            .map(|schema| schema.properties.0)
+            .unwrap_or_default();
+        closed.fields = asked
+            .iter()
+            .filter(|name| sent.contains_key(*name))
+            .cloned()
+            .chain(sent.keys().filter(|name| !asked.contains(name)).cloned())
+            .collect();
     }
     closed
+}
+
+/// A form's schema, for the order its fields are asked in.
+#[derive(Deserialize)]
+struct FormSchema {
+    #[serde(default)]
+    properties: Names,
+}
+
+/// An object's keys in the order they were written; a parsed `Value`
+/// would sort them.
+#[derive(Default)]
+struct Names(Vec<String>);
+
+impl<'de> Deserialize<'de> for Names {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Names;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Names, A::Error> {
+                let mut names = Vec::new();
+                while let Some((name, serde::de::IgnoredAny)) = map.next_entry::<String, _>()? {
+                    names.push(name);
+                }
+                Ok(Names(names))
+            }
+        }
+        deserializer.deserialize_map(Visitor)
+    }
 }
 
 /// A link opened, declined or cancelled.
@@ -300,4 +346,22 @@ pub(crate) fn describe(item: &AskItem) -> String {
         ));
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sent_form_lists_its_fields_in_the_forms_order_without_values() {
+        let schema = br#"{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"},"assignee":{"type":"string"}}}"#;
+        let form = FormAnswer {
+            action: FormAction::Accept as i32,
+            content_json: br#"{"assignee":"jo","title":"Fix it","extra":1}"#.to_vec(),
+        };
+        let closed = form_sent(&form, schema);
+        assert_eq!(closed.outcome, AskOutcome::Answered as i32);
+        assert_eq!(closed.fields, ["title", "assignee", "extra"]);
+        assert!(!format!("{closed:?}").contains("Fix it"));
+    }
 }

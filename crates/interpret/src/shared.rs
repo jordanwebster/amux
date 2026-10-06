@@ -1168,6 +1168,43 @@ pub fn human() -> Sender {
     }
 }
 
+/// The new-side line of a hunk's first added or removed line, counting
+/// from the hunk's start past its leading context.
+pub(crate) fn first_change<S: AsRef<str>>(new_start: u32, lines: &[S]) -> Option<u32> {
+    let mut at = new_start;
+    for line in lines {
+        match line.as_ref().chars().next() {
+            Some('+' | '-') => return Some(at.max(1)),
+            Some('\\') => {}
+            _ => at += 1,
+        }
+    }
+    None
+}
+
+/// The new-side line a unified diff's first change landed on: its first
+/// hunk with a change, read from the hunk's header.
+pub(crate) fn patch_first_change(patch: &str) -> Option<u32> {
+    let mut lines = patch.lines().peekable();
+    while let Some(line) = lines.next() {
+        let Some(header) = line.strip_prefix("@@ ") else {
+            continue;
+        };
+        let start = header
+            .split_whitespace()
+            .find_map(|range| range.strip_prefix('+'))
+            .and_then(|range| range.split(',').next()?.parse::<u32>().ok())?;
+        let mut body = Vec::new();
+        while let Some(next) = lines.next_if(|next| !next.starts_with("@@ ")) {
+            body.push(next);
+        }
+        if let Some(line) = first_change(start, &body) {
+            return Some(line);
+        }
+    }
+    None
+}
+
 /// The JSON at `path` inside `payload`, exactly as the provider wrote it;
 /// None when it is absent or null. A parsed `Value` keeps object keys
 /// sorted, so encoding one again loses the provider's order, and a form
@@ -1502,6 +1539,18 @@ mod tests {
             json_as_written(br#"{"request":{}}"#, &["request", "x"]),
             None
         );
+    }
+
+    #[test]
+    fn an_edit_lands_on_its_first_changed_line_past_the_context() {
+        assert_eq!(first_change(10, &[" a", " b", "-c", "+d"]), Some(12));
+        assert_eq!(first_change(1, &["+new"]), Some(1));
+        assert_eq!(first_change(0, &["-gone"]), Some(1));
+        assert_eq!(first_change(4, &[" only context"]), None);
+        assert_eq!(patch_first_change("@@ -1 +1 @@\n-one\n+two\n"), Some(1));
+        let patch = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -7,4 +7,4 @@ fn x\n keep\n keep\n-old\n+new\n";
+        assert_eq!(patch_first_change(patch), Some(9));
+        assert_eq!(patch_first_change("just text\n"), None);
     }
 
     fn offered(value: &str, display_name: &str, resolved_model: &str) -> wire::OfferedModel {

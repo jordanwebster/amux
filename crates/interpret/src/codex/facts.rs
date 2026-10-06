@@ -36,7 +36,7 @@ use super::{
     client_message_id, elicitation_response, item_body, work_ask, work_complete,
 };
 use crate::claude_common::compact_json;
-use crate::shared::{Output, json_as_written};
+use crate::shared::{Output, json_as_written, patch_first_change};
 use crate::{
     AMUX_TOOL_SERVER, Channel, Effect, Emit, Fact, ItemDraft, SendOutcome, ask_item, is_send_tool,
     is_status_tool, sent_message, status_working_on,
@@ -1419,7 +1419,6 @@ impl State {
         };
         let verdict = ToolDecision {
             outcome: outcome as i32,
-            scope: "reviewer".into(),
             ..Default::default()
         };
         if self.works.contains_key(&target) {
@@ -1760,6 +1759,12 @@ impl State {
                                 _ => String::new(),
                             },
                             patch: change.diff.clone(),
+                            line: match &change.kind {
+                                PatchChangeKind::Update(_) if state == ToolState::Succeeded => {
+                                    patch_first_change(&change.diff)
+                                }
+                                _ => None,
+                            },
                         })
                         .collect(),
                 }),

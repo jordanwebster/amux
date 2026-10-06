@@ -21,12 +21,12 @@
 ## 9 fact {"channel":"rpc","json":{"id":8,"method":"item/fileChange/requestApproval","params":{"grantRoot":"/work","itemId":"fc-1","reason":"Edit outside the workspace","threadId":"t1","turnId":"turn-1"}}}
   ask 8 -> "fc-1" 1/1 Open
     choices AllowOnce*, AllowForSession, Deny { stops: false }, DenyAndStop
-    body Edit { path: "/work/a.txt", files: 1, added: 1, removed: 1, diff: "@@ -1 +1 @@\n-a\n+b\n", reason: "Edit outside the workspace", created: false }
+    body Edit { path: "/work/a.txt", files: 1, added: 1, removed: 1, diff: "@@ -1 +1 @@\n-a\n+b\n", reason: "Edit outside the workspace", created: Some(false) }
   composer Send activity=None queue=[] outbox=[]
 ## 10 input {"answer":{"answer":{"decision":"approve_similar"},"ask":"8"},"id":"a3"}
   ask 8 -> "fc-1" 1/1 Rejected("unsupported")
     choices AllowOnce*, AllowForSession, Deny { stops: false }, DenyAndStop
-    body Edit { path: "/work/a.txt", files: 1, added: 1, removed: 1, diff: "@@ -1 +1 @@\n-a\n+b\n", reason: "Edit outside the workspace", created: false }
+    body Edit { path: "/work/a.txt", files: 1, added: 1, removed: 1, diff: "@@ -1 +1 @@\n-a\n+b\n", reason: "Edit outside the workspace", created: Some(false) }
 ## 11 input {"answer":{"answer":{"decision":"deny"},"ask":"8"},"id":"a4"}
   row    4 fc-1 FileChange { files: [FileRow { path: "/work/a.txt", change: Edited, added: 1, removed: 1 }], state: Running } decision=Decision { outcome: Denied, scope: None, note: None, elsewhere: false }
   ask none

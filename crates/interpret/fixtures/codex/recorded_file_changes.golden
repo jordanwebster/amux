@@ -66,7 +66,7 @@ snapshot WORKING queue=[] working_on=- at=1790388509415 asks=[] thread=01a0db78-
 ## 69 recorded 68: fact Rpc method=item/started
 item exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8 work open at=1790388511233 text="" file_change [FILE_CHANGE_KIND_UPDATE <MACHINE_PATH> patch="@@ -1 +1 @@\n-one\n+two\n"] TOOL_STATE_RUNNING
 ## 71 recorded 70: fact Rpc method=item/completed
-item exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8 work final at=1790388511233 text="" file_change [FILE_CHANGE_KIND_UPDATE <MACHINE_PATH> patch="@@ -1 +1 @@\n-one\n+two\n"] TOOL_STATE_SUCCEEDED ended=1790388511251
+item exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8 work final at=1790388511233 text="" file_change [FILE_CHANGE_KIND_UPDATE <MACHINE_PATH> line=1 patch="@@ -1 +1 @@\n-one\n+two\n"] TOOL_STATE_SUCCEEDED ended=1790388511251
 ## 73 recorded 72: fact Rpc method=turn/diff/updated
 item diff:01a0db78-83d5-7ff0-820e-122e9a43ee0f turn_diff final at=1790388511253 text="" patch="diff --git a/notes.txt b/notes.txt\nnew file mode 100644\ninde…"
 ## 75 recorded 74: fact Rpc method=thread/tokenUsage/updated

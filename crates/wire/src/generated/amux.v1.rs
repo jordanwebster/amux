@@ -678,6 +678,13 @@ pub struct ToolCall {
     /// When the call finished, the provider's timestamp where it has one.
     #[prost(int64, optional, tag = "14")]
     pub ended_at_ms: ::core::option::Option<i64>,
+    /// A file write that finished: whether it made the file (else it
+    /// replaced one). Claude says which only once the write is done.
+    #[prost(bool, optional, tag = "15")]
+    pub created: ::core::option::Option<bool>,
+    /// A file edit that finished: the line its first change landed on.
+    #[prost(uint32, optional, tag = "16")]
+    pub line: ::core::option::Option<u32>,
 }
 impl ::prost::Name for ToolCall {
     const NAME: &'static str = "ToolCall";
@@ -693,15 +700,29 @@ impl ::prost::Name for ToolCall {
 pub struct ToolDecision {
     #[prost(enumeration = "DecisionOutcome", tag = "1")]
     pub outcome: i32,
-    /// The scope the person chose, in the provider's terms; empty when it
-    /// cannot be recovered.
-    #[prost(string, tag = "2")]
-    pub scope: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub note: ::prost::alloc::string::String,
     /// Answered in the provider's own interface rather than through amux.
     #[prost(bool, tag = "4")]
     pub elsewhere: bool,
+    /// What an allowance granted beyond this one call. Absent when it allowed
+    /// the call alone, and when the provider did not say which choice was
+    /// made: Claude's own terminal does not report it.
+    #[prost(oneof = "tool_decision::Granted", tags = "5, 6")]
+    pub granted: ::core::option::Option<tool_decision::Granted>,
+}
+/// Nested message and enum types in `ToolDecision`.
+pub mod tool_decision {
+    /// What an allowance granted beyond this one call. Absent when it allowed
+    /// the call alone, and when the provider did not say which choice was
+    /// made: Claude's own terminal does not report it.
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Granted {
+        #[prost(message, tag = "5")]
+        Claude(super::ClaudeGrant),
+        #[prost(message, tag = "6")]
+        Codex(super::CodexGrant),
+    }
 }
 impl ::prost::Name for ToolDecision {
     const NAME: &'static str = "ToolDecision";
@@ -711,6 +732,94 @@ impl ::prost::Name for ToolDecision {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.ToolDecision".into()
+    }
+}
+/// A standing permission Claude added when the call was allowed.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeGrant {
+    /// The rules added, as Claude writes them: "Bash(npm test:\*)".
+    #[prost(string, repeated, tag = "1")]
+    pub rules: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Folders added to those Claude may work in.
+    #[prost(string, repeated, tag = "2")]
+    pub directories: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// A permission mode Claude switched to.
+    #[prost(string, optional, tag = "3")]
+    pub mode: ::core::option::Option<::prost::alloc::string::String>,
+    /// Where Claude saved it: session, localSettings, projectSettings,
+    /// userSettings, or Claude's own word.
+    #[prost(string, tag = "4")]
+    pub saved_to: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ClaudeGrant {
+    const NAME: &'static str = "ClaudeGrant";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.ClaudeGrant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.ClaudeGrant".into()
+    }
+}
+/// What Codex allows from now on.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexGrant {
+    #[prost(oneof = "codex_grant::Of", tags = "1, 2, 3")]
+    pub of: ::core::option::Option<codex_grant::Of>,
+}
+/// Nested message and enum types in `CodexGrant`.
+pub mod codex_grant {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Of {
+        /// Approvals like this one, for the rest of the session.
+        #[prost(message, tag = "1")]
+        Session(super::Empty),
+        /// Commands starting with these words.
+        #[prost(message, tag = "2")]
+        CommandPrefix(super::CommandPrefix),
+        /// Network access to these hosts.
+        #[prost(message, tag = "3")]
+        NetworkHosts(super::NetworkHosts),
+    }
+}
+impl ::prost::Name for CodexGrant {
+    const NAME: &'static str = "CodexGrant";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.CodexGrant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.CodexGrant".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CommandPrefix {
+    #[prost(string, repeated, tag = "1")]
+    pub words: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+impl ::prost::Name for CommandPrefix {
+    const NAME: &'static str = "CommandPrefix";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.CommandPrefix".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.CommandPrefix".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct NetworkHosts {
+    #[prost(string, repeated, tag = "1")]
+    pub hosts: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+impl ::prost::Name for NetworkHosts {
+    const NAME: &'static str = "NetworkHosts";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.NetworkHosts".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.NetworkHosts".into()
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -3558,6 +3667,10 @@ pub struct FileChange {
     /// Unified diff for this file.
     #[prost(string, tag = "4")]
     pub patch: ::prost::alloc::string::String,
+    /// An update that finished: the line its first change landed on. Whether
+    /// the change made the file is its kind.
+    #[prost(uint32, optional, tag = "5")]
+    pub line: ::core::option::Option<u32>,
 }
 impl ::prost::Name for FileChange {
     const NAME: &'static str = "FileChange";

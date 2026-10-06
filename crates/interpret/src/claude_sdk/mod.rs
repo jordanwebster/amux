@@ -31,15 +31,17 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    AgentSpec, Ask, AskClosed, Attachment, ClaudeAnswer, ClaudeSdkItem, ClaudeSdkSnapshot,
-    ClaudeUsage, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input, OfferedCommand,
-    OfferedModel, SignIn, Step, ToolCall, ToolDecision, ToolServerHealth, claude_answer,
-    claude_sdk_input, claude_sdk_item, input, permission_answer,
+    AgentSpec, Ask, AskClosed, Attachment, ClaudeAnswer, ClaudeGrant, ClaudeSdkItem,
+    ClaudeSdkSnapshot, ClaudeUsage, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input,
+    OfferedCommand, OfferedModel, SignIn, Step, ToolCall, ToolDecision, ToolServerHealth,
+    ToolState, claude_answer, claude_sdk_input, claude_sdk_item, input, permission_answer,
+    tool_decision,
 };
 
 use crate::claude_common::{
-    Jobs, Task, Verdict, describe_asks, describe_claude_usage, describe_tasks, describe_tool,
-    or_dash, plan_item, question_item, task_list,
+    Jobs, Task, Verdict, claude_grant, describe_asks, describe_claude_usage, describe_tasks,
+    describe_tool, file_step_facts, or_dash, permission_scopes, plan_item, question_item,
+    task_list,
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
@@ -142,7 +144,8 @@ enum Decided {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct ToolDecisionState {
     outcome: i32,
-    scope: String,
+    #[serde(default, with = "serde_pb::opt_msg")]
+    grant: Option<ClaudeGrant>,
     note: String,
 }
 
@@ -710,7 +713,18 @@ impl State {
             .ok()
             .and_then(|answer| answer.of);
         let closed = match &parsed {
-            Some(claude_answer::Of::Form(form)) => Some(ask_item::form_sent(form)),
+            Some(claude_answer::Of::Form(form)) => {
+                let schema = match self
+                    .shared
+                    .asks()
+                    .get(&key)
+                    .and_then(|ask| ask.body.as_ref())
+                {
+                    Some(wire::ask::Body::Form(asked)) => asked.schema_json.as_slice(),
+                    _ => &[],
+                };
+                Some(ask_item::form_sent(form, schema))
+            }
             Some(claude_answer::Of::Link(link)) => Some(ask_item::link_answered(link.action)),
             _ => None,
         };
@@ -908,6 +922,11 @@ impl State {
                 },
             );
         }
+        let (created, line) = if tool.state == ToolState::Succeeded as i32 {
+            file_step_facts(&tool.name, &tool.server, &tool.outcome_json)
+        } else {
+            (None, None)
+        };
         let body = item_body(claude_sdk_item::Kind::Tool(ToolCall {
             name: tool.name.clone(),
             input_json: tool.input.clone().into_bytes(),
@@ -918,9 +937,9 @@ impl State {
             class: tool.class,
             decision: tool.decision.as_ref().map(|decision| ToolDecision {
                 outcome: decision.outcome,
-                scope: decision.scope.clone(),
                 note: decision.note.clone(),
                 elsewhere: false,
+                granted: decision.grant.clone().map(tool_decision::Granted::Claude),
             }),
             background: tool.background,
             parent_key: tool.parent_key.clone(),
@@ -934,6 +953,8 @@ impl State {
             server: tool.server.clone(),
             exit_code: None,
             ended_at_ms: tool.ended_at_ms,
+            created,
+            line,
         }));
         if body == tool.emitted {
             return;
@@ -1025,10 +1046,10 @@ fn sdk_answer(
     answer: claude_answer::Of,
 ) -> Option<(SdkAnswer, Option<Decided>)> {
     let input = serde_json::from_str::<Value>(&meta.input).unwrap_or(Value::Null);
-    let decided = |outcome: DecisionOutcome, scope: &str, note: &str| {
+    let decided = |outcome: DecisionOutcome, grant: Option<ClaudeGrant>, note: &str| {
         Some(Decided::Tool(ToolDecisionState {
             outcome: outcome as i32,
-            scope: scope.to_owned(),
+            grant,
             note: note.to_owned(),
         }))
     };
@@ -1058,23 +1079,24 @@ fn sdk_answer(
         (AskShape::Permission, claude_answer::Of::Permission(permission)) => match permission.of? {
             permission_answer::Of::Allow(chosen) => {
                 let mut permissions = None;
-                let mut scope = String::new();
+                let mut grant = None;
                 if let Some(index) = chosen.scope {
                     let suggestion = serde_json::from_str::<PermissionUpdate>(
                         meta.suggestions.get(index as usize)?,
                     )
                     .ok()?;
-                    scope = suggestion.destination().unwrap_or_default().to_owned();
+                    let scopes = permission_scopes(std::slice::from_ref(&suggestion));
+                    grant = scopes.first().map(claude_grant);
                     permissions = Some(vec![suggestion]);
                 }
                 Some((
                     allow(input, permissions),
-                    decided(DecisionOutcome::Allowed, &scope, ""),
+                    decided(DecisionOutcome::Allowed, grant, ""),
                 ))
             }
             permission_answer::Of::Deny(no) => Some((
                 deny(&no.note, no.stop),
-                decided(DecisionOutcome::Denied, "", &no.note),
+                decided(DecisionOutcome::Denied, None, &no.note),
             )),
         },
         (AskShape::Plan, claude_answer::Of::Plan(plan)) => {

@@ -508,9 +508,21 @@ fn decision_view(decision: Option<&wire::ToolDecision>) -> Option<Decision> {
         DecisionOutcome::Unknown => DecisionView::Dismissed,
     };
     let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+    // Worded as the scope string the record used to carry until the views
+    // read the typed grant.
+    let scope = match &decision.granted {
+        Some(wire::tool_decision::Granted::Claude(grant)) => text(&grant.saved_to),
+        Some(wire::tool_decision::Granted::Codex(grant)) => match &grant.of {
+            Some(wire::codex_grant::Of::Session(_)) => Some("session".into()),
+            Some(wire::codex_grant::Of::CommandPrefix(_)) => Some("similar".into()),
+            Some(wire::codex_grant::Of::NetworkHosts(_)) => Some("network".into()),
+            None => None,
+        },
+        None => None,
+    };
     Some(Decision {
         outcome,
-        scope: text(&decision.scope),
+        scope,
         note: text(&decision.note),
         elsewhere: decision.elsewhere,
     })

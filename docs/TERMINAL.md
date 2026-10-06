@@ -209,8 +209,9 @@ behind it and comes back after. The plan or the call it is about stays in the fe
 - **A tool server's form** (`● linear needs details`): its message, then each field as a step in the server's
   order (a choice, Yes / No, boxes, or a typed value, numbers checked), required ones marked, and a review with
   Submit; `Decline` is the way out.
-- **A tool server's link** (`● grafana needs you to sign in`): the message and the address, `1. Open the link`
-  (the box stays), `2. I'm signed in`, and `Decline`.
+- **A tool server's link** (`● grafana sent a link`): the server's own message and the address, `1. Open the
+  link` (the box stays), `2. Done`, and `Decline`. The provider says nothing of what a link is for, so the
+  record after it (`Opened grafana's link`) carries the message's first line.
 - **Wider access** (Codex): what it wants and why, `Allow for this turn`, `Allow for this session`, `No`.
 - **What this client cannot answer** (a dialog only Claude's own terminal shows): the reason, and `Open Claude's
   terminal` where that terminal can be attached here.

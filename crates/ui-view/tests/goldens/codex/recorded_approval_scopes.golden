@@ -64,7 +64,7 @@
 ## 77 recorded 76: fact Rpc method=item/fileChange/requestApproval
   ask 1 -> "exec-1a0fca9e-2c71-46fa-bc5c-ffb0c1bb9a17" 1/1 Open
     choices AllowOnce*, AllowForSession, Deny { stops: false }, DenyAndStop
-    body Edit { path: "<MACHINE_PATH>", files: 1, added: 0, removed: 0, diff: "one\n", reason: "", created: true }
+    body Edit { path: "<MACHINE_PATH>", files: 1, added: 0, removed: 0, diff: "one\n", reason: "", created: Some(true) }
   composer Send activity=None queue=[] outbox=[]
 ## 79 recorded 78: input stdin-6
   row    7 exec-1a0fca9e-2c71-46fa-bc5c-ffb0c1bb9a17 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 0 }, added: 0, removed: 0 }], state: Running } decision=Decision { outcome: Allowed, scope: Some("session"), note: None, elsewhere: false }

@@ -12,7 +12,6 @@
 
 
 
-
   started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -21,7 +20,8 @@
 
   ▸ 1 call
 
-  │ Signed in to grafana
+  │ Opened grafana's link
+  │ Grafana needs you to sign in before I can read its dashboards.
 
     I'll read the dashboards another way.
 

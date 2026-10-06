@@ -695,28 +695,28 @@ def tool_server_asks(journey: TerminalJourney) -> list[str]:
     control = negative_control(form_sent, decisions, {**FORM, "team": "CORE"})
 
     # A link: Codex asks to let the server's tool run, then the server
-    # asks the person to sign in.
+    # sends a link, worded from its own message.
     journey.home(pane)
     journey.open_chat(pane, "linker")
     journey.type(pane, "Check the relay's error rate.")
     journey.keys(pane, "Enter")
     journey.wait_terms(pane, "Wants to use", "grafana ask")
     journey.keys(pane, "1")
-    journey.wait_terms(pane, "grafana needs you to sign in", "https://grafana.example.com/login", "I'm signed in")
+    journey.wait_terms(pane, "grafana sent a link", "https://grafana.example.com/login", "Done")
     journey.frame(pane, "link")
     journey.keys(pane, "Down", "Enter")
-    journey.wait(pane, lambda frame: at_rest(frame, "Signed in to grafana", "I'll read the dashboards another way."), "the reply")
+    journey.wait(pane, lambda frame: at_rest(frame, "Opened grafana's link", "I'll read the dashboards another way."), "the reply")
     results = codex_results(journey, "linker", "link-answers")
     if [result.get("action") for result in results] != ["accept", "accept"] or results[1].get("content") is not None:
         raise RuntimeError(f"Codex was answered {results!r}")
-    journey.frame(pane, "signed-in")
+    journey.frame(pane, "link-opened")
     journey.quit_client(pane)
     return [
         "the form asked for title, team and estimate in the server's order and showed them for review",
         f"Claude received the form accepted with {FORM!r}",
         control,
         "Codex's ask to run the server's tool was allowed, then the link showed its message and address",
-        "'I'm signed in' answered the link: Codex received two accepts, the link's with no content",
+        "'Done' answered the link: Codex received two accepts, the link's with no content",
         "the client exited 0",
     ]
 

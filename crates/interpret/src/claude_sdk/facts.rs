@@ -288,7 +288,7 @@ impl State {
                     &denied.tool_use_id,
                     Decided::Tool(ToolDecisionState {
                         outcome: DecisionOutcome::Denied as i32,
-                        scope: String::new(),
+                        grant: None,
                         note,
                     }),
                 );

@@ -441,7 +441,11 @@ fn short_subject(card: &AskCard) -> String {
 fn asking_verb(card: &AskCard) -> &'static str {
     match &card.body {
         AskBody::Command { .. } => "Wants to run",
-        AskBody::Edit { created: true, .. } => "Wants to create",
+        AskBody::Edit {
+            created: Some(true),
+            ..
+        } => "Wants to create",
+        AskBody::Edit { created: None, .. } => "Wants to write",
         AskBody::Edit { .. } => "Wants to edit",
         AskBody::Plan { .. } => "Plan ready",
         AskBody::Access { .. } => "Wants access to",
@@ -2286,7 +2290,7 @@ impl AskUi {
         let mut head = Line::from(Span::styled("● ", theme.attention()));
         push(
             &mut head,
-            format!("{server} needs you to sign in"),
+            format!("{server} sent a link"),
             theme.text(),
             width,
         );
@@ -2307,7 +2311,7 @@ impl AskUi {
         ));
         out.lines.push(link);
         out.lines.push(Line::default());
-        for (at, words) in ["Open the link", "I'm signed in"].iter().enumerate() {
+        for (at, words) in ["Open the link", "Done"].iter().enumerate() {
             let lit = self.selected == at;
             let mut row = Line::default();
             push(

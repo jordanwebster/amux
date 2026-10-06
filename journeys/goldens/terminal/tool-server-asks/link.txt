@@ -20,13 +20,13 @@
   ▸ 1 call
 
   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-  │ ● grafana needs you to sign in                                                                         │
+  │ ● grafana sent a link                                                                                  │
   │                                                                                                        │
   │ Grafana needs you to sign in before I can read its dashboards.                                         │
   │ https://grafana.example.com/login                                                                      │
   │                                                                                                        │
   │ › 1. Open the link                                                                                     │
-  │   2. I'm signed in                                                                                     │
+  │   2. Done                                                                                              │
   │                                                                                                        │
   │   Decline  esc                                                                                         │
   ╰──────────────────────────────────────────────────────────────────────────────────── gpt-fake (medium) ─╯

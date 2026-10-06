@@ -330,7 +330,7 @@ public struct AnswerView: Codable, Hashable, Sendable {
 
 public enum AskBody: Codable, Hashable, Sendable {
     case command(command: String, cwd: String, reason: String, description: String)
-    case edit(path: String, files: UInt32, added: UInt32, removed: UInt32, diff: String, reason: String, created: Bool)
+    case edit(path: String, files: UInt32, added: UInt32, removed: UInt32, diff: String, reason: String, created: Bool?)
     case tool(server: String, tool: String, arguments: String)
     case question([QuestionView])
     case plan(plan: String)
@@ -431,7 +431,7 @@ public enum AskBody: Codable, Hashable, Sendable {
                 removed: try _fields.decode(UInt32.self, forKey: .removed),
                 diff: try _fields.decode(String.self, forKey: .diff),
                 reason: try _fields.decode(String.self, forKey: .reason),
-                created: try _fields.decode(Bool.self, forKey: .created))
+                created: try _fields.decodeIfPresent(Bool.self, forKey: .created))
         case .tool:
             let _fields = try _container.nestedContainer(
                 keyedBy: ToolKeys.self, forKey: .tool)
@@ -495,7 +495,7 @@ public enum AskBody: Codable, Hashable, Sendable {
             try _fields.encode(removed, forKey: .removed)
             try _fields.encode(diff, forKey: .diff)
             try _fields.encode(reason, forKey: .reason)
-            try _fields.encode(created, forKey: .created)
+            try _fields.encodeIfPresent(created, forKey: .created)
         case .tool(let server, let tool, let arguments):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: ToolKeys.self, forKey: .tool)
@@ -789,7 +789,7 @@ public enum AskRow: Codable, Hashable, Sendable {
 public enum AskSubject: Codable, Hashable, Sendable {
     case plan
     case command(command: String)
-    case edit(path: String, files: UInt32, created: Bool)
+    case edit(path: String, files: UInt32, created: Bool?)
     case tool(server: String, tool: String)
     /// The first question, and how many there are.
     case question(question: String, count: UInt32)
@@ -878,7 +878,7 @@ public enum AskSubject: Codable, Hashable, Sendable {
             self = .edit(
                 path: try _fields.decode(String.self, forKey: .path),
                 files: try _fields.decode(UInt32.self, forKey: .files),
-                created: try _fields.decode(Bool.self, forKey: .created))
+                created: try _fields.decodeIfPresent(Bool.self, forKey: .created))
         case .tool:
             let _fields = try _container.nestedContainer(
                 keyedBy: ToolKeys.self, forKey: .tool)
@@ -930,7 +930,7 @@ public enum AskSubject: Codable, Hashable, Sendable {
             var _fields = _container.nestedContainer(keyedBy: EditKeys.self, forKey: .edit)
             try _fields.encode(path, forKey: .path)
             try _fields.encode(files, forKey: .files)
-            try _fields.encode(created, forKey: .created)
+            try _fields.encodeIfPresent(created, forKey: .created)
         case .tool(let server, let tool):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: ToolKeys.self, forKey: .tool)

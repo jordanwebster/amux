@@ -222,17 +222,26 @@ pub fn row_lines(
                 ask_step(&mut drawn, &lines, width, theme);
             }
             RowKind::Ask(AskRow::Link {
-                server, resolution, ..
+                server,
+                message,
+                resolution,
+                ..
             }) => {
+                // The provider says nothing of what a link is for, so the
+                // server's own message is what tells it apart.
                 let words = match resolution {
-                    Resolution::Open => format!("{server} needs you to sign in"),
-                    Resolution::Answered => format!("Signed in to {server}"),
-                    Resolution::Declined => format!("Declined {server}'s sign-in"),
+                    Resolution::Open => format!("{server} sent a link"),
+                    Resolution::Answered => format!("Opened {server}'s link"),
+                    Resolution::Declined => format!("Declined {server}'s link"),
                     Resolution::Cancelled | Resolution::Dismissed => {
-                        format!("Dismissed {server}'s sign-in")
+                        format!("Dismissed {server}'s link")
                     }
                 };
-                ask_step(&mut drawn, &[words], width, theme);
+                let mut lines = vec![words];
+                if let Some(said) = message.lines().find(|line| !line.trim().is_empty()) {
+                    lines.push(said.trim().to_owned());
+                }
+                ask_step(&mut drawn, &lines, width, theme);
             }
             RowKind::Ask(AskRow::Grant {
                 read,

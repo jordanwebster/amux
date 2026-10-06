@@ -36,7 +36,7 @@ snapshot WORKING queue=[] working_on=- at=1788080222887 asks=[] session=2108a7ed
 ## 38 recorded 36: fact Transcript type=assistant uuid=34d89cb5-34b1-455b-9ca8-044bc1031850
 item toolu_01Mxtd6WkCNMK9U7KSDpsLGD tool final at=1788080222931 text="" Edit TOOL_STATE_RUNNING input="{\"file_path\":\"<MACHINE_PATH>\",\"new_string\":\"VALUE=2\",\"old_st…"
 ## 46 recorded 44: fact Transcript type=user uuid=095aa16e-114a-45c5-bd0a-e05d3017b8f0
-item toolu_01Mxtd6WkCNMK9U7KSDpsLGD tool final at=1788080222931 text="" Edit TOOL_STATE_SUCCEEDED ended=1788080222973 input="{\"file_path\":\"<MACHINE_PATH>\",\"new_string\":\"VALUE=2\",\"old_st…" out="The file /private<MACHINE_PATH> has been updated successfull…"
+item toolu_01Mxtd6WkCNMK9U7KSDpsLGD tool final at=1788080222931 text="" Edit TOOL_STATE_SUCCEEDED ended=1788080222973 line=1 input="{\"file_path\":\"<MACHINE_PATH>\",\"new_string\":\"VALUE=2\",\"old_st…" out="The file /private<MACHINE_PATH> has been updated successfull…"
 ## 49 recorded 47: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01KZYaYpW6mGjKYjYSTBax7p
 snapshot WORKING queue=[] working_on=- at=1788080224439 asks=[] session=2108a7ed-b28f-457f-9480-37df2991fb5e model=claude-haiku-4-5-20251001 model_name="Haiku 4.5" mode=bypassPermissions context=34562 tasks=? background=? running=toolu_01KZYaYpW6mGjKYjYSTBax7p Bash since=1788080224439
 ## 51 recorded 49: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01KZYaYpW6mGjKYjYSTBax7p

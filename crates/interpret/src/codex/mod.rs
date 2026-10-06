@@ -34,7 +34,9 @@ use codex_protocol::client::{
     TurnInterruptParams, TurnStartParams, TurnSteerParams, UserInputResponse,
 };
 use codex_protocol::items::{TextContent, UserInput};
-use codex_protocol::server::{FileSystemPermissions, NetworkPermissions, PermissionProfile};
+use codex_protocol::server::{
+    CommandDecision, FileSystemPermissions, NetworkPermissions, PermissionProfile,
+};
 use codex_protocol::thread::{
     ApprovalPolicy, ApprovalsReviewer, AskForApproval, CollaborationMode, CollaborationSettings,
     ModeKind, ReasoningEffort, SandboxMode,
@@ -44,11 +46,11 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    AgentSpec, AskClosed, AskItem, BackgroundJob, CodexAnswer, CodexAsk, CodexItem, CodexSnapshot,
-    CodexUsage, ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction, Input,
-    OfferedCommand, OfferedMode, OfferedModel, OfferedPermission, QueuedInput, Step, TaskList,
-    TaskListEntry, ToolDecision, ToolServerHealth, Work, codex_answer, codex_ask, codex_input,
-    codex_item, input, sender, work,
+    AgentSpec, AskClosed, AskItem, BackgroundJob, CodexAnswer, CodexAsk, CodexGrant, CodexItem,
+    CodexSnapshot, CodexUsage, ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind,
+    FormAction, Input, OfferedCommand, OfferedMode, OfferedModel, OfferedPermission, QueuedInput,
+    Step, TaskList, TaskListEntry, ToolDecision, ToolServerHealth, Work, codex_answer, codex_ask,
+    codex_grant, codex_input, codex_item, input, sender, tool_decision, work,
 };
 
 use crate::claude_common::{clip, describe_tasks, or_dash};
@@ -1117,25 +1119,25 @@ impl State {
         };
         self.shared.answer(emit, id, &key);
         self.asks.remove(&key);
-        self.respond(emit, &meta.id, Ok(response));
         let decision = Decision::try_from(approve.decision).unwrap_or_default();
-        let (outcome, scope) = match decision {
-            Decision::Approve => (DecisionOutcome::Allowed, ""),
-            Decision::ApproveSession => (DecisionOutcome::Allowed, "session"),
-            Decision::ApproveSimilar => (DecisionOutcome::Allowed, "similar"),
-            Decision::ApproveNetwork => (DecisionOutcome::Allowed, "network"),
-            Decision::Deny => (DecisionOutcome::Denied, ""),
-            Decision::Abort => (DecisionOutcome::Denied, "abort"),
-            Decision::Unspecified => (DecisionOutcome::Unknown, ""),
+        let granted = granted(decision, &response);
+        self.respond(emit, &meta.id, Ok(response));
+        let outcome = match decision {
+            Decision::Approve
+            | Decision::ApproveSession
+            | Decision::ApproveSimilar
+            | Decision::ApproveNetwork => DecisionOutcome::Allowed,
+            Decision::Deny | Decision::Abort => DecisionOutcome::Denied,
+            Decision::Unspecified => DecisionOutcome::Unknown,
         };
         self.decide(
             emit,
             &ask.item_key,
             ToolDecision {
                 outcome: outcome as i32,
-                scope: scope.into(),
                 note: String::new(),
                 elsewhere: false,
+                granted: granted.map(tool_decision::Granted::Codex),
             },
         );
         self.shared.accept(emit, id, false);
@@ -1415,7 +1417,7 @@ fn codex_answer_response(
                 ask_item::answered(asked, &answer)?,
             ))
         }
-        (codex_ask::Body::McpForm(_), codex_answer::Of::Form(form)) => {
+        (codex_ask::Body::McpForm(asked), codex_answer::Of::Form(form)) => {
             let action = form_action(form.action)?;
             let content = (action == ElicitationAction::Accept).then(|| {
                 serde_json::from_slice(&form.content_json)
@@ -1423,7 +1425,7 @@ fn codex_answer_response(
             });
             Some((
                 elicitation_response(action, content, None),
-                ask_item::form_sent(&form),
+                ask_item::form_sent(&form, &asked.schema_json),
             ))
         }
         (codex_ask::Body::McpLink(_), codex_answer::Of::Link(link)) => Some((
@@ -1626,7 +1628,7 @@ fn describe_work(work: &Work) -> String {
                 .changes
                 .iter()
                 .map(|file| format!(
-                    "{} {}{} patch={}",
+                    "{} {}{}{} patch={}",
                     wire::FileChangeKind::try_from(file.kind)
                         .map_or("?", |kind| kind.as_str_name()),
                     file.path,
@@ -1635,6 +1637,9 @@ fn describe_work(work: &Work) -> String {
                     } else {
                         format!(" -> {}", file.move_to)
                     },
+                    file.line
+                        .map(|line| format!(" line={line}"))
+                        .unwrap_or_default(),
                     clip(&file.patch, 40)
                 ))
                 .collect::<Vec<_>>()
@@ -1682,11 +1687,7 @@ fn describe_work(work: &Work) -> String {
             " decision={}{}{}",
             DecisionOutcome::try_from(decision.outcome)
                 .map_or("?", |outcome| outcome.as_str_name()),
-            if decision.scope.is_empty() {
-                String::new()
-            } else {
-                format!(" scope={}", decision.scope)
-            },
+            crate::claude_common::describe_grant(decision.granted.as_ref()),
             if decision.elsewhere { " elsewhere" } else { "" }
         ));
     }
@@ -1816,6 +1817,33 @@ fn describe_item(body: &[u8]) -> ItemView {
         complete,
         text,
     }
+}
+
+/// What an approval allows from now on, read from the answer sent: the
+/// rule it carries, or the session-wide choice.
+fn granted(decision: Decision, response: &ClientResponse) -> Option<CodexGrant> {
+    let of = match response {
+        ClientResponse::CommandApproval(answer) => match &answer.decision {
+            CommandDecision::AcceptWithExecpolicyAmendment {
+                accept_with_execpolicy_amendment: rule,
+            } => Some(codex_grant::Of::CommandPrefix(wire::CommandPrefix {
+                words: rule.execpolicy_amendment.clone(),
+            })),
+            CommandDecision::ApplyNetworkPolicyAmendment {
+                apply_network_policy_amendment: choice,
+            } if choice.network_policy_amendment.action == "allow" => {
+                Some(codex_grant::Of::NetworkHosts(wire::NetworkHosts {
+                    hosts: vec![choice.network_policy_amendment.host.clone()],
+                }))
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    of.or_else(|| {
+        (decision == Decision::ApproveSession).then_some(codex_grant::Of::Session(wire::Empty {}))
+    })
+    .map(|of| CodexGrant { of: Some(of) })
 }
 
 fn describe_ask(ask: &CodexAsk) -> String {

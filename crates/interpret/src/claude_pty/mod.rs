@@ -67,15 +67,15 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    AgentSpec, Ask, AskClosed, Attachment, Boundary, BoundaryKind, ClaudeAnswer, ClaudePtyItem,
-    ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName, RunningCall, Step,
-    SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input, claude_pty_item,
-    input, permission_answer,
+    AgentSpec, Ask, AskClosed, Attachment, Boundary, BoundaryKind, ClaudeAnswer, ClaudeGrant,
+    ClaudePtyItem, ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName, RunningCall,
+    Step, SubagentProgress, ToolCall, ToolDecision, ToolState, claude_answer, claude_pty_input,
+    claude_pty_item, input, permission_answer, tool_decision,
 };
 
 use crate::claude_common::{
-    Jobs, Task, Verdict, describe_asks, describe_tasks, describe_tool, or_dash, plan_item,
-    question_item, same_json, split_tool_name, task_list,
+    Jobs, Task, Verdict, describe_asks, describe_tasks, describe_tool, file_step_facts, or_dash,
+    plan_item, question_item, same_json, split_tool_name, task_list,
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
@@ -370,7 +370,10 @@ struct Subagent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Decision {
     outcome: i32,
-    scope: String,
+    /// What allowing granted; None when it allowed only the call, and when
+    /// it was answered in Claude's own terminal, which does not say.
+    #[serde(default, with = "serde_pb::opt_msg")]
+    grant: Option<ClaudeGrant>,
     note: String,
     elsewhere: bool,
     /// How a plan ask closed, which its plan carries instead.
@@ -385,7 +388,7 @@ impl Decision {
     fn elsewhere(outcome: DecisionOutcome) -> Self {
         Self {
             outcome: outcome as i32,
-            scope: String::new(),
+            grant: None,
             note: String::new(),
             elsewhere: true,
             verdict: None,
@@ -396,7 +399,7 @@ impl Decision {
     fn unknown() -> Self {
         Self {
             outcome: DecisionOutcome::Unknown as i32,
-            scope: String::new(),
+            grant: None,
             note: String::new(),
             elsewhere: false,
             verdict: None,
@@ -434,9 +437,9 @@ impl Decision {
     fn to_wire(&self) -> ToolDecision {
         ToolDecision {
             outcome: self.outcome,
-            scope: self.scope.clone(),
             note: self.note.clone(),
             elsewhere: self.elsewhere,
+            granted: self.grant.clone().map(tool_decision::Granted::Claude),
         }
     }
 }
@@ -461,8 +464,9 @@ struct AskMeta {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum AskShape {
     Permission {
-        /// The destination of each scope choice, in offer order.
-        scopes: Vec<String>,
+        /// What each scope choice grants, in offer order.
+        #[serde(with = "serde_pb::msgs")]
+        grants: Vec<ClaudeGrant>,
         /// How many suggestions the hook carried: what the keymap reads
         /// the terminal's menu by.
         #[serde(default)]
@@ -701,6 +705,11 @@ impl State {
                 },
             );
         }
+        let (created, line) = if tool.state == ToolState::Succeeded as i32 {
+            file_step_facts(&tool.name, &tool.server, &tool.outcome_json)
+        } else {
+            (None, None)
+        };
         let body = item_body(claude_pty_item::Kind::Tool(ToolCall {
             name: tool.name.clone(),
             input_json: tool.input.clone().into_bytes(),
@@ -720,6 +729,8 @@ impl State {
             server: tool.server.clone(),
             exit_code: None,
             ended_at_ms: tool.ended_at_ms,
+            created,
+            line,
         }));
         if body == tool.emitted {
             return;
@@ -1309,9 +1320,9 @@ fn terminal_answer(
     asked: Option<&wire::QuestionAsk>,
     answer: claude_answer::Of,
 ) -> Result<(TerminalInput, Decision), &'static str> {
-    let decision = |outcome: DecisionOutcome, scope: String, note: String| Decision {
+    let decision = |outcome: DecisionOutcome, grant: Option<ClaudeGrant>, note: String| Decision {
         outcome: outcome as i32,
-        scope,
+        grant,
         note,
         elsewhere: false,
         verdict: None,
@@ -1320,7 +1331,7 @@ fn terminal_answer(
     match (shape, answer) {
         (
             AskShape::Permission {
-                scopes,
+                grants,
                 suggestions,
             },
             claude_answer::Of::Permission(permission),
@@ -1333,7 +1344,7 @@ fn terminal_answer(
                             suggestions,
                             choice: PermissionChoice::AllowOnce,
                         },
-                        decision(DecisionOutcome::Allowed, String::new(), String::new()),
+                        decision(DecisionOutcome::Allowed, None, String::new()),
                     )),
                     Some(index) => Ok((
                         TerminalInput::Permission {
@@ -1342,7 +1353,7 @@ fn terminal_answer(
                         },
                         decision(
                             DecisionOutcome::Allowed,
-                            scopes.get(index as usize).ok_or(NO_KEY_FOR_ANSWER)?.clone(),
+                            Some(grants.get(index as usize).ok_or(NO_KEY_FOR_ANSWER)?.clone()),
                             String::new(),
                         ),
                     )),
@@ -1354,7 +1365,7 @@ fn terminal_answer(
                             note: deny.note.clone(),
                         },
                     },
-                    decision(DecisionOutcome::Denied, String::new(), deny.note),
+                    decision(DecisionOutcome::Denied, None, deny.note),
                 )),
             }
         }

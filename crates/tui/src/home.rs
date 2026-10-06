@@ -1910,7 +1910,11 @@ fn ask_words(ask: &AskSummary) -> String {
         AskSubject::Command { command } => format!("wants to run {}", text::first_line(command)),
         AskSubject::Edit { files, .. } if *files > 1 => format!("wants to edit {files} files"),
         AskSubject::Edit { path, created, .. } => {
-            let verb = if *created { "create" } else { "edit" };
+            let verb = match created {
+                Some(true) => "create",
+                Some(false) => "edit",
+                None => "write",
+            };
             format!("wants to {verb} {path}")
         }
         AskSubject::Tool { server, tool } => {

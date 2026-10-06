@@ -92,6 +92,9 @@ message FileChange {
   string move_to = 3;
   // Unified diff for this file.
   string patch = 4;
+  // An update that finished: the line its first change landed on. Whether
+  // the change made the file is its kind.
+  optional uint32 line = 5;
 }
 
 enum FileChangeKind {

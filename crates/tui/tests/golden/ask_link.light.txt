@@ -1,10 +1,10 @@
-● linear needs you to sign in
+● linear sent a link
 
 Sign in to Linear
 https://linear.app/oauth/authorize
 
 › 1. Open the link
-  2. I'm signed in
+  2. Done
 
   Decline  esc
 --- styles

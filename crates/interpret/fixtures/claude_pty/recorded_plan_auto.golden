@@ -62,4 +62,4 @@ snapshot WORKING queue=[] working_on=- at=1788080296215 asks=[] session=eafd66d9
 item toolu_012N117fcWKqVrMgjVuuCieR tool final at=1788080296332 text="" Edit TOOL_STATE_RUNNING input="{\"file_path\":\"<MACHINE_PATH>\",\"new_string\":\"UPDATED\",\"old_st…"
 snapshot WORKING queue=[] working_on=- at=1788080296274 asks=[] session=eafd66d9-41c5-4216-8d1a-7a493141d679 model=claude-sonnet-5 model_name="Sonnet 5" mode=auto context=52254 tasks=? background=?
 ## 87 recorded 85: fact Transcript type=user uuid=5645ba9f-3853-4c3b-93ff-6fb5ada890ee
-item toolu_012N117fcWKqVrMgjVuuCieR tool final at=1788080296332 text="" Edit TOOL_STATE_SUCCEEDED ended=1788080296380 input="{\"file_path\":\"<MACHINE_PATH>\",\"new_string\":\"UPDATED\",\"old_st…" out="The file /private<MACHINE_PATH> has been updated successfull…"
+item toolu_012N117fcWKqVrMgjVuuCieR tool final at=1788080296332 text="" Edit TOOL_STATE_SUCCEEDED ended=1788080296380 line=1 input="{\"file_path\":\"<MACHINE_PATH>\",\"new_string\":\"UPDATED\",\"old_st…" out="The file /private<MACHINE_PATH> has been updated successfull…"

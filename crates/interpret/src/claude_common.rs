@@ -12,10 +12,10 @@ use claude_protocol::stream::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    Ask, Attachment, BackgroundJob, BlobRef, ClaudeLimit, ClaudeUsage, DecisionOutcome,
-    OfferedCommand, OfferedModel, OfferedPermission, Question, QuestionAsk, QuestionOption,
-    ScopeChoice, TaskList, TaskListEntry, TaskListStatus, ToolCall, ToolClass, ToolState,
-    UsageState, attachment,
+    Ask, Attachment, BackgroundJob, BlobRef, ClaudeGrant, ClaudeLimit, ClaudeUsage,
+    DecisionOutcome, OfferedCommand, OfferedModel, OfferedPermission, Question, QuestionAsk,
+    QuestionOption, ScopeChoice, TaskList, TaskListEntry, TaskListStatus, ToolCall, ToolClass,
+    ToolState, UsageState, attachment, codex_grant, tool_decision,
 };
 
 use crate::Effect;
@@ -327,11 +327,7 @@ pub(crate) fn describe_tool(tool: &ToolCall) -> String {
             " decision={}{}{}{}",
             DecisionOutcome::try_from(decision.outcome)
                 .map_or("?", |outcome| outcome.as_str_name()),
-            if decision.scope.is_empty() {
-                String::new()
-            } else {
-                format!(" scope={}", decision.scope)
-            },
+            describe_grant(decision.granted.as_ref()),
             if decision.note.is_empty() {
                 String::new()
             } else {
@@ -342,6 +338,12 @@ pub(crate) fn describe_tool(tool: &ToolCall) -> String {
     }
     if let Some(ended) = tool.ended_at_ms {
         text.push_str(&format!(" ended={ended}"));
+    }
+    if let Some(created) = tool.created {
+        text.push_str(if created { " created" } else { " updated" });
+    }
+    if let Some(line) = tool.line {
+        text.push_str(&format!(" line={line}"));
     }
     for attachment in &tool.attachments {
         if let Some(attachment::Of::Image(image)) = &attachment.of {
@@ -609,6 +611,107 @@ fn questions_asked(questions: Vec<QuestionItem>) -> (QuestionAsk, Vec<QuestionSh
         })
         .collect();
     (QuestionAsk { questions }, shapes)
+}
+
+/// What a decision granted, as goldens print it.
+pub(crate) fn describe_grant(granted: Option<&tool_decision::Granted>) -> String {
+    let words = |words: &[String]| format!("{words:?}");
+    match granted {
+        None => String::new(),
+        Some(tool_decision::Granted::Claude(grant)) => {
+            let mut text = format!(" grant=claude(saved_to={}", or_dash(&grant.saved_to));
+            if !grant.rules.is_empty() {
+                text.push_str(&format!(" rules={}", words(&grant.rules)));
+            }
+            if !grant.directories.is_empty() {
+                text.push_str(&format!(" directories={}", words(&grant.directories)));
+            }
+            if let Some(mode) = &grant.mode {
+                text.push_str(&format!(" mode={mode}"));
+            }
+            text.push(')');
+            text
+        }
+        Some(tool_decision::Granted::Codex(grant)) => match &grant.of {
+            Some(codex_grant::Of::Session(_)) => " grant=session".into(),
+            Some(codex_grant::Of::CommandPrefix(prefix)) => {
+                format!(" grant=prefix{}", words(&prefix.words))
+            }
+            Some(codex_grant::Of::NetworkHosts(hosts)) => {
+                format!(" grant=hosts{}", words(&hosts.hosts))
+            }
+            None => " grant=?".into(),
+        },
+    }
+}
+
+/// What allowing with a scope choice grants: the choice as Claude offered
+/// it, in the record's words.
+pub(crate) fn claude_grant(scope: &ScopeChoice) -> ClaudeGrant {
+    ClaudeGrant {
+        rules: scope.rules.clone(),
+        directories: scope.directories.clone(),
+        mode: (!scope.mode.is_empty()).then(|| scope.mode.clone()),
+        saved_to: scope.destination.clone(),
+    }
+}
+
+/// A finished Write's result: Claude says whether it made the file.
+#[derive(Deserialize)]
+struct WriteResult {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+/// A finished edit's result: the hunks of the change it made.
+#[derive(Deserialize)]
+struct EditResult {
+    #[serde(rename = "structuredPatch", default)]
+    structured_patch: Vec<Hunk>,
+}
+
+#[derive(Deserialize)]
+struct Hunk {
+    #[serde(rename = "newStart")]
+    new_start: u32,
+    #[serde(default)]
+    lines: Vec<String>,
+}
+
+/// What a finished file write or edit states on its step: whether it made
+/// the file, and the line its first change landed on. Read from Claude's
+/// result, which says both only once the change is made.
+pub(crate) fn file_step_facts(
+    name: &str,
+    server: &str,
+    result: &str,
+) -> (Option<bool>, Option<u32>) {
+    if !server.is_empty() || result.is_empty() {
+        return (None, None);
+    }
+    let created = match name {
+        "Write" => serde_json::from_str::<WriteResult>(result)
+            .ok()
+            .and_then(|write| match write.kind.as_str() {
+                "create" => Some(true),
+                "update" => Some(false),
+                _ => None,
+            }),
+        _ => None,
+    };
+    let line = match name {
+        "Write" | "Edit" | "MultiEdit" if created != Some(true) => {
+            serde_json::from_str::<EditResult>(result)
+                .ok()
+                .and_then(|edit| {
+                    edit.structured_patch
+                        .iter()
+                        .find_map(|hunk| crate::shared::first_change(hunk.new_start, &hunk.lines))
+                })
+        }
+        _ => None,
+    };
+    (created, line)
 }
 
 /// Every scope choice Claude offered with a permission request, in order.
@@ -1073,4 +1176,25 @@ pub(crate) fn describe_model_name(name: Option<&str>) -> String {
     name.map_or("?".to_owned(), |name| {
         serde_json::Value::String(name.to_owned()).to_string()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_finished_write_says_whether_it_made_the_file_and_an_edit_where_it_landed() {
+        let created =
+            r#"{"type":"create","filePath":"/w/a.txt","content":"hi","structuredPatch":[]}"#;
+        assert_eq!(file_step_facts("Write", "", created), (Some(true), None));
+        let updated = r#"{"type":"update","filePath":"/w/a.txt","structuredPatch":[{"oldStart":3,"oldLines":3,"newStart":3,"newLines":3,"lines":[" a","-b","+c"]}]}"#;
+        assert_eq!(
+            file_step_facts("Write", "", updated),
+            (Some(false), Some(4))
+        );
+        let edit = r#"{"filePath":"/w/a.rs","oldString":"b","newString":"c","structuredPatch":[{"oldStart":40,"oldLines":7,"newStart":40,"newLines":7,"lines":[" x"," y"," z","-b","+c"," p"]}]}"#;
+        assert_eq!(file_step_facts("Edit", "", edit), (None, Some(43)));
+        assert_eq!(file_step_facts("Edit", "server", edit), (None, None));
+        assert_eq!(file_step_facts("Read", "", edit), (None, None));
+    }
 }

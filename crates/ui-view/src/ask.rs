@@ -60,8 +60,10 @@ pub enum AskBody {
         removed: u32,
         diff: String,
         reason: String,
-        /// The file does not exist yet: "Wants to create".
-        created: bool,
+        /// Whether the file is new: true "Wants to create", false "Wants
+        /// to edit". None for a write that may do either: Claude says
+        /// which only once it is done ("Wants to write").
+        created: Option<bool>,
     },
     Tool {
         server: String,
@@ -417,7 +419,7 @@ fn permission_body(p: &wire::PermissionAsk) -> AskBody {
                 removed,
                 diff,
                 reason: p.reason.clone(),
-                created: p.tool_name == "Write",
+                created: (p.tool_name != "Write").then_some(false),
             }
         }
         _ => AskBody::Tool {
@@ -722,8 +724,9 @@ fn codex(state: &SessionState, ask: &wire::CodexAsk) -> (AskBody, Vec<Choice>) {
                     removed,
                     diff,
                     reason: f.reason.clone(),
-                    created: f.changes.len() == 1
-                        && f.changes[0].kind() == wire::FileChangeKind::Add,
+                    created: Some(
+                        f.changes.len() == 1 && f.changes[0].kind() == wire::FileChangeKind::Add,
+                    ),
                 },
                 decision_choices(vec![], vec![]),
             )

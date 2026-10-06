@@ -38,10 +38,10 @@
   row    6 review:1db1dab2-2fed-4674-872a-20952bdfa1db AutoReview { decision: "inProgress", risk: "", rationale: "", subject: "exec-b283e140-65f5-4684-9498-73e4c2de1ce0" }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 52 recorded 51: fact Rpc method=item/autoApprovalReview/completed
-  row    5 exec-b283e140-65f5-4684-9498-73e4c2de1ce0 Command { command: "/bin/zsh -lc 'touch reviewed.txt'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: AutoApproved, scope: Some("reviewer"), note: None, elsewhere: false }
+  row    5 exec-b283e140-65f5-4684-9498-73e4c2de1ce0 Command { command: "/bin/zsh -lc 'touch reviewed.txt'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: AutoApproved, scope: None, note: None, elsewhere: false }
   row    6 review:1db1dab2-2fed-4674-872a-20952bdfa1db AutoReview { decision: "approved", risk: "low", rationale: "The user explicitly authorized the exact touch command, which only creates or updates a single workspace file.", subject: "exec-b283e140-65f5-4684-9498-73e4c2de1ce0" }
 ## 54 recorded 53: fact Rpc method=item/completed
-  row    5 exec-b283e140-65f5-4684-9498-73e4c2de1ce0 Command { command: "/bin/zsh -lc 'touch reviewed.txt'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2065) } decision=Decision { outcome: AutoApproved, scope: Some("reviewer"), note: None, elsewhere: false }
+  row    5 exec-b283e140-65f5-4684-9498-73e4c2de1ce0 Command { command: "/bin/zsh -lc 'touch reviewed.txt'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2065) } decision=Decision { outcome: AutoApproved, scope: None, note: None, elsewhere: false }
 ## 60 recorded 59: fact Rpc method=item/started
   row    7 rs_0f339e74503e57f8016ab72f0c0f9887d29ef65aae080be9df Thinking { text: "", open: true, duration_ms: None }
   composer Send activity=Some(Thinking) queue=[] outbox=[]
@@ -62,7 +62,7 @@
      2 prompt:737464696e2d34 Prompt { text: [Text("Run this exact shell command and no substitute: touch reviewed.txt. Then say DONE.")], steered: false }
      3 rs_0f339e74503e57f8016ab72f064e7887d284c5821bf2ed5fbe Thinking { text: "", open: false, duration_ms: Some(3171) }
      4 msg_0f339e74503e57f8016ab72f06e49487d2bd368a73fabdac32 Prose { text: [Text("I’ll run the exact command now.")], streaming: false, working_note: true }
-     5 exec-b283e140-65f5-4684-9498-73e4c2de1ce0 Command { command: "/bin/zsh -lc 'touch reviewed.txt'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2065) } decision=Decision { outcome: AutoApproved, scope: Some("reviewer"), note: None, elsewhere: false }
+     5 exec-b283e140-65f5-4684-9498-73e4c2de1ce0 Command { command: "/bin/zsh -lc 'touch reviewed.txt'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2065) } decision=Decision { outcome: AutoApproved, scope: None, note: None, elsewhere: false }
      6 review:1db1dab2-2fed-4674-872a-20952bdfa1db AutoReview { decision: "approved", risk: "low", rationale: "The user explicitly authorized the exact touch command, which only creates or updates a single workspace file.", subject: "exec-b283e140-65f5-4684-9498-73e4c2de1ce0" }
      7 rs_0f339e74503e57f8016ab72f0c0f9887d29ef65aae080be9df Thinking { text: "", open: false, duration_ms: Some(2778) }
      8 msg_0f339e74503e57f8016ab72f0c4acc87d292a26f115be10720 Prose { text: [Text("DONE")], streaming: false, working_note: false }

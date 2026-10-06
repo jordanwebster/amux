@@ -1583,7 +1583,7 @@ fn cards() -> Vec<CardSet> {
                     removed: 1,
                     diff: "@@ -10,3 +10,4 @@\n let a = 1;\n-let b = 2;\n+let b = 3;\n+let c = 4;".into(),
                     reason: String::new(),
-                    created: false,
+                    created: Some(false),
                 },
                 vec![
                     choice(ChoiceOutcome::AllowOnce),

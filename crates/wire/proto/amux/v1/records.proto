@@ -338,6 +338,11 @@ message ToolCall {
   optional int32 exit_code = 13;
   // When the call finished, the provider's timestamp where it has one.
   optional int64 ended_at_ms = 14;
+  // A file write that finished: whether it made the file (else it
+  // replaced one). Claude says which only once the write is done.
+  optional bool created = 15;
+  // A file edit that finished: the line its first change landed on.
+  optional uint32 line = 16;
 }
 
 enum ToolState {
@@ -367,13 +372,51 @@ enum ToolClass {
 }
 
 message ToolDecision {
+  reserved 2;
   DecisionOutcome outcome = 1;
-  // The scope the person chose, in the provider's terms; empty when it
-  // cannot be recovered.
-  string scope = 2;
   string note = 3;
   // Answered in the provider's own interface rather than through amux.
   bool elsewhere = 4;
+  // What an allowance granted beyond this one call. Absent when it allowed
+  // the call alone, and when the provider did not say which choice was
+  // made: Claude's own terminal does not report it.
+  oneof granted {
+    ClaudeGrant claude = 5;
+    CodexGrant codex = 6;
+  }
+}
+
+// A standing permission Claude added when the call was allowed.
+message ClaudeGrant {
+  // The rules added, as Claude writes them: "Bash(npm test:*)".
+  repeated string rules = 1;
+  // Folders added to those Claude may work in.
+  repeated string directories = 2;
+  // A permission mode Claude switched to.
+  optional string mode = 3;
+  // Where Claude saved it: session, localSettings, projectSettings,
+  // userSettings, or Claude's own word.
+  string saved_to = 4;
+}
+
+// What Codex allows from now on.
+message CodexGrant {
+  oneof of {
+    // Approvals like this one, for the rest of the session.
+    Empty session = 1;
+    // Commands starting with these words.
+    CommandPrefix command_prefix = 2;
+    // Network access to these hosts.
+    NetworkHosts network_hosts = 3;
+  }
+}
+
+message CommandPrefix {
+  repeated string words = 1;
+}
+
+message NetworkHosts {
+  repeated string hosts = 1;
 }
 
 enum DecisionOutcome {

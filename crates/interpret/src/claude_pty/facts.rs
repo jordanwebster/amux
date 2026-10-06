@@ -22,9 +22,9 @@ use super::{
 };
 use crate::claude_common::{
     AnsweredResult, BackgroundInput, JobInput, PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, Verdict,
-    apply_task_tool, blocks_text, compact_json, message_text, permission_scopes, plan_ask,
-    plan_mode_write, question_ask, question_ask_text, same_json, split_tool_name, timestamp_ms,
-    tool_class, tool_result_images, tool_result_text, without_image_bytes,
+    apply_task_tool, blocks_text, claude_grant, compact_json, message_text, permission_scopes,
+    plan_ask, plan_mode_write, question_ask, question_ask_text, same_json, split_tool_name,
+    timestamp_ms, tool_class, tool_result_images, tool_result_text, without_image_bytes,
 };
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
@@ -1395,10 +1395,7 @@ fn permission_ask(
         Vec::new()
     };
     let shape = AskShape::Permission {
-        scopes: scopes
-            .iter()
-            .map(|scope| scope.destination.clone())
-            .collect(),
+        grants: scopes.iter().map(claude_grant).collect(),
         suggestions: count,
     };
     (

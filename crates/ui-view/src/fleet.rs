@@ -114,7 +114,8 @@ pub enum AskSubject {
     Edit {
         path: String,
         files: u32,
-        created: bool,
+        /// As the ask's card has it: None for a write that may do either.
+        created: Option<bool>,
     },
     Tool {
         server: String,

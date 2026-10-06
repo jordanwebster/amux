@@ -1,3 +1,22 @@
+2026-10-06 — **A permission's record says what it granted.**
+A decided permission kept one loose string: Claude's word for where a rule
+was saved, or which Codex button was pressed. So a step could say "always
+allowed" but not what. The record now carries a typed grant per provider,
+taken from the choice the interpreter sends: for Claude the rules, folders
+added, mode switched to and where it was saved; for Codex session-wide, the
+command prefix or the network host, read from the rule in the answer. An
+allowance answered in Claude's own terminal stays "allowed" with no detail,
+since Claude does not say which option was picked. The reviewer and abort
+words the string also held are gone: the outcome already says auto-approved
+or denied. Smaller facts move into the interpreters too: a finished Claude
+Write says whether it created or updated the file, a finished edit (Claude's
+or Codex's) says the line its first change landed on, and a Claude Write ask
+reads "Wants to write" rather than guessing "create" from the tool's name. A
+sent form's field names follow the form's schema, read in the order the
+server wrote it, instead of sorted; the values are still not kept. A tool
+server's link no longer reads "sign in": the card says the server sent a
+link and shows its own message.
+
 2026-10-06 — **A question can be skipped, noted, or replied to instead.**
 A question answer carried one note for the whole form, every question had
 to be answered, and the only way out was to dismiss it. The note now rides
