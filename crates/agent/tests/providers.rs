@@ -730,6 +730,7 @@ fn terminal_claude_denies_on_the_menu_that_offers_auto_mode() {
                     outcome: Outcome {
                         output: "fetched".into(),
                         error: false,
+                        pieces: None,
                     },
                     wait_for: None,
                 })),

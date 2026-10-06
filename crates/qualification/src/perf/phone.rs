@@ -88,6 +88,7 @@ pub fn long_rows(rows: usize) -> Vec<Step> {
                 outcome: Outcome {
                     output: format!("src/lib.rs:{}: let needle_{at} = {};\n", at % 900 + 1, at),
                     error: false,
+                    pieces: None,
                 },
                 wait_for: None,
             })
@@ -104,6 +105,7 @@ pub fn long_rows(rows: usize) -> Vec<Step> {
                         .collect::<Vec<_>>()
                         .join("\n"),
                     error: false,
+                    pieces: None,
                 },
                 wait_for: None,
             })
@@ -120,6 +122,7 @@ pub fn long_rows(rows: usize) -> Vec<Step> {
                         .collect::<Vec<_>>()
                         .join("\n"),
                     error: false,
+                    pieces: None,
                 },
                 wait_for: None,
             })
@@ -135,6 +138,7 @@ pub fn long_rows(rows: usize) -> Vec<Step> {
                 outcome: Outcome {
                     output: "The file has been updated.".to_owned(),
                     error: false,
+                    pieces: None,
                 },
                 wait_for: None,
             })
