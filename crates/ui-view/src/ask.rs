@@ -33,11 +33,14 @@ pub struct AskCard {
     /// The person may reply in their own words instead of answering the
     /// questions. Not for the provider's own dialogs, outside any turn.
     pub question_reply: bool,
+    /// Stopping interrupts a running turn. Codex proposes a plan as its
+    /// turn ends, so with its plan open there is no turn to stop.
+    pub stops_turn: bool,
     pub state: CardState,
 }
 
-/// Where the card is after the person acts. Stop is always in the menu:
-/// it is the interrupt, and the agent stays.
+/// Where the card is after the person acts. Stop is in the menu while a
+/// turn runs: it is the interrupt, and the agent stays.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum CardState {
     Open,
@@ -227,6 +230,13 @@ pub fn ask_card(state: &SessionState) -> Option<AskCard> {
         question_note: state.kind() != wire::Kind::ClaudePty,
         question_skip: state.kind() != wire::Kind::ClaudePty,
         question_reply: !provider_dialog(head),
+        stops_turn: !matches!(
+            head,
+            OpenAsk::Codex(wire::CodexAsk {
+                body: Some(codex_ask::Body::Plan(_)),
+                ..
+            })
+        ),
         state: card_state,
     })
 }

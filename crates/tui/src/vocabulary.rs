@@ -1552,6 +1552,7 @@ fn card(body: AskBody, mut choices: Vec<Choice>) -> AskCard {
         question_note: true,
         question_skip: true,
         question_reply: true,
+        stops_turn: true,
         state: CardState::Open,
     }
 }
@@ -1860,6 +1861,7 @@ fn cards() -> Vec<CardSet> {
             "Codex's plan to implement or keep planning with a note.",
             AskCard {
                 kind: wire::Kind::Codex,
+                stops_turn: false,
                 ..card(
                     AskBody::Plan {
                         plan: "## Plan\n\n1. Collapse the pairing failures into one error.".into(),

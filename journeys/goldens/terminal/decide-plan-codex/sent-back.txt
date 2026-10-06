@@ -31,4 +31,4 @@
   │   2. No, keep planning  esc · tab to add a note                                                        │
   ╰──────────────────────────────────────────────────────────────────── gpt-fake (medium) · custom · plan ─╯
 
-  enter choose   ctrl+x stop   ctrl+a more
+  enter choose   ctrl+a more

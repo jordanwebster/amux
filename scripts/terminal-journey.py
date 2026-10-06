@@ -718,7 +718,7 @@ ANSWERS = {
 
 SKIPPED = "Which section should come first?"
 PALETTE = "Pick the palette too."
-REPLY = "Let me see both palettes on the desk first."
+QUESTION_REPLY = "Let me see both palettes on the desk first."
 
 
 def answered(decisions: list[dict], answers: dict) -> None:
@@ -768,15 +768,15 @@ def answer_questions(journey: TerminalJourney) -> list[str]:
     journey.keys(pane, "Escape")
     journey.wait_terms(pane, "› Reply instead")
     journey.keys(pane, "Enter")
-    journey.type(pane, REPLY)
-    journey.wait_terms(pane, f"Reply instead: {REPLY}")
+    journey.type(pane, QUESTION_REPLY)
+    journey.wait_terms(pane, f"Reply instead: {QUESTION_REPLY}")
     journey.frame(pane, "reply-instead")
     journey.keys(pane, "Enter")
-    journey.wait(pane, lambda frame: at_rest(frame, REPLY, "I'll leave the palette for later."), "the reply to the reply")
+    journey.wait(pane, lambda frame: at_rest(frame, QUESTION_REPLY, "I'll leave the palette for later."), "the reply to the reply")
     journey.frame(pane, "replied")
     decisions = control_responses(journey, "asker", "answers")
     answered(decisions, ANSWERS)
-    replied(decisions, REPLY)
+    replied(decisions, QUESTION_REPLY)
     controls = [
         negative_control(answered, decisions, {**ANSWERS, SKIPPED: "Relay"}),
         negative_control(replied, decisions, "Pick Terminal."),

@@ -1,3 +1,14 @@
+2026-10-06 — **A Codex plan's decision no longer offers to stop a finished turn.**
+Codex proposes a plan as its turn ends, so with Plan ready open there is
+nothing to interrupt, yet the keys under the box said ctrl+x stop (and
+pressing it did nothing). The shared ask card now says whether stopping
+interrupts a turn, false for a Codex plan; the terminal offers ctrl+x stop,
+and acts on it, only when it does. Claude's plans and every other ask, asked
+mid-turn, keep it. The terminal question story's reply constant had
+silently replaced the conversation-decision stories' expected reply, so
+those three stories waited for words that never came; it has its own name
+now.
+
 2026-10-06 — **The plan-mode set's Codex agent proposes its plan as a plan.**
 Served with `just tui-set plan-mode`, the Codex agent wrote its plan as an
 ordinary message, so after a plan-mode turn no Plan ready decision opened

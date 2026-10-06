@@ -603,7 +603,8 @@ impl ChatView {
         }
         match key.code {
             KeyCode::Char('x') if ctrl => {
-                return if state.phase() == PhaseView::Working || !state.open_asks().is_empty() {
+                let stops = ui_view::ask_card(state).is_some_and(|card| card.stops_turn);
+                return if state.phase() == PhaseView::Working || stops {
                     vec![ChatEffect::Interrupt]
                 } else {
                     vec![]
@@ -2036,19 +2037,23 @@ impl ChatView {
                 {
                     hint = Err(words);
                 } else if footer.is_none() {
-                    hint = Err(if self.ask.in_box_note(card) {
-                        "enter send · esc clear · ctrl+x stop".to_owned()
-                    } else if !matches!(card.state, CardState::Open | CardState::Rejected(_)) {
-                        format!("ctrl+x stop · ctrl+{} more", self.leader)
-                    } else if self.ask.on_noted_deny(card) {
-                        format!(
-                            "enter choose · tab note · ctrl+x stop · ctrl+{} more",
-                            self.leader
-                        )
-                    } else if matches!(card.state, CardState::Open | CardState::Rejected(_)) {
-                        format!("enter choose · ctrl+x stop · ctrl+{} more", self.leader)
+                    let stop = if card.stops_turn {
+                        "ctrl+x stop · "
                     } else {
-                        format!("ctrl+x stop · ctrl+{} more", self.leader)
+                        ""
+                    };
+                    hint = Err(if self.ask.in_box_note(card) {
+                        if card.stops_turn {
+                            "enter send · esc clear · ctrl+x stop".to_owned()
+                        } else {
+                            "enter send · esc clear".to_owned()
+                        }
+                    } else if !matches!(card.state, CardState::Open | CardState::Rejected(_)) {
+                        format!("{stop}ctrl+{} more", self.leader)
+                    } else if self.ask.on_noted_deny(card) {
+                        format!("enter choose · tab note · {stop}ctrl+{} more", self.leader)
+                    } else {
+                        format!("enter choose · {stop}ctrl+{} more", self.leader)
                     });
                 }
             }

@@ -563,9 +563,12 @@ public struct AskCard: Codable, Hashable, Sendable {
     /// The person may reply in their own words instead of answering the
     /// questions. Not for the provider's own dialogs, outside any turn.
     public var questionReply: Bool
+    /// Stopping interrupts a running turn. Codex proposes a plan as its
+    /// turn ends, so with its plan open there is no turn to stop.
+    public var stopsTurn: Bool
     public var state: CardState
 
-    public init(kind: Kind, key: String, itemKey: String, position: UInt, count: UInt, body: AskBody, choices: [Choice], questionNote: Bool, questionSkip: Bool, questionReply: Bool, state: CardState) {
+    public init(kind: Kind, key: String, itemKey: String, position: UInt, count: UInt, body: AskBody, choices: [Choice], questionNote: Bool, questionSkip: Bool, questionReply: Bool, stopsTurn: Bool, state: CardState) {
         self.kind = kind
         self.key = key
         self.itemKey = itemKey
@@ -576,6 +579,7 @@ public struct AskCard: Codable, Hashable, Sendable {
         self.questionNote = questionNote
         self.questionSkip = questionSkip
         self.questionReply = questionReply
+        self.stopsTurn = stopsTurn
         self.state = state
     }
 
@@ -590,6 +594,7 @@ public struct AskCard: Codable, Hashable, Sendable {
         case questionNote = "question_note"
         case questionSkip = "question_skip"
         case questionReply = "question_reply"
+        case stopsTurn = "stops_turn"
         case state
     }
 }
@@ -1239,8 +1244,8 @@ public enum BoundaryKind: String, Codable, Hashable, Sendable, CaseIterable {
     case daemonLost = "DaemonLost"
 }
 
-/// Where the card is after the person acts. Stop is always in the menu:
-/// it is the interrupt, and the agent stays.
+/// Where the card is after the person acts. Stop is in the menu while a
+/// turn runs: it is the interrupt, and the agent stays.
 public enum CardState: Codable, Hashable, Sendable {
     case open
     /// Shrunk to one line until the agent confirms.

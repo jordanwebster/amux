@@ -474,7 +474,8 @@ fn unanswerable() -> SessionState {
 }
 
 /// Every kind of ask takes the composer's box, and the keys under it say
-/// how to stop the turn.
+/// how to stop the turn when one is running (not under a Codex plan,
+/// proposed as its turn ended).
 #[test]
 fn every_ask_body_draws_in_the_box_with_the_way_to_stop() {
     let mut seen = HashSet::new();
@@ -490,7 +491,11 @@ fn every_ask_body_draws_in_the_box_with_the_way_to_stop() {
         let (buffer, _) = draw(&mut view, state, at, 120, 60, theme());
         let screen = text(&buffer);
         assert!(screen.contains("╭"), "{label}: {screen}");
-        assert!(screen.contains("ctrl+x stop"), "{label}: {screen}");
+        assert_eq!(
+            screen.contains("ctrl+x stop"),
+            card.stops_turn,
+            "{label}: {screen}"
+        );
     };
     for (kind, dir) in [
         (Kind::ClaudePty, "claude_pty"),
@@ -2080,6 +2085,7 @@ fn a_paste_into_a_secret_answer_shows_as_bullets() {
         question_note: true,
         question_skip: true,
         question_reply: true,
+        stops_turn: true,
         state: CardState::Open,
     };
     let mut ask = crate::chat::ask::AskUi::default();
@@ -3281,6 +3287,7 @@ fn two_questions(kind: Kind) -> ui_view::AskCard {
         question_note: kind != Kind::ClaudePty,
         question_skip: kind != Kind::ClaudePty,
         question_reply: true,
+        stops_turn: true,
         state: CardState::Open,
     }
 }
@@ -3421,6 +3428,15 @@ fn a_plan_reads_under_its_heading_and_folds_once_decided() {
             let (buffer, _) = draw(&mut view, state, *now, W, H, theme());
             let screen = text(&buffer);
             assert!(screen.contains("Plan"), "{name} {when}:\n{screen}");
+            // Codex proposes its plan as its turn ends, so there is no turn
+            // to stop; Claude asks mid-turn.
+            if when == "open" {
+                assert_eq!(
+                    screen.contains("ctrl+x stop"),
+                    kind != Kind::Codex,
+                    "{name}:\n{screen}"
+                );
+            }
             fixtures::assert_frame_golden(&format!("frame_plan_{name}_{when}"), &buffer, theme());
         }
     }
