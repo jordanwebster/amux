@@ -689,7 +689,7 @@ pub struct ElicitationParams {
 pub struct ElicitationMeta {
     /// How long an acceptance may last: "session", "always".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub persist: Option<Vec<String>>,
+    pub persist: Option<Persist>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_approval_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -699,6 +699,28 @@ pub struct ElicitationMeta {
     pub tool_params: Option<Value>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+/// The lifetimes an approval offers. Codex writes a single string when
+/// it offers one and a list when it offers both.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Persist {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Persist {
+    pub fn scopes(&self) -> &[String] {
+        match self {
+            Persist::One(scope) => std::slice::from_ref(scope),
+            Persist::Many(scopes) => scopes,
+        }
+    }
+
+    pub fn offers(&self, scope: &str) -> bool {
+        self.scopes().iter().any(|offered| offered == scope)
+    }
 }
 
 // ── Results of amux's requests ───────────────────────────────────

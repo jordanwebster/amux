@@ -421,3 +421,87 @@ fn an_attachment_element_in_a_reply_becomes_an_item_attachment() {
         );
     }
 }
+
+/// A tool-call approval Codex elicits from `server`, its `_meta.persist`
+/// as given, on a started thread: what the interpreter wrote and the asks
+/// left open.
+fn approval_elicited(server: &str, persist: Value) -> (Vec<Value>, Vec<wire::CodexAsk>) {
+    use prost::Message as _;
+    let spec = wire::AgentSpec {
+        agent_id: b"agent".to_vec(),
+        ..Default::default()
+    };
+    let (mut state, _) = Codex::initial(&spec, "test");
+    Codex::step(
+        &mut state,
+        rpc(
+            json!({"id": 2, "result": {"thread": {"id": "t1", "cliVersion": "0.160.0", "turns": []}, "model": "m"}}),
+        ),
+    );
+    let stepped = Codex::step(
+        &mut state,
+        rpc(json!({
+            "id": 0,
+            "method": "mcpServer/elicitation/request",
+            "params": {
+                "_meta": {
+                    "codex_approval_kind": "mcp_tool_call",
+                    "persist": persist,
+                    "tool_params": {"word": "BLUE"},
+                },
+                "message": "Allow the server to run tool \"ask\"?",
+                "mode": "form",
+                "requestedSchema": {"properties": {}, "type": "object"},
+                "serverName": server,
+                "threadId": "t1",
+                "turnId": "turn-1",
+            },
+        })),
+    );
+    let asks = stepped
+        .step
+        .snapshot
+        .map(|snapshot| {
+            wire::CodexSnapshot::decode(snapshot.body.as_slice())
+                .unwrap()
+                .asks
+        })
+        .unwrap_or_default();
+    (writes(&stepped.effects), asks)
+}
+
+/// Codex writes `persist` as a single string when it offers one lifetime.
+#[test]
+fn an_approval_offering_one_lifetime_as_a_string_is_read() {
+    let (written, asks) = approval_elicited(interpret::AMUX_TOOL_SERVER, json!("session"));
+    assert_eq!(
+        written,
+        [
+            json!({"id": 0, "result": {"action": "accept", "content": {}, "_meta": {"persist": "session"}}})
+        ],
+        "amux's own tool is approved at once, for the session"
+    );
+    assert!(asks.is_empty());
+
+    let decisions = |persist| {
+        let (written, asks) = approval_elicited("spec", persist);
+        assert!(written.is_empty(), "{written:?}");
+        let [ask] = &asks[..] else {
+            panic!("one ask: {asks:?}");
+        };
+        ask.decisions
+            .iter()
+            .map(|decision| wire::Decision::try_from(*decision).unwrap())
+            .collect::<Vec<_>>()
+    };
+    use wire::Decision::{Abort, Approve, ApproveSession, Deny};
+    assert_eq!(
+        decisions(json!("session")),
+        [Approve, ApproveSession, Deny, Abort]
+    );
+    assert_eq!(
+        decisions(json!("always")),
+        [Approve, Deny, Abort],
+        "no remember-for-session choice when Codex offers only always"
+    );
+}

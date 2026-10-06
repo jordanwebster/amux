@@ -796,9 +796,8 @@ impl State {
         let approval = meta.codex_approval_kind.as_deref() == Some("mcp_tool_call");
         let session = meta
             .persist
-            .iter()
-            .flatten()
-            .any(|scope| scope == "session");
+            .as_ref()
+            .is_some_and(|persist| persist.offers("session"));
         if approval && server == AMUX_TOOL_SERVER {
             // amux's own tools never ask, as the Claude launch settings
             // pre-approve them: the call is approved at once, for the rest

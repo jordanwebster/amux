@@ -8,7 +8,7 @@ use codex_protocol::client::{
 };
 use codex_protocol::items::{CommandAction, ThreadItem, ToolStatus, UserInput, WebSearchAction};
 use codex_protocol::server::{
-    CommandDecision, Decision, ServerNotification as N, ServerRequest as R, ThreadResponse,
+    CommandDecision, Decision, Persist, ServerNotification as N, ServerRequest as R, ThreadResponse,
 };
 use codex_protocol::thread::{ModeKind, ReasoningEffort, SandboxMode, TurnStatus};
 use codex_protocol::{
@@ -19,19 +19,21 @@ use serde_json::{Value, json};
 
 /// The first line Codex sent in a recording that contains every needle.
 fn recorded(spec: &str, needles: &[&str]) -> ServerMessage {
+    codex_protocol::strict(recorded_line(spec, needles).as_bytes()).expect("known")
+}
+
+fn recorded_line(spec: &str, needles: &[&str]) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../codex-specs/fixtures/runtime")
         .join(spec)
         .join("io.jsonl");
     let text = std::fs::read_to_string(&path).expect("recording");
-    let line = text
-        .lines()
+    text.lines()
         .map(|record| serde_json::from_str::<Value>(record).expect("record"))
         .filter(|record| record["dir"] == "stdout")
         .map(|record| record["line"].as_str().expect("line").to_owned())
         .find(|line| needles.iter().all(|needle| line.contains(needle)))
-        .unwrap_or_else(|| panic!("{spec}: no line with {needles:?}"));
-    codex_protocol::strict(line.as_bytes()).expect("known")
+        .unwrap_or_else(|| panic!("{spec}: no line with {needles:?}"))
 }
 
 fn notification(message: ServerMessage) -> N {
@@ -124,7 +126,7 @@ fn an_elicitation_reads_its_meta_and_schema() {
     };
     let meta = ask.meta.expect("meta");
     assert_eq!(
-        meta.persist.as_deref(),
+        meta.persist.as_ref().map(Persist::scopes),
         Some(&["session".to_owned(), "always".to_owned()][..])
     );
     assert_eq!(meta.tool_params, Some(json!({ "word": "BLUE" })));
@@ -133,6 +135,35 @@ fn an_elicitation_reads_its_meta_and_schema() {
         Some(json!({ "properties": {}, "type": "object" }))
     );
     assert_eq!(ask.mode, "form");
+}
+
+/// Codex writes `persist` as one string when it offers one lifetime and as
+/// a list when it offers both; each reads and writes back as it came.
+#[test]
+fn an_elicitation_reads_persist_as_a_string_or_a_list() {
+    let recorded = recorded_line("tool_server_form", &["elicitation/request", "persist"]);
+    let list = r#""persist":["session","always"]"#.to_owned();
+    assert!(recorded.contains(&list), "{recorded}");
+    for (written, scopes) in [
+        (list.clone(), vec!["session", "always"]),
+        (r#""persist":"session""#.to_owned(), vec!["session"]),
+        (r#""persist":"always""#.to_owned(), vec!["always"]),
+    ] {
+        let line = recorded.replace(&list, &written);
+        let message = codex_protocol::strict(line.as_bytes()).expect("known");
+        let R::Elicitation(ask) = request(message.clone()) else {
+            panic!("not an elicitation: {line}");
+        };
+        let persist = ask.meta.and_then(|meta| meta.persist).expect("persist");
+        assert_eq!(persist.scopes(), &scopes[..], "{written}");
+        let again: Value =
+            serde_json::from_slice(&codex_protocol::encode_server(&message)).unwrap();
+        assert_eq!(
+            again,
+            serde_json::from_str::<Value>(&line).unwrap(),
+            "{written}"
+        );
+    }
 }
 
 #[test]

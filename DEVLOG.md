@@ -1,3 +1,14 @@
+2026-10-06 — **Codex tool-call approvals that offer one lifetime are read again.**
+Codex 0.160.0 writes an MCP tool-call approval's `_meta.persist` as a single
+string ("session" or "always") when it offers one lifetime, and as a list
+only when it offers both. The typed `ElicitationMeta.persist` accepted only
+the list, so a string made the whole `mcpServer/elicitation/request` decode
+as unknown and the interpreter refused it: amux's own tool calls were
+declined instead of approved at once, and other servers' approvals never
+reached the person. `persist` is now `codex_protocol::server::Persist`, a
+string or a list written back as it came; the remember-for-session choice is
+offered exactly when "session" is among its scopes.
+
 2026-10-06 — **A check holds the interpreters to the protocol types.**
 `just typed-provider-check` (part of `just ci` and the CI workflow) searches
 the three interpreters, the code they share and the agent's provider
