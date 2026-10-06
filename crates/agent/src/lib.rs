@@ -17,6 +17,7 @@
 pub mod attach;
 mod dir;
 mod dump;
+mod git;
 mod host;
 mod provider;
 mod ready;

@@ -130,6 +130,9 @@ pub enum Event {
     Exiting {
         cause: String,
     },
+    /// What the agent's folder says about its repository, read by the agent
+    /// process at start and at each turn end; None outside a repository.
+    Git(Option<wire::Git>),
 }
 
 /// The cause the final boundary gives for a provider's own exit.

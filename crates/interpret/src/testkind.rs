@@ -320,6 +320,7 @@ impl<const FORGET: bool> Interpreter for TestKind<FORGET> {
                 state.shared.provider_exited();
             }
             Event::DaemonLost | Event::StopRequested(_) => {}
+            Event::Git(git) => state.shared.set_git(git),
         }
         if let Some(entry) = state.shared.next_queued() {
             emit.effect(write(&entry.text));

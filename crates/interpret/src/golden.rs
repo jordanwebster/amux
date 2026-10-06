@@ -14,6 +14,8 @@
 //!     { "fact": { "channel": "stream", "json": { "type": "ready" } } },
 //!     { "input": { "id": "p1", "prompt": { "text": "hello" } },
 //!       "expect": { "reply": "accepted", "phase": "WORKING" } },
+//!     { "git": { "branch": "fix", "base_branch": "main",
+//!                "uncommitted": { "files": 1, "added": 2, "removed": 0 } } },
 //!     { "checkpoint": {} }
 //!   ],
 //!   "end": { "queue_may_remain": false }
@@ -560,6 +562,7 @@ fn scripted<I: Interpreter>(value: &Value) -> Result<Scripted, String> {
                 other => return Err(format!("unknown stop mode {other:?}")),
             },
         )),
+        "git" => Action::Event(Event::Git(git_of(body)?)),
         "checkpoint" => Action::Checkpoint,
         other => return Err(format!("unknown action {other:?}")),
     };
@@ -568,6 +571,61 @@ fn scripted<I: Interpreter>(value: &Value) -> Result<Scripted, String> {
         action,
         expect,
     })
+}
+
+/// A repository's facts as a fixture writes them; null outside one.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FixtureGit {
+    branch: Option<String>,
+    base_branch: Option<String>,
+    uncommitted: Option<FixtureTotals>,
+    on_branch: Option<FixtureTotals>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FixtureTotals {
+    files: u32,
+    added: u32,
+    removed: u32,
+}
+
+fn git_of(body: &Value) -> Result<Option<wire::Git>, String> {
+    let Some(git) = serde_json::from_value::<Option<FixtureGit>>(body.clone())
+        .map_err(|error| format!("git: {error}"))?
+    else {
+        return Ok(None);
+    };
+    let totals = |totals: Option<FixtureTotals>| {
+        totals.map(|totals| wire::ChangeTotals {
+            files: totals.files,
+            added: totals.added,
+            removed: totals.removed,
+        })
+    };
+    Ok(Some(wire::Git {
+        branch: git.branch,
+        base_branch: git.base_branch,
+        uncommitted: totals(git.uncommitted),
+        on_branch: totals(git.on_branch),
+    }))
+}
+
+/// A snapshot's repository facts in a golden.
+fn git_label(git: &wire::Git) -> String {
+    let totals = |totals: &Option<wire::ChangeTotals>| {
+        totals.as_ref().map_or("-".to_owned(), |totals| {
+            format!("{}f+{}-{}", totals.files, totals.added, totals.removed)
+        })
+    };
+    format!(
+        "git(branch={} base={} uncommitted={} on_branch={})",
+        git.branch.as_deref().unwrap_or("-"),
+        git.base_branch.as_deref().unwrap_or("-"),
+        totals(&git.uncommitted),
+        totals(&git.on_branch)
+    )
 }
 
 fn fact(body: &Value) -> Result<Fact, String> {
@@ -1319,6 +1377,9 @@ fn check_expectations<I: Interpreter>(frames: &[Frame], script: &[Scripted]) -> 
 fn render<I: Interpreter>(frames: &[Frame]) -> String {
     let mut out = String::new();
     let mut pending: &[Vec<u8>] = &[];
+    // Repository facts are printed when a snapshot changes them, not on
+    // every snapshot that carries them on.
+    let mut git: Option<&wire::Git> = None;
     for (index, frame) in frames.iter().enumerate() {
         let step = &frame.step;
         let pending_changed = frame.pending != pending;
@@ -1372,6 +1433,11 @@ fn render<I: Interpreter>(frames: &[Frame]) -> String {
             );
         }
         if let Some(snapshot) = &frame.step.snapshot {
+            if snapshot.git.as_ref() != git {
+                git = snapshot.git.as_ref();
+                let label = git.map_or("git none".to_owned(), git_label);
+                let _ = writeln!(out, "snapshot {label}");
+            }
             let _ = writeln!(
                 out,
                 "snapshot {} queue=[{}] working_on={} at={} {}",
@@ -1484,6 +1550,8 @@ fn event_label(event: &Event) -> String {
         Event::DaemonLost => "daemon_lost".into(),
         Event::Exiting { cause } => format!("exiting {cause:?}"),
         Event::StopRequested(mode) => format!("stop {}", mode.as_str_name()),
+        Event::Git(None) => "git none".into(),
+        Event::Git(Some(git)) => git_label(git),
     }
 }
 

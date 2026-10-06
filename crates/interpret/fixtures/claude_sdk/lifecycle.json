@@ -19,6 +19,23 @@
       }
     },
     {
+      "git": {
+        "branch": "fix-tests",
+        "base_branch": "main",
+        "uncommitted": {
+          "files": 0,
+          "added": 0,
+          "removed": 0
+        },
+        "on_branch": {
+          "files": 2,
+          "added": 30,
+          "removed": 4
+        }
+      },
+      "note": "read by the agent process at start"
+    },
+    {
       "input": {
         "id": "p1",
         "prompt": {
@@ -76,6 +93,23 @@
           "req-1"
         ]
       }
+    },
+    {
+      "git": {
+        "branch": "fix-tests",
+        "base_branch": "main",
+        "uncommitted": {
+          "files": 1,
+          "added": 12,
+          "removed": 3
+        },
+        "on_branch": {
+          "files": 3,
+          "added": 42,
+          "removed": 7
+        }
+      },
+      "note": "read again later: a file changed"
     },
     {
       "daemon_lost": {},

@@ -38,6 +38,11 @@ pub enum Entry {
     Exiting {
         cause: String,
     },
+    /// The encoded `wire::Git`, absent outside a repository.
+    Git {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hex: Option<String>,
+    },
 }
 
 impl Entry {
@@ -65,6 +70,9 @@ impl Entry {
             Event::Exiting { cause } => Entry::Exiting {
                 cause: cause.clone(),
             },
+            Event::Git(git) => Entry::Git {
+                hex: git.as_ref().map(|git| crate::to_hex(&git.encode_to_vec())),
+            },
         }
     }
 
@@ -87,6 +95,10 @@ impl Entry {
             Entry::DaemonLost => Event::DaemonLost,
             Entry::Stop { mode } => Event::StopRequested(StopMode::try_from(mode).ok()?),
             Entry::Exiting { cause } => Event::Exiting { cause },
+            Entry::Git { hex: None } => Event::Git(None),
+            Entry::Git { hex: Some(hex) } => Event::Git(Some(
+                wire::Git::decode(crate::from_hex(&hex).ok()?.as_slice()).ok()?,
+            )),
         })
     }
 }

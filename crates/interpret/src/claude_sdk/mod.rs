@@ -1042,6 +1042,7 @@ impl Interpreter for ClaudeSdk {
             }
             Event::StopRequested(wire::StopMode::Abort) => state.interrupt(&mut emit),
             Event::StopRequested(_) => {}
+            Event::Git(git) => state.shared.set_git(git),
         }
         if let Some(entry) = state.shared.next_queued() {
             state.submit(&mut emit, entry);

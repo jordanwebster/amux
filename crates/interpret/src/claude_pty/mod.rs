@@ -1254,6 +1254,7 @@ impl Interpreter for ClaudePty {
             }
             Event::StopRequested(wire::StopMode::Abort) => state.interrupt(&mut emit),
             Event::StopRequested(_) => {}
+            Event::Git(git) => state.shared.set_git(git),
         }
         if let Some(entry) = state.shared.next_queued() {
             state.typed(&mut emit, entry);

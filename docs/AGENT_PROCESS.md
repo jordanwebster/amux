@@ -334,6 +334,17 @@ the pipe closes and the shell sends the server's group SIGTERM; after the
 server exits on its own, the agent lets the tether go, which ends whatever
 the server left in its group.
 
+## Git facts
+
+The snapshot carries the agent folder's branch, base branch and change
+totals, which the fleet row shows. The agent process reads them with the
+[`git-facts`](../crates/git-facts/src/lib.rs) crate at start and again each
+time a turn ends, off its event loop and one read at a time, and feeds each
+result to the interpreter as an event; the snapshot changes only when the
+facts do. A folder outside a repository, or a machine without git, has none.
+The base is the repository's default branch: what `origin/HEAD` names, else
+the configured default, else `main` or `master`.
+
 ## The facts ring
 
 `private/facts/` records every event the interpreter was fed, in order, so
@@ -344,8 +355,9 @@ first entry.
 
 - An entry is one JSON line: a fact with its channel and its payload (as text
   when it is UTF-8, as hex otherwise), an input as its encoded protobuf in
-  hex, a tick, the provider's exit, the daemon being lost, a stop, or the
-  process exiting (`interpret::ring::Entry`).
+  hex, a tick, the provider's exit, the daemon being lost, a stop, the
+  process exiting, or the folder's git facts as an encoded `Git` in hex
+  (`interpret::ring::Entry`).
 - The ring's size, from the spec (4 MiB by default), is split across two
   segments; a segment rotates once full, checkpointing the state the next
   event meets, and only the newest two are kept.
@@ -537,7 +549,7 @@ the system.
 | Suite | Run it with | What it holds |
 |---|---|---|
 | Provider hosting | `just test-crate agent -- --lib --test providers` | Each kind's child is launched, completes its handshake and a turn, continues its own session in a later incarnation, and takes agent messages through its own channel |
-| Lifecycle | `just test-crate agent -- --test lifecycle` | Grace, drain, abort, kill, a failed journal write and a provider exit, with every deadline driven by the test's clock |
+| Lifecycle | `just test-crate agent -- --test lifecycle` | Grace, drain, abort, kill, a failed journal write and a provider exit, with every deadline driven by the test's clock; the snapshot's git facts at start and after a turn |
 | Raw attach | `just test-crate agent -- --test attach` | Two clients share terminal Claude's one terminal; each Codex client gets its own view |
 | Codex attach | `just test-crate amux -- --test codex_attach` | Codex's own app joins a fresh agent's server; its prompt shows in amux's chat, and an approval is answered from amux, then from the app |
 | Codex attach, live | `just live codex attach` | The same against the real Codex, from amux's client and Codex's app in two terminals: a timed capture of each (`app.cast`, `amux.cast`, raw bytes), a text frame of both per step and a verdict, in `target/live/codex-attach/` |

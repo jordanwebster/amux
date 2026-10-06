@@ -57,6 +57,47 @@ async fn with_no_daemon_the_agent_runs_its_first_prompt_then_drains_after_the_gr
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_snapshot_carries_the_folders_git_facts_from_start_and_after_each_turn() {
+    let agent = Agent::start(Setup {
+        repository: true,
+        steps: vec![text("done"), Step::TurnEnd],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent
+        .wait("git facts read at start", |log| log.git().is_some())
+        .await;
+    let at_start = agent.log().git().unwrap();
+    assert_eq!(at_start.branch.as_deref(), Some("main"));
+    assert_eq!(at_start.base_branch.as_deref(), Some("main"));
+    assert_eq!(
+        at_start.uncommitted,
+        Some(wire::ChangeTotals::default()),
+        "nothing changed yet"
+    );
+    assert_eq!(at_start.on_branch, None, "on its base branch");
+
+    // The person, or the agent, changes the folder; the turn end reads it.
+    std::fs::write(agent.work().join("notes.txt"), "one\ntwo\nthree\n").unwrap();
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", "go").await, Verdict::Accepted);
+    agent
+        .wait("git facts read at the turn end", |log| {
+            log.turn_ends() == 1
+                && log.git().and_then(|git| git.uncommitted)
+                    == Some(wire::ChangeTotals {
+                        files: 1,
+                        added: 3,
+                        removed: 0,
+                    })
+        })
+        .await;
+    println!("after the turn: {:?}", agent.log().git());
+    drop(daemon);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_orphan_finishes_its_turn_before_it_exits() {
     let agent = Agent::start(Setup {
         steps: vec![

@@ -16,6 +16,7 @@ members = [
     "crates/codex-protocol",
     "crates/codex-specs",
     "crates/fake-amux",
+    "crates/git-facts",
     "crates/interpret",
     "crates/journal",
     "crates/model",
@@ -65,6 +66,7 @@ store = { path = "crates/store" }
 wire = { path = "crates/wire" }
 settings = { path = "crates/settings" }
 attachments = { path = "crates/attachments" }
+git-facts = { path = "crates/git-facts" }
 ui-runtime = { path = "crates/ui-runtime" }
 ui-state = { path = "crates/ui-state" }
 ui-view = { path = "crates/ui-view" }

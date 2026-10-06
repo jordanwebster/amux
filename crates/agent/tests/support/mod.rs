@@ -113,6 +113,8 @@ pub struct Setup {
     pub offers_auto_mode: bool,
     /// Terminal Claude asks whether its folder is trusted first.
     pub untrusted_folder: bool,
+    /// The agent's folder is a git repository on `main` with one commit.
+    pub repository: bool,
 }
 
 impl Setup {
@@ -133,6 +135,7 @@ impl Setup {
             journal_bytes: 0,
             offers_auto_mode: false,
             untrusted_folder: false,
+            repository: false,
         }
     }
 }
@@ -153,6 +156,11 @@ pub struct Agent {
 const INPUT_LOG: &str = "provider-input.jsonl";
 
 impl Agent {
+    /// The agent's working folder.
+    pub fn work(&self) -> PathBuf {
+        self._root.path().join("work")
+    }
+
     /// Every line the agent has written to its stdio provider so far.
     pub fn provider_input(&self) -> Vec<serde_json::Value> {
         std::fs::read_to_string(self._root.path().join(INPUT_LOG))
@@ -194,6 +202,26 @@ impl Agent {
         let work = root.path().join("work");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&work).unwrap();
+        if setup.repository {
+            for args in [
+                &["init", "-q", "-b", "main"][..],
+                &["commit", "-q", "--allow-empty", "-m", "start"],
+            ] {
+                let status = std::process::Command::new("git")
+                    .args([
+                        "-c",
+                        "user.name=amux",
+                        "-c",
+                        "user.email=amux@example.invalid",
+                    ])
+                    .args(["-c", "commit.gpgsign=false"])
+                    .args(args)
+                    .current_dir(&work)
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "git {args:?}");
+            }
+        }
         let release = root.path().join("release");
         let hold = root.path().join("hold");
 
@@ -713,6 +741,15 @@ pub struct Log {
 }
 
 impl Log {
+    /// The git facts of the newest snapshot that carried any.
+    pub fn git(&self) -> Option<wire::Git> {
+        self.steps
+            .iter()
+            .rev()
+            .filter_map(|step| step.snapshot.as_ref())
+            .find_map(|snapshot| snapshot.git.clone())
+    }
+
     pub fn turn_ends(&self) -> usize {
         self.steps
             .iter()

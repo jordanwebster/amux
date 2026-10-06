@@ -53,8 +53,9 @@ no ids (they arrive on inputs and facts) and does no I/O. It implements
 | `describe_item`, `describe_snapshot`, `fixture_input`, `recording` | What the golden harness needs to render bodies, build authored inputs and read recorded corpora |
 
 An `Event` is a provider `Fact`, an `Input` from the daemon, a `Tick`, the
-provider's exit, the daemon being lost, a stop request, or the process
-exiting. A fact carries its `Channel`: `Transcript`, `Hook` and `Agent` for
+provider's exit, the daemon being lost, a stop request, the process
+exiting, or the agent folder's git facts (`Git`, none outside a repository),
+which the shared core publishes on the snapshot. A fact carries its `Channel`: `Transcript`, `Hook` and `Agent` for
 terminal Claude, `Stream` for headless Claude, `Rpc` for Codex.
 
 An `Effect` is something the agent process does on the interpreter's behalf,

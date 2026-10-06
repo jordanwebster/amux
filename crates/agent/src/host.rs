@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use interpret::{Effect, Event, Interpreter, Stepped, reason, reply};
 use tokio::io::AsyncReadExt;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Notify, mpsc, watch};
 use wire::{AgentHello, AgentSpec, CtlFrame, InputReply, Nudge, Phase, StopMode, ctl_frame, input};
 
 use crate::clock::Clock;
@@ -112,6 +112,8 @@ pub(crate) struct Host<I: Interpreter> {
     asked_to_exit: Option<ExitCause>,
     last_tick: i64,
     done: Option<ExitCause>,
+    /// Asks for the folder's git facts to be read again.
+    git_wanted: Arc<Notify>,
 }
 
 /// Everything the host listens to.
@@ -123,6 +125,8 @@ struct Channels {
     frames_tx: mpsc::UnboundedSender<(u64, Option<CtlFrame>)>,
     /// What attached terminal clients type and their sizes.
     control: mpsc::UnboundedReceiver<attach::Control>,
+    /// The folder's git facts, each time they are read.
+    git: mpsc::UnboundedReceiver<Option<wire::Git>>,
 }
 
 pub(crate) async fn run<I: Interpreter>(
@@ -189,6 +193,15 @@ pub(crate) async fn run<I: Interpreter>(
         };
         tasks.push(tokio::spawn(attach::serve(pty, how)));
     }
+    // Read once at start; each turn end asks again.
+    let git_wanted = Arc::new(Notify::new());
+    git_wanted.notify_one();
+    let (git_tx, git_rx) = mpsc::unbounded_channel();
+    tasks.push(crate::git::reader(
+        PathBuf::from(&spec.cwd),
+        git_wanted.clone(),
+        git_tx,
+    ));
     let facts = dir.join(dir::PRIVATE).join(dir::FACTS);
     let (state, first) = start::<I>(&facts, &spec);
     let ring = Ring::open(
@@ -221,6 +234,7 @@ pub(crate) async fn run<I: Interpreter>(
         asked_to_exit: None,
         last_tick: i64::MIN,
         done: None,
+        git_wanted,
     };
     for step in first {
         host.apply(Stepped {
@@ -237,6 +251,7 @@ pub(crate) async fn run<I: Interpreter>(
         frames: frames_rx,
         frames_tx,
         control: control_rx,
+        git: git_rx,
     };
     let result = host.run(&mut channels).await;
     // The listeners live in these tasks; waiting for each to be dropped
@@ -297,6 +312,7 @@ impl<I: Interpreter> Host<I> {
                     }
                     Ok(())
                 }
+                Some(git) = channels.git.recv() => self.on_git(git).await,
                 () = sleep => self.on_deadline().await,
             };
             if let Err(error) = handled {
@@ -314,6 +330,14 @@ impl<I: Interpreter> Host<I> {
     }
 
     // --- events ----------------------------------------------------------
+
+    async fn on_git(&mut self, git: Option<wire::Git>) -> Result<(), AgentError> {
+        if matches!(self.mode, Mode::Exiting { .. }) {
+            // The final boundary is written; the incarnation is over.
+            return Ok(());
+        }
+        self.feed(Event::Git(git)).await
+    }
 
     async fn on_provider(&mut self, event: ProviderEvent) -> Result<(), AgentError> {
         match event {
@@ -671,7 +695,11 @@ impl<I: Interpreter> Host<I> {
             self.phase = snapshot.phase();
             self.queue_empty = snapshot.queue.is_empty();
         }
-        self.turn_ended |= step.turn_end.is_some();
+        if step.turn_end.is_some() {
+            self.turn_ended = true;
+            // A turn changes the working tree; the row's totals follow.
+            self.git_wanted.notify_one();
+        }
         if self.journal.offset() > before {
             self.send(ctl_frame::Of::Nudge(Nudge {}));
         }

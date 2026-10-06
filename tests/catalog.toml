@@ -156,6 +156,25 @@ cargo = [
 ]
 
 [[suite]]
+name = "git-facts"
+contract = "An agent folder's branch, base branch and change totals are read from real repositories: nothing outside one, the base recorded or else the repository's default, totals counting staged, changed and untracked files, the branch measured from where it left its base, and the person's index untouched."
+paths = ["crates/git-facts"]
+recipe = "just test-crate git-facts"
+boundary = "Store, effects, bridge"
+oracle = "The facts read back against what the test made each repository hold, and the index file's bytes."
+real = ["git", "temporary repositories"]
+substituted = []
+time = "real"
+capabilities = ["desktop", "git"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "git-facts", kind = "lib", targets = ["git_facts"], features = [] },
+  { package = "git-facts", targets = ["facts"], features = [] },
+]
+
+[[suite]]
 name = "app-runtime-host-turns"
 contract = "The app runtime wakes its host once per turn with the chat or fleet that moved, serves rows by key and older pages below the oldest held, reads collapsed runs as the views say, and dumps the fleet and every open chat."
 paths = ["crates/app-runtime/tests", "crates/app-runtime/src"]

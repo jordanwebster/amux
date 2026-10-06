@@ -18,13 +18,16 @@ ALLOWED_LOCAL = {
     "store": {"wire"},
     "agent-dir": {"wire"},
     "redaction": set(),
+    # Reads an agent folder's branch and change totals by running git; the
+    # agent process and the daemon share it.
+    "git-facts": set(),
     # The pure per-kind step, and the per-kind body redactor beside it.
     "interpret": {"attachments", "claude-protocol", "codex-protocol", "redaction", "wire"},
     # The agent process: its lock, journal and sockets, the interpreter,
     # and the provider hosts.
     "agent": {
-        "agent-dir", "attachments", "claude", "claude-protocol", "codex", "codex-protocol", "interpret",
-        "journal", "pty-host", "wire",
+        "agent-dir", "attachments", "claude", "claude-protocol", "codex", "codex-protocol",
+        "git-facts", "interpret", "journal", "pty-host", "wire",
     },
     "claude": {"claude-protocol", "pty-host"},
     "codex": {"codex-protocol"},

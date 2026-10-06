@@ -19,6 +19,7 @@ dependencies = [
  "codex",
  "codex-protocol",
  "futures-util",
+ "git-facts",
  "hyper-util",
  "interpret",
  "journal",
@@ -1522,6 +1523,15 @@ dependencies = [
  "r-efi 6.0.0",
  "rand_core 0.10.1",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "git-facts"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]

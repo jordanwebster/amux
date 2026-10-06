@@ -1,3 +1,19 @@
+2026-10-06 — **The snapshot carries the folder's git facts.**
+A new crate, `git-facts`, reads an agent folder's branch, its base branch
+(one recorded when amux made the worktree, else the repository's default:
+`origin/HEAD`, the configured default, `main` or `master`), the uncommitted
+totals against HEAD and the on-branch totals from where the branch left its
+base to the working tree. Totals count staged, changed and untracked files
+through a temporary copy of the index, so the person's own index is never
+written; a folder outside a repository has no facts. The agent process reads
+them at start and at each turn end, one read at a time off its event loop,
+and feeds them to the interpreter as a new `Git` event, which the facts ring
+records; the part the interpreters share publishes them on the snapshot, and
+the daemon already copies them onto the row. Each kind's lifecycle fixture
+gains two git events, and the golden prints a snapshot's git facts when they
+change. Tests run against temporary repositories, and an agent lifecycle
+test shows the facts at start and after a turn that changed a file.
+
 2026-10-06 — **Every agent gets a name.**
 An agent created without a name now gets a memorable word pair from its
 daemon, such as `quiet-otter`: lowercase and hyphenated so a branch can be

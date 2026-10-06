@@ -334,6 +334,9 @@ pub struct Shared<A: OpenAsk> {
     /// The last snapshot emitted, so a step emits one only when it changed.
     #[serde(with = "serde_pb::opt_msg")]
     last_snapshot: Option<Snapshot>,
+    /// The repository facts the agent process last read.
+    #[serde(default, with = "serde_pb::opt_msg")]
+    git: Option<wire::Git>,
 }
 
 impl<A: OpenAsk> Shared<A> {
@@ -356,6 +359,7 @@ impl<A: OpenAsk> Shared<A> {
             submitted: Vec::new(),
             open_items: BTreeMap::new(),
             last_snapshot: None,
+            git: None,
         };
         if let Some(initial) = &spec.initial_prompt
             && let Some(entry) = queued_from_input(initial)
@@ -426,7 +430,7 @@ impl<A: OpenAsk> Shared<A> {
             working_on: self.working_on.clone(),
             at_ms: self.now_ms,
             phase_since_ms,
-            git: None,
+            git: self.git.clone(),
         };
         let changed = self.last_snapshot.as_ref().is_none_or(|last| {
             Snapshot {
@@ -452,6 +456,14 @@ impl<A: OpenAsk> Shared<A> {
         } else {
             Phase::Idle
         }
+    }
+
+    // --- repository ------------------------------------------------------
+
+    /// Publishes the branch and change totals on the next snapshot; a step
+    /// emits one only when they changed.
+    pub fn set_git(&mut self, git: Option<wire::Git>) {
+        self.git = git;
     }
 
     // --- clock -----------------------------------------------------------
@@ -1159,6 +1171,28 @@ mod tests {
         shared.turn_ended(&mut emit);
         let done = shared.finish(emit, Vec::new()).step;
         assert_eq!(since(&done), Some((Phase::Idle as i32, 60)));
+    }
+
+    #[test]
+    fn git_facts_ride_the_snapshot_and_a_folder_outside_a_repository_has_none() {
+        let mut shared = shared();
+        let git = |step: &Step| step.snapshot.as_ref().map(|s| s.git.clone());
+        assert_eq!(git(&shared.initial_step(Vec::new())), Some(None));
+
+        let facts = wire::Git {
+            branch: Some("fix".into()),
+            ..Default::default()
+        };
+        shared.set_git(Some(facts.clone()));
+        let read = shared.finish(Emit::default(), Vec::new()).step;
+        assert_eq!(git(&read), Some(Some(facts.clone())));
+        shared.set_git(Some(facts));
+        let same = shared.finish(Emit::default(), Vec::new()).step;
+        assert_eq!(git(&same), None, "the same facts publish nothing");
+
+        shared.set_git(None);
+        let gone = shared.finish(Emit::default(), Vec::new()).step;
+        assert_eq!(git(&gone), Some(None));
     }
 
     #[test]
