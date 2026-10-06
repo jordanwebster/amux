@@ -434,13 +434,27 @@ answer.
   item when the turn carries one) and dismisses every ask still open. A
   prompt starts a turn with `turn/start`, and its item is written then, keyed
   by its input id; Codex's own reflection of it is left out. Send now steers
-  the running turn with `turn/steer`; a steer Codex refuses, or one still
+  the running turn with `turn/steer`. Both carry the input id (in hex) as
+  `clientUserMessageId`, which Codex echoes as the user message's
+  `clientId`, so the echo is matched to what amux sent by id; a user message
+  without an id is matched by order (the oldest prompt awaiting its
+  reflection, then the oldest steer). A steer Codex refuses, or one still
   unanswered when the turn ends, goes back to waiting in the queue. An
   interrupt is `turn/interrupt`, held until `turn/started` names the turn
   when it has not yet; a held interrupt is dropped when that `turn/start`
   fails or Codex exits, so it never lands on a later turn. A `/compact` prompt is `thread/compact/start`.
 - **Model, effort, approval.** These inputs are accepted at once and ride on
   the next `turn/start` as overrides.
+- **Other clients.** The agent is one client of its Codex server, and
+  Codex's own app can be another; nothing is locked, and the interpreter
+  believes what Codex reports whoever caused it. A user message whose id is
+  not amux's is another client's: the first in a turn is drawn as a prompt,
+  later ones as steers. Their turns, interrupts and settings changes arrive
+  as the same notifications amux's own do and change the snapshot the same
+  way. An approval Codex resolves (`serverRequest/resolved`) without amux's
+  answer was answered elsewhere: its decision is marked so and reads
+  allowed or denied by how the command then ends; one resolved because amux
+  interrupted the turn is dismissed.
 - **Streaming.** Agent-message, plan and reasoning deltas and command output
   are appends to their open items.
 - **Agent messages** go to Codex with `thread/inject_items`. Codex reports

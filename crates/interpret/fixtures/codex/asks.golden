@@ -7,7 +7,7 @@ item boundary:1 boundary final at=1800000000000 text="" BOUNDARY_KIND_STARTED se
 snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 2 input {"id":"p1","prompt":{"text":"Deploy it."}}
 effect reply p1 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Deploy it.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"7031\",\"input\":[{\"text\":\"Deploy it.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
 item prompt:7031 prompt final input=p1 at=1800000000000 text="Deploy it."
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 3 fact {"channel":"rpc","json":{"id":"amux-1","result":{"turn":{"id":"turn-1"}}}}
@@ -78,7 +78,7 @@ item mcp-1 work final at=1800000000700 text="" mcp docs·sign_in args="{}" resul
 item cmd-2 work open at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_PENDING
 snapshot NEEDS_YOU queue=[] working_on=- at=1800000000000 asks=[30→cmd-2 command "/bin/zsh -lc 'curl -s https://api.example.com/stat…" reason="Reach the status API." prefix=["curl", "-s"] hosts=["api.example.com"] decisions=[APPROVE,APPROVE_SESSION,DENY,ABORT]] thread=t1 turn=turn-1 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 25 fact {"channel":"rpc","json":{"method":"serverRequest/resolved","params":{"requestId":30,"threadId":"t1"}}}
-item cmd-2 work open at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_PENDING decision=DECISION_OUTCOME_UNKNOWN
+item cmd-2 work open at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_PENDING decision=DECISION_OUTCOME_UNKNOWN elsewhere
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-1 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 26 fact {"channel":"rpc","json":{"id":33,"method":"item/tool/requestUserInput","params":{"itemId":"call-2","questions":[{"header":"Region","id":"region","isOther":true,"isSecret":false,"options":null,"question":"Which region?"}],"threadId":"t1","turnId":"turn-1"}}}
 item ask:33 ask final at=1800000000000 text="" question×1 open
@@ -105,7 +105,7 @@ snapshot NEEDS_YOU queue=[] working_on=- at=1800000000000 asks=[32→cmd-3 comma
 ## 33 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-1","status":"interrupted"}}}}
 item cmd-3 work final at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_CANCELLED decision=DECISION_OUTCOME_UNKNOWN
 item cmd-1 work final at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_CANCELLED decision=DECISION_OUTCOME_ALLOWED scope=network
-item cmd-2 work final at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_CANCELLED decision=DECISION_OUTCOME_UNKNOWN
+item cmd-2 work final at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_CANCELLED decision=DECISION_OUTCOME_UNKNOWN elsewhere
 item turn:1 turn final at=1800000000000 text="" #1 TURN_OUTCOME_INTERRUPTED started=1800000000000
 snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 turn_end 1 last=-

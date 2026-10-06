@@ -9,7 +9,7 @@ item boundary:1 boundary final at=1790390019203 text="" BOUNDARY_KIND_STARTED se
 snapshot IDLE queue=[] working_on=- at=1790390019203 asks=[] thread=01a0db8f-a479-7e43-9452-28faa90c6a6b turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 11 recorded 10: input stdin-4
 effect reply stdin-4 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Run this exact shell command and no substitute: touch reviewed.txt. Then say DONE.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db8f-a479-7e43-9452-28faa90c6a6b\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d34\",\"input\":[{\"text\":\"Run this exact shell command and no substitute: touch reviewed.txt. Then say DONE.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db8f-a479-7e43-9452-28faa90c6a6b\"}}"
 item prompt:737464696e2d34 prompt final input=stdin-4 at=1790390019204 text="Run this exact shell command and no substitute: touch reviewed.txt. Then say DONE."
 snapshot WORKING queue=[] working_on=- at=1790390019204 asks=[] thread=01a0db8f-a479-7e43-9452-28faa90c6a6b turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 12 recorded 11: fact Rpc method=mcpServer/startupStatus/updated

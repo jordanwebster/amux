@@ -14,7 +14,7 @@ effect reply stdin-4-effort accepted
 snapshot IDLE queue=[] working_on=- at=1790388477776 asks=[] thread=01a0db78-1f40-79a0-b8e7-2c98649a4293 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_STARTING] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 13 recorded 12: input stdin-4
 effect reply stdin-4 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"effort\":\"high\",\"input\":[{\"text\":\"Think carefully about which is larger, 17 * 23 or 19 * 21, then reply with only the larger product.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db78-1f40-79a0-b8e7-2c98649a4293\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d34\",\"effort\":\"high\",\"input\":[{\"text\":\"Think carefully about which is larger, 17 * 23 or 19 * 21, then reply with only the larger product.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db78-1f40-79a0-b8e7-2c98649a4293\"}}"
 item prompt:737464696e2d34 prompt final input=stdin-4 at=1790388477776 text="Think carefully about which is larger, 17 * 23 or 19 * 21, then reply with only the larger product."
 snapshot WORKING queue=[] working_on=- at=1790388477776 asks=[] thread=01a0db78-1f40-79a0-b8e7-2c98649a4293 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_STARTING] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 17 recorded 16: fact Rpc "{\"id\":\"amux-1\",\"result\":{\"turn\":{\"completedAt\":null,\"durationMs\":nu…

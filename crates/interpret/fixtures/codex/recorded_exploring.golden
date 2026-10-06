@@ -9,7 +9,7 @@ item boundary:1 boundary final at=1790388483330 text="" BOUNDARY_KIND_STARTED se
 snapshot IDLE queue=[] working_on=- at=1790388483330 asks=[] thread=01a0db78-34e9-7932-b7d9-1855751185f3 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 10 recorded 9: input stdin-4
 effect reply stdin-4 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Run these three shell commands separately, one tool call each: `cat config.txt`, `ls`, and `grep -n VALUE config.txt`. Then reply DONE.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db78-34e9-7932-b7d9-1855751185f3\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d34\",\"input\":[{\"text\":\"Run these three shell commands separately, one tool call each: `cat config.txt`, `ls`, and `grep -n VALUE config.txt`. Then reply DONE.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db78-34e9-7932-b7d9-1855751185f3\"}}"
 item prompt:737464696e2d34 prompt final input=stdin-4 at=1790388483332 text="Run these three shell commands separately, one tool call each: `cat config.txt`, `ls`, and `grep -n VALUE config.txt`. Then reply DONE."
 snapshot WORKING queue=[] working_on=- at=1790388483332 asks=[] thread=01a0db78-34e9-7932-b7d9-1855751185f3 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 12 recorded 11: fact Rpc method=mcpServer/startupStatus/updated

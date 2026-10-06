@@ -31,8 +31,8 @@ use wire::{
 };
 
 use super::{
-    AskMeta, InjectConsumption, Request, State, Streamed, WorkState, ask_key, elicitation_response,
-    item_body, work_ask, work_complete,
+    AskMeta, InjectConsumption, Request, State, Streamed, WorkState, ask_key, client_message_id,
+    elicitation_response, item_body, work_ask, work_complete,
 };
 use crate::claude_common::compact_json;
 use crate::shared::json_as_written;
@@ -887,14 +887,18 @@ impl State {
         );
     }
 
-    /// An ask the server resolved without an answer from here: answered
-    /// elsewhere, or withdrawn when its turn ended.
+    /// An ask the server resolved without an answer from here: withdrawn
+    /// when amux interrupted its turn, else answered by another client.
     fn ask_resolved(&mut self, emit: &mut Emit, key: &str) {
         let Some(ask) = self.shared.close_ask(key) else {
             return;
         };
         let meta = self.asks.remove(key);
-        self.dismiss(emit, &ask, meta);
+        if self.interrupted_here {
+            self.dismiss(emit, &ask, meta);
+        } else {
+            self.answered_elsewhere(emit, &ask, meta);
+        }
     }
 
     // --- notifications ---------------------------------------------------
@@ -913,6 +917,8 @@ impl State {
             }
             ServerNotification::TurnStarted(started) => {
                 self.shared.turn_started();
+                self.turn_prompted = false;
+                self.interrupted_here = false;
                 self.active_turn = some(&started.turn.id).or(self.active_turn.take());
                 if std::mem::take(&mut self.interrupt_pending)
                     && let Some(turn) = self.active_turn.clone()
@@ -1246,7 +1252,7 @@ impl State {
         match item {
             ThreadItem::UserMessage(message) => {
                 if completed {
-                    self.user_message(emit, &id, &message.content);
+                    self.user_message(emit, &id, message.client_id.as_deref(), &message.content);
                 }
             }
             ThreadItem::AgentMessage(message) | ThreadItem::Plan(message) => {
@@ -1363,11 +1369,32 @@ impl State {
 
     /// A prompt as Codex reflects it. One this interpreter sent is already
     /// an item; one typed into an attached terminal becomes one.
-    fn user_message(&mut self, emit: &mut Emit, id: &str, content: &[UserInput]) {
-        if self.shared.reflect_prompt().is_some() {
+    /// A user message Codex reports: the echo of amux's own prompt or
+    /// steer, matched by the client message id it was sent with, or another
+    /// client's, drawn as amux's own would be. Without an id (a Codex that
+    /// echoes none) order is the only evidence: the oldest prompt awaiting
+    /// its reflection, then the oldest steer.
+    fn user_message(
+        &mut self,
+        emit: &mut Emit,
+        id: &str,
+        client_id: Option<&str>,
+        content: &[UserInput],
+    ) {
+        let first_in_turn = !std::mem::replace(&mut self.turn_prompted, true);
+        let ours =
+            |input_id: &[u8]| client_id.is_none_or(|sent| sent == client_message_id(input_id));
+        let prompt = self
+            .shared
+            .awaiting_reflection()
+            .iter()
+            .find(|input_id| ours(input_id))
+            .cloned();
+        if let Some(prompt) = prompt {
+            self.shared.reflect_prompt_id(&prompt);
             return;
         }
-        if let Some(entry) = self.shared.steer_reflected(|_| true) {
+        if let Some(entry) = self.shared.steer_reflected(|entry| ours(&entry.input_id)) {
             self.emit_item(
                 emit,
                 ItemDraft {
@@ -1390,12 +1417,18 @@ impl State {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        // Another client's: the prompt that started the turn, or a steer.
+        let kind = if first_in_turn {
+            codex_item::Kind::Prompt(wire::Prompt {})
+        } else {
+            codex_item::Kind::Steer(wire::Steer {})
+        };
         self.emit_item(
             emit,
             ItemDraft {
                 key: id.to_owned(),
                 text,
-                body: item_body(codex_item::Kind::Prompt(wire::Prompt {})),
+                body: item_body(kind),
                 complete: true,
                 ..Default::default()
             },
@@ -1565,10 +1598,23 @@ impl State {
             _ => return,
         };
         let prior_work = prior.as_ref().and_then(|prior| prior.work.clone());
-        let decision = prior_work
+        let mut decision = prior_work
             .as_ref()
             .and_then(|work| work.decision.clone())
             .or_else(|| self.reviewed.remove(id));
+        // An approval answered by another client: how the work ended says
+        // what was decided.
+        if let Some(decision) = &mut decision
+            && decision.elsewhere
+            && decision.outcome == DecisionOutcome::Unknown as i32
+            && completed
+        {
+            decision.outcome = if state == ToolState::Denied {
+                DecisionOutcome::Denied
+            } else {
+                DecisionOutcome::Allowed
+            } as i32;
+        }
         let background = prior_work
             .as_ref()
             .and_then(|work| match &work.of {

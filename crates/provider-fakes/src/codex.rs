@@ -451,7 +451,7 @@ impl Engine {
                 match self.turn.clone() {
                     Some(turn) if expected.is_none_or(|expected| expected == turn) => {
                         self.respond(client, &id, json!({ "turnId": turn })).await;
-                        self.user_message(&turn, &params["input"]).await;
+                        self.user_message(&turn, params).await;
                     }
                     _ => self.refuse(client, &id, -32600, "no active turn to steer").await,
                 }
@@ -690,8 +690,10 @@ impl Engine {
         self.notify(phase, params).await;
     }
 
-    async fn user_message(&mut self, turn: &str, input: &Value) {
-        let content: Vec<Value> = input
+    /// The user message a turn start or steer reports, echoing the client
+    /// message id it was sent with, as Codex does.
+    async fn user_message(&mut self, turn: &str, params: &Value) {
+        let content: Vec<Value> = params["input"]
             .as_array()
             .into_iter()
             .flatten()
@@ -707,7 +709,7 @@ impl Engine {
             return;
         }
         let item = json!({
-            "clientId": null,
+            "clientId": params["clientUserMessageId"].as_str(),
             "content": content,
             "id": self.item_id("user_"),
             "type": "userMessage",
@@ -776,7 +778,7 @@ impl Engine {
             json!({ "threadId": thread, "turn": started }),
         )
         .await;
-        self.user_message(&turn, &params["input"]).await;
+        self.user_message(&turn, &params).await;
         let exit = loop {
             self.drain().await;
             if self.interrupted {

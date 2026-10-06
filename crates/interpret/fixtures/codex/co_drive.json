@@ -1,0 +1,450 @@
+{
+  "about": "Co-driving with another client of the same Codex server (Codex's own app). amux sends each prompt and steer with its input id as the client message id and recognises Codex's echo by it, so another client's prompt reads as a prompt and its steers as steers, even when one lands while amux's steer is in flight. An approval another client answers closes the ask with a decision marked elsewhere, allowed or denied by how the command then ends. Another client's settings change and interrupt change the snapshot and phase as amux's own would.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.160.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "WORKING"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "userMessage",
+              "id": "u-1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Fix the flaky test."
+                }
+              ],
+              "clientId": "tui-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "userMessage",
+              "id": "u-2",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Only the parser tests."
+                }
+              ],
+              "clientId": "tui-2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Keep the old fixtures."
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "queue": [
+          "p1"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "n1",
+        "send_now": {
+          "target": "p1"
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "queue": [
+          "p1(steered)"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "userMessage",
+              "id": "u-3",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "And run them twice."
+                }
+              ],
+              "clientId": "tui-3"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "userMessage",
+              "id": "u-4",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Keep the old fixtures."
+                }
+              ],
+              "clientId": "7031"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "commandExecution",
+              "id": "cmd-1",
+              "command": "/bin/zsh -lc 'cargo test -p parser'",
+              "cwd": "/work",
+              "status": "inProgress",
+              "commandActions": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 40,
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "cmd-1",
+            "command": "/bin/zsh -lc 'cargo test -p parser'",
+            "cwd": "/work",
+            "reason": "Needs approval."
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "serverRequest/resolved",
+          "params": {
+            "threadId": "t1",
+            "requestId": 40
+          }
+        }
+      },
+      "expect": {
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "commandExecution",
+              "id": "cmd-1",
+              "command": "/bin/zsh -lc 'cargo test -p parser'",
+              "cwd": "/work",
+              "status": "completed",
+              "commandActions": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "commandExecution",
+              "id": "cmd-2",
+              "command": "/bin/zsh -lc 'rm -rf fixtures'",
+              "cwd": "/work",
+              "status": "inProgress",
+              "commandActions": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 41,
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "cmd-2",
+            "command": "/bin/zsh -lc 'rm -rf fixtures'",
+            "cwd": "/work",
+            "reason": "Needs approval."
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "serverRequest/resolved",
+          "params": {
+            "threadId": "t1",
+            "requestId": 41
+          }
+        }
+      },
+      "expect": {
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "commandExecution",
+              "id": "cmd-2",
+              "command": "/bin/zsh -lc 'rm -rf fixtures'",
+              "cwd": "/work",
+              "status": "declined",
+              "commandActions": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "thread/settings/updated",
+          "params": {
+            "threadId": "t1",
+            "threadSettings": {
+              "approvalPolicy": "never",
+              "collaborationMode": {
+                "mode": "default",
+                "settings": {
+                  "model": "gpt-5.6",
+                  "reasoning_effort": "high"
+                }
+              },
+              "cwd": "/work",
+              "effort": "high",
+              "model": "gpt-5.6",
+              "sandboxPolicy": {
+                "type": "dangerFullAccess"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "interrupted"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "p2",
+        "prompt": {
+          "text": "Now commit."
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-2",
+          "result": {
+            "turn": {
+              "id": "turn-2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-2",
+            "item": {
+              "type": "userMessage",
+              "id": "u-5",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Now commit."
+                }
+              ],
+              "clientId": "7032"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    }
+  ]
+}

@@ -9,7 +9,7 @@ item boundary:1 boundary final at=1790388564985 text="" BOUNDARY_KIND_STARTED se
 snapshot IDLE queue=[] working_on=- at=1790388564985 asks=[] thread=01a0db79-73ef-7e43-854f-9f9d3a931f3d turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_OUT - background=?
 ## 10 recorded 9: input stdin-5
 effect reply stdin-5 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Reply with exactly CODEX_SPEC_SIGNED_OUT.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db79-73ef-7e43-854f-9f9d3a931f3d\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d35\",\"input\":[{\"text\":\"Reply with exactly CODEX_SPEC_SIGNED_OUT.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db79-73ef-7e43-854f-9f9d3a931f3d\"}}"
 item prompt:737464696e2d35 prompt final input=stdin-5 at=1790388564986 text="Reply with exactly CODEX_SPEC_SIGNED_OUT."
 snapshot WORKING queue=[] working_on=- at=1790388564986 asks=[] thread=01a0db79-73ef-7e43-854f-9f9d3a931f3d turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_OUT - background=?
 ## 12 recorded 11: fact Rpc "{\"id\":\"amux-1\",\"result\":{\"turn\":{\"completedAt\":null,\"durationMs\":nu…

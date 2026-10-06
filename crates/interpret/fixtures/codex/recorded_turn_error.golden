@@ -12,7 +12,7 @@ effect reply stdin-4-model accepted
 snapshot IDLE queue=[] working_on=- at=1790388561500 asks=[] thread=01a0db79-664d-7e22-9034-c020a8bac578 turn=- model=codex-spec-no-such-model effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 11 recorded 10: input stdin-4
 effect reply stdin-4 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Reply with exactly CODEX_SPEC_UNREACHABLE.\",\"text_elements\":[],\"type\":\"text\"}],\"model\":\"codex-spec-no-such-model\",\"threadId\":\"01a0db79-664d-7e22-9034-c020a8bac578\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d34\",\"input\":[{\"text\":\"Reply with exactly CODEX_SPEC_UNREACHABLE.\",\"text_elements\":[],\"type\":\"text\"}],\"model\":\"codex-spec-no-such-model\",\"threadId\":\"01a0db79-664d-7e22-9034-c020a8bac578\"}}"
 item prompt:737464696e2d34 prompt final input=stdin-4 at=1790388561500 text="Reply with exactly CODEX_SPEC_UNREACHABLE."
 snapshot WORKING queue=[] working_on=- at=1790388561500 asks=[] thread=01a0db79-664d-7e22-9034-c020a8bac578 turn=- model=codex-spec-no-such-model effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 12 recorded 11: fact Rpc method=mcpServer/startupStatus/updated

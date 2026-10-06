@@ -7,7 +7,7 @@ item boundary:1 boundary final at=1800000000000 text="" BOUNDARY_KIND_STARTED se
 snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 2 input {"id":"p1","prompt":{"text":"Count to three."}}
 effect reply p1 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Count to three.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"7031\",\"input\":[{\"text\":\"Count to three.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
 item prompt:7031 prompt final input=p1 at=1800000000000 text="Count to three."
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 3 fact {"channel":"rpc","json":{"id":"amux-1","result":{"turn":{"id":"turn-1","status":"inProgress"}}}}

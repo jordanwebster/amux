@@ -7,7 +7,7 @@ item boundary:1 boundary final at=1788037174591 text="" BOUNDARY_KIND_STARTED se
 snapshot IDLE queue=[] working_on=- at=1788037174591 asks=[] thread=01a04f52-152b-71a0-a023-161853ed3fdf turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 8 recorded 7: input stdin-4
 effect reply stdin-4 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a04f52-152b-71a0-a023-161853ed3fdf\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d34\",\"input\":[{\"text\":\"Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a04f52-152b-71a0-a023-161853ed3fdf\"}}"
 item prompt:737464696e2d34 prompt final input=stdin-4 at=1788037174592 text="Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE."
 snapshot WORKING queue=[] working_on=- at=1788037174592 asks=[] thread=01a04f52-152b-71a0-a023-161853ed3fdf turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 10 recorded 9: fact Rpc method=mcpServer/startupStatus/updated

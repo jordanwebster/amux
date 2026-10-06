@@ -9,7 +9,7 @@ snapshot IDLE queue=[] working_on=- at=1790387838661 asks=[] thread=01a0db6e-5eb
 snapshot IDLE queue=[] working_on=- at=1790387838663 asks=[] thread=01a0db6e-5eb0-71e0-ae6c-0293baf2bb48 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_STARTING] sign_in=? background=?
 ## 11 recorded 10: input stdin-4
 effect reply stdin-4 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Run the shell command `sleep 5`, then reply with exactly CODEX_SPEC_DONE_A and nothing else.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db6e-5eb0-71e0-ae6c-0293baf2bb48\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d34\",\"input\":[{\"text\":\"Run the shell command `sleep 5`, then reply with exactly CODEX_SPEC_DONE_A and nothing else.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db6e-5eb0-71e0-ae6c-0293baf2bb48\"}}"
 item prompt:737464696e2d34 prompt final input=stdin-4 at=1790387838664 text="Run the shell command `sleep 5`, then reply with exactly CODEX_SPEC_DONE_A and nothing else."
 snapshot WORKING queue=[] working_on=- at=1790387838664 asks=[] thread=01a0db6e-5eb0-71e0-ae6c-0293baf2bb48 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_STARTING] sign_in=? background=?
 ## 13 recorded 12: fact Rpc "{\"id\":\"amux-1\",\"result\":{\"turn\":{\"completedAt\":null,\"durationMs\":nu…

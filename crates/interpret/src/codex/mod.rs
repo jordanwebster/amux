@@ -209,8 +209,16 @@ pub struct State {
     overrides: Overrides,
     /// The turn Codex reports running.
     active_turn: Option<String>,
+    /// The running turn has reported its prompt: a later user message in
+    /// it is a steer.
+    #[serde(default)]
+    turn_prompted: bool,
     /// An interrupt asked for before Codex named the turn.
     interrupt_pending: bool,
+    /// amux interrupted the running turn: the asks Codex then resolves are
+    /// withdrawn, not answered elsewhere.
+    #[serde(default)]
+    interrupted_here: bool,
     requests: BTreeMap<String, Request>,
     next_request: u64,
     next_boundary: u64,
@@ -288,7 +296,9 @@ impl State {
             offers_asked: false,
             overrides: Overrides::default(),
             active_turn: None,
+            turn_prompted: false,
             interrupt_pending: false,
+            interrupted_here: false,
             requests: BTreeMap::new(),
             next_request: 0,
             next_boundary: 0,
@@ -498,6 +508,24 @@ impl State {
         }
     }
 
+    /// Closes an ask another client answered. An approval's decision says
+    /// so, and takes its outcome from how the work then goes; an ask that
+    /// is the work reads dismissed, as Codex does not say what was answered.
+    fn answered_elsewhere(&mut self, emit: &mut Emit, ask: &CodexAsk, meta: Option<AskMeta>) {
+        self.decide(
+            emit,
+            &ask.item_key,
+            ToolDecision {
+                outcome: DecisionOutcome::Unknown as i32,
+                elsewhere: true,
+                ..Default::default()
+            },
+        );
+        if let Some(meta) = meta {
+            self.emit_ask(emit, ask, meta.at_ms, Some(ask_item::dismissed()));
+        }
+    }
+
     /// Puts a decision on the work item an ask pointed at.
     fn decide(&mut self, emit: &mut Emit, item_key: &str, decision: ToolDecision) {
         let Some(work) = self
@@ -514,6 +542,9 @@ impl State {
     /// Cancels the running turn; one still starting is cancelled as soon
     /// as Codex names it.
     fn interrupt(&mut self, emit: &mut Emit) {
+        if self.shared.is_busy() {
+            self.interrupted_here = true;
+        }
         match self.active_turn.clone() {
             Some(turn) => self.request(
                 emit,
@@ -622,7 +653,8 @@ impl State {
             );
         } else {
             consumes.append(&mut self.parked);
-            let params = self.turn_params(&entry.text);
+            let mut params = self.turn_params(&entry.text);
+            params.client_user_message_id = Some(client_message_id(&entry.input_id));
             let request =
                 self.request_bytes(ClientRequest::TurnStart(params), Request::Turn { consumes });
             emit.effect(if entry.attachments.is_empty() {
@@ -681,6 +713,7 @@ impl State {
             thread_id: self.thread(),
             expected_turn_id: turn.to_owned(),
             input: vec![UserInput::text(entry.text.clone())],
+            client_user_message_id: Some(client_message_id(&entry.input_id)),
             ..Default::default()
         };
         let request = self.request_bytes(
@@ -893,6 +926,13 @@ fn injected_text(envelope: &Envelope) -> String {
         EnvelopeKind::Failed => format!("[{from} stopped: {}]", envelope.text),
         _ => format!("[message from {from}]\n{}", envelope.text),
     }
+}
+
+/// The client message id a prompt or steer goes to Codex with: its input
+/// id, which Codex echoes on the user message it reports, so the echo is
+/// told from another client's prompt by id rather than by order.
+fn client_message_id(input_id: &[u8]) -> String {
+    serde_pb::to_hex(input_id)
 }
 
 fn prompt_key(input_id: &[u8]) -> String {

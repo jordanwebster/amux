@@ -594,6 +594,13 @@ impl<A: OpenAsk> Shared<A> {
         (!self.submitted.is_empty()).then(|| self.submitted.remove(0))
     }
 
+    /// The submitted prompt with this input id has been reflected: true
+    /// when it was awaiting its reflection.
+    pub fn reflect_prompt_id(&mut self, input_id: &[u8]) -> bool {
+        let at = self.submitted.iter().position(|id| id == input_id);
+        at.map(|at| self.submitted.remove(at)).is_some()
+    }
+
     pub fn awaiting_reflection(&self) -> &[Vec<u8>] {
         &self.submitted
     }

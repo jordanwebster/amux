@@ -7,7 +7,7 @@ item boundary:1 boundary final at=1788037193431 text="" BOUNDARY_KIND_STARTED se
 snapshot IDLE queue=[] working_on=- at=1788037193431 asks=[] thread=01a04f52-5ec1-7d20-a553-3efc75f82bf5 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 10 recorded 9: input stdin-4
 effect reply stdin-4 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Reply with exactly CODEX_SPEC_RESUME and nothing else.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a04f52-5ec1-7d20-a553-3efc75f82bf5\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d34\",\"input\":[{\"text\":\"Reply with exactly CODEX_SPEC_RESUME and nothing else.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a04f52-5ec1-7d20-a553-3efc75f82bf5\"}}"
 item prompt:737464696e2d34 prompt final input=stdin-4 at=1788037193433 text="Reply with exactly CODEX_SPEC_RESUME and nothing else."
 snapshot WORKING queue=[] working_on=- at=1788037193433 asks=[] thread=01a04f52-5ec1-7d20-a553-3efc75f82bf5 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 11 recorded 10: fact Rpc method=mcpServer/startupStatus/updated

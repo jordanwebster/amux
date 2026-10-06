@@ -7,7 +7,7 @@ item boundary:1 boundary final at=1788037213409 text="" BOUNDARY_KIND_STARTED se
 snapshot IDLE queue=[] working_on=- at=1788037213409 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 9 recorded 8: input stdin-4
 effect reply stdin-4 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Send two separate assistant messages in this turn: first exactly CODEX_SPEC_FIRST in commentary, then exactly CODEX_SPEC_SECOND as the final answer.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a04f52-acd1-77d3-92d0-83a744b3d5b2\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d34\",\"input\":[{\"text\":\"Send two separate assistant messages in this turn: first exactly CODEX_SPEC_FIRST in commentary, then exactly CODEX_SPEC_SECOND as the final answer.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a04f52-acd1-77d3-92d0-83a744b3d5b2\"}}"
 item prompt:737464696e2d34 prompt final input=stdin-4 at=1788037213410 text="Send two separate assistant messages in this turn: first exactly CODEX_SPEC_FIRST in commentary, then exactly CODEX_SPEC_SECOND as the final answer."
 snapshot WORKING queue=[] working_on=- at=1788037213410 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 10 recorded 9: fact Rpc method=mcpServer/startupStatus/updated

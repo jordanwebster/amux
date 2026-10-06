@@ -11,7 +11,7 @@ snapshot IDLE queue=[] working_on=- at=1790390775987 asks=[] thread=01a0db9b-309
 snapshot IDLE queue=[] working_on=- at=1790390775989 asks=[] thread=01a0db9b-309a-7312-9cdd-9a19ac57a8e2 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_STARTING] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 12 recorded 11: input stdin-4
 effect reply stdin-4 accepted
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Reply with exactly CODEX_SPEC_UNREACHABLE.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db9b-309a-7312-9cdd-9a19ac57a8e2\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"737464696e2d34\",\"input\":[{\"text\":\"Reply with exactly CODEX_SPEC_UNREACHABLE.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a0db9b-309a-7312-9cdd-9a19ac57a8e2\"}}"
 item prompt:737464696e2d34 prompt final input=stdin-4 at=1790390775989 text="Reply with exactly CODEX_SPEC_UNREACHABLE."
 snapshot WORKING queue=[] working_on=- at=1790390775989 asks=[] thread=01a0db9b-309a-7312-9cdd-9a19ac57a8e2 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_STARTING] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 14 recorded 13: fact Rpc "{\"id\":\"amux-1\",\"result\":{\"turn\":{\"completedAt\":null,\"durationMs\":nu…

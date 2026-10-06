@@ -1,3 +1,17 @@
+2026-10-06 — **The Codex interpreter believes what Codex reports, whoever caused it.**
+With Codex's server on a socket, Codex's own app can drive an agent beside
+amux. amux now sends every prompt and steer with its input id as Codex's
+client message id and matches the echoed user message by it, instead of
+taking the oldest prompt awaiting its reflection, so another client's
+prompt or steer landing while amux's is in flight is no longer mistaken for
+amux's own. A user message that is not amux's is drawn as another client's
+prompt (the first in its turn) or steer. An approval Codex resolves without
+amux's answer now closes with a decision marked answered elsewhere, read as
+allowed or denied from how the command ends, rather than as dismissed; one
+withdrawn because amux interrupted stays dismissed. The fake Codex echoes the
+client message id as Codex does. A new hand-built fixture covers co-driving;
+every Codex golden's `turn/start` now shows the id.
+
 2026-10-06 — **A Codex agent's app server listens on a socket in its folder.**
 On macOS and Linux the agent process now starts `codex app-server --listen
 unix://…/private/codex.sock` and connects to it as one client, over

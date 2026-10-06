@@ -8,7 +8,7 @@ effect reply n0 rejected:unsupported
 ## 3 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
 effect write "{\"id\":\"amux-models-1\",\"method\":\"model/list\",\"params\":{}}"
 effect write "{\"id\":\"amux-skills\",\"method\":\"skills/list\",\"params\":{}}"
-effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Plan it.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"7030\",\"input\":[{\"text\":\"Plan it.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
 item boundary:1 boundary final at=1800000000000 text="" BOUNDARY_KIND_STARTED session=t1 version=0.157.0
 item prompt:7030 prompt final input=p0 at=1800000000000 text="Plan it."
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
@@ -23,7 +23,7 @@ effect reply p1 queued
 snapshot WORKING queue=[p1] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-1 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 9 input {"id":"n2","send_now":{"target":"p1"}}
 effect reply n2 accepted
-effect write "{\"id\":\"amux-2\",\"method\":\"turn/steer\",\"params\":{\"expectedTurnId\":\"turn-1\",\"input\":[{\"text\":\"Use the staging config.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
+effect write "{\"id\":\"amux-2\",\"method\":\"turn/steer\",\"params\":{\"clientUserMessageId\":\"7031\",\"expectedTurnId\":\"turn-1\",\"input\":[{\"text\":\"Use the staging config.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
 snapshot WORKING queue=[p1(steered)] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-1 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 10 input {"id":"w1","withdraw":{"target":"p1"}}
 effect reply w1 rejected:not_queued
@@ -46,7 +46,7 @@ pending []
 effect reply p2 queued
 snapshot WORKING queue=[p2] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-1 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 18 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-1","status":"completed"}}}}
-effect write "{\"id\":\"amux-4\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Then summarise.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
+effect write "{\"id\":\"amux-4\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"7032\",\"input\":[{\"text\":\"Then summarise.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
 item turn:1 turn final at=1800000000000 text="" #1 TURN_OUTCOME_COMPLETED started=1800000000000
 item prompt:7032 prompt final input=p2 at=1800000000000 text="Then summarise."
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
@@ -62,10 +62,10 @@ effect reply p3 queued
 snapshot WORKING queue=[p3] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 24 input {"id":"n6","send_now":{"target":"p3"}}
 effect reply n6 accepted
-effect write "{\"id\":\"amux-5\",\"method\":\"turn/steer\",\"params\":{\"expectedTurnId\":\"turn-2\",\"input\":[{\"text\":\"Also check the logs.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
+effect write "{\"id\":\"amux-5\",\"method\":\"turn/steer\",\"params\":{\"clientUserMessageId\":\"7033\",\"expectedTurnId\":\"turn-2\",\"input\":[{\"text\":\"Also check the logs.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
 snapshot WORKING queue=[p3(steered)] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 25 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-2","status":"completed"}}}}
-effect write "{\"id\":\"amux-6\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Also check the logs.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
+effect write "{\"id\":\"amux-6\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"7033\",\"input\":[{\"text\":\"Also check the logs.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
 item turn:2 turn final at=1800000000000 text="" #2 TURN_OUTCOME_COMPLETED started=1800000000000
 item prompt:7033 prompt final input=p3 at=1800000000000 text="Also check the logs."
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
