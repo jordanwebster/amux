@@ -379,6 +379,7 @@ impl Server {
                 _ => create_agent_request::Config::Claude(ClaudeCreateConfig::default()),
             }),
             host_name: host,
+            new_worktree: false,
         };
         let agent = self
             .daemon_once("the new agent".to_owned(), |mut client| {

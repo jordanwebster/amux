@@ -559,6 +559,12 @@ message CreateAgentRequest {
     ClaudeCreateConfig claude = 10;
     CodexCreateConfig codex = 11;
   }
+  // Start the agent in a new git worktree of cwd's repository, on a new
+  // branch named after the agent, made from whatever cwd has checked out.
+  // The agent's host chooses where the worktree lives; the agent's cwd is
+  // the worktree. Fails the call, making no agent, when cwd is not in a
+  // repository or the branch exists.
+  bool new_worktree = 12;
 }
 
 message RenameAgentRequest {

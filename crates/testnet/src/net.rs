@@ -561,6 +561,7 @@ impl Net {
             kind: decl.kind.wire() as i32,
             config: Some(create_config(&decl)),
             host_name: None,
+            new_worktree: false,
         };
         let runtime = self.runtime(&decl.host)?;
         runtime.set_launch(self.launch(&host, Some((decl.kind, &script))));

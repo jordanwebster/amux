@@ -219,6 +219,8 @@ pub enum RegistryError {
     BadCwd(String),
     #[error("an agent's name cannot be empty")]
     EmptyName,
+    #[error("starting in a new worktree: {0}")]
+    Worktree(#[from] git_facts::WorktreeError),
     #[error("spawning on another host goes through that host's daemon")]
     OtherHost,
     #[error(transparent)]
@@ -250,6 +252,14 @@ impl RegistryError {
             }
             Self::OtherHost => ErrorCode::Unimplemented,
             Self::StartTimeout(_) | Self::StopTimeout(_) => ErrorCode::Aborted,
+            Self::Worktree(error) => match error {
+                git_facts::WorktreeError::BranchExists(_)
+                | git_facts::WorktreeError::DestinationExists(_) => ErrorCode::AlreadyExists,
+                git_facts::WorktreeError::NotARepository(_)
+                | git_facts::WorktreeError::NoBranch(_)
+                | git_facts::WorktreeError::BadBranchName(_) => ErrorCode::FailedPrecondition,
+                git_facts::WorktreeError::Git(_) => ErrorCode::Internal,
+            },
             Self::Store(_) | Self::Io(_) => ErrorCode::Internal,
             Self::HostName(error) => return error.to_wire(),
             Self::Forwarded(error) => return error.to_wire(),
@@ -333,6 +343,7 @@ pub struct ProfileRuntime {
     pub(crate) retention: watch::Sender<Retention>,
     pub(crate) reports: PathBuf,
     pub(crate) daemon_log: Option<PathBuf>,
+    worktrees: Arc<dyn crate::worktree::MakeWorktree>,
     pub(crate) me: Weak<ProfileRuntime>,
     /// The network edge, once the profile is in service.
     edge: std::sync::OnceLock<Arc<crate::edge::Edge>>,
@@ -493,6 +504,8 @@ pub struct Profile {
     pub reports: PathBuf,
     /// The daemon's own log, which a dump includes.
     pub daemon_log: Option<PathBuf>,
+    /// What makes the worktree an agent asked to start in one starts in.
+    pub worktrees: Arc<dyn crate::worktree::MakeWorktree>,
 }
 
 impl ProfileRuntime {
@@ -509,6 +522,7 @@ impl ProfileRuntime {
             push,
             reports,
             daemon_log,
+            worktrees,
         } = profile;
         Arc::new_cyclic(|me| Self {
             profile,
@@ -532,6 +546,7 @@ impl ProfileRuntime {
             retention: watch::Sender::new(Retention::default()),
             reports,
             daemon_log,
+            worktrees,
             me: me.clone(),
             edge: std::sync::OnceLock::new(),
             sources: Mutex::new(crate::sources::Sources::default()),
@@ -761,6 +776,16 @@ impl ProfileRuntime {
         let _operation = operation.lock().await;
         let key = self.key(id);
         let now = self.clock.now_ms();
+        let row_for = |name: &str, cwd: &str| {
+            let mut row = AgentRow::new(key.clone(), kind_name, cwd);
+            row.name = Some(name.to_owned());
+            row.parent = parent
+                .as_ref()
+                .map(|parent| AgentKey::new(parent.host_id.clone(), parent.agent_id.clone()));
+            row.created_at = now;
+            row.incarnation = 1;
+            row
+        };
         let name = {
             let mut store = self.store.lock().await;
             if store.agent(&key)?.is_some() {
@@ -784,15 +809,24 @@ impl ProfileRuntime {
             };
             // The row comes first: a crash after it leaves a row the sweep
             // marks exited, never a directory nothing lists.
-            let mut row = AgentRow::new(key.clone(), kind_name, request.cwd.clone());
-            row.name = Some(name.clone());
-            row.parent = parent
-                .as_ref()
-                .map(|parent| AgentKey::new(parent.host_id.clone(), parent.agent_id.clone()));
-            row.created_at = now;
-            row.incarnation = 1;
-            self.put_row(&mut store, &row)?;
+            if !request.new_worktree {
+                self.put_row(&mut store, &row_for(&name, &request.cwd))?;
+            }
             name
+        };
+        // A worktree is made before the row, outside the store's lock: a
+        // folder it cannot be made in fails the create with no agent made.
+        // Two unnamed creates at once in one repository could pick the same
+        // pair; the second then finds the branch taken and fails.
+        let chosen = request.cwd.clone();
+        let base_branch = if request.new_worktree {
+            let made = self.worktrees.make(Path::new(&chosen), &name).await?;
+            request.cwd = made.path.to_string_lossy().into_owned();
+            let mut store = self.store.lock().await;
+            self.put_row(&mut store, &row_for(&name, &request.cwd))?;
+            Some(made.base_branch)
+        } else {
+            None
         };
 
         let dir = self.agent_dir(id);
@@ -814,15 +848,13 @@ impl ProfileRuntime {
                 incarnation: 1,
                 initial_prompt: request.initial_prompt.clone(),
                 offered,
+                base_branch,
             },
         );
         spec::write(&dir, &spec)?;
         let started = self.start_process(id, &dir, &launch).await;
         if started.is_ok() {
-            self.recent
-                .lock()
-                .unwrap()
-                .record(Path::new(&request.cwd), now);
+            self.recent.lock().unwrap().record(Path::new(&chosen), now);
         }
         started
     }
@@ -940,6 +972,7 @@ impl ProfileRuntime {
                 incarnation: next,
                 initial_prompt: prompt,
                 offered,
+                base_branch: previous.base_branch.clone(),
             },
         );
         spec::write(&dir, &spec)?;

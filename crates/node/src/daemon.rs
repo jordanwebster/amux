@@ -146,6 +146,9 @@ impl Installation {
             push: self.push.clone(),
             reports: self.data_dir.join(REPORTS),
             daemon_log: self.daemon_log.clone(),
+            worktrees: Arc::new(crate::worktree::GitWorktrees::new(
+                self.data_dir.join(crate::worktree::WORKTREES),
+            )),
         }))
     }
 

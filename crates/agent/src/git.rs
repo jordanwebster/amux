@@ -8,16 +8,18 @@ use tokio::sync::{Notify, mpsc};
 
 /// Reads the facts each time `wanted` is notified, in order, so a slow read
 /// is never overtaken by a later one. Notifications that arrive while a
-/// read runs fold into one more read.
+/// read runs fold into one more read. `base` is the branch the agent's
+/// worktree was made from, when its host made one.
 pub(crate) fn reader(
     cwd: PathBuf,
+    base: Option<String>,
     wanted: Arc<Notify>,
     facts: mpsc::UnboundedSender<Option<wire::Git>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
             wanted.notified().await;
-            let read = match git_facts::facts(&cwd, None).await {
+            let read = match git_facts::facts(&cwd, base.as_deref()).await {
                 Ok(read) => read.map(to_wire),
                 Err(error) => {
                     // Without git the row shows no branch; nothing else

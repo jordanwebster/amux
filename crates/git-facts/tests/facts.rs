@@ -3,7 +3,10 @@
 use std::path::Path;
 use std::process::Command;
 
-use git_facts::{Change, ChangeTotals, Comparison, FileChange, GitError, GitFacts, compare, facts};
+use git_facts::{
+    Change, ChangeTotals, Comparison, FileChange, GitError, GitFacts, Worktree, WorktreeError,
+    add_worktree, compare, facts, repository as repository_of,
+};
 
 fn git(cwd: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -296,4 +299,111 @@ async fn a_comparison_lists_each_file_and_builds_a_patch_only_when_asked() {
         compare(outside.path(), &Comparison::Uncommitted, false).await,
         Err(GitError::NotARepository)
     ));
+}
+
+#[tokio::test]
+async fn a_worktree_branches_from_what_the_folder_has_checked_out() {
+    let repo = repository();
+    let dir = repo.path();
+    git(dir, &["switch", "-q", "-c", "feature"]);
+    write(dir, "feature.txt", 3);
+    git(dir, &["add", "feature.txt"]);
+    git(dir, &["commit", "-q", "-m", "on feature"]);
+    std::fs::create_dir(dir.join("sub")).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let destination = home.path().join("repo").join("quiet-otter");
+
+    // Asked from a folder inside the repository.
+    let made = add_worktree(&dir.join("sub"), &destination, "quiet-otter")
+        .await
+        .unwrap();
+    assert_eq!(
+        made,
+        Worktree {
+            path: destination.clone(),
+            branch: "quiet-otter".into(),
+            base_branch: "feature".into(),
+        }
+    );
+    assert!(destination.join("feature.txt").is_file());
+    assert_eq!(git(dir, &["branch", "--show-current"]), "feature");
+    assert_eq!(
+        repository_of(&destination).await.unwrap(),
+        repository_of(dir).await.unwrap(),
+        "a worktree belongs to the repository it was made from"
+    );
+    assert_eq!(
+        repository_of(dir)
+            .await
+            .unwrap()
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
+        dir.canonicalize().unwrap()
+    );
+
+    // Its facts, measured from the recorded base.
+    write(&destination, "new.txt", 2);
+    let found = facts(&destination, Some(&made.base_branch))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.branch.as_deref(), Some("quiet-otter"));
+    assert_eq!(found.base_branch.as_deref(), Some("feature"));
+    assert_eq!(found.on_branch, totals(1, 2, 0));
+}
+
+#[tokio::test]
+async fn a_worktree_is_refused_rather_than_reusing_a_branch_or_a_folder() {
+    let repo = repository();
+    let dir = repo.path();
+    git(dir, &["branch", "taken"]);
+    let home = tempfile::tempdir().unwrap();
+
+    let outside = tempfile::tempdir().unwrap();
+    let refused = add_worktree(outside.path(), &home.path().join("a"), "a").await;
+    assert!(
+        matches!(refused, Err(WorktreeError::NotARepository(_))),
+        "{refused:?}"
+    );
+    let refused = add_worktree(dir, &home.path().join("taken"), "taken").await;
+    assert!(
+        matches!(&refused, Err(WorktreeError::BranchExists(name)) if name == "taken"),
+        "{refused:?}"
+    );
+    assert_eq!(
+        refused.unwrap_err().to_string(),
+        "the repository already has a branch named taken"
+    );
+    let refused = add_worktree(dir, &home.path().join("bad"), "two words").await;
+    assert!(
+        matches!(refused, Err(WorktreeError::BadBranchName(_))),
+        "{refused:?}"
+    );
+    std::fs::create_dir(home.path().join("there")).unwrap();
+    let refused = add_worktree(dir, &home.path().join("there"), "there").await;
+    assert!(
+        matches!(refused, Err(WorktreeError::DestinationExists(_))),
+        "{refused:?}"
+    );
+    git(dir, &["switch", "-q", "--detach"]);
+    let refused = add_worktree(dir, &home.path().join("loose"), "loose").await;
+    assert!(
+        matches!(refused, Err(WorktreeError::NoBranch(_))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        git(
+            dir,
+            &["for-each-ref", "--format=%(refname:short)", "refs/heads"]
+        ),
+        "main\ntaken",
+        "no refusal made a branch"
+    );
+    assert_eq!(
+        git(dir, &["worktree", "list", "--porcelain"])
+            .matches("worktree ")
+            .count(),
+        1
+    );
 }

@@ -168,6 +168,7 @@ pub fn create(cwd: &Path, name: &str, prompt: Option<&str>) -> CreateAgentReques
             ClaudeCreateConfig::default(),
         )),
         host_name: None,
+        new_worktree: false,
     }
 }
 

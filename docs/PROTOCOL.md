@@ -472,6 +472,19 @@ hosts, an exact match first and then one ignoring case; no match is
 `NOT_FOUND` listing the known names, and several are `AmbiguousHostName`
 with the candidates.
 
+`CreateAgent` with `new_worktree` starts the agent in a new git worktree,
+made by the agent's host before the agent exists (`crates/node/src/worktree.rs`).
+The client says only yes: the host puts the worktree under its installation
+folder, `worktrees/<repository>/<agent name>`, on a new branch named after the
+agent, made from whatever the chosen folder has checked out, and records that
+branch in the agent's spec as the base its git facts measure against. A
+folder outside a repository or with no branch checked out is
+`FAILED_PRECONDITION`, and a name a branch already has is `ALREADY_EXISTS`;
+either way no agent is made. Renaming the agent leaves its branch alone, and
+amux never removes a worktree or its branch. The worktree is made behind one
+seam, `MakeWorktree`, so another tool could make it instead; the daemon takes
+the folder, branch and base it gets back as given.
+
 ### PeerService
 
 `PeerService` (`crates/node/src/edge/peer.rs`) carries the same requests and

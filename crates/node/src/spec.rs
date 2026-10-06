@@ -144,6 +144,8 @@ pub struct Incarnation<'a> {
     pub initial_prompt: Option<Input>,
     /// What the host's provider offers, for a kind that cannot be asked.
     pub offered: Option<Catalogue>,
+    /// The branch the agent's worktree was made from, when its host made one.
+    pub base_branch: Option<String>,
 }
 
 pub fn build(launch: &Launch, at: Incarnation<'_>) -> AgentSpec {
@@ -184,6 +186,7 @@ pub fn build(launch: &Launch, at: Incarnation<'_>) -> AgentSpec {
         incarnation: at.incarnation,
         initial_prompt: at.initial_prompt,
         offered: at.offered,
+        base_branch: at.base_branch,
     }
 }
 

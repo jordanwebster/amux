@@ -4298,6 +4298,11 @@ pub struct AgentSpec {
     /// the host has no copy.
     #[prost(message, optional, tag = "17")]
     pub offered: ::core::option::Option<Catalogue>,
+    /// The branch the agent's worktree was made from, when its host made one:
+    /// what its git facts measure the branch against. Absent otherwise, and
+    /// the repository's default branch is the base.
+    #[prost(string, optional, tag = "18")]
+    pub base_branch: ::core::option::Option<::prost::alloc::string::String>,
 }
 impl ::prost::Name for AgentSpec {
     const NAME: &'static str = "AgentSpec";
@@ -5691,6 +5696,13 @@ pub struct CreateAgentRequest {
     /// are set; neither means this host.
     #[prost(string, optional, tag = "8")]
     pub host_name: ::core::option::Option<::prost::alloc::string::String>,
+    /// Start the agent in a new git worktree of cwd's repository, on a new
+    /// branch named after the agent, made from whatever cwd has checked out.
+    /// The agent's host chooses where the worktree lives; the agent's cwd is
+    /// the worktree. Fails the call, making no agent, when cwd is not in a
+    /// repository or the branch exists.
+    #[prost(bool, tag = "12")]
+    pub new_worktree: bool,
     #[prost(oneof = "create_agent_request::Config", tags = "10, 11")]
     pub config: ::core::option::Option<create_agent_request::Config>,
 }

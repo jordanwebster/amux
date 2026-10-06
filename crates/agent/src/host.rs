@@ -199,6 +199,7 @@ pub(crate) async fn run<I: Interpreter>(
     let (git_tx, git_rx) = mpsc::unbounded_channel();
     tasks.push(crate::git::reader(
         PathBuf::from(&spec.cwd),
+        spec.base_branch.clone(),
         git_wanted.clone(),
         git_tx,
     ));

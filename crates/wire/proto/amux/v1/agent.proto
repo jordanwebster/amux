@@ -75,6 +75,10 @@ message AgentSpec {
   // for a kind that cannot be asked itself: terminal Claude. Absent when
   // the host has no copy.
   optional Catalogue offered = 17;
+  // The branch the agent's worktree was made from, when its host made one:
+  // what its git facts measure the branch against. Absent otherwise, and
+  // the repository's default branch is the base.
+  optional string base_branch = 18;
 }
 
 // What `amux catalogue <provider>` learned by running the provider just

@@ -51,6 +51,7 @@ mod spec;
 pub mod supervisor;
 mod transport;
 mod trust;
+mod worktree;
 
 pub use activation::{ActivationError, ActivationPipe, GO, InheritedPipe, PIPE_ENV, PREPARED};
 pub use blobs::{BlobError, PATCH_MIME};
@@ -100,6 +101,7 @@ pub use serve::{InventorySubscription, MAX_PAGE, ServeError, Subscription};
 pub use sources::{
     InventoryHook, NO_LONGER_LISTED, NOT_TRUSTED, SourceHook, SourcePolicy, SourceVerdict,
 };
+pub use worktree::{GitWorktrees, MakeWorktree, WORKTREES};
 
 /// Internals the testnet harness assembles topologies from. Hidden and
 /// unstable: reachable only for test infrastructure, never for products.

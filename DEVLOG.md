@@ -1,3 +1,14 @@
+2026-10-06 — **An agent can start in a fresh git worktree.**
+`CreateAgent` takes a yes/no for a new worktree and nothing else: the
+agent's host makes it under its own folder, `worktrees/<repository>/<agent
+name>`, on a branch named after the agent from whatever the chosen folder
+has checked out, and the agent's git facts measure the branch from there.
+A folder outside a repository, or a name a branch already has, fails the
+create with a clear error and no agent. A create forwarded from another
+host makes the worktree on the agent's host. Renaming the agent leaves the
+branch alone, and nothing in amux removes a worktree or a branch. The
+worktree is made behind one seam so another tool could make it later.
+
 2026-10-06 — **A send to another host's agent that may have arrived is no longer reported as not sent.**
 When the link to an agent's host dropped while a forwarded prompt waited
 for its answer, the sender was told the host could not be reached, as if

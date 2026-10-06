@@ -1,6 +1,7 @@
 //! What an agent's folder says about its git repository: the branch, the
 //! branch it is measured against, and how much changed. The one piece of git
-//! code the agent process and the daemon share.
+//! code the agent process and the daemon share, including the worktree a new
+//! agent can start in.
 //!
 //! Everything is read by running `git` in the folder, with optional locks
 //! off so a read never contends with the person's own git. The person's
@@ -9,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 
 use tokio::io::AsyncWriteExt;
@@ -96,6 +97,123 @@ pub enum GitError {
     NotARepository,
     #[error("the branch shares no history with {0}")]
     NoForkPoint(String),
+}
+
+/// A worktree made for an agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Worktree {
+    pub path: PathBuf,
+    /// The new branch checked out in it.
+    pub branch: String,
+    /// The branch it was made from: what the repository had checked out.
+    pub base_branch: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum WorktreeError {
+    #[error("{} is not in a git repository", .0.display())]
+    NotARepository(PathBuf),
+    #[error("{} has no branch checked out to start a new one from", .0.display())]
+    NoBranch(PathBuf),
+    #[error("the repository already has a branch named {0}")]
+    BranchExists(String),
+    #[error("{0:?} cannot be a branch name")]
+    BadBranchName(String),
+    #[error("{} already exists", .0.display())]
+    DestinationExists(PathBuf),
+    #[error("making the worktree: {0}")]
+    Git(String),
+}
+
+impl From<GitError> for WorktreeError {
+    fn from(error: GitError) -> Self {
+        Self::Git(error.to_string())
+    }
+}
+
+/// The repository `cwd` belongs to, named by its main working tree's folder
+/// (for a bare repository, the repository's own folder); None when `cwd` is
+/// not in one. The same for every worktree of the repository.
+pub async fn repository(cwd: &Path) -> Result<Option<PathBuf>, GitError> {
+    let Some(common) = answer(
+        cwd,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let common = PathBuf::from(common);
+    Ok(Some(match common.file_name() {
+        Some(name) if name == ".git" => common.parent().map_or(common.clone(), Path::to_owned),
+        _ => common,
+    }))
+}
+
+/// A new worktree at `destination` on a new branch `branch`, made from
+/// whatever `repository` (any folder in it) has checked out. Never removes
+/// anything, and fails rather than reuse a branch or a folder.
+pub async fn add_worktree(
+    repository: &Path,
+    destination: &Path,
+    branch: &str,
+) -> Result<Worktree, WorktreeError> {
+    let inside = run(
+        repository,
+        None,
+        &["rev-parse", "--is-inside-work-tree"],
+        None,
+    )
+    .await?;
+    if !inside.status.success() || text(&inside.stdout) != "true" {
+        return Err(WorktreeError::NotARepository(repository.to_owned()));
+    }
+    let base_branch = answer(repository, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .await?
+        .ok_or_else(|| WorktreeError::NoBranch(repository.to_owned()))?;
+    if answer(repository, &["check-ref-format", "--branch", branch])
+        .await?
+        .is_none()
+    {
+        return Err(WorktreeError::BadBranchName(branch.to_owned()));
+    }
+    let named = format!("refs/heads/{branch}");
+    if answer(repository, &["rev-parse", "--verify", "--quiet", &named])
+        .await?
+        .is_some()
+    {
+        return Err(WorktreeError::BranchExists(branch.to_owned()));
+    }
+    if destination.exists() {
+        return Err(WorktreeError::DestinationExists(destination.to_owned()));
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| WorktreeError::Git(error.to_string()))?;
+    }
+    let destination_text = destination.to_string_lossy();
+    let added = run(
+        repository,
+        None,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            branch,
+            &destination_text,
+            "HEAD",
+        ],
+        None,
+    )
+    .await?;
+    if !added.status.success() {
+        return Err(WorktreeError::Git(text(&added.stderr)));
+    }
+    Ok(Worktree {
+        path: destination.to_owned(),
+        branch: branch.to_owned(),
+        base_branch,
+    })
 }
 
 /// The facts for `cwd`, or None when it is not inside a git working tree.
