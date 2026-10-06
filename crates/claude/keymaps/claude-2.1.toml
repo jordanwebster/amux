@@ -141,37 +141,44 @@ steps = [
         { step = "if", cond = "is_first", then = [], otherwise = [
             { step = "delay", delay = "after_tab" },
         ] },
-        { step = "if", cond = "multi_select", then = [
-            { step = "for_each", over = "selected_options", steps = [
-                { step = "move_to", row = "selected_option" },
-                { step = "key", key = "space" },
-                { step = "delay", delay = "after_toggle" },
-            ] },
-            { step = "if", cond = "has_other", then = [
-                { step = "move_to", row = "other_row" },
-                { step = "key", key = "enter" },
-                { step = "delay", delay = "after_editor_open" },
-                { step = "type", text = "other_text" },
-                { step = "delay", delay = "before_submit" },
-                { step = "key", key = "enter" },
-                { step = "delay", delay = "after_other_save" },
-                { step = "key", key = "space" },
-                { step = "delay", delay = "after_toggle" },
-            ] },
+        # A skipped question is moved past with Tab. Claude's review screen
+        # lists it as unanswered and still submits; only a form of more than
+        # one question reaches that screen.
+        { step = "if", cond = "skipped", then = [
             { step = "key", key = "tab" },
         ], otherwise = [
-            { step = "if", cond = "has_other", then = [
-                { step = "digit", digit = { source = "other_row" } },
-                { step = "delay", delay = "after_editor_open" },
-                { step = "type", text = "other_text" },
-                { step = "delay", delay = "before_submit" },
-                { step = "key", key = "enter" },
-            ], otherwise = [
+            { step = "if", cond = "multi_select", then = [
                 { step = "for_each", over = "selected_options", steps = [
-                    { step = "digit", digit = { source = "selected_option" } },
-                    { step = "if", cond = "has_previews", then = [
-                        { step = "delay", delay = "after_move" },
-                        { step = "key", key = "enter" },
+                    { step = "move_to", row = "selected_option" },
+                    { step = "key", key = "space" },
+                    { step = "delay", delay = "after_toggle" },
+                ] },
+                { step = "if", cond = "has_other", then = [
+                    { step = "move_to", row = "other_row" },
+                    { step = "key", key = "enter" },
+                    { step = "delay", delay = "after_editor_open" },
+                    { step = "type", text = "other_text" },
+                    { step = "delay", delay = "before_submit" },
+                    { step = "key", key = "enter" },
+                    { step = "delay", delay = "after_other_save" },
+                    { step = "key", key = "space" },
+                    { step = "delay", delay = "after_toggle" },
+                ] },
+                { step = "key", key = "tab" },
+            ], otherwise = [
+                { step = "if", cond = "has_other", then = [
+                    { step = "digit", digit = { source = "other_row" } },
+                    { step = "delay", delay = "after_editor_open" },
+                    { step = "type", text = "other_text" },
+                    { step = "delay", delay = "before_submit" },
+                    { step = "key", key = "enter" },
+                ], otherwise = [
+                    { step = "for_each", over = "selected_options", steps = [
+                        { step = "digit", digit = { source = "selected_option" } },
+                        { step = "if", cond = "has_previews", then = [
+                            { step = "delay", delay = "after_move" },
+                            { step = "key", key = "enter" },
+                        ] },
                     ] },
                 ] },
             ] },

@@ -252,6 +252,7 @@ string_enum!(Cond {
     LastQuestionMulti,
     SingleQuestionSingleSelect,
     HasPreviews,
+    Skipped,
 });
 
 string_enum!(RowSource {
@@ -1049,12 +1050,21 @@ fn validate_environment(
             }
             if questions.len() != response.answers.len() {
                 return mismatch(format!(
-                    "{} questions, {} answers; every question must be answered",
+                    "{} questions, {} answers; each question takes one, empty when skipped",
                     questions.len(),
                     response.answers.len()
                 ));
             }
             for (index, (question, answer)) in questions.iter().zip(&response.answers).enumerate() {
+                if answer.is_skipped() {
+                    // Only a form of several questions ends in Claude's
+                    // review screen, which submits with some unanswered; a
+                    // lone question is submitted by answering it.
+                    if questions.len() == 1 {
+                        return mismatch("a lone question cannot be skipped");
+                    }
+                    continue;
+                }
                 validate_question_answer(index, question.options, question.multi_select, answer)?;
             }
         }
@@ -1394,6 +1404,7 @@ impl Interpreter<'_, '_> {
                 _ => false,
             }),
             Cond::HasOther => Ok(self.question_answer()?.other.is_some()),
+            Cond::Skipped => Ok(self.question_answer()?.is_skipped()),
             Cond::MultiSelect => Ok(self.question_fact()?.multi_select),
             Cond::HasPreviews => Ok(self.question_fact()?.previews),
             Cond::IsFirst => Ok(self.question == Some(0)),
@@ -2059,6 +2070,95 @@ mod interpret {
             3,
             "two rows then one row after cursor reset"
         );
+    }
+
+    #[test]
+    fn a_skipped_question_is_moved_past_with_tab_wherever_it_stands() {
+        let ask = questions(&[(2, false), (3, true), (2, false)]);
+        let skipped = |answers| {
+            encoded(&answer_intent(question_answer(answers)), Some(&ask)).expect("a skip")
+        };
+        assert_eq!(
+            skipped(vec![(vec![], None), (vec![0], None), (vec![1], None)]),
+            vec![
+                write(b"\t"),
+                delay(800),
+                write(b" "),
+                delay(400),
+                write(b"\t"),
+                delay(800),
+                write(b"2"),
+                delay(800),
+                write(b"\r"),
+            ],
+            "the first, a single-select question"
+        );
+        assert_eq!(
+            skipped(vec![(vec![0], None), (vec![], None), (vec![1], None)]),
+            vec![
+                write(b"1"),
+                delay(800),
+                write(b"\t"),
+                delay(800),
+                write(b"2"),
+                delay(800),
+                write(b"\r"),
+            ],
+            "the middle, a multi-select question: nothing toggled"
+        );
+        assert_eq!(
+            skipped(vec![(vec![0], None), (vec![2], None), (vec![], None)]),
+            vec![
+                write(b"1"),
+                delay(800),
+                write(b"\x1b[B"),
+                delay(300),
+                write(b"\x1b[B"),
+                delay(300),
+                write(b" "),
+                delay(400),
+                write(b"\t"),
+                delay(800),
+                write(b"\t"),
+                delay(800),
+                write(b"\r"),
+            ],
+            "the last: Tab reaches the review screen, which submits"
+        );
+
+        let ask = questions(&[(2, false), (3, true)]);
+        assert_eq!(
+            encoded(
+                &answer_intent(question_answer(vec![(vec![1], None), (vec![], None)])),
+                Some(&ask),
+            )
+            .expect("the last, a multi-select question"),
+            vec![
+                write(b"2"),
+                delay(800),
+                write(b"\t"),
+                delay(800),
+                write(b"\r"),
+                delay(1_000),
+                write(b"\r"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_lone_question_cannot_be_skipped() {
+        for multi_select in [false, true] {
+            let ask = questions(&[(2, multi_select)]);
+            let refused = encoded(
+                &answer_intent(question_answer(vec![(vec![], None)])),
+                Some(&ask),
+            )
+            .expect_err("a lone question is submitted by answering it");
+            assert!(
+                matches!(&refused, InputError::AnswerMismatchesAsk { detail } if detail.contains("lone question")),
+                "{refused:?}"
+            );
+        }
     }
 
     fn assert_text_refused(source: TextSource, text: &str, typed: bool) {

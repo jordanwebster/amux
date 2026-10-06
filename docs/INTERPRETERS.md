@@ -255,10 +255,14 @@ words.
   the words as the reason and leaves the turn running, so the model reads
   them as the call's result. A question answered or dismissed elsewhere
   takes its record from the call's result.
-- **Terminal Claude.** The same item. Claude's form asks every question
-  before it submits and has nowhere to type a note, so a skip or a note is
-  refused. A reply cancels the menu with the interrupt key, which stops the
-  turn, and queues the words as the next prompt.
+- **Terminal Claude.** The same item. Claude's form has nowhere to type a
+  note, so a note is refused. A form of several questions ends in Claude's
+  review screen, which submits with some unanswered: the keymap moves past a
+  skipped question with Tab and Claude leaves it out of its answers. A lone
+  question has no review screen, since Claude submits it as soon as it is
+  answered, so its skip is refused; the shared card offers Skip only where
+  the form takes one. A reply cancels the menu with the interrupt key, which
+  stops the turn, and queues the words as the next prompt.
 - **Codex.** `item/tool/requestUserInput` is the ask. A skipped question goes
   back with no answers, as Codex's own form sends it, and a note is one more
   answer, `user_note: <note>`. A reply interrupts the turn and sends the

@@ -1,5 +1,5 @@
 {
-  "about": "Terminal Claude's questions take a reply instead: amux cancels Claude's menu and sends the person's words as the next prompt, and the question reads replied instead. Claude's form has nowhere to type a note, so a note is refused.",
+  "about": "Terminal Claude's question form takes a skipped question when it has several: the keys move past it to Claude's review screen, which submits with it unanswered, and the record reads answered 2 of 3. A lone question has no review screen, so its skip is refused.",
   "events": [
     {
       "fact": {
@@ -86,11 +86,11 @@
                 "options": [
                   {
                     "label": "Red",
-                    "description": "warm"
+                    "description": ""
                   },
                   {
                     "label": "Blue",
-                    "description": "cool"
+                    "description": ""
                   }
                 ]
               },
@@ -105,6 +105,21 @@
                   },
                   {
                     "label": "Saw",
+                    "description": ""
+                  }
+                ]
+              },
+              {
+                "header": "Size",
+                "question": "Pick a size",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Small",
+                    "description": ""
+                  },
+                  {
+                    "label": "Large",
                     "description": ""
                   }
                 ]
@@ -129,11 +144,11 @@
                 "options": [
                   {
                     "label": "Red",
-                    "description": "warm"
+                    "description": ""
                   },
                   {
                     "label": "Blue",
-                    "description": "cool"
+                    "description": ""
                   }
                 ]
               },
@@ -151,6 +166,21 @@
                     "description": ""
                   }
                 ]
+              },
+              {
+                "header": "Size",
+                "question": "Pick a size",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Small",
+                    "description": ""
+                  },
+                  {
+                    "label": "Large",
+                    "description": ""
+                  }
+                ]
               }
             ]
           }
@@ -164,50 +194,23 @@
     },
     {
       "input": {
-        "id": "a2",
+        "id": "a1",
         "answer": {
           "ask": "ask:1",
           "answer": {
             "selected": [
-              0,
-              [
-                1
-              ]
-            ],
-            "notes": [
-              "warm is better",
-              null
+              1,
+              null,
+              0
             ]
           }
         }
       },
       "expect": {
-        "reply": "rejected:unsupported",
-        "silent": true,
-        "asks": [
-          "ask:1"
-        ]
-      },
-      "note": "a note on a question: Claude's form has nowhere to type one"
-    },
-    {
-      "input": {
-        "id": "a3",
-        "answer": {
-          "ask": "ask:1",
-          "answer": {
-            "reply": {
-              "text": "Use the old palette.",
-              "selected": []
-            }
-          }
-        }
-      },
-      "expect": {
-        "reply": "queued",
+        "reply": "accepted",
         "asks": []
       },
-      "note": "reply instead cancels the menu, which stops the turn, and queues the words as the next prompt"
+      "note": "the middle question skipped: the keys move past it with Tab and submit from Claude's review screen"
     },
     {
       "fact": {
@@ -235,11 +238,11 @@
                       "options": [
                         {
                           "label": "Red",
-                          "description": "warm"
+                          "description": ""
                         },
                         {
                           "label": "Blue",
-                          "description": "cool"
+                          "description": ""
                         }
                       ]
                     },
@@ -257,6 +260,21 @@
                           "description": ""
                         }
                       ]
+                    },
+                    {
+                      "header": "Size",
+                      "question": "Pick a size",
+                      "multiSelect": false,
+                      "options": [
+                        {
+                          "label": "Small",
+                          "description": ""
+                        },
+                        {
+                          "label": "Large",
+                          "description": ""
+                        }
+                      ]
                     }
                   ]
                 }
@@ -264,13 +282,7 @@
             ]
           }
         }
-      },
-      "expect": {
-        "items": [
-          "t1"
-        ]
-      },
-      "note": "the row Claude writes at the cancel reads replied instead"
+      }
     },
     {
       "fact": {
@@ -286,32 +298,90 @@
               {
                 "type": "tool_result",
                 "tool_use_id": "t1",
-                "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
-                "is_error": true
+                "content": "User has answered your questions: \"Pick a color\"=\"Blue\", \"Pick a size\"=\"Small\". You can now continue with the user's answers in mind."
               }
             ]
           },
-          "toolUseResult": "User rejected tool use"
-        }
-      },
-      "expect": {
-        "items": []
-      }
-    },
-    {
-      "fact": {
-        "channel": "transcript",
-        "json": {
-          "type": "user",
-          "uuid": "i1",
-          "timestamp": "2027-01-15T08:00:00.026Z",
-          "sessionId": "s1",
-          "message": {
-            "role": "user",
-            "content": [
+          "toolUseResult": {
+            "questions": [
               {
-                "type": "text",
-                "text": "[Request interrupted by user for tool use]"
+                "header": "Color",
+                "question": "Pick a color",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": ""
+                  },
+                  {
+                    "label": "Blue",
+                    "description": ""
+                  }
+                ]
+              },
+              {
+                "header": "Tools",
+                "question": "Pick tools",
+                "multiSelect": true,
+                "options": [
+                  {
+                    "label": "Hammer",
+                    "description": ""
+                  },
+                  {
+                    "label": "Saw",
+                    "description": ""
+                  }
+                ]
+              },
+              {
+                "header": "Size",
+                "question": "Pick a size",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Small",
+                    "description": ""
+                  },
+                  {
+                    "label": "Large",
+                    "description": ""
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pick a color": "Blue",
+              "Pick a size": "Small"
+            }
+          }
+        }
+      },
+      "note": "Claude leaves the skipped question out of its answers"
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t2",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {
+                "header": "Ship",
+                "question": "Ship it now?",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Yes",
+                    "description": ""
+                  },
+                  {
+                    "label": "No",
+                    "description": ""
+                  }
+                ]
               }
             ]
           }
@@ -320,26 +390,73 @@
     },
     {
       "fact": {
-        "channel": "transcript",
+        "channel": "hook",
         "json": {
-          "type": "user",
-          "uuid": "u2",
-          "timestamp": "2027-01-15T08:00:00.040Z",
-          "sessionId": "s1",
-          "origin": {
-            "kind": "human"
-          },
-          "promptSource": "typed",
-          "message": {
-            "role": "user",
-            "content": "Use the old palette."
+          "hook_event_name": "PermissionRequest",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {
+                "header": "Ship",
+                "question": "Ship it now?",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Yes",
+                    "description": ""
+                  },
+                  {
+                    "label": "No",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
           }
         }
       },
       "expect": {
-        "items": [
-          "u2"
+        "asks": [
+          "ask:2"
         ]
+      }
+    },
+    {
+      "input": {
+        "id": "a2",
+        "answer": {
+          "ask": "ask:2",
+          "answer": {
+            "selected": [
+              null
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "silent": true,
+        "asks": [
+          "ask:2"
+        ]
+      },
+      "note": "a lone question cannot be skipped: Claude submits it as soon as it is answered, with no review screen"
+    },
+    {
+      "input": {
+        "id": "a3",
+        "answer": {
+          "ask": "ask:2",
+          "answer": {
+            "selected": [
+              0
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": []
       }
     }
   ]

@@ -32,6 +32,7 @@ goldens! {
     lifecycle_events_write_boundaries_and_interrupt => "lifecycle",
     plans_are_items_with_their_verdict => "plans",
     a_question_takes_a_reply_instead => "question_reply",
+    a_question_of_several_can_be_skipped => "question_skip",
     recorded_prompt => "recorded_prompt",
     recorded_prompt_multiline => "recorded_prompt_multiline",
     recorded_tools => "recorded_tools",

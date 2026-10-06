@@ -1230,18 +1230,22 @@ impl Engine {
                     return self.abandon(&id, &name, &input, &tool);
                 };
                 self.call_row(request, message, &id, &name, &input);
-                let said = questions
+                // A skipped question is left out, as Claude's form does.
+                let answered: Vec<(&Question, String)> = questions
                     .iter()
-                    .zip(&answers)
+                    .zip(answers)
+                    .filter_map(|(q, answer)| Some((q, answer?)))
+                    .collect();
+                let said = answered
+                    .iter()
                     .map(|(q, answer)| format!("\"{}\"=\"{answer}\"", q.question))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let content = format!(
                     "User has answered your questions: {said}. You can now continue with the user's answers in mind."
                 );
-                let answers: serde_json::Map<String, Value> = questions
-                    .iter()
-                    .zip(answers)
+                let answers: serde_json::Map<String, Value> = answered
+                    .into_iter()
                     .map(|(q, answer)| (q.question.clone(), json!(answer)))
                     .collect();
                 let result = json!({ "questions": input["questions"], "answers": answers });
@@ -1298,8 +1302,9 @@ impl Engine {
     }
 
     /// Fill in a question form from the keys the claude-2.1 keymap types,
-    /// returning one answer per question (labels joined by ", ").
-    async fn form(&mut self, questions: &[Question]) -> Option<Vec<String>> {
+    /// returning one answer per question (labels joined by ", "), None for
+    /// a question moved past with Tab and nothing picked.
+    async fn form(&mut self, questions: &[Question]) -> Option<Vec<Option<String>>> {
         let mut answers = Vec::new();
         for q in questions {
             let other_row = q.options.len() + 1;
@@ -1329,21 +1334,27 @@ impl Engine {
                 if other_on && let Some(other) = other {
                     labels.push(other);
                 }
-                answers.push(labels.join(", "));
+                answers.push((!labels.is_empty()).then(|| labels.join(", ")));
             } else {
                 let digit = loop {
-                    if let Key::Char(c) = self.key().await?
-                        && let Some(digit) = c.to_digit(10)
-                    {
-                        break digit as usize;
+                    match self.key().await? {
+                        Key::Char(c) if c.is_ascii_digit() => break c.to_digit(10),
+                        // Moves on to the next question, or to the review
+                        // screen after the last, leaving this one unanswered.
+                        Key::Tab => break None,
+                        _ => {}
                     }
                 };
+                let Some(digit) = digit.map(|digit| digit as usize) else {
+                    answers.push(None);
+                    continue;
+                };
                 if digit == other_row {
-                    answers.push(self.line().await?);
+                    answers.push(Some(self.line().await?));
                 } else if (1..other_row).contains(&digit) {
-                    answers.push(q.options[digit - 1].label().to_owned());
+                    answers.push(Some(q.options[digit - 1].label().to_owned()));
                 } else {
-                    answers.push(String::new());
+                    answers.push(Some(String::new()));
                 }
             }
         }

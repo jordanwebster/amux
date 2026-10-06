@@ -830,6 +830,76 @@ fn terminal_claude_denies_on_the_menu_that_offers_auto_mode() {
     });
 }
 
+/// A question of several skipped in terminal Claude's form: the keymap
+/// moves past it with Tab and submits from Claude's review screen, and
+/// Claude's answers leave it out.
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
+#[test]
+fn terminal_claude_takes_a_skipped_question_through_its_review_screen() {
+    use provider_fakes::Ask;
+    use provider_fakes::script::Question;
+    let question = |header: &str, text: &str, multi_select, labels: [&str; 2]| Question {
+        question: text.into(),
+        header: header.into(),
+        options: labels.into_iter().map(Into::into).collect(),
+        multi_select,
+        other: false,
+        secret: false,
+    };
+    terminal_test(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            steps: vec![
+                Step::Ask(Ask::Question {
+                    questions: vec![
+                        question("Color", "Pick a color", false, ["Red", "Blue"]),
+                        question("Tools", "Pick tools", true, ["Hammer", "Saw"]),
+                        question("Size", "Pick a size", false, ["Small", "Large"]),
+                    ],
+                }),
+                Step::Text {
+                    chunks: vec!["Blue and small it is.".into()],
+                },
+                Step::TurnEnd,
+            ],
+            ..Setup::sdk()
+        })
+        .await;
+        let mut daemon = agent.dial().await;
+        agent.ready().await;
+        assert_eq!(daemon.prompt(b"p1", "Ask me").await, Verdict::Accepted);
+        answer(
+            &agent,
+            &mut daemon,
+            b"a1",
+            serde_json::json!({"selected": [1, null, 0]}),
+        )
+        .await;
+        agent
+            .wait("the turn ends", |log| log.turn_ends() == 1)
+            .await;
+        assert!(agent.log().has_text("Blue and small it is."));
+        let answers = agent
+            .facts()
+            .iter()
+            .filter(|entry| entry["event"] == "fact" && entry["channel"] == "transcript")
+            .filter_map(|entry| {
+                serde_json::from_str::<serde_json::Value>(entry["text"].as_str()?).ok()
+            })
+            .find_map(|row| row.pointer("/toolUseResult/answers").cloned())
+            .expect("Claude's answers");
+        assert_eq!(
+            answers,
+            serde_json::json!({"Pick a color": "Blue", "Pick a size": "Small"}),
+            "the skipped question is left out"
+        );
+        daemon.stop(StopMode::Graceful).await;
+        assert_eq!(agent.exit().await, ExitCause::Stopped);
+    });
+}
+
 /// Terminal Claude on a folder it has not been told to trust asks first.
 /// The question reaches the daemon before Claude counts as ready, a prompt
 /// sent meanwhile waits instead of being typed into the dialog, and

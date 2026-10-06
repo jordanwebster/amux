@@ -97,6 +97,13 @@ pub struct QuestionAnswer {
     pub other: Option<String>,
 }
 
+impl QuestionAnswer {
+    /// Nothing picked and nothing typed: the question is left unanswered.
+    pub fn is_skipped(&self) -> bool {
+        self.selected.is_empty() && self.other.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub enum PtyInput {

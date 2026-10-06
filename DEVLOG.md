@@ -1,3 +1,19 @@
+2026-10-06 — **A question can be skipped in terminal Claude's form.**
+Terminal Claude refused every skipped question on the belief that its form
+needs an answer to each, so the terminal and the phone never offered Skip
+for it. Claude's form asking several questions ends in its review screen,
+which warns "You have not answered all questions" and still submits, and
+Claude leaves a skipped question out of its answers. The keymap now moves
+past a skipped question with Tab and submits from that screen; the
+interpreter takes the response and records it as answered N of M; the
+shared card offers Skip for terminal Claude exactly when the form asks
+more than one question. A lone question is still refused a skip: Claude
+submits it as soon as it is answered and has no review screen (Reply
+instead covers it). Notes stay refused. The fake terminal Claude takes Tab
+past a question and leaves it out of its answers. The keys are a reading of
+recorded sessions and Claude's own strings; no live run has typed a skip
+yet.
+
 2026-10-06 — **An agent can start in a fresh git worktree.**
 `CreateAgent` takes a yes/no for a new worktree and nothing else: the
 agent's host makes it under its own folder, `worktrees/<repository>/<agent
@@ -66,8 +82,9 @@ A question in the composer's box can now be skipped (a Skip row under the
 options), given a note with Tab (it shows under the options and goes with
 that question's answer), or replied to instead (the Reply instead row opens
 for the person's words, sent with whatever was answered so far). The review
-says "skipped" where a question was left. Terminal Claude's menu takes no
-note and no skip, and its folder-trust dialog is Claude's own, outside any
+says "skipped" where a question was left. Terminal Claude's form takes no
+note, and a skip only on a form of several questions (corrected below: at
+first it took none), and its folder-trust dialog is Claude's own, outside any
 turn, so the card says which of these each ask takes: the wire marks a
 provider's own dialog, and the shared card carries whether a question may be
 skipped, noted or replied to; the terminal's stand-ins for them are deleted.
@@ -132,8 +149,10 @@ answers and each note as a `user_note:` answer. A new answer, reply
 instead, carries the person's words and any answers so far: headless Claude
 refuses the call with the words as the reason, terminal Claude cancels its
 menu and queues them as the next prompt, and Codex interrupts the turn and
-sends them as the next prompt. Terminal Claude still refuses a skip or a
-note, which its form cannot take. Claude's AskUserQuestion is now drawn as a
+sends them as the next prompt. Terminal Claude refuses a note, which its
+form cannot take, and at first refused a skip too; it now takes one on a
+form of several questions (see the entry on skipping in terminal Claude's
+form). Claude's AskUserQuestion is now drawn as a
 question ask item like Codex's, so all three kinds record the answers the
 same way: answered N of M, or replied instead with the words.
 

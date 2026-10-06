@@ -191,6 +191,10 @@ impl fmt::Display for TerminalInput {
             Self::Question { questions, answers } => {
                 write!(f, "question")?;
                 for (shape, answer) in questions.iter().zip(answers) {
+                    if answer.selected.is_empty() && answer.other.is_none() {
+                        write!(f, " [skipped of {}]", shape.options)?;
+                        continue;
+                    }
                     write!(
                         f,
                         " [{} of {}{}{}{}]",
@@ -1403,8 +1407,10 @@ fn terminal_answer(
             Ok((TerminalInput::Plan(choice), Decision::plan(verdict)))
         }
         (AskShape::Question { questions }, claude_answer::Of::Question(answer)) => {
-            // Claude's form has nowhere to type a note, and the keymap
-            // answers every question.
+            // Claude's form has nowhere to type a note. A question is
+            // skipped by moving past it to Claude's review screen, which
+            // only a form of several questions has: a lone question is
+            // submitted by answering it.
             if answer.answers.len() != questions.len()
                 || answer
                     .answers
@@ -1420,8 +1426,8 @@ fn terminal_answer(
             for (shape, response) in questions.iter().zip(answer.answers) {
                 let picks = response.selected.len() + usize::from(response.other.is_some());
                 let fits = response.selected.iter().all(|index| *index < shape.options)
-                    && picks > 0
-                    && (shape.multi_select || picks == 1)
+                    && (picks > 0 || questions.len() > 1)
+                    && (shape.multi_select || picks <= 1)
                     && !(shape.previews && response.other.is_some());
                 if !fits {
                     return Err(reason::UNSUPPORTED);

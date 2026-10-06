@@ -3258,7 +3258,7 @@ fn scrolled_back_offers_the_way_to_the_newest() {
 }
 
 /// Two questions as headless Claude asks them: pick one, then pick several.
-fn two_questions(kind: Kind) -> ui_view::AskCard {
+fn two_questions() -> ui_view::AskCard {
     let option = |label: &str| ui_view::OptionView {
         label: label.into(),
         description: String::new(),
@@ -3274,7 +3274,7 @@ fn two_questions(kind: Kind) -> ui_view::AskCard {
         secret: false,
     };
     ui_view::AskCard {
-        kind,
+        kind: Kind::ClaudeSdk,
         key: "ask".into(),
         item_key: "k".into(),
         position: 1,
@@ -3284,8 +3284,8 @@ fn two_questions(kind: Kind) -> ui_view::AskCard {
             question("Platforms", true),
         ]),
         choices: vec![],
-        question_note: kind != Kind::ClaudePty,
-        question_skip: kind != Kind::ClaudePty,
+        question_note: true,
+        question_skip: true,
         question_reply: true,
         stops_turn: true,
         state: CardState::Open,
@@ -3321,7 +3321,7 @@ fn chars(words: &str) -> Vec<KeyEvent> {
 
 #[test]
 fn a_question_is_noted_with_tab_and_the_next_skipped() {
-    let card = two_questions(Kind::ClaudeSdk);
+    let card = two_questions();
     // Tab opens the first question's note; Enter answers with the
     // highlighted option and the note. On the second, Esc then ↑ reaches
     // Skip, which leaves it and goes to the review; Enter sends.
@@ -3353,7 +3353,7 @@ fn a_question_is_noted_with_tab_and_the_next_skipped() {
 
 #[test]
 fn a_question_is_replied_to_instead_with_what_was_answered_so_far() {
-    let card = two_questions(Kind::ClaudeSdk);
+    let card = two_questions();
     // The first answered; on the second, Esc points at Reply instead and
     // Enter opens it to type the words.
     let mut keys = vec![key(KeyCode::Enter), key(KeyCode::Esc), key(KeyCode::Enter)];
@@ -3376,21 +3376,64 @@ fn a_question_is_replied_to_instead_with_what_was_answered_so_far() {
     );
 }
 
-#[test]
-fn terminal_claude_questions_are_answered_whole() {
-    // Its menu takes no note and no skip: Tab moves on, there is no Skip
-    // row, and the review will not send with a question open.
-    let card = two_questions(Kind::ClaudePty);
-    let keys = [key(KeyCode::Tab), key(KeyCode::Tab), key(KeyCode::Enter)];
-    assert_eq!(pressed(&card, &keys), None);
+/// What the composer's box shows for `card`.
+fn box_screen(card: &ui_view::AskCard) -> String {
     let mut ask = crate::chat::ask::AskUi::default();
-    ask.sync(&card);
-    let screen: String = ask
-        .box_lines(&card, 100, theme())
+    ask.sync(card);
+    ask.box_lines(card, 100, theme())
         .lines
         .iter()
         .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
-        .collect();
+        .collect()
+}
+
+#[test]
+fn terminal_claude_offers_skip_only_on_a_form_of_several_questions() {
+    // Claude's form asking several questions ends in its review screen,
+    // which submits with one unanswered; a lone question is submitted by
+    // answering it. Neither has a place for a note.
+    let open = |count: usize| {
+        move |state: &SessionState| {
+            ask_card(state).is_some_and(|card| {
+                card.state == CardState::Open
+                    && matches!(&card.body, AskBody::Question(questions) if questions.len() == count)
+            })
+        }
+    };
+    let (state, _) = fixtures::frame_where(Kind::ClaudePty, "question_skip", open(3));
+    let card = ask_card(&state).expect("three questions");
+    assert!(card.question_skip && !card.question_note);
+    let screen = box_screen(&card);
+    assert!(screen.contains("Skip"), "{screen}");
+    assert!(screen.contains("Reply instead"), "{screen}");
+    // Blue on the first; on the second, Esc then ↑ reaches Skip; Small on
+    // the third; the review sends.
+    let keys = [
+        key(KeyCode::Down),
+        key(KeyCode::Enter),
+        key(KeyCode::Esc),
+        key(KeyCode::Up),
+        key(KeyCode::Enter),
+        key(KeyCode::Enter),
+        key(KeyCode::Enter),
+    ];
+    let answer = pressed(&card, &keys).expect("the review sends the answers");
+    let Some(wire::claude_answer::Of::Question(answers)) = answer.of else {
+        panic!("{answer:?}");
+    };
+    let picked = |index| wire::QuestionResponse {
+        selected: vec![index],
+        ..Default::default()
+    };
+    assert_eq!(
+        answers.answers,
+        vec![picked(1), wire::QuestionResponse::default(), picked(0)]
+    );
+
+    let (state, _) = fixtures::frame_where(Kind::ClaudePty, "question_skip", open(1));
+    let card = ask_card(&state).expect("a lone question");
+    assert!(!card.question_skip && !card.question_note);
+    let screen = box_screen(&card);
     assert!(!screen.contains("Skip"), "{screen}");
     assert!(screen.contains("Reply instead"), "{screen}");
 }
