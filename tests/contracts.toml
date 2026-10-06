@@ -863,7 +863,7 @@ section = "Contracts from the CI repair"
 claim = "A chat believes the Snapshot for what the agent is doing and the entry for whether it exists; the fleet reads the row alone."
 tests = [
   "ui-state/spec::snapshot::the_chat_header_reads_the_snapshot_while_the_row_says_otherwise",
-  "ui-view/views::the_fleet_ranks_families_by_their_loudest_member",
+  "ui-view/views::the_fleet_places_families_by_their_loudest_member_newest_first",
 ]
 
 [[contract]]
