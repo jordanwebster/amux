@@ -18,7 +18,7 @@ chat.send | Send |  | 335,779,44,44 (disabled)
  | Back |  | 16,68,42,46
  | limited, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | 5-hour limit reached · resets 10:34 PM |  | 12,698,378,30
+ | 5-hour limit reached · resets <time> |  | 12,698,378,30
  | Attach |  | 23,779,44,44
  | claude-fake-1 |  | 71,779,139,44
  | Dictate |  | 287,779,44,44
