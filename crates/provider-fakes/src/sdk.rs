@@ -1100,7 +1100,7 @@ impl Engine {
         {
             return answer;
         }
-        Ok(tool.outcome.output.clone())
+        Ok(tool.outcome.text())
     }
 
     /// The tool's result row: its output, or the refusal or failure text.
@@ -1241,7 +1241,7 @@ impl Engine {
                     .await;
                 let Some(answer) = answer else { return };
                 let outcome = match allowed(&answer) {
-                    Ok(()) => Ok(tool.outcome.output.clone()),
+                    Ok(()) => Ok(tool.outcome.text()),
                     Err(refusal) => Err(refusal),
                 };
                 self.tool_result(&id, &tool, &input, outcome).await;

@@ -233,6 +233,28 @@ pub struct Outcome {
     /// The tool ran and failed.
     #[serde(default)]
     pub error: bool,
+    /// The command prints `output` this many times as it runs, `{piece}`
+    /// in it numbered from 1: a long build's log without a script the size
+    /// of the log. Codex streams each piece as it is printed; the others
+    /// return the pieces joined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pieces: Option<usize>,
+}
+
+impl Outcome {
+    /// What the command prints, a piece at a time.
+    pub fn printed(&self) -> impl Iterator<Item = String> + '_ {
+        let pieces = self.pieces;
+        (1..=pieces.unwrap_or(1)).map(move |piece| match pieces {
+            Some(_) => self.output.replace("{piece}", &piece.to_string()),
+            None => self.output.clone(),
+        })
+    }
+
+    /// Everything the command printed.
+    pub fn text(&self) -> String {
+        self.printed().collect()
+    }
 }
 
 /// Every kind of ask the providers raise. Not every provider raises every

@@ -155,6 +155,43 @@ async fn a_turn_streams_its_message_and_completes_with_it() {
 }
 
 #[tokio::test]
+async fn a_command_printing_in_pieces_streams_them_while_it_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let gate = dir.path().join("gate");
+    let mut host = Host::start(json!({"steps": [
+        {"tool": {"class": "consequential", "input": {"command": "make"},
+                  "outcome": {"output": "line {piece}\n", "pieces": 3},
+                  "wait_for": gate}},
+        "turn_end",
+    ]}))
+    .await;
+    host.turn("Build").await;
+    for piece in 1..=3 {
+        let delta = host
+            .line
+            .until(|frame| frame["method"] == "item/commandExecution/outputDelta")
+            .await;
+        assert_eq!(delta["params"]["delta"], format!("line {piece}\n"));
+    }
+    assert!(
+        items(&host.line.frames, "commandExecution").is_empty(),
+        "the command is still running"
+    );
+    std::fs::write(&gate, "").unwrap();
+    host.completed().await;
+    let command = &items(&host.line.frames, "commandExecution")[0];
+    assert_eq!(command["aggregatedOutput"], "line 1\nline 2\nline 3\n");
+    let deltas = host
+        .line
+        .frames
+        .iter()
+        .filter(|frame| frame["method"] == "item/commandExecution/outputDelta")
+        .count();
+    assert_eq!(deltas, 3, "nothing printed again at the end");
+    assert_eq!(host.line.close().await, 0);
+}
+
+#[tokio::test]
 async fn an_item_injected_mid_turn_is_acknowledged_and_drained_by_that_turn() {
     let dir = tempfile::tempdir().unwrap();
     let gate = dir.path().join("gate");

@@ -1,3 +1,13 @@
+2026-10-06 — **A served set shows a long command's output staying bounded.**
+The fake Codex can now print a command's output in pieces while the command
+runs (`outcome.pieces`, `{piece}` numbered in the text), each piece its own
+output delta, as a real long build streams its log; the other fakes return the
+pieces joined. The new `long-command` set runs a test sweep that prints about
+300 KB in 3000 pieces and holds on a gate. Opening the running command's row in
+the terminal shows `… 1,986 earlier lines` above the newest crates: the client
+holds about 100 KB, under twice the 64 KiB output cap, however long the run
+prints.
+
 2026-10-06 — **The fake headless Claude runs background commands, and a shell is not a subagent.**
 A `run_in_background` Bash in a fake headless Claude script now behaves as
 Claude's recordings show: the job list gains it, its task starts, the call's

@@ -1202,9 +1202,20 @@ impl Engine {
             }
             self.status(Some(&[])).await;
         }
+        // A command printing in pieces prints them while it runs; any other
+        // prints its output once it is done.
+        if tool.outcome.pieces.is_some() {
+            for piece in tool.outcome.printed() {
+                self.notify(
+                    "item/commandExecution/outputDelta",
+                    json!({ "delta": piece, "itemId": id, "threadId": thread, "turnId": turn }),
+                )
+                .await;
+            }
+        }
         self.run_tool(tool).await;
-        let output = tool.outcome.output.clone();
-        if !output.is_empty() {
+        let output = tool.outcome.text();
+        if tool.outcome.pieces.is_none() && !output.is_empty() {
             self.notify(
                 "item/commandExecution/outputDelta",
                 json!({ "delta": output, "itemId": id, "threadId": thread, "turnId": turn }),
@@ -1348,7 +1359,7 @@ impl Engine {
             .servers
             .call(server, name, &arguments)
             .await
-            .unwrap_or_else(|| Ok(tool.outcome.output.clone()));
+            .unwrap_or_else(|| Ok(tool.outcome.text()));
         item["durationMs"] = json!(0);
         match answer {
             Ok(text) => {

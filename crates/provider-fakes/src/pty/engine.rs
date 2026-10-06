@@ -893,7 +893,7 @@ impl Engine {
         {
             return answer;
         }
-        Ok(tool.outcome.output.clone())
+        Ok(tool.outcome.text())
     }
 
     fn finish_tool(
@@ -1163,7 +1163,7 @@ impl Engine {
                     self.interruption_row("[Request interrupted by user for tool use]");
                     return;
                 }
-                self.finish_tool(&id, &name, &input, &tool, Ok(tool.outcome.output.clone()));
+                self.finish_tool(&id, &name, &input, &tool, Ok(tool.outcome.text()));
             }
             Ask::Plan { markdown } => {
                 let tool = named("ExitPlanMode", json!({ "plan": markdown }));
