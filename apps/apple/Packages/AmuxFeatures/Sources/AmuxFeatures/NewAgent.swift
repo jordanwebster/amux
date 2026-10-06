@@ -312,6 +312,13 @@ public struct NewAgent: View {
 
     // MARK: - What runs there
 
+    /// Whether the chosen host has said this provider is signed in there;
+    /// nil until it says.
+    private func signedIn(_ provider: NewAgentStore.Provider) -> Bool? {
+        guard let machine = model.machine else { return nil }
+        return hosts.host(machine)?.providers.first { $0.provider == provider.rawValue }?.signedIn
+    }
+
     private var layers: some View {
         VStack(alignment: .leading, spacing: 9) {
             SectionHead(title: "Agent")
@@ -319,10 +326,152 @@ public struct NewAgent: View {
                 ForEach(NewAgentStore.Provider.allCases) { provider in
                     LayerCard(
                         provider: provider, chosen: model.provider == provider,
+                        signedOut: signedIn(provider) == false,
                         choose: { model.choose(provider: provider) })
                 }
             }
+            if signedIn(model.provider) == false {
+                Explain("\(model.provider.title) is not signed in on \(machineName). Its agents can’t work there until it is.")
+                    .identified("new-agent.signed-out", value: model.provider.rawValue)
+            }
+            settings
         }
+    }
+
+    // MARK: - What it runs with
+
+    /// The model, effort, permission and mode the agent starts with, from
+    /// what the host says its provider offers, and the new-worktree switch.
+    @ViewBuilder
+    private var settings: some View {
+        if model.machine != nil {
+            switch model.offers[model.provider] {
+            case .offered?:
+                Surface {
+                    VStack(spacing: 0) {
+                        ForEach(Array(pickers.enumerated()), id: \.offset) { index, picker in
+                            if index > 0 { rule }
+                            picker
+                        }
+                    }
+                }
+            case .unavailable?:
+                Explain("\(machineName) could not say what \(model.provider.title) offers. The agent starts with the host’s defaults.")
+                    .identified("new-agent.offer.unavailable")
+            case .asking?, nil:
+                Explain("Asking \(machineName) what \(model.provider.title) offers…")
+                    .identified("new-agent.offer.asking")
+            }
+        }
+        Surface { worktree }
+    }
+
+    private var rule: some View {
+        Rectangle()
+            .fill(design.hairline.color)
+            .frame(height: design.metrics.hairline)
+    }
+
+    private var pickers: [AnyView] {
+        var rows = [AnyView(modelPicker)]
+        if !model.offeredEfforts.isEmpty { rows.append(AnyView(effortPicker)) }
+        if !model.offeredPermissions.isEmpty { rows.append(AnyView(permissionPicker)) }
+        if model.offeredModes.count >= 2 { rows.append(AnyView(modePicker)) }
+        return rows
+    }
+
+    private static func named(_ name: String, _ value: String) -> String {
+        name.isEmpty ? value : name
+    }
+
+    private var hostDefault: String { String(localized: "Host default") }
+
+    private var modelPicker: some View {
+        let current = model.offeredModel.map { Self.named($0.displayName, $0.value) }
+            ?? model.model ?? hostDefault
+        let items = [MenuItem(title: hostDefault, systemImage: "", chosen: model.model == nil) {
+            model.choose(model: nil)
+        }] + (model.catalogue?.models ?? []).map { offered in
+            MenuItem(
+                title: Self.named(offered.displayName, offered.value), systemImage: "",
+                chosen: model.offeredModel?.value == offered.value
+            ) { model.choose(model: offered.value) }
+        }
+        return picker(String(localized: "Model"), id: "new-agent.model", current: current, items: items)
+    }
+
+    private var effortPicker: some View {
+        let fallback = model.offeredModel?.defaultEffort
+        let worded = { (effort: String) in
+            effort == fallback ? String(localized: "\(effort) (default)") : effort
+        }
+        let items = [MenuItem(
+            title: String(localized: "Model default"), systemImage: "", chosen: model.effort == nil
+        ) { model.choose(effort: nil) }] + model.offeredEfforts.map { effort in
+            MenuItem(title: worded(effort), systemImage: "", chosen: model.effort == effort) {
+                model.choose(effort: effort)
+            }
+        }
+        return picker(
+            String(localized: "Effort"), id: "new-agent.effort",
+            current: model.effort ?? String(localized: "Model default"), items: items)
+    }
+
+    private var permissionPicker: some View {
+        let offered = model.offeredPermissions
+        let current = model.permission.map { value in
+            offered.first { $0.value == value }.map { Self.named($0.displayName, $0.value) } ?? value
+        } ?? hostDefault
+        // One that acts without asking reads red, as on a chat's settings.
+        let items = [MenuItem(title: hostDefault, systemImage: "", chosen: model.permission == nil) {
+            model.choose(permission: nil)
+        }] + offered.map { permission in
+            MenuItem(
+                title: Self.named(permission.displayName, permission.value), systemImage: "",
+                destructive: permission.neverAsks, chosen: model.permission == permission.value
+            ) { model.choose(permission: permission.value) }
+        }
+        return picker(
+            String(localized: "Permission"), id: "new-agent.permission", current: current, items: items)
+    }
+
+    private var modePicker: some View {
+        let modes = model.offeredModes
+        let inForce = modes.first { $0.value == model.mode } ?? modes.first(where: \.normal)
+        let items = modes.map { mode in
+            MenuItem(
+                title: Self.named(mode.displayName, mode.value), systemImage: "",
+                chosen: inForce?.value == mode.value
+            ) { model.choose(mode: mode.normal ? nil : mode.value) }
+        }
+        return picker(
+            String(localized: "Mode"), id: "new-agent.mode",
+            current: inForce.map { Self.named($0.displayName, $0.value) } ?? hostDefault, items: items)
+    }
+
+    private func picker(_ label: String, id: String, current: String, items: [MenuItem]) -> some View {
+        MenuButton(name: "\(label), \(current)", identifier: id, items: items, value: current) {
+            FieldRow(label: label, value: current)
+        }
+    }
+
+    private var worktree: some View {
+        Toggle(isOn: Binding(get: { model.newWorktree }, set: { model.newWorktree = $0 })) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("New worktree")
+                    .designFont(.body, design)
+                    .foregroundStyle(design.ink.color)
+                Text("A worktree of its own, made from the directory’s repository")
+                    .designFont(.detail, design)
+                    .foregroundStyle(design.inkMuted.color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .tint(design.ink.color)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .identified("new-agent.worktree", label: "New worktree", value: model.newWorktree ? "on" : "off")
     }
 
     // MARK: - Starting it
@@ -349,16 +498,14 @@ public struct NewAgent: View {
     }
 }
 
-/// One layer, as a card that is chosen whole.
-///
-/// Every agent starts on its host's default model: nothing tells a phone what
-/// models a host offers before an agent of that kind runs there.
+/// One layer, as a card that is chosen whole; one the host has said is
+/// signed out there says so.
 private struct LayerCard: View {
     @Environment(\.design) private var design
     let provider: NewAgentStore.Provider
     let chosen: Bool
+    let signedOut: Bool
     let choose: @MainActor () -> Void
-    private let model = "Host Default"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -368,7 +515,12 @@ private struct LayerCard: View {
             Text(provider.title)
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
-            models
+            if signedOut {
+                Text("Not signed in")
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.removed.color)
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -389,18 +541,8 @@ private struct LayerCard: View {
         .accessibilityAddTraits(chosen ? [.isSelected] : [])
         .identified(
             "new-agent.provider.\(provider.rawValue)",
-            label: "\(provider.title), \(model)", value: chosen ? "chosen" : "not chosen")
-    }
-
-    private var models: some View {
-        line.identified("new-agent.model.\(provider.rawValue)", value: model)
-    }
-
-    private var line: some View {
-        Text(model)
-            .designFont(.monoSmall, design)
-            .foregroundStyle(design.inkMuted.color)
-            .lineLimit(1)
+            label: signedOut ? "\(provider.title), not signed in" : provider.title,
+            value: chosen ? "chosen" : "not chosen")
     }
 
     private var glyph: String {

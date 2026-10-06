@@ -2,9 +2,11 @@ import AmuxValues
 import Foundation
 import Observation
 
-/// Starting an agent: which host, where on it, what it is called and which
-/// agent it is. One screen; every choice is held here and reset each time
-/// the screen opens.
+/// Starting an agent: which host, where on it, what it is called, which
+/// agent it is and what that agent runs with. One screen; every choice is
+/// held here and reset each time the screen opens. The models, efforts,
+/// permissions and modes offered are what the chosen host says its
+/// provider offers; nothing chosen means the host's own default.
 @MainActor
 @Observable
 public final class NewAgentStore {
@@ -31,6 +33,14 @@ public final class NewAgentStore {
         }
     }
 
+    /// What the chosen host said a provider offers.
+    public enum Offer: Equatable, Sendable {
+        case asking
+        case offered(Catalogue)
+        /// The host could not say; the agent starts on the host's defaults.
+        case unavailable
+    }
+
     public enum Listing: Equatable, Sendable {
         case none
         case asking
@@ -55,6 +65,16 @@ public final class NewAgentStore {
     public var typed = ""
     public var browsing = false
     public private(set) var provider = Provider.claude
+    /// What the chosen host offers, per provider, once asked.
+    public private(set) var offers: [Provider: Offer] = [:]
+    /// The chosen model, effort, permission and mode, by their values in
+    /// the host's catalogue; nil leaves each to the host.
+    public private(set) var model: String?
+    public private(set) var effort: String?
+    public private(set) var permission: String?
+    public private(set) var mode: String?
+    /// Start it in a worktree of its own, made from the folder's repository.
+    public var newWorktree = false
     public private(set) var typedName: String?
     public private(set) var starting = false
     public private(set) var failure: String?
@@ -67,6 +87,7 @@ public final class NewAgentStore {
     /// chooser offers when the host lists nothing of its own.
     @ObservationIgnored private var worked: [HostId: [Directory]] = [:]
     @ObservationIgnored private var asked = 0
+    @ObservationIgnored private var offerAsked: [Provider: Int] = [:]
 
     public init() {}
 
@@ -83,6 +104,10 @@ public final class NewAgentStore {
         typedName = nil
         browsing = false
         provider = .claude
+        offers = [:]
+        offerAsked = [:]
+        startAfresh()
+        newWorktree = false
         starting = false
         failure = nil
         created = nil
@@ -102,6 +127,9 @@ public final class NewAgentStore {
         query = ""
         failure = nil
         asked += 1
+        offers = [:]
+        offerAsked = [:]
+        startAfresh()
     }
 
     /// What the fleet lists, for names and directories per host.
@@ -157,11 +185,89 @@ public final class NewAgentStore {
         failure = nil
     }
 
+    /// Another agent starts its model, effort, permission and mode afresh:
+    /// they do not carry across providers.
     public func choose(provider chosen: Provider) {
         guard provider != chosen else { return }
         provider = chosen
+        startAfresh()
         failure = nil
     }
+
+    private func startAfresh() {
+        model = nil
+        effort = nil
+        permission = nil
+        mode = nil
+    }
+
+    // MARK: - What the host offers
+
+    /// Marks a provider's catalogue as asked for on the chosen host and
+    /// answers the ask's number.
+    public func askingOffer(for provider: Provider) -> Int {
+        asked += 1
+        offerAsked[provider] = asked
+        offers[provider] = .asking
+        return asked
+    }
+
+    public func offered(
+        _ result: Result<Catalogue, RuntimeFailure>, for provider: Provider, asked number: Int
+    ) {
+        guard offerAsked[provider] == number else { return }
+        switch result {
+        case .success(let catalogue): offers[provider] = .offered(catalogue)
+        case .failure: offers[provider] = .unavailable
+        }
+    }
+
+    /// The chosen provider's catalogue on the chosen host, once it said.
+    public var catalogue: Catalogue? {
+        if case .offered(let catalogue)? = offers[provider] { return catalogue }
+        return nil
+    }
+
+    /// The chosen model as the catalogue offers it: by value, else by the
+    /// id an alias stands for.
+    public var offeredModel: OfferedModel? {
+        guard let model, let models = catalogue?.models else { return nil }
+        return models.first { $0.value == model } ?? models.first { $0.resolvedModel == model }
+    }
+
+    /// The efforts the chosen model takes, in the provider's order.
+    public var offeredEfforts: [String] { offeredModel?.efforts ?? [] }
+
+    /// The permissions a new agent can start with: settable, and taken by
+    /// the chosen model when they name models.
+    public var offeredPermissions: [OfferedPermission] {
+        let model = offeredModel?.value
+        return (catalogue?.permissions ?? []).filter { permission in
+            permission.settable
+                && (permission.models.isEmpty || model.map(permission.models.contains) == true)
+        }
+    }
+
+    /// The modes it can start in; only Codex offers any.
+    public var offeredModes: [OfferedMode] {
+        (catalogue?.modes ?? []).filter(\.settable)
+    }
+
+    /// Picks a model. An effort the new model does not take gives way to
+    /// its default, and a permission it does not take to the host's.
+    public func choose(model value: String?) {
+        model = value
+        if let efforts = offeredModel?.efforts, let chosen = effort, !efforts.contains(chosen) {
+            effort = nil
+        }
+        if let chosen = permission, !offeredPermissions.contains(where: { $0.value == chosen }) {
+            permission = nil
+        }
+    }
+
+    public func choose(effort value: String?) { effort = value }
+    public func choose(permission value: String?) { permission = value }
+    public func choose(mode value: String?) { mode = value }
 
     /// What the chooser shows for the search typed so far.
     public var found: [Directory] {
@@ -211,7 +317,8 @@ public final class NewAgentStore {
         guard ready, let machine else { return nil }
         return NewAgent(
             hostId: machine.bytes, kind: provider.kind, cwd: directory, name: chosenName,
-            effort: nil, mode: nil, model: nil, newWorktree: nil, permission: nil)
+            effort: effort, mode: provider == .codex ? mode : nil, model: model,
+            newWorktree: newWorktree ? true : nil, permission: permission)
     }
 
     public func starts() {

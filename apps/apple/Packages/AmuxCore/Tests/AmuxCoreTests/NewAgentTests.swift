@@ -90,4 +90,82 @@ final class NewAgentTests: XCTestCase {
         XCTAssertEqual(store.found.map(\.name), ["relay"])
         XCTAssertFalse(store.searchesTheMachine)
     }
+
+    private let codex = Catalogue(
+        hash: [1],
+        models: [
+            OfferedModel(value: "gpt-6-astra", displayName: "GPT-6-Astra", description: "", efforts: ["low", "high"], resolvedModel: "", defaultEffort: "low"),
+            OfferedModel(value: "gpt-6-sol", displayName: "GPT-6-Sol", description: "", efforts: ["low"], resolvedModel: "", defaultEffort: "low"),
+        ],
+        commands: [],
+        permissions: [
+            OfferedPermission(value: "default", displayName: "Default", normal: true, neverAsks: false, settable: true, models: []),
+            OfferedPermission(value: "auto", displayName: "Auto", normal: false, neverAsks: false, settable: true, models: ["gpt-6-astra"]),
+            OfferedPermission(value: "locked", displayName: "Locked", normal: false, neverAsks: false, settable: false, models: []),
+        ],
+        modes: [
+            OfferedMode(value: "default", displayName: "Default", normal: true, settable: true),
+            OfferedMode(value: "plan", displayName: "Plan", normal: false, settable: true),
+        ])
+
+    func testTheChoicesComeFromTheHostsCatalogueAndGoInTheRequest() {
+        let store = NewAgentStore()
+        store.open(on: Cards.desk)
+        store.choose(directory: "/src/x")
+        store.choose(provider: .codex)
+        let asked = store.askingOffer(for: .codex)
+        XCTAssertNil(store.catalogue, "nothing is offered until the host says")
+        store.offered(.success(codex), for: .codex, asked: asked)
+        XCTAssertEqual(store.catalogue, codex)
+
+        XCTAssertEqual(store.offeredPermissions.map(\.value), ["default"],
+                       "a permission naming models waits for one of them; one not settable is never offered")
+        store.choose(model: "gpt-6-astra")
+        XCTAssertEqual(store.offeredEfforts, ["low", "high"])
+        XCTAssertEqual(store.offeredPermissions.map(\.value), ["default", "auto"])
+        XCTAssertEqual(store.offeredModes.map(\.value), ["default", "plan"])
+        store.choose(effort: "high")
+        store.choose(permission: "auto")
+        store.choose(mode: "plan")
+        store.newWorktree = true
+        XCTAssertEqual(
+            store.request,
+            NewAgent(hostId: Cards.desk.bytes, kind: .codex, cwd: "/src/x", name: "x",
+                     effort: "high", mode: "plan", model: "gpt-6-astra", newWorktree: true,
+                     permission: "auto"))
+
+        // A model that takes neither drops them back to the host's defaults.
+        store.choose(model: "gpt-6-sol")
+        XCTAssertNil(store.effort)
+        XCTAssertNil(store.permission)
+    }
+
+    func testAnotherProviderStartsAfreshAndOnlyCodexTakesAMode() {
+        let store = NewAgentStore()
+        store.open(on: Cards.desk)
+        store.choose(directory: "/src/x")
+        store.choose(provider: .codex)
+        store.offered(.success(codex), for: .codex, asked: store.askingOffer(for: .codex))
+        store.choose(model: "gpt-6-astra")
+        store.choose(mode: "plan")
+        store.choose(provider: .claude)
+        XCTAssertNil(store.model)
+        XCTAssertNil(store.mode)
+        XCTAssertNil(store.catalogue, "Claude's catalogue was not asked for")
+        XCTAssertNil(store.request?.mode)
+        XCTAssertNil(store.request?.newWorktree, "the switch is off until turned on")
+    }
+
+    func testAnOfferForAHostLeftBehindIsDropped() {
+        let store = NewAgentStore()
+        store.open(on: Cards.desk)
+        store.choose(provider: .codex)
+        let stale = store.askingOffer(for: .codex)
+        store.point(at: HostId(UUID()))
+        store.offered(.success(codex), for: .codex, asked: stale)
+        XCTAssertNil(store.offers[.codex])
+        let failed = store.askingOffer(for: .codex)
+        store.offered(.failure(RuntimeFailure("no route")), for: .codex, asked: failed)
+        XCTAssertEqual(store.offers[.codex], .unavailable)
+    }
 }

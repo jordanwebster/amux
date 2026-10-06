@@ -1067,13 +1067,19 @@ private struct AskRowView: View {
         case .questions(let questions, let answers, _, let resolution, let reply):
             questionsRow(questions, answers, resolution, reply)
         case .plan(let plan, let verdict, _, let note):
+            // An open plan reads whole under its heading while the decision
+            // stands in the composer's place; once decided it folds to its
+            // heading and opens on a tap.
+            let open = verdict == .open
             let sentBack = verdict == .sentBack && !(note ?? "").isEmpty
             GridRow(
-                kind: "plan", glyph: "list.bullet.rectangle", accented: verdict == .open,
+                kind: "plan", glyph: "list.bullet.rectangle", accented: open,
                 rail: rail, verb: planVerb(verdict), subject: sentBack ? "" : planTitle(plan),
-                subjectFace: .text, quote: sentBack ? ChatWords.firstLine(note ?? "") : nil,
-                below: expanded ? AnyView(planBody(plan)) : nil,
-                opens: true, open: expanded, toggle: toggle)
+                subjectFace: .text,
+                meta: RowMeta(verdict == .approvedAcceptingEdits ? String(localized: "accepting edits") : ""),
+                quote: sentBack ? ChatWords.firstLine(note ?? "") : nil,
+                below: open || expanded ? AnyView(planBody(plan)) : nil,
+                opens: !open, open: expanded, toggle: toggle)
         case .form(let server, let message, let fields, let resolution):
             GridRow(
                 kind: "form", glyph: "list.bullet.clipboard", accented: resolution == .open,

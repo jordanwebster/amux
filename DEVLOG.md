@@ -1,3 +1,23 @@
+2026-10-06 — **The phone's pickers, plans, questions and new-agent screen read the catalogue.**
+A chat's settings card lists only what the agent's catalogue offers: the
+permissions a pick can set (the hand-written table of what each permission
+value means is gone; the card says only what the catalogue does, that one
+acts without asking or that the agent reported one it does not offer), and
+for Codex a second pick for the mode. New Agent asks the chosen host what
+each provider offers there and picks the model, effort, permission and mode
+from it, says when the provider is not signed in on that host, and has a
+switch to start the agent in a worktree of its own. A plan reads whole under
+its heading while the decision stands where the composer was, and folds to
+its heading once decided. Question cards offer Skip, a note on each answer
+and "Reply instead" only where the card says the agent takes them, so a
+terminal Claude question without them shows neither. Choices and decided
+permissions name a permission switch by its catalogue name. Tool steps fold
+by the shared run: the chat holds open runs apart from opened rows and has
+the runtime re-hold them as the run grows or the window trims it, so tapping
+a step inside a run opens that step, not the run. Component baselines that
+drifted when the bridge moved (a folded run now names its newest step) are
+recorded with the new ones.
+
 2026-10-06 — **The phone draws the shared fleet and what runs around a chat.**
 Home now lists the runtime's sections (Needs you, Running, Exited, with
 Exited folded until opened) in the runtime's order, instead of the phone's

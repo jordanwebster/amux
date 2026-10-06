@@ -84,6 +84,45 @@ final class ChatWordsTests: XCTestCase {
         XCTAssertEqual(ChatWords.decision(elsewhere), "allowed · in the terminal")
     }
 
+    func testADecidedPermissionSaysWhatWasGranted() {
+        let always = Decision(
+            outcome: .allowed, elsewhere: false,
+            granted: .claude(subjects: ["cargo test"], directories: [], mode: "", modeName: "", savedTo: .project),
+            note: nil)
+        XCTAssertEqual(ChatWords.decision(always), "allowed · always cargo test in this project")
+        let switched = Decision(
+            outcome: .allowed, elsewhere: false,
+            granted: .claude(subjects: [], directories: [], mode: "acceptEdits", modeName: "Accept edits", savedTo: .session),
+            note: nil)
+        XCTAssertEqual(ChatWords.decision(switched), "allowed · switched to Accept edits")
+        let prefix = Decision(outcome: .allowed, elsewhere: false, granted: .commandPrefix(words: ["curl", "-s"]), note: nil)
+        XCTAssertEqual(ChatWords.decision(prefix), "allowed · commands starting with curl -s")
+        let hosts = Decision(outcome: .allowed, elsewhere: false, granted: .networkHosts(hosts: ["example.com"]), note: nil)
+        XCTAssertEqual(ChatWords.decision(hosts), "allowed · network access to example.com")
+    }
+
+    func testPermissionsAndModesAreWordedFromTheCatalogue() {
+        func permission(_ value: String, _ name: String, reported: Bool = false, neverAsks: Bool = false, settable: Bool = true) -> PermissionChoice {
+            PermissionChoice(
+                value: value, displayName: name, current: false, reported: reported, normal: false,
+                neverAsks: neverAsks, settable: settable)
+        }
+        XCTAssertEqual(ChatWords.permission(permission("acceptEdits", "Accept edits")), "Accept edits")
+        XCTAssertEqual(ChatWords.permission(permission("", "")), "Custom")
+        XCTAssertEqual(ChatWords.permissionDetail(permission("auto", "Auto")), "")
+        XCTAssertEqual(ChatWords.permissionDetail(permission("full", "Full", neverAsks: true)), "Acts without asking")
+        XCTAssertEqual(ChatWords.permissionDetail(permission("odd", "", reported: true)), "Reported by the agent")
+        XCTAssertEqual(ChatWords.permissionDetail(permission("auto", "Auto", settable: false)), "Can’t be picked from here")
+        XCTAssertEqual(
+            ChatWords.mode(ModeChoice(value: "plan", displayName: "Plan", current: true, reported: false, normal: false, settable: true)),
+            "Plan")
+        let switching = Choice(
+            outcome: .allowAlways(subjects: [], directories: [], mode: "acceptEdits", modeName: "Accept edits", scope: .session, label: ""),
+            primary: false, takesNote: false)
+        XCTAssertEqual(ChatWords.choice(switching), "Switch to Accept edits")
+        XCTAssertEqual(ChatWords.scopeRow(switching).title, "Switch to Accept edits")
+    }
+
     func testChoicesAreStatedAsOutcomes() {
         let always = Choice(
             outcome: .allowAlways(subjects: ["cargo test"], directories: [], mode: "", modeName: "", scope: .project, label: ""),

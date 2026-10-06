@@ -97,6 +97,18 @@
         }
       }
     },
+    "%@ (default)": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (default)"
+          }
+        }
+      }
+    },
     "%@ *": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
       "extractionState": "manual",
@@ -177,6 +189,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ could not list its projects. Choose where its agents work, or type a path."
+          }
+        }
+      }
+    },
+    "%@ could not say what %@ offers. The agent starts with the host’s defaults.": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ could not say what %@ offers. The agent starts with the host’s defaults."
           }
         }
       }
@@ -285,6 +309,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ is away. This chat fills in when it is back."
+          }
+        }
+      }
+    },
+    "%@ is not signed in on %@. Its agents can’t work there until it is.": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is not signed in on %@. Its agents can’t work there until it is."
           }
         }
       }
@@ -757,6 +793,18 @@
         }
       }
     },
+    "%@, not signed in": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, not signed in"
+          }
+        }
+      }
+    },
     "%@-minute limit": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
       "extractionState": "manual",
@@ -1009,6 +1057,18 @@
         }
       }
     },
+    "A note on this answer": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A note on this answer"
+          }
+        }
+      }
+    },
     "A report includes a screenshot and this phone’s diagnostic dump.": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift.",
       "extractionState": "manual",
@@ -1029,6 +1089,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "A subscription reaches your hosts from anywhere. Hosts on this network work without one."
+          }
+        }
+      }
+    },
+    "A worktree of its own, made from the directory’s repository": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A worktree of its own, made from the directory’s repository"
           }
         }
       }
@@ -1081,6 +1153,18 @@
         }
       }
     },
+    "Acts without asking": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Acts without asking"
+          }
+        }
+      }
+    },
     "Add Account": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift.",
       "extractionState": "manual",
@@ -1089,6 +1173,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Add Account"
+          }
+        }
+      }
+    },
+    "Add a note": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a note"
           }
         }
       }
@@ -1501,6 +1597,18 @@
         }
       }
     },
+    "Asking %@ what %@ offers…": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Asking %@ what %@ offers…"
+          }
+        }
+      }
+    },
     "Asks before edits and commands": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
       "extractionState": "manual",
@@ -1809,6 +1917,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Can’t answer this here"
+          }
+        }
+      }
+    },
+    "Can’t be picked from here": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can’t be picked from here"
           }
         }
       }
@@ -2929,6 +3049,18 @@
         }
       }
     },
+    "Host default": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host default"
+          }
+        }
+      }
+    },
     "Hosts": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift, ios/Packages/AmuxShell/Sources/AmuxShell/Route.swift.",
       "extractionState": "manual",
@@ -3313,6 +3445,18 @@
         }
       }
     },
+    "MODE": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SettingsCard.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MODE"
+          }
+        }
+      }
+    },
     "MODEL": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SettingsCard.swift.",
       "extractionState": "manual",
@@ -3361,6 +3505,18 @@
         }
       }
     },
+    "Mode": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mode"
+          }
+        }
+      }
+    },
     "Model": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Settings.swift.",
       "extractionState": "manual",
@@ -3369,6 +3525,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Model"
+          }
+        }
+      }
+    },
+    "Model default": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model default"
           }
         }
       }
@@ -3513,6 +3681,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "New activity"
+          }
+        }
+      }
+    },
+    "New worktree": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New worktree"
           }
         }
       }
@@ -4093,6 +4273,18 @@
         }
       }
     },
+    "Permission": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permission"
+          }
+        }
+      }
+    },
     "Permissions": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Attach.swift.",
       "extractionState": "manual",
@@ -4185,6 +4377,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Plan proposed"
+          }
+        }
+      }
+    },
+    "Plan ready": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plan ready"
           }
         }
       }
@@ -4633,6 +4837,30 @@
         }
       }
     },
+    "Reply in your own words": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reply in your own words"
+          }
+        }
+      }
+    },
+    "Reply instead": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reply instead"
+          }
+        }
+      }
+    },
     "Report": {
       "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
       "extractionState": "manual",
@@ -5065,6 +5293,18 @@
         }
       }
     },
+    "Send reply": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send reply"
+          }
+        }
+      }
+    },
     "Send · %@ selected": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
       "extractionState": "manual",
@@ -5401,6 +5641,30 @@
         }
       }
     },
+    "Skip": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skip"
+          }
+        }
+      }
+    },
+    "Skipped": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skipped"
+          }
+        }
+      }
+    },
     "Something else": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
       "extractionState": "manual",
@@ -5697,6 +5961,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Subscription"
+          }
+        }
+      }
+    },
+    "Switch to %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to %@"
           }
         }
       }
@@ -6969,6 +7245,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "a year"
+          }
+        }
+      }
+    },
+    "accepting edits": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "accepting edits"
           }
         }
       }

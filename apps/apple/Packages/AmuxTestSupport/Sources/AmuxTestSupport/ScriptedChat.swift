@@ -241,6 +241,11 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
 
     public func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome? { .done }
     public func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome? { .done }
+    public func replyInstead(_ ask: String, text: String, soFar: [QuestionResponse]) async -> ActOutcome? { .done }
+    public func toggleRun(_ member: String, open: [String]) -> [String] {
+        open.contains(member) ? open.filter { $0 != member } : open + [member]
+    }
+    public func keepOpenRuns(_ open: [String]) -> [String] { open }
     public func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? { .done }
     public func withdraw(_ input: [UInt8]) async -> ActOutcome? { .done }
     public func sendNow(_ input: [UInt8]) async -> ActOutcome? { .done }

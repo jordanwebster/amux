@@ -314,12 +314,31 @@ public final class StoreBundle {
         newAgent.remember(fleet.rows)
         guard let host else { return }
         listDirectories(on: host, matching: "")
+        askOffers(on: host)
     }
 
     public func point(at host: HostId) {
         guard newAgent.machine != host else { return }
         newAgent.point(at: host)
         listDirectories(on: host, matching: "")
+        askOffers(on: host)
+    }
+
+    /// Asks the host what each provider offers there, for the screen's
+    /// model, effort, permission and mode choices.
+    private func askOffers(on host: HostId) {
+        for provider in NewAgentStore.Provider.allCases {
+            let asked = newAgent.askingOffer(for: provider)
+            guard let profile else {
+                newAgent.offered(
+                    .failure(RuntimeFailure("nothing is running")), for: provider, asked: asked)
+                continue
+            }
+            Task {
+                let offered = await profile.hostCatalogue(on: host, provider: provider.rawValue)
+                newAgent.offered(offered, for: provider, asked: asked)
+            }
+        }
     }
 
     public func searchDirectories() {

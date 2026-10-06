@@ -18,6 +18,11 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     var resumed: [Draft] = []
     var withdrawn: [[UInt8]] = []
     var discarded: [[UInt8]] = []
+    /// The open sets asked to be re-held, in order.
+    var kept: [[String]] = []
+    /// The question responses sent, answered or with a reply, in order.
+    var responded: [[QuestionResponse]] = []
+    var replied: [String] = []
     /// What each queued or sent prompt held, by input id.
     var drafts: [[UInt8]: Draft] = [:]
     var interrupts = 0
@@ -119,7 +124,29 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     }
 
     func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome? { .done }
-    func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome? { .done }
+    func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome? {
+        responded.append(responses)
+        return .done
+    }
+
+    func replyInstead(_ ask: String, text: String, soFar: [QuestionResponse]) async -> ActOutcome? {
+        replied.append(text)
+        responded.append(soFar)
+        return .done
+    }
+    /// The shared fold's rule: a run is held by any of its steps; opening
+    /// holds its newest, closing forgets every step held.
+    func toggleRun(_ member: String, open: [String]) -> [String] {
+        guard let run = ordered.first(where: { $0.id == member })?.run else { return open }
+        let members = Set(ordered.filter { $0.run?.last == run.last }.map(\.id))
+        let held = open.filter(members.contains)
+        return held.isEmpty ? open + [run.last] : open.filter { !members.contains($0) }
+    }
+
+    func keepOpenRuns(_ open: [String]) -> [String] {
+        kept.append(open)
+        return open.map { key in ordered.first { $0.id == key }?.run?.last ?? key }
+    }
     func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? { .done }
 
     func withdraw(_ input: [UInt8]) async -> ActOutcome? {
@@ -724,7 +751,7 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(model.loadingHint)
     }
 
-    func testARunOpensByAnyOfItsKeysAndStaysOpenAsItGrows() {
+    func testARunOpensAtItsFoldAndStaysOpenAsItGrows() {
         let run = Run(
             first: "a", last: "b", steps: 2, live: false, openBelow: false,
             unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 2, searches: 0, subagents: 0, other: 0),
@@ -736,6 +763,7 @@ final class ChatModelTests: XCTestCase {
         model.toggle("b")
         XCTAssertTrue(model.isExpanded("b"))
         XCTAssertEqual(model.options, RowOptions(tools: .collapse(open: ["b"])))
+        XCTAssertTrue(model.expanded.isEmpty, "a run is not a row's own detail")
 
         let grown = Run(
             first: "a", last: "c", steps: 3, live: false, openBelow: false,
@@ -744,15 +772,50 @@ final class ChatModelTests: XCTestCase {
         source.ordered = [row("a", 1, run: grown), row("b", 2, run: grown), row("c", 3, run: grown)]
         source.pending = ChatChanges(keys: ["a", "b", "c"], reloaded: false, session: false)
         model.woke()
+        XCTAssertEqual(source.kept, [["b"]], "the open set is re-held before rows are read")
+        XCTAssertEqual(model.options, RowOptions(tools: .collapse(open: ["c"])))
         _ = model.cell(for: "c")
-        XCTAssertTrue(model.isExpanded("c"), "the new summary is open by the key it was opened by")
+        XCTAssertTrue(model.isExpanded("c"), "the run's new fold is open")
+        XCTAssertFalse(model.isExpanded("b"), "an earlier step is not opened by its run")
         model.toggle("c")
         XCTAssertFalse(model.isExpanded("c"))
-        XCTAssertTrue(model.expanded.isEmpty)
+        XCTAssertEqual(model.options, RowOptions(tools: .collapse(open: [])))
     }
 
-    /// Picks on a question card not yet sent stay with the chat, as the
-    /// draft does, until the ask closes.
+    func testARowInsideARunOpensItsOwnDetailNotTheRun() {
+        let run = Run(
+            first: "a", last: "b", steps: 2, live: false, openBelow: false,
+            unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 1, searches: 0, subagents: 1, other: 0),
+            recent: nil)
+        let source = FakeChat(rows: [row("a", 1, run: run), row("b", 2, run: run)], frame: frame())
+        let model = ChatModel(source: source)
+        _ = model.cell(for: "a")
+        model.toggle("a")
+        XCTAssertTrue(model.isExpanded("a"))
+        XCTAssertEqual(model.options, RowOptions(tools: .collapse(open: [])), "the run stays folded")
+    }
+
+    func testAQuestionCardIsAnsweredOrRepliedToInsteadPerQuestion() async {
+        let source = FakeChat(rows: [row("a", 1)], frame: frame())
+        source.card = AskCard(
+            kind: .codex, key: "ask:1", itemKey: "", position: 1, count: 1, body: .question([]),
+            choices: [], questionNote: true, questionSkip: true, questionReply: true,
+            stopsTurn: true, state: .open)
+        let model = ChatModel(source: source)
+        await settle()
+        let answers = [
+            QuestionResponse(pick: .options([1]), note: "only on staging"),
+            QuestionResponse(pick: .options([]), note: nil),
+        ]
+        model.answer(responses: answers)
+        await settle()
+        XCTAssertEqual(source.responded, [answers], "a skip is an empty pick, and each note stays on its question")
+        model.replyInstead("Hold off for now", soFar: answers)
+        await settle()
+        XCTAssertEqual(source.replied, ["Hold off for now"])
+        XCTAssertEqual(source.responded.last, answers)
+    }
+
     func testAQuestionCardsPicksStayUntilItsAskCloses() async {
         func card(_ key: String) -> AskCard {
             AskCard(
@@ -766,7 +829,7 @@ final class ChatModelTests: XCTestCase {
         await settle()
         let picked = QuestionDraft(
             step: 1, picks: [[2], []], others: [nil, "Only on staging"], highlighted: [2, nil],
-            note: "and say when")
+            skipped: [false, false], notes: ["", "and say when"], noting: [false, true])
         model.keep(picked, onAsk: "ask:1")
         model.keep(picked, onAsk: "ask:2")
         XCTAssertNil(model.questionDraft(onAsk: "ask:2"), "only the head ask keeps progress")

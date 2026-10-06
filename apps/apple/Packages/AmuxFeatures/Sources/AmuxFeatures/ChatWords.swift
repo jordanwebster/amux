@@ -574,25 +574,19 @@ public enum ChatWords {
         return choice.value.isEmpty ? String(localized: "Custom") : choice.value
     }
 
-    /// What the agent does under a permission without asking first.
-    public static func permissionDetail(_ value: String, kind: Kind?) -> String {
-        if kind != .codex {
-            return switch value {
-            case "default": String(localized: "Asks before edits and commands")
-            case "acceptEdits": String(localized: "Edits files without asking, asks before commands")
-            case "plan": String(localized: "Plans without changing anything")
-            case "auto": String(localized: "Decides for itself when to ask")
-            case "bypassPermissions": String(localized: "Never asks")
-            default: String(localized: "Reported by the agent")
-            }
-        }
-        return switch value {
-        case "read-only": String(localized: "Reads files, asks before any change")
-        case "default": String(localized: "Works in its folder, asks to go further")
-        case "auto": String(localized: "Works in its folder, a reviewer decides when to ask")
-        case "full-access": String(localized: "Never asks, with full access")
-        default: String(localized: "Reported by the agent")
-        }
+    /// What the catalogue says of a permission beyond its name: that it
+    /// acts without asking, that the agent reported it without offering
+    /// it, or that it cannot be picked from here.
+    public static func permissionDetail(_ choice: PermissionChoice) -> String {
+        if choice.reported { return String(localized: "Reported by the agent") }
+        if choice.neverAsks { return String(localized: "Acts without asking") }
+        if !choice.settable { return String(localized: "Can’t be picked from here") }
+        return ""
+    }
+
+    /// A mode by the name its agent offers it under, else its value.
+    public static func mode(_ choice: ModeChoice) -> String {
+        choice.displayName.isEmpty ? choice.value : choice.displayName
     }
 
     /// The permissions card's heading, by the agent's kind.
@@ -641,7 +635,7 @@ public enum ChatWords {
         case .question(let questions) where questions.count > 1:
             return String(localized: "\(questions.count) questions")
         case .question: return String(localized: "Question")
-        case .plan: return String(localized: "Plan")
+        case .plan: return String(localized: "Plan ready")
         case .form(let server, _, _): return String(localized: "\(server) needs details")
         case .link(let server, _, _): return String(localized: "\(server) wants you to open a link")
         case .access: return String(localized: "Wants more access")
@@ -663,13 +657,13 @@ public enum ChatWords {
     public static func choice(_ choice: Choice) -> String {
         let label: String = switch choice.outcome {
         case .allowOnce: String(localized: "Allow once")
-        case .allowAlways(let subjects, let directories, let mode, _, let scope, let label):
+        case .allowAlways(let subjects, let directories, let mode, let modeName, let scope, let label):
             if !subjects.isEmpty {
                 String(localized: "Always allow \(subjects.joined(separator: ", ")) \(Self.scope(scope))")
             } else if !directories.isEmpty {
                 String(localized: "Allow access to \(directories.joined(separator: ", ")) \(Self.scope(scope))")
             } else if !mode.isEmpty {
-                String(localized: "Switch to \(mode) mode")
+                String(localized: "Switch to \(modeName.isEmpty ? mode : modeName)")
             } else if !label.isEmpty {
                 label
             } else {
@@ -709,7 +703,7 @@ public enum ChatWords {
     /// reaches.
     public static func scopeRow(_ choice: Choice) -> (title: String, detail: String?) {
         switch choice.outcome {
-        case .allowAlways(let subjects, let directories, let mode, _, let scope, let label):
+        case .allowAlways(let subjects, let directories, let mode, let modeName, let scope, let label):
             if !subjects.isEmpty {
                 return (String(localized: "Always allow \(subjects.joined(separator: ", "))"), reach(scope))
             } else if !directories.isEmpty {
@@ -718,10 +712,8 @@ public enum ChatWords {
                             ? String(localized: "Allow access for this session")
                             : String(localized: "Always allow access"),
                         String(localized: "in \(directories.joined(separator: ", "))"))
-            } else if mode == "acceptEdits" {
-                return (String(localized: "Allow edits"), reach(scope))
             } else if !mode.isEmpty {
-                return (String(localized: "Switch to \(mode) mode"), nil)
+                return (String(localized: "Switch to \(modeName.isEmpty ? mode : modeName)"), reach(scope))
             } else if !label.isEmpty {
                 return (label, nil)
             }

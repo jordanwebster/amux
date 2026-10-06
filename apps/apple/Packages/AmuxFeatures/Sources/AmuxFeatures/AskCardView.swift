@@ -7,8 +7,12 @@ import SwiftUI
 public enum AskAction: Equatable, Sendable {
     /// The choice at this position on the card, with the note it takes.
     case choose(Int, note: String?)
-    /// One pick per question, and the note that goes with them.
-    case pick([Pick], note: String?)
+    /// One response per question, in order: a pick (none skips it) and
+    /// its note.
+    case respond([QuestionResponse])
+    /// The person's own words instead of answering, with what they had
+    /// answered so far.
+    case reply(String, soFar: [QuestionResponse])
     /// A form's Submit at this position, with the fields as a JSON object.
     case submit(Int, content: String)
     /// The interrupt: the turn ends, the ask is dismissed, the agent stays.
@@ -27,6 +31,10 @@ public enum AskPreset: Equatable, Sendable {
     case highlighted(UInt32)
     case reviewing([Pick])
     case autoAccept
+    /// The first question's note being written.
+    case questionNote(String)
+    /// A reply instead being written.
+    case replying(String)
 }
 
 /// Where a question card keeps its progress: what it was left at, and where
@@ -329,7 +337,6 @@ private struct AskBodyView: View {
     @State private var noting: Bool
     @State private var note = ""
     @State private var wholeDiff = false
-    @State private var wholePlan = false
     @State private var autoAccept = false
     @State private var forSession = false
     @State private var opened = false
@@ -378,20 +385,10 @@ private struct AskBodyView: View {
             if !arguments.isEmpty { SubjectBox(text: arguments, lines: 8) }
         case .question:
             EmptyView()
-        case .plan(let plan):
-            VStack(alignment: .leading, spacing: 8) {
-                Prose(markdown: plan)
-                    .frame(maxHeight: wholePlan ? 420 : 132, alignment: .top)
-                    .clipped()
-                    .mask {
-                        LinearGradient(
-                            stops: [.init(color: .black, location: 0.6),
-                                    .init(color: wholePlan ? .black : .clear, location: 1)],
-                            startPoint: .top, endPoint: .bottom)
-                    }
-                link(wholePlan ? String(localized: "Fold the plan") : String(localized: "Read the plan"),
-                     id: "ask.plan.read", value: wholePlan ? "open" : "folded") { wholePlan.toggle() }
-            }
+        case .plan:
+            // The plan reads under its own heading in the chat; the card is
+            // only the decision.
+            EmptyView()
         case .form(_, let message, _):
             if !message.isEmpty { why(message) }
         case .link(_, let message, let url):
@@ -467,11 +464,9 @@ private struct AskBodyView: View {
         switch card.body {
         case .question(let questions):
             QuestionCard(
-                questions: questions, takesNote: card.questionNote, preset: preset,
-                keeping: self.questions
-            ) { picks, note in
-                act(.pick(picks, note: note))
-            }
+                questions: questions, takesNote: card.questionNote, skips: card.questionSkip,
+                replies: card.questionReply, preset: preset, keeping: self.questions,
+                send: { act(.respond($0)) }, reply: { act(.reply($0, soFar: $1)) })
         case .plan:
             planChoices
         case .access:
@@ -921,43 +916,63 @@ private struct FormFieldView: View {
 
 /// Questions: one at a time with the headers as steps, a review of every
 /// answer before sending, previews, "Something else…" and secret answers.
-/// One pick-one question without previews answers on the tap.
+/// What else a card offers comes from the card: a note on each question,
+/// skipping one, and replying in the person's own words instead. One
+/// pick-one question without previews answers on the tap, unless its note
+/// is open.
 struct QuestionCard: View {
     @Environment(\.design) private var design
     let questions: [QuestionView]
     let takesNote: Bool
+    let skips: Bool
+    let replies: Bool
     let keeping: QuestionKeeping
-    let send: ([Pick], String?) -> Void
+    let send: ([QuestionResponse]) -> Void
+    let reply: (String, [QuestionResponse]) -> Void
     @State private var step = 0
     @State private var picks: [Set<UInt32>]
     @State private var others: [String?]
     @State private var highlighted: [UInt32?]
+    @State private var skipped: [Bool]
+    @State private var notes: [String]
+    @State private var noting: [Bool]
     @State private var reviewing = false
-    @State private var note = ""
-    @State private var noting = false
+    @State private var replying = false
+    @State private var replyText = ""
 
     init(
-        questions: [QuestionView], takesNote: Bool, preset: AskPreset? = nil,
-        keeping: QuestionKeeping = .none, send: @escaping ([Pick], String?) -> Void
+        questions: [QuestionView], takesNote: Bool, skips: Bool = false, replies: Bool = false,
+        preset: AskPreset? = nil, keeping: QuestionKeeping = .none,
+        send: @escaping ([QuestionResponse]) -> Void,
+        reply: @escaping (String, [QuestionResponse]) -> Void = { _, _ in }
     ) {
         self.questions = questions
         self.takesNote = takesNote
+        self.skips = skips
+        self.replies = replies
         self.keeping = keeping
         self.send = send
-        if let kept = keeping.kept, kept.picks.count == questions.count,
-           kept.others.count == questions.count, kept.highlighted.count == questions.count {
+        self.reply = reply
+        let count = questions.count
+        if let kept = keeping.kept, kept.fits(count) {
             _step = State(initialValue: kept.step)
             _picks = State(initialValue: kept.picks)
             _others = State(initialValue: kept.others)
             _highlighted = State(initialValue: kept.highlighted)
-            _reviewing = State(initialValue: kept.reviewing)
-            _note = State(initialValue: kept.note)
+            _skipped = State(initialValue: kept.skipped)
+            _notes = State(initialValue: kept.notes)
             _noting = State(initialValue: kept.noting)
+            _reviewing = State(initialValue: kept.reviewing)
+            _replying = State(initialValue: kept.replying)
+            _replyText = State(initialValue: kept.reply)
             return
         }
-        var picks = Array(repeating: Set<UInt32>(), count: questions.count)
-        var others = Array(repeating: String?.none, count: questions.count)
-        var highlighted = Array(repeating: UInt32?.none, count: questions.count)
+        var picks = Array(repeating: Set<UInt32>(), count: count)
+        var others = Array(repeating: String?.none, count: count)
+        var highlighted = Array(repeating: UInt32?.none, count: count)
+        var skipped = Array(repeating: false, count: count)
+        var notes = Array(repeating: "", count: count)
+        var noting = Array(repeating: false, count: count)
         switch preset {
         case .other(let text)?: if !others.isEmpty { others[0] = text }
         case .highlighted(let position)?:
@@ -966,27 +981,44 @@ struct QuestionCard: View {
                 highlighted[0] = position
             }
         case .reviewing(let answers)?:
-            for (index, answer) in answers.enumerated() where index < questions.count {
+            for (index, answer) in answers.enumerated() where index < count {
                 switch answer {
+                case .options(let chosen) where chosen.isEmpty: skipped[index] = true
                 case .options(let chosen): picks[index] = Set(chosen)
                 case .other(let text): others[index] = text
                 }
             }
             _reviewing = State(initialValue: true)
+        case .questionNote(let text)?:
+            if !notes.isEmpty {
+                notes[0] = text
+                noting[0] = true
+            }
+        case .replying(let text)?:
+            _replying = State(initialValue: true)
+            _replyText = State(initialValue: text)
         default: break
         }
         _picks = State(initialValue: picks)
         _others = State(initialValue: others)
         _highlighted = State(initialValue: highlighted)
+        _skipped = State(initialValue: skipped)
+        _notes = State(initialValue: notes)
+        _noting = State(initialValue: noting)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if questions.count > 1 { steps }
-            if reviewing {
-                review
-            } else if questions.indices.contains(step) {
-                question(questions[step], at: step)
+            if replying {
+                replyStep
+            } else {
+                if questions.count > 1 { steps }
+                if reviewing {
+                    review
+                } else if questions.indices.contains(step) {
+                    question(questions[step], at: step)
+                }
+                if replies { replyLink }
             }
         }
         .onChange(of: progress) { _, progress in keeping.keep(progress) }
@@ -995,7 +1027,8 @@ struct QuestionCard: View {
     private var progress: QuestionDraft {
         QuestionDraft(
             step: step, picks: picks, others: others, highlighted: highlighted,
-            reviewing: reviewing, note: note, noting: noting)
+            skipped: skipped, notes: notes, noting: noting, reviewing: reviewing,
+            replying: replying, reply: replyText)
     }
 
     /// The questions' headers as steps: done ones carry a check, the one
@@ -1010,10 +1043,10 @@ struct QuestionCard: View {
                     } label: {
                         stepChip(
                             question.header.isEmpty ? String(localized: "Question \(index + 1)") : question.header,
-                            current: !reviewing && index == step, done: answered(index))
+                            current: !reviewing && index == step, done: decided(index))
                     }
                     .buttonStyle(.amuxControl)
-                    .identified("ask.step.\(index)", value: answered(index) ? "answered" : "open")
+                    .identified("ask.step.\(index)", value: stepState(index))
                 }
                 Button { reviewing = true } label: {
                     stepChip(String(localized: "Review"), current: reviewing, done: false)
@@ -1054,11 +1087,22 @@ struct QuestionCard: View {
         return !picks[index].isEmpty || !(others[index] ?? "").isEmpty
     }
 
+    /// Answered, or left unanswered on purpose.
+    private func decided(_ index: Int) -> Bool {
+        answered(index) || (skipped.indices.contains(index) && skipped[index])
+    }
+
+    private func stepState(_ index: Int) -> String {
+        if answered(index) { return "answered" }
+        return decided(index) ? "skipped" : "open"
+    }
+
     private var hasPreviews: Bool { questions.contains { $0.options.contains { !$0.preview.isEmpty } } }
 
-    /// One tap answers only one pick-one question with no previews.
+    /// One tap answers only one pick-one question with no previews, while
+    /// its note is not being written.
     private var tapAnswers: Bool {
-        questions.count == 1 && !questions[0].multiSelect && !hasPreviews
+        questions.count == 1 && !questions[0].multiSelect && !hasPreviews && noting.first != true
     }
 
     @ViewBuilder
@@ -1088,15 +1132,64 @@ struct QuestionCard: View {
             }
             if question.allowOther { other(question, at: index) }
         }
-        if !tapAnswers || (others.indices.contains(index) && others[index] != nil) {
+        if takesNote { noteField(at: index) }
+        let typing = others.indices.contains(index) && others[index] != nil
+        if !tapAnswers || typing || skips {
             let count = picks.indices.contains(index) ? picks[index].count : 0
             let last = questions.count == 1
-            choiceButton(
-                question.multiSelect && count > 0
-                    ? (last ? String(localized: "Send · \(count) selected") : String(localized: "Next · \(count) selected"))
-                    : (last ? String(localized: "Send") : String(localized: "Next")),
-                kind: .primary, id: "ask.next", enabled: answered(index)
-            ) { advance(from: index) }
+            ButtonPair {
+                if skips {
+                    choiceButton(String(localized: "Skip"), kind: .outline, id: "ask.skip") {
+                        skip(index)
+                    }
+                }
+                if !tapAnswers || typing {
+                    choiceButton(
+                        question.multiSelect && count > 0
+                            ? (last ? String(localized: "Send · \(count) selected") : String(localized: "Next · \(count) selected"))
+                            : (last ? String(localized: "Send") : String(localized: "Next")),
+                        kind: .primary, id: "ask.next", enabled: answered(index)
+                    ) { advance(from: index) }
+                }
+            }
+        }
+    }
+
+    /// A note on this question, for the agent to read with its answer.
+    @ViewBuilder
+    private func noteField(at index: Int) -> some View {
+        if noting.indices.contains(index) && noting[index] {
+            TextField(
+                String(localized: "A note on this answer"),
+                text: Binding(get: { notes[index] }, set: { notes[index] = $0 }), axis: .vertical
+            )
+            .lineLimit(1...4)
+            .designFont(.body, design)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background {
+                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                    .fill(design.raised.color)
+                    .strokeBorder(design.hairline.color, lineWidth: 1)
+            }
+            .identified("ask.note.\(index)", value: notes[index])
+        } else if noting.indices.contains(index) {
+            textLink(String(localized: "Add a note"), id: "ask.addNote.\(index)") { noting[index] = true }
+        }
+    }
+
+    /// Leaves the question unanswered and moves on.
+    private func skip(_ index: Int) {
+        guard skipped.indices.contains(index) else { return }
+        picks[index] = []
+        others[index] = nil
+        skipped[index] = true
+        if questions.count == 1 {
+            send(responses)
+        } else if index + 1 < questions.count {
+            step = index + 1
+        } else {
+            reviewing = true
         }
     }
 
@@ -1118,6 +1211,7 @@ struct QuestionCard: View {
     private func select(_ position: UInt32, in question: QuestionView, at index: Int) {
         guard picks.indices.contains(index) else { return }
         others[index] = nil
+        skipped[index] = false
         highlighted[index] = position
         if question.multiSelect {
             if picks[index].contains(position) { picks[index].remove(position) } else {
@@ -1127,8 +1221,8 @@ struct QuestionCard: View {
         }
         picks[index] = [position]
         if tapAnswers {
-            send([.options([position])], nil)
-        } else if !hasPreviews {
+            send(responses)
+        } else if !hasPreviews && !(noting.indices.contains(index) && noting[index]) {
             advance(from: index)
         }
     }
@@ -1139,7 +1233,7 @@ struct QuestionCard: View {
         if open {
             let binding = Binding(
                 get: { others.indices.contains(index) ? others[index] ?? "" : "" },
-                set: { others[index] = $0; picks[index] = [] })
+                set: { others[index] = $0; picks[index] = []; skipped[index] = false })
             Group {
                 if question.secret {
                     SecureField(String(localized: "Something else"), text: binding)
@@ -1172,8 +1266,8 @@ struct QuestionCard: View {
 
     private func advance(from index: Int) {
         guard answered(index) else { return }
-        if questions.count == 1 && !takesNote {
-            send(answers, nil)
+        if questions.count == 1 {
+            send(responses)
         } else if index + 1 < questions.count {
             step = index + 1
         } else {
@@ -1181,15 +1275,23 @@ struct QuestionCard: View {
         }
     }
 
-    private var answers: [Pick] {
+    /// One response per question, in order: what was picked or typed, an
+    /// empty pick for one not answered, and its note.
+    private var responses: [QuestionResponse] {
         questions.indices.map { index in
-            if let other = others[index], !other.isEmpty { return .other(other) }
-            return .options(picks[index].sorted())
+            let note = notes[index].trimmingCharacters(in: .whitespacesAndNewlines)
+            let pick: Pick
+            if let other = others[index], !other.isEmpty {
+                pick = .other(other)
+            } else {
+                pick = .options(picks[index].sorted())
+            }
+            return QuestionResponse(pick: pick, note: note.isEmpty ? nil : note)
         }
     }
 
-    /// Every answer on one screen; tap one to change it. An unanswered
-    /// question is marked and blocks Send.
+    /// Every answer on one screen; tap one to change it. A question neither
+    /// answered nor skipped is marked and blocks Send.
     @ViewBuilder
     private var review: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1205,48 +1307,26 @@ struct QuestionCard: View {
                             .lineLimit(2)
                         Text(summary(question, at: index))
                             .designFont(.body, design)
-                            .foregroundStyle(answered(index) ? design.ink.color : design.accent.color)
+                            .foregroundStyle(decided(index) ? design.ink.color : design.accent.color)
+                        let note = notes[index].trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !note.isEmpty {
+                            Text(String(localized: "Note: \(note)"))
+                                .designFont(.detail, design)
+                                .foregroundStyle(design.inkMuted.color)
+                                .lineLimit(2)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.amuxControl)
-                .identified("ask.review.\(index)", value: answered(index) ? "answered" : "open")
-            }
-            if takesNote {
-                if noting {
-                    TextField(String(localized: "A note for the agent"), text: $note, axis: .vertical)
-                        .lineLimit(1...4)
-                        .designFont(.body, design)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background {
-                            RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                                .fill(design.raised.color)
-                                .strokeBorder(design.hairline.color, lineWidth: 1)
-                        }
-                        .identified("ask.review.note", value: note)
-                } else {
-                    Button { noting = true } label: {
-                        HStack(spacing: 5) {
-                            Text("Add a note for the agent")
-                                .designFont(.bodyEmphasis, design)
-                                .foregroundStyle(design.ink.color)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(design.inkMuted.color)
-                        }
-                        .frame(minHeight: 44)
-                    }
-                    .buttonStyle(.amuxControl)
-                    .identified("ask.review.addNote")
-                }
+                .identified("ask.review.\(index)", value: stepState(index))
             }
             choiceButton(
                 String(localized: "Send answers"), kind: .primary, id: "ask.send",
-                enabled: questions.indices.allSatisfy(answered)
+                enabled: questions.indices.allSatisfy(decided)
             ) {
-                send(answers, note.isEmpty ? nil : note)
+                send(responses)
             }
         }
     }
@@ -1259,7 +1339,70 @@ struct QuestionCard: View {
         let labels = picks[index].sorted().compactMap { position in
             question.options.indices.contains(Int(position)) ? question.options[Int(position)].label : nil
         }
-        return labels.isEmpty ? String(localized: "Not answered") : labels.joined(separator: ", ")
+        if !labels.isEmpty { return labels.joined(separator: ", ") }
+        return skipped[index] ? String(localized: "Skipped") : String(localized: "Not answered")
+    }
+
+    // MARK: Replying instead
+
+    private var replyLink: some View {
+        textLink(String(localized: "Reply instead"), id: "ask.reply") { replying = true }
+    }
+
+    /// The person's own words in place of the answers; what they had
+    /// answered so far goes with them.
+    private var replyStep: some View {
+        let blank = replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Reply in your own words")
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkMuted.color)
+                Spacer(minLength: 6)
+                Button { replying = false } label: {
+                    Text("Back")
+                        .designFont(.detail, design)
+                        .foregroundStyle(design.inkMuted.color)
+                        .thumbTarget(x: 6, y: 12)
+                }
+                .buttonStyle(.amuxControl)
+                .identified("ask.reply.back", label: String(localized: "Back"))
+                .reclaimingThumbTarget(x: 6, y: 12)
+            }
+            TextField("", text: $replyText, axis: .vertical)
+                .lineLimit(2...6)
+                .designFont(.body, design)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background {
+                    RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                        .fill(design.raised.color)
+                        .strokeBorder(design.ink.color, lineWidth: 1)
+                }
+                .accessibilityLabel(String(localized: "Reply in your own words"))
+                .identified("ask.reply.text", value: replyText)
+            choiceButton(
+                String(localized: "Send reply"), kind: .primary, id: "ask.reply.send", enabled: !blank
+            ) {
+                reply(replyText, responses)
+            }
+        }
+    }
+
+    private func textLink(_ title: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title)
+                    .designFont(.bodyEmphasis, design)
+                    .foregroundStyle(design.ink.color)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(design.inkMuted.color)
+            }
+            .frame(minHeight: 44)
+        }
+        .buttonStyle(.amuxControl)
+        .identified(id, label: title)
     }
 }
 

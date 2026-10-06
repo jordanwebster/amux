@@ -7,6 +7,8 @@ struct MenuItem {
     let title: String
     let systemImage: String
     var destructive = false
+    /// The current one of a set of choices, ticked.
+    var chosen = false
     let action: () -> Void
 }
 
@@ -23,6 +25,8 @@ struct MenuButton<Label: View>: View {
     let name: String
     let identifier: String
     let items: [MenuItem]
+    /// What it is set to, for a driver to read.
+    var value: String? = nil
     /// Runs as the menu opens, before any row is chosen.
     var opened: () -> Void = {}
     @ViewBuilder let label: () -> Label
@@ -37,7 +41,7 @@ struct MenuButton<Label: View>: View {
                     name: name, identifier: identifier, items: items, opened: opened,
                     pressed: $pressed)
             }
-            .reported(identifier, label: name)
+            .reported(identifier, label: name, value: value)
     }
 
     /// Gives under the thumb the way every other discrete control does.
@@ -106,7 +110,8 @@ private struct MenuTrigger: UIViewRepresentable {
         button.menu = UIMenu(children: items.map { item in
             UIAction(
                 title: item.title, image: UIImage(systemName: item.systemImage),
-                attributes: item.destructive ? .destructive : []
+                attributes: item.destructive ? .destructive : [],
+                state: item.chosen ? .on : .off
             ) { _ in item.action() }
         })
     }

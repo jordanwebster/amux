@@ -51,7 +51,7 @@ struct ComponentExample: Identifiable {
 /// row kind, every ask card, the composer's states and the chat's own.
 @MainActor
 enum ComponentCatalog {
-    static let examples: [ComponentExample] = rows + asks + composer + chat + overview + review
+    static let examples: [ComponentExample] = rows + asks + composer + chat + overview + review + newAgent
 
     static func example(id: String) -> ComponentExample? {
         examples.first { $0.id == id }
@@ -130,6 +130,15 @@ enum ComponentCatalog {
                 command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTail: [],
                 durationMs: 12_000, exitCode: 0),
                 decision: Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil))),
+            row("command-allowed-always", r("x8", 14, .command(
+                command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTail: [],
+                durationMs: 12_000, exitCode: 0),
+                decision: Decision(outcome: .allowed, elsewhere: false, granted: .claude(
+                    subjects: ["cargo test"], directories: [], mode: "", modeName: "", savedTo: .project), note: nil))),
+            row("command-allowed-prefix", r("x9", 14, .command(
+                command: "curl -s localhost:8080/health", state: .succeeded, outputHead: [], moreLines: 0, outputTail: [],
+                durationMs: 300, exitCode: 0),
+                decision: Decision(outcome: .allowed, elsewhere: false, granted: .commandPrefix(words: ["curl", "-s"]), note: nil))),
             row("command-elsewhere", r("x5", 15, .toolCall(
                 server: "github", tool: "create_issue", fact: "", state: .succeeded, result: ""),
                 decision: Decision(outcome: .allowed, elsewhere: true, granted: nil, note: nil))),
@@ -192,6 +201,13 @@ enum ComponentCatalog {
                 skipped: 0, resolution: .answered, reply: nil)))),
             row("ask-plan-approved", r("l1", 41, .ask(.plan(plan: F.plan, verdict: .approved, writing: false, note: nil)))),
             row("ask-plan-sent-back", r("l2", 42, .ask(.plan(plan: F.plan, verdict: .sentBack, writing: false, note: "Don’t touch the wire codes yet")))),
+            row("ask-plan-accepting-edits", r("l4", 42, .ask(.plan(plan: F.plan, verdict: .approvedAcceptingEdits, writing: false, note: nil)))),
+            row("ask-questions-replied", height: 280, r("q4", 39, .ask(.questions(
+                questions: F.threeQuestions,
+                answers: [AnswerView(picked: ["macOS"], hidden: false, note: "Linux comes later", other: nil),
+                          AnswerView(picked: [], hidden: false, note: nil, other: nil),
+                          AnswerView(picked: [], hidden: false, note: nil, other: nil)],
+                skipped: 2, resolution: .replied, reply: "Hold off on the rollout; ask me again after the release.")))),
             row("ask-plan-open", height: 330, expanded: true, readiness: true,
                 r("l3", 43, .ask(.plan(plan: F.plan, verdict: .open, writing: false, note: nil)))),
             row("ask-form", r("g1", 44, .ask(.form(server: "github", message: "Create the issue", fields: ["repository", "labels", "assignee"], resolution: .answered)))),
@@ -260,15 +276,23 @@ enum ComponentCatalog {
             ask("questions-step", height: 440, F.card(.codex, .question(F.threeQuestions), [])),
             ask("questions-review", height: 520, preset: .reviewing([.options([0, 1]), .options([1]), .other("Only failures, with the host id")]),
                 F.card(.codex, .question(F.threeQuestions), [])),
+            ask("questions-skipped", height: 560, preset: .reviewing([.options([0, 1]), .options([]), .other("Only failures, with the host id")]),
+                F.card(.codex, .question(F.threeQuestions), [])),
+            ask("question-note", height: 560, preset: .questionNote("Keep the old strings for one release"),
+                F.card(.claudeSdk, .question([F.redactionQuestion]), [])),
+            ask("question-reply", height: 360, preset: .replying("Hold off; I want to read the diff first."),
+                F.card(.codex, .question(F.threeQuestions), [])),
+            ask("question-terminal", height: 440, F.card(.claudePty, .question([F.redactionQuestion]), [])),
             ask("question-previews", height: 520, preset: .highlighted(0), F.card(.claudeSdk, .question([F.previewQuestion]), [])),
             ask("question-other", height: 460, preset: .other("Put it in amux-wire next to the codes"),
                 F.card(.claudeSdk, .question([F.redactionQuestion]), [])),
             ask("question-secret", height: 360, preset: .other("hunter2"), F.card(.codex, .question([F.secretQuestion]), [])),
-            ask("plan", height: 480, preset: .autoAccept, F.card(.claudeSdk, .plan(plan: F.plan), [
+            ask("plan", height: 260, preset: .autoAccept, F.card(.claudeSdk, .plan(plan: F.plan), [
                 Choice(outcome: .approvePlan(autoAcceptEdits: true), primary: true, takesNote: false),
                 Choice(outcome: .approvePlan(autoAcceptEdits: false), primary: false, takesNote: false),
                 Choice(outcome: .sendBack, primary: false, takesNote: true),
             ])),
+            ask("plan-codex", height: 220, F.card(.codex, .plan(plan: F.plan), F.codexPlanChoices)),
             ask("form", height: 520, F.card(.claudeSdk, .form(
                 server: "github", message: "Create the issue in which repository?", schemaJson: F.formSchema), [
                     Choice(outcome: .submit, primary: true, takesNote: false),
@@ -518,6 +542,11 @@ enum ComponentCatalog {
                     rows: F.conversation, frame: ScriptedChat.frame(phase: .idle),
                     strip: ScriptedChat.strip(git: F.git))
             }) { model, _ in model.compare(.onBranch) },
+            chat("plan", chat: {
+                ScriptedChat(
+                    rows: F.planned, frame: ScriptedChat.frame(kind: .codex, phase: .needsYou),
+                    card: F.card(.codex, .plan(plan: F.plan), F.codexPlanChoices))
+            }),
             chat("rename", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .rename),
             chat("delete", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .delete),
             chat("delete-family", chat: {
@@ -690,7 +719,11 @@ enum CatalogFixtures {
                     value: value, displayName: name, current: value == "default", reported: false,
                     normal: value == "default", neverAsks: value == "full-access", settable: true)
             },
-            modes: [], cyclePermission: false, commands: [], changeByTyping: nil, effortRefusal: nil,
+            modes: [
+                ModeChoice(value: "default", displayName: "Default", current: true, reported: false, normal: true, settable: true),
+                ModeChoice(value: "plan", displayName: "Plan", current: false, reported: false, normal: false, settable: true),
+            ],
+            cyclePermission: false, commands: [], changeByTyping: nil, effortRefusal: nil,
             modelRefusal: nil, permissionRefusal: nil)
     }()
 
@@ -930,6 +963,19 @@ enum CatalogFixtures {
         Choice(outcome: .denyAndStop, primary: false, takesNote: true),
     ]
 
+    static let codexPlanChoices = [
+        Choice(outcome: .approvePlan(autoAcceptEdits: false), primary: true, takesNote: false),
+        Choice(outcome: .sendBack, primary: false, takesNote: true),
+    ]
+
+    /// A prompt, the agent's look around, and the plan it proposed.
+    static let planned: [Row] = [
+        ScriptedChat.row("p1", 1, .prompt(text: [.text("Plan how to collapse the pairing errors.")], steered: false)),
+        ScriptedChat.row("e1", 2, .explore(verb: .search, subject: "INVALID_PIN", state: .succeeded)),
+        ScriptedChat.row("e2", 3, .explore(verb: .read, subject: "wire/src/codes.rs", state: .succeeded)),
+        ScriptedChat.row("l1", 4, .ask(.plan(plan: plan, verdict: .open, writing: false, note: nil))),
+    ]
+
     static func card(
         _ kind: Kind, _ body: AskBody, _ choices: [Choice], state: CardState = .open, count: UInt = 1
     ) -> AskCard {
@@ -1089,4 +1135,96 @@ struct ComponentCatalogGallery: View {
 
 #Preview("Component Catalog") {
     ComponentCatalogGallery()
+}
+
+extension ComponentCatalog {
+    // MARK: - New agent
+
+    /// Starting an agent on a host whose catalogue arrived: the chosen
+    /// provider's model, effort, permission and mode, and the worktree
+    /// switch; once more with the provider signed out there.
+    fileprivate static let newAgent: [ComponentExample] = [
+        newAgent("codex", provider: .codex, signedIn: true),
+        newAgent("signed-out", provider: .claude, signedIn: false),
+    ]
+
+    private static func newAgent(
+        _ id: String, provider: NewAgentStore.Provider, signedIn: Bool
+    ) -> ComponentExample {
+        ComponentExample(
+            id: "new-agent.\(id)", family: .chat, canvas: CGSize(width: 390, height: 1100),
+            readinessIdentifier: "new-agent.worktree", readinessValue: "on"
+        ) {
+            let (store, hosts) = CatalogFixtures.newAgent(provider: provider, signedIn: signedIn)
+            NewAgent(model: store, hosts: hosts) { _ in }
+        }
+    }
+}
+
+extension CatalogFixtures {
+    static let desk = HostId(bytes: Array(repeating: 7, count: 16))!
+
+    static func newAgent(
+        provider: NewAgentStore.Provider, signedIn: Bool
+    ) -> (NewAgentStore, HostsStore) {
+        let hosts = HostsStore()
+        hosts.show([HostView(
+            hostId: desk.bytes, name: "desk", local: false, trusted: true, candidate: false,
+            presence: .online, away: .plain, addrs: [], via: .direct, current: true,
+            providers: [
+                ProviderSignIn(provider: "claude", signedIn: signedIn),
+                ProviderSignIn(provider: "codex", signedIn: true),
+            ],
+            lastDialError: nil, platform: "macOS", signedIn: nil, version: nil)])
+        let store = NewAgentStore()
+        store.open(on: desk)
+        store.listed(.success(Directories(
+            recent: [Directory(path: "~/src/amux", name: "amux", lastUsedMs: 5)],
+            repositories: [], roots: ["~/src"])), asked: store.asking())
+        for offered in NewAgentStore.Provider.allCases {
+            let catalogue = offered == .codex ? codexCatalogue : claudeCatalogue
+            store.offered(.success(catalogue), for: offered, asked: store.askingOffer(for: offered))
+        }
+        store.choose(provider: provider)
+        if provider == .codex {
+            store.choose(model: "gpt-6-astra")
+            store.choose(effort: "high")
+            store.choose(permission: "read-only")
+            store.choose(mode: "plan")
+        }
+        store.newWorktree = true
+        return (store, hosts)
+    }
+
+    static let codexCatalogue = Catalogue(
+        hash: [1],
+        models: [
+            OfferedModel(value: "gpt-6-astra", displayName: "GPT-6-Astra", description: "Frontier agentic coding model.", efforts: ["low", "medium", "high"], resolvedModel: "", defaultEffort: "medium"),
+            OfferedModel(value: "gpt-6-sol", displayName: "GPT-6-Sol", description: "Smaller, faster and cheaper.", efforts: ["low", "medium"], resolvedModel: "", defaultEffort: "low"),
+        ],
+        commands: [],
+        permissions: [
+            OfferedPermission(value: "read-only", displayName: "Read only", normal: false, neverAsks: false, settable: true, models: []),
+            OfferedPermission(value: "default", displayName: "Default", normal: true, neverAsks: false, settable: true, models: []),
+            OfferedPermission(value: "full-access", displayName: "Full access", normal: false, neverAsks: true, settable: true, models: []),
+        ],
+        modes: [
+            OfferedMode(value: "default", displayName: "Default", normal: true, settable: true),
+            OfferedMode(value: "plan", displayName: "Plan", normal: false, settable: true),
+        ])
+
+    static let claudeCatalogue = Catalogue(
+        hash: [2],
+        models: [
+            OfferedModel(value: "default", displayName: "Default (recommended)", description: "Opus 5.5 · Most capable for complex work", efforts: ["low", "medium", "high"], resolvedModel: "", defaultEffort: "high"),
+            OfferedModel(value: "sonnet", displayName: "Sonnet", description: "Sonnet 5 · Best for everyday tasks", efforts: ["low", "medium", "high"], resolvedModel: "", defaultEffort: "high"),
+        ],
+        commands: [],
+        permissions: [
+            OfferedPermission(value: "default", displayName: "Default", normal: true, neverAsks: false, settable: true, models: []),
+            OfferedPermission(value: "acceptEdits", displayName: "Accept edits", normal: false, neverAsks: false, settable: true, models: []),
+            OfferedPermission(value: "plan", displayName: "Plan", normal: false, neverAsks: false, settable: true, models: []),
+            OfferedPermission(value: "bypassPermissions", displayName: "Bypass permissions", normal: false, neverAsks: true, settable: true, models: []),
+        ],
+        modes: [])
 }

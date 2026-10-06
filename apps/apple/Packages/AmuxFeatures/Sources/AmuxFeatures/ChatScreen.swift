@@ -535,7 +535,8 @@ public struct ChatStanding: View {
     private func answer(_ action: AskAction) {
         switch action {
         case .choose(let index, let note): model.answer(choice: index, note: note)
-        case .pick(let picks, let note): model.answer(picks: picks, note: note)
+        case .respond(let responses): model.answer(responses: responses)
+        case .reply(let text, let soFar): model.replyInstead(text, soFar: soFar)
         case .submit(let index, let content): model.submit(choice: index, content: content)
         case .stop: model.interrupt()
         case .resend: model.resendAnswer()

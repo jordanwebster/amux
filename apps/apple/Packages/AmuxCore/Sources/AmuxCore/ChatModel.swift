@@ -22,6 +22,12 @@ public protocol ChatSource: AnyObject, Sendable {
     func send(_ draft: Draft) async -> Result<SendOutcome, RuntimeFailure>
     func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome?
     func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome?
+    func replyInstead(_ ask: String, text: String, soFar: [QuestionResponse]) async -> ActOutcome?
+    /// Opens or closes the run `member` sits in, in an open set of keys,
+    /// and answers the new set.
+    func toggleRun(_ member: String, open: [String]) -> [String]
+    /// The open set with each open run re-held on its newest step.
+    func keepOpenRuns(_ open: [String]) -> [String]
     func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome?
     func withdraw(_ input: [UInt8]) async -> ActOutcome?
     /// A queued or sent prompt as the draft it came from, attachments whole.
@@ -137,9 +143,10 @@ public final class ChatModel {
     public private(set) var overview: Overview?
     /// What the agent offers to change, the current values marked.
     public private(set) var settings: SettingsView?
-    /// Rows the reader opened: a run's members, a subagent's steps, or a
-    /// row's detail.
+    /// Rows the reader opened: a subagent's steps, or a row's detail.
     public private(set) var expanded: Set<String> = []
+    /// The runs the reader opened, each held by one of its steps.
+    public private(set) var openRuns: Set<String> = []
     public private(set) var paging: ChatPaging = .idle
     /// The chat is still empty a moment after opening.
     public private(set) var loadingHint = false
@@ -193,6 +200,11 @@ public final class ChatModel {
     /// cells again, and read the frame, the card and the strip.
     public func woke() {
         let changes = source.takeChanges()
+        // An open run is held by its newest step, re-held before rows are
+        // read so it stays open as it grows or the window trims it.
+        if !openRuns.isEmpty, changes.reloaded || !changes.keys.isEmpty {
+            openRuns = Set(source.keepOpenRuns(openRuns.sorted()))
+        }
         if changes.reloaded || !changes.keys.isEmpty {
             Signposts.emit(.transcriptCommit)
         }
@@ -247,17 +259,17 @@ public final class ChatModel {
     }
 
     public var options: RowOptions {
-        RowOptions(tools: .collapse(open: expanded.sorted()))
+        RowOptions(tools: .collapse(open: openRuns.sorted()))
     }
 
-    /// Opens or closes a row: its run, its steps, or its detail. A run is
-    /// open while any key the reader opened it by is still one of its
-    /// members, which stays true as the run grows.
+    /// Opens or closes a row. At a run's fold point it is the run, by the
+    /// shared fold: open while the open set holds any of its steps.
+    /// Anywhere else it is the row's own detail or steps.
     public func toggle(_ id: String) {
-        if expanded.contains(id) {
+        if let row = cells[id]?.row, Self.foldPoint(row) {
+            openRuns = Set(source.toggleRun(id, open: openRuns.sorted()))
+        } else if expanded.contains(id) {
             expanded.remove(id)
-        } else if let open = openedBy(cells[id]?.row?.run) {
-            expanded.remove(open)
         } else {
             expanded.insert(id)
         }
@@ -265,14 +277,16 @@ public final class ChatModel {
     }
 
     public func isExpanded(_ id: String) -> Bool {
-        expanded.contains(id) || openedBy(cells[id]?.row?.run) != nil
+        if expanded.contains(id) { return true }
+        guard let row = cells[id]?.row, Self.foldPoint(row) else { return false }
+        return openRuns.contains(id)
     }
 
-    /// The opened key that belongs to this run. A member's run attribute is
-    /// read again whenever the run moves, so its newest key names the run.
-    private func openedBy(_ run: Run?) -> String? {
-        guard let run else { return nil }
-        return expanded.first { cells[$0]?.row?.run?.last == run.last }
+    /// The row a run folds to, and opens from: its newest step, when it
+    /// has more than one.
+    private static func foldPoint(_ row: Row) -> Bool {
+        guard let run = row.run else { return false }
+        return row.id == run.last && run.steps > 1
     }
 
     /// An attachment's bytes where this phone holds them; asking starts the
@@ -809,13 +823,16 @@ public final class ChatModel {
         act({ await $0.answer(ask.key, choice: choice, note: note) })
     }
 
-    public func answer(picks: [Pick], note: String? = nil) {
+    /// Answers the head question card: one response per question.
+    public func answer(responses: [QuestionResponse]) {
         guard let ask else { return }
-        // One note for the whole card goes with its last question.
-        let responses = picks.enumerated().map { index, pick in
-            QuestionResponse(pick: pick, note: index == picks.count - 1 ? note : nil)
-        }
         act({ await $0.answer(ask.key, responses: responses) })
+    }
+
+    /// Replies to the head question card in the person's own words.
+    public func replyInstead(_ text: String, soFar: [QuestionResponse]) {
+        guard let ask else { return }
+        act({ await $0.replyInstead(ask.key, text: text, soFar: soFar) })
     }
 
     public func submit(choice: Int, content: String) {
@@ -856,27 +873,41 @@ public final class ChatModel {
     static let closed = String(localized: "This chat is closed.")
 }
 
-/// A question card part way through: where it stands, what is picked and
-/// typed per question, and the note.
+/// A question card part way through: where it stands, what is picked,
+/// typed, skipped and noted per question, and a reply being written.
 public struct QuestionDraft: Equatable, Sendable {
     public var step: Int
     public var picks: [Set<UInt32>]
     public var others: [String?]
     public var highlighted: [UInt32?]
+    public var skipped: [Bool]
+    public var notes: [String]
+    /// Whose note field is open.
+    public var noting: [Bool]
     public var reviewing: Bool
-    public var note: String
-    public var noting: Bool
+    public var replying: Bool
+    public var reply: String
 
     public init(
         step: Int = 0, picks: [Set<UInt32>], others: [String?], highlighted: [UInt32?],
-        reviewing: Bool = false, note: String = "", noting: Bool = false
+        skipped: [Bool]? = nil, notes: [String]? = nil, noting: [Bool]? = nil,
+        reviewing: Bool = false, replying: Bool = false, reply: String = ""
     ) {
         self.step = step
         self.picks = picks
         self.others = others
         self.highlighted = highlighted
+        self.skipped = skipped ?? picks.map { _ in false }
+        self.notes = notes ?? picks.map { _ in "" }
+        self.noting = noting ?? picks.map { _ in false }
         self.reviewing = reviewing
-        self.note = note
-        self.noting = noting
+        self.replying = replying
+        self.reply = reply
+    }
+
+    /// Whether it was kept for a card of this many questions.
+    public func fits(_ count: Int) -> Bool {
+        [picks.count, others.count, highlighted.count, skipped.count, notes.count, noting.count]
+            .allSatisfy { $0 == count }
     }
 }

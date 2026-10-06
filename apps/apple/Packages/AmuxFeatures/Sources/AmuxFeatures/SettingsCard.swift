@@ -3,8 +3,8 @@ import AmuxDesign
 import SwiftUI
 
 /// What the agent offers to change, as the settings view lists it: the
-/// models, the current model's efforts and the permission modes, each with
-/// the current value marked. A pick is sent at once and the mark moves when
+/// models, the current model's efforts, the permissions and (Codex) the
+/// modes, each from the agent's catalogue with the current value marked. A pick is sent at once and the mark moves when
 /// the agent reports the new value. Where a setting cannot change from here
 /// the card says why instead of offering a pick.
 struct SettingsCard: View {
@@ -58,7 +58,8 @@ struct SettingsCard: View {
             if !view.models.isEmpty || view.modelRefusal != nil { models }
             if !view.efforts.isEmpty || view.effortRefusal != nil { efforts }
             if let typing = view.changeByTyping { sentence(typing, id: "chat.settings.typing") }
-            if !view.permissions.isEmpty || view.cyclePermission || view.permissionRefusal != nil { modes }
+            if !view.permissions.isEmpty || view.cyclePermission || view.permissionRefusal != nil { permissions }
+            if !view.modes.isEmpty { modes }
         }
     }
 
@@ -118,8 +119,14 @@ struct SettingsCard: View {
 
     // MARK: - Permissions
 
+    /// The permissions a pick can set, and the current one whether or not
+    /// it can be picked.
+    private var pickable: [PermissionChoice] {
+        view.permissions.filter { $0.settable || $0.current }
+    }
+
     @ViewBuilder
-    private var modes: some View {
+    private var permissions: some View {
         VStack(alignment: .leading, spacing: 4) {
             heading(ChatWords.permissionsHeading(kind))
             if view.cyclePermission {
@@ -129,10 +136,13 @@ struct SettingsCard: View {
                             Text(ChatWords.permission(current))
                                 .designFont(.bodyEmphasis, design)
                                 .foregroundStyle(current.neverAsks ? design.removed.color : design.ink.color)
-                            Text(ChatWords.permissionDetail(current.value, kind: kind))
-                                .designFont(.detail, design)
-                                .foregroundStyle(design.inkMuted.color)
-                                .fixedSize(horizontal: false, vertical: true)
+                            let detail = ChatWords.permissionDetail(current)
+                            if !detail.isEmpty {
+                                Text(detail)
+                                    .designFont(.detail, design)
+                                    .foregroundStyle(design.inkMuted.color)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         .identified("chat.settings.mode", label: ChatWords.permission(current))
                     }
@@ -147,15 +157,35 @@ struct SettingsCard: View {
             } else if let refusal = view.permissionRefusal {
                 sentence(refusal, id: "chat.settings.mode.refusal")
             } else {
-                ForEach(Array(view.permissions.enumerated()), id: \.offset) { index, choice in
+                ForEach(Array(pickable.enumerated()), id: \.offset) { index, choice in
                     if index > 0 { rule }
                     radio(
                         id: "chat.settings.mode.\(choice.value)",
                         title: ChatWords.permission(choice),
-                        detail: ChatWords.permissionDetail(choice.value, kind: kind),
+                        detail: ChatWords.permissionDetail(choice),
                         current: choice.current, warn: choice.neverAsks
                     ) { change(.permission(choice.value)) }
                 }
+            }
+        }
+    }
+
+    // MARK: - Modes
+
+    /// How the agent works (Codex's default or plan), beside how much it
+    /// may do: a second pick.
+    private var modes: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            heading(String(localized: "MODE"))
+            ForEach(Array(view.modes.filter { $0.settable || $0.current }.enumerated()), id: \.offset) {
+                index, choice in
+                if index > 0 { rule }
+                radio(
+                    id: "chat.settings.workmode.\(choice.value)",
+                    title: ChatWords.mode(choice),
+                    detail: choice.reported ? String(localized: "Reported by the agent") : "",
+                    current: choice.current, warn: false
+                ) { change(.mode(choice.value)) }
             }
         }
     }

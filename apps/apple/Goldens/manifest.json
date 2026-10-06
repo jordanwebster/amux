@@ -85,6 +85,14 @@
       "shows": "A command the person allowed, the decision on the command's own row."
     },
     {
+      "id": "row.command-allowed-always",
+      "shows": "A command allowed for good in this project, the rule it granted on its row."
+    },
+    {
+      "id": "row.command-allowed-prefix",
+      "shows": "A Codex command allowed with the commands that start the same way, the prefix on its row."
+    },
+    {
       "id": "row.command-elsewhere",
       "shows": "A tool server call allowed in the terminal, the decision saying where it was made."
     },
@@ -189,6 +197,14 @@
       "shows": "A plan the person sent back, with their note."
     },
     {
+      "id": "row.ask-plan-accepting-edits",
+      "shows": "A plan approved with edits accepted from then on, folded to its heading."
+    },
+    {
+      "id": "row.ask-questions-replied",
+      "shows": "Questions replied to in the person's own words, with the one answer and its note given so far."
+    },
+    {
       "id": "row.ask-plan-open",
       "shows": "A plan opened to read in full."
     },
@@ -249,6 +265,22 @@
       "shows": "Several questions answered and shown together for review before sending."
     },
     {
+      "id": "ask.questions-skipped",
+      "shows": "The review of three questions with one skipped."
+    },
+    {
+      "id": "ask.question-note",
+      "shows": "A question with a note being written on its answer."
+    },
+    {
+      "id": "ask.question-reply",
+      "shows": "Questions replied to in the person's own words instead of answered."
+    },
+    {
+      "id": "ask.question-terminal",
+      "shows": "A terminal Claude question: no note, no skip on a lone question."
+    },
+    {
       "id": "ask.question-previews",
       "shows": "A question whose options carry previews, with no write-your-own row."
     },
@@ -262,7 +294,11 @@
     },
     {
       "id": "ask.plan",
-      "shows": "A plan to approve, with the choice to accept edits automatically afterwards."
+      "shows": "A plan's decision where the composer was, with the choice to accept edits automatically afterwards."
+    },
+    {
+      "id": "ask.plan-codex",
+      "shows": "A Codex plan's decision, start or keep planning."
     },
     {
       "id": "ask.form",
@@ -394,7 +430,7 @@
     },
     {
       "id": "composer.settings-codex",
-      "shows": "The settings card for Codex."
+      "shows": "The settings card for Codex: a permission and a mode picked separately."
     },
     {
       "id": "composer.settings-claude-pty",
@@ -457,6 +493,10 @@
       "shows": "The same header counting everything on the agent's branch against main."
     },
     {
+      "id": "chat.plan",
+      "shows": "A Codex plan read whole under its heading, the decision standing in the composer's place."
+    },
+    {
       "id": "overview.uncommitted",
       "shows": "A chat's overview: two background jobs, the uncommitted changes listed by folder, a tool server that needs signing in and three usage windows."
     },
@@ -495,6 +535,14 @@
     {
       "id": "review.files",
       "shows": "The list of files a review covers."
+    },
+    {
+      "id": "new-agent.codex",
+      "shows": "Starting a Codex agent from the host's catalogue: model, effort, permission and mode picked, a new worktree on."
+    },
+    {
+      "id": "new-agent.signed-out",
+      "shows": "Starting a Claude agent on a host where Claude is not signed in."
     }
   ],
   "screens": [

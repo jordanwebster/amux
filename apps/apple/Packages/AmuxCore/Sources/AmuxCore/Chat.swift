@@ -90,6 +90,24 @@ public final class Chat: ChatSource, @unchecked Sendable {
         }
     }
 
+    public func toggleRun(_ member: String, open: [String]) -> [String] {
+        call(open) { live in
+            member.withCString { member in
+                Bridge.json(open).withCString {
+                    Bridge.read([String].self, amux_session_toggle_run(live, member, $0))
+                }
+            } ?? open
+        }
+    }
+
+    public func keepOpenRuns(_ open: [String]) -> [String] {
+        call(open) { live in
+            Bridge.json(open).withCString {
+                Bridge.read([String].self, amux_session_keep_open_runs(live, $0))
+            } ?? open
+        }
+    }
+
     public func askCard() -> AskCard? {
         call(nil) { live in
             Bridge.read(AskCard?.self, amux_session_ask_card(live)) ?? nil
