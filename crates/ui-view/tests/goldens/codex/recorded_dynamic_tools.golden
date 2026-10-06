@@ -35,7 +35,8 @@
      4 exec-f10ce098-5709-429d-8b03-34a205ab390e ToolCall { server: "", tool: "send", fact: "CODEX_SPEC_SENT", state: Succeeded, result: "[{\"text\":\"sent\",\"type\":\"inputText\"}]" }
      5 msg_05888512e7901f14016a934852fe8c87d2a14ec76ffb529c7d Prose { text: [Text("Done.")], streaming: false, working_note: false }
      6 turn:1 TurnEnd { duration_ms: Some(5516), cost_usd: None, failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 14674, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 14674, window_tokens: Some(258400), percent: Some(5), near_full: false }) sign-in None
 == settings
   model* reported gpt-5.6-luna "" efforts=[]
   mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }

@@ -39,7 +39,7 @@ use model::{AgentKey, Key};
 use node::SourcePolicy;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use ui_view::{Pick, SettingChange};
+use ui_view::{Comparison, Pick, SettingChange};
 
 // The tests drive real agent processes, which run on Unix.
 #[cfg(all(test, unix))]
@@ -1551,14 +1551,15 @@ pub unsafe extern "C" fn amux_session_ask_card(chat: *const AmuxChat) -> *mut c_
     unsafe { read(chat, Chat::ask_card) }
 }
 
-/// The session `Strip`.
+/// The chat's `Overview`, with the changed files the last
+/// `amux_session_open_overview` fetched.
 ///
 /// # Safety
 /// `chat` is from `amux_session_open`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_session_strip(chat: *const AmuxChat) -> *mut c_char {
+pub unsafe extern "C" fn amux_session_overview(chat: *const AmuxChat) -> *mut c_char {
     // SAFETY: the caller's contract.
-    unsafe { read(chat, Chat::strip) }
+    unsafe { read(chat, Chat::overview) }
 }
 
 /// The `SettingsView`: what the agent offers to change, the current values
@@ -1917,6 +1918,29 @@ pub unsafe extern "C" fn amux_session_page_older(
     unsafe {
         act(chat, callback, context, move |chat| async move {
             chat.page_older(n).await
+        })
+    }
+}
+
+/// Fetches the files changed for `comparison` (a JSON `Comparison`), with
+/// no patch, as the overview opens; the callback gets `{"Ok": Overview}` or
+/// `{"Err": ..}`.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `comparison` is a C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_open_overview(
+    chat: *const AmuxChat,
+    comparison: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let comparison: Comparison = unsafe { parse(comparison) }.unwrap_or_default();
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, move |chat| async move {
+            Answered::from(chat.open_overview(comparison).await)
         })
     }
 }

@@ -27,7 +27,7 @@ Three rules shape the library:
 | [`client`](../crates/client/src/lib.rs) | The `Client` trait: the one seam both clients call the runtime through, with a gRPC implementation over the profile socket and an in-process one for the phone. |
 | [`model`](../crates/model/src/lib.rs) | Plain shared values: `Key`, `AgentKey`, `Attention`, `Connection`, `BlobStatus`, `Composer`, `Waiting`, `PhaseView`, `Activity`, `InputState`. The Swift mirrors are generated from these. |
 | [`ui-state`](../crates/ui-state/src/lib.rs) | `SessionState` (one open chat) and `FleetState` (the inventory), updated by messages. No I/O, no clock, no handles. |
-| [`ui-view`](../crates/ui-view/src/lib.rs) | Pure functions from the state to content values: chat rows, the ask card, the composer and strip, the settings view, fleet rows and cards, the review document. |
+| [`ui-view`](../crates/ui-view/src/lib.rs) | Pure functions from the state to content values: chat rows, the ask card, the composer and overview, the settings view, fleet rows and cards, the review document. |
 | [`ui-runtime`](../crates/ui-runtime/src/lib.rs) | The drivers, `Session` and `Fleet`: subscribe, reconnect, page, send, fetch blobs, and keep a bounded trace for dumps. The fleet holds the one session each live agent has. The only place a chat does I/O. |
 | [`replay-support`](../crates/replay-support/src/lib.rs) | Replaying a dump bundle through the interpreter, the session state and the views, and replaying recorded provider traffic for the provider spec crates. |
 | [`redaction`](../crates/redaction/src/lib.rs) | The structural redactor for free text and JSON in reports, captures and specs. |
@@ -311,7 +311,8 @@ each renderer. A client may also read the state directly.
 | `composer(state, now_ms)`, `waiting(state)` | The composer mode and the activity line inside it; the waiting reason. |
 | `composer_tokens(draft, attachments)`, `segments(text, attachments)` | Text runs and attachment chips at their placeholder positions. |
 | `queue_rows(state)`, `outbox_rows(state)` | Queued prompts (withdraw, send now) and this client's prompts still sending, not confirmed or rejected. |
-| `session_strip(state)` | The `Strip`: tasks, context, model, effort, mode, usage, failed tool servers, sign-in, background count, working-on. |
+| `overview(state, diff)`, `changes(diff)`, `diff_base(state, comparison)` | The `Overview`: tasks, background jobs, failed tool servers, usage near a limit, and the changed files by folder (root files first) from a `Diff` fetched without a patch; the base a comparison asks `Diff` for. |
+| `context(state)`, `sign_in(state)`, `effort_in_force(agent)` | Context use (near full from 80%), a sign-in problem, and the effort the agent runs at. |
 | `settings(state)`, `setting_input(kind, change)` | What the agent offers to change (models, efforts, modes, commands), why a setting cannot change from here, and the input a pick sends. |
 | `fleet_view(fleet, lines, expand, keep)`, `session_line(state, now_ms)` | Home's sections (needs you, running, exited) with each family in its loudest member's section, newest since-when first, and every row's second line; what one session knows for that line. |
 | `fleet_card(fleet, agent_id)`, `family_header(fleet, agent_id)` | One agent's card (name, branch, host, family counts), and a chat's family header. |

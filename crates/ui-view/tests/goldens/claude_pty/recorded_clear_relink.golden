@@ -21,7 +21,8 @@
      4 67516796-dd9c-482d-8786-2a1948429361 Prose { text: [Text("READY_FOR_RELINK")], streaming: false, working_note: false }
      5 turn:1 TurnEnd { duration_ms: Some(1725), cost_usd: None, failed: false }
      6 boundary:2 Boundary { kind: Cleared, cause: "" }
-== strip Strip { tasks: None, context: None, model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context None sign-in None
 == settings
   model* reported claude-haiku-4-5-20251001 "" efforts=[]
   mode* Claude("default")

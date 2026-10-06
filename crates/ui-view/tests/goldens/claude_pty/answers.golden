@@ -98,7 +98,8 @@
      6 t4 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: SentBack, edits_accepted: false, note: Some("explain why"), writing: false })
      7 t5 [Answered: Color = "Green"; Tools = Hammer, Drill] Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "#00f", recommended: false }], allow_other: true, secret: false }, QuestionView { he…
      8 turn:1 TurnEnd { duration_ms: Some(50), cost_usd: None, failed: false }
-== strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context None sign-in None
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
   mode: cycle to the next

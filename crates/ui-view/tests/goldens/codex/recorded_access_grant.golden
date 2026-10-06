@@ -92,7 +92,8 @@
      7 exec-8dd0f788-c801-4c7a-8196-b19a7c8aeec0 Command { command: "/bin/zsh -lc 'curl -sI https://example.com'", state: Succeeded, exit_code: Some(0), output_head: ["HTTP/2 200 ", "date: Sat, 26 Sep 2026 02:32:33 GMT", "content-type: text/html"], more_lines: 8, output_tail: ["HTTP/2 200 ", "date: Sat, 26 Sep 2026 02:32:33 GMT", "content-type: text/html", "server: cloudflare", "last-modified: Tue, …
      8 msg_0267f61d4441067f016ab72ec30e7487d281dfeb0bf02e2447 Prose { text: [Text("HTTP/2 200")], streaming: false, working_note: false }
      9 turn:1 TurnEnd { duration_ms: Some(14566), cost_usd: None, failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 13088, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 13088, window_tokens: Some(258400), percent: Some(5), near_full: false }) sign-in None
 == settings
   model* reported gpt-5.6-luna "" efforts=[]
   mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }

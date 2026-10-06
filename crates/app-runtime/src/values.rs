@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use model::{AgentKey, Connection, InputState, Key, PhaseView, Waiting};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui_view::{Away, ComposerView, OutboxRow, QueuedRow, ToolRows};
+use ui_view::{Away, ComposerView, ContextView, OutboxRow, QueuedRow, SignInView, ToolRows};
 use wire::{BlobRef, HostVia, Kind, Presence};
 
 /// What an embedded runtime starts from.
@@ -65,7 +65,7 @@ pub struct ChatChanges {
     pub keys: Vec<Key>,
     /// Every row id may be new: read the keys again.
     pub reloaded: bool,
-    /// Something beside the rows moved: the frame, the strip or the ask.
+    /// Something beside the rows moved: the frame, the overview or the ask.
     pub session: bool,
 }
 
@@ -78,6 +78,13 @@ pub struct ChatFrame {
     pub phase: PhaseView,
     pub composer: ComposerView,
     pub waiting: Option<Waiting>,
+    /// The agent's model, effort in force and mode, as it reports them.
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub mode: Option<String>,
+    pub context: Option<ContextView>,
+    /// Only a problem; it replaces the composer with a foot card.
+    pub sign_in: Option<SignInView>,
     pub connection: Connection,
     /// The rows are current with the agent's host.
     pub caught_up: bool,

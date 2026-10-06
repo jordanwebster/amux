@@ -74,7 +74,8 @@
     19 boundary:2 Boundary { kind: Compacted, cause: "" }
     20 8b164c5e-6b9e-4737-8685-335403c36779 Compaction { tokens_before: Some(34695), tokens_after: Some(2587), automatic: false }
     21 84436818-1189-4bf8-8ea0-583532b7d9d0 Hidden collapsed
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 2587, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 2587, window_tokens: None, percent: None, near_full: false }) sign-in None
 == settings
   model* reported claude-haiku-4-5-20251001 "" efforts=[]
   mode* Claude("default")

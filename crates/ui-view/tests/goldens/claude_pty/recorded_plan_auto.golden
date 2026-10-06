@@ -86,7 +86,8 @@
      8 toolu_01KRCAuhBR8hvUPHSRDAiB9p Ask(Plan { plan: "# Context\n\nThe user wants README.md's single line of content changed from `CURRENT` to `UPDATED`. This is a trivial, isolated one-line edit.\n\n# Plan\n\n- Edit `README.md`, replacing its only line `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read `README.md` to confirm it now contains `UPDATED` and nothing else.\n", verdict: Approved, ed…
      9 toolu_01MSt5E9ViPRq4nSpf3hbJii Explore { verb: Read, subject: "<MACHINE_PATH>", state: Succeeded }
     10 toolu_012N117fcWKqVrMgjVuuCieR FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1 }], state: Succeeded }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 52254, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-sonnet-5"), effort: None, mode: Some("auto"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 52254, window_tokens: None, percent: None, near_full: false }) sign-in None
 == settings
   model* reported claude-sonnet-5 "" efforts=[]
   mode* Claude("auto")

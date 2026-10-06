@@ -49,7 +49,7 @@ tools. `just mobile-check` checks `node`, `client`, `ui-state` and
 
 ## What a client reuses
 
-- **Views.** Rows, ask cards, the strip, the composer, fleet cards and the
+- **Views.** Rows, ask cards, the overview, the composer, fleet cards and the
   review document are `ui-view` values, the same ones the terminal renders.
   A client draws them; it does not recompute grouping or phases. See
   [the chat vocabulary](CHAT_VOCABULARY.md) for what each one means.
@@ -185,7 +185,7 @@ returns.
 | `amux_runtime_*` | `AmuxRuntime` | The installation: start and stop, the profile list and its wake, the registry (create, delete, bind, sign out, pause, resume), source policy, discovered machines, bearers, entitlement refresh, which profiles trust a host |
 | `amux_profile_*` | `AmuxProfile` | One profile open on screen: pairing, the roster, account state, creating agents and listing directories, renaming, stopping and deleting agents, the dump |
 | `amux_fleet_*` | `AmuxProfile` | That profile's fleet: rows, cards, family headers, hosts, and taking its changes |
-| `amux_session_*` | `AmuxChat` | One open chat: keys and rows by key, the ask card, strip, settings and frame, taking changes; sending, answering, withdrawing, interrupting, resuming, paging, blobs and the review |
+| `amux_session_*` | `AmuxChat` | One open chat: keys and rows by key, the ask card, overview, settings and frame, taking changes; sending, answering, withdrawing, interrupting, resuming, paging, blobs and the review |
 
 The lifecycle nests: start the runtime, open a profile, open chats on it;
 close every chat before its profile and every profile before stopping the

@@ -47,7 +47,8 @@
     11 msg_011CeXyLBWao6sWd7QVvXTek:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\". Then they asked me to list every word they asked me to remember, and nothing else.\n\nSo the word they asked me to remember is: ALBATROSS\n\nI should list just this word and nothing else.", open: false, duration_ms: None }
     12 msg_011CeXyLBWao6sWd7QVvXTek:1 Prose { text: [Text("ALBATROSS")], streaming: false, working_note: false }
     13 turn:3 TurnEnd { duration_ms: Some(1542), cost_usd: Some(0.0029433000000000003), failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 24476, window_tokens: Some(200000), percent: Some(12), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 24476, window_tokens: Some(200000), percent: Some(12), near_full: false }) sign-in None
 == settings
   model  default "Default (recommended)" efforts=[low,medium,high,xhigh,max]
   model  opus[1m] "Opus (1M context)" efforts=[low,medium,high,xhigh,max]

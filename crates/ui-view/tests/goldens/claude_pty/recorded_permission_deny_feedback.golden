@@ -38,7 +38,8 @@
      5 cbcedc43-9485-480d-a7d7-7914fab141d9 Hidden collapsed
      6 turn:1 Stopped
      7 bb9829a2-d4d0-4aa9-8f30-f3fbe430ccbc Prompt { text: [Text("Use a read-only command instead")], steered: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 36224, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 36224, window_tokens: None, percent: None, near_full: false }) sign-in None
 == settings
   model* reported claude-haiku-4-5-20251001 "" efforts=[]
   mode* Claude("default")

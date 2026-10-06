@@ -11,6 +11,7 @@
 mod ask;
 mod composer;
 mod fleet;
+mod overview;
 mod plan;
 mod review;
 mod rows;
@@ -23,15 +24,18 @@ pub use ask::{
     Scope, answer_input, ask_card, question_answer, with_form_content,
 };
 pub use composer::{
-    CONTEXT_STRIP_PERCENT, ComposerView, ContextView, OutboxRow, OutboxState, QueuedRow,
-    ServerView, SignInView, Strip, TaskLine, TaskMark, TasksView, UsageLabel, UsageView,
-    UsageWindowView, composer, composer_tokens, outbox_rows, queue_rows, session_strip,
-    usage_windows, waiting,
+    CONTEXT_NEAR_FULL_PERCENT, ComposerView, ContextView, OutboxRow, OutboxState, QueuedRow,
+    SignInView, composer, composer_tokens, context, outbox_rows, queue_rows, sign_in, waiting,
 };
 pub use fleet::{
     ActivityLine, AskSubject, AskSummary, Away, ExitCause, FamilyHeader, FleetCard, FleetRow,
     FleetSection, FleetView, LoudMember, SecondLine, SectionKind, SessionLine, StuckReason, away,
     family_header, fleet_card, fleet_view, session_line, signed_out,
+};
+pub use overview::{
+    ChangeTotals, ChangedFile, Changes, Comparison, Folder, JobRow, Overview, ServerView, TaskLine,
+    TaskMark, TasksView, UsageLabel, UsageView, UsageWindowView, changes, diff_base, overview,
+    usage_windows,
 };
 pub use review::{DiffLine, FileStatus, Hunk, LineKind, ReviewDoc, ReviewFile, review_doc};
 pub use rows::{
@@ -42,6 +46,6 @@ pub use rows::{
 pub use segments::{AttachmentView, Segment, segments};
 pub use settings::{
     CommandView, EffortChoice, ModeChoice, ModeValue, ModelChoice, SettingChange, SettingsView,
-    setting_input, settings,
+    effort_in_force, setting_input, settings,
 };
 pub use stretch::{Stretch, StretchCounts, stretch_at, stretch_steps};

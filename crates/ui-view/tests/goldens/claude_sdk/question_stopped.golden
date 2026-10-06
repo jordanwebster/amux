@@ -45,7 +45,8 @@
      5 70320000-0000-4000-8000-000000000000 Prompt { text: [Text("ask again")], steered: false }
      6 t2 [Dismissed: ] Ask(Question { questions: [QuestionView { header: "Ship", question: "Ship it today?", multi_select: false, options: [OptionView { label: "Yes", description: "Ship it today", preview: "", recommended: false }, OptionView { label: "No", description: "Do not ship it today", preview: "", recommended: false }], allow_other: true, secret: false }], answers: [], note: None, resoluti…
      7 turn:2 Stopped
-== strip Strip { tasks: None, context: None, model: Some("claude-sonnet-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context None sign-in None
 == settings
   model* reported claude-sonnet-5 "" efforts=[]
   mode* Claude("default")

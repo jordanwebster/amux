@@ -3,7 +3,7 @@
 
 use ratatui::text::{Line, Span};
 use ui_state::{Composer, Waiting};
-use ui_view::{Away, QueuedRow, Segment, Strip, composer_tokens};
+use ui_view::{Away, Overview, QueuedRow, Segment, composer_tokens};
 
 use super::rows::chip;
 use crate::editor::Editor;
@@ -25,7 +25,7 @@ const GROUP_GAP: usize = 4;
 /// only near it and only while `typing`, since that is when it bears on a
 /// choice. None when there is nothing to say.
 pub fn edge_row(
-    strip: &Strip,
+    overview: &Overview,
     servers: bool,
     jobs: usize,
     typing: bool,
@@ -38,7 +38,7 @@ pub fn edge_row(
     // drops, before anything else does.
     let mut name: Option<String> = None;
     let mut groups: Vec<Vec<(String, ratatui::style::Style)>> = Vec::new();
-    if let Some(tasks) = strip.tasks.as_ref().filter(|t| t.done < t.total) {
+    if let Some(tasks) = overview.tasks.as_ref().filter(|t| t.done < t.total) {
         let count = format!("{} of {} tasks", tasks.done, tasks.total);
         if !tasks.current.is_empty() {
             name = Some(tasks.current.clone());
@@ -46,12 +46,12 @@ pub fn edge_row(
         groups.push(vec![(count, theme.faint())]);
     }
     if servers {
-        let sign_in = strip
+        let sign_in = overview
             .failed_servers
             .iter()
             .filter(|server| server.needs_auth)
             .count();
-        let failed = strip.failed_servers.len() - sign_in;
+        let failed = overview.failed_servers.len() - sign_in;
         if sign_in > 0 {
             let words = match sign_in {
                 1 => "1 tool server needs sign-in".to_owned(),
@@ -73,8 +73,8 @@ pub fn edge_row(
     if !groups.is_empty() {
         groups.push(vec![("ctrl+o".to_owned(), theme.faint())]);
     }
-    let usage = strip
-        .usage
+    let usage = overview
+        .usage_near_limit
         .as_ref()
         .filter(|usage| typing && !usage.blocked)
         .and_then(|usage| {
@@ -166,8 +166,11 @@ fn limit_name(label: &ui_view::UsageLabel) -> String {
 /// "5-hour limit reached · resets 23:24": the window of a usage limit that
 /// has been reached, for the composer's edge; the fullest one when the
 /// provider does not say which. None when no limit is reached.
-pub fn limit_reached(strip: &Strip, now_ms: i64) -> Option<String> {
-    let usage = strip.usage.as_ref().filter(|usage| usage.blocked)?;
+pub fn limit_reached(overview: &Overview, now_ms: i64) -> Option<String> {
+    let usage = overview
+        .usage_near_limit
+        .as_ref()
+        .filter(|usage| usage.blocked)?;
     let Some(window) = usage
         .windows
         .iter()

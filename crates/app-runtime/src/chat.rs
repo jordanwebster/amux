@@ -2,13 +2,13 @@
 //! the fleet and widened while the chat is open, its changes gathered for
 //! the host's next turn, and the views the host asks for by row key.
 
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use model::AgentKey;
 use tokio::task::JoinHandle;
 use ui_runtime::{Fleet, InputError, PageError, Session};
 use ui_state::{InputOutcome, InputState, Key, SessionState};
-use ui_view::{AskCard, ChatOptions, Pick, Row, SettingChange, SettingsView, Strip};
+use ui_view::{AskCard, ChatOptions, Comparison, Overview, Pick, Row, SettingChange, SettingsView};
 use wire::{BlobRef, send_input_response};
 
 use crate::coalesce::{Coalescer, WakeFn};
@@ -29,6 +29,8 @@ pub struct Chat {
     changes: Coalescer<Key>,
     watcher: OnceLock<JoinHandle<()>>,
     clock: Arc<dyn client::Clock>,
+    /// The changed files the overview last fetched.
+    changed_files: Mutex<Option<wire::Diff>>,
 }
 
 impl Chat {
@@ -53,6 +55,7 @@ impl Chat {
             changes: Coalescer::new(wake),
             watcher: OnceLock::new(),
             clock,
+            changed_files: Mutex::new(None),
         });
         // Spawned once the chat exists, so every change it sees finds the
         // chat; it ends when the chat is dropped or the session ends.
@@ -146,8 +149,27 @@ impl Chat {
         ui_view::ask_card(&self.session.state())
     }
 
-    pub fn strip(&self) -> Strip {
-        ui_view::session_strip(&self.session.state())
+    /// The overview, with the changed files [`Chat::open_overview`] last
+    /// fetched.
+    pub fn overview(&self) -> Overview {
+        let files = self.changed_files.lock().unwrap().clone();
+        ui_view::overview(&self.session.state(), files.as_ref())
+    }
+
+    /// Fetches the files changed for `comparison`, without a patch, and
+    /// answers the overview with them. A branch with no known base has no
+    /// changes to list.
+    pub async fn open_overview(
+        &self,
+        comparison: Comparison,
+    ) -> Result<Overview, client::RpcError> {
+        let base = ui_view::diff_base(&self.session.state(), comparison);
+        let files = match base {
+            Some(base) => Some(self.session.changed_files(base).await?),
+            None => None,
+        };
+        *self.changed_files.lock().unwrap() = files;
+        Ok(self.overview())
     }
 
     /// What the agent offers to change, with the current values marked.
@@ -245,7 +267,7 @@ impl Chat {
         }
     }
 
-    /// Sends a pick from the settings view; the strip shows the new value
+    /// Sends a pick from the settings view; the frame shows the new value
     /// once the agent reports it.
     pub async fn change_setting(&self, change: &SettingChange) -> ActOutcome {
         let kind = self.session.state().kind();
@@ -374,6 +396,11 @@ pub(crate) fn frame(state: &SessionState, now_ms: i64, ended: Option<String>) ->
         phase: state.phase(),
         composer: ui_view::composer(state, now_ms),
         waiting: ui_view::waiting(state),
+        model: state.agent_state().model.clone(),
+        effort: ui_view::effort_in_force(state.agent_state()),
+        mode: state.agent_state().mode.clone(),
+        context: ui_view::context(state),
+        sign_in: ui_view::sign_in(state),
         connection: state.connection(),
         caught_up: state.caught_up(),
         has_older: state.transcript().has_older(),

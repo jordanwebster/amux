@@ -50,7 +50,8 @@
      6 t3 FileChange { files: [FileRow { path: "notes.md", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Succeeded } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
      7 a5 Prose { text: [Text("Done.")], streaming: false, working_note: false }
      8 turn:1 TurnEnd { duration_ms: Some(7290), cost_usd: None, failed: false }
-== strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context None sign-in None
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
   mode: cycle to the next

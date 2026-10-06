@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ui_state::Key;
-use ui_view::{Strip, TaskMark};
+use ui_view::{Overview, TaskMark};
 
 use crate::text::{self, pad_to, push};
 use crate::theme::Theme;
@@ -96,7 +96,7 @@ pub struct Job {
 
 /// What the pane shows, read once a frame.
 pub struct Contents<'a> {
-    pub strip: &'a Strip,
+    pub overview: &'a Overview,
     pub jobs: &'a [Job],
     /// None until the working tree's diff is read.
     pub files: Option<&'a [FileLine]>,
@@ -107,7 +107,7 @@ impl Contents<'_> {
     /// The sections with something in them, in the pane's order.
     fn sections(&self) -> Vec<Section> {
         let mut sections = Vec::new();
-        if self.strip.tasks.is_some() {
+        if self.overview.tasks.is_some() {
             sections.push(Section::Tasks);
         }
         if !self.jobs.is_empty() {
@@ -116,7 +116,7 @@ impl Contents<'_> {
         if self.files.is_some_and(|files| !files.is_empty()) {
             sections.push(Section::Changes);
         }
-        if !self.strip.failed_servers.is_empty() {
+        if !self.overview.failed_servers.is_empty() {
             sections.push(Section::Servers);
         }
         sections
@@ -230,14 +230,14 @@ pub fn pane_lines(
         let folded = contents.folded.contains(&section);
         let count = match section {
             Section::Tasks => contents
-                .strip
+                .overview
                 .tasks
                 .as_ref()
                 .map(|tasks| format!("{} of {}", tasks.done, tasks.total))
                 .unwrap_or_default(),
             Section::Background => contents.jobs.len().to_string(),
             Section::Changes => contents.files.unwrap_or_default().len().to_string(),
-            Section::Servers => contents.strip.failed_servers.len().to_string(),
+            Section::Servers => contents.overview.failed_servers.len().to_string(),
         };
         // Like home's headings: a fold marker, the words, the count and a
         // hairline to the edge. A control: lit, its marker and words
@@ -267,7 +267,7 @@ pub fn pane_lines(
         blank(&mut out);
         match section {
             Section::Tasks => {
-                let Some(tasks) = &contents.strip.tasks else {
+                let Some(tasks) = &contents.overview.tasks else {
                     continue;
                 };
                 for task in &tasks.entries {
@@ -338,7 +338,7 @@ pub fn pane_lines(
                 out.changes_end = out.body.len();
             }
             Section::Servers => {
-                for server in &contents.strip.failed_servers {
+                for server in &contents.overview.failed_servers {
                     let what = if server.needs_auth {
                         "needs sign-in"
                     } else {

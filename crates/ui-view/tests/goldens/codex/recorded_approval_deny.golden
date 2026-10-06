@@ -91,7 +91,8 @@
      5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(2) } decision=Decision { outcome: Denied, scope: None, note: None, elsewhere: false }
      6 msg_073bfcd196c14513016a93484730dc87d2a9020fd7e4998c63 Prose { text: [Text("Unable to run the command because filesystem-write approval was denied.")], streaming: false, working_note: false }
      7 turn:1 TurnEnd { duration_ms: Some(7991), cost_usd: None, failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 14771, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 14771, window_tokens: Some(258400), percent: Some(5), near_full: false }) sign-in None
 == settings
   model* reported gpt-5.6-luna "" efforts=[]
   mode* Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }

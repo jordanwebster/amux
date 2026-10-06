@@ -28,7 +28,8 @@
      2 78a96e78-0ffc-4670-bd7b-8aef995cce04 Prompt { text: [Text("Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer.")], steered: false }
      3 334b06d7-78a5-4e91-93fd-3ec7b981ae55 Thinking { text: "", open: false, duration_ms: Some(2023) }
      4 toolu_01HH38hjU7RXeC2ecXtMYUrV [Answered: Color = "a warm ochre"] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other:…
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 34339, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 34339, window_tokens: None, percent: None, near_full: false }) sign-in None
 == settings
   model* reported claude-haiku-4-5-20251001 "" efforts=[]
   mode* Claude("default")

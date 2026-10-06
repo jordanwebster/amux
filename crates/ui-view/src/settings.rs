@@ -169,7 +169,7 @@ fn refusals(kind: Kind) -> [Option<&'static str>; 3] {
 /// The effort the agent runs at: the one it reports, else its current
 /// model's default. Codex reports none until one is chosen, which means
 /// the model's default, and its model list says what that is.
-pub(crate) fn effort_in_force(agent: &ui_state::AgentState) -> Option<String> {
+pub fn effort_in_force(agent: &ui_state::AgentState) -> Option<String> {
     if agent.effort.is_some() {
         return agent.effort.clone();
     }

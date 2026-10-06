@@ -27,7 +27,8 @@
      2 prompt:737464696e2d34 Prompt { text: [Text("Reply with exactly CODEX_SPEC_PONG and nothing else.")], steered: false }
      3 msg_06c4950302592050016a934835b27887d28ecfc4578303dc9a Prose { text: [Text("CODEX_SPEC_PONG")], streaming: false, working_note: false }
      4 turn:1 TurnEnd { duration_ms: Some(3741), cost_usd: None, failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 14541, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 14541, window_tokens: Some(258400), percent: Some(5), near_full: false }) sign-in None
 == settings
   model* reported gpt-5.6-luna "" efforts=[]
   mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }

@@ -10,7 +10,8 @@
   composer Send activity=Some(Working) queue=[] outbox=[]
 == chat
      1 toolu_0111yBonGHJL4YvNmE5Zm5iK FileChange { files: [FileRow { path: "/tmp/planner-probe/permission-request-target.txt", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Failed } attention
-== strip Strip { tasks: Some(TasksView { done: 0, total: 1, current: "Resuming from the live checklist", entries: [TaskLine { subject: "Resume from the live checklist", mark: Current }] }), context: Some(ContextView { used_tokens: 10830, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: Some(TasksView { done: 0, total: 1, current: "Resuming from the live checklist", entries: [TaskLine { subject: "Resume from the live checklist", mark: Current }] }), jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 10830, window_tokens: None, percent: None, near_full: false }) sign-in None
 == settings
   model* reported claude-haiku-4-5-20251001 "" efforts=[]
   mode: cycle to the next

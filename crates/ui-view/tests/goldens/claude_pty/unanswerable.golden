@@ -114,7 +114,8 @@
     14 u3 Prompt { text: [Text("once more")], steered: false }
     15 ask:ask:6 Ask(Unanswerable { reason: "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.", resolution: Dismissed })
     16 boundary:2 Boundary { kind: Exited, cause: "exit code 1" }
-== strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context None sign-in None
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
   mode* Claude("default")

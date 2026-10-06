@@ -24,7 +24,8 @@
      2 u1 Prompt { text: [Text("test it")], steered: false }
      3 boundary:2 Boundary { kind: DaemonLost, cause: "" }
      4 boundary:3 Boundary { kind: Exited, cause: "stopped" }
-== strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context None sign-in None
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
   mode: cycle to the next

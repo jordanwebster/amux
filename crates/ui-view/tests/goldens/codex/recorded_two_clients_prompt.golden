@@ -35,7 +35,8 @@
      4 turn:1 TurnEnd { duration_ms: Some(1785), cost_usd: None, failed: false }
      5 01a10efb-e879-71a1-ac48-c250bdfc406e Prompt { text: [Text("Count slowly from one to one hundred, one number per line.")], steered: false }
      6 turn:2 Stopped
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 13176, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 13176, window_tokens: Some(258400), percent: Some(5), near_full: false }) sign-in None
 == settings
   model* reported gpt-5.6-luna "" efforts=[]
   mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }

@@ -1098,16 +1098,18 @@ impl App {
             let client = self.client.clone();
             let agent_id = chat.view.agent_id.clone();
             self.spawn(async move {
-                let (diff, patch) =
-                    ui_runtime::review::working_tree_review(client.as_ref(), &agent_id)
-                        .await
-                        .ok()?;
-                let doc = ui_view::review_doc(&diff, &patch, &[]);
+                let base = wire::DiffBase {
+                    base: Some(wire::diff_base::Base::WorkingTree(wire::Empty {})),
+                };
+                let diff = ui_runtime::review::changed_files(client.as_ref(), &agent_id, base)
+                    .await
+                    .ok()?;
+                let changes = ui_view::changes(&diff);
                 Some(AppEvent::DiffStat {
                     agent_id,
-                    added: doc.added,
-                    removed: doc.removed,
-                    files: doc
+                    added: changes.totals.added,
+                    removed: changes.totals.removed,
+                    files: diff
                         .files
                         .iter()
                         .map(|file| crate::chat::pane::FileLine {

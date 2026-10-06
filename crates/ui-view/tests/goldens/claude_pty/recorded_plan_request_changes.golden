@@ -50,7 +50,8 @@
      4 toolu_01CCKWYNmy7THHQyHVemofcc FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 11 }, added: 11, removed: 0 }], state: Succeeded }
      5 toolu_01Egc5HsizMsVn1xBhztAhiU Explore { verb: Search, subject: "select:ExitPlanMode", state: Succeeded }
      6 toolu_012mL17q3UZCtEJ343VAWHka Ask(Plan { plan: "# Context\n\nThe user asked to change README.md's only line from `CURRENT` to `UPDATED`. This is a trivial, explicitly-specified text change.\n\n# Plan\n\n- Edit `README.md`, replacing its sole line's content `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read README.md after the edit to confirm it contains `UPDATED` and not `CURRENT`.\n", ve…
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 51419, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-sonnet-5"), effort: None, mode: Some("plan"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 51419, window_tokens: None, percent: None, near_full: false }) sign-in None
 == settings
   model* reported claude-sonnet-5 "" efforts=[]
   mode* Claude("plan")

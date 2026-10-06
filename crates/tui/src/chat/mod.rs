@@ -28,7 +28,7 @@ use ui_state::{
 };
 use ui_view::{
     AskBody, AskCard, Away, CardState, ChatOptions, FamilyHeader, RowKind, ToolRows, ask_card,
-    chat_rows_for, composer, queue_rows, session_strip,
+    chat_rows_for, composer, overview, queue_rows,
 };
 use wire::{Attachment, attachment};
 
@@ -635,7 +635,7 @@ impl ChatView {
             return self.ask_effects(state, &card, action);
         }
         // Signing in happens elsewhere; the draft waits behind the box.
-        if session_strip(state).sign_in.is_some() {
+        if ui_view::sign_in(state).is_some() {
             return vec![];
         }
         if let Some(selected) = self.tray {
@@ -984,10 +984,10 @@ impl ChatView {
 
     /// The pane's items in its order, as this frame would draw them.
     fn pane_items(&self, state: &SessionState) -> Vec<pane::PaneItem> {
-        let strip = session_strip(state);
+        let overview = overview(state, None);
         let jobs = crate::pending::background_jobs(state);
         pane::Contents {
-            strip: &strip,
+            overview: &overview,
             jobs: &jobs,
             files: self.diff_files.as_deref(),
             folded: &self.pane_folds,
@@ -1663,14 +1663,16 @@ impl ChatView {
             .map(|host| host.name.clone())
             .unwrap_or_else(|| "its host".into());
 
-        let strip = session_strip(state);
+        let overview = overview(state, None);
+        let sign_in = ui_view::sign_in(state);
+        let effort = ui_view::effort_in_force(state.agent_state());
         let jobs = if self.pane_open {
             crate::pending::background_jobs(state)
         } else {
             Vec::new()
         };
         let items = pane::Contents {
-            strip: &strip,
+            overview: &overview,
             jobs: &jobs,
             files: self.diff_files.as_deref(),
             folded: &self.pane_folds,
@@ -1688,7 +1690,7 @@ impl ChatView {
             .clone()
             .filter(|hovered| items.contains(hovered))
             .or(self.pane_focus.clone().filter(|_| pane_keys));
-        let (header, controls) = self.top_line(state, &name, &strip, full, theme);
+        let (header, controls) = self.top_line(state, &name, full, theme);
         // A blank line above the header keeps it off the terminal's edge.
         self.header_spots = controls
             .into_iter()
@@ -1824,7 +1826,7 @@ impl ChatView {
         // from whatever is above. It is the pane folded: while the pane is
         // open it takes the row's place.
         let running = crate::pending::background_jobs(state).len();
-        self.servers_failing = strip
+        self.servers_failing = overview
             .failed_servers
             .iter()
             .map(|server| server.name.clone())
@@ -1835,7 +1837,7 @@ impl ChatView {
             .any(|name| !self.servers_told.contains(name));
         if !side
             && let Some(line) = edge_row(
-                &strip,
+                &overview,
                 servers_new,
                 running,
                 !self.editor.is_empty(),
@@ -1897,7 +1899,7 @@ impl ChatView {
                 &invite,
                 &EdgeWords {
                     model: crate::words::model_words(state),
-                    effort: strip.effort.clone(),
+                    effort: effort.clone(),
                     mode: crate::words::mode_words(state),
                 },
                 !pane_keys,
@@ -1939,7 +1941,7 @@ impl ChatView {
                     theme.attention(),
                     &EdgeWords {
                         model: crate::words::model_words(state),
-                        effort: strip.effort.clone(),
+                        effort: effort.clone(),
                         mode: crate::words::mode_words(state),
                     },
                     width,
@@ -1978,10 +1980,10 @@ impl ChatView {
             // The agent's account needs signing in: the box says how, as an
             // ask would, and keeps the draft for afterwards. An ask the
             // agent exited with leaves the composer to say it exited.
-            _ if strip.sign_in.is_some() => {
+            _ if sign_in.is_some() => {
                 const MARGIN: usize = 2;
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
-                let body = strip.sign_in.as_ref().map_or_else(Vec::new, |sign_in| {
+                let body = sign_in.as_ref().map_or_else(Vec::new, |sign_in| {
                     sign_in_lines(state.kind(), &host, sign_in, inner, theme)
                 });
                 let (lines, mode, _) = framed(
@@ -1989,7 +1991,7 @@ impl ChatView {
                     theme.attention(),
                     &EdgeWords {
                         model: crate::words::model_words(state),
-                        effort: strip.effort.clone(),
+                        effort: effort.clone(),
                         mode: crate::words::mode_words(state),
                     },
                     width,
@@ -2053,7 +2055,7 @@ impl ChatView {
                 &state.composer(),
                 &host,
                 self.away,
-                composer::limit_reached(&strip, now_ms),
+                composer::limit_reached(&overview, now_ms),
                 theme,
             );
             if let Some((words, ink)) = words
@@ -2271,7 +2273,7 @@ impl ChatView {
                 paint.render_widget(ratatui::widgets::Clear, cleared);
             }
             self.pane_rect = Some(rect);
-            self.draw_side_pane(paint, rect, &strip, &jobs, lit.as_ref(), now_ms, theme);
+            self.draw_side_pane(paint, rect, &overview, &jobs, lit.as_ref(), now_ms, theme);
         }
         // A model or effort being chosen: its flyover rises from the model's
         // words on the composer's edge, over the box (and the pane).
@@ -2338,7 +2340,7 @@ impl ChatView {
         &mut self,
         paint: &mut Paint<'_>,
         rect: Rect,
-        strip: &ui_view::Strip,
+        overview: &ui_view::Overview,
         jobs: &[pane::Job],
         lit: Option<&pane::PaneItem>,
         now_ms: i64,
@@ -2355,7 +2357,7 @@ impl ChatView {
         let focused = self.pane_keys;
         let content = pane::pane_lines(
             &pane::Contents {
-                strip,
+                overview,
                 jobs,
                 files: self.diff_files.as_deref(),
                 folded: &self.pane_folds,
@@ -2511,7 +2513,6 @@ impl ChatView {
         &self,
         state: &SessionState,
         name: &str,
-        strip: &ui_view::Strip,
         width: usize,
         theme: Theme,
     ) -> (Line<'static>, HeaderSpots) {
@@ -2531,14 +2532,14 @@ impl ChatView {
         if let Some((words, style)) = problem_words(state, self.away, &host, theme) {
             right.push(Span::styled(words, style));
         }
-        if let Some(context) = &strip.context {
+        if let Some(context) = ui_view::context(state) {
             gap(&mut right);
             let used = tokens_short(context.used_tokens);
             let words = match context.window_tokens {
                 Some(window) => format!("{used} / {}", tokens_short(window)),
                 None => used,
             };
-            let style = if context.in_strip {
+            let style = if context.near_full {
                 theme.warning()
             } else {
                 theme.faint()

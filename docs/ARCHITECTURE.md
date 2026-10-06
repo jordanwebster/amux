@@ -463,7 +463,7 @@ checks.
 |---|---|
 | [`client`](../crates/client/src/lib.rs) | The one seam both clients call the local runtime through: gRPC over the profile socket, or in process on the phone. |
 | [`ui-state`](../crates/ui-state/src/lib.rs) | The pure session and fleet model clients reduce their streams into, with the thin per-kind layer that decodes snapshot bodies. |
-| [`ui-view`](../crates/ui-view/src/lib.rs) | Pure content values: chat rows, ask cards, the session strip, the fleet, the review document. |
+| [`ui-view`](../crates/ui-view/src/lib.rs) | Pure content values: chat rows, ask cards, the overview, the fleet, the review document. |
 | [`ui-runtime`](../crates/ui-runtime/src/lib.rs) | The session and fleet drivers: the only place a chat does I/O. |
 
 **Clients and binaries.**

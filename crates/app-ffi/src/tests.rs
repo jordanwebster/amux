@@ -463,8 +463,8 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     assert_eq!(frame["name"], "worker", "{frame}");
     assert_eq!(frame["caught_up"], true, "{frame}");
     // SAFETY: the chat is open.
-    let strip = take(unsafe { amux_session_strip(chat) });
-    assert!(strip.is_object(), "{strip}");
+    let overview = take(unsafe { amux_session_overview(chat) });
+    assert!(overview.is_object(), "{overview}");
     // SAFETY: the chat is open.
     let keys = take(unsafe { amux_session_keys(chat) });
     let newest = c(keys.as_array().unwrap().last().unwrap().as_str().unwrap());

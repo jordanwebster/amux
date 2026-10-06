@@ -1,3 +1,18 @@
+2026-10-06 — **One overview value replaces the session strip.**
+`ui_view::Strip` mixed what is still in flight around a chat with the agent's
+settings and a sign-in problem, and counted background jobs instead of
+listing them. `ui_view::overview(state, diff)` now gives one `Overview`: the
+task list, each running background job with its command, start and step,
+the tool servers that failed, usage near a limit, and the changed files by
+folder with root files first (`changes(diff)`). The changed files come from a
+`Diff` asked for without a patch (`ui_runtime::review::changed_files`); only
+the review page still builds one. Context use (`context`, near full from
+80%), the sign-in problem (`sign_in`) and the effort in force
+(`effort_in_force`) are read on their own; the bridge's `ChatFrame` carries
+them with the model and mode, and `Chat::open_overview(comparison)` fetches
+the files as the overview opens. The terminal draws exactly what it drew
+before from the new values, and its working-tree count asks for no patch.
+
 2026-10-06 — **A client drops an append for an item it holds nothing for.**
 Now that appends go to any open item, a session kept small while off screen
 would have fetched every running command below its window with a `Get` on each

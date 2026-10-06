@@ -54,7 +54,8 @@
      7 exec-a6e3d06e-be70-441f-ba72-8fb01c9007b0 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Moved { to: "<MACHINE_PATH>" }, added: 0, removed: 0 }], state: Succeeded }
      8 msg_029a3b95d86dbaa8016ab72f1a9b7887d28e6885f79ce0b102 Prose { text: [Text("DONE")], streaming: false, working_note: false }
      9 turn:1 TurnEnd { duration_ms: Some(24083), cost_usd: None, failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 13800, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("never"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 13800, window_tokens: Some(258400), percent: Some(5), near_full: false }) sign-in None
 == settings
   model* reported gpt-5.6-luna "" efforts=[]
   mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }

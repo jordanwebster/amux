@@ -1315,13 +1315,79 @@ public enum CardState: Codable, Hashable, Sendable {
     }
 }
 
+public struct ChangeTotals: Codable, Hashable, Sendable {
+    public var files: UInt32
+    public var added: UInt32
+    public var removed: UInt32
+
+    public init(files: UInt32, added: UInt32, removed: UInt32) {
+        self.files = files
+        self.added = added
+        self.removed = removed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case files
+        case added
+        case removed
+    }
+}
+
+public struct ChangedFile: Codable, Hashable, Sendable {
+    /// From the repository's root.
+    public var path: String
+    /// Inside its folder.
+    public var name: String
+    /// Lines; none for a binary file.
+    public var added: UInt32
+    public var removed: UInt32
+    public var status: FileStatus
+    public var binary: Bool
+
+    public init(path: String, name: String, added: UInt32, removed: UInt32, status: FileStatus, binary: Bool) {
+        self.path = path
+        self.name = name
+        self.added = added
+        self.removed = removed
+        self.status = status
+        self.binary = binary
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case name
+        case added
+        case removed
+        case status
+        case binary
+    }
+}
+
+/// The changed files of one comparison, by folder.
+public struct Changes: Codable, Hashable, Sendable {
+    public var totals: ChangeTotals
+    /// Files at the root first, under the folder "", then each folder by
+    /// path.
+    public var folders: [Folder]
+
+    public init(totals: ChangeTotals, folders: [Folder]) {
+        self.totals = totals
+        self.folders = folders
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case totals
+        case folders
+    }
+}
+
 /// What changed in a chat since the host last took its changes.
 public struct ChatChanges: Codable, Hashable, Sendable {
     /// Rows to fetch again, each once.
     public var keys: [String]
     /// Every row id may be new: read the keys again.
     public var reloaded: Bool
-    /// Something beside the rows moved: the frame, the strip or the ask.
+    /// Something beside the rows moved: the frame, the overview or the ask.
     public var session: Bool
 
     public init(keys: [String], reloaded: Bool, session: Bool) {
@@ -1357,11 +1423,18 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     /// The input answering the head ask, which a card that was not
     /// confirmed resends or discards.
     public var askInput: [UInt8]?
+    public var context: ContextView?
+    public var effort: String?
     /// The runtime no longer serves this chat: the agent is gone.
     public var ended: String?
+    public var mode: String?
+    /// The agent's model, effort in force and mode, as it reports them.
+    public var model: String?
+    /// Only a problem; it replaces the composer with a foot card.
+    public var signIn: SignInView?
     public var waiting: Waiting?
 
-    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], outbox: [OutboxRow], askInput: [UInt8]?, ended: String?, waiting: Waiting?) {
+    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], outbox: [OutboxRow], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, mode: String?, model: String?, signIn: SignInView?, waiting: Waiting?) {
         self.agent = agent
         self.name = name
         self.kind = kind
@@ -1374,7 +1447,12 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         self.queue = queue
         self.outbox = outbox
         self.askInput = askInput
+        self.context = context
+        self.effort = effort
         self.ended = ended
+        self.mode = mode
+        self.model = model
+        self.signIn = signIn
         self.waiting = waiting
     }
 
@@ -1391,7 +1469,12 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         case queue
         case outbox
         case askInput = "ask_input"
+        case context
+        case effort
         case ended
+        case mode
+        case model
+        case signIn = "sign_in"
         case waiting
     }
 }
@@ -1607,6 +1690,14 @@ public struct CommandView: Codable, Hashable, Sendable {
     }
 }
 
+/// What the changed files are counted against.
+public enum Comparison: String, Codable, Hashable, Sendable, CaseIterable {
+    /// The working tree against its last commit.
+    case uncommitted = "Uncommitted"
+    /// Everything since the branch left its base, uncommitted work included.
+    case onBranch = "OnBranch"
+}
+
 /// What the composer offers.
 public enum Composer: Codable, Hashable, Sendable {
     case send
@@ -1688,21 +1779,21 @@ public enum Connection: String, Codable, Hashable, Sendable, CaseIterable {
 
 public struct ContextView: Codable, Hashable, Sendable {
     public var usedTokens: UInt64
-    /// High enough to show in the strip rather than only in settings.
-    public var inStrip: Bool
+    /// At or past [`CONTEXT_NEAR_FULL_PERCENT`] of the window.
+    public var nearFull: Bool
     public var percent: UInt64?
     public var windowTokens: UInt64?
 
-    public init(usedTokens: UInt64, inStrip: Bool, percent: UInt64?, windowTokens: UInt64?) {
+    public init(usedTokens: UInt64, nearFull: Bool, percent: UInt64?, windowTokens: UInt64?) {
         self.usedTokens = usedTokens
-        self.inStrip = inStrip
+        self.nearFull = nearFull
         self.percent = percent
         self.windowTokens = windowTokens
     }
 
     private enum CodingKeys: String, CodingKey {
         case usedTokens = "used_tokens"
-        case inStrip = "in_strip"
+        case nearFull = "near_full"
         case percent
         case windowTokens = "window_tokens"
     }
@@ -2315,6 +2406,24 @@ public struct FleetView: Codable, Hashable, Sendable {
     }
 }
 
+/// One folder's changed files, sorted by name. Shortening a long path is
+/// the client's.
+public struct Folder: Codable, Hashable, Sendable {
+    /// With its trailing slash; empty for the root.
+    public var path: String
+    public var files: [ChangedFile]
+
+    public init(path: String, files: [ChangedFile]) {
+        self.path = path
+        self.files = files
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case files
+    }
+}
+
 /// A machine the phone's own browser found on the local network.
 public struct Found: Codable, Hashable, Sendable {
     public var hostId: [UInt8]
@@ -2548,6 +2657,26 @@ public enum InputState: Codable, Hashable, Sendable {
             var _container = encoder.singleValueContainer()
             try _container.encode("Uncertain")
         }
+    }
+}
+
+/// A background job the agent started that is still running.
+public struct JobRow: Codable, Hashable, Sendable {
+    public var command: String
+    public var startedAtMs: Int64
+    /// The step that started it, when the provider said which.
+    public var step: String?
+
+    public init(command: String, startedAtMs: Int64, step: String?) {
+        self.command = command
+        self.startedAtMs = startedAtMs
+        self.step = step
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case command
+        case startedAtMs = "started_at_ms"
+        case step
     }
 }
 
@@ -2808,6 +2937,36 @@ public enum OutboxState: Codable, Hashable, Sendable {
             var _container = encoder.container(keyedBy: Tag.self)
             try _container.encode(_value, forKey: .rejected)
         }
+    }
+}
+
+/// Everything the overview lists; each part is empty or None when there is
+/// nothing to show.
+public struct Overview: Codable, Hashable, Sendable {
+    /// Running background jobs, in the agent's order.
+    public var jobs: [JobRow]
+    /// Only tool servers that failed or need signing in.
+    public var failedServers: [ServerView]
+    /// None until the changed files are fetched.
+    public var changes: Changes?
+    public var tasks: TasksView?
+    /// Only near or at a limit.
+    public var usageNearLimit: UsageView?
+
+    public init(jobs: [JobRow], failedServers: [ServerView], changes: Changes?, tasks: TasksView?, usageNearLimit: UsageView?) {
+        self.jobs = jobs
+        self.failedServers = failedServers
+        self.changes = changes
+        self.tasks = tasks
+        self.usageNearLimit = usageNearLimit
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case jobs
+        case failedServers = "failed_servers"
+        case changes
+        case tasks
+        case usageNearLimit = "usage_near_limit"
     }
 }
 
@@ -4301,50 +4460,6 @@ public struct StartConfig: Codable, Hashable, Sendable {
         case relayRoot = "relay_root"
         case relayTcp = "relay_tcp"
         case tail
-    }
-}
-
-/// The facts strip: each field is None when there is nothing to show.
-public struct Strip: Codable, Hashable, Sendable {
-    /// Only tool servers that failed.
-    public var failedServers: [ServerView]
-    /// Running background processes, when known and any.
-    public var background: UInt32?
-    public var context: ContextView?
-    public var effort: String?
-    public var mode: String?
-    public var model: String?
-    /// Only a problem; it replaces the composer with a foot card.
-    public var signIn: SignInView?
-    public var tasks: TasksView?
-    /// Only near or at a limit.
-    public var usage: UsageView?
-    public var workingOn: String?
-
-    public init(failedServers: [ServerView], background: UInt32?, context: ContextView?, effort: String?, mode: String?, model: String?, signIn: SignInView?, tasks: TasksView?, usage: UsageView?, workingOn: String?) {
-        self.failedServers = failedServers
-        self.background = background
-        self.context = context
-        self.effort = effort
-        self.mode = mode
-        self.model = model
-        self.signIn = signIn
-        self.tasks = tasks
-        self.usage = usage
-        self.workingOn = workingOn
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case failedServers = "failed_servers"
-        case background
-        case context
-        case effort
-        case mode
-        case model
-        case signIn = "sign_in"
-        case tasks
-        case usage
-        case workingOn = "working_on"
     }
 }
 

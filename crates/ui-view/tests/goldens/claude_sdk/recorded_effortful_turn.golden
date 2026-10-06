@@ -16,7 +16,8 @@
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly EFFORT_OK and nothing else.")], steered: false }
      3 msg_011CeXCnKivzYbLkYWw6aeNr:0 Prose { text: [Text("EFFORT_OK")], streaming: false, working_note: false }
      4 turn:1 TurnEnd { duration_ms: Some(1606), cost_usd: Some(0.0600194), failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 37948, window_tokens: Some(1000000), percent: Some(3), in_strip: false }), model: Some("claude-sonnet-5"), effort: Some("low"), mode: Some("default"), usage: None, failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 37948, window_tokens: Some(1000000), percent: Some(3), near_full: false }) sign-in None
 == settings
   model  default "Default (recommended)" efforts=[low,medium,high,xhigh,max]
   model  opus[1m] "Opus (1M context)" efforts=[low,medium,high,xhigh,max]

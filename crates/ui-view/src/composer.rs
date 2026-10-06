@@ -1,203 +1,29 @@
-//! Around the composer: the session strip, the composer's mode and tokens,
-//! the queued prompts and this client's unconfirmed inputs.
+//! Around the composer: context use, a sign-in problem, the composer's mode
+//! and tokens, the queued prompts and this client's unconfirmed inputs.
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use ui_state::{Activity, Composer, InputState, InputWhat, SessionState, Usage, Waiting};
-use wire::{
-    Attachment, ClaudeLimit, CodexLimit, SignInState, TaskListStatus, UsageMeter, UsageState,
-};
+use ui_state::{Activity, Composer, InputState, InputWhat, SessionState, Waiting};
+use wire::{Attachment, SignInState};
 
 use crate::segments::{Segment, segments};
 
-/// Context use shows in the strip only from here; below it lives in
-/// settings.
-pub const CONTEXT_STRIP_PERCENT: u64 = 80;
-
-/// The facts strip: each field is None when there is nothing to show.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, JsonSchema)]
-pub struct Strip {
-    pub tasks: Option<TasksView>,
-    pub context: Option<ContextView>,
-    pub model: Option<String>,
-    pub effort: Option<String>,
-    pub mode: Option<String>,
-    /// Only near or at a limit.
-    pub usage: Option<UsageView>,
-    /// Only tool servers that failed.
-    pub failed_servers: Vec<ServerView>,
-    /// Only a problem; it replaces the composer with a foot card.
-    pub sign_in: Option<SignInView>,
-    /// Running background processes, when known and any.
-    pub background: Option<u32>,
-    pub working_on: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct TasksView {
-    pub done: u32,
-    pub total: u32,
-    /// The task in progress, in its active form.
-    pub current: String,
-    /// Every task in the agent's order.
-    pub entries: Vec<TaskLine>,
-}
-
-/// One task of the list, by its subject.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct TaskLine {
-    pub subject: String,
-    pub mark: TaskMark,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub enum TaskMark {
-    Done,
-    Current,
-    Todo,
-}
+/// Context use from here on is near full, which a client may set apart.
+pub const CONTEXT_NEAR_FULL_PERCENT: u64 = 80;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ContextView {
     pub used_tokens: u64,
     pub window_tokens: Option<u64>,
     pub percent: Option<u64>,
-    /// High enough to show in the strip rather than only in settings.
-    pub in_strip: bool,
+    /// At or past [`CONTEXT_NEAR_FULL_PERCENT`] of the window.
+    pub near_full: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
-pub struct UsageView {
-    pub blocked: bool,
-    pub windows: Vec<UsageWindowView>,
-    pub credits: Option<String>,
-}
-
-/// One rate-limit window: which limit it is, how much of it is used, when
-/// it resets, and its own state.
-#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
-pub struct UsageWindowView {
-    pub label: UsageLabel,
-    pub used_percent: f64,
-    pub resets_at_ms: Option<i64>,
-    pub state: UsageState,
-}
-
-/// Which limit a usage window is, for a client to word.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub enum UsageLabel {
-    FiveHour,
-    /// The weekly limit, or one model's weekly limit.
-    Weekly {
-        model: Option<String>,
-    },
-    /// A window known only by its length, as Codex gives it.
-    Minutes(u32),
-    /// A window known only by the provider's own name for it.
-    Named(String),
-}
-
-/// Every usage window the provider reported, in its order.
-pub fn usage_windows(usage: &Usage) -> Vec<UsageWindowView> {
-    let view = |label, meter: Option<UsageMeter>| {
-        let meter = meter.unwrap_or_default();
-        UsageWindowView {
-            label,
-            used_percent: meter.used_percent,
-            resets_at_ms: meter.resets_at_ms,
-            state: meter.state(),
-        }
-    };
-    match usage {
-        Usage::Unknown => Vec::new(),
-        Usage::Claude(usage) => usage
-            .windows
-            .iter()
-            .map(|window| {
-                let label = match window.limit() {
-                    ClaudeLimit::FiveHour => UsageLabel::FiveHour,
-                    ClaudeLimit::Weekly => UsageLabel::Weekly {
-                        model: window.model.clone(),
-                    },
-                    ClaudeLimit::Unspecified => UsageLabel::Named(window.provider_name.clone()),
-                };
-                view(label, window.meter)
-            })
-            .collect(),
-        Usage::Codex(usage) => usage
-            .windows
-            .iter()
-            .map(|window| {
-                let label = match window.limit() {
-                    CodexLimit::FiveHour => UsageLabel::FiveHour,
-                    CodexLimit::Weekly => UsageLabel::Weekly { model: None },
-                    CodexLimit::Unspecified => UsageLabel::Minutes(window.window_minutes),
-                };
-                view(label, window.meter)
-            })
-            .collect(),
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct ServerView {
-    pub name: String,
-    pub error: String,
-    pub needs_auth: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct SignInView {
-    pub state: SignInState,
-    pub account: String,
-    pub message: String,
-}
-
-pub fn session_strip(state: &SessionState) -> Strip {
+/// How much of its context window the agent uses, once it has said.
+pub fn context(state: &SessionState) -> Option<ContextView> {
     let agent = state.agent_state();
-    let tasks = agent.tasks.known.then(|| {
-        let total = agent.tasks.entries.len() as u32;
-        let done = agent
-            .tasks
-            .entries
-            .iter()
-            .filter(|task| task.status() == TaskListStatus::Completed)
-            .count() as u32;
-        let current = agent
-            .tasks
-            .entries
-            .iter()
-            .find(|task| task.status() == TaskListStatus::InProgress)
-            .map(|task| {
-                if task.active_form.is_empty() {
-                    task.subject.clone()
-                } else {
-                    task.active_form.clone()
-                }
-            })
-            .unwrap_or_default();
-        let entries = agent
-            .tasks
-            .entries
-            .iter()
-            .map(|task| TaskLine {
-                subject: task.subject.clone(),
-                mark: match task.status() {
-                    TaskListStatus::Completed => TaskMark::Done,
-                    TaskListStatus::InProgress => TaskMark::Current,
-                    _ => TaskMark::Todo,
-                },
-            })
-            .collect();
-        TasksView {
-            done,
-            total,
-            current,
-            entries,
-        }
-    });
-    let tasks = tasks.filter(|tasks| tasks.total > 0);
-    let context = agent.context.known.then(|| {
+    agent.context.known.then(|| {
         let percent = agent
             .context
             .window_tokens
@@ -207,56 +33,29 @@ pub fn session_strip(state: &SessionState) -> Strip {
             used_tokens: agent.context.used_tokens,
             window_tokens: agent.context.window_tokens,
             percent,
-            in_strip: percent.is_some_and(|percent| percent >= CONTEXT_STRIP_PERCENT),
+            near_full: percent.is_some_and(|percent| percent >= CONTEXT_NEAR_FULL_PERCENT),
         }
-    });
-    let usage = match agent.usage.state() {
-        UsageState::NearLimit | UsageState::Blocked => Some(UsageView {
-            blocked: agent.usage.state() == UsageState::Blocked,
-            windows: usage_windows(&agent.usage),
-            credits: match &agent.usage {
-                Usage::Codex(usage) => usage.credits.clone(),
-                Usage::Claude(_) | Usage::Unknown => None,
-            },
-        }),
-        UsageState::Unknown | UsageState::Ok => None,
-    };
-    let failed_servers = agent
-        .servers
-        .servers
-        .iter()
-        .filter(|server| {
-            matches!(
-                server.status(),
-                wire::ToolServerStatus::Failed | wire::ToolServerStatus::NeedsAuth
-            )
-        })
-        .map(|server| ServerView {
-            name: server.name.clone(),
-            error: server.error.clone(),
-            needs_auth: server.status() == wire::ToolServerStatus::NeedsAuth,
-        })
-        .collect();
-    let sign_in = match agent.sign_in.state() {
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SignInView {
+    pub state: SignInState,
+    pub account: String,
+    pub message: String,
+}
+
+/// The agent's account, only when it needs signing in: it replaces the
+/// composer with a foot card.
+pub fn sign_in(state: &SessionState) -> Option<SignInView> {
+    let agent = state.agent_state();
+    match agent.sign_in.state() {
         SignInState::SignedOut | SignInState::Expired | SignInState::Failed => Some(SignInView {
             state: agent.sign_in.state(),
             account: agent.sign_in.account.clone(),
             message: agent.sign_in.message.clone(),
         }),
         SignInState::Unknown | SignInState::SignedIn => None,
-    };
-    Strip {
-        tasks,
-        context,
-        model: agent.model.clone(),
-        effort: crate::settings::effort_in_force(agent),
-        mode: agent.mode.clone(),
-        usage,
-        failed_servers,
-        sign_in,
-        background: (agent.background.known && !agent.background.jobs.is_empty())
-            .then_some(agent.background.jobs.len() as u32),
-        working_on: agent.working_on.clone(),
     }
 }
 

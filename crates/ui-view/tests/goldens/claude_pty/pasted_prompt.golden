@@ -17,7 +17,8 @@
      2 u1 Prompt { text: [Text("Call the AskUserQuestion tool exactly once, now, with these four questions and nothing else first. Q1 header \"Database\", question \"Which database should the service use?\", single select, options: \"SQLite\" (description \"One file, no server\"), \"Postgres\" (description \"A server, more features\"). Q2 header \"Checks\", question \"Which checks should run before …
      3 a1 Prose { text: [Text("Asking now.")], streaming: false, working_note: false }
      4 turn:1 TurnEnd { duration_ms: Some(20), cost_usd: None, failed: false }
-== strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context None sign-in None
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
   mode: cycle to the next

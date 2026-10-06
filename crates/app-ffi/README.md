@@ -19,7 +19,7 @@ cargo run -p xtask -- swift-types          # regenerate
 cargo run -p xtask -- swift-types --check  # fail when the committed file differs
 ```
 
-Rows, ask cards, the strip and fleet cards are the `ui-view` values the
+Rows, ask cards, the overview and fleet cards are the `ui-view` values the
 terminal renders; `ChatFrame`, `ChatChanges`, `Draft`, `RowOptions`,
 `HostView` and the act outcomes are `app-runtime::values`. Byte strings such
 as agent and input ids are JSON arrays of numbers. Answers never carry a
@@ -74,7 +74,7 @@ the chats that open for every other profile and in the background.
 ## Reads and changes
 
 Reads return at once: `amux_session_keys`, `amux_session_rows_for`,
-`amux_session_ask_card`, `amux_session_strip`, `amux_session_settings`,
+`amux_session_ask_card`, `amux_session_overview`, `amux_session_settings`,
 `amux_session_frame`,
 `amux_fleet_rows`, `amux_fleet_card`, `amux_fleet_family`, `amux_fleet_hosts`,
 `amux_runtime_profiles`, `amux_runtime_source_policy_listed`.
@@ -111,7 +111,9 @@ with a JSON result the callback borrows until it returns:
 the settings view), `amux_session_withdraw`,
 `amux_session_send_now`, `amux_session_resend`, `amux_session_interrupt`,
 `amux_session_resume` (the exited composer's draft), `amux_session_page_older`,
-`amux_session_put_blob`, `amux_profile_begin_pair` (a PIN or a pairing
+`amux_session_put_blob`, `amux_session_open_overview` (the changed files for
+a `Comparison`, fetched without a patch as the overview opens),
+`amux_profile_begin_pair` (a PIN or a pairing
 link: reaches and authenticates the machine, answering its name and
 fingerprint), `amux_profile_confirm_pair` and `amux_profile_abandon_pair`
 (the person's decision), `amux_profile_unpair`, `amux_profile_roster` (this

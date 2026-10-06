@@ -3,7 +3,7 @@
 *For developers changing an interpreter, a view, or how either client draws a chat.*
 
 This page is the client contract: everything terminal Claude, headless Claude and Codex can tell amux, sorted
-into one set of rows, asks and strip fields that the terminal client and the iPhone app both draw. It says where
+into one set of rows, asks and session facts that the terminal client and the iPhone app both draw. It says where
 each kind of fact goes, what each row and ask carries, how the three agent kinds differ, and what the
 interpreters and views must cover.
 
@@ -23,11 +23,11 @@ The rule is a question about the person, not about the protocol.
 | **Chat row** | Would you scroll back to find it? | An item in the agent's journal: a reply, an edit, a command, a decision. It stays in history. | `ui_view::chat_rows`, one row per item |
 | **Activity line** | Does it only matter while it is happening? | Derived from the newest items and the snapshot's phase by `SessionState::activity`, timed by the renderer against item timestamps. Replaced as the agent moves on; never a row. | `ui_view::composer(state, now_ms).activity` |
 | **Ask** | Does it need your decision? | An entry in the snapshot's ask list, opened and closed only by provider facts. It takes over the composer; once settled it leaves a decision in the chat. | `ui_view::ask_card` |
-| **Session strip** | Does it describe the session rather than an event? | The snapshot's per-kind fields: tasks, context, model, effort, mode, usage, tool servers, sign-in, background processes. Always the latest value. | `ui_view::session_strip`, `ui_view::settings` |
-| **Hidden** | None of the above? | Plumbing, kept in the interpreter's facts ring for debug reports. An item that belongs to the strip or the activity line maps to `RowKind::Hidden`. A failure can promote a fact to a notice row. | never drawn |
+| **Session fact** | Does it describe the session rather than an event? | The snapshot's per-kind fields: tasks, context, model, effort, mode, usage, tool servers, sign-in, background processes. Always the latest value. | `ui_view::overview`, `ui_view::context`, `ui_view::sign_in`, `ui_view::settings` |
+| **Hidden** | None of the above? | Plumbing, kept in the interpreter's facts ring for debug reports. An item that belongs to the overview or the activity line maps to `RowKind::Hidden`. A failure can promote a fact to a notice row. | never drawn |
 
 Placement is decided once, by the interpreter inside each agent process, and stored: the item kind, the
-snapshot's asks and strip fields are what every client, every replica and the store see. The phone and the
+snapshot's asks and session facts are what every client, every replica and the store see. The phone and the
 terminal cannot disagree about where something goes because neither decides. A provider event this build cannot
 read still shows, as an `Unrecognized` row, so a gap is visible rather than silent.
 
@@ -62,7 +62,7 @@ kind is the [`ui_view::RowKind`](../crates/ui-view/src/rows.rs) variant the view
 | File created, deleted, moved | `FileChange` with `Created { lines }`, `Deleted`, `Moved { to }` | "Created path · 38 lines", "Deleted path", "Moved a → b". | partial: create and overwrite only | partial | full |
 | Tool call | `ToolCall { server, tool, fact, state, result }` | "Used github · create_issue" plus one fact, opening to input and result. | partial: name and text result | full | full |
 | Subagent | `Subagent { description, running, tool_count, last_tool, answer, duration_ms }` | Live while running ("12 tools · 48s · last: Read"), its answer once finished; its own steps are rows with a `parent`, collapsed under it. | partial | full | partial |
-| Background process | `Background { command, running }` | "Started in background npm run dev"; the running count goes to the strip. | partial | partial | partial |
+| Background process | `Background { command, running }` | "Started in background npm run dev"; the running job is listed in the overview. | partial | partial | partial |
 | Image | `Image { image, path, generated }` | A thumbnail opening full size; Codex can report generated images. | partial | partial | full |
 | Slash command output | `SlashOutput { command, args, output }` | The command, then its output block. | partial | partial | n/a: skills run as prompts |
 
@@ -204,21 +204,29 @@ row or the row failed.
 
 ![Asks that became rows: a question answered, two questions answered, a plan approved and one sent back with its note, three fields sent to a tool server, a link declined, write access granted for the turn, and a dialog this build could not read, dismissed twice.](figures/vocabulary/row_ask.light.png)
 
-## The session strip
+## Session facts
 
-`session_strip(state)` returns a `Strip` whose every field is `None` when there is nothing to show:
+`overview(state, diff)` returns the `Overview`, what is still in flight around the chat; each part is empty or
+`None` when there is nothing to show. The composer's edge reads it folded and the overview reads it whole:
 
 | Field | Shown | claude_pty | claude_sdk | codex |
 |---|---|---|---|---|
 | `tasks` | "3/7 · Updating the pairing copy", opening to the list (Claude's task list, Codex's plan steps) | partial | partial | full |
-| `context` | Always in settings; in the strip only from 80% used (`CONTEXT_STRIP_PERCENT`) | partial: tokens, no window | full | full |
-| `model`, `effort`, `mode` | Composer facts and the settings view | partial | full | full |
-| `usage` | Nothing while fine; a warning near a limit; a foot card when blocked | none | full | full |
-| `failed_servers` | Only tool servers that failed to start | none | full | full |
-| `sign_in` | A foot card in place of the composer when there is a problem | partial: as an API error | full | full |
-| `background` | The running count, when any | partial | partial | partial |
+| `jobs` | Each background job still running: its command, when it started, and the step that started it | partial | partial | partial |
+| `failed_servers` | Only tool servers that failed to start or need signing in | none | full | full |
+| `usage_near_limit` | Nothing while fine; a warning near a limit; a foot card when blocked | none | full | full |
+| `changes` | The changed files by folder, root files first, once fetched with `Diff` and no patch (`changes(diff)`) | full | full | full |
 
-`working_on`, what the agent says it is working on, comes from the snapshot's envelope for every kind.
+Beside it, read from the same state:
+
+| Function | Shown | claude_pty | claude_sdk | codex |
+|---|---|---|---|---|
+| `context(state)` | Always in settings; set apart from 80% used (`CONTEXT_NEAR_FULL_PERCENT`, `near_full`) | partial: tokens, no window | full | full |
+| `effort_in_force(agent)`, the agent's `model` and `mode` | Composer facts and the settings view | partial | full | full |
+| `sign_in(state)` | A foot card in place of the composer when there is a problem | partial: as an API error | full | full |
+
+`diff_base(state, comparison)` names what the changed files are counted against: the uncommitted work, or
+everything on the branch since it left its base branch.
 
 `settings(state)` is the settings view: the offered models with their efforts, the modes, the commands the agent
 offers, and for each setting the sentence saying why it cannot change from here when it cannot. Terminal Claude
@@ -281,7 +289,7 @@ naming the carrier and the golden line that shows it.
 
 **The views.** [`crates/ui-view/tests/goldens.rs`](../crates/ui-view/tests/goldens.rs) replays every interpreter
 fixture of all three kinds, commits its emission the way the daemon does, reduces it into a `SessionState`, and
-records the views (rows, ask card with its choices, strip, composer, queue, outbox, settings) after every frame
+records the views (rows, ask card with its choices, overview, composer, queue, outbox, settings) after every frame
 into `crates/ui-view/tests/goldens/<kind>/<fixture>.golden`. Authored goldens cover inputs and composer states;
 `views.rs` checks row invariants over random windows; `answers.rs` checks that the interpreter accepts the input
 each card's choices build. These goldens are the content oracle for both clients. Rewrite them with

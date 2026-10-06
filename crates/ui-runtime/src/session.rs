@@ -676,6 +676,11 @@ impl Session {
         tokio::spawn(self.inner.clone().fetch_blob(hash.to_vec()));
     }
 
+    /// The files changed against `base`, without a patch, for an overview.
+    pub async fn changed_files(&self, base: wire::DiffBase) -> Result<wire::Diff, RpcError> {
+        crate::review::changed_files(self.inner.client.as_ref(), &self.inner.agent_id, base).await
+    }
+
     /// The agent's working-tree diff and its patch, for a review page.
     pub async fn working_tree_review(&self) -> Result<(wire::Diff, String), RpcError> {
         crate::review::working_tree_review(self.inner.client.as_ref(), &self.inner.agent_id).await

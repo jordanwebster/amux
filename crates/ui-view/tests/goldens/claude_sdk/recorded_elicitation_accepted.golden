@@ -49,7 +49,8 @@
      6 msg_011CeiyN1wiM3Dzg9UpjPo5J:0 Thinking { text: "", open: false, duration_ms: Some(1058) }
      7 msg_011CeiyN1wiM3Dzg9UpjPo5J:1 Prose { text: [Text("PELICAN")], streaming: false, working_note: false }
      8 turn:1 TurnEnd { duration_ms: Some(4112), cost_usd: Some(0.055543), failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 25313, window_tokens: Some(200000), percent: Some(12), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 25313, window_tokens: Some(200000), percent: Some(12), near_full: false }) sign-in None
 == settings
   model  default "Default (recommended)" efforts=[low,medium,high,xhigh,max]
   model  opus[1m] "Opus (1M context)" efforts=[low,medium,high,xhigh,max]

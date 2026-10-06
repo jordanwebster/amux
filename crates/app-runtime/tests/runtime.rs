@@ -16,7 +16,7 @@ use model::{AgentKey, InputState, PhaseView};
 use provider_fakes::script::{Ask, Question, Step, Tool, ToolClass};
 use testnet::{AgentDecl, FakeKind, Net, Topology};
 use tokio::sync::mpsc;
-use ui_view::{AskBody, ChoiceOutcome, ModeValue, Pick, RowKind, SettingChange};
+use ui_view::{AskBody, ChoiceOutcome, Comparison, ModeValue, Pick, RowKind, SettingChange};
 
 const PATIENCE: Duration = Duration::from_secs(20);
 
@@ -406,8 +406,7 @@ async fn collapsed_runs_and_the_frame_read_as_the_views_say() {
         },
     );
     assert_eq!(hidden.len(), keys.len(), "hidden rows keep their ids");
-    let strip = chat.strip();
-    assert!(strip.failed_servers.is_empty());
+    assert!(chat.overview().failed_servers.is_empty());
     net.shutdown().await.unwrap();
 }
 
@@ -459,7 +458,7 @@ async fn the_fleet_wakes_the_host_when_an_agent_moves() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_settings_pick_reaches_the_agent_and_the_strip_shows_it() {
+async fn a_settings_pick_reaches_the_agent_and_the_frame_shows_it() {
     let net = Net::start(topology()).await.unwrap();
     let (runtime, mut host) = open(&net).await;
     let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
@@ -487,7 +486,7 @@ async fn a_settings_pick_reaches_the_agent_and_the_strip_shows_it() {
     let pick = SettingChange::Mode(plan.value.clone());
     assert_eq!(chat.change_setting(&pick).await, ActOutcome::Done);
     until(&mut host, &chat, "the plan mode", |chat| {
-        chat.strip().mode.as_deref() == Some("plan")
+        chat.frame().mode.as_deref() == Some("plan")
     })
     .await;
     assert!(
@@ -508,5 +507,50 @@ async fn a_settings_pick_reaches_the_agent_and_the_strip_shows_it() {
             .any(|effort| effort.current && effort.value == "high")
     })
     .await;
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_the_overview_lists_the_changed_files_by_folder() {
+    let topology = Topology::new().host("desk").agent(
+        AgentDecl::new("worker", "desk")
+            .kind(FakeKind::ClaudeSdk)
+            .cwd("project")
+            .branch("main")
+            .steps(vec![text("turn one"), Step::TurnEnd])
+            .prompt("go"),
+    );
+    let net = Net::start(topology).await.unwrap();
+    let folder = net.host("desk").unwrap().work.join("project");
+    std::fs::create_dir_all(folder.join("notes")).unwrap();
+    std::fs::write(folder.join("notes/plan.md"), "one\ntwo\n").unwrap();
+    std::fs::write(folder.join("README.md"), "hello\n").unwrap();
+    let (runtime, mut host) = open(&net).await;
+    let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
+    until(&mut host, &chat, "the first turn", |chat| {
+        chat.frame().caught_up && says(chat, "turn one")
+    })
+    .await;
+    assert_eq!(chat.overview().changes, None, "nothing fetched yet");
+    let opened = chat.open_overview(Comparison::Uncommitted).await.unwrap();
+    let changes = opened.changes.expect("the files were fetched");
+    let folders: Vec<(&str, Vec<&str>)> = changes
+        .folders
+        .iter()
+        .map(|folder| {
+            let names = folder.files.iter().map(|file| file.name.as_str()).collect();
+            (folder.path.as_str(), names)
+        })
+        .collect();
+    assert_eq!(
+        folders,
+        vec![("", vec!["README.md"]), ("notes/", vec!["plan.md"])]
+    );
+    assert_eq!((changes.totals.files, changes.totals.added), (2, 3));
+    assert_eq!(
+        chat.overview().changes.map(|changes| changes.totals),
+        Some(changes.totals),
+        "the overview keeps what it fetched"
+    );
     net.shutdown().await.unwrap();
 }

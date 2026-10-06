@@ -45,7 +45,8 @@
      4 msg_0c55feb572459127016a934861bf6887d28dfc52e3aa94f16b Prose { text: [Text("CODEX_SPEC_FIRST")], streaming: false, working_note: true }
      5 msg_0c55feb572459127016a934861f11087d2a954de2ba1465f7e Prose { text: [Text("CODEX_SPEC_SECOND")], streaming: false, working_note: false }
      6 turn:1 TurnEnd { duration_ms: Some(4841), cost_usd: None, failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 14560, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context Some(ContextView { used_tokens: 14560, window_tokens: Some(258400), percent: Some(5), near_full: false }) sign-in None
 == settings
   model* reported gpt-5.6-luna "" efforts=[]
   mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }

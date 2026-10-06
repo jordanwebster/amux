@@ -16,8 +16,8 @@ use interpret::codex::{Codex, CodexWith, Drained, Parked};
 use interpret::{Interpreter, Replayed, replay};
 use ui_state::{InputOutcome, Msg, SessionState};
 use ui_view::{
-    ChatOptions, ToolRows, ask_card, chat_rows, chat_rows_for, composer, outbox_rows, queue_rows,
-    session_strip, settings,
+    ChatOptions, ToolRows, ask_card, chat_rows, chat_rows_for, composer, context, outbox_rows,
+    overview, queue_rows, settings, sign_in,
 };
 use wire::{Kind, SessionEvent, session_event};
 
@@ -235,7 +235,13 @@ fn render(kind: Kind, frames: &[Replayed]) -> String {
     for row in chat_rows(&state, 0..=head, &opts) {
         let _ = writeln!(out, "  {}", describe_row(&row));
     }
-    let _ = writeln!(out, "== strip {:?}", session_strip(&state));
+    let _ = writeln!(out, "== overview {:?}", overview(&state, None));
+    let _ = writeln!(
+        out,
+        "== context {:?} sign-in {:?}",
+        context(&state),
+        sign_in(&state)
+    );
     describe_settings(&mut out, &state);
     out
 }

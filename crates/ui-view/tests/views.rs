@@ -1,7 +1,7 @@
 //! View invariants over small authored session states, and the authored
 //! goldens for what no interpreter fixture reaches: an input not confirmed,
 //! the exited composer, steering a queued prompt, an unanswerable or
-//! dismissed ask, and the strip's facts.
+//! dismissed ask, and the overview and composer facts.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -800,7 +800,13 @@ fn authored(kind: Kind) -> String {
                 let _ = writeln!(out, "  ask none");
             }
         }
-        let _ = writeln!(out, "  strip {:?}", session_strip(state));
+        let _ = writeln!(out, "  overview {:?}", overview(state, None));
+        let _ = writeln!(
+            out,
+            "  context {:?} sign-in {:?}",
+            context(state),
+            sign_in(state)
+        );
     };
     state.update(snapshot(
         kind,
@@ -817,7 +823,7 @@ fn authored(kind: Kind) -> String {
     }));
     state.update(caught_up());
     show(
-        "an ask that can't be answered here, two queued prompts, every strip fact",
+        "an ask that can't be answered here, two queued prompts, every overview fact",
         &state,
     );
 
@@ -974,7 +980,8 @@ fn unknown_renders_one_way() {
     for kind in KINDS {
         let mut state = SessionState::new(agent(kind), CAP);
         state.update(snapshot(kind, Phase::Starting, vec![], vec![]));
-        assert_eq!(session_strip(&state), Strip::default());
+        assert_eq!(overview(&state, None), Overview::default());
+        assert_eq!((context(&state), sign_in(&state)), (None, None));
     }
 }
 
@@ -1761,4 +1768,71 @@ fn rows_hold_their_order_while_an_agent_streams() {
     }));
     let after = home(&view(&fleet, &state, 30_000));
     assert_eq!(after[1].1, "streamer");
+}
+
+#[test]
+fn changed_files_group_by_folder_with_root_files_first() {
+    let file = |path: &str, added, removed, change: wire::DiffFileChange| wire::DiffFile {
+        path: path.into(),
+        added,
+        removed,
+        change: change as i32,
+        binary: false,
+    };
+    let diff = wire::Diff {
+        files: vec![
+            file("src/b.rs", 3, 1, wire::DiffFileChange::Changed),
+            file("README.md", 2, 0, wire::DiffFileChange::Changed),
+            file("docs/x/y.md", 0, 9, wire::DiffFileChange::Deleted),
+            file("src/a.rs", 5, 0, wire::DiffFileChange::Created),
+            file("Cargo.toml", 1, 1, wire::DiffFileChange::Changed),
+        ],
+        ..Default::default()
+    };
+    let changes = changes(&diff);
+    assert_eq!(
+        changes.totals,
+        ChangeTotals {
+            files: 5,
+            added: 11,
+            removed: 11
+        }
+    );
+    let folders: Vec<(&str, Vec<&str>)> = changes
+        .folders
+        .iter()
+        .map(|folder| {
+            let names = folder.files.iter().map(|file| file.name.as_str()).collect();
+            (folder.path.as_str(), names)
+        })
+        .collect();
+    assert_eq!(
+        folders,
+        vec![
+            ("", vec!["Cargo.toml", "README.md"]),
+            ("docs/x/", vec!["y.md"]),
+            ("src/", vec!["a.rs", "b.rs"]),
+        ]
+    );
+    let a = &changes.folders[2].files[0];
+    assert_eq!((a.path.as_str(), a.status), ("src/a.rs", FileStatus::Added));
+    assert_eq!(changes.folders[1].files[0].status, FileStatus::Deleted);
+}
+
+#[test]
+fn the_overview_holds_the_changes_it_is_given() {
+    let mut state = SessionState::new(agent(Kind::Codex), CAP);
+    state.update(snapshot(Kind::Codex, Phase::Idle, vec![], vec![]));
+    assert_eq!(overview(&state, None).changes, None);
+    let diff = wire::Diff::default();
+    assert_eq!(
+        overview(&state, Some(&diff)).changes,
+        Some(Changes::default()),
+        "a fetched clean tree is no changes, not unknown"
+    );
+    assert!(
+        diff_base(&state, Comparison::OnBranch).is_none(),
+        "no base branch, nothing to compare the branch with"
+    );
+    assert!(diff_base(&state, Comparison::Uncommitted).is_some());
 }

@@ -25,7 +25,8 @@
      3 t1 Command { command: "rm -rf target", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) }
      4 boundary:2 Boundary { kind: DaemonLost, cause: "" }
      5 boundary:3 Boundary { kind: Exited, cause: "orphaned while waiting for you" }
-== strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context None sign-in None
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
   mode* Claude("default")
