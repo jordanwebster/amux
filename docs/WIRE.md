@@ -235,6 +235,10 @@ message Git {
 message ChangeTotals { uint32 files = 1; uint32 added = 2; uint32 removed = 3; }
 ```
 
+On the base branch itself the branch has left nothing behind, so `on_branch`
+equals `uncommitted`; it is absent only without a base or a commit, or when
+the branch shares no history with its base.
+
 The daemon and the store read only the envelope. A `body` is bytes to them,
 stored and forwarded without decoding, so a body written by a later agent
 binary passes through an earlier daemon intact. Bodies are decoded only at the

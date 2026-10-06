@@ -56,7 +56,7 @@ async fn a_folder_outside_a_repository_has_no_facts() {
 }
 
 #[tokio::test]
-async fn a_clean_default_branch_has_nothing_uncommitted_and_no_branch_totals() {
+async fn a_clean_default_branch_has_nothing_uncommitted_or_on_the_branch() {
     let repo = repository();
     assert_eq!(
         facts(repo.path(), None).await.unwrap(),
@@ -64,9 +64,22 @@ async fn a_clean_default_branch_has_nothing_uncommitted_and_no_branch_totals() {
             branch: Some("main".into()),
             base_branch: Some("main".into()),
             uncommitted: totals(0, 0, 0),
-            on_branch: None,
+            on_branch: totals(0, 0, 0),
         })
     );
+}
+
+#[tokio::test]
+async fn on_the_base_branch_its_uncommitted_work_is_what_is_on_the_branch() {
+    let repo = repository();
+    let dir = repo.path();
+    write(dir, "base.txt", 6);
+    write(dir, "untracked.txt", 2);
+
+    let found = facts(dir, None).await.unwrap().unwrap();
+    assert_eq!(found.branch.as_deref(), Some("main"));
+    assert_eq!(found.uncommitted, totals(2, 2, 4));
+    assert_eq!(found.on_branch, found.uncommitted);
 }
 
 #[tokio::test]

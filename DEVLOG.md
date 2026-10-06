@@ -1,3 +1,10 @@
+2026-10-06 — **On the base branch, the branch comparison counts the uncommitted work.**
+An agent working on `main` itself had no totals for "everything on this
+branch", so switching its chat header to `[Diff vs main]` dropped the numbers
+the uncommitted comparison had shown. Where the branch has not left its base
+the fork point is HEAD, so the branch's changes are exactly the uncommitted
+ones; git facts now say so, and the header reads `[Diff vs main +98 −75]`.
+
 2026-10-06 — **A background launch's result no longer re-sends its call.**
 Headless Claude answers a background command or subagent at once with a
 result that only tells the model the job started; the call stays open until

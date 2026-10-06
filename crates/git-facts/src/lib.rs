@@ -37,8 +37,9 @@ pub struct GitFacts {
     /// empty tree.
     pub uncommitted: Option<ChangeTotals>,
     /// From where the branch left its base to the working tree, so
-    /// uncommitted work counts. None on the base branch itself, without a
-    /// base, or when the branch shares no history with it.
+    /// uncommitted work counts; on the base branch itself that is the
+    /// uncommitted work. None without a base or a commit, or when the
+    /// branch shares no history with it.
     pub on_branch: Option<ChangeTotals>,
 }
 
@@ -117,12 +118,13 @@ pub async fn facts(cwd: &Path, recorded_base: Option<&str>) -> Result<Option<Git
     };
     let uncommitted = Some(totals(cwd, &against).await?);
     let on_branch = match (&base_branch, &head) {
-        (Some(base), Some(_)) if branch.as_deref() != Some(base.as_str()) => {
-            match fork_point(cwd, base).await? {
-                Some(fork) => Some(totals(cwd, &fork).await?),
-                None => None,
-            }
-        }
+        (Some(base), Some(head)) => match fork_point(cwd, base).await? {
+            // On the base branch itself, or a branch that has not left
+            // it, only the uncommitted work is on the branch.
+            Some(fork) if fork == *head => uncommitted,
+            Some(fork) => Some(totals(cwd, &fork).await?),
+            None => None,
+        },
         _ => None,
     };
     Ok(Some(GitFacts {

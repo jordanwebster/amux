@@ -76,7 +76,10 @@ async fn the_snapshot_carries_the_folders_git_facts_from_start_and_after_each_tu
         Some(wire::ChangeTotals::default()),
         "nothing changed yet"
     );
-    assert_eq!(at_start.on_branch, None, "on its base branch");
+    assert_eq!(
+        at_start.on_branch, at_start.uncommitted,
+        "on its base branch, only the uncommitted work"
+    );
 
     // The person, or the agent, changes the folder; the turn end reads it.
     std::fs::write(agent.work().join("notes.txt"), "one\ntwo\nthree\n").unwrap();
