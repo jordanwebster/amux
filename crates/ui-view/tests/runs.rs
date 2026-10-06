@@ -7,7 +7,9 @@ use std::collections::HashSet;
 
 use prost::Message;
 use ui_state::{Key, Msg, SessionState};
-use ui_view::{ChatOptions, Row, Run, RunCounts, ToolRows, chat_rows};
+use ui_view::{
+    ChatOptions, Row, Run, RunCounts, ToolRows, chat_rows, keep_open_runs, run_is_open, toggle_run,
+};
 use wire::{Item, Kind, Phase, SessionEvent, ToolClass, ToolState, session_event};
 
 fn event(of: session_event::Of) -> Msg {
@@ -101,6 +103,12 @@ fn item(order: u64, it: &It) -> Item {
 }
 
 fn session(items: &[It]) -> SessionState {
+    session_from(1, 200, items)
+}
+
+/// A session whose window holds `items` from order `first`, under `cap`:
+/// from past order one, older history exists below it.
+fn session_from(first: u64, cap: usize, items: &[It]) -> SessionState {
     let agent = wire::Agent {
         agent_id: b"agent".to_vec(),
         host_id: b"host".to_vec(),
@@ -110,13 +118,13 @@ fn session(items: &[It]) -> SessionState {
         incarnation: 1,
         ..wire::Agent::default()
     };
-    let mut state = SessionState::new(agent, 200);
+    let mut state = SessionState::new(agent, cap);
     state.update(Msg::Connection(ui_state::Connection::Live));
     state.update(event(
         session_event::Of::Snapshot(wire::Snapshot::default()),
     ));
     for (i, it) in items.iter().enumerate() {
-        state.update(event(session_event::Of::Item(item(i as u64 + 1, it))));
+        state.update(event(session_event::Of::Item(item(first + i as u64, it))));
     }
     state.update(event(session_event::Of::CaughtUp(wire::CaughtUp {
         revision: 0,
@@ -165,7 +173,7 @@ fn text_splits_a_turn_into_runs_stated_on_every_row() {
     for order in 2..=4 {
         let run = at(&state, order);
         assert_eq!(
-            (run.id.as_str(), run.last.as_str(), run.steps),
+            (run.first.as_str(), run.last.as_str(), run.steps),
             ("k2", "k4", 2)
         );
         assert!(!run.live);
@@ -182,7 +190,7 @@ fn text_splits_a_turn_into_runs_stated_on_every_row() {
     assert_eq!(at(&state, 2).recent, Some(1));
 
     let second = at(&state, 7);
-    assert_eq!((second.id.as_str(), second.steps), ("k6", 2));
+    assert_eq!((second.first.as_str(), second.steps), ("k6", 2));
     let counts = second.counts.unwrap();
     assert_eq!((counts.edits, counts.commands), (1, 1));
 
@@ -239,8 +247,8 @@ fn a_folded_run_keeps_its_newest_step_and_a_failure_left_unresolved() {
         shown(&state, ToolRows::Collapse { open: &none }),
         vec![1, 3, 4, 5, 6]
     );
-    // Opened by its id, every step shows.
-    let open: HashSet<Key> = ["k2".to_owned()].into();
+    // Opened by any step of it, every step shows.
+    let open: HashSet<Key> = ["k3".to_owned()].into();
     assert_eq!(
         shown(&state, ToolRows::Collapse { open: &open }),
         vec![1, 2, 3, 4, 5, 6]
@@ -285,4 +293,73 @@ fn a_failure_redone_in_the_turn_is_resolved_and_one_left_is_not() {
         It::Turn,
     ]);
     assert!(!at(&later, 2).unresolved_failure);
+}
+
+/// The held orders that draw with the runs `open` holds opened.
+fn shown_open(state: &SessionState, open: &HashSet<Key>) -> Vec<u64> {
+    shown(state, ToolRows::Collapse { open })
+}
+
+#[test]
+fn an_opened_run_stays_open_as_older_steps_page_in_below_it() {
+    let mut steps: Vec<It> = (0..10).map(|_| It::Read("a.rs")).collect();
+    steps.extend([It::Say("found it"), It::Turn]);
+    let mut state = session_from(50, 200, &steps);
+    assert!(at(&state, 55).open_below);
+    let mut open = HashSet::new();
+    toggle_run(&state, &"k55".to_owned(), &mut open);
+    assert_eq!(
+        open,
+        ["k59".to_owned()].into(),
+        "opening holds the newest step"
+    );
+    assert_eq!(shown_open(&state, &open), (50..=61).collect::<Vec<_>>());
+
+    // Older steps of the same run page in below: its oldest step moves,
+    // and the run stays open with every step drawn.
+    let epoch = state.epoch();
+    state.update(Msg::Page {
+        items: (40..50)
+            .rev()
+            .map(|order| item(order, &It::Read("b.rs")))
+            .collect(),
+        exhausted: false,
+        epoch,
+    });
+    let run = at(&state, 59);
+    assert_eq!((run.first.as_str(), run.steps), ("k40", 20));
+    assert!(run_is_open(&state, 45, &open));
+    assert_eq!(shown_open(&state, &open), (40..=61).collect::<Vec<_>>());
+
+    // Closing forgets the hold, whichever step it is closed from.
+    toggle_run(&state, &"k40".to_owned(), &mut open);
+    assert!(open.is_empty());
+    assert_eq!(shown_open(&state, &open), vec![59, 60, 61]);
+}
+
+#[test]
+fn an_opened_run_stays_open_while_the_window_trims_its_oldest_steps() {
+    const CAP: usize = 20;
+    let mut items = vec![It::Prompt("go")];
+    items.extend((0..10).map(|_| It::Read("a.rs")));
+    let mut state = session_from(1, CAP, &items);
+    let mut open = HashSet::new();
+    toggle_run(&state, &"k2".to_owned(), &mut open);
+    for order in 12..=80 {
+        state.update(event(session_event::Of::Item(item(
+            order,
+            &It::Read("a.rs"),
+        ))));
+        keep_open_runs(&state, &mut open);
+        assert!(run_is_open(&state, order, &open), "after step {order}");
+        let oldest = state.transcript().oldest_held().unwrap();
+        assert_eq!(
+            shown_open(&state, &open),
+            (oldest..=order).collect::<Vec<_>>(),
+            "every held step draws after step {order}"
+        );
+    }
+    let oldest = state.transcript().oldest_held().unwrap();
+    assert!(oldest > 60, "the window trimmed the run's oldest steps");
+    assert_eq!(open, ["k80".to_owned()].into(), "held by its newest step");
 }

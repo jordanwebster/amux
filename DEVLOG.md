@@ -1,3 +1,18 @@
+2026-10-06 — **An opened run stays open while the window's edges move.**
+A run was named by its oldest held step, and clients kept open runs by that
+name. Both edges of the window move a run's oldest step: a page of older
+history merges more steps in below, and a window following the newest row
+trims its oldest steps. Either gave the run a new name, so a run longer than a
+page folded shut as the reader scrolled up into it, and one longer than the
+window's cap folded again on every new step. A client now holds an open run by
+any one of its steps: the shared views count a run open when the held set
+contains a member (a lookup per held key), open it by holding its newest step
+and close it by forgetting every member held, and `keep_open_runs` moves each
+hold to the run's newest step as it grows, which the terminal calls before
+each frame. The row's run field is now `first`, saying only where an opened
+run draws its header. The phone's open list follows the same rule; its
+upkeep comes with the phone's move onto runs.
+
 2026-10-06 — **A terminal chat chooses how its tool steps draw.**
 The shared views offered three ways to draw tool steps (fold each run, show
 every step, hide them) but the terminal only ever folded. `<leader> t` now

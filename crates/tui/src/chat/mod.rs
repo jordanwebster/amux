@@ -1120,8 +1120,8 @@ impl ChatView {
         let Some(order) = transcript.get(key).map(|held| held.item.order) else {
             return;
         };
-        if let Some(run) = transcript.run_at(order) {
-            self.open_runs.insert(run.oldest_key);
+        if !ui_view::run_is_open(state, order, &self.open_runs) {
+            ui_view::toggle_run(state, key, &mut self.open_runs);
         }
         self.expanded.insert(key.clone());
         self.anchor = Anchor::Top {
@@ -1454,11 +1454,7 @@ impl ChatView {
         }
         match hit {
             FeedHit::Link(url) => return vec![ChatEffect::OpenUrl(url)],
-            FeedHit::Run(id) => {
-                if !self.open_runs.remove(&id) {
-                    self.open_runs.insert(id);
-                }
-            }
+            FeedHit::Run(member) => ui_view::toggle_run(state, &member, &mut self.open_runs),
             FeedHit::Step(key) => {
                 // A run opens from any member and closes as a whole.
                 let transcript = state.transcript();
@@ -2186,6 +2182,9 @@ impl ChatView {
             ));
             self.laid = Laid::default();
         } else {
+            // A run grown since the last frame is held by its newest step
+            // again, so trimming its oldest steps never folds it.
+            ui_view::keep_open_runs(state, &mut self.open_runs);
             let mut laid = self.frame(theme).layout(state);
             // A step revealed within the last screenful cannot reach the
             // top; the feed simply shows the newest row.

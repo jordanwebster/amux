@@ -4145,8 +4145,10 @@ public struct RowOptions: Codable, Hashable, Sendable {
 
 /// A row's place in its run.
 public struct Run: Codable, Hashable, Sendable {
-    /// The run's oldest held step: what a client holds to keep it open.
-    public var id: String
+    /// The run's oldest held step, where an opened run draws its header.
+    /// It moves as the window's low edge does, so it names no run: hold
+    /// an open run by a member (see [`run_is_open`]).
+    public var first: String
     /// Its newest step, where a folded run draws its one line.
     public var last: String
     public var steps: UInt32
@@ -4164,8 +4166,8 @@ public struct Run: Codable, Hashable, Sendable {
     /// the newest); absent for the rest.
     public var recent: UInt32?
 
-    public init(id: String, last: String, steps: UInt32, live: Bool, openBelow: Bool, unresolvedFailure: Bool, counts: RunCounts?, recent: UInt32?) {
-        self.id = id
+    public init(first: String, last: String, steps: UInt32, live: Bool, openBelow: Bool, unresolvedFailure: Bool, counts: RunCounts?, recent: UInt32?) {
+        self.first = first
         self.last = last
         self.steps = steps
         self.live = live
@@ -4176,7 +4178,7 @@ public struct Run: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id
+        case first
         case last
         case steps
         case live
@@ -4764,7 +4766,8 @@ public struct TasksView: Codable, Hashable, Sendable {
 public enum ToolRowsOption: Codable, Hashable, Sendable {
     case showAll
     case hide
-    /// Each run folds to its newest step unless its id is here.
+    /// Each run folds to its newest step unless one of its steps is here:
+    /// hold its newest, and re-hold the newest as the run grows.
     case collapse(open: [String])
 
     private enum Tag: String, CodingKey {

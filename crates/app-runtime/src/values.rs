@@ -115,7 +115,8 @@ pub enum ToolRowsOption {
     #[default]
     ShowAll,
     Hide,
-    /// Each run folds to its newest step unless its id is here.
+    /// Each run folds to its newest step unless one of its steps is here:
+    /// hold its newest, and re-hold the newest as the run grows.
     Collapse {
         open: Vec<Key>,
     },

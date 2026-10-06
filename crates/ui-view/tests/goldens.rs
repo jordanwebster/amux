@@ -119,7 +119,7 @@ fn describe_row(row: &ui_view::Row) -> String {
         let _ = write!(
             line,
             " run[{}..{} x{}{}{}{}{}{}]",
-            run.id,
+            run.first,
             run.last,
             run.steps,
             run.recent

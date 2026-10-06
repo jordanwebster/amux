@@ -128,6 +128,14 @@ impl Transcript {
         self.runs.run_at(order, self)
     }
 
+    /// The held orders of the run the item at `order` sits in, from its
+    /// oldest step to its newest, without reading the rows.
+    pub fn run_span(&self, order: u64) -> Option<RangeInclusive<u64>> {
+        self.runs
+            .containing(order)
+            .map(|(&start, segment)| start..=segment.end)
+    }
+
     /// Whether the turn the item at `order` belongs to has ended: the
     /// first prompt, steer or turn end held after it is a turn end.
     pub fn turn_ended_after(&self, order: u64) -> bool {

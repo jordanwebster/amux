@@ -237,12 +237,12 @@ fn row_ids_never_move_and_rows_by_keys_equal_rows_by_range() {
                 let first = rows
                     .iter()
                     .find_map(|row| row.run.as_ref())
-                    .map(|run| &run.id);
+                    .map(|run| &run.first);
                 for row in &rows {
                     if let Some(run) = &row.run
                         && run.open_below
                     {
-                        assert_eq!(Some(&run.id), first);
+                        assert_eq!(Some(&run.first), first);
                         assert!(transcript.has_older());
                     }
                 }
@@ -252,7 +252,7 @@ fn row_ids_never_move_and_rows_by_keys_equal_rows_by_range() {
 }
 
 #[test]
-fn a_folded_run_draws_at_its_newest_step_and_opens_by_its_id() {
+fn a_folded_run_draws_at_its_newest_step_and_opens_by_any_step() {
     for kind in KINDS {
         let mut state = SessionState::new(agent(kind), CAP);
         state.update(snapshot(kind, Phase::Working, vec![], vec![]));
@@ -276,11 +276,11 @@ fn a_folded_run_draws_at_its_newest_step_and_opens_by_its_id() {
         let last = rows.iter().find(|row| row.order == 8).unwrap();
         let run = last.run.as_ref().unwrap();
         assert!(run.is_last() && !last.collapsed);
-        assert_eq!((run.id.as_str(), run.steps), ("k4", 5));
+        assert_eq!((run.first.as_str(), run.steps), ("k4", 5));
         assert_eq!(run.counts.as_ref().unwrap().reads, 5);
         assert!(rows[3..7].iter().all(|row| row.collapsed));
-        // Opened by its id.
-        let open: HashSet<Key> = ["k4".to_owned()].into();
+        // Opened by one of its steps.
+        let open: HashSet<Key> = ["k6".to_owned()].into();
         let opts = ChatOptions {
             tools: ToolRows::Collapse { open: &open },
         };

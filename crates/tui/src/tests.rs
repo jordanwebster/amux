@@ -3000,6 +3000,49 @@ fn a_run_folds_to_its_counts_and_opens_to_its_steps() {
     assert!(screen.contains("▸ 3 reads"), "{screen}");
 }
 
+/// An opened run longer than the window stays open as the reader scrolls
+/// into it and its older steps page in below.
+#[test]
+fn an_opened_run_stays_open_as_its_older_steps_page_in() {
+    let mut items: Vec<Item> = (41..=60)
+        .map(|order| item(order, Some(&format!("src/file{order}.rs"))))
+        .collect();
+    items.extend(replies(61, 61));
+    let mut state = chat(items);
+    assert!(state.transcript().has_older());
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (screen, _) = feed(&mut view, &state);
+    click(&mut view, &state, &screen, "20+ reads");
+    let (screen, _) = feed(&mut view, &state);
+    assert!(screen.contains("src/file59.rs"), "{screen}");
+
+    let epoch = state.epoch();
+    state.update(Msg::Page {
+        items: (21..=40)
+            .map(|order| item(order, Some(&format!("src/file{order}.rs"))))
+            .collect(),
+        exhausted: false,
+        epoch,
+    });
+    let (screen, _) = feed(&mut view, &state);
+    assert!(!screen.contains("▸"), "the run folded:\n{screen}");
+    assert!(screen.contains("src/file59.rs"), "{screen}");
+    // Scrolled up, the paged steps draw on their own lines under the
+    // run's line.
+    let mut screen = screen;
+    for _ in 0..10 {
+        if screen.contains("40+ reads") {
+            break;
+        }
+        view.key(&state, key(KeyCode::PageUp), theme());
+        screen = feed(&mut view, &state).0;
+    }
+    assert!(screen.contains("▾ 40+ reads"), "{screen}");
+    for order in 21..=25 {
+        assert!(screen.contains(&format!("src/file{order}.rs")), "{screen}");
+    }
+}
+
 /// A run the agent is still at shows its newest steps, with a line for the
 /// ones above them, until its text follows.
 #[test]

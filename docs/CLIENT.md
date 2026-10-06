@@ -340,15 +340,23 @@ row. The row kinds and what each draws are in [CHAT_VOCABULARY.md](CHAT_VOCABULA
 the agent or the person put in the transcript. Thinking, retry notices, a subagent's own steps and items that draw
 nothing pass through a run; an ask, the agent's text, a prompt or a turn's end ends it. The session's run index
 keeps membership current on every message (and marks every member changed when its run moves), and `Run` on each
-member row says it: the run's `id` (its oldest held step, what a client holds to keep it open), its `last` step,
+member row says it: the run's `first` held step (where an opened run draws its header), its `last` step,
 `steps`, `live` (nothing has ended it yet), `open_below`, `recent` (for one of its newest few steps, how many
 follow), `unresolved_failure` (this step failed, its turn has ended and nothing later in the turn with the same
 subject succeeded) and, on the newest step's row only, `counts` of what its steps did. `ChatOptions { tools }`
 chooses `ShowAll`, `Hide` (every step hidden but an unresolved failure) or `Collapse { open }`: a run folds to its
 newest step, where a client draws its one line, keeping an unresolved failure; while live it shows its newest
-`LIVE_STEPS` steps; a run whose id is in `open` shows every step. When a page merges older steps into a run, the
+`LIVE_STEPS` steps; a run `open` holds any step of shows every step. When a page merges older steps into a run, the
 newest step the reader is looking at keeps its id and the run grows its count; when a live step extends a run, the
 newest step moves to it, where nothing is anchored.
+
+A run's ends move with the window, so neither names it: a page merges older steps in below, and a window following
+the newest row trims its oldest steps. A client therefore holds an open run by one of its steps, and a run is open
+when the client's set holds any member (`run_is_open`, a lookup per held key, never a walk of the run).
+`toggle_run` opens a run by holding its newest step, which no page moves, and closes it by forgetting every member the
+set holds; `keep_open_runs` moves each hold to its run's current newest step, so a client that calls it as rows
+arrive keeps a growing run open while the window trims it. What the client holds survives both merges and trims, and
+a hold whose step left the window opens the run again when it pages back in.
 
 Three guarantees follow, and any list technique, including the inverted list chat apps use, can rely on them:
 row ids never move; the window changes only at its two edges; appends touch only items still open.

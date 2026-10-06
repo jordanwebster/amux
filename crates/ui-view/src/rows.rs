@@ -49,7 +49,8 @@ pub enum ToolRows<'a> {
     Hide,
     /// Each run folds to its newest step, where its one line goes, keeping
     /// a failure its turn left unresolved; under way it shows its newest
-    /// few steps. A run whose id is in `open` shows every step.
+    /// few steps. A run `open` holds a step of shows every step (see
+    /// [`crate::run_is_open`]).
     Collapse {
         open: &'a HashSet<Key>,
     },
@@ -439,7 +440,7 @@ fn row(state: &SessionState, held: &Held, opts: &ChatOptions) -> Row {
                 } else {
                     run.is_last() || kept
                 };
-                !shown && !open.contains(&run.id)
+                !shown && !crate::run::run_is_open(state, item.order, open)
             }),
         };
     let asked = state

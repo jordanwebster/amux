@@ -56,7 +56,7 @@ impl ToolSteps {
 pub enum Toggle {
     /// The row itself.
     Row,
-    /// A run, by its id.
+    /// A run, by one of its steps.
     Run(Key),
     /// A step's detail.
     Step(Key),
@@ -128,8 +128,8 @@ pub struct Frame<'a> {
     pub height: usize,
     pub theme: Theme,
     pub leader: char,
-    /// Runs the reader opened, by their ids: they show every step
-    /// whatever `tools` says.
+    /// Runs the reader opened, each held by one of its steps (see
+    /// `ui_view::run_is_open`): they show every step whatever `tools` says.
     pub open_runs: &'a HashSet<Key>,
     pub tools: ToolSteps,
     /// The step an ask in the composer's box points at: the box shows it,
@@ -251,11 +251,11 @@ impl Frame<'_> {
                     run.is_last() || (run.recent == Some(1) && self.asking == Some(&run.last));
                 let running =
                     matches!(&held.class, ItemClass::Tool(tool) if tool.in_flight) && run.is_last();
-                let opened = self.open_runs.contains(&run.id);
+                let opened = ui_view::run_is_open(state, order, self.open_runs);
                 if opened || self.tools == ToolSteps::ShowAll {
                     // Opened, a run lists every step on its own line, under
                     // the line that folds it again.
-                    let header = (opened && row.id == run.id).then(|| Header {
+                    let header = (opened && row.id == run.first).then(|| Header {
                         counts: Some(self.counts(state, &run.last)),
                         run: run.clone(),
                         earlier: 0,
@@ -295,7 +295,7 @@ impl Frame<'_> {
                     let toggle = Toggle::Step(row.id.clone());
                     (placement, row, toggle)
                 } else if run.is_last() {
-                    let toggle = Toggle::Run(run.id.clone());
+                    let toggle = Toggle::Run(run.last.clone());
                     (Placement::Folded { run }, row, toggle)
                 } else if run.unresolved_failure {
                     let toggle = Toggle::Step(row.id.clone());
@@ -367,10 +367,9 @@ impl Frame<'_> {
             if *span.start() >= top {
                 break;
             }
-            let open = transcript
-                .at(*span.start())
-                .is_some_and(|held| self.open_runs.contains(&held.item.key));
-            if open || self.tools == ToolSteps::ShowAll {
+            if ui_view::run_is_open(state, *span.start(), self.open_runs)
+                || self.tools == ToolSteps::ShowAll
+            {
                 continue;
             }
             let end = (*span.end()).min(top.saturating_sub(1));

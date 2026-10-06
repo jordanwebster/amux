@@ -40,7 +40,7 @@ const DETAIL_LINES: usize = 12;
 /// What a click on a feed line does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FeedHit {
-    /// Fold or unfold the run with this id.
+    /// Fold or unfold the run this step sits in.
     Run(Key),
     /// Open or close a step's detail.
     Step(Key),
@@ -929,7 +929,7 @@ fn folded(drawn: &mut Drawn, run: &Run, width: usize, theme: Theme) {
         theme.faint(),
         width,
     );
-    drawn.hit_line(line, FeedHit::Run(run.id.clone()));
+    drawn.hit_line(line, FeedHit::Run(run.last.clone()));
 }
 
 /// A failed step a folded run keeps in view.
@@ -984,7 +984,7 @@ fn header_line(drawn: &mut Drawn, header: &Header, width: usize, theme: Theme) {
             width,
         );
     }
-    drawn.hit_line(line, FeedHit::Run(header.run.id.clone()));
+    drawn.hit_line(line, FeedHit::Run(header.run.last.clone()));
 }
 
 /// A step's verb, subject and meta, in words.

@@ -9,6 +9,15 @@
 //! row, so any client's list gets the fold with the rows. A client chooses
 //! between showing every step, hiding them and folding them, and holds
 //! which runs are open.
+//!
+//! A run's ends move with the window: a page of older history grows it
+//! below, and a window following the newest row trims its oldest steps. So
+//! a client holds an open run by one of its steps, not by either end: a run
+//! is open when the open set holds any of its members. Opening holds its
+//! newest step, which no page moves; [`keep_open_runs`] moves each hold to
+//! its run's newest step as the run grows, so a trim never takes it.
+
+use std::collections::HashSet;
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -22,8 +31,10 @@ pub const LIVE_STEPS: u32 = 3;
 /// A row's place in its run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Run {
-    /// The run's oldest held step: what a client holds to keep it open.
-    pub id: Key,
+    /// The run's oldest held step, where an opened run draws its header.
+    /// It moves as the window's low edge does, so it names no run: hold
+    /// an open run by a member (see [`run_is_open`]).
+    pub first: Key,
     /// Its newest step, where a folded run draws its one line.
     pub last: Key,
     pub steps: u32,
@@ -83,7 +94,7 @@ pub(crate) fn run_of(
         .flatten();
     let counts = (run.newest == held.item.order).then(|| counts(state, &run));
     Some(Run {
-        id: run.oldest_key.clone(),
+        first: run.oldest_key.clone(),
         last: run.newest_key.clone(),
         steps: run.steps,
         live: !run.closed,
@@ -92,6 +103,69 @@ pub(crate) fn run_of(
         unresolved_failure: step && (failed || failed_kind(kind)) && unresolved(state, held),
         counts,
     })
+}
+
+/// Whether the run the item at `order` sits in is open: `open` holds one
+/// of its steps. Costs a lookup per held key, never a walk of the run.
+pub fn run_is_open(state: &SessionState, order: u64, open: &HashSet<Key>) -> bool {
+    let transcript = state.transcript();
+    let Some(span) = transcript.run_span(order) else {
+        return false;
+    };
+    open.iter().any(|key| {
+        transcript
+            .get(key)
+            .is_some_and(|held| span.contains(&held.item.order))
+    })
+}
+
+/// Opens the run `member` sits in, holding its newest step, or closes it,
+/// forgetting every step of it the set holds.
+pub fn toggle_run(state: &SessionState, member: &Key, open: &mut HashSet<Key>) {
+    let transcript = state.transcript();
+    let Some(span) = transcript
+        .get(member)
+        .and_then(|held| transcript.run_span(held.item.order))
+    else {
+        return;
+    };
+    let held: Vec<Key> = open
+        .iter()
+        .filter(|key| {
+            transcript
+                .get(key)
+                .is_some_and(|held| span.contains(&held.item.order))
+        })
+        .cloned()
+        .collect();
+    if held.is_empty() {
+        if let Some(newest) = transcript.at(*span.end()) {
+            open.insert(newest.item.key.clone());
+        }
+    } else {
+        for key in held {
+            open.remove(&key);
+        }
+    }
+}
+
+/// Moves each hold on an open run to the run's newest step, so a window
+/// that trims the run's oldest steps while it grows never drops the hold.
+/// A key no longer held stays: its run opens again when it pages back in.
+pub fn keep_open_runs(state: &SessionState, open: &mut HashSet<Key>) {
+    let transcript = state.transcript();
+    let moved: Vec<(Key, Key)> = open
+        .iter()
+        .filter_map(|key| {
+            let span = transcript.run_span(transcript.get(key)?.item.order)?;
+            let newest = &transcript.at(*span.end())?.item.key;
+            (newest != key).then(|| (key.clone(), newest.clone()))
+        })
+        .collect();
+    for (old, new) in moved {
+        open.remove(&old);
+        open.insert(new);
+    }
 }
 
 /// How many steps follow the one at `order` in `run`, when it is among the

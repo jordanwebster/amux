@@ -42,7 +42,7 @@ pub use rows::{
     Granted, OUTPUT_HEAD_LINES, PatchHead, PatchLine, PermissionGrant, PlanVerdict, Resolution,
     Row, RowKind, ToolRows, ToolStateView, chat_rows, chat_rows_for, patch_head,
 };
-pub use run::{LIVE_STEPS, Run, RunCounts};
+pub use run::{LIVE_STEPS, Run, RunCounts, keep_open_runs, run_is_open, toggle_run};
 pub use segments::{AttachmentView, Segment, segments};
 pub use settings::{
     CommandView, EffortChoice, ModeChoice, ModelChoice, PermissionChoice, SettingChange,
