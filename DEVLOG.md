@@ -1,3 +1,25 @@
+2026-10-06 — **The phone tells the three plan stories.**
+`decide-plan-claude-sdk`, `decide-plan-claude-pty` and `decide-plan-codex`
+now run on the phone as well as in the terminal, against
+journeys/topologies/phone-flows.json, which serves the desk's scripted
+flows the terminal's stories use. On the phone the plan reads whole in the
+chat while its decision stands where the composer was; Send back… takes the
+note, and the revised plan arrives under the plan sent back. Codex is put
+in plan mode from the settings card the model chip opens. The desk and the
+providers are checked as in the terminal: the prompt once, the plan file
+as no step, Claude sent back with the note then approved, and Codex
+started in plan mode on the prompt and the note and in default mode on the
+implement turn, each with a wrong expectation shown to fail.
+
+Codex's settings card is taller than its cap, so its mode is the last thing
+on it and has to be scrolled to. The card now always holds its sections in
+a scroll view measured from inside, where nothing squeezes them, so a card
+offered less room scrolls rather than pushing its last rows past its edge.
+The door's scroll can name an element, and moves the list that element is
+drawn in, as a swipe on the card would. Re-recorded deliberately:
+`composer-settings-claude-pty`, light and dark (the same picture, moved by a
+few pixels).
+
 2026-10-06 — **The new-agent runtime test takes each fleet batch it is woken for.**
 The runtime wakes the host once per batch of fleet changes and not again
 until the host takes it. The test that starts an agent from the host's

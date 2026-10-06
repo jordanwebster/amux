@@ -1,0 +1,73 @@
+shell |  | agents | 0,62,402,778
+home |  | signed-out | 0,62,402,778
+home.title | Agents, switch account | Agents | 60,65,104,46
+home.subtitle |  | 1 need you · 9 agents | 60,105,151,16
+home.newAgent | New Agent |  | 345,74,44,44
+home.row.<planner-pty> | planner-pty, Needs you, Has a plan for you to decide, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,159,366,91
+home.row.<planner-pty>.age.volatile | <volatile>
+home.row.<planner-pty>.second |  |  | 31,197,187,18
+home.row.<planner-pty>.detail.volatile | <volatile>
+home.row.<planner-pty> | planner-pty, Working, Running, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | working | 18,291,366,91
+home.row.<planner-pty>.age.volatile | <volatile>
+home.row.<planner-pty>.second |  |  | 31,329,58,18
+home.row.<planner-pty>.detail.volatile | <volatile>
+home.row.<expired> | expired, Idle, Tidied., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,291,366,91
+home.row.<expired>.age.volatile | <volatile>
+home.row.<expired>.second |  |  | 31,329,47,18
+home.row.<expired>.detail.volatile | <volatile>
+home.row.<limited> | limited, Idle, Usage limit reached · resets 9:53 PM, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,383,366,91
+home.row.<limited>.age.volatile | <volatile>
+home.row.<limited>.second |  |  | 31,421,244,18
+home.row.<limited>.detail.volatile | <volatile>
+home.row.<worker> | worker, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,475,366,70
+home.row.<worker>.age.volatile | <volatile>
+home.row.<worker>.detail.volatile | <volatile>
+home.row.<linker> | linker, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,545,366,70
+home.row.<linker>.age.volatile | <volatile>
+home.row.<linker>.detail.volatile | <volatile>
+home.row.<filer> | filer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,616,366,70
+home.row.<filer>.age.volatile | <volatile>
+home.row.<filer>.detail.volatile | <volatile>
+home.row.<asker> | asker, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,686,366,70
+home.row.<asker>.age.volatile | <volatile>
+home.row.<asker>.detail.volatile | <volatile>
+home.row.<planner-codex> | planner-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,757,366,70
+home.row.<planner-codex>.age.volatile | <volatile>
+home.row.<planner-codex>.detail.volatile | <volatile>
+home.row.<planner> | planner, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,827,366,70
+home.row.<planner>.age.volatile | <volatile>
+home.row.<planner>.detail.volatile | <volatile>
+chat |  | planner-pty | 0,62,402,778
+chat.row.boundary | Started |  | 18,132,366,34
+chat.row.prompt | Move the journal. |  | 18,166,366,40
+chat.row.plan | Plan sent back, Check the copy before switching. | folded | 18,205,366,64
+chat.row.plan | Plan proposed, Move the journal |  | 18,271,366,185
+chat.prose.render |  | rendered | 60,310,312,134
+chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
+chat.back | Back |  | 16,68,42,46
+chat.title | planner-pty | planner-pty | 51,72,156,38
+chat.more | More |  | 344,69,44,44
+ask | Plan ready | open | 12,664,378,166
+ask.more | More |  | 338,672,44,44
+ask.plan.auto |  | off | 28,720,346,38
+ask.approve | Approve |  | 28,770,169,44
+ask.choice.2 | Send back… |  | 205,770,169,44
+hosts |  | 1 reachable | 0,62,402,778
+hosts.title |  | Hosts | 18,72,69,32
+hosts.subtitle |  | 1 reachable | 18,105,79,16
+hosts.row.<desk> | desk, macOS, reachable on this network | on-this-network | 18,159,366,64
+hosts.fact.identity | <volatile>
+hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,310,366,46
+hosts.caption.devices |  |  | 18,363,320,18
+ | Back |  | 16,68,42,46
+ | planner-pty, /t/a/n/d/work · desk |  | 51,72,156,38
+ | More |  | 344,69,44,44
+ | Plan ready |  | 62,684,79,20
+ | More |  | 338,672,44,44
+ | Accept edits without asking, Until the plan is done | 0 | 28,720,346,38
+ | Approve |  | 28,770,169,44
+ | Send back… |  | 205,770,169,44
+ | Started |  | 18,132,366,34
+ | Move the journal. |  | 18,166,366,40
+ | Plan sent back, “Check the copy before switching.” |  | 18,207,366,64
+ | Plan proposed, Move the journal, Move the journal, 1., Copy the journal to the new store., 2., Check the copy against the original., 3., Point the daemon at it., 4., Keep the old journal for a week. |  | 18,271,366,185

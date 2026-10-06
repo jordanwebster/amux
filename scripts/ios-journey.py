@@ -246,6 +246,220 @@ def conversation_decision(journey: PhoneJourney, agent: str, provider_logs: bool
     return assertions
 
 
+PLAN_PROMPT = "Move the journal."
+PLAN_NOTE = "Check the copy before switching."
+PLAN_DONE = "Moving the journal as planned."
+PLAN_FILE = ("/.claude/plans/", "move-the-journal.md")
+
+
+def control_responses(journey: PhoneJourney, agent: str, label: str) -> list[dict]:
+    """What headless Claude was answered, in order."""
+    lines = [json.loads(line) for line in journey.provider_input(agent, label)]
+    return [line["response"]["response"] for line in lines if line.get("type") == "control_response"]
+
+
+def sent_back_then_approved(decisions: list[dict], note: str) -> None:
+    """The plan went back once with `note`, then was approved once."""
+    behaviors = [decision.get("behavior") for decision in decisions]
+    if behaviors != ["deny", "allow"] or not decisions[0].get("message", "").endswith(note):
+        raise RuntimeError(f"Claude was answered {decisions!r}")
+
+
+def plans_only(chat: dict) -> None:
+    """The desk holds the two plans as its only tool items: the plan file
+    Claude wrote before each is no step of the chat."""
+    calls = [item for item in chat["items"] if item["key"].startswith("toolu_")]
+    if len(calls) != 2 or not all(item["text"].startswith("# Move the journal") for item in calls):
+        raise RuntimeError(f"the desk holds {[item['text'][:40] for item in calls]!r} as tool items")
+
+
+def no_plan_file(drawn: dict) -> dict:
+    """No row on the phone is a step writing the plan file."""
+    shown = [
+        f"{name}: {element.get('label')}" for name, element in drawn.items()
+        if any(part in (element.get("label") or "") for part in PLAN_FILE)
+    ]
+    if shown:
+        raise RuntimeError(f"the plan file shows as a step: {shown!r}")
+    return drawn
+
+
+def plan_card(drawn: dict) -> bool:
+    return "ask" in drawn and "ask.approve" in drawn
+
+
+def send_back(journey: PhoneJourney, card: dict, note: str) -> None:
+    """Send back… opens the note the plan goes back with; the send-back
+    under it is offered only once something is written."""
+    journey.tap(choice(card, "Send back…"))
+    journey.wait_for("ask.note")
+    journey.type("ask.note", note)
+    drawn = journey.wait(
+        lambda drawn: any(
+            name.startswith("ask.choice.") and element.get("label") == "Send back" and element.get("enabled", True)
+            for name, element in drawn.items()
+        ),
+        "a note ready to send back",
+    )
+    journey.tap(choice(drawn, "Send back"))
+
+
+def decide_plan(journey: PhoneJourney, agent: str, headless: bool) -> list[str]:
+    journey.launch()
+    pair_by_code(journey, "desk")
+    agent_id = open_agent(journey, agent)
+    send(journey, PLAN_PROMPT)
+    card = no_plan_file(journey.wait(
+        lambda drawn: plan_card(drawn) and labelled(drawn, "Delete the old journal."), "the plan and its decision"
+    ))
+    journey.screen("plan")
+    send_back(journey, card, PLAN_NOTE)
+    card = no_plan_file(journey.wait(
+        lambda drawn: plan_card(drawn) and labelled(drawn, "Plan sent back") and labelled(drawn, PLAN_NOTE)
+        and labelled(drawn, "Keep the old journal for a week."),
+        "the revised plan",
+    ))
+    journey.screen("revised")
+    journey.tap("ask.approve")
+    journey.wait(lambda drawn: "ask" not in drawn and labelled(drawn, PLAN_DONE), "the approved plan's work")
+    settled = journey.wait_chat(
+        "desk",
+        agent,
+        lambda chat: chat["phase"] == "IDLE" and any(PLAN_DONE in item["text"] for item in chat["items"]),
+        "plan-settled",
+    )
+    reflected_once(settled, PLAN_PROMPT)
+    plans_only(settled)
+    assertions = [
+        f"{PLAN_PROMPT!r} reflected once in the desk's chat",
+        "the plan read whole in the chat with its decision where the composer was",
+        "sent back with a note, the revised plan arrived under the plan sent back; approved, the work ran",
+        "the plan file Claude wrote before each plan showed as no step, on the phone or on the desk",
+        negative_control(plans_only, {"items": [*settled["items"], {"key": "toolu_write", "text": ""}]}),
+    ]
+    if headless:
+        decisions = control_responses(journey, agent, "plan-decisions")
+        sent_back_then_approved(decisions, PLAN_NOTE)
+        assertions.append("Claude received the plan sent back with the note, then one approval")
+        assertions.append(negative_control(sent_back_then_approved, decisions, "a note never written"))
+    no_plan_file(reopen(journey, agent_id, lambda drawn: labelled(drawn, PLAN_DONE) and "chat.row.turn-end" in drawn))
+    journey.screen("approved", volatile=("chat.row.turn-end",))
+    return assertions
+
+
+ROTATE_PROMPT = "Rotate the logs."
+ROTATE_NOTE = "Keep a month of logs, compressed."
+IMPLEMENT = "Implement the plan."
+
+
+def codex_turns(journey: PhoneJourney, agent: str, label: str) -> list[tuple[str, str]]:
+    """Each turn amux started on Codex: the collaboration mode it ran in
+    and its words. A turn naming no mode keeps the one before, as Codex
+    does."""
+    lines = [json.loads(line) for line in journey.provider_input(agent, label)]
+    turns = []
+    mode = "default"
+    for line in lines:
+        if line.get("method") != "turn/start":
+            continue
+        params = line["params"]
+        mode = (params.get("collaborationMode") or {}).get("mode", mode)
+        text = "".join(part.get("text", "") for part in params.get("input", []))
+        turns.append((mode, text))
+    return turns
+
+
+def codex_plan_turns(turns: list[tuple[str, str]], expected: list[tuple[str, str]]) -> None:
+    if turns != expected:
+        raise RuntimeError(f"Codex was started on {turns!r}")
+
+
+def plan_mode(journey: PhoneJourney) -> None:
+    """Plan picked as Codex's mode on the settings card the model chip
+    opens; the card closed once the agent reports it."""
+    journey.tap("chat.model")
+    journey.wait_for("chat.settings.workmode.plan")
+    # Codex's card holds more than fits above the chat, and the mode is the
+    # last thing on it; it is swiped once the card has finished rising.
+    journey.app({"kind": "settle"})
+    journey.app({"kind": "scroll", "direction": "bottom", "identifier": "chat.settings.workmode.plan"})
+    journey.app({"kind": "settle"})
+    journey.tap("chat.settings.workmode.plan")
+    journey.wait(
+        lambda drawn: drawn.get("chat.settings.workmode.plan", {}).get("value") == "current", "plan mode current"
+    )
+    journey.tap("chat.settings.close")
+    journey.wait(lambda drawn: "chat.settings" not in drawn, "the settings card closed")
+
+
+def decide_plan_codex(journey: PhoneJourney) -> list[str]:
+    agent = "planner-codex"
+    journey.launch()
+    pair_by_code(journey, "desk")
+    agent_id = open_agent(journey, agent)
+    plan_mode(journey)
+    send(journey, PLAN_PROMPT)
+    # The plan is in the chat while the turn still runs, with no decision;
+    # opened again, it is read with the keyboard down.
+    def streaming(drawn: dict) -> bool:
+        return labelled(drawn, "Delete the old journal.") and "ask" not in drawn and "chat.activity" in drawn
+
+    journey.wait(streaming, "the plan streaming")
+    reopen(journey, agent_id, streaming)
+    # The activity bar slides while the turn runs; under reduced motion it
+    # stands still, so the screen can be photographed. Its elapsed time is
+    # masked.
+    journey.app({"kind": "assist", "motion": True, "transparency": True})
+    journey.screen("plan-streaming", volatile=("chat.activity",))
+    journey.app({"kind": "assist", "motion": False, "transparency": True})
+    journey.request({"OpenGate": {"name": "plan-streamed"}})
+    journey.wait(lambda drawn: plan_card(drawn) and labelled(drawn, "Delete the old journal."), "the plan's decision")
+    journey.wait_chat("desk", agent, lambda chat: chat["phase"] == "NEEDS_YOU", "plan-needs-you")
+    journey.screen("plan-ready")
+    journey.tap("ask.approve")
+    journey.wait(
+        lambda drawn: "ask" not in drawn and labelled(drawn, PLAN_DONE) and "chat.row.turn-end" in drawn,
+        "the implemented plan's work",
+    )
+    # A second plan, sent back with a note: Codex plans again on it.
+    plan_mode(journey)
+    send(journey, ROTATE_PROMPT)
+    card = journey.wait(
+        lambda drawn: plan_card(drawn) and labelled(drawn, "Delete logs older than a week."), "the second plan"
+    )
+    send_back(journey, card, ROTATE_NOTE)
+    journey.wait(
+        lambda drawn: plan_card(drawn) and labelled(drawn, "Delete logs older than a month."), "the revised plan"
+    )
+    journey.wait_chat(
+        "desk", agent, lambda chat: chat["phase"] == "NEEDS_YOU" and len(prompts(chat, ROTATE_NOTE)) == 1, "revised"
+    )
+    # Opened again, so it is read at rest: the decision stands where the
+    # composer was.
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat" not in drawn and f"home.row.{agent_id}" in drawn, "the fleet")
+    journey.tap(f"home.row.{agent_id}")
+    journey.wait(lambda drawn: plan_card(drawn) and labelled(drawn, "Delete logs older than a month."), "the chat again")
+    journey.screen("sent-back")
+    expected = [
+        ("plan", PLAN_PROMPT),
+        ("default", IMPLEMENT),
+        ("plan", ROTATE_PROMPT),
+        ("plan", ROTATE_NOTE),
+    ]
+    turns = codex_turns(journey, agent, "plan-turns")
+    codex_plan_turns(turns, expected)
+    control = negative_control(codex_plan_turns, turns, [*expected[:3], ("default", ROTATE_NOTE)])
+    return [
+        "plan picked on the settings card, the plan showed in the chat while Codex's turn still ran",
+        "when the turn ended the plan's decision stood where the composer was and the desk said the agent needs you",
+        f"Approve started a turn out of plan mode with {IMPLEMENT!r}, and its work ran",
+        "a second plan, sent back with a note, came back revised; the note went as the next prompt, still in plan mode",
+        "Codex was started on the prompt and the note in plan mode and on the implement turn in default mode",
+        control,
+    ]
+
+
 LIVE, EXITED = 1, 2
 HELLO = "Say hello."
 BACK = "Welcome back."
@@ -1197,6 +1411,9 @@ STORIES = {
     "conversation-decision-claude-pty": lambda j: conversation_decision(j, "decision-pty", False),
     "conversation-decision-claude-sdk": lambda j: conversation_decision(j, "decision-sdk", True),
     "conversation-decision-codex": lambda j: conversation_decision(j, "decision-codex", True),
+    "decide-plan-claude-sdk": lambda j: decide_plan(j, "planner", True),
+    "decide-plan-claude-pty": lambda j: decide_plan(j, "planner-pty", False),
+    "decide-plan-codex": decide_plan_codex,
     "keep-authority": keep_authority,
     "manage-agent": manage_agent,
     "attachment-or-review": attachment_or_review,

@@ -1,0 +1,72 @@
+shell |  | agents | 0,62,402,778
+home |  | signed-out | 0,62,402,778
+home.title | Agents, switch account | Agents | 60,65,104,46
+home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
+home.newAgent | New Agent |  | 345,74,44,44
+home.row.<planner> | planner, Idle, Moving the journal as planned., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,91
+home.row.<planner>.age.volatile | <volatile>
+home.row.<planner>.second |  |  | 31,197,209,18
+home.row.<planner>.detail.volatile | <volatile>
+home.row.<expired> | expired, Idle, Tidied., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,251,366,91
+home.row.<expired>.age.volatile | <volatile>
+home.row.<expired>.second |  |  | 31,289,47,18
+home.row.<expired>.detail.volatile | <volatile>
+home.row.<limited> | limited, Idle, Usage limit reached · resets 9:52 PM, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,343,366,91
+home.row.<limited>.age.volatile | <volatile>
+home.row.<limited>.second |  |  | 31,381,243,18
+home.row.<limited>.detail.volatile | <volatile>
+home.row.<worker> | worker, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,434,366,70
+home.row.<worker>.age.volatile | <volatile>
+home.row.<worker>.detail.volatile | <volatile>
+home.row.<linker> | linker, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,505,366,70
+home.row.<linker>.age.volatile | <volatile>
+home.row.<linker>.detail.volatile | <volatile>
+home.row.<filer> | filer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,576,366,70
+home.row.<filer>.age.volatile | <volatile>
+home.row.<filer>.detail.volatile | <volatile>
+home.row.<asker> | asker, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,646,366,70
+home.row.<asker>.age.volatile | <volatile>
+home.row.<asker>.detail.volatile | <volatile>
+home.row.<planner-codex> | planner-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,716,366,70
+home.row.<planner-codex>.age.volatile | <volatile>
+home.row.<planner-codex>.detail.volatile | <volatile>
+home.row.<planner-pty> | planner-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,787,366,70
+home.row.<planner-pty>.age.volatile | <volatile>
+home.row.<planner-pty>.detail.volatile | <volatile>
+chat |  | planner | 0,62,402,778
+chat.row.boundary | Started |  | 18,132,366,34
+chat.row.prompt | Move the journal. |  | 18,166,366,40
+chat.row.plan | Plan sent back, Check the copy before switching. | folded | 18,205,366,64
+chat.row.plan | Plan approved, Move the journal | folded | 18,255,366,44
+chat.row.prose | Moving the journal as planned. | final | 18,301,366,20
+chat.prose.render |  | rendered | 18,301,366,20
+chat.row.turn-end | <volatile>
+chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
+chat.back | Back |  | 16,68,42,46
+chat.title | planner | planner | 51,72,156,38
+chat.more | More |  | 344,69,44,44
+chat.field | Message planner |  | 28,750,346,24
+chat.attach | Attach | closed | 23,779,44,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
+chat.dictate | Dictate | idle | 287,779,44,44
+chat.send | Send |  | 335,779,44,44 (disabled)
+hosts |  | 1 reachable | 0,62,402,778
+hosts.title |  | Hosts | 18,72,69,32
+hosts.subtitle |  | 1 reachable | 18,105,79,16
+hosts.row.<desk> | desk, macOS, reachable on this network | on-this-network | 18,159,366,64
+hosts.fact.identity | <volatile>
+hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,310,366,46
+hosts.caption.devices |  |  | 18,363,320,18
+ | Back |  | 16,68,42,46
+ | planner, /t/a/n/d/work · desk |  | 51,72,156,38
+ | More |  | 344,69,44,44
+ | Attach |  | 23,779,44,44
+ | claude-fake-1 |  | 71,779,139,44
+ | Dictate |  | 287,779,44,44
+ | Send |  | 335,779,44,44 (disabled)
+ | Started |  | 18,132,366,34
+ | Move the journal. |  | 18,166,366,40
+ | Plan sent back, “Check the copy before switching.” |  | 18,205,366,64
+ | Plan approved, Move the journal |  | 18,255,366,44
+ | Moving the journal as planned. |  | 18,301,366,20
+ | Worked <t> · $0.00 |  | 48,329,130,16

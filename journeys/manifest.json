@@ -67,22 +67,25 @@
     {
       "id": "decide-plan-claude-sdk",
       "stage": 17,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-flows.json",
+      "phone_topology": "journeys/topologies/phone-flows.json",
       "claim": "A person asks headless Claude, planning, for work. The plan shows in the chat with its decision in the composer's box and the plan file Claude writes first shows as no step; sent back with a note, a revised plan arrives, and approved, the work runs. Claude receives the plan sent back with that note, then one approval."
     },
     {
       "id": "decide-plan-claude-pty",
       "stage": 17,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-flows.json",
+      "phone_topology": "journeys/topologies/phone-flows.json",
       "claim": "A person asks Claude in its own terminal, planning, for work. The plan shows in the chat while it waits and the plan file Claude writes first shows as no step; sent back with a note, a revised plan arrives, and approved, the work runs; the host holds both plans, no step for the plan file, and the reply."
     },
     {
       "id": "decide-plan-codex",
       "stage": 17,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-flows.json",
+      "phone_topology": "journeys/topologies/phone-flows.json",
       "claim": "A person puts Codex in plan mode and asks for work. The plan shows in the chat while Codex's turn runs; when it ends the agent needs the person and the plan's decision takes the composer's box. Implement starts the work out of plan mode. A second plan, sent back with a note, comes back revised. Codex is started on the prompt and the note in plan mode and on the implement turn in default mode."
     },
     {
