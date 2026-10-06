@@ -283,6 +283,9 @@ class Run:
             f"first frame {marks['firstCachedFrame']:.0f}, reconciled {marks['reconciled']:.0f} ms"
         )
         print(self.notes[-1], flush=True)
+        raw = self.journey.app({"kind": "signposts"})["marks"]
+        base = marks["storeReadEnded"]
+        print("PROBE", [(m["signpost"], round(m["sinceProcessStart"] * 1000 - base, 1)) for m in raw if base - 1 <= m["sinceProcessStart"] * 1000 <= marks["firstCachedFrame"] + 30], flush=True)
         return marks
 
     def space_launches(self) -> None:

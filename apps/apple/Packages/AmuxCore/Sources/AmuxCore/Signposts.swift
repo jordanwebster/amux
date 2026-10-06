@@ -70,6 +70,14 @@ public enum Signpost: String, Sendable, CaseIterable, Codable {
     /// The pushed chat was still behind when the wait for it ran out, or its
     /// host is trusted by no profile on this phone.
     case pushBehind
+    case probeHosts
+    case probeFleetRead
+    case probeShown
+    case probeReadDone
+    case probeCommitted
+    case probeHomeBody
+    case probeRefresh
+    case probeWoke
 }
 
 /// One emission: the signpost and when it happened.

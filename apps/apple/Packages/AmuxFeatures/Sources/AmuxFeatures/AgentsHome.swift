@@ -76,7 +76,8 @@ public struct AgentsHome: View {
     }
 
     private var home: some View {
-        ZStack {
+        let _ = Signposts.emit(.probeHomeBody)
+        return ZStack {
             Ground()
             VStack(alignment: .leading, spacing: 0) {
                 header
