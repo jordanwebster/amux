@@ -1359,11 +1359,13 @@ impl ::prost::Name for AskItem {
 pub struct AskClosed {
     #[prost(enumeration = "AskOutcome", tag = "1")]
     pub outcome: i32,
-    /// A question's answers, one per question in the ask's order.
+    /// A question's answers, one per question in the ask's order; with reply
+    /// instead, the answers given before it.
     #[prost(message, repeated, tag = "2")]
     pub answers: ::prost::alloc::vec::Vec<AnsweredQuestion>,
-    #[prost(string, tag = "3")]
-    pub note: ::prost::alloc::string::String,
+    /// The person's own words, when they replied instead of answering.
+    #[prost(string, tag = "6")]
+    pub reply: ::prost::alloc::string::String,
     /// The names of the form fields sent; the values went to the server only.
     #[prost(string, repeated, tag = "4")]
     pub fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
@@ -1392,6 +1394,10 @@ pub struct AnsweredQuestion {
     /// A secret answer: what was typed is never recorded.
     #[prost(bool, tag = "3")]
     pub hidden: bool,
+    /// The person's note on this question. Nothing picked, typed or hidden
+    /// means the question was skipped.
+    #[prost(string, optional, tag = "4")]
+    pub note: ::core::option::Option<::prost::alloc::string::String>,
 }
 impl ::prost::Name for AnsweredQuestion {
     const NAME: &'static str = "AnsweredQuestion";
@@ -1872,8 +1878,6 @@ pub struct QuestionAnswer {
     /// One per question, in the ask's order.
     #[prost(message, repeated, tag = "1")]
     pub answers: ::prost::alloc::vec::Vec<QuestionResponse>,
-    #[prost(string, tag = "2")]
-    pub note: ::prost::alloc::string::String,
 }
 impl ::prost::Name for QuestionAnswer {
     const NAME: &'static str = "QuestionAnswer";
@@ -1885,12 +1889,15 @@ impl ::prost::Name for QuestionAnswer {
         "/amux.v1.QuestionAnswer".into()
     }
 }
+/// Nothing selected and no text: the question is skipped.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct QuestionResponse {
     #[prost(uint32, repeated, tag = "1")]
     pub selected: ::prost::alloc::vec::Vec<u32>,
     #[prost(string, optional, tag = "2")]
     pub other: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "3")]
+    pub note: ::core::option::Option<::prost::alloc::string::String>,
 }
 impl ::prost::Name for QuestionResponse {
     const NAME: &'static str = "QuestionResponse";
@@ -1900,6 +1907,26 @@ impl ::prost::Name for QuestionResponse {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.QuestionResponse".into()
+    }
+}
+/// The person's own words instead of answering a question.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReplyInstead {
+    #[prost(string, tag = "1")]
+    pub text: ::prost::alloc::string::String,
+    /// One per question, in the ask's order: what was answered before
+    /// replying; nothing selected and no text where nothing was.
+    #[prost(message, repeated, tag = "2")]
+    pub answers_so_far: ::prost::alloc::vec::Vec<QuestionResponse>,
+}
+impl ::prost::Name for ReplyInstead {
+    const NAME: &'static str = "ReplyInstead";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.ReplyInstead".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.ReplyInstead".into()
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2435,6 +2462,8 @@ pub enum AskOutcome {
     Cancelled = 3,
     /// Closed by a later fact that did not say how.
     Dismissed = 4,
+    /// The person replied in their own words instead of answering.
+    Replied = 5,
 }
 impl AskOutcome {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2448,6 +2477,7 @@ impl AskOutcome {
             Self::Declined => "ASK_OUTCOME_DECLINED",
             Self::Cancelled => "ASK_OUTCOME_CANCELLED",
             Self::Dismissed => "ASK_OUTCOME_DISMISSED",
+            Self::Replied => "ASK_OUTCOME_REPLIED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2458,6 +2488,7 @@ impl AskOutcome {
             "ASK_OUTCOME_DECLINED" => Some(Self::Declined),
             "ASK_OUTCOME_CANCELLED" => Some(Self::Cancelled),
             "ASK_OUTCOME_DISMISSED" => Some(Self::Dismissed),
+            "ASK_OUTCOME_REPLIED" => Some(Self::Replied),
             _ => None,
         }
     }
@@ -3155,7 +3186,7 @@ impl ::prost::Name for ClaudeSdkInput {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudeAnswer {
-    #[prost(oneof = "claude_answer::Of", tags = "1, 2, 3, 4, 5")]
+    #[prost(oneof = "claude_answer::Of", tags = "1, 2, 3, 4, 5, 6")]
     pub of: ::core::option::Option<claude_answer::Of>,
 }
 /// Nested message and enum types in `ClaudeAnswer`.
@@ -3172,6 +3203,8 @@ pub mod claude_answer {
         Form(super::FormAnswer),
         #[prost(message, tag = "5")]
         Link(super::LinkAnswer),
+        #[prost(message, tag = "6")]
+        Reply(super::ReplyInstead),
     }
 }
 impl ::prost::Name for ClaudeAnswer {
@@ -3924,7 +3957,7 @@ impl ::prost::Name for Approve {
 /// access grants.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CodexAnswer {
-    #[prost(oneof = "codex_answer::Of", tags = "1, 2, 3, 4, 5")]
+    #[prost(oneof = "codex_answer::Of", tags = "1, 2, 3, 4, 5, 6")]
     pub of: ::core::option::Option<codex_answer::Of>,
 }
 /// Nested message and enum types in `CodexAnswer`.
@@ -3941,6 +3974,8 @@ pub mod codex_answer {
         Grant(super::GrantAnswer),
         #[prost(message, tag = "5")]
         Plan(super::PlanAnswer),
+        #[prost(message, tag = "6")]
+        Reply(super::ReplyInstead),
     }
 }
 impl ::prost::Name for CodexAnswer {

@@ -236,6 +236,34 @@ draw both from these facts alone.
   starts) or when the next turn starts (sent back if it runs in plan mode,
   approved otherwise). A prompt typed in amux instead dismisses the plan.
 
+## Questions
+
+A question the agent asks is an ask item of its own, keyed by the call or
+request that asked it, whose record lists each question's answer. An answer
+gives one response per question: the options picked, typed text, and a
+note. A response with nothing picked and no text skips its question. The
+record reads answered N of M, each skipped question marked, with its notes.
+
+Instead of answering, the person can reply: the answer carries their words
+and any answers given so far, and the record reads replied instead with the
+words.
+
+- **Headless Claude.** `AskUserQuestion` is drawn as its ask item rather than
+  a tool row. A skipped question is left out of the answers handed back to
+  the tool, as Claude's own form leaves it, and each note goes in the input's
+  `annotations` under its question's text. A reply refuses the call with
+  the words as the reason and leaves the turn running, so the model reads
+  them as the call's result. A question answered or dismissed elsewhere
+  takes its record from the call's result.
+- **Terminal Claude.** The same item. Claude's form asks every question
+  before it submits and has nowhere to type a note, so a skip or a note is
+  refused. A reply cancels the menu with the interrupt key, which stops the
+  turn, and queues the words as the next prompt.
+- **Codex.** `item/tool/requestUserInput` is the ask. A skipped question goes
+  back with no answers, as Codex's own form sends it, and a note is one more
+  answer, `user_note: <note>`. A reply interrupts the turn and sends the
+  words as the next prompt.
+
 ## Redaction
 
 Dumps leave the machine, so every body in them is redacted, and only an

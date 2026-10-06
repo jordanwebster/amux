@@ -815,25 +815,27 @@ pub enum Pick {
     Other(String),
 }
 
-/// The answer to a question ask: one pick per question, in order, and the
-/// optional note.
+/// The answer to a question ask: one pick per question, in order, with the
+/// optional note on the last question.
 pub fn question_answer(card: &AskCard, picks: &[Pick], note: &str) -> Answer {
-    let answers = wire::QuestionAnswer {
+    let mut answers = wire::QuestionAnswer {
         answers: picks
             .iter()
             .map(|pick| match pick {
                 Pick::Options(selected) => wire::QuestionResponse {
                     selected: selected.clone(),
                     other: None,
+                    note: None,
                 },
                 Pick::Other(text) => wire::QuestionResponse {
                     selected: vec![],
                     other: Some(text.clone()),
+                    note: None,
                 },
             })
             .collect(),
-        note: note.to_owned(),
     };
+    note_last(&mut answers, note);
     match card.kind {
         wire::Kind::Codex => Answer::Codex(CodexAnswer {
             of: Some(wire::codex_answer::Of::Question(answers)),
@@ -927,18 +929,28 @@ fn with_note(answer: &Answer, note: &str) -> Answer {
             claude_answer::Of::Plan(plan) if plan.choice() == wire::PlanChoice::KeepPlanning => {
                 plan.note = Some(note.to_owned())
             }
-            claude_answer::Of::Question(question) => question.note = note.to_owned(),
+            claude_answer::Of::Question(question) => note_last(question, note),
             _ => {}
         },
         Answer::Codex(CodexAnswer {
             of: Some(wire::codex_answer::Of::Question(question)),
-        }) => question.note = note.to_owned(),
+        }) => note_last(question, note),
         Answer::Codex(CodexAnswer {
             of: Some(wire::codex_answer::Of::Plan(plan)),
         }) if plan.choice() == wire::PlanChoice::KeepPlanning => plan.note = Some(note.to_owned()),
         _ => {}
     }
     answer
+}
+
+/// The note on the last question's response, where a card with one note
+/// box puts it.
+fn note_last(answer: &mut wire::QuestionAnswer, note: &str) {
+    if let Some(last) = answer.answers.last_mut()
+        && !note.is_empty()
+    {
+        last.note = Some(note.to_owned());
+    }
 }
 
 #[cfg(test)]

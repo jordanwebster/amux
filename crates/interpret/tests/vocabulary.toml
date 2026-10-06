@@ -121,9 +121,9 @@ codex = { mark = "full", carriers = ["ask:command", "ask:file_change", "ask:mcp_
 [[row]]
 id = "C15"
 item = "Question"
-claude_pty = { mark = "full", carriers = ["ask:question"], golden = ["asks=[", " question:"] }
-claude_sdk = { mark = "full", carriers = ["ask:question"], golden = ["asks=[", " question:"] }
-codex = { mark = "partial", carriers = ["ask:question", "item:ask.question", "item:ask.closed.answers"], golden = [" ask final ", " question×", " ASK_OUTCOME_ANSWERED answers=["] }
+claude_pty = { mark = "full", carriers = ["ask:question", "item:ask.question", "item:ask.closed.answers"], golden = [" ask final ", " question×", " ASK_OUTCOME_ANSWERED answered "] }
+claude_sdk = { mark = "full", carriers = ["ask:question", "item:ask.question", "item:ask.closed.answers"], golden = [" ask final ", " question×", " ASK_OUTCOME_ANSWERED answered "] }
+codex = { mark = "partial", carriers = ["ask:question", "item:ask.question", "item:ask.closed.answers"], golden = [" ask final ", " question×", " ASK_OUTCOME_ANSWERED answered "] }
 
 [[row]]
 id = "C16"

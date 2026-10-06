@@ -1,0 +1,368 @@
+{
+  "about": "Terminal Claude's questions take a reply instead: amux cancels Claude's menu and sends the person's words as the next prompt, and the question reads replied instead. Claude's form here asks every question and has nowhere to type a note, so a skip or a note is refused.",
+  "events": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.282",
+          "keymap": "claude-2.1",
+          "permission_menus": {
+            "per_suggestion": [
+              1
+            ],
+            "folded": [
+              2
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "test it"
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "effects": [
+          "reply p1 accepted",
+          "terminal prompt \"test it\""
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "timestamp": "2027-01-15T08:00:00.010Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "test it"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "u1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t1",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {
+                "header": "Color",
+                "question": "Pick a color",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "warm"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "cool"
+                  }
+                ]
+              },
+              {
+                "header": "Tools",
+                "question": "Pick tools",
+                "multiSelect": true,
+                "options": [
+                  {
+                    "label": "Hammer",
+                    "description": ""
+                  },
+                  {
+                    "label": "Saw",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PermissionRequest",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {
+                "header": "Color",
+                "question": "Pick a color",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "warm"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "cool"
+                  }
+                ]
+              },
+              {
+                "header": "Tools",
+                "question": "Pick tools",
+                "multiSelect": true,
+                "options": [
+                  {
+                    "label": "Hammer",
+                    "description": ""
+                  },
+                  {
+                    "label": "Saw",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:1"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a1",
+        "answer": {
+          "ask": "ask:1",
+          "answer": {
+            "selected": [
+              0,
+              null
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "silent": true,
+        "asks": [
+          "ask:1"
+        ]
+      },
+      "note": "a skipped question: Claude's form here asks every question before it submits"
+    },
+    {
+      "input": {
+        "id": "a2",
+        "answer": {
+          "ask": "ask:1",
+          "answer": {
+            "selected": [
+              0,
+              [
+                1
+              ]
+            ],
+            "notes": [
+              "warm is better",
+              null
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "silent": true,
+        "asks": [
+          "ask:1"
+        ]
+      },
+      "note": "a note on a question: Claude's form has nowhere to type one"
+    },
+    {
+      "input": {
+        "id": "a3",
+        "answer": {
+          "ask": "ask:1",
+          "answer": {
+            "reply": {
+              "text": "Use the old palette.",
+              "selected": []
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "asks": []
+      },
+      "note": "reply instead cancels the menu, which stops the turn, and queues the words as the next prompt"
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a1",
+          "timestamp": "2027-01-15T08:00:00.020Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m1",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "AskUserQuestion",
+                "input": {
+                  "questions": [
+                    {
+                      "header": "Color",
+                      "question": "Pick a color",
+                      "multiSelect": false,
+                      "options": [
+                        {
+                          "label": "Red",
+                          "description": "warm"
+                        },
+                        {
+                          "label": "Blue",
+                          "description": "cool"
+                        }
+                      ]
+                    },
+                    {
+                      "header": "Tools",
+                      "question": "Pick tools",
+                      "multiSelect": true,
+                      "options": [
+                        {
+                          "label": "Hammer",
+                          "description": ""
+                        },
+                        {
+                          "label": "Saw",
+                          "description": ""
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "t1"
+        ]
+      },
+      "note": "the row Claude writes at the cancel reads replied instead"
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "r1",
+          "timestamp": "2027-01-15T08:00:00.025Z",
+          "sessionId": "s1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "t1",
+                "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+                "is_error": true
+              }
+            ]
+          },
+          "toolUseResult": "User rejected tool use"
+        }
+      },
+      "expect": {
+        "items": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "i1",
+          "timestamp": "2027-01-15T08:00:00.026Z",
+          "sessionId": "s1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "[Request interrupted by user for tool use]"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u2",
+          "timestamp": "2027-01-15T08:00:00.040Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "Use the old palette."
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "u2"
+        ]
+      }
+    }
+  ]
+}

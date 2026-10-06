@@ -1,0 +1,278 @@
+{
+  "about": "Answering Codex's questions question by question: a skipped question goes back with no answers, a note rides on its own question, and reply instead interrupts the turn and sends the person's words as the next prompt. The record reads answered N of M, or replied instead with the words.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Deploy it."
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turn": {
+              "id": "turn-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 9,
+          "method": "item/tool/requestUserInput",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "call-1",
+            "questions": [
+              {
+                "id": "env",
+                "header": "Env",
+                "question": "Which environment?",
+                "isOther": false,
+                "isSecret": false,
+                "options": [
+                  {
+                    "label": "staging (Recommended)",
+                    "description": "Safe first."
+                  },
+                  {
+                    "label": "production",
+                    "description": "Live."
+                  }
+                ]
+              },
+              {
+                "id": "window",
+                "header": "Window",
+                "question": "When should it go out?",
+                "isOther": false,
+                "isSecret": false,
+                "options": [
+                  {
+                    "label": "now",
+                    "description": ""
+                  },
+                  {
+                    "label": "tonight",
+                    "description": ""
+                  }
+                ]
+              },
+              {
+                "id": "tag",
+                "header": "Tag",
+                "question": "Which tag?",
+                "isOther": true,
+                "isSecret": false,
+                "options": null
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "9"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a1",
+        "answer": {
+          "ask": "9",
+          "answer": {
+            "selected": [
+              1,
+              null,
+              "v2.3"
+            ],
+            "notes": [
+              "after the freeze",
+              null,
+              "cut it from main"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": []
+      },
+      "note": "the window is skipped and goes back with no answers, as Codex's own form sends it; each note rides on its own question"
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "serverRequest/resolved",
+          "params": {
+            "threadId": "t1",
+            "requestId": 9
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 10,
+          "method": "item/tool/requestUserInput",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "call-2",
+            "questions": [
+              {
+                "id": "env",
+                "header": "Env",
+                "question": "Which environment?",
+                "isOther": false,
+                "isSecret": false,
+                "options": [
+                  {
+                    "label": "staging (Recommended)",
+                    "description": "Safe first."
+                  },
+                  {
+                    "label": "production",
+                    "description": "Live."
+                  }
+                ]
+              },
+              {
+                "id": "window",
+                "header": "Window",
+                "question": "When should it go out?",
+                "isOther": false,
+                "isSecret": false,
+                "options": [
+                  {
+                    "label": "now",
+                    "description": ""
+                  },
+                  {
+                    "label": "tonight",
+                    "description": ""
+                  }
+                ]
+              },
+              {
+                "id": "tag",
+                "header": "Tag",
+                "question": "Which tag?",
+                "isOther": true,
+                "isSecret": false,
+                "options": null
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "10"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a2",
+        "answer": {
+          "ask": "10",
+          "answer": {
+            "reply": {
+              "text": "Hold the deploy until Monday.",
+              "selected": [
+                0,
+                null,
+                null
+              ]
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "asks": []
+      },
+      "note": "reply instead interrupts the turn and sends the words as the next prompt"
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "serverRequest/resolved",
+          "params": {
+            "threadId": "t1",
+            "requestId": 10
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "interrupted"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

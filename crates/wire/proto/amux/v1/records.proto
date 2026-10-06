@@ -686,10 +686,13 @@ message AskItem {
 }
 
 message AskClosed {
+  reserved 3;
   AskOutcome outcome = 1;
-  // A question's answers, one per question in the ask's order.
+  // A question's answers, one per question in the ask's order; with reply
+  // instead, the answers given before it.
   repeated AnsweredQuestion answers = 2;
-  string note = 3;
+  // The person's own words, when they replied instead of answering.
+  string reply = 6;
   // The names of the form fields sent; the values went to the server only.
   repeated string fields = 4;
   // What an access grant granted.
@@ -705,6 +708,8 @@ enum AskOutcome {
   ASK_OUTCOME_CANCELLED = 3;
   // Closed by a later fact that did not say how.
   ASK_OUTCOME_DISMISSED = 4;
+  // The person replied in their own words instead of answering.
+  ASK_OUTCOME_REPLIED = 5;
 }
 
 message AnsweredQuestion {
@@ -714,6 +719,9 @@ message AnsweredQuestion {
   optional string other = 2;
   // A secret answer: what was typed is never recorded.
   bool hidden = 3;
+  // The person's note on this question. Nothing picked, typed or hidden
+  // means the question was skipped.
+  optional string note = 4;
 }
 
 // The provider is asking something this build cannot read; the only way out
@@ -936,14 +944,24 @@ message SetEffort {
 // Answer pieces shared by the per-kind answer bodies.
 
 message QuestionAnswer {
+  reserved 2;
   // One per question, in the ask's order.
   repeated QuestionResponse answers = 1;
-  string note = 2;
 }
 
+// Nothing selected and no text: the question is skipped.
 message QuestionResponse {
   repeated uint32 selected = 1;
   optional string other = 2;
+  optional string note = 3;
+}
+
+// The person's own words instead of answering a question.
+message ReplyInstead {
+  string text = 1;
+  // One per question, in the ask's order: what was answered before
+  // replying; nothing selected and no text where nothing was.
+  repeated QuestionResponse answers_so_far = 2;
 }
 
 message FormAnswer {

@@ -930,10 +930,9 @@
         }
       },
       "expect": {
-        "items": [
-          "t5"
-        ]
-      }
+        "items": []
+      },
+      "note": "the question's record came with the answer through amux; its result adds nothing"
     },
     {
       "fact": {

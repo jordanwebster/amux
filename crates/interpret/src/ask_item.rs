@@ -4,11 +4,15 @@
 //! The kinds call these helpers so every carrier records a close the same
 //! way.
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 use wire::{
     AnsweredQuestion, AskClosed, AskItem, AskOutcome, FormAction, FormAnswer, GrantAnswer,
-    QuestionAnswer, QuestionAsk, ask_item,
+    Question, QuestionAnswer, QuestionAsk, QuestionResponse, ReplyInstead, ask_item,
 };
+
+use crate::claude_common::AnswerNote;
 
 /// The key of the item an ask that is the work is drawn on.
 pub(crate) fn key(ask_key: &str) -> String {
@@ -43,39 +47,138 @@ pub(crate) fn outcome(outcome: AskOutcome) -> AskClosed {
     }
 }
 
-/// A question answered: the picked labels and typed answers per question,
-/// with a secret question's typed answer left out. None when an index names
+/// One question's response as recorded: the picked labels, the typed
+/// answer unless the question is secret, and the note. None when an index
+/// names no option.
+fn recorded(question: &Question, response: &QuestionResponse) -> Option<AnsweredQuestion> {
+    let picked = response
+        .selected
+        .iter()
+        .map(|index| {
+            question
+                .options
+                .get(*index as usize)
+                .map(|option| option.label.clone())
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let hidden = question.secret && response.other.is_some();
+    Some(AnsweredQuestion {
+        picked,
+        other: if hidden { None } else { response.other.clone() },
+        hidden,
+        note: response.note.clone().filter(|note| !note.trim().is_empty()),
+    })
+}
+
+fn all_recorded(
+    asked: &QuestionAsk,
+    responses: &[QuestionResponse],
+) -> Option<Vec<AnsweredQuestion>> {
+    asked
+        .questions
+        .iter()
+        .zip(responses)
+        .map(|(question, response)| recorded(question, response))
+        .collect()
+}
+
+/// A question answered, each question with what was picked or typed and
+/// its note; a question with neither was skipped. None when an index names
 /// no option.
 pub(crate) fn answered(asked: &QuestionAsk, answer: &QuestionAnswer) -> Option<AskClosed> {
+    Some(AskClosed {
+        outcome: AskOutcome::Answered as i32,
+        answers: all_recorded(asked, &answer.answers)?,
+        ..Default::default()
+    })
+}
+
+/// The person replied in their own words instead, with what they had
+/// answered so far.
+pub(crate) fn replied(asked: &QuestionAsk, reply: &ReplyInstead) -> Option<AskClosed> {
+    let none = vec![QuestionResponse::default(); asked.questions.len()];
+    let so_far = if reply.answers_so_far.is_empty() {
+        &none
+    } else {
+        &reply.answers_so_far
+    };
+    Some(AskClosed {
+        outcome: AskOutcome::Replied as i32,
+        answers: all_recorded(asked, so_far)?,
+        reply: reply.text.clone(),
+        ..Default::default()
+    })
+}
+
+/// Questions answered in Claude's own interface, from the answers and
+/// notes Claude recorded, each by its question's text. Claude joins picked
+/// labels with ", " and adds a typed answer after them; a question it has
+/// no answer for was skipped.
+pub(crate) fn recorded_by_claude(
+    asked: &QuestionAsk,
+    answers: &BTreeMap<String, String>,
+    notes: &BTreeMap<String, AnswerNote>,
+) -> AskClosed {
     let answers = asked
         .questions
         .iter()
-        .zip(&answer.answers)
-        .map(|(question, response)| {
-            let picked = response
-                .selected
-                .iter()
-                .map(|index| {
-                    question
-                        .options
-                        .get(*index as usize)
-                        .map(|option| option.label.clone())
-                })
-                .collect::<Option<Vec<_>>>()?;
-            let hidden = question.secret && response.other.is_some();
-            Some(AnsweredQuestion {
+        .map(|question| {
+            let text = answers
+                .get(&question.question)
+                .map(String::as_str)
+                .unwrap_or_default();
+            let (picked, other) = claude_parts(question, text);
+            AnsweredQuestion {
                 picked,
-                other: if hidden { None } else { response.other.clone() },
-                hidden,
-            })
+                other,
+                hidden: false,
+                note: notes
+                    .get(&question.question)
+                    .map(|note| note.notes.clone())
+                    .filter(|note| !note.trim().is_empty()),
+            }
         })
-        .collect::<Option<Vec<_>>>()?;
-    Some(AskClosed {
+        .collect();
+    AskClosed {
         outcome: AskOutcome::Answered as i32,
         answers,
-        note: answer.note.clone(),
         ..Default::default()
-    })
+    }
+}
+
+/// The labels at the front of Claude's answer text, and what was typed
+/// after them.
+fn claude_parts(question: &Question, text: &str) -> (Vec<String>, Option<String>) {
+    // Longest first, so a label that begins with another label wins.
+    let mut labels: Vec<&str> = question
+        .options
+        .iter()
+        .map(|option| option.label.as_str())
+        .filter(|label| !label.is_empty())
+        .collect();
+    labels.sort_by_key(|label| std::cmp::Reverse(label.len()));
+    let mut picked = Vec::new();
+    let mut rest = text.trim();
+    while !rest.is_empty() && (question.multi_select || picked.is_empty()) {
+        let found = labels.iter().find_map(|label| {
+            let after = rest.strip_prefix(*label)?;
+            let after = after
+                .strip_prefix(" (Recommended)")
+                .or_else(|| after.strip_prefix("(Recommended)"))
+                .unwrap_or(after);
+            match after.strip_prefix(',') {
+                Some(more) if question.multi_select => Some((*label, more.trim_start())),
+                _ if after.is_empty() => Some((*label, after)),
+                _ => None,
+            }
+        });
+        let Some((label, after)) = found else {
+            break;
+        };
+        picked.push(label.to_owned());
+        rest = after;
+    }
+    (picked, (!rest.is_empty()).then(|| rest.to_owned()))
 }
 
 /// A form answered: sent with its field names, declined or cancelled.
@@ -156,13 +259,29 @@ pub(crate) fn describe(item: &AskItem) -> String {
                 if answer.hidden {
                     parts.push("(hidden)".into());
                 }
-                parts.join("+")
+                if parts.is_empty() {
+                    parts.push("(skipped)".into());
+                }
+                let mut text = parts.join("+");
+                if let Some(note) = &answer.note {
+                    text.push_str(&format!(" note={}", Value::String(note.clone())));
+                }
+                text
             })
             .collect::<Vec<_>>();
-        text.push_str(&format!(" answers=[{}]", answers.join("; ")));
+        let given = closed
+            .answers
+            .iter()
+            .filter(|answer| !answer.picked.is_empty() || answer.other.is_some() || answer.hidden)
+            .count();
+        text.push_str(&format!(
+            " answered {given} of {} [{}]",
+            closed.answers.len(),
+            answers.join("; ")
+        ));
     }
-    if !closed.note.is_empty() {
-        text.push_str(&format!(" note={}", Value::String(closed.note.clone())));
+    if !closed.reply.is_empty() {
+        text.push_str(&format!(" reply={}", Value::String(closed.reply.clone())));
     }
     if !closed.fields.is_empty() {
         text.push_str(&format!(" fields={:?}", closed.fields));

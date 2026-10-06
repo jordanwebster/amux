@@ -638,7 +638,7 @@ fn ask_row(item: &wire::AskItem) -> RowKind {
     let resolution = match item.closed.as_ref().map(|closed| closed.outcome()) {
         None => Resolution::Open,
         Some(wire::AskOutcome::Answered) => Resolution::Answered,
-        Some(wire::AskOutcome::Declined) => Resolution::Declined,
+        Some(wire::AskOutcome::Declined | wire::AskOutcome::Replied) => Resolution::Declined,
         Some(wire::AskOutcome::Cancelled) => Resolution::Cancelled,
         Some(wire::AskOutcome::Dismissed | wire::AskOutcome::Unspecified) => Resolution::Dismissed,
     };
@@ -658,7 +658,11 @@ fn ask_row(item: &wire::AskItem) -> RowKind {
                     hidden: answer.hidden,
                 })
                 .collect(),
-            note: (!closed.note.is_empty()).then_some(closed.note),
+            note: closed
+                .answers
+                .iter()
+                .rev()
+                .find_map(|answer| answer.note.clone()),
             resolution,
         },
         Some(Ask::Form(form)) => AskRow::Form {

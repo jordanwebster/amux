@@ -158,10 +158,9 @@
         }
       },
       "expect": {
-        "items": [
-          "t1"
-        ]
-      }
+        "items": []
+      },
+      "note": "the refusal adds nothing: the question row already reads dismissed"
     },
     {
       "fact": {

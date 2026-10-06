@@ -1,0 +1,51 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 2 fact {"channel":"hook","json":{"hook_event_name":"SessionStart","model":"claude-opus-5-5","session_id":"s1","source":"startup","transcript_path":"/t/s1.jsonl"}}
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 3 input {"id":"p1","prompt":{"text":"test it"}}
+  composer Send activity=Some(Working) queue=[] outbox=[OutboxRow { input_id: [112, 49], text: [Text("test it")], state: Sending }]
+## 4 fact {"channel":"transcript","json":{"message":{"content":"test it","role":"user"},"origin":{"kind":"human"},"promptSource":"typed","sessionId":"s1","timestamp":"2027-01-15T08:00:00.010Z","type":"user","uuid":"u1"}}
+  row    2 u1 Prompt { text: [Text("test it")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 5 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"}],"question":"Pick tools"}]},"tool_name":"A…
+  composer Send activity=Some(Running { key: "t1" }) queue=[] outbox=[]
+## 6 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","tool_input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"}],"question":"Pick tools"}]},"tool_n…
+  ask ask:1 -> "" 1/1 Open
+    choices 
+    body Question([QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select: true, options: [OptionView …
+  composer Send activity=None queue=[] outbox=[]
+## 7 input {"answer":{"answer":{"selected":[0,null]},"ask":"ask:1"},"id":"a1"}
+  ask ask:1 -> "" 1/1 Rejected("unsupported")
+    choices 
+    body Question([QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select: true, options: [OptionView …
+## 9 input {"answer":{"answer":{"reply":{"selected":[],"text":"Use the old palette."}},"ask":"ask:1"},"id":"a3"}
+  ask none
+  composer Send activity=Some(Running { key: "t1" }) queue=[QueuedRow { input_id: [97, 51], text: [Text("Use the old palette.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
+## 10 fact {"channel":"transcript","json":{"message":{"content":[{"id":"t1","input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"}],"question":"Pick tools"}]},"name":"Ask…
+  row    3 t1 Ask(Questions { questions: [QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select: t…
+## 11 fact {"channel":"transcript","json":{"message":{"content":[{"content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.","is_error":true,"tool_use_id":"t1","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":…
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [97, 51], text: [Text("Use the old palette.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
+## 12 fact {"channel":"transcript","json":{"message":{"content":[{"text":"[Request interrupted by user for tool use]","type":"text"}],"role":"user"},"sessionId":"s1","timestamp":"2027-01-15T08:00:00.026Z","type":"user","uuid":"i1"}}
+  row    4 i1 Hidden collapsed
+  row    5 turn:1 Stopped
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 13 fact {"channel":"transcript","json":{"message":{"content":"Use the old palette.","role":"user"},"origin":{"kind":"human"},"promptSource":"typed","sessionId":"s1","timestamp":"2027-01-15T08:00:00.040Z","type":"user","uuid":"u2"}}
+  row    6 u2 Prompt { text: [Text("Use the old palette.")], steered: false }
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 u1 Prompt { text: [Text("test it")], steered: false }
+     3 t1 Ask(Questions { questions: [QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select: t…
+     4 i1 Hidden collapsed
+     5 turn:1 Stopped
+     6 u2 Prompt { text: [Text("Use the old palette.")], steered: false }
+== overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
+== context None sign-in None
+== settings
+  model* reported claude-opus-5-5 "" efforts=[]
+  permission  "default" "Ask" normal unsettable
+  permission  "acceptEdits" "Accept edits" unsettable
+  permission  "plan" "Plan" unsettable
+  permission  "auto" "Auto" unsettable
+  permission: cycle to the next
+  refused permission: Terminal Claude changes permission only by cycling through its permissions.
+  by typing: To change the model or effort, type /model <name> or /effort <level> in the composer.

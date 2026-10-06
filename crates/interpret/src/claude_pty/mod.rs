@@ -75,7 +75,7 @@ use wire::{
 
 use crate::claude_common::{
     Jobs, Task, Verdict, describe_asks, describe_tasks, describe_tool, or_dash, plan_item,
-    same_json, split_tool_name, task_list,
+    question_item, same_json, split_tool_name, task_list,
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
@@ -351,6 +351,12 @@ struct Tool {
     /// An ExitPlanMode call is drawn as its plan, with this verdict.
     #[serde(default)]
     plan: Option<Verdict>,
+    /// An AskUserQuestion call is drawn as its question, closed with this
+    /// record once decided.
+    #[serde(default)]
+    question: bool,
+    #[serde(default, with = "serde_pb::opt_msg")]
+    asked: Option<AskClosed>,
     #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
 }
@@ -370,6 +376,9 @@ struct Decision {
     /// How a plan ask closed, which its plan carries instead.
     #[serde(default)]
     verdict: Option<Verdict>,
+    /// How a question closed, which its item carries instead.
+    #[serde(default, with = "serde_pb::opt_msg")]
+    record: Option<AskClosed>,
 }
 
 impl Decision {
@@ -380,6 +389,7 @@ impl Decision {
             note: String::new(),
             elsewhere: true,
             verdict: None,
+            record: None,
         }
     }
 
@@ -390,12 +400,20 @@ impl Decision {
             note: String::new(),
             elsewhere: false,
             verdict: None,
+            record: None,
         }
     }
 
     fn plan(verdict: Verdict) -> Self {
         Self {
             verdict: Some(verdict),
+            ..Self::unknown()
+        }
+    }
+
+    fn question(record: AskClosed) -> Self {
+        Self {
+            record: Some(record),
             ..Self::unknown()
         }
     }
@@ -614,6 +632,27 @@ impl State {
         if tool.hidden {
             return;
         }
+        if tool.question {
+            let Some(item) = question_item(&tool.input, tool.asked.clone(), true) else {
+                return;
+            };
+            let body = item_body(claude_pty_item::Kind::Ask(item));
+            if body == tool.emitted {
+                return;
+            }
+            tool.emitted = body.clone();
+            let at_ms = tool.at_ms;
+            return self.shared.item(
+                emit,
+                ItemDraft {
+                    key: id.to_owned(),
+                    body,
+                    at_ms: Some(at_ms),
+                    complete: true,
+                    ..Default::default()
+                },
+            );
+        }
         if let Some(verdict) = &tool.plan {
             let Some((text, plan)) = plan_item(&tool.input, verdict) else {
                 return;
@@ -727,9 +766,19 @@ impl State {
 
     fn decide(&mut self, emit: &mut Emit, tool_id: &str, decision: Decision) {
         if let Some(tool) = self.tools.get_mut(tool_id) {
-            match &mut tool.plan {
-                Some(plan) => *plan = decision.plan_verdict(None),
-                None => tool.decision = Some(decision),
+            if tool.question {
+                // Answered in Claude's own terminal, the question's result
+                // says how; anything else closed it without answers.
+                match (decision.record, DecisionOutcome::try_from(decision.outcome)) {
+                    (Some(record), _) => tool.asked = Some(record),
+                    (None, Ok(DecisionOutcome::Allowed)) => {}
+                    (None, _) => tool.asked = Some(ask_item::dismissed()),
+                }
+            } else {
+                match &mut tool.plan {
+                    Some(plan) => *plan = decision.plan_verdict(None),
+                    None => tool.decision = Some(decision),
+                }
             }
             self.emit_tool(emit, tool_id);
         }
@@ -1144,8 +1193,20 @@ impl State {
         if let Some(AskShape::Trust) = self.asks.get(&key).map(|meta| &meta.shape) {
             return self.answer_trust(emit, id, &key, parsed);
         }
+        let asked = match self
+            .shared
+            .asks()
+            .get(&key)
+            .and_then(|ask| ask.body.as_ref())
+        {
+            Some(wire::ask::Body::Question(asked)) => Some(asked.clone()),
+            _ => None,
+        };
+        if let (Some(asked), Some(claude_answer::Of::Reply(reply))) = (&asked, &parsed) {
+            return self.reply_instead(emit, id, &key, asked, reply);
+        }
         let answered = match (self.asks.get(&key), parsed) {
-            (Some(meta), Some(parsed)) => terminal_answer(&meta.shape, parsed),
+            (Some(meta), Some(parsed)) => terminal_answer(&meta.shape, asked.as_ref(), parsed),
             _ => Err(reason::UNSUPPORTED),
         };
         let (terminal, decision) = match answered {
@@ -1160,6 +1221,36 @@ impl State {
 }
 
 impl State {
+    /// The person replied in their own words instead of answering: Claude's
+    /// question menu is cancelled with the interrupt key, which ends the
+    /// turn, and the words are typed as the next prompt.
+    fn reply_instead(
+        &mut self,
+        emit: &mut Emit,
+        id: &[u8],
+        key: &str,
+        asked: &wire::QuestionAsk,
+        reply: &wire::ReplyInstead,
+    ) {
+        let fits =
+            reply.answers_so_far.is_empty() || reply.answers_so_far.len() == asked.questions.len();
+        let Some(record) =
+            ask_item::replied(asked, reply).filter(|_| fits && !reply.text.trim().is_empty())
+        else {
+            return self.shared.reject(emit, id, reason::UNSUPPORTED);
+        };
+        self.shared.answer(emit, id, key);
+        self.close(emit, key, Decision::question(record));
+        emit.effect(Effect::Terminal(TerminalInput::Interrupt));
+        let prompt = wire::PromptInput {
+            text: reply.text.clone(),
+            ..Default::default()
+        };
+        if let Some(entry) = self.shared.admit_prompt(emit, id, prompt, human()) {
+            self.typed(emit, entry);
+        }
+    }
+
     /// The trust question answered through amux: its first answer trusts
     /// the folder, its second exits.
     fn answer_trust(
@@ -1171,7 +1262,10 @@ impl State {
     ) {
         let trust = match &parsed {
             Some(claude_answer::Of::Question(answer))
-                if answer.note.trim().is_empty()
+                if answer
+                    .answers
+                    .iter()
+                    .all(|response| response.note.is_none())
                     && answer.answers.len() == 1
                     && answer.answers[0].other.is_none() =>
             {
@@ -1212,6 +1306,7 @@ impl Tool {
 /// terminal's menu has no entry for.
 fn terminal_answer(
     shape: &AskShape,
+    asked: Option<&wire::QuestionAsk>,
     answer: claude_answer::Of,
 ) -> Result<(TerminalInput, Decision), &'static str> {
     let decision = |outcome: DecisionOutcome, scope: String, note: String| Decision {
@@ -1220,6 +1315,7 @@ fn terminal_answer(
         note,
         elsewhere: false,
         verdict: None,
+        record: None,
     };
     match (shape, answer) {
         (
@@ -1282,10 +1378,19 @@ fn terminal_answer(
             Ok((TerminalInput::Plan(choice), Decision::plan(verdict)))
         }
         (AskShape::Question { questions }, claude_answer::Of::Question(answer)) => {
-            // Claude's form has nowhere to type a note for the answers.
-            if answer.answers.len() != questions.len() || !answer.note.trim().is_empty() {
+            // Claude's form has nowhere to type a note, and the keymap
+            // answers every question.
+            if answer.answers.len() != questions.len()
+                || answer
+                    .answers
+                    .iter()
+                    .any(|response| response.note.is_some())
+            {
                 return Err(reason::UNSUPPORTED);
             }
+            let record = asked
+                .and_then(|asked| ask_item::answered(asked, &answer))
+                .ok_or(reason::UNSUPPORTED)?;
             let mut answers = Vec::new();
             for (shape, response) in questions.iter().zip(answer.answers) {
                 let picks = response.selected.len() + usize::from(response.other.is_some());
@@ -1306,7 +1411,7 @@ fn terminal_answer(
                     questions: questions.clone(),
                     answers,
                 },
-                decision(DecisionOutcome::Allowed, String::new(), answer.note),
+                Decision::question(record),
             ))
         }
         _ => Err(reason::UNSUPPORTED),

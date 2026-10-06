@@ -105,6 +105,47 @@ pub(crate) fn plan_item(input: &str, verdict: &Verdict) -> Option<(String, wire:
     })
 }
 
+/// The ask item of an AskUserQuestion call: its questions, and how they
+/// were answered once they were. None until the call's input carries them.
+/// In Claude's terminal a question with previews takes no typed answer.
+pub(crate) fn question_item(
+    input: &str,
+    closed: Option<wire::AskClosed>,
+    terminal: bool,
+) -> Option<wire::AskItem> {
+    let (mut asked, shapes) = question_ask_text(input);
+    if asked.questions.is_empty() {
+        return None;
+    }
+    if terminal {
+        for (question, shape) in asked.questions.iter_mut().zip(&shapes) {
+            question.allow_other = !shape.previews;
+        }
+    }
+    Some(wire::AskItem {
+        ask: Some(wire::ask_item::Ask::Question(asked)),
+        closed,
+    })
+}
+
+/// AskUserQuestion's answers as Claude records them, in the input handed to
+/// the tool and in its result: by each question's text, with notes beside
+/// them.
+#[derive(Deserialize)]
+pub(crate) struct AnsweredResult {
+    #[serde(default)]
+    pub answers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub annotations: BTreeMap<String, AnswerNote>,
+}
+
+/// The note on one answered question.
+#[derive(Deserialize)]
+pub(crate) struct AnswerNote {
+    #[serde(default)]
+    pub notes: String,
+}
+
 /// The decision Claude's plan asks offer, in the order Claude's own
 /// terminal lists them.
 pub(crate) fn plan_ask() -> wire::PlanAsk {
@@ -517,9 +558,23 @@ pub(crate) struct QuestionOptionItem {
 /// The question form AskUserQuestion's input describes, and each
 /// question's shape.
 pub(crate) fn question_ask(input: &Value) -> (QuestionAsk, Vec<QuestionShape>) {
-    let questions = QuestionInput::deserialize(input)
-        .map(|input| input.questions)
-        .unwrap_or_default();
+    questions_asked(
+        QuestionInput::deserialize(input)
+            .map(|input| input.questions)
+            .unwrap_or_default(),
+    )
+}
+
+/// The same, from the input kept as text on its call.
+pub(crate) fn question_ask_text(input: &str) -> (QuestionAsk, Vec<QuestionShape>) {
+    questions_asked(
+        serde_json::from_str::<QuestionInput>(input)
+            .map(|input| input.questions)
+            .unwrap_or_default(),
+    )
+}
+
+fn questions_asked(questions: Vec<QuestionItem>) -> (QuestionAsk, Vec<QuestionShape>) {
     let shapes = questions
         .iter()
         .map(|question| QuestionShape {

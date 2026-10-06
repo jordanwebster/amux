@@ -1,0 +1,507 @@
+{
+  "about": "Answering headless Claude's questions question by question: a skipped question is left out of the answers, a note rides on its own question, and reply instead refuses the call with the person's words. The record reads answered N of M, or replied instead with the words.",
+  "events": [
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "init",
+          "uuid": "init-s1",
+          "session_id": "s1",
+          "claude_code_version": "2.1.283",
+          "model": "claude-sonnet-5",
+          "permissionMode": "default"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "ask me three things"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "assistant",
+          "uuid": "m1",
+          "message": {
+            "id": "m1",
+            "model": "claude-sonnet-5",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "AskUserQuestion",
+                "input": {
+                  "questions": [
+                    {
+                      "question": "Which color do you prefer?",
+                      "header": "Color",
+                      "options": [
+                        {
+                          "label": "Red",
+                          "description": "The color red"
+                        },
+                        {
+                          "label": "Blue",
+                          "description": "The color blue"
+                        }
+                      ],
+                      "multiSelect": false
+                    },
+                    {
+                      "question": "Which fruit do you prefer?",
+                      "header": "Fruit",
+                      "options": [
+                        {
+                          "label": "Apple",
+                          "description": "A crisp apple"
+                        },
+                        {
+                          "label": "Pear",
+                          "description": "A sweet pear"
+                        }
+                      ],
+                      "multiSelect": false
+                    },
+                    {
+                      "question": "Which tools do you need?",
+                      "header": "Tools",
+                      "options": [
+                        {
+                          "label": "Hammer",
+                          "description": ""
+                        },
+                        {
+                          "label": "Saw",
+                          "description": ""
+                        }
+                      ],
+                      "multiSelect": true
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "control_request",
+          "request_id": "req-1",
+          "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "AskUserQuestion",
+            "display_name": "AskUserQuestion",
+            "input": {
+              "questions": [
+                {
+                  "question": "Which color do you prefer?",
+                  "header": "Color",
+                  "options": [
+                    {
+                      "label": "Red",
+                      "description": "The color red"
+                    },
+                    {
+                      "label": "Blue",
+                      "description": "The color blue"
+                    }
+                  ],
+                  "multiSelect": false
+                },
+                {
+                  "question": "Which fruit do you prefer?",
+                  "header": "Fruit",
+                  "options": [
+                    {
+                      "label": "Apple",
+                      "description": "A crisp apple"
+                    },
+                    {
+                      "label": "Pear",
+                      "description": "A sweet pear"
+                    }
+                  ],
+                  "multiSelect": false
+                },
+                {
+                  "question": "Which tools do you need?",
+                  "header": "Tools",
+                  "options": [
+                    {
+                      "label": "Hammer",
+                      "description": ""
+                    },
+                    {
+                      "label": "Saw",
+                      "description": ""
+                    }
+                  ],
+                  "multiSelect": true
+                }
+              ]
+            },
+            "tool_use_id": "t1"
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "req-1"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a1",
+        "answer": {
+          "ask": "req-1",
+          "answer": {
+            "selected": [
+              1,
+              null,
+              [
+                0,
+                1
+              ]
+            ],
+            "notes": [
+              "the blue of the logo",
+              null,
+              "both, for the shelf"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "items": [
+          "t1"
+        ]
+      },
+      "note": "the fruit is skipped: it is left out of the answers, as Claude's own form leaves it; each note rides on its own question's annotation"
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "content": "Your questions have been answered: \"Which color do you prefer?\"=\"Blue\", \"Which tools do you need?\"=\"Hammer, Saw\". You can now continue with these answers in mind.",
+                "tool_use_id": "t1"
+              }
+            ]
+          },
+          "tool_use_result": {
+            "questions": [
+              {
+                "question": "Which color do you prefer?",
+                "header": "Color",
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "The color red"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "The color blue"
+                  }
+                ],
+                "multiSelect": false
+              },
+              {
+                "question": "Which fruit do you prefer?",
+                "header": "Fruit",
+                "options": [
+                  {
+                    "label": "Apple",
+                    "description": "A crisp apple"
+                  },
+                  {
+                    "label": "Pear",
+                    "description": "A sweet pear"
+                  }
+                ],
+                "multiSelect": false
+              },
+              {
+                "question": "Which tools do you need?",
+                "header": "Tools",
+                "options": [
+                  {
+                    "label": "Hammer",
+                    "description": ""
+                  },
+                  {
+                    "label": "Saw",
+                    "description": ""
+                  }
+                ],
+                "multiSelect": true
+              }
+            ],
+            "answers": {
+              "Which color do you prefer?": "Blue",
+              "Which tools do you need?": "Hammer, Saw"
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": []
+      },
+      "note": "the record was set when amux answered; the result adds nothing"
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "assistant",
+          "uuid": "m2",
+          "message": {
+            "id": "m2",
+            "model": "claude-sonnet-5",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t2",
+                "name": "AskUserQuestion",
+                "input": {
+                  "questions": [
+                    {
+                      "question": "Which color do you prefer?",
+                      "header": "Color",
+                      "options": [
+                        {
+                          "label": "Red",
+                          "description": "The color red"
+                        },
+                        {
+                          "label": "Blue",
+                          "description": "The color blue"
+                        }
+                      ],
+                      "multiSelect": false
+                    },
+                    {
+                      "question": "Which fruit do you prefer?",
+                      "header": "Fruit",
+                      "options": [
+                        {
+                          "label": "Apple",
+                          "description": "A crisp apple"
+                        },
+                        {
+                          "label": "Pear",
+                          "description": "A sweet pear"
+                        }
+                      ],
+                      "multiSelect": false
+                    },
+                    {
+                      "question": "Which tools do you need?",
+                      "header": "Tools",
+                      "options": [
+                        {
+                          "label": "Hammer",
+                          "description": ""
+                        },
+                        {
+                          "label": "Saw",
+                          "description": ""
+                        }
+                      ],
+                      "multiSelect": true
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "control_request",
+          "request_id": "req-2",
+          "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "AskUserQuestion",
+            "display_name": "AskUserQuestion",
+            "input": {
+              "questions": [
+                {
+                  "question": "Which color do you prefer?",
+                  "header": "Color",
+                  "options": [
+                    {
+                      "label": "Red",
+                      "description": "The color red"
+                    },
+                    {
+                      "label": "Blue",
+                      "description": "The color blue"
+                    }
+                  ],
+                  "multiSelect": false
+                },
+                {
+                  "question": "Which fruit do you prefer?",
+                  "header": "Fruit",
+                  "options": [
+                    {
+                      "label": "Apple",
+                      "description": "A crisp apple"
+                    },
+                    {
+                      "label": "Pear",
+                      "description": "A sweet pear"
+                    }
+                  ],
+                  "multiSelect": false
+                },
+                {
+                  "question": "Which tools do you need?",
+                  "header": "Tools",
+                  "options": [
+                    {
+                      "label": "Hammer",
+                      "description": ""
+                    },
+                    {
+                      "label": "Saw",
+                      "description": ""
+                    }
+                  ],
+                  "multiSelect": true
+                }
+              ]
+            },
+            "tool_use_id": "t2"
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "req-2"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a2bad",
+        "answer": {
+          "ask": "req-2",
+          "answer": {
+            "reply": {
+              "text": "Pick whatever matches the old page.",
+              "selected": [
+                0
+              ]
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "asks": [
+          "req-2"
+        ],
+        "silent": true
+      },
+      "note": "answers so far come one per question or not at all"
+    },
+    {
+      "input": {
+        "id": "a2",
+        "answer": {
+          "ask": "req-2",
+          "answer": {
+            "reply": {
+              "text": "Pick whatever matches the old page.",
+              "selected": [
+                0,
+                null,
+                null
+              ]
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "items": [
+          "t2"
+        ]
+      },
+      "note": "reply instead refuses the call with the person's words as the reason and leaves the turn running, so Claude reads them and carries on"
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "user",
+          "uuid": "u2",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "content": "Pick whatever matches the old page.",
+                "is_error": true,
+                "tool_use_id": "t2"
+              }
+            ]
+          },
+          "tool_use_result": "Error: Pick whatever matches the old page."
+        }
+      },
+      "expect": {
+        "items": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "result",
+          "subtype": "success",
+          "uuid": "r1",
+          "is_error": false,
+          "duration_ms": 4000,
+          "duration_api_ms": 3000,
+          "num_turns": 3,
+          "session_id": "s1",
+          "result": "ok",
+          "stop_reason": "end_turn"
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    }
+  ]
+}

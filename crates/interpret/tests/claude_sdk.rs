@@ -36,6 +36,7 @@ goldens! {
     questions_and_plan_verdicts_are_asks => "verdicts",
     plans_are_items_with_their_verdict => "plans",
     a_stopped_question_is_dismissed => "question_stopped",
+    questions_are_skipped_noted_or_replied_to => "question_answers",
     usage_health_and_sign_in_are_strip_fields => "strip",
     refusal_fallback_is_a_model_switch_row => "rows",
     inputs_become_stream_json_writes => "inputs",

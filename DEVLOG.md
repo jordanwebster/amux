@@ -1,3 +1,18 @@
+2026-10-06 — **A question can be skipped, noted, or replied to instead.**
+A question answer carried one note for the whole form, every question had
+to be answered, and the only way out was to dismiss it. The note now rides
+on each question's response, and a response with nothing picked skips its
+question: headless Claude leaves it out of the answers, as its own form
+does, with each note in the input's annotations, and Codex sends it with no
+answers and each note as a `user_note:` answer. A new answer, reply
+instead, carries the person's words and any answers so far: headless Claude
+refuses the call with the words as the reason, terminal Claude cancels its
+menu and queues them as the next prompt, and Codex interrupts the turn and
+sends them as the next prompt. Terminal Claude still refuses a skip or a
+note, which its form cannot take. Claude's AskUserQuestion is now drawn as a
+question ask item like Codex's, so all three kinds record the answers the
+same way: answered N of M, or replied instead with the words.
+
 2026-10-06 — **A Codex plan opens its own decision.**
 Codex's plan item was relabelled a message, and Codex asks nothing about a
 plan, so an agent that finished planning looked idle. The plan now streams

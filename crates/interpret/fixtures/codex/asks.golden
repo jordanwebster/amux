@@ -43,7 +43,7 @@ snapshot NEEDS_YOU queue=[] working_on=- at=1800000000000 asks=[9→ask:9 questi
 ## 14 input {"answer":{"answer":{"note":"rotate it after the deploy","selected":["tok-SECRET-1234",0]},"ask":"9"},"id":"a5"}
 effect write "{\"id\":9,\"result\":{\"answers\":{\"env\":{\"answers\":[\"staging (Recommended)\",\"user_note: rotate it after the deploy\"]},\"token\":{\"answers\":[\"tok-SECRET-1234\"]}}}}"
 effect reply a5 accepted
-item ask:9 ask final at=1800000000000 text="" question×2 ASK_OUTCOME_ANSWERED answers=[(hidden); staging (Recommended)] note="rotate it after the deploy"
+item ask:9 ask final at=1800000000000 text="" question×2 ASK_OUTCOME_ANSWERED answered 2 of 2 [(hidden); staging (Recommended) note="rotate it after the deploy"]
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-1 model=gpt-5.6-luna model_name="GPT-5.6 Luna" effort=? permission=default mode=? approval=on-request sandbox=workspace-write reviewer=? collaboration=? context=? plan=? usage=? servers=? sign_in=? background=?
 ## 15 fact {"channel":"rpc","json":{"id":20,"method":"item/permissions/requestApproval","params":{"itemId":"exec-9","permissions":{"fileSystem":{"read":["/etc/shared"],"write":["/var/cache"]},"network":{"enabled":true}},"reason":"Read the shared config and reach the registry.","threadId":"t1","turnId":"turn-1"}}}
 item ask:20 ask final at=1800000000000 text="" access read=["/etc/shared"] write=["/var/cache"] network=true open

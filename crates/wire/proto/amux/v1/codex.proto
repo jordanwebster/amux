@@ -278,5 +278,6 @@ message CodexAnswer {
     LinkAnswer link = 3;
     GrantAnswer grant = 4;
     PlanAnswer plan = 5;
+    ReplyInstead reply = 6;
   }
 }

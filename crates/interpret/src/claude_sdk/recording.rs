@@ -27,8 +27,7 @@ use wire::{
     claude_sdk_input, input, permission_answer,
 };
 
-use super::AnsweredInput;
-use crate::claude_common::{PLAN_TOOL, QUESTION_TOOL, QuestionInput, message_text};
+use crate::claude_common::{AnsweredResult, PLAN_TOOL, QUESTION_TOOL, QuestionInput, message_text};
 use crate::{Channel, Event, Fact};
 
 /// One line of a recording: when, which way, and what.
@@ -253,7 +252,7 @@ fn answer(request: &ControlRequestBody, response: &ControlResponse) -> Option<cl
                     }
                 })),
                 QUESTION_TOOL if allow => {
-                    let answered = AnsweredInput::deserialize(updated_input.as_ref()?).ok()?;
+                    let answered = AnsweredResult::deserialize(updated_input.as_ref()?).ok()?;
                     let questions = QuestionInput::deserialize(&asked.input).ok()?;
                     Some(claude_answer::Of::Question(QuestionAnswer {
                         answers: questions
@@ -263,11 +262,11 @@ fn answer(request: &ControlRequestBody, response: &ControlResponse) -> Option<cl
                                 let picked = answered
                                     .answers
                                     .get(&question.question)
-                                    .and_then(serde_json::Value::as_str)
+                                    .map(String::as_str)
                                     .unwrap_or_default();
                                 let mut selected = Vec::new();
                                 let mut other = Vec::new();
-                                for pick in picked.split(", ") {
+                                for pick in picked.split(", ").filter(|pick| !pick.is_empty()) {
                                     match question
                                         .options
                                         .iter()
@@ -280,10 +279,14 @@ fn answer(request: &ControlRequestBody, response: &ControlResponse) -> Option<cl
                                 QuestionResponse {
                                     selected,
                                     other: (!other.is_empty()).then(|| other.join(", ")),
+                                    note: answered
+                                        .annotations
+                                        .get(&question.question)
+                                        .map(|note| note.notes.clone())
+                                        .filter(|note| !note.is_empty()),
                                 }
                             })
                             .collect(),
-                        note: String::new(),
                     }))
                 }
                 _ => Some(claude_answer::Of::Permission(PermissionAnswer {

@@ -26,10 +26,11 @@ use super::{
     AskMeta, AskShape, Decided, Request, State, TaskState, Tool, ToolDecisionState, item_body,
 };
 use crate::claude_common::{
-    BackgroundInput, JobInput, PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, Verdict, apply_task_tool,
-    auto_models, blocks_text, claude_limit, compact_json, message_text, offered_commands,
-    offered_models, permission_scopes, plan_ask, plan_mode_write, question_ask, split_tool_name,
-    tool_class, tool_result_images, tool_result_text, without_image_bytes,
+    AnsweredResult, BackgroundInput, JobInput, PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, Verdict,
+    apply_task_tool, auto_models, blocks_text, claude_limit, compact_json, message_text,
+    offered_commands, offered_models, permission_scopes, plan_ask, plan_mode_write, question_ask,
+    question_ask_text, split_tool_name, tool_class, tool_result_images, tool_result_text,
+    without_image_bytes,
 };
 use crate::shared::json_as_written;
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
@@ -770,6 +771,8 @@ impl State {
                 || (server.is_empty() && TASK_TOOLS.contains(&tool_name.as_str()))
                 || plan_mode_write(planning, &server, &tool_name),
             plan: (server.is_empty() && tool_name == PLAN_TOOL).then(Verdict::default),
+            question: server.is_empty() && tool_name == QUESTION_TOOL,
+            asked: None,
             name: tool_name,
             server,
             input: String::new(),
@@ -900,6 +903,17 @@ impl State {
         }
         if let Some(result) = result {
             tool.outcome_json = compact_json(&without_image_bytes(result));
+        }
+        // A question nothing here closed: Claude's own record says how.
+        if tool.question && tool.asked.is_none() {
+            tool.asked = Some(match result.map(AnsweredResult::deserialize) {
+                Some(Ok(answered)) if !is_error => ask_item::recorded_by_claude(
+                    &question_ask_text(&tool.input).0,
+                    &answered.answers,
+                    &answered.annotations,
+                ),
+                _ => ask_item::dismissed(),
+            });
         }
         tool.ended_at_ms.get_or_insert(now);
         if tool.server.is_empty() && TASK_TOOLS.contains(&tool.name.as_str()) {

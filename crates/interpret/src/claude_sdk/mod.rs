@@ -39,7 +39,7 @@ use wire::{
 
 use crate::claude_common::{
     Jobs, Task, Verdict, describe_asks, describe_claude_usage, describe_tasks, describe_tool,
-    or_dash, plan_item, task_list,
+    or_dash, plan_item, question_item, task_list,
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
@@ -122,6 +122,12 @@ struct Tool {
     /// An ExitPlanMode call is drawn as its plan, with this verdict.
     #[serde(default)]
     plan: Option<Verdict>,
+    /// An AskUserQuestion call is drawn as its question, closed with this
+    /// record once decided.
+    #[serde(default)]
+    question: bool,
+    #[serde(default, with = "serde_pb::opt_msg")]
+    asked: Option<AskClosed>,
     #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
 }
@@ -130,6 +136,7 @@ struct Tool {
 enum Decided {
     Tool(ToolDecisionState),
     Plan(Verdict),
+    Question(AskClosed),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -271,13 +278,6 @@ fn item_body(kind: claude_sdk_item::Kind) -> Vec<u8> {
 /// A line for Claude's stdin.
 fn write(input: &claude_stream::Input) -> Effect {
     Effect::ProviderWrite(claude_stream::encode(input))
-}
-
-/// AskUserQuestion's input once answered: each answer by its question's
-/// text.
-#[derive(Deserialize)]
-pub(super) struct AnsweredInput {
-    answers: serde_json::Map<String, Value>,
 }
 
 /// AskUserQuestion's input with the person's answers: Claude hands it to
@@ -714,10 +714,19 @@ impl State {
             Some(claude_answer::Of::Link(link)) => Some(ask_item::link_answered(link.action)),
             _ => None,
         };
+        let asked = match self
+            .shared
+            .asks()
+            .get(&key)
+            .and_then(|ask| ask.body.as_ref())
+        {
+            Some(wire::ask::Body::Question(asked)) => Some(asked.clone()),
+            _ => None,
+        };
         let Some((response, decision)) = self
             .asks
             .get(&key)
-            .and_then(|meta| sdk_answer(meta, parsed?))
+            .and_then(|meta| sdk_answer(meta, asked.as_ref(), parsed?))
         else {
             return self.shared.reject(emit, id, reason::UNSUPPORTED);
         };
@@ -794,6 +803,9 @@ impl State {
         if let Some(plan) = tool.plan.as_mut().filter(|plan| plan.undecided()) {
             *plan = Verdict::of(wire::PlanVerdict::Dismissed);
         }
+        if tool.question && tool.asked.is_none() {
+            tool.asked = Some(ask_item::dismissed());
+        }
         if matches!(
             wire::ToolState::try_from(tool.state),
             Ok(wire::ToolState::Pending | wire::ToolState::Running)
@@ -807,8 +819,14 @@ impl State {
     fn decide(&mut self, emit: &mut Emit, tool_use_id: &str, decided: Decided) {
         if let Some(tool) = self.tools.get_mut(tool_use_id) {
             match decided {
+                // A question cannot be declined: one refused anyway closed
+                // without answers.
+                Decided::Tool(_) if tool.question => {
+                    tool.asked.get_or_insert_with(ask_item::dismissed);
+                }
                 Decided::Tool(decision) => tool.decision = Some(decision),
                 Decided::Plan(verdict) => tool.plan = Some(verdict),
+                Decided::Question(closed) => tool.asked = Some(closed),
             }
             self.emit_tool(emit, tool_use_id);
         }
@@ -820,6 +838,27 @@ impl State {
         };
         if tool.hidden {
             return;
+        }
+        if tool.question {
+            let Some(item) = question_item(&tool.input, tool.asked.clone(), false) else {
+                return;
+            };
+            let body = item_body(claude_sdk_item::Kind::Ask(item));
+            if body == tool.emitted {
+                return;
+            }
+            tool.emitted = body.clone();
+            let at_ms = tool.at_ms;
+            return self.shared.item(
+                emit,
+                ItemDraft {
+                    key: id.to_owned(),
+                    body,
+                    at_ms: Some(at_ms),
+                    complete: true,
+                    ..Default::default()
+                },
+            );
         }
         if let Some(verdict) = &tool.plan {
             let Some((text, plan)) = plan_item(&tool.input, verdict) else {
@@ -980,7 +1019,11 @@ const REJECTED: &str = "The user doesn't want to proceed with this tool use. The
 
 /// The control response an answer sends and the decision it puts on the
 /// call's row, or None when the answer does not fit the ask.
-fn sdk_answer(meta: &AskMeta, answer: claude_answer::Of) -> Option<(SdkAnswer, Option<Decided>)> {
+fn sdk_answer(
+    meta: &AskMeta,
+    asked: Option<&wire::QuestionAsk>,
+    answer: claude_answer::Of,
+) -> Option<(SdkAnswer, Option<Decided>)> {
     let input = serde_json::from_str::<Value>(&meta.input).unwrap_or(Value::Null);
     let decided = |outcome: DecisionOutcome, scope: &str, note: &str| {
         Some(Decided::Tool(ToolDecisionState {
@@ -1067,30 +1110,30 @@ fn sdk_answer(meta: &AskMeta, answer: claude_answer::Of) -> Option<(SdkAnswer, O
             if answer.answers.len() != questions.len() {
                 return None;
             }
+            // A skipped question is left out of the answers, as Claude's
+            // own interface does; Claude takes notes per question, by its
+            // text, whether or not it was answered.
             let mut answers = BTreeMap::new();
+            let mut annotations = BTreeMap::new();
             for ((question, labels, multi), response) in questions.iter().zip(&answer.answers) {
                 let mut picked = Vec::new();
                 for index in &response.selected {
                     picked.push(labels.get(*index as usize)?.clone());
                 }
                 picked.extend(response.other.clone());
-                if picked.is_empty() || (!multi && picked.len() > 1) {
+                if !multi && picked.len() > 1 {
                     return None;
                 }
-                answers.insert(question.as_str(), picked.join(", "));
-            }
-            // Claude takes notes per question, keyed by the question's text;
-            // the one note the person wrote goes on the last.
-            let mut annotations = BTreeMap::new();
-            if let Some((question, _, _)) = questions.last()
-                && !answer.note.is_empty()
-            {
-                annotations.insert(
-                    question.as_str(),
-                    QuestionNote {
-                        notes: &answer.note,
-                    },
-                );
+                if !picked.is_empty() {
+                    answers.insert(question.as_str(), picked.join(", "));
+                }
+                if let Some(note) = response
+                    .note
+                    .as_deref()
+                    .filter(|note| !note.trim().is_empty())
+                {
+                    annotations.insert(question.as_str(), QuestionNote { notes: note });
+                }
             }
             let updated = AnsweringInput {
                 input: match input {
@@ -1100,12 +1143,32 @@ fn sdk_answer(meta: &AskMeta, answer: claude_answer::Of) -> Option<(SdkAnswer, O
                 answers,
                 annotations,
             };
+            let closed = ask_item::answered(asked?, &answer)?;
             Some((
                 allow(
                     serde_json::to_value(updated).expect("an answered input serializes"),
                     None,
                 ),
-                decided(DecisionOutcome::Allowed, "", &answer.note),
+                Some(Decided::Question(closed)),
+            ))
+        }
+        // The question is refused with the person's own words, which
+        // Claude hands the model as the call's result.
+        (AskShape::Question(questions), claude_answer::Of::Reply(reply)) => {
+            if reply.text.trim().is_empty()
+                || (!reply.answers_so_far.is_empty()
+                    && reply.answers_so_far.len() != questions.len())
+            {
+                return None;
+            }
+            let closed = ask_item::replied(asked?, &reply)?;
+            Some((
+                SdkAnswer::Permission(PermissionResult::Deny {
+                    message: reply.text,
+                    interrupt: Some(false),
+                    tool_use_id: None,
+                }),
+                Some(Decided::Question(closed)),
             ))
         }
         (AskShape::Form, claude_answer::Of::Form(form)) => {

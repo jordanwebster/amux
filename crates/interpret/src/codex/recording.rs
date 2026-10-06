@@ -368,7 +368,6 @@ fn answer(
             }))
         }
         (ServerRequest::RequestUserInput(params), ClientResponse::UserInput(answered)) => {
-            let mut note = String::new();
             let responses = params
                 .questions
                 .iter()
@@ -387,7 +386,7 @@ fn answer(
                         .unwrap_or_default()
                     {
                         if let Some(noted) = picked.strip_prefix(super::USER_NOTE) {
-                            note = noted.to_owned();
+                            response.note = Some(noted.to_owned());
                             continue;
                         }
                         match labels.iter().position(|label| label == picked) {
@@ -400,7 +399,6 @@ fn answer(
                 .collect();
             body(codex_answer::Of::Question(QuestionAnswer {
                 answers: responses,
-                note,
             }))
         }
         (ServerRequest::Elicitation(params), ClientResponse::Elicitation(answered)) => {

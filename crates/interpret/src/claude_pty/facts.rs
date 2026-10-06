@@ -21,10 +21,10 @@ use super::{
     Subagent, Tool, item_body,
 };
 use crate::claude_common::{
-    BackgroundInput, JobInput, PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, Verdict, apply_task_tool,
-    blocks_text, compact_json, message_text, permission_scopes, plan_ask, plan_mode_write,
-    question_ask, same_json, split_tool_name, timestamp_ms, tool_class, tool_result_images,
-    tool_result_text, without_image_bytes,
+    AnsweredResult, BackgroundInput, JobInput, PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, Verdict,
+    apply_task_tool, blocks_text, compact_json, message_text, permission_scopes, plan_ask,
+    plan_mode_write, question_ask, question_ask_text, same_json, split_tool_name, timestamp_ms,
+    tool_class, tool_result_images, tool_result_text, without_image_bytes,
 };
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
@@ -642,6 +642,7 @@ impl State {
                     &tool_name,
                 );
             let plan = (server.is_empty() && tool_name == PLAN_TOOL).then(Verdict::default);
+            let question = server.is_empty() && tool_name == QUESTION_TOOL;
             if is_status_tool(&server, &tool_name)
                 && let Some(working_on) = status_working_on(input.to_string().as_bytes())
             {
@@ -673,6 +674,8 @@ impl State {
                     awaiting_notification: false,
                     images: Vec::new(),
                     plan,
+                    question,
+                    asked: None,
                     emitted: Vec::new(),
                 },
             );
@@ -770,6 +773,25 @@ impl State {
                 decision.note = note.clone();
                 self.close(emit, &key, decision);
             }
+        }
+        // A question answered in Claude's own terminal, or closed by a fact
+        // before its answers showed: Claude's own record says how.
+        if let Some(tool) = self.tools.get_mut(&id).filter(|tool| tool.question)
+            && tool
+                .asked
+                .as_ref()
+                .is_none_or(|closed| closed.outcome == wire::AskOutcome::Dismissed as i32)
+        {
+            tool.asked = Some(match result.map(AnsweredResult::deserialize) {
+                Some(Ok(answered)) if !is_error && !answered.answers.is_empty() => {
+                    ask_item::recorded_by_claude(
+                        &question_ask_text(&tool.input).0,
+                        &answered.answers,
+                        &answered.annotations,
+                    )
+                }
+                _ => ask_item::dismissed(),
+            });
         }
         self.task_tool(&id, result.unwrap_or(&Value::Null));
         self.emit_tool(emit, &id);

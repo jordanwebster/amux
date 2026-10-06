@@ -229,6 +229,7 @@ message ClaudeAnswer {
     PlanAnswer plan = 3;
     FormAnswer form = 4;
     LinkAnswer link = 5;
+    ReplyInstead reply = 6;
   }
 }
 

@@ -94,8 +94,10 @@ pub enum FixtureInput {
     /// `answer` is the kind's answer in JSON: for Claude `{"allow": {}}`,
     /// `{"allow": {"scope": 1}}`, `{"deny": {"note": "…", "stop": true}}`,
     /// `{"approve_plan": {}}`, `{"send_back": {"note": "…"}}`,
-    /// `{"selected": [0, [1, 2], "typed"], "note": "…"}` (one entry per
-    /// question: an index, indices, or a typed answer),
+    /// `{"selected": [0, [1, 2], "typed", null], "notes": ["…", null]}`
+    /// (one entry per question: an index, indices, a typed answer, or null
+    /// to skip; a lone `"note"` goes on the last question), `{"reply":
+    /// {"text": "…", "selected": [...]}}` to reply instead,
     /// `{"form": {"action": "accept", "content": {…}}}`,
     /// `{"link": {"action": "decline"}}`; for Codex
     /// `{"decision": "approve"}` answers an approval, and a question, form,
@@ -793,8 +795,10 @@ fn claude_answer(kind: &str, ask: &str, answer: &Value) -> Option<AnswerInput> {
             } as i32,
             note: None,
         })
-    } else if let Some(selected) = answer.get("selected").and_then(Value::as_array) {
-        claude_answer::Of::Question(question_answer(selected, text(answer, "note")))
+    } else if answer.get("selected").is_some() {
+        claude_answer::Of::Question(question_answer(answer))
+    } else if let Some(reply) = answer.get("reply") {
+        claude_answer::Of::Reply(reply_instead(reply))
     } else if let Some(link) = answer.get("link") {
         claude_answer::Of::Link(wire::LinkAnswer {
             action: wire::FormAction::from_str_name(&format!(
@@ -937,28 +941,68 @@ pub fn codex_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
     })
 }
 
-/// One answer per question: an option index, a list of indices for a
-/// multi-select, or a string for a typed answer.
-fn question_answer(selected: &[Value], note: String) -> wire::QuestionAnswer {
+/// One response per question: an option index, a list of indices for a
+/// multi-select, a string for a typed answer, or null for a skip. `notes`
+/// holds each question's note (null for none); a lone `note` goes on the
+/// last question.
+fn question_responses(answer: &Value) -> Vec<wire::QuestionResponse> {
+    let selected = answer
+        .get("selected")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let notes = answer
+        .get("notes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let last = selected.len().saturating_sub(1);
+    selected
+        .iter()
+        .enumerate()
+        .map(|(at, choice)| wire::QuestionResponse {
+            selected: match choice {
+                Value::Array(indices) => indices
+                    .iter()
+                    .filter_map(Value::as_u64)
+                    .map(|index| index as u32)
+                    .collect(),
+                other => other
+                    .as_u64()
+                    .map(|index| vec![index as u32])
+                    .unwrap_or_default(),
+            },
+            other: choice.as_str().map(str::to_owned),
+            note: notes
+                .get(at)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| {
+                    (at == last)
+                        .then(|| answer.get("note").and_then(Value::as_str))
+                        .flatten()
+                        .map(str::to_owned)
+                }),
+        })
+        .collect()
+}
+
+fn question_answer(answer: &Value) -> wire::QuestionAnswer {
     wire::QuestionAnswer {
-        answers: selected
-            .iter()
-            .map(|choice| wire::QuestionResponse {
-                selected: match choice {
-                    Value::Array(indices) => indices
-                        .iter()
-                        .filter_map(Value::as_u64)
-                        .map(|index| index as u32)
-                        .collect(),
-                    other => other
-                        .as_u64()
-                        .map(|index| vec![index as u32])
-                        .unwrap_or_default(),
-                },
-                other: choice.as_str().map(str::to_owned),
-            })
-            .collect(),
-        note,
+        answers: question_responses(answer),
+    }
+}
+
+/// `{"reply": {"text": "…", "selected": [...]}}`: the person's words, with
+/// the answers so far in the question vocabulary.
+fn reply_instead(reply: &Value) -> wire::ReplyInstead {
+    wire::ReplyInstead {
+        text: reply
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        answers_so_far: question_responses(reply),
     }
 }
 
@@ -975,15 +1019,10 @@ fn codex_answer(answer: &Value) -> Option<CodexAnswer> {
         ))
         .map(|action| action as i32)
     };
-    let of = if let Some(selected) = answer.get("selected").and_then(Value::as_array) {
-        Of::Question(question_answer(
-            selected,
-            answer
-                .get("note")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-        ))
+    let of = if answer.get("selected").is_some() {
+        Of::Question(question_answer(answer))
+    } else if let Some(reply) = answer.get("reply") {
+        Of::Reply(reply_instead(reply))
     } else if let Some(link) = answer.get("link") {
         Of::Link(wire::LinkAnswer {
             action: action(link)?,

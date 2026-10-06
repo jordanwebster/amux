@@ -271,7 +271,7 @@ fn codex_cards_answer_the_interpreter() {
     assert_eq!(
         answered,
         BTreeSet::from([
-            "access", "command", "edit", "form", "link", "question", "tool"
+            "access", "command", "edit", "form", "link", "plan", "question", "tool"
         ]),
         "card bodies answered"
     );

@@ -1155,6 +1155,11 @@ impl State {
                 _ => self.shared.reject(emit, id, reason::UNSUPPORTED),
             };
         }
+        if let (Some(codex_ask::Body::Question(asked)), Some(codex_answer::Of::Reply(reply))) =
+            (&ask.body, &parsed)
+        {
+            return self.reply_instead(emit, id, &ask, asked, reply);
+        }
         let Some((meta, parsed)) = self.asks.get(&key).cloned().zip(parsed) else {
             return self.shared.reject(emit, id, reason::UNSUPPORTED);
         };
@@ -1259,6 +1264,39 @@ impl State {
         }
     }
 
+    /// The person replied in their own words instead of answering: the turn
+    /// is interrupted, which withdraws the question, and the words go as
+    /// the next prompt.
+    fn reply_instead(
+        &mut self,
+        emit: &mut Emit,
+        id: &[u8],
+        ask: &CodexAsk,
+        asked: &wire::QuestionAsk,
+        reply: &wire::ReplyInstead,
+    ) {
+        let fits =
+            reply.answers_so_far.is_empty() || reply.answers_so_far.len() == asked.questions.len();
+        let Some(closed) =
+            ask_item::replied(asked, reply).filter(|_| fits && !reply.text.trim().is_empty())
+        else {
+            return self.shared.reject(emit, id, reason::UNSUPPORTED);
+        };
+        if self.shared.answer(emit, id, &ask.key).is_none() {
+            return;
+        }
+        let meta = self.asks.remove(&ask.key);
+        self.emit_ask(emit, ask, meta.map_or(0, |meta| meta.at_ms), Some(closed));
+        self.interrupt(emit);
+        let prompt = wire::PromptInput {
+            text: reply.text.clone(),
+            ..Default::default()
+        };
+        if let Some(entry) = self.shared.admit_prompt(emit, id, prompt, human()) {
+            self.submit(emit, entry, Vec::new());
+        }
+    }
+
     /// Implement leaves plan for the default mode, keeping the permission,
     /// and starts a turn with Codex's own words; stay sends the note, if
     /// any, as the next prompt, still in plan mode.
@@ -1345,22 +1383,21 @@ fn codex_answer_response(
                 return None;
             }
             let mut answers = std::collections::BTreeMap::new();
-            let last = meta.questions.len().saturating_sub(1);
-            for (at, ((question, labels), response)) in
-                meta.questions.iter().zip(&answer.answers).enumerate()
-            {
+            for ((question, labels), response) in meta.questions.iter().zip(&answer.answers) {
+                // A skipped question goes with no answers, and a note is
+                // appended to its question's answers, as Codex's own form
+                // sends them.
                 let mut picked = Vec::new();
                 for index in &response.selected {
                     picked.push(labels.get(*index as usize)?.clone());
                 }
                 picked.extend(response.other.clone());
-                if picked.is_empty() {
-                    return None;
-                }
-                // Codex's own form appends a question's notes to its answers
-                // this way; the one note the person wrote goes on the last.
-                if at == last && !answer.note.is_empty() {
-                    picked.push(format!("{USER_NOTE}{}", answer.note));
+                if let Some(note) = response
+                    .note
+                    .as_deref()
+                    .filter(|note| !note.trim().is_empty())
+                {
+                    picked.push(format!("{USER_NOTE}{note}"));
                 }
                 answers.insert(
                     question.clone(),
