@@ -776,6 +776,10 @@ mod tests {
             // function.
             "Stretch",
             "StretchCounts",
+            // What a session knows for its fleet row: the runtime reads it
+            // and hands it to ui_view::fleet_view, which returns the cards
+            // the phone draws.
+            "SessionLine",
         ];
         let definitions = definitions();
         let root = repository();
