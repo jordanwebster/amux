@@ -3,8 +3,9 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
 home.newAgent | New Agent |  | 345,74,44,44
-home.row.<id> | helper, Welcome back., Idle, desk, /private/tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,91
+home.row.<id> | helper, Idle, Ready when you are., desk, /private/tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,91
 home.row.<id>.age.volatile | <volatile>
+home.row.<id>.second |  |  | 31,197,140,18
 home.row.<id>.detail.volatile | <volatile>
 home.row.<decision-pty> | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,251,366,70
 home.row.<decision-pty>.age.volatile | <volatile>
@@ -12,8 +13,9 @@ home.row.<decision-pty>.detail.volatile | <volatile>
 home.row.<reviewer> | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,321,366,70
 home.row.<reviewer>.age.volatile | <volatile>
 home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, Remember this recovery turn., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,392,366,91
+home.row.<keeper> | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,392,366,91
 home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.second |  |  | 31,430,236,18
 home.row.<keeper>.detail.volatile | <volatile>
 home.row.<decision-codex> | decision-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,484,366,70
 home.row.<decision-codex>.age.volatile | <volatile>
@@ -39,7 +41,7 @@ chat.title | helper | helper | 51,72,172,38
 chat.more | More |  | 344,69,44,44
 chat.field | Message helper |  | 28,750,346,24
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778

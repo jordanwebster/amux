@@ -9,8 +9,9 @@ home.row.<decision-pty>.detail.volatile | <volatile>
 home.row.<reviewer> | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,229,366,70
 home.row.<reviewer>.age.volatile | <volatile>
 home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, Remember this recovery turn., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,300,366,91
+home.row.<keeper> | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,300,366,91
 home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.second |  |  | 31,338,236,18
 home.row.<keeper>.detail.volatile | <volatile>
 home.row.<decision-codex> | decision-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,392,366,70
 home.row.<decision-codex>.age.volatile | <volatile>
@@ -34,9 +35,9 @@ tab.you | You | not selected | 253,777,99,57
  | Agents, switch account |  | 60,65,104,46
  | Nothing needs you · 0 running |  | 60,105,209,16
  | New Agent |  | 345,74,44,44
- | AGENTS |  | 20,137,42,14
+ | RUNNING |  | 20,137,49,14
  | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,159,366,70
  | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,230,366,70
- | keeper, Remember this recovery turn., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,300,366,91
+ | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,300,366,91
  | decision-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,392,366,70
  | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,462,366,70

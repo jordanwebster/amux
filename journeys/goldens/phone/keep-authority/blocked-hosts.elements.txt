@@ -3,7 +3,7 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | ada · nothing needs you | 60,105,166,16
 home.exceptions | desk offline | desk offline | 18,137,366,44
-home.row.<guarded> | guarded, hello, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | host-offline | 18,221,366,91
+home.row.<guarded> | guarded, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | host-offline | 18,221,366,70
 home.row.<guarded>.age.volatile | <volatile>
 home.row.<guarded>.detail.volatile | <volatile>
 hosts |  | 1 offline | 0,62,402,778

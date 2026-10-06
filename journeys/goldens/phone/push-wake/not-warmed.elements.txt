@@ -3,10 +3,10 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | 1 need you · 2 agents | 60,105,151,16
 home.exceptions | Sign in to reach your agents from anywhere | Sign in to reach your agents from anywhere | 18,137,366,44
-home.row.<asker> | asker, Get ready., desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,221,366,91
+home.row.<asker> | asker, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,221,366,70
 home.row.<asker>.age.volatile | <volatile>
 home.row.<asker>.detail.volatile | <volatile>
-home.row.<bystander> | bystander, Get ready., desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,313,366,91
+home.row.<bystander> | bystander, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,331,366,70
 home.row.<bystander>.age.volatile | <volatile>
 home.row.<bystander>.detail.volatile | <volatile>
 chat |  | bystander | 0,62,402,778
@@ -21,7 +21,7 @@ chat.title | bystander | bystander | 51,72,102,38
 chat.more | More |  | 344,69,44,44
 chat.field | desk is out of reach · your draft is kept |  | 28,750,346,24
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 offline | 0,62,402,778

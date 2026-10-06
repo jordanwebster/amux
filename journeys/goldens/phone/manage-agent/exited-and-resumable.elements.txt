@@ -9,8 +9,9 @@ home.row.<decision-pty>.detail.volatile | <volatile>
 home.row.<reviewer> | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,229,366,70
 home.row.<reviewer>.age.volatile | <volatile>
 home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, Remember this recovery turn., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,300,366,91
+home.row.<keeper> | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,300,366,91
 home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.second |  |  | 31,338,236,18
 home.row.<keeper>.detail.volatile | <volatile>
 home.row.<decision-codex> | decision-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,392,366,70
 home.row.<decision-codex>.age.volatile | <volatile>
@@ -18,7 +19,7 @@ home.row.<decision-codex>.detail.volatile | <volatile>
 home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,462,366,70
 home.row.<decision-sdk>.age.volatile | <volatile>
 home.row.<decision-sdk>.detail.volatile | <volatile>
-home.row.<id> | helper, Exited, stopped, desk, /private/tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,533,366,70
+home.row.<id> | helper, Exited, desk, /private/tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,573,366,70
 home.row.<id>.age.volatile | <volatile>
 home.row.<id>.detail.volatile | <volatile>
 chat |  | helper | 0,62,402,778
@@ -35,7 +36,7 @@ chat.more | More |  | 344,69,44,44
 chat.exited | Exited · stopped | desk | 28,720,346,20
 chat.field | helper has exited · a message resumes it |  | 28,750,346,24
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 228,779,44,44
 chat.resume | Resume |  | 276,779,103,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778

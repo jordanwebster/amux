@@ -496,9 +496,21 @@ def reopen_card(journey: PhoneJourney, agent_id: str, ready) -> dict:
     standing where the composer was, so it is read with the keyboard
     down."""
     journey.tap("chat.back")
-    journey.wait(lambda drawn: "chat" not in drawn and f"home.row.{agent_id}" in drawn, "the fleet")
+    back_to_row(journey, agent_id, lambda drawn: "chat" not in drawn)
     journey.tap(f"home.row.{agent_id}")
     return journey.wait(lambda drawn: "ask" in drawn and ready(drawn), "the chat again")
+
+
+def back_to_row(journey: PhoneJourney, agent_id: str, left) -> None:
+    """Waits for the fleet with the agent's row on it, opening the folded
+    section holding the row when the fleet keeps it folded away."""
+    row = f"home.row.{agent_id}"
+    folds = lambda drawn: [name for name in drawn if name.startswith("home.fold.")]
+    drawn = journey.wait(lambda drawn: left(drawn) and (row in drawn or folds(drawn)), "the fleet")
+    if row not in drawn:
+        for fold in folds(drawn):
+            journey.tap(fold)
+    journey.wait(lambda drawn: left(drawn) and row in drawn, "the fleet")
 
 
 def answer_questions(journey: PhoneJourney) -> list[str]:
@@ -858,7 +870,7 @@ def reopen(journey: PhoneJourney, agent_id: str, ready) -> dict:
     """Leaves the chat for the fleet and opens it again, so it is read with
     the keyboard down."""
     journey.tap("chat.back")
-    journey.wait(lambda drawn: "chat.field" not in drawn and f"home.row.{agent_id}" in drawn, "the fleet")
+    back_to_row(journey, agent_id, lambda drawn: "chat.field" not in drawn)
     journey.tap(f"home.row.{agent_id}")
     return journey.wait(lambda drawn: "chat.field" in drawn and ready(drawn), "the chat again")
 
@@ -1002,6 +1014,11 @@ def attachment_or_review(journey: PhoneJourney) -> list[str]:
     git("add", "deploy.sh")
     git("commit", "-qm", "Deploy by rsync")
     (work / "deploy.sh").write_text("#!/bin/sh\necho deploying\nrsync --delete build/ prod:/srv\necho done\n")
+    # An agent reads its folder's git facts when it starts and when a turn
+    # ends, and the reviewer started before its folder was a repository: start
+    # it again so the phone has changes to offer for review.
+    journey.request({"Stop": {"agent": "reviewer"}})
+    journey.request({"Resume": {"agent": "reviewer"}})
 
     journey.launch()
     pair_by_code(journey, "desk")

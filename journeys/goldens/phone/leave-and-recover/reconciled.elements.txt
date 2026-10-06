@@ -3,8 +3,9 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
 home.newAgent | New Agent |  | 345,74,44,44
-home.row.<keeper> | keeper, Remember this recovery turn., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,91
+home.row.<keeper> | keeper, Idle, Back after the restart., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,91
 home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.second |  |  | 31,197,148,18
 home.row.<keeper>.detail.volatile | <volatile>
 home.row.<decision-pty> | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,251,366,70
 home.row.<decision-pty>.age.volatile | <volatile>
@@ -38,7 +39,7 @@ chat.title | keeper | keeper | 51,72,156,38
 chat.more | More |  | 344,69,44,44
 chat.field | Message keeper |  | 28,750,346,24
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
  | Back |  | 16,68,42,46

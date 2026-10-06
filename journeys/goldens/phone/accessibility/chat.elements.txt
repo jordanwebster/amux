@@ -12,6 +12,7 @@ chat.title | decision-sdk | decision-sdk | 51,72,252,82
 chat.more | More |  | 344,91,44,44
 chat.field | Message decision-sdk |  | 28,727,346,47
 chat.attach | Attach | closed | 23,779,44,44
+chat.model | claude-fake-1 · medium |  | 71,779,199,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778
@@ -25,5 +26,6 @@ hosts.caption.devices |  |  | 18,550,347,78
  | decision-sdk, /t/a/n/d/work · desk |  | 51,72,252,82
  | More |  | 344,91,44,44
  | Attach |  | 23,779,44,44
+ | claude-fake-1 |  | 71,779,199,44
  | Dictate |  | 287,779,44,44
  | Send |  | 335,779,44,44 (disabled)

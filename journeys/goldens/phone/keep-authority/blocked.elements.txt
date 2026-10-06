@@ -3,7 +3,7 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | ada · nothing needs you | 60,105,166,16
 home.exceptions | desk offline | desk offline | 18,137,366,44
-home.row.<guarded> | guarded, hello, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,221,366,91
+home.row.<guarded> | guarded, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,221,366,70
 home.row.<guarded>.age.volatile | <volatile>
 home.row.<guarded>.detail.volatile | <volatile>
 chat |  | guarded | 0,62,402,778
@@ -23,7 +23,7 @@ chat.more | More |  | 344,69,44,44
 chat.field | This phone is signed out · your draft is kept | Still there? | 28,750,318,24
 chat.clear | Clear |  | 342,738,44,43
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 offline | 0,62,402,778

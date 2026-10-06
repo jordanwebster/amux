@@ -3,14 +3,16 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
 home.newAgent | New Agent |  | 345,74,44,44
-home.row.<decision-pty> | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,70
-home.row.<decision-pty>.age.volatile | <volatile>
-home.row.<decision-pty>.detail.volatile | <volatile>
-home.row.<reviewer> | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,229,366,70
+home.row.<reviewer> | reviewer, on main, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,70
+home.row.<reviewer>.branch |  |  | 114,175,31,17
 home.row.<reviewer>.age.volatile | <volatile>
 home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, Remember this recovery turn., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,300,366,91
+home.row.<decision-pty> | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,229,366,70
+home.row.<decision-pty>.age.volatile | <volatile>
+home.row.<decision-pty>.detail.volatile | <volatile>
+home.row.<keeper> | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,300,366,91
 home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.second |  |  | 31,338,236,18
 home.row.<keeper>.detail.volatile | <volatile>
 home.row.<decision-codex> | decision-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,392,366,70
 home.row.<decision-codex>.age.volatile | <volatile>
@@ -19,10 +21,11 @@ home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/
 home.row.<decision-sdk>.age.volatile | <volatile>
 home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | reviewer | 0,62,402,778
+chat.row.boundary | Ended · stopped |  | 18,132,366,34
 chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
 chat.title | reviewer | reviewer | 51,72,156,38
-chat.changes | +2 −1 | shown | 280,73,60,36
+chat.changes | +2 −1 | Uncommitted | 280,73,60,36
 chat.more | More |  | 344,69,44,44
 chat.attachment | Pasted text · 12 lines |  | 28,683,215,26
 chat.attachment.remove | Remove |  | 213,680,31,30
@@ -31,6 +34,7 @@ chat.attachment.remove | Remove |  | 187,712,31,30
 chat.field | Message reviewer | Please check against | 28,750,318,24
 chat.clear | Clear |  | 342,738,44,43
 chat.attach | Attach | closed | 23,779,44,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44
 hosts |  | 1 reachable | 0,62,402,778
@@ -52,5 +56,7 @@ hosts.caption.devices |  |  | 18,363,320,18
  | Remove |  | 187,712,31,30
  | Clear |  | 342,738,44,43
  | Attach |  | 23,779,44,44
+ | claude-fake-1 |  | 71,779,139,44
  | Dictate |  | 287,779,44,44
  | Send |  | 335,779,44,44
+ | Ended · stopped |  | 18,132,366,34

@@ -3,19 +3,25 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | 1 need you · 5 agents | 60,105,151,16
 home.newAgent | New Agent |  | 345,74,44,44
-home.row.<decision-pty> | decision-pty, Needs you, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,159,366,70
+home.row.<decision-pty> | decision-pty, Needs you, Wants to run deploy --check, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,159,366,91
 home.row.<decision-pty>.age.volatile | <volatile>
+home.row.<decision-pty>.second |  |  | 31,197,197,18
 home.row.<decision-pty>.detail.volatile | <volatile>
-home.row.<reviewer> | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,229,366,70
+home.row.<decision-pty> | decision-pty, Working, Working, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | working | 18,291,366,91
+home.row.<decision-pty>.age.volatile | <volatile>
+home.row.<decision-pty>.second |  |  | 31,329,60,18
+home.row.<decision-pty>.detail.volatile | <volatile>
+home.row.<reviewer> | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,291,366,70
 home.row.<reviewer>.age.volatile | <volatile>
 home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, Remember this recovery turn., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,300,366,91
+home.row.<keeper> | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,362,366,91
 home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.second |  |  | 31,400,236,18
 home.row.<keeper>.detail.volatile | <volatile>
-home.row.<decision-codex> | decision-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,392,366,70
+home.row.<decision-codex> | decision-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,454,366,70
 home.row.<decision-codex>.age.volatile | <volatile>
 home.row.<decision-codex>.detail.volatile | <volatile>
-home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,462,366,70
+home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,524,366,70
 home.row.<decision-sdk>.age.volatile | <volatile>
 home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | decision-pty | 0,62,402,778

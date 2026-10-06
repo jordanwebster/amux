@@ -9,13 +9,13 @@ home.row.<decision-pty>.detail.volatile | <volatile>
 home.row.<reviewer> | reviewer, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,292,366,70
 home.row.<reviewer>.age.volatile | <volatile>
 home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, Remember this recovery turn., desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,362,366,91
+home.row.<keeper> | keeper, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,362,366,70
 home.row.<keeper>.age.volatile | <volatile>
 home.row.<keeper>.detail.volatile | <volatile>
-home.row.<decision-codex> | decision-codex, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,454,366,70
+home.row.<decision-codex> | decision-codex, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,432,366,70
 home.row.<decision-codex>.age.volatile | <volatile>
 home.row.<decision-codex>.detail.volatile | <volatile>
-home.row.<decision-sdk> | decision-sdk, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,524,366,70
+home.row.<decision-sdk> | decision-sdk, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,503,366,70
 home.row.<decision-sdk>.age.volatile | <volatile>
 home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | keeper | 0,62,402,778
@@ -31,7 +31,7 @@ chat.more | More |  | 344,69,44,44
 chat.field | desk is out of reach · your draft is kept | Pick up where we left off. | 28,750,318,24
 chat.clear | Clear |  | 342,738,44,43
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
  | Back |  | 16,68,42,46

@@ -3,8 +3,9 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,165,68
 home.subtitle |  | 1 need you · 1 agent | 60,127,242,81
 home.newAgent | New Agent |  | 345,118,44,44
-home.row.<decision-sdk> | decision-sdk, Needs you, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,271,366,194
+home.row.<decision-sdk> | decision-sdk, Needs you, Wants to run deploy --check, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,271,366,275
 home.row.<decision-sdk>.age.volatile | <volatile>
+home.row.<decision-sdk>.second |  |  | 31,331,301,78
 chat |  | decision-sdk | 0,62,402,778
 chat.row.boundary | Started |  | 18,98,366,58
 chat.row.prompt | Check the deployment once. |  | 18,157,366,106
@@ -35,6 +36,6 @@ hosts.caption.devices |  |  | 18,550,347,78
  | Always allow Bash, In this project, from now on |  | 28,516,346,225
  | Allow |  | 28,749,169,65
  | Deny… |  | 205,749,169,65
- | Started |  | 18,98,366,58
  | Check the deployment once. |  | 18,157,366,106
  | Wants to run, deploy --check |  | 18,274,366,40
+ | Started |  | 18,98,366,58

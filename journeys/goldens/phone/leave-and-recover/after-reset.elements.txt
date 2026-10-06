@@ -3,20 +3,25 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
 home.newAgent | New Agent |  | 345,74,44,44
-home.row.<keeper> | keeper, Remember this recovery turn., Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,159,366,91
+home.row.<keeper> | keeper, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,159,366,91
 home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.second |  |  | 31,197,189,18
 home.row.<keeper>.detail.volatile | <volatile>
-home.row.<decision-pty> | decision-pty, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,251,366,70
+home.row.<decision-pty> | decision-pty, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,251,366,91
 home.row.<decision-pty>.age.volatile | <volatile>
+home.row.<decision-pty>.second |  |  | 31,289,189,18
 home.row.<decision-pty>.detail.volatile | <volatile>
-home.row.<reviewer> | reviewer, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,321,366,70
+home.row.<reviewer> | reviewer, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,343,366,91
 home.row.<reviewer>.age.volatile | <volatile>
+home.row.<reviewer>.second |  |  | 31,381,189,18
 home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<decision-codex> | decision-codex, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,392,366,70
+home.row.<decision-codex> | decision-codex, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,434,366,91
 home.row.<decision-codex>.age.volatile | <volatile>
+home.row.<decision-codex>.second |  |  | 31,472,189,18
 home.row.<decision-codex>.detail.volatile | <volatile>
-home.row.<decision-sdk> | decision-sdk, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,462,366,70
+home.row.<decision-sdk> | decision-sdk, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,526,366,91
 home.row.<decision-sdk>.age.volatile | <volatile>
+home.row.<decision-sdk>.second |  |  | 31,564,189,18
 home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | keeper | 0,62,402,778
 chat.row.boundary | Started |  | 18,132,366,34
@@ -39,7 +44,7 @@ chat.more | More |  | 344,69,44,44
 chat.exited | Exited · while the daemon was away | desk | 28,720,346,20
 chat.field | keeper has exited · a message resumes it |  | 28,750,346,24
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 228,779,44,44
 chat.resume | Resume |  | 276,779,103,44 (disabled)
  | Back |  | 16,68,42,46

@@ -3,8 +3,9 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,165,68
 home.subtitle |  | Nothing needs you · 0 running | 60,127,279,81
 home.newAgent | New Agent |  | 345,118,44,44
-home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,271,366,194
+home.row.<decision-sdk> | decision-sdk, Idle, The deploy check passed., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,271,366,275
 home.row.<decision-sdk>.age.volatile | <volatile>
+home.row.<decision-sdk>.second |  |  | 31,331,208,78
 chat |  | decision-sdk | 0,62,402,778
 chat.row.boundary | Started |  | 18,176,366,58
 chat.row.prompt | Check the deployment once. |  | 18,234,366,106
@@ -19,7 +20,7 @@ chat.title | decision-sdk | decision-sdk | 51,72,252,82
 chat.more | More |  | 344,91,44,44
 chat.field | Message decision-sdk |  | 28,727,346,47
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,199,44
+chat.model | claude-fake-1 · medium |  | 71,779,199,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778

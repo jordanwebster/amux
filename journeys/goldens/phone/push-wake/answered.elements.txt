@@ -3,11 +3,13 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
 home.newAgent | New Agent |  | 345,74,44,44
-home.row.<asker> | asker, Get ready., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,91
+home.row.<asker> | asker, Idle, Deployed to production., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,91
 home.row.<asker>.age.volatile | <volatile>
+home.row.<asker>.second |  |  | 31,197,166,18
 home.row.<asker>.detail.volatile | <volatile>
-home.row.<bystander> | bystander, Get ready., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,251,366,91
+home.row.<bystander> | bystander, Idle, The logs are quiet., desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,251,366,91
 home.row.<bystander>.age.volatile | <volatile>
+home.row.<bystander>.second |  |  | 31,289,126,18
 home.row.<bystander>.detail.volatile | <volatile>
 chat |  | asker | 0,62,402,778
 chat.row.boundary | Started |  | 18,132,366,34
@@ -27,7 +29,7 @@ chat.title | asker | asker | 51,72,156,38
 chat.more | More |  | 344,69,44,44
 chat.field | Message asker |  | 28,750,346,24
 chat.attach | Attach | closed | 23,779,44,44
-chat.model | claude-fake-1 · Default |  | 71,779,139,44
+chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 287,779,44,44
 chat.send | Send |  | 335,779,44,44 (disabled)
 hosts |  | 1 reachable | 0,62,402,778

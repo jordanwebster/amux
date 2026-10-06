@@ -19,6 +19,25 @@ Re-recorded deliberately, each looked at before it was kept:
   words — instead of what the agent was working on.
 - `claude-sdk-ask-question` (light, dark): the question card offers Add a
   note, Skip and Reply instead under its options.
+- The phone journeys' screens for reach-host, the three
+  conversation-decision stories, keep-authority, manage-agent,
+  attachment-or-review, leave-and-recover, account-sign-in,
+  purchase-restore, report, accessibility, local-network and push-wake:
+  the same fleet sections and second lines (a host that is away says only
+  that), and the composer's model chip naming the default effort
+  ("claude-fake-1 · medium") where it said Default.
+
+Two of the older phone stories no longer matched the app, and now do:
+
+- The fleet folds exited agents under "Exited · N", so manage-agent and
+  leave-and-recover open the fold to reach an exited agent's row, as a
+  person would.
+- An agent reads its folder's git facts when it starts and when a turn
+  ends, and the changes the phone offers for review come from those facts.
+  attachment-or-review made the reviewer's folder a repository after the
+  reviewer had started, so the phone had nothing to offer; the story now
+  stops and resumes the reviewer once its folder is ready, and its chat
+  opens on that stop and resume.
 
 2026-10-06 — **The phone tells the queue, away and usage-limit stories.**
 `queue-and-steer`, `send-while-away` and `composer-limits` now run on the
