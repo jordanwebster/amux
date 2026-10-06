@@ -179,6 +179,7 @@ mod tests {
                     "Diff",
                     "ListRepositories",
                     "Dump",
+                    "GetCatalogue",
                 ]
                 .map(str::to_owned)
             )
@@ -256,6 +257,7 @@ mod tests {
                 ("phase", 6),
                 ("working_on", 7),
                 ("at_ms", 8),
+                ("catalogue", 9),
                 ("phase_since_ms", 10),
                 ("git", 11),
             ],
