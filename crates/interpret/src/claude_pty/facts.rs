@@ -752,7 +752,7 @@ impl State {
                 if let Attachment::QueuedCommand(queued) = &row.attachment
                     && matches!(queued.command_mode.as_deref(), None | Some("" | "prompt"))
                 {
-                    let prompt = unwrap_pasted(&queued.prompt);
+                    let prompt = unwrap_pasted(&message_text(&queued.prompt));
                     self.joined_prompt(emit, row.envelope.uuid.clone(), prompt, at_ms);
                 }
             }

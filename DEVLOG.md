@@ -1,3 +1,13 @@
+2026-10-06 — **A queued terminal-Claude prompt with a pasted image is a steer again.**
+Claude writes a queued-command row's `prompt` as content blocks (text, then
+the image) when the prompt carries a pasted image, and as a string
+otherwise. The typed `QueuedCommand.prompt` read only the string, so such a
+row decoded as unknown and the terminal Claude interpreter emitted nothing:
+an entry amux had steered into the running turn stayed queued until an
+interrupt, clear or exit. `prompt` is now a `MessageContent`, written back as
+it came, and the interpreter takes its text through the same helper as a
+user row's content.
+
 2026-10-06 — **Codex tool-call approvals that offer one lifetime are read again.**
 Codex 0.160.0 writes an MCP tool-call approval's `_meta.persist` as a single
 string ("session" or "always") when it offers one lifetime, and as a list

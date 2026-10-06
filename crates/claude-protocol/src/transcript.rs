@@ -13,7 +13,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::stream::{ApiMessage, CompactTrigger, Extensions, MessageParam, PermissionMode};
+use crate::stream::{
+    ApiMessage, CompactTrigger, Extensions, MessageContent, MessageParam, PermissionMode,
+};
 use crate::strictness::tagged_enum;
 use crate::{DecodeError, Drift, decoding};
 
@@ -383,8 +385,9 @@ tagged_enum! {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueuedCommand {
+    /// The prompt's text, or its blocks when it carries a pasted image.
     #[serde(default = "crate::absent::prompt")]
-    pub prompt: String,
+    pub prompt: MessageContent,
     /// `prompt` for a prompt; anything else is a command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_mode: Option<String>,

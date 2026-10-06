@@ -147,6 +147,43 @@ fn an_invented_row_or_payload_is_unknown_and_fails_strict() {
     assert!(drift.to_string().contains("Teleport"), "{drift}");
 }
 
+/// A prompt queued with a pasted image is written as content blocks, text
+/// then image, where a plain prompt is a string. The recorded queued
+/// prompt, given an image the way Claude writes one.
+#[test]
+fn a_queued_prompt_with_an_image_reads_as_blocks() {
+    let recorded = lines()
+        .into_iter()
+        .find_map(|(_, line)| match line {
+            Line::Row(row) if row.contains("queued_command") && row.contains("BANANA") => Some(row),
+            _ => None,
+        })
+        .expect("steer_queued's queued prompt");
+    let mut row: Value = serde_json::from_str(&recorded).unwrap();
+    row["attachment"]["prompt"] = serde_json::json!([
+        {"type": "text", "text": "[Image #1]\n\nAlso append the word BANANA."},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+    ]);
+    row["attachment"]["imagePasteIds"] = serde_json::json!([1]);
+    let line = row.to_string();
+    let decoded = transcript::strict(line.as_bytes()).expect("known");
+    let transcript::Row::Attachment(attachment) = &decoded else {
+        panic!("decoded as {decoded:?}");
+    };
+    let transcript::Attachment::QueuedCommand(queued) = &attachment.attachment else {
+        panic!("decoded as {attachment:?}");
+    };
+    let claude_protocol::stream::MessageContent::Blocks(blocks) = &queued.prompt else {
+        panic!("prompt read as {:?}", queued.prompt);
+    };
+    assert_eq!(
+        blocks.iter().map(|block| block.kind()).collect::<Vec<_>>(),
+        ["text", "image"]
+    );
+    let again: Value = serde_json::from_slice(&transcript::encode(&decoded)).unwrap();
+    assert_eq!(again, row);
+}
+
 /// Where two JSON values differ, as paths with what each side holds.
 fn differ(path: &str, written: &Value, encoded: &Value, out: &mut Vec<String>) {
     match (written, encoded) {

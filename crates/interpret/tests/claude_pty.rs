@@ -200,3 +200,90 @@ fn an_attachment_element_in_a_reply_becomes_an_item_attachment() {
     );
     assert_eq!(item.attachments, vec![attachment]);
 }
+
+/// A prompt queued with a pasted image is written as content blocks, text
+/// then image. Steered into the running turn, its queued-command row is
+/// still the steer: the steered entry leaves the queue as a steer item.
+#[test]
+fn a_queued_prompt_with_an_image_is_still_the_steer() {
+    use interpret::{Channel, Fact, FixtureInput};
+    use prost::Message as _;
+    use serde_json::{Value, json};
+
+    let fixture: Value = serde_json::from_slice(
+        &std::fs::read(fixtures().join("steering.json")).expect("steering fixture"),
+    )
+    .unwrap();
+    let events = fixture["events"].as_array().unwrap();
+    let spec = wire::AgentSpec {
+        agent_id: b"agent".to_vec(),
+        ..Default::default()
+    };
+    let (mut state, _) = ClaudePty::initial(&spec, "test");
+    // Up to Claude taking the steered prompt from its queue.
+    let mut queued_row = None;
+    for event in events {
+        if let Some(input) = event.get("input") {
+            let mut input = input.as_object().unwrap().clone();
+            let id = input.remove("id").unwrap();
+            let fixture_input: FixtureInput = serde_json::from_value(Value::Object(input)).unwrap();
+            let input =
+                ClaudePty::fixture_input(id.as_str().unwrap().as_bytes().to_vec(), &fixture_input)
+                    .expect("a terminal input");
+            ClaudePty::step(&mut state, Event::Input(input));
+            continue;
+        }
+        let fact = &event["fact"];
+        if fact["json"]["attachment"]["type"] == "queued_command" {
+            queued_row = Some(fact["json"].clone());
+            break;
+        }
+        let channel = match fact["channel"].as_str().unwrap() {
+            "hook" => Channel::Hook,
+            "transcript" => Channel::Transcript,
+            other => panic!("channel {other}"),
+        };
+        ClaudePty::step(
+            &mut state,
+            Event::Fact(Fact {
+                channel,
+                payload: fact["json"].to_string().into_bytes(),
+            }),
+        );
+    }
+    let steered = |state: &interpret::claude_pty::State| {
+        state
+            .shared()
+            .queue()
+            .entries()
+            .iter()
+            .any(|entry| entry.input_id == b"p1" && entry.steer)
+    };
+    assert!(steered(&state), "p1 is steered before its row");
+
+    let mut row = queued_row.expect("the queued-command row");
+    row["attachment"]["prompt"] = json!([
+        {"type": "text", "text": "[Image #1]\n\nUse the staging config."},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+    ]);
+    row["attachment"]["imagePasteIds"] = json!([1]);
+    let stepped = ClaudePty::step(
+        &mut state,
+        Event::Fact(Fact {
+            channel: Channel::Transcript,
+            payload: row.to_string().into_bytes(),
+        }),
+    );
+    let [item] = &stepped.step.items[..] else {
+        panic!("one item: {:?}", stepped.step.items);
+    };
+    assert_eq!(item.input_id, b"p1");
+    assert_eq!(item.text, "[Image #1]\n\nUse the staging config.");
+    let body = wire::ClaudePtyItem::decode(item.body.as_slice()).unwrap();
+    assert!(
+        matches!(body.kind, Some(wire::claude_pty_item::Kind::Steer(_))),
+        "{body:?}"
+    );
+    assert!(!steered(&state), "p1 left the queue");
+    assert!(state.shared().queue().is_empty());
+}

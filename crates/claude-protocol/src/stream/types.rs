@@ -423,6 +423,12 @@ pub enum MessageContent {
     Blocks(Vec<ContentBlock>),
 }
 
+impl Default for MessageContent {
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
+}
+
 // ── PermissionDenial ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
