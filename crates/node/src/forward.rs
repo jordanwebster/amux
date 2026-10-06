@@ -20,10 +20,15 @@ use crate::HostId;
 use crate::grpc::wire_error;
 use crate::runtime::{ProfileRuntime, to_wire};
 
-/// How long one forwarded call may take before its host counts as
-/// unreachable. A spawn waits for the child's Hello on the far side, so
-/// this covers a start as well as a round trip.
-const FORWARD_PATIENCE: Duration = Duration::from_secs(30);
+/// How long reaching a host may take: finding its link and opening a
+/// channel on it. Past it the call never left, and the host counts as
+/// unreachable.
+const REACH_PATIENCE: Duration = Duration::from_secs(10);
+
+/// How long a call that went out waits for its answer. A spawn waits for
+/// the child's Hello on the far side, so this covers a start as well as a
+/// round trip. Past it the call may or may not have arrived.
+const ANSWER_PATIENCE: Duration = Duration::from_secs(30);
 
 /// Where an agent lives, as this runtime's store knows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,12 +42,18 @@ pub enum Owner {
 }
 
 /// A forwarded call that did not get an answer from the owner, or got a
-/// refusal.
+/// refusal. Hosts are named as a person knows them: by the name they were
+/// paired under.
 #[derive(Debug, thiserror::Error)]
 pub enum ForwardError {
-    /// Named as a person knows the host: by the name it was paired under.
+    /// The call never left this host: no link to the owner, the owner is not
+    /// trusted, or no channel could be opened. Nothing reached it.
     #[error("{name} cannot be reached")]
-    Unreachable { host: HostId, name: String },
+    NotSent { host: HostId, name: String },
+    /// The call went out and its answer did not come back: the link failed
+    /// or the answer took too long. The owner may have acted on it.
+    #[error("{name} stopped answering; the call may or may not have arrived")]
+    Uncertain { host: HostId, name: String },
     #[error("{}", .0.message)]
     Remote(wire::Error),
 }
@@ -52,14 +63,17 @@ impl ForwardError {
     /// the same answer it would have had from the owner directly.
     pub fn to_wire(&self) -> wire::Error {
         match self {
-            Self::Unreachable { .. } => wire_error(ErrorCode::Unreachable, self.to_string()),
+            Self::NotSent { .. } | Self::Uncertain { .. } => {
+                wire_error(self.code(), self.to_string())
+            }
             Self::Remote(error) => error.clone(),
         }
     }
 
     pub fn code(&self) -> ErrorCode {
         match self {
-            Self::Unreachable { .. } => ErrorCode::Unreachable,
+            Self::NotSent { .. } => ErrorCode::Unreachable,
+            Self::Uncertain { .. } => ErrorCode::Aborted,
             Self::Remote(error) => {
                 ErrorCode::try_from(error.code).unwrap_or(ErrorCode::Unspecified)
             }
@@ -96,14 +110,15 @@ impl HostNameError {
 }
 
 /// The owner's error from a status: the wire error our daemons put in the
-/// details, or one made from the code. A transport failure, which never
-/// reached the owner's service, is the host being unreachable.
-fn from_status(unreachable: ForwardError, status: &Status) -> ForwardError {
+/// details, or one made from the code. A transport failure on a call that
+/// went out leaves it uncertain: the owner may have acted on it before the
+/// answer was lost.
+fn from_status(uncertain: ForwardError, status: &Status) -> ForwardError {
     if let Some(error) = crate::net_error::from_status(status) {
         return ForwardError::Remote(error);
     }
     match status.code() {
-        Code::Unavailable | Code::DeadlineExceeded | Code::Cancelled | Code::Unknown => unreachable,
+        Code::Unavailable | Code::DeadlineExceeded | Code::Cancelled | Code::Unknown => uncertain,
         code => ForwardError::Remote(wire_error(
             match code {
                 Code::NotFound => ErrorCode::NotFound,
@@ -147,41 +162,48 @@ impl ProfileRuntime {
             .find(|row| row.agent.agent == agent_id))
     }
 
-    /// Makes one call on `host`'s daemon, bounded by the forwarding
-    /// patience.
+    /// Makes one call on `host`'s daemon. Reaching the host and waiting for
+    /// its answer have separate limits, so a failure says whether the call
+    /// went out.
     pub(crate) async fn on_peer<T, F, Fut>(&self, host: HostId, call: F) -> Result<T, ForwardError>
     where
         F: FnOnce(crate::PeerClient) -> Fut,
         Fut: Future<Output = Result<Response<T>, Status>>,
     {
-        let unreachable = || self.unreachable(host);
-        let edge = self.edge().ok_or_else(unreachable)?;
+        let not_sent = || ForwardError::NotSent {
+            host,
+            name: self.host_name(host),
+        };
+        let uncertain = || ForwardError::Uncertain {
+            host,
+            name: self.host_name(host),
+        };
+        let edge = self.edge().ok_or_else(not_sent)?;
         if !edge.is_trusted(host) {
-            return Err(unreachable());
+            return Err(not_sent());
         }
-        let answer = tokio::time::timeout(FORWARD_PATIENCE, async move {
-            let client = edge.peer(host).await.map_err(|_| unreachable())?;
-            drop(edge);
-            call(client)
-                .await
+        let client = match tokio::time::timeout(REACH_PATIENCE, edge.peer(host)).await {
+            Ok(Ok(client)) => client,
+            Ok(Err(_)) | Err(_) => return Err(not_sent()),
+        };
+        drop(edge);
+        match tokio::time::timeout(ANSWER_PATIENCE, call(client)).await {
+            Ok(answer) => answer
                 .map(Response::into_inner)
-                .map_err(|status| from_status(unreachable(), &status))
-        })
-        .await;
-        answer.unwrap_or_else(|_| Err(unreachable()))
+                .map_err(|status| from_status(uncertain(), &status)),
+            Err(_) => Err(uncertain()),
+        }
     }
 
-    /// `host` cannot be reached, named by the name it was paired under.
-    fn unreachable(&self, host: HostId) -> ForwardError {
-        let name = self
-            .edge()
+    /// `host` as a person knows it: the name it was paired under.
+    fn host_name(&self, host: HostId) -> String {
+        self.edge()
             .and_then(|edge| {
                 edge.trusted()
                     .into_iter()
                     .find(|(id, name, _)| *id == host && !name.is_empty())
             })
-            .map_or_else(|| format!("host {host}"), |(_, name, _)| name);
-        ForwardError::Unreachable { host, name }
+            .map_or_else(|| format!("host {host}"), |(_, name, _)| name)
     }
 
     /// The cascade's step for a child on another host: the delete is

@@ -376,7 +376,7 @@ Rejection reasons (constants in `interpret::reason`, `node::EXITED` and
 | `draining` | interpreter | The agent is finishing up because its daemon went away or it was stopped |
 | `exiting` | interpreter | A one-shot child decided to exit |
 | `exited` | the owning daemon | The agent has exited; the composer offers Resume |
-| `host_unreachable` | the local runtime | The agent's host cannot be reached |
+| `host_unreachable` | the local runtime | The agent's host cannot be reached, so the input never left; one that left and lost its answer is `ABORTED` instead |
 
 A rejection may instead carry a sentence for a person, when the refusal
 depends on the provider rather than the protocol: terminal Claude refuses

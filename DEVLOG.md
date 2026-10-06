@@ -1,3 +1,16 @@
+2026-10-06 — **A send to another host's agent that may have arrived is no longer reported as not sent.**
+When the link to an agent's host dropped while a forwarded prompt waited
+for its answer, the sender was told the host could not be reached, as if
+the prompt never left, though the agent had it and went on to act on it.
+Forwarding now tells the two apart: a call that never left (no link, an
+untrusted host, no channel within 10 seconds) is still a definite
+`host_unreachable` rejection, while one that went out and lost its answer
+(the link failed, or 30 seconds passed) comes back aborted, which clients
+already hold as uncertain and settle at the next catch-up. A parent's
+outbox retries such a delivery, and the envelope id catches a duplicate.
+A new node test freezes an agent on another host, sends, cuts and restores
+the link, and sees the prompt arrive once and the sender told uncertain.
+
 2026-10-06 — **A Codex plan's decision no longer offers to stop a finished turn.**
 Codex proposes a plan as its turn ends, so with Plan ready open there is
 nothing to interrupt, yet the keys under the box said ctrl+x stop (and

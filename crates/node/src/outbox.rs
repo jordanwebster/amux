@@ -256,7 +256,9 @@ impl ProfileRuntime {
     /// A delivery to a parent on another host, sent to that host's daemon
     /// as a message from the child. Its answers read as the lane's would:
     /// not found means the incarnation or the parent is gone, a refusal
-    /// keeps the row, and no answer means the host is away.
+    /// keeps the row, a call that never left means the host is away, and
+    /// one that lost its answer may have arrived: the row is tried again
+    /// and the envelope id catches a duplicate.
     async fn deliver_remote(&self, host: &[u8], envelope: Envelope) -> Result<(), RelayError> {
         let host = Uuid::from_slice(host).map_err(|_| RelayError::NoAgent)?;
         let sent = self
@@ -266,7 +268,8 @@ impl ProfileRuntime {
             .await;
         match sent {
             Ok(_) => Ok(()),
-            Err(ForwardError::Unreachable { .. }) => Err(RelayError::Unavailable),
+            Err(ForwardError::NotSent { .. }) => Err(RelayError::Unavailable),
+            Err(ForwardError::Uncertain { .. }) => Err(RelayError::Lost),
             Err(error) => match error.code() {
                 ErrorCode::NotFound => Err(RelayError::Stale),
                 ErrorCode::FailedPrecondition => Err(RelayError::Rejected(error.to_string())),

@@ -59,6 +59,8 @@ pub struct SyntheticAgent {
     inputs: Arc<Mutex<Vec<Input>>>,
     /// Set when the agent stops reading its control connection.
     wedged: Arc<tokio::sync::watch::Sender<bool>>,
+    /// Set while the agent holds every answer back.
+    frozen: Arc<tokio::sync::watch::Sender<bool>>,
     cwd: PathBuf,
     live: Option<Live>,
 }
@@ -105,6 +107,7 @@ impl SyntheticAgent {
             answer: Arc::new(Mutex::new(Answer::Accept)),
             inputs: Arc::default(),
             wedged: Arc::new(tokio::sync::watch::Sender::new(false)),
+            frozen: Arc::new(tokio::sync::watch::Sender::new(false)),
             cwd: install.work.clone(),
             live: None,
         }
@@ -131,6 +134,18 @@ impl SyntheticAgent {
     /// fills the socket's buffer and then blocks.
     pub fn stop_reading(&self) {
         self.wedged.send_replace(true);
+    }
+
+    /// The agent stops answering, as a process stopped by the scheduler
+    /// would: it takes in what the daemon sends and answers nothing until
+    /// thawed.
+    pub fn freeze(&self) {
+        self.frozen.send_replace(true);
+    }
+
+    /// Lets a frozen agent answer again, starting with what it took in.
+    pub fn thaw(&self) {
+        self.frozen.send_replace(false);
     }
 
     /// Every input the daemon relayed to this agent.
@@ -214,6 +229,7 @@ impl SyntheticAgent {
         let answer = self.answer.clone();
         let inputs = self.inputs.clone();
         let wedged = self.wedged.clone();
+        let frozen = self.frozen.clone();
         let accept = tokio::spawn({
             let conn = conn.clone();
             let reading = reading.clone();
@@ -240,6 +256,7 @@ impl SyntheticAgent {
                         inputs.clone(),
                     );
                     let mut wedged = wedged.subscribe();
+                    let mut frozen = frozen.subscribe();
                     let task = tokio::spawn(async move {
                         loop {
                             let frame = tokio::select! {
@@ -258,6 +275,7 @@ impl SyntheticAgent {
                                 continue;
                             };
                             inputs.lock().unwrap().push(input.clone());
+                            let _ = frozen.wait_for(|frozen| !*frozen).await;
                             let answer = answer.lock().unwrap().clone();
                             answer_input(&input, &answer, &journal, &conn).await;
                         }

@@ -328,7 +328,10 @@ impl ClientService for ClientApi {
                 .await;
             return match forwarded {
                 Ok(verdict) => Ok(Response::new(verdict)),
-                Err(ForwardError::Unreachable { .. }) => {
+                // Never left: definitely not sent. A send that went out and
+                // lost its answer comes back aborted, which the sender
+                // settles at its next catch-up.
+                Err(ForwardError::NotSent { .. }) => {
                     Ok(Response::new(crate::relay::rejected(HOST_UNREACHABLE)))
                 }
                 Err(error) => Err(status(error.to_wire())),

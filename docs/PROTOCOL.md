@@ -441,12 +441,21 @@ outlives its runtime is answered `UNAVAILABLE` and the client redials.
 Only the host that owns an agent can act on it. When a call names an agent
 whose row here is a replica, `ClientApi` makes the same call on the owner's
 daemon through `PeerService`, exactly as a phone would, and answers with what
-the owner answered (`crates/node/src/forward.rs`). A forwarded call gets 30
-seconds before the owner counts as unreachable; that covers a spawn, which
-waits for the child's process to start on the far side. An unreachable owner
-is `ERROR_CODE_UNREACHABLE` naming the host by the name it was paired under,
-except for `SendInput`, which answers with a rejected verdict,
-`host_unreachable`, so a composer treats it like any other refusal.
+the owner answered (`crates/node/src/forward.rs`). A forwarded call fails in
+one of two ways, and they are kept apart because only the second may have
+reached the owner:
+
+- **Not sent.** The call never left: no link to the owner, the owner is not
+  trusted, or no channel opened within 10 seconds. That is
+  `ERROR_CODE_UNREACHABLE` naming the host by the name it was paired under,
+  except for `SendInput`, which answers with a rejected verdict,
+  `host_unreachable`, so a composer treats it like any other refusal.
+- **Uncertain.** The call went out and its answer did not come back: the
+  link failed under it, or 30 seconds passed (enough for a spawn, which waits
+  for the child's process to start on the far side). That is
+  `ERROR_CODE_ABORTED` for every call, `SendInput` included: the sender holds
+  the input as uncertain and settles it at its next catch-up, and nothing
+  sends it again.
 
 Forwarding goes one hop. `PeerService` is `ClientApi` built for a peer
 (`ClientApi::for_peer`): it answers only for this host's own agents and never
