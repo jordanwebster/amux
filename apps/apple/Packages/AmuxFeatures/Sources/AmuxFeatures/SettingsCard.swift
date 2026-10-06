@@ -34,23 +34,20 @@ struct SettingsCard: View {
                 .identified("chat.settings.close", label: "Close")
                 .reclaimingThumbTarget(x: 12, y: 12)
             }
-            // The sections as they are, until they measure taller than the
-            // cap; past it they scroll inside it.
-            if height > Self.tallest {
-                ScrollView { measured }
-                    .scrollIndicators(.hidden)
-                    .frame(height: Self.tallest)
-            } else {
-                measured
+            // The sections in a scroll view as tall as they are, up to the
+            // cap. The height is measured inside the scroll view, where nothing
+            // squeezes them; the frame only caps it, so on a screen with less
+            // room the scroll view shrinks and its last rows stay in reach.
+            ScrollView {
+                sections.onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
             }
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxHeight: min(height, Self.tallest))
         }
         .padding(16)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .identified("chat.settings", value: kind.map { "\($0)" })
-    }
-
-    private var measured: some View {
-        sections.onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
     }
 
     private var sections: some View {

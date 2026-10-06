@@ -159,8 +159,10 @@ public enum DoorRequest: Sendable, Equatable {
     case clear(identifier: String)
     /// Move the scrolling list under the middle of the screen one page `up`
     /// (towards older rows) or `down`, or to its `top` or `bottom`, as a
-    /// person's swipe does.
-    case scroll(direction: String)
+    /// person's swipe does. Named, the list moved is the one the element is
+    /// drawn in, in sight or scrolled out of it: a swipe on a card's own list
+    /// rather than the screen's.
+    case scroll(direction: String, identifier: String? = nil)
     /// Put this text on the system's clipboard and paste it into the named
     /// field, which is the message the system's own Paste menu item sends.
     ///
@@ -684,7 +686,9 @@ extension DoorRequest: Codable {
         case "clear":
             self = .clear(identifier: try fields.decode(String.self, forKey: .identifier))
         case "scroll":
-            self = .scroll(direction: try fields.decode(String.self, forKey: .direction))
+            self = .scroll(
+                direction: try fields.decode(String.self, forKey: .direction),
+                identifier: try fields.decodeIfPresent(String.self, forKey: .identifier))
         case "paste":
             self = .paste(
                 identifier: try fields.decode(String.self, forKey: .identifier),
@@ -863,9 +867,10 @@ extension DoorRequest: Codable {
         case .clear(let identifier):
             try fields.encode("clear", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)
-        case .scroll(let direction):
+        case .scroll(let direction, let identifier):
             try fields.encode("scroll", forKey: .kind)
             try fields.encode(direction, forKey: .direction)
+            try fields.encodeIfPresent(identifier, forKey: .identifier)
         case .paste(let identifier, let text):
             try fields.encode("paste", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)

@@ -98,6 +98,24 @@ enum VisibleTree {
         return view as? UIScrollView
     }
 
+    /// The innermost list on show whose content holds `point`, in window
+    /// coordinates, whether that part of it is in sight or scrolled out of
+    /// it.
+    @MainActor
+    static func list(holding point: CGPoint, in window: UIWindow) -> UIScrollView? {
+        var found: UIScrollView?
+        func visit(_ view: UIView) {
+            if let list = view as? UIScrollView, !(list is UITextView), !list.isHidden,
+               scrollsVertically(list), reached(list, in: window),
+               list.convert(CGRect(origin: .zero, size: list.contentSize), to: window).contains(point) {
+                found = list
+            }
+            for subview in view.subviews { visit(subview) }
+        }
+        visit(window)
+        return found
+    }
+
     @MainActor
     private static func scrollsVertically(_ list: UIScrollView) -> Bool {
         let inset = list.adjustedContentInset

@@ -7,7 +7,7 @@
       {"literal": "\"context-band\"", "context": "case contextBand = \"context-band\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorHost.swift": [
-      {"literal": "\"nothing scrolls there\"", "context": "guard let list = VisibleTree.list(in: window) else { return .error(\"nothing scrolls there\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"nothing scrolls there\"", "context": "guard let list = found else { return .error(\"nothing scrolls there\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"up\"", "context": "case \"up\": y = max(top, list.contentOffset.y - page)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"down\"", "context": "case \"down\": y = min(bottom, list.contentOffset.y + page)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"top\"", "context": "case \"top\": y = top", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -30,7 +30,7 @@
       {"literal": "\"-\\(name)\"", "context": "guard let flag = arguments.firstIndex(of: \"-\\(name)\"),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"no window on screen\"", "context": "guard let window = DoorWindow.current else { return .error(\"no window on screen\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 8},
       {"literal": "\"capture failed: the window would not draw\"", "context": "return .error(\"capture failed: the window would not draw\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"no element named \\(identifier)\"", "context": "return .error(\"no element named \\(identifier)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 4},
+      {"literal": "\"no element named \\(identifier)\"", "context": "return .error(\"no element named \\(identifier)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 5},
       {"literal": "\"\\(identifier) did not activate\"", "context": "return .error(\"\\(identifier) did not activate\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"\\(identifier) does not take text\"", "context": "return .error(\"\\(identifier) does not take text\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"\\(identifier) would not empty\"", "context": "guard !input.hasText else { return .error(\"\\(identifier) would not empty\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},

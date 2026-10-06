@@ -55,6 +55,7 @@ final class DoorTests: XCTestCase {
             .type(identifier: "composer.field", text: "hello"),
             .paste(identifier: "composer.field", text: "a paste worth naming"),
             .scroll(direction: "up"),
+            .scroll(direction: "bottom", identifier: "chat.settings.workmode.plan"),
             .attach(
                 agent: "6f1c1f8e-0000-4000-8000-000000000001", kind: "image",
                 name: "screenshot.png", mime: "image/png", base64: "iVBORw0KGgo="),

@@ -174,7 +174,7 @@ final class DoorHost {
         case .perform(let identifier, let action): return perform(action, on: identifier)
         case .type(let identifier, let text): return type(text, into: identifier)
         case .clear(let identifier): return clear(identifier)
-        case .scroll(let direction): return scroll(direction)
+        case .scroll(let direction, let identifier): return scroll(direction, holding: identifier)
         case .paste(let identifier, let text): return paste(text, into: identifier)
         case .pair(let qr): return await pair(link: qr)
         case .pairByCode(let host, let pin): return await pair(pin: pin, on: host)
@@ -686,9 +686,18 @@ final class DoorHost {
     /// The list on top, moved the way a swipe moves it: a page is most of
     /// what shows, so a row near the edge stays in sight as the reader's
     /// anchor.
-    private func scroll(_ direction: String) -> DoorReply {
+    private func scroll(_ direction: String, holding identifier: String?) -> DoorReply {
         guard let window = DoorWindow.current else { return .error("no window on screen") }
-        guard let list = VisibleTree.list(in: window) else { return .error("nothing scrolls there") }
+        let found: UIScrollView?
+        if let identifier {
+            guard let declared = declared.first(where: { $0.identifier == identifier }) else {
+                return .error("no element named \(identifier)")
+            }
+            found = VisibleTree.list(holding: CGPoint(x: declared.frame.midX, y: declared.frame.midY), in: window)
+        } else {
+            found = VisibleTree.list(in: window)
+        }
+        guard let list = found else { return .error("nothing scrolls there") }
         let inset = list.adjustedContentInset
         let top = -inset.top
         let bottom = max(top, list.contentSize.height + inset.bottom - list.bounds.height)
