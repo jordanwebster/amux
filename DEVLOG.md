@@ -1,3 +1,12 @@
+2026-10-06 — **Git facts read any number of untracked files.**
+Counting untracked files toward a folder's totals put every untracked path
+on `git add --intent-to-add`'s command line, so a folder with enough of them
+(32 KiB of path text on Windows, about 1 MiB on macOS) failed the whole read
+and its row lost its branch and totals. The paths now go to git on standard
+input, NUL-separated and byte for byte as `ls-files` listed them, which also
+stops non-UTF-8 names being mangled. A test with 2.5 MiB of untracked path
+text fails with "Argument list too long" against the old code.
+
 2026-10-06 — **Served agents can work on a branch, and busy-fleet shows one per row.**
 A test network agent may declare `branch` with a relative `cwd`: the net
 makes that folder a git repository on the branch (agents sharing a folder must

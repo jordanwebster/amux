@@ -173,3 +173,28 @@ async fn a_repository_without_commits_counts_everything_as_uncommitted() {
     assert_eq!(found.uncommitted, totals(1, 5, 0));
     assert_eq!(found.on_branch, None);
 }
+
+#[tokio::test]
+async fn untracked_paths_past_the_command_line_limit_still_count() {
+    // More path text than one command line holds: 32 KiB on Windows, about
+    // 1 MiB on macOS and usually 2 MiB on Linux.
+    let (files, path_text) = if cfg!(windows) {
+        (400, 64 * 1024)
+    } else {
+        (13_000, 5 * 1024 * 1024 / 2)
+    };
+    let repo = repository();
+    let dir = repo.path();
+    let padding = "x".repeat(200);
+    let mut written = 0;
+    for n in 0..files {
+        let name = format!("{n:05}-{padding}.txt");
+        written += name.len();
+        std::fs::write(dir.join(&name), "one line\n").unwrap();
+    }
+    assert!(written > path_text, "{written} bytes of untracked paths");
+
+    let found = facts(dir, None).await.unwrap().unwrap();
+    assert_eq!(found.branch.as_deref(), Some("main"));
+    assert_eq!(found.uncommitted, totals(files, files, 0));
+}

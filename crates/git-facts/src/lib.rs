@@ -12,6 +12,8 @@
 use std::path::Path;
 use std::process::{Output, Stdio};
 
+use tokio::io::AsyncWriteExt;
+
 /// How much a comparison changed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ChangeTotals {
@@ -54,7 +56,7 @@ pub enum GitError {
 /// `recorded_base` is the branch a worktree was made from when amux made
 /// it; without one the base is the repository's default branch.
 pub async fn facts(cwd: &Path, recorded_base: Option<&str>) -> Result<Option<GitFacts>, GitError> {
-    let inside = run(cwd, None, &["rev-parse", "--is-inside-work-tree"]).await?;
+    let inside = run(cwd, None, &["rev-parse", "--is-inside-work-tree"], None).await?;
     if !inside.status.success() || text(&inside.stdout) != "true" {
         return Ok(None);
     }
@@ -182,15 +184,23 @@ async fn totals(cwd: &Path, against: &str) -> Result<ChangeTotals, GitError> {
         &["ls-files", "--others", "--exclude-standard", "-z"],
     )
     .await?;
-    let untracked: Vec<String> = untracked
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-        .map(|path| String::from_utf8_lossy(path).into_owned())
-        .collect();
+    // The paths go to git on its standard input as ls-files wrote them:
+    // a folder's untracked paths can together pass the platform's
+    // command-line limit, and are not always valid UTF-8.
     if !untracked.is_empty() {
-        let mut args = vec!["--literal-pathspecs", "add", "--intent-to-add", "--"];
-        args.extend(untracked.iter().map(String::as_str));
-        checked(cwd, scratch_index, &args).await?;
+        checked_with_input(
+            cwd,
+            scratch_index,
+            &[
+                "--literal-pathspecs",
+                "add",
+                "--intent-to-add",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ],
+            untracked,
+        )
+        .await?;
     }
     let numstat = checked(
         cwd,
@@ -232,7 +242,7 @@ fn count(numstat: &[u8]) -> ChangeTotals {
 /// A git query's one-line answer, or None when git says no (exit status
 /// non-zero), as `--quiet` lookups do for something that is not there.
 async fn answer(cwd: &Path, args: &[&str]) -> Result<Option<String>, GitError> {
-    let output = run(cwd, None, args).await?;
+    let output = run(cwd, None, args, None).await?;
     Ok(output
         .status
         .success()
@@ -242,28 +252,68 @@ async fn answer(cwd: &Path, args: &[&str]) -> Result<Option<String>, GitError> {
 
 /// Standard output of a git command that must succeed.
 async fn checked(cwd: &Path, index: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, GitError> {
-    let output = run(cwd, index, args).await?;
+    succeeded(args, run(cwd, index, args, None).await?)
+}
+
+/// [`checked`], with `input` written to the command's standard input.
+async fn checked_with_input(
+    cwd: &Path,
+    index: Option<&Path>,
+    args: &[&str],
+    input: Vec<u8>,
+) -> Result<Vec<u8>, GitError> {
+    succeeded(args, run(cwd, index, args, Some(input)).await?)
+}
+
+fn succeeded(args: &[&str], output: Output) -> Result<Vec<u8>, GitError> {
     if !output.status.success() {
         return Err(GitError::Failed {
-            command: args.first().copied().unwrap_or_default().to_owned(),
+            command: args
+                .iter()
+                .find(|arg| !arg.starts_with('-'))
+                .copied()
+                .unwrap_or_default()
+                .to_owned(),
             stderr: text(&output.stderr),
         });
     }
     Ok(output.stdout)
 }
 
-async fn run(cwd: &Path, index: Option<&Path>, args: &[&str]) -> Result<Output, GitError> {
+async fn run(
+    cwd: &Path,
+    index: Option<&Path>,
+    args: &[&str],
+    input: Option<Vec<u8>>,
+) -> Result<Output, GitError> {
     let mut command = tokio::process::Command::new("git");
     command
         .args(args)
         .current_dir(cwd)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .env("GIT_OPTIONAL_LOCKS", "0")
         .kill_on_drop(true);
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
     }
-    command.output().await.map_err(GitError::Spawn)
+    let Some(input) = input else {
+        return command.output().await.map_err(GitError::Spawn);
+    };
+    let mut child = command.spawn().map_err(GitError::Spawn)?;
+    let mut stdin = child.stdin.take().expect("standard input is piped");
+    // Written while the output is read, so neither side waits on a full
+    // pipe; a git that stops reading early says why on its way out.
+    let write = async move {
+        let _ = stdin.write_all(&input).await;
+    };
+    let (_, output) = tokio::join!(write, child.wait_with_output());
+    output.map_err(GitError::Spawn)
 }
 
 fn text(bytes: &[u8]) -> String {
