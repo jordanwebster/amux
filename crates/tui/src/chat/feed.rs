@@ -60,8 +60,10 @@ pub enum Placement {
     /// The one line a folded run draws, on its newest step; that step
     /// follows on its own line when its turn left it failed.
     Folded { run: Run },
-    /// A failed step its turn left unresolved, in view in a folded run.
-    Failed,
+    /// A failed step its turn left unresolved, in view in a folded or
+    /// hidden run; `blank` closes it with a blank line, where no folded
+    /// line follows.
+    Failed { blank: bool },
     /// A step drawn on its own line.
     Step {
         /// The run's line drawn above this, its first drawn step.
@@ -146,8 +148,11 @@ pub fn row_lines(
             }
             drawn.blank();
         }
-        Placement::Failed => {
+        Placement::Failed { blank } => {
             failure(&mut drawn, row, width, theme);
+            if *blank {
+                drawn.blank();
+            }
         }
         Placement::Step {
             header,

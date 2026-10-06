@@ -17,6 +17,40 @@ use super::feed::{self, Header, LineHits, Placement};
 use super::rows::{OPEN_LINES, PATCH_HEAD_LINES, RowFacts, RowState, on_rail, row_lines};
 use crate::theme::Theme;
 
+/// How a chat draws its runs of tool steps: the person's choice, kept for
+/// each chat.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolSteps {
+    /// Each run folds to one line on its newest step; under way, its
+    /// newest few steps show.
+    #[default]
+    Collapse,
+    /// Every step on its own line.
+    ShowAll,
+    /// No steps but a failure its turn left unresolved.
+    Hide,
+}
+
+impl ToolSteps {
+    /// The next choice, round from collapse through show all and hide.
+    pub fn next(self) -> ToolSteps {
+        match self {
+            ToolSteps::Collapse => ToolSteps::ShowAll,
+            ToolSteps::ShowAll => ToolSteps::Hide,
+            ToolSteps::Hide => ToolSteps::Collapse,
+        }
+    }
+
+    pub fn words(self) -> &'static str {
+        match self {
+            ToolSteps::Collapse => "collapse",
+            ToolSteps::ShowAll => "show all",
+            ToolSteps::Hide => "hide",
+        }
+    }
+}
+
 /// What a block's toggle key opens or closes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Toggle {
@@ -94,8 +128,10 @@ pub struct Frame<'a> {
     pub height: usize,
     pub theme: Theme,
     pub leader: char,
-    /// Runs the reader opened, by their ids.
+    /// Runs the reader opened, by their ids: they show every step
+    /// whatever `tools` says.
     pub open_runs: &'a HashSet<Key>,
+    pub tools: ToolSteps,
     /// The step an ask in the composer's box points at: the box shows it,
     /// so the feed does not draw it twice.
     pub asking: Option<&'a Key>,
@@ -215,9 +251,11 @@ impl Frame<'_> {
                     run.is_last() || (run.recent == Some(1) && self.asking == Some(&run.last));
                 let running =
                     matches!(&held.class, ItemClass::Tool(tool) if tool.in_flight) && run.is_last();
-                if self.open_runs.contains(&run.id) {
-                    // Opened, a run lists every step on its own line.
-                    let header = (row.id == run.id).then(|| Header {
+                let opened = self.open_runs.contains(&run.id);
+                if opened || self.tools == ToolSteps::ShowAll {
+                    // Opened, a run lists every step on its own line, under
+                    // the line that folds it again.
+                    let header = (opened && row.id == run.id).then(|| Header {
                         counts: Some(self.counts(state, &run.last)),
                         run: run.clone(),
                         earlier: 0,
@@ -231,6 +269,12 @@ impl Frame<'_> {
                     };
                     let toggle = Toggle::Step(row.id.clone());
                     (placement, row, toggle)
+                } else if self.tools == ToolSteps::Hide {
+                    if !run.unresolved_failure {
+                        return None;
+                    }
+                    let toggle = Toggle::Step(row.id.clone());
+                    (Placement::Failed { blank: true }, row, toggle)
                 } else if run.live {
                     // Under way: the newest few steps, the newest bright
                     // while it runs.
@@ -255,7 +299,7 @@ impl Frame<'_> {
                     (Placement::Folded { run }, row, toggle)
                 } else if run.unresolved_failure {
                     let toggle = Toggle::Step(row.id.clone());
-                    (Placement::Failed, row, toggle)
+                    (Placement::Failed { blank: false }, row, toggle)
                 } else {
                     return None;
                 }
@@ -326,12 +370,13 @@ impl Frame<'_> {
             let open = transcript
                 .at(*span.start())
                 .is_some_and(|held| self.open_runs.contains(&held.item.key));
-            if open {
+            if open || self.tools == ToolSteps::ShowAll {
                 continue;
             }
             let end = (*span.end()).min(top.saturating_sub(1));
-            // A run's members above its newest step do not draw.
-            let hidden = if *span.end() < top {
+            // A run's members above its newest step do not draw; hidden,
+            // its newest does not either.
+            let hidden = if *span.end() < top && self.tools == ToolSteps::Collapse {
                 span.end() - span.start()
             } else {
                 end + 1 - span.start()

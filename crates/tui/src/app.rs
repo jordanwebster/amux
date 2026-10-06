@@ -81,6 +81,10 @@ pub struct Layout {
     /// What a chat's changes are counted against.
     #[serde(default)]
     pub comparison: crate::chat::Comparison,
+    /// How each chat draws its tool steps, by agent id in hex; a chat not
+    /// named collapses them.
+    #[serde(default)]
+    pub tools: std::collections::BTreeMap<String, crate::chat::ToolSteps>,
 }
 
 impl Layout {
@@ -111,19 +115,40 @@ impl Layout {
     }
 }
 
+impl Layout {
+    pub(crate) fn tools_of(&self, agent_id: &[u8]) -> crate::chat::ToolSteps {
+        self.tools.get(&hex(agent_id)).copied().unwrap_or_default()
+    }
+
+    /// Records how a chat draws its tool steps; returns whether that
+    /// changed.
+    pub(crate) fn set_tools(&mut self, agent_id: &[u8], tools: crate::chat::ToolSteps) -> bool {
+        if self.tools_of(agent_id) == tools {
+            return false;
+        }
+        let id = hex(agent_id);
+        if tools == crate::chat::ToolSteps::default() {
+            self.tools.remove(&id);
+        } else {
+            self.tools.insert(id, tools);
+        }
+        true
+    }
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl Layout {
-    fn load(path: Option<&std::path::Path>) -> Layout {
+    pub(crate) fn load(path: Option<&std::path::Path>) -> Layout {
         path.and_then(|path| std::fs::read(path).ok())
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default()
     }
 
     /// Best effort: a layout that cannot be written is only forgotten.
-    fn save(&self, path: Option<&std::path::Path>) {
+    pub(crate) fn save(&self, path: Option<&std::path::Path>) {
         let Some(path) = path else {
             return;
         };
@@ -420,6 +445,7 @@ impl App {
                         view.pane_open = self.layout.overview;
                         view.pane_folds = self.layout.folds_of(&agent.agent);
                         view.comparison = self.layout.comparison;
+                        view.tools = self.layout.tools_of(&agent.agent);
                         self.fleet_view.select(agent.clone());
                         self.chat = Some(OpenChat {
                             session,
@@ -755,6 +781,11 @@ impl App {
                     drop(state);
                     self.notice("no base branch to compare with", Tone::Info);
                 }
+            }
+            KeyCode::Char('t') => {
+                let tools = chat.view.switch_tools();
+                drop(state);
+                self.notice(format!("tool steps: {}", tools.words()), Tone::Info);
             }
             KeyCode::Char('a') if self.config.attach => {
                 let agent = chat.agent.clone();
@@ -1438,6 +1469,7 @@ impl App {
         changed |= self
             .layout
             .set_folds(&chat.view.agent_id, &chat.view.pane_folds);
+        changed |= self.layout.set_tools(&chat.view.agent_id, chat.view.tools);
         if changed {
             self.layout.save(self.config.layout.as_deref());
         }
@@ -1467,6 +1499,12 @@ fn panel_entries(attach: bool) -> Vec<crate::chat::PanelEntry> {
             "c",
             "count changes: uncommitted or on this branch",
             'c',
+        ),
+        entry(
+            "this chat",
+            "t",
+            "tool steps: collapse, show all or hide",
+            't',
         ),
     ];
     if attach {
@@ -1546,13 +1584,15 @@ fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
         ("Leader", String::new()),
     ]);
     // The leader's chords, by their whole keys.
-    let chords: [(&str, &str); 11] = [
+    let chords: [(&str, &str); 13] = [
         ("s", "home"),
         ("n", "new agent, starting from this chat's settings"),
         ("h", "hosts"),
         ("d", "detach: leave to the shell; agents keep running"),
         ("b", "report a problem: mark the screen, write a note"),
         ("r", "review changes; comments go in the draft"),
+        ("c", "count changes: uncommitted or on this branch"),
+        ("t", "tool steps: collapse, show all or hide"),
         ("a", "attach to the agent's own terminal (this machine)"),
         ("k / j", "focus an older or newer row"),
         ("o", "open the focused row or run"),

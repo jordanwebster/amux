@@ -1,3 +1,15 @@
+2026-10-06 — **A terminal chat chooses how its tool steps draw.**
+The shared views offered three ways to draw tool steps (fold each run, show
+every step, hide them) but the terminal only ever folded. `<leader> t` now
+switches a chat round from collapse through show all and hide, with a notice
+naming the choice. Show all lists every step of every run with no fold line;
+hide leaves the agent's text and only a failure its turn left unresolved,
+closed by a blank line as nothing folds after it; a run opened from the
+overview still lists its steps in either. The choice is kept per chat in the
+terminal's layout file (by agent id; a chat not named collapses), so leaving
+and reopening a chat, or restarting, keeps it. The leader panel and the help
+page list the chord, and the help page now lists `<leader> c` as well.
+
 2026-10-06 — **The terminal's stand-ins are gone, and a check holds them gone.**
 The terminal client was built ahead of the protocol, with one module that
 decided what to hold back or build from lesser facts until the wire carried

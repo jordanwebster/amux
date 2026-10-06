@@ -3077,6 +3077,118 @@ fn a_folded_run_keeps_a_failure_its_turn_left_unresolved() {
     assert!(failure < row_of(&screen, "3 commands"), "{screen}");
 }
 
+/// `<leader> t` switches a chat's tool steps round from collapse through
+/// show all and hide: show all lists every step with no fold line, and
+/// hide leaves only the agent's text and a failure its turn left
+/// unresolved.
+#[test]
+fn tool_steps_switch_between_collapse_show_all_and_hide() {
+    use wire::claude_sdk_item::Kind as K;
+
+    use crate::chat::ToolSteps;
+    let command = |order: u64, line: &str, exit: i32| {
+        let mut item = item(order, Some("unused"));
+        item.body = wire::ClaudeSdkItem {
+            kind: Some(K::Tool(wire::ToolCall {
+                name: "Bash".into(),
+                state: ToolState::Succeeded as i32,
+                class: ToolClass::Consequential as i32,
+                input_json: format!(r#"{{"command":"{line}"}}"#).into_bytes(),
+                exit_code: Some(exit),
+                ..Default::default()
+            })),
+        }
+        .encode_to_vec();
+        item
+    };
+    let mut items = replies(1, 1);
+    items.push(command(2, "just lint", 1));
+    items.push(command(3, "just lint", 0));
+    items.push(command(4, "just docs-check", 1));
+    items.push(item(5, Some("docs/a.md")));
+    items.extend(replies(6, 6));
+    let mut turn_end = item(7, None);
+    turn_end.text = String::new();
+    turn_end.body = wire::ClaudeSdkItem {
+        kind: Some(K::Turn(wire::Turn::default())),
+    }
+    .encode_to_vec();
+    items.push(turn_end);
+    // A second turn still at it: five reads, no text after them yet.
+    items.extend(replies(8, 8));
+    items.extend((9..=13).map(|order| item(order, Some(&format!("src/file{order}.rs")))));
+    let state = chat(items);
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    assert_eq!(view.tools, ToolSteps::Collapse);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(screen.contains("▸ 3 commands · 1 read"), "{screen}");
+    assert!(
+        screen.contains("✗ Ran just docs-check · exit 1"),
+        "{screen}"
+    );
+    assert!(!screen.contains("just lint"), "{screen}");
+    assert!(screen.contains("2 earlier steps"), "{screen}");
+    assert!(!screen.contains("src/file10.rs"), "{screen}");
+    assert!(screen.contains("src/file13.rs"), "{screen}");
+
+    assert_eq!(view.switch_tools(), ToolSteps::ShowAll);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(!screen.contains("3 commands"), "{screen}");
+    assert!(!screen.contains("earlier step"), "{screen}");
+    for words in ["just lint", "just docs-check", "docs/a.md"] {
+        assert!(screen.contains(words), "{words}:\n{screen}");
+    }
+    for order in 9..=13 {
+        assert!(screen.contains(&format!("src/file{order}.rs")), "{screen}");
+    }
+
+    assert_eq!(view.switch_tools(), ToolSteps::Hide);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(
+        screen.contains("✗ Ran just docs-check · exit 1"),
+        "{screen}"
+    );
+    for words in [
+        "just lint",
+        "docs/a.md",
+        "3 commands",
+        "earlier step",
+        "src/file",
+    ] {
+        assert!(!screen.contains(words), "{words}:\n{screen}");
+    }
+    for order in [1, 6, 8] {
+        assert!(
+            screen.contains(&format!("reply number {order}")),
+            "{screen}"
+        );
+    }
+
+    assert_eq!(view.switch_tools(), ToolSteps::Collapse);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(screen.contains("▸ 3 commands · 1 read"), "{screen}");
+}
+
+/// How a chat draws its tool steps is kept for that chat between runs;
+/// another chat keeps collapsing them.
+#[test]
+fn a_chats_tool_steps_choice_is_kept_for_that_chat() {
+    use crate::chat::ToolSteps;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("layout.json");
+    let mut layout = crate::app::Layout::load(Some(&path));
+    assert!(layout.set_tools(b"one", ToolSteps::Hide));
+    assert!(!layout.set_tools(b"one", ToolSteps::Hide));
+    layout.save(Some(&path));
+
+    let mut layout = crate::app::Layout::load(Some(&path));
+    assert_eq!(layout.tools_of(b"one"), ToolSteps::Hide);
+    assert_eq!(layout.tools_of(b"two"), ToolSteps::Collapse);
+    // Back to the default, the chat is no longer named.
+    assert!(layout.set_tools(b"one", ToolSteps::Collapse));
+    assert!(layout.tools.is_empty());
+}
+
 /// The header names the agent under one blank line, and the composer is
 /// boxed.
 #[test]

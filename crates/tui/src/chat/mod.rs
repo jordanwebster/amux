@@ -36,6 +36,7 @@ use wire::{Attachment, attachment};
 use self::ask::{AskAction, AskUi};
 use self::composer::{COMPOSER_LINES, QueueEntry, edge_row, editor_lines, placeholder};
 use self::feed::FeedHit;
+pub use self::layout::ToolSteps;
 use self::layout::{Anchor, Frame, Laid, Toggle};
 use self::review::{ReviewAction, ReviewPage};
 use crate::clipboard::ClipboardContent;
@@ -225,6 +226,9 @@ pub struct ChatView {
     pub leader: char,
     /// Runs of steps the reader opened, by their ids.
     pub open_runs: HashSet<Key>,
+    /// Whether tool steps fold, all show or hide: the person's choice,
+    /// kept by the app for this chat.
+    pub tools: ToolSteps,
     /// Whether the agent runs on this machine; the header names its host
     /// only when it does not.
     pub local: bool,
@@ -342,6 +346,7 @@ impl ChatView {
             away: Away::Plain,
             leader: 'a',
             open_runs: HashSet::new(),
+            tools: ToolSteps::Collapse,
             local: true,
             comparison: Comparison::Uncommitted,
             changes: None,
@@ -403,6 +408,7 @@ impl ChatView {
             theme,
             leader: self.leader,
             open_runs: &self.open_runs,
+            tools: self.tools,
             asking: self.asking.as_ref(),
             tail: &self.feed_tail,
         }
@@ -1410,6 +1416,13 @@ impl ChatView {
         }
         self.comparison = next;
         true
+    }
+
+    /// Switches how tool steps draw, round from collapse through show all
+    /// and hide, and returns the new choice.
+    pub fn switch_tools(&mut self) -> ToolSteps {
+        self.tools = self.tools.next();
+        self.tools
     }
 
     /// What the feed line under a click does there.
