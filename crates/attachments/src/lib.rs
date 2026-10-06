@@ -440,6 +440,8 @@ fn parse_element(text: &str, start: usize) -> Result<(Attachment, usize), Proble
                     base: base.map(|base| DiffBase { base: Some(base) }),
                     head,
                     merge_base,
+                    // The patch names every file; the form does not repeat them.
+                    files: Vec::new(),
                 }),
                 comments,
             })

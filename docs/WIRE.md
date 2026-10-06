@@ -85,7 +85,7 @@ failed and whether the call took effect is unknown. Codes a client meets often:
 | `SendMessage(Envelope)` | `SendMessageResponse` | Agent messaging (see [agent tools](AGENT_TOOLS.md)) |
 | `PutBlob(PutBlobRequest)` | `BlobRef` | Bytes into an agent's directory |
 | `GetBlob(GetBlobRequest)` | `GetBlobResponse` | Bytes out |
-| `Diff(DiffRequest)` | `Diff` | A diff on the owning host, its patch stored as a blob |
+| `Diff(DiffRequest)` | `Diff` | The changed files on the owning host; the patch, stored as a blob, only when asked |
 | `ListRepositories` | `ListRepositoriesResponse` | Repositories a host offers to spawn agents in |
 | `Dump(DumpRequest)` | `DumpResponse` | A debug bundle (see [debugging](DEBUGGING.md)) |
 
@@ -415,10 +415,18 @@ checks their hash, keeps them under `replicas/` and returns them. The
 `BlobRef` in the response carries the hash and size; the name and mime type
 belong to the attachment that referenced the blob.
 
-`Diff(agent_id, base)` runs git in the agent's working directory on its own
-host, stores the patch as one of that agent's blobs (`text/x-diff`) and returns
-a `Diff` value: the patch reference, the base, `head` and, for a branch base,
-`merge_base`. File lists and line counts are parsed from the patch by the view.
+`Diff(agent_id, base, with_patch)` compares the agent's working directory on
+its own host, through the `git-facts` crate the agent process also reads its
+row's totals with. It runs to the working tree, untracked files included, from
+HEAD for a working-tree base, or from where the branch left the named base
+branch for a branch base, so the branch's commits and its uncommitted work both
+count. The `Diff` value carries the base, `head` (empty before the first
+commit), the `merge_base` for a branch base, and `files`: each changed file's
+path, lines added and removed, whether it was created, deleted or changed, and
+whether it is binary. Only `with_patch` builds the patch and stores it as one of
+that agent's blobs (`text/x-diff`), named in `patch`; without it the host writes
+nothing. An exited agent's folder is compared as it is now; another host's
+agent's diff is made on that host and forwarded.
 
 A blob lives as long as its agent's directory. See
 [attachments](ATTACHMENTS.md) for the attachment types and lifetimes.

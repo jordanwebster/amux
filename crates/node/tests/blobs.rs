@@ -1,20 +1,18 @@
 //! Blobs: PutBlob writes into the named agent's directory by
-//! temp-and-rename, GetBlob reads own and replica files, Diff writes its
-//! patch as the agent's blob, and a write that fails is an error to the
-//! caller that leaves nothing behind.
+//! temp-and-rename, GetBlob reads own and replica files, and a write that
+//! fails is an error to the caller that leaves nothing behind.
 
 mod support;
 
 use std::path::Path;
-use std::process::Command;
 
-use node::{BlobError, PATCH_MIME};
+use node::BlobError;
 use sha2::{Digest as _, Sha256};
 use store::{AgentKey, AgentRow, Store as _};
 use support::synthetic::*;
 use support::*;
 use uuid::Uuid;
-use wire::{DiffBase, DiffRequest, GetBlobRequest, PutBlobRequest, diff_base};
+use wire::{GetBlobRequest, PutBlobRequest};
 
 const SEGMENTS: u64 = 1 << 20;
 
@@ -184,100 +182,6 @@ async fn a_failed_write_is_an_error_to_the_caller_and_leaves_nothing_behind() {
     assert!(matches!(error, BlobError::Write(_)), "{error}");
     println!("PutBlob answered: {}", error.to_wire().message);
     assert_eq!(files_in(&blobs), vec![name], "no temporary file is left");
-    drop(runtime);
-    daemon.shutdown().await.unwrap();
-}
-
-fn git(cwd: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .env("GIT_AUTHOR_NAME", "t")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_NAME", "t")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .output()
-        .expect("git runs");
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn diff_writes_the_patch_as_the_agents_blob_and_returns_the_diff() {
-    let install = Install::new();
-    let work = &install.work;
-    git(work, &["init", "-q", "-b", "main"]);
-    std::fs::write(work.join("kept.txt"), "one\n").unwrap();
-    git(work, &["add", "."]);
-    git(work, &["commit", "-q", "-m", "first"]);
-    git(work, &["checkout", "-q", "-b", "feature"]);
-    std::fs::write(work.join("kept.txt"), "one\ntwo\n").unwrap();
-    git(work, &["commit", "-q", "-am", "second"]);
-    std::fs::write(work.join("kept.txt"), "one\ntwo\nthree\n").unwrap();
-    std::fs::write(work.join("new.txt"), "untracked\n").unwrap();
-    let head = git(work, &["rev-parse", "HEAD"]);
-    let first = git(work, &["rev-parse", "main"]);
-
-    let agent = SyntheticAgent::new(&install, "coder", SEGMENTS);
-    agent.register_offline(&install);
-    let daemon = install.start("boot-1", quiet_launch()).await;
-    let runtime = runtime(&daemon, &install);
-    let blob_text = |hash: &[u8]| {
-        std::fs::read_to_string(agent.dir.join(agent_dir::BLOBS).join(hex(hash))).unwrap()
-    };
-
-    let tree = runtime
-        .diff(DiffRequest {
-            agent_id: agent.id.as_bytes().to_vec(),
-            base: Some(DiffBase {
-                base: Some(diff_base::Base::WorkingTree(wire::Empty {})),
-            }),
-        })
-        .await
-        .unwrap();
-    assert_eq!(tree.head, head);
-    assert_eq!(tree.merge_base, None);
-    let patch = tree.patch.unwrap();
-    assert_eq!(patch.mime, PATCH_MIME);
-    assert_eq!(patch.name, "working-tree.diff");
-    let text = blob_text(&patch.hash);
-    println!("working tree:\n{text}");
-    assert!(text.contains("+three"), "the uncommitted change");
-    assert!(
-        text.contains("new.txt") && text.contains("+untracked"),
-        "untracked files"
-    );
-    assert!(!text.contains("+two"), "committed changes are HEAD's");
-    assert!(
-        text.lines()
-            .any(|line| line.starts_with("index ") && line.len() > 80),
-        "index lines carry full object ids"
-    );
-    assert_eq!(
-        git(work, &["status", "--porcelain"]),
-        "M kept.txt\n?? new.txt",
-        "the person's own index is untouched"
-    );
-
-    let branch = runtime
-        .diff(DiffRequest {
-            agent_id: agent.id.as_bytes().to_vec(),
-            base: Some(DiffBase {
-                base: Some(diff_base::Base::Branch("main".into())),
-            }),
-        })
-        .await
-        .unwrap();
-    assert_eq!(branch.merge_base.as_deref(), Some(first.as_str()));
-    let patch = branch.patch.unwrap();
-    assert_eq!(patch.name, "main.diff");
-    let text = blob_text(&patch.hash);
-    println!("against main:\n{text}");
-    assert!(text.contains("+two") && !text.contains("+three"));
     drop(runtime);
     daemon.shutdown().await.unwrap();
 }

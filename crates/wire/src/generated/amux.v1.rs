@@ -431,19 +431,26 @@ impl ::prost::Name for InlineText {
         "/amux.v1.InlineText".into()
     }
 }
-/// A diff generated on the owning host. The patch is a text/x-diff blob;
-/// files, counts and per-file identity are parsed from its index lines.
+/// A comparison of an agent's working tree, made on the agent's host. It
+/// runs to the working tree, untracked files included, from HEAD or from
+/// where the branch left the named base. The patch is a text/x-diff blob of
+/// the agent, built only when asked for; its index lines carry each file's
+/// full object ids.
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Diff {
     #[prost(message, optional, tag = "1")]
     pub patch: ::core::option::Option<BlobRef>,
     #[prost(message, optional, tag = "2")]
     pub base: ::core::option::Option<DiffBase>,
+    /// Empty before the first commit.
     #[prost(string, tag = "3")]
     pub head: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "4")]
     pub merge_base: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag = "5")]
+    pub files: ::prost::alloc::vec::Vec<DiffFile>,
 }
 impl ::prost::Name for Diff {
     const NAME: &'static str = "Diff";
@@ -453,6 +460,31 @@ impl ::prost::Name for Diff {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.Diff".into()
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DiffFile {
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    /// Lines; none for a binary file.
+    #[prost(uint32, tag = "2")]
+    pub added: u32,
+    #[prost(uint32, tag = "3")]
+    pub removed: u32,
+    #[prost(enumeration = "DiffFileChange", tag = "4")]
+    pub change: i32,
+    #[prost(bool, tag = "5")]
+    pub binary: bool,
+}
+impl ::prost::Name for DiffFile {
+    const NAME: &'static str = "DiffFile";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.DiffFile".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.DiffFile".into()
     }
 }
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -1797,6 +1829,36 @@ impl Phase {
             "IDLE" => Some(Self::Idle),
             "WORKING" => Some(Self::Working),
             "NEEDS_YOU" => Some(Self::NeedsYou),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DiffFileChange {
+    Changed = 0,
+    Created = 1,
+    Deleted = 2,
+}
+impl DiffFileChange {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Changed => "DIFF_FILE_CHANGE_CHANGED",
+            Self::Created => "DIFF_FILE_CHANGE_CREATED",
+            Self::Deleted => "DIFF_FILE_CHANGE_DELETED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DIFF_FILE_CHANGE_CHANGED" => Some(Self::Changed),
+            "DIFF_FILE_CHANGE_CREATED" => Some(Self::Created),
+            "DIFF_FILE_CHANGE_DELETED" => Some(Self::Deleted),
             _ => None,
         }
     }
@@ -5269,6 +5331,9 @@ pub struct DiffRequest {
     pub agent_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "2")]
     pub base: ::core::option::Option<DiffBase>,
+    /// Also build the patch and store it as the agent's blob.
+    #[prost(bool, tag = "3")]
+    pub with_patch: bool,
 }
 impl ::prost::Name for DiffRequest {
     const NAME: &'static str = "DiffRequest";
@@ -7475,7 +7540,7 @@ pub mod client_service_client {
                 .insert(GrpcMethod::new("amux.v1.ClientService", "GetBlob"));
             self.inner.unary(req, path, codec).await
         }
-        /// Puts the patch blob on the host and returns the Diff value.
+        /// The changed files; with_patch also puts the patch blob on the host.
         pub async fn diff(
             &mut self,
             request: impl tonic::IntoRequest<super::DiffRequest>,
@@ -7645,7 +7710,7 @@ pub mod client_service_server {
             &self,
             request: tonic::Request<super::GetBlobRequest>,
         ) -> std::result::Result<tonic::Response<super::GetBlobResponse>, tonic::Status>;
-        /// Puts the patch blob on the host and returns the Diff value.
+        /// The changed files; with_patch also puts the patch blob on the host.
         async fn diff(
             &self,
             request: tonic::Request<super::DiffRequest>,

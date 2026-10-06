@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use git_facts::{ChangeTotals, GitFacts, facts};
+use git_facts::{Change, ChangeTotals, Comparison, FileChange, GitError, GitFacts, compare, facts};
 
 fn git(cwd: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -197,4 +197,90 @@ async fn untracked_paths_past_the_command_line_limit_still_count() {
     let found = facts(dir, None).await.unwrap().unwrap();
     assert_eq!(found.branch.as_deref(), Some("main"));
     assert_eq!(found.uncommitted, totals(files, files, 0));
+}
+
+fn file(path: &str, added: u32, removed: u32, change: Change, binary: bool) -> FileChange {
+    FileChange {
+        path: path.to_owned(),
+        added,
+        removed,
+        change,
+        binary,
+    }
+}
+
+#[tokio::test]
+async fn a_comparison_lists_each_file_and_builds_a_patch_only_when_asked() {
+    let repo = repository();
+    let dir = repo.path();
+    write(dir, "gone.txt", 2);
+    git(dir, &["add", "gone.txt"]);
+    git(dir, &["commit", "-q", "-m", "a file to delete"]);
+    let fork = git(dir, &["rev-parse", "HEAD"]);
+    git(dir, &["switch", "-q", "-c", "feature"]);
+    write(dir, "committed.txt", 4);
+    git(dir, &["add", "committed.txt"]);
+    git(dir, &["commit", "-q", "-m", "on the branch"]);
+    let head = git(dir, &["rev-parse", "HEAD"]);
+    write(dir, "base.txt", 8);
+    std::fs::remove_file(dir.join("gone.txt")).unwrap();
+    std::fs::write(dir.join("logo.png"), [0u8, 1, 2, 0, 255]).unwrap();
+    let index = std::fs::read(dir.join(".git/index")).unwrap();
+
+    let uncommitted = compare(dir, &Comparison::Uncommitted, false).await.unwrap();
+    assert_eq!(uncommitted.head.as_deref(), Some(head.as_str()));
+    assert_eq!(uncommitted.merge_base, None);
+    assert_eq!(uncommitted.patch, None, "no patch unless asked");
+    assert_eq!(
+        uncommitted.files,
+        vec![
+            file("base.txt", 0, 2, Change::Changed, false),
+            file("gone.txt", 0, 2, Change::Deleted, false),
+            file("logo.png", 0, 0, Change::Created, true),
+        ]
+    );
+
+    let on_branch = Comparison::OnBranch {
+        base: "main".into(),
+    };
+    let branch = compare(dir, &on_branch, true).await.unwrap();
+    assert_eq!(branch.merge_base.as_deref(), Some(fork.as_str()));
+    assert_eq!(
+        branch
+            .files
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>(),
+        ["base.txt", "committed.txt", "gone.txt", "logo.png"],
+        "the branch's commit and its uncommitted work"
+    );
+    let patch = String::from_utf8(branch.patch.unwrap()).unwrap();
+    assert!(
+        patch.contains("+line 3") && patch.contains("-line 9"),
+        "{patch}"
+    );
+    assert!(
+        patch
+            .lines()
+            .any(|line| line.starts_with("index ") && line.len() > 80),
+        "index lines carry full object ids"
+    );
+    assert_eq!(
+        std::fs::read(dir.join(".git/index")).unwrap(),
+        index,
+        "the person's index is untouched"
+    );
+
+    let unknown = Comparison::OnBranch {
+        base: "nowhere".into(),
+    };
+    assert!(matches!(
+        compare(dir, &unknown, false).await,
+        Err(GitError::NoForkPoint(base)) if base == "nowhere"
+    ));
+    let outside = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        compare(outside.path(), &Comparison::Uncommitted, false).await,
+        Err(GitError::NotARepository)
+    ));
 }

@@ -53,6 +53,7 @@ fn review(base: Option<Base>, merge_base: Option<&str>) -> Attachment {
                 base: base.map(|base| DiffBase { base: Some(base) }),
                 head: "4f2a9c1".into(),
                 merge_base: merge_base.map(str::to_owned),
+                files: Vec::new(),
             }),
             comments: vec![
                 ReviewComment {

@@ -16,6 +16,7 @@ pub async fn working_tree_review(
             base: Some(DiffBase {
                 base: Some(diff_base::Base::WorkingTree(wire::Empty {})),
             }),
+            with_patch: true,
         })
         .await?;
     let patch = match &diff.patch {

@@ -222,13 +222,33 @@ message InlineText {
   string text = 2;
 }
 
-// A diff generated on the owning host. The patch is a text/x-diff blob;
-// files, counts and per-file identity are parsed from its index lines.
+// A comparison of an agent's working tree, made on the agent's host. It
+// runs to the working tree, untracked files included, from HEAD or from
+// where the branch left the named base. The patch is a text/x-diff blob of
+// the agent, built only when asked for; its index lines carry each file's
+// full object ids.
 message Diff {
   BlobRef patch = 1;
   DiffBase base = 2;
+  // Empty before the first commit.
   string head = 3;
   optional string merge_base = 4;
+  repeated DiffFile files = 5;
+}
+
+message DiffFile {
+  string path = 1;
+  // Lines; none for a binary file.
+  uint32 added = 2;
+  uint32 removed = 3;
+  DiffFileChange change = 4;
+  bool binary = 5;
+}
+
+enum DiffFileChange {
+  DIFF_FILE_CHANGE_CHANGED = 0;
+  DIFF_FILE_CHANGE_CREATED = 1;
+  DIFF_FILE_CHANGE_DELETED = 2;
 }
 
 message DiffBase {

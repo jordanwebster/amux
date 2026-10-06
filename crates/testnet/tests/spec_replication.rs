@@ -1416,7 +1416,7 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
 /// A person on the laptop works with the blobs of the desk's agent as with
 /// its own: an attachment stored from the laptop is written into the
 /// agent's directory on the desk, a diff of its working tree is made on the
-/// desk, and the laptop reads each blob from the desk once and keeps the
+/// desk (its file list always, its patch when asked for), and the laptop reads each blob from the desk once and keeps the
 /// bytes under the replica, so the next read needs no link.
 #[tokio::test(flavor = "multi_thread")]
 async fn blobs_and_diffs_of_a_peers_agent_are_made_at_its_origin_and_kept_by_the_reader() {
@@ -1473,16 +1473,35 @@ async fn blobs_and_diffs_of_a_peers_agent_are_made_at_its_origin_and_kept_by_the
     let written = on_desk(&stored.hash).expect("the attachment is in the desk's data");
     assert_eq!(std::fs::read(written).unwrap(), b"from the laptop");
 
-    let diff = laptop
-        .diff(tonic::Request::new(wire::DiffRequest {
-            agent_id: agent_id.clone(),
-            base: Some(wire::DiffBase {
-                base: Some(wire::diff_base::Base::WorkingTree(wire::Empty {})),
-            }),
-        }))
-        .await
-        .expect("the desk diffs its agent's working tree")
-        .into_inner();
+    let diff = |with_patch| {
+        let laptop = laptop.clone();
+        let agent_id = agent_id.clone();
+        async move {
+            laptop
+                .diff(tonic::Request::new(wire::DiffRequest {
+                    agent_id,
+                    base: Some(wire::DiffBase {
+                        base: Some(wire::diff_base::Base::WorkingTree(wire::Empty {})),
+                    }),
+                    with_patch,
+                }))
+                .await
+                .expect("the desk diffs its agent's working tree")
+                .into_inner()
+        }
+    };
+    let listed = diff(false).await;
+    assert_eq!(listed.patch, None, "no patch unless asked");
+    assert_eq!(
+        listed
+            .files
+            .iter()
+            .map(|file| (file.path.as_str(), file.added, file.removed))
+            .collect::<Vec<_>>(),
+        [("deploy.sh", 1, 1)]
+    );
+    let diff = diff(true).await;
+    assert_eq!(diff.files, listed.files);
     let patch = diff.patch.unwrap();
     assert!(
         on_desk(&patch.hash).is_some(),

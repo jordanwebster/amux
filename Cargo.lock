@@ -2339,6 +2339,7 @@ dependencies = [
  "curve25519-dalek",
  "futures-util",
  "gethostname",
+ "git-facts",
  "http-body-util",
  "hyper",
  "hyper-util",

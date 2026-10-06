@@ -42,6 +42,47 @@ pub struct GitFacts {
     pub on_branch: Option<ChangeTotals>,
 }
 
+/// What a comparison runs from; it always runs to the working tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Comparison {
+    /// From HEAD: the work not committed yet.
+    Uncommitted,
+    /// From where the branch left `base`, so the branch's commits and its
+    /// uncommitted work both count.
+    OnBranch { base: String },
+}
+
+/// What happened to a file between the two ends of a comparison.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    Created,
+    Deleted,
+    Changed,
+}
+
+/// One file a comparison found different.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileChange {
+    pub path: String,
+    /// Lines added and removed; none for a binary file.
+    pub added: u32,
+    pub removed: u32,
+    pub change: Change,
+    pub binary: bool,
+}
+
+/// A comparison of an agent's folder.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Compared {
+    /// The commit checked out; None before the first commit.
+    pub head: Option<String>,
+    /// For a branch comparison, where the branch left its base.
+    pub merge_base: Option<String>,
+    pub files: Vec<FileChange>,
+    /// Built only when asked for.
+    pub patch: Option<Vec<u8>>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
     #[error("running git: {0}")]
@@ -50,6 +91,10 @@ pub enum GitError {
     Failed { command: String, stderr: String },
     #[error("the temporary index: {0}")]
     Scratch(#[source] std::io::Error),
+    #[error("the folder is not in a git repository")]
+    NotARepository,
+    #[error("the branch shares no history with {0}")]
+    NoForkPoint(String),
 }
 
 /// The facts for `cwd`, or None when it is not inside a git working tree.
@@ -86,6 +131,46 @@ pub async fn facts(cwd: &Path, recorded_base: Option<&str>) -> Result<Option<Git
         uncommitted,
         on_branch,
     }))
+}
+
+/// Compares the working tree of `cwd` with where `comparison` runs from:
+/// the list of changed files always, the patch only `with_patch`.
+pub async fn compare(
+    cwd: &Path,
+    comparison: &Comparison,
+    with_patch: bool,
+) -> Result<Compared, GitError> {
+    let inside = run(cwd, None, &["rev-parse", "--is-inside-work-tree"], None).await?;
+    if !inside.status.success() || text(&inside.stdout) != "true" {
+        return Err(GitError::NotARepository);
+    }
+    let head = answer(cwd, &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]).await?;
+    let (against, merge_base) = match comparison {
+        Comparison::Uncommitted => match &head {
+            Some(head) => (head.clone(), None),
+            None => (empty_tree(cwd).await?, None),
+        },
+        Comparison::OnBranch { base } => {
+            let fork = match head {
+                Some(_) => fork_point(cwd, base).await?,
+                None => None,
+            };
+            let fork = fork.ok_or_else(|| GitError::NoForkPoint(base.clone()))?;
+            (fork.clone(), Some(fork))
+        }
+    };
+    let scratch = Scratch::new(cwd).await?;
+    let files = scratch.files(&against).await?;
+    let patch = match with_patch {
+        true => Some(scratch.patch(&against).await?),
+        false => None,
+    };
+    Ok(Compared {
+        head,
+        merge_base,
+        files,
+        patch,
+    })
 }
 
 /// The repository's default branch: what `origin/HEAD` names, else the
@@ -153,90 +238,152 @@ async fn empty_tree(cwd: &Path) -> Result<String, GitError> {
     Ok(text(&output))
 }
 
-/// `against` compared with the working tree, untracked files included. A
-/// temporary copy of the index gets intent-to-add entries for the untracked
-/// files, so they count as added and the person's index is never touched.
+/// `against` compared with the working tree, untracked files included.
 async fn totals(cwd: &Path, against: &str) -> Result<ChangeTotals, GitError> {
-    let scratch = tempfile::Builder::new()
-        .prefix("amux-git-facts-")
-        .tempfile()
-        .map_err(GitError::Scratch)?;
-    let index = text(
-        &checked(
-            cwd,
-            None,
-            &["rev-parse", "--path-format=absolute", "--git-path", "index"],
-        )
-        .await?,
-    );
-    match std::fs::copy(&index, scratch.path()) {
-        Ok(_) => {}
-        // A repository nothing was ever added to has no index yet.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::remove_file(scratch.path()).map_err(GitError::Scratch)?;
-        }
-        Err(error) => return Err(GitError::Scratch(error)),
-    }
-    let scratch_index = Some(scratch.path());
-    let untracked = checked(
-        cwd,
-        scratch_index,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-    )
-    .await?;
-    // The paths go to git on its standard input as ls-files wrote them:
-    // a folder's untracked paths can together pass the platform's
-    // command-line limit, and are not always valid UTF-8.
-    if !untracked.is_empty() {
-        checked_with_input(
-            cwd,
-            scratch_index,
-            &[
-                "--literal-pathspecs",
-                "add",
-                "--intent-to-add",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-            ],
-            untracked,
-        )
-        .await?;
-    }
-    let numstat = checked(
-        cwd,
-        scratch_index,
-        &[
-            "diff",
-            "--numstat",
-            "-z",
-            "--no-renames",
-            "--no-ext-diff",
-            "--no-textconv",
-            against,
-            "--",
-        ],
-    )
-    .await?;
-    Ok(count(&numstat))
+    let scratch = Scratch::new(cwd).await?;
+    Ok(sum(&scratch.files(against).await?))
 }
 
-/// Sums `git diff --numstat -z --no-renames` records: `added TAB removed
-/// TAB path NUL`, with `-` for both counts on a binary file.
-fn count(numstat: &[u8]) -> ChangeTotals {
-    let mut totals = ChangeTotals::default();
-    for record in numstat.split(|byte| *byte == 0) {
-        let record = String::from_utf8_lossy(record);
-        let mut fields = record.splitn(3, '\t');
-        let (Some(added), Some(removed), Some(_path)) =
-            (fields.next(), fields.next(), fields.next())
+fn sum(files: &[FileChange]) -> ChangeTotals {
+    files
+        .iter()
+        .fold(ChangeTotals::default(), |totals, file| ChangeTotals {
+            files: totals.files + 1,
+            added: totals.added + file.added,
+            removed: totals.removed + file.removed,
+        })
+}
+
+/// A temporary copy of the person's index with intent-to-add entries for
+/// the untracked files, so a comparison with the working tree counts them
+/// as added and the person's own index is never touched. Removed on drop.
+struct Scratch<'a> {
+    cwd: &'a Path,
+    index: tempfile::NamedTempFile,
+}
+
+impl<'a> Scratch<'a> {
+    async fn new(cwd: &'a Path) -> Result<Self, GitError> {
+        let index = tempfile::Builder::new()
+            .prefix("amux-git-facts-")
+            .tempfile()
+            .map_err(GitError::Scratch)?;
+        let own = text(
+            &checked(
+                cwd,
+                None,
+                &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            )
+            .await?,
+        );
+        match std::fs::copy(&own, index.path()) {
+            Ok(_) => {}
+            // A repository nothing was ever added to has no index yet.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::remove_file(index.path()).map_err(GitError::Scratch)?;
+            }
+            Err(error) => return Err(GitError::Scratch(error)),
+        }
+        let scratch = Self { cwd, index };
+        let untracked = scratch
+            .checked(&["ls-files", "--others", "--exclude-standard", "-z"])
+            .await?;
+        // The paths go to git on its standard input as ls-files wrote them:
+        // a folder's untracked paths can together pass the platform's
+        // command-line limit, and are not always valid UTF-8.
+        if !untracked.is_empty() {
+            checked_with_input(
+                cwd,
+                Some(scratch.index.path()),
+                &[
+                    "--literal-pathspecs",
+                    "add",
+                    "--intent-to-add",
+                    "--pathspec-from-file=-",
+                    "--pathspec-file-nul",
+                ],
+                untracked,
+            )
+            .await?;
+        }
+        Ok(scratch)
+    }
+
+    async fn checked(&self, args: &[&str]) -> Result<Vec<u8>, GitError> {
+        checked(self.cwd, Some(self.index.path()), args).await
+    }
+
+    /// Each file that differs between `against` and the working tree.
+    async fn files(&self, against: &str) -> Result<Vec<FileChange>, GitError> {
+        let raw = self
+            .checked(&[
+                "diff",
+                "--raw",
+                "--numstat",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+                against,
+                "--",
+            ])
+            .await?;
+        Ok(file_changes(&raw))
+    }
+
+    /// The patch from `against` to the working tree, with full object ids
+    /// on its index lines: each file's identity.
+    async fn patch(&self, against: &str) -> Result<Vec<u8>, GitError> {
+        self.checked(&[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--no-renames",
+            "--full-index",
+            against,
+            "--",
+        ])
+        .await
+    }
+}
+
+/// Reads `git diff --raw --numstat -z --no-renames`: first a raw record per
+/// file (`:modes ids STATUS NUL path NUL`), then a numstat record per file
+/// in the same order (`added TAB removed TAB path NUL`, `-` for both counts
+/// on a binary file).
+fn file_changes(output: &[u8]) -> Vec<FileChange> {
+    let mut fields = output
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
+    let mut changes: Vec<Change> = Vec::new();
+    let mut files = Vec::new();
+    while let Some(field) = fields.next() {
+        let field = String::from_utf8_lossy(field);
+        if let Some(raw) = field.strip_prefix(':') {
+            let _path = fields.next();
+            changes.push(match raw.rsplit(' ').next() {
+                Some("A") => Change::Created,
+                Some("D") => Change::Deleted,
+                _ => Change::Changed,
+            });
+            continue;
+        }
+        let mut parts = field.splitn(3, '\t');
+        let (Some(added), Some(removed), Some(path)) = (parts.next(), parts.next(), parts.next())
         else {
             continue;
         };
-        totals.files += 1;
-        totals.added += added.parse::<u32>().unwrap_or(0);
-        totals.removed += removed.parse::<u32>().unwrap_or(0);
+        let binary = added == "-" && removed == "-";
+        files.push(FileChange {
+            path: path.to_owned(),
+            added: added.parse().unwrap_or(0),
+            removed: removed.parse().unwrap_or(0),
+            change: changes.get(files.len()).copied().unwrap_or(Change::Changed),
+            binary,
+        });
     }
-    totals
+    files
 }
 
 /// A git query's one-line answer, or None when git says no (exit status
@@ -325,16 +472,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn numstat_counts_lines_and_binary_files() {
-        let totals = count(b"3\t1\tsrc/a.rs\x00-\t-\tlogo.png\x0010\t0\tnew file.txt\x00");
+    fn raw_and_numstat_records_make_one_entry_per_file() {
+        let output = b":100644 100644 aaa bbb M\x00src/a.rs\x00\
+:000000 100644 000 ccc A\x00logo.png\x00\
+:100644 000000 ddd 000 D\x00gone file.txt\x00\
+3\t1\tsrc/a.rs\x00-\t-\tlogo.png\x000\t10\tgone file.txt\x00";
+        let file = |path: &str, added, removed, change, binary| FileChange {
+            path: path.to_owned(),
+            added,
+            removed,
+            change,
+            binary,
+        };
+        let files = file_changes(output);
         assert_eq!(
-            totals,
+            files,
+            vec![
+                file("src/a.rs", 3, 1, Change::Changed, false),
+                file("logo.png", 0, 0, Change::Created, true),
+                file("gone file.txt", 0, 10, Change::Deleted, false),
+            ]
+        );
+        assert_eq!(
+            sum(&files),
             ChangeTotals {
                 files: 3,
-                added: 13,
-                removed: 1
+                added: 3,
+                removed: 11
             }
         );
-        assert_eq!(count(b""), ChangeTotals::default());
+        assert_eq!(file_changes(b""), Vec::new());
     }
 }

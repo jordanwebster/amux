@@ -6,20 +6,20 @@
 //!
 //! PutBlob writes a person's attachment into the agent's directory before
 //! the input that references it is handed over. GetBlob reads a file for a
-//! client. Diff runs git in the agent's working directory and writes the
-//! patch as a blob of the requesting agent, so it lives as long as that
-//! agent whether or not a review is ever attached.
+//! client. Diff compares the agent's working directory through git-facts
+//! and, only when asked for the patch, writes it as a blob of the agent, so
+//! it lives as long as that agent whether or not a review is ever attached.
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
+use git_facts::{Change, Comparison};
 use sha2::{Digest as _, Sha256};
 use store::{AgentRow, Store as _, StoreError};
 use uuid::Uuid;
 use wire::{
-    BlobRef, DiffBase, DiffRequest, ErrorCode, GetBlobRequest, GetBlobResponse, PutBlobRequest,
-    diff_base,
+    BlobRef, DiffBase, DiffFile, DiffFileChange, DiffRequest, ErrorCode, GetBlobRequest,
+    GetBlobResponse, PutBlobRequest, diff_base,
 };
 
 use crate::install::{AGENTS, REPLICAS};
@@ -46,8 +46,8 @@ pub enum BlobError {
     Write(io::Error),
     #[error("reading the blob: {0}")]
     Read(io::Error),
-    #[error("{0}")]
-    Git(String),
+    #[error(transparent)]
+    Git(#[from] git_facts::GitError),
     #[error("the bytes a peer sent are not the blob {0}")]
     Mismatch(String),
     #[error("the store: {0}")]
@@ -167,44 +167,49 @@ impl ProfileRuntime {
         Ok(())
     }
 
-    /// Diffs the agent's working directory against `base` and writes the
-    /// patch as the agent's blob. The working tree includes untracked
-    /// files; a branch base diffs its merge base with HEAD. Index lines
-    /// carry full object ids, which is each file's identity.
+    /// Compares the agent's working directory with `base`: HEAD, or where
+    /// the branch left the named base branch, to the working tree with
+    /// untracked files. Lists the changed files; only `with_patch` builds
+    /// the patch and writes it as the agent's blob. An exited agent's
+    /// folder is compared as it is now.
     pub async fn diff(&self, request: DiffRequest) -> Result<wire::Diff, BlobError> {
         let row = self.blob_owner(&request.agent_id).await?;
         if row.agent.host != self.host().as_bytes() {
             return Err(BlobError::NotOwn);
         }
-        let base = request.base.ok_or(BlobError::NoBase)?;
-        let cwd = PathBuf::from(&row.cwd);
-        let head = one_line(git(&cwd, None, &["rev-parse", "--verify", "HEAD^{commit}"]).await?);
-        let (patch, merge_base, name) = match &base.base {
-            Some(diff_base::Base::Branch(branch)) => {
-                let merge_base = one_line(git(&cwd, None, &["merge-base", branch, "HEAD"]).await?);
-                let patch = git(&cwd, None, &diff_args(&[&merge_base, "HEAD"])).await?;
-                (patch, Some(merge_base), format!("{branch}.diff"))
+        let base = request.base.and_then(|base| base.base);
+        let (comparison, name) = match &base {
+            Some(diff_base::Base::WorkingTree(_)) => {
+                (Comparison::Uncommitted, "working-tree.diff".to_owned())
             }
-            Some(diff_base::Base::WorkingTree(_)) => (
-                working_tree(&cwd).await?,
-                None,
-                "working-tree.diff".to_owned(),
+            Some(diff_base::Base::Branch(branch)) => (
+                Comparison::OnBranch {
+                    base: branch.clone(),
+                },
+                format!("{branch}.diff"),
             ),
             None => return Err(BlobError::NoBase),
         };
-        let patch = self
-            .put_blob(PutBlobRequest {
-                agent_id: request.agent_id,
-                name,
-                mime: PATCH_MIME.to_owned(),
-                bytes: patch,
-            })
-            .await?;
+        let compared =
+            git_facts::compare(Path::new(&row.cwd), &comparison, request.with_patch).await?;
+        let patch = match compared.patch {
+            Some(bytes) => Some(
+                self.put_blob(PutBlobRequest {
+                    agent_id: request.agent_id,
+                    name,
+                    mime: PATCH_MIME.to_owned(),
+                    bytes,
+                })
+                .await?,
+            ),
+            None => None,
+        };
         Ok(wire::Diff {
-            patch: Some(patch),
-            base: Some(DiffBase { base: base.base }),
-            head,
-            merge_base,
+            patch,
+            base: Some(DiffBase { base }),
+            head: compared.head.unwrap_or_default(),
+            merge_base: compared.merge_base,
+            files: compared.files.into_iter().map(diff_file).collect(),
         })
     }
 
@@ -265,78 +270,17 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     })
 }
 
-fn diff_args<'a>(revisions: &[&'a str]) -> Vec<&'a str> {
-    let mut args = vec![
-        "diff",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--no-color",
-        "--no-renames",
-        "--full-index",
-    ];
-    args.extend_from_slice(revisions);
-    args.push("--");
-    args
-}
-
-/// HEAD against the working tree, untracked files included: a temporary
-/// index holds HEAD plus intent-to-add entries for the untracked files, so
-/// the person's own index is never touched.
-async fn working_tree(cwd: &Path) -> Result<Vec<u8>, BlobError> {
-    let scratch = tempfile_path();
-    let result = async {
-        git(cwd, Some(&scratch), &["read-tree", "HEAD"]).await?;
-        let untracked = git(
-            cwd,
-            None,
-            &["ls-files", "--others", "--exclude-standard", "-z"],
-        )
-        .await?;
-        let untracked: Vec<String> = untracked
-            .split(|byte| *byte == 0)
-            .filter(|path| !path.is_empty())
-            .map(|path| String::from_utf8_lossy(path).into_owned())
-            .collect();
-        if !untracked.is_empty() {
-            let mut args = vec!["--literal-pathspecs", "add", "--intent-to-add", "--"];
-            args.extend(untracked.iter().map(String::as_str));
-            git(cwd, Some(&scratch), &args).await?;
-        }
-        git(cwd, Some(&scratch), &diff_args(&["HEAD"])).await
+fn diff_file(file: git_facts::FileChange) -> DiffFile {
+    let change = match file.change {
+        Change::Created => DiffFileChange::Created,
+        Change::Deleted => DiffFileChange::Deleted,
+        Change::Changed => DiffFileChange::Changed,
+    };
+    DiffFile {
+        path: file.path,
+        added: file.added,
+        removed: file.removed,
+        change: change as i32,
+        binary: file.binary,
     }
-    .await;
-    let _ = std::fs::remove_file(&scratch);
-    result
-}
-
-fn tempfile_path() -> PathBuf {
-    std::env::temp_dir().join(format!("amux-diff-index-{}", Uuid::new_v4().simple()))
-}
-
-async fn git(cwd: &Path, index: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, BlobError> {
-    let mut command = tokio::process::Command::new("git");
-    command
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .env("GIT_OPTIONAL_LOCKS", "0");
-    if let Some(index) = index {
-        command.env("GIT_INDEX_FILE", index);
-    }
-    let output = command
-        .output()
-        .await
-        .map_err(|error| BlobError::Git(format!("running git: {error}")))?;
-    if !output.status.success() {
-        return Err(BlobError::Git(format!(
-            "git {} failed: {}",
-            args.first().copied().unwrap_or_default(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-    Ok(output.stdout)
-}
-
-fn one_line(bytes: Vec<u8>) -> String {
-    String::from_utf8_lossy(&bytes).trim().to_owned()
 }

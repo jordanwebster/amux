@@ -56,6 +56,8 @@ const VIEW_VALUES: &[&str] = &[
     "amux.v1.Diff",
     "amux.v1.DiffBase",
     "amux.v1.DiffBase.base",
+    "amux.v1.DiffFile",
+    "amux.v1.DiffFileChange",
     "amux.v1.Empty",
     "amux.v1.EnvelopeKind",
     "amux.v1.HostVia",
@@ -102,6 +104,9 @@ fn codegen() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]",
         );
     }
+    // prost never derives Eq for a message with a repeated message field,
+    // though every field here is Eq; the views that hold a Diff compare it.
+    config.type_attribute("amux.v1.Diff", "#[derive(Eq)]");
     tonic_prost_build::configure()
         // Keep generated clients, but omit tonic's transport convenience
         // constructors. Otherwise `RoutingService.Connect` collides with the

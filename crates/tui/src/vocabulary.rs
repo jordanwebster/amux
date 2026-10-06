@@ -529,6 +529,22 @@ index 0000000..3333333
         }),
         head: "0463fb2c".into(),
         merge_base: None,
+        files: vec![
+            wire::DiffFile {
+                path: "src/sum.rs".into(),
+                added: 3,
+                removed: 2,
+                change: wire::DiffFileChange::Changed as i32,
+                binary: false,
+            },
+            wire::DiffFile {
+                path: "NOTES.md".into(),
+                added: 1,
+                removed: 0,
+                change: wire::DiffFileChange::Created as i32,
+                binary: false,
+            },
+        ],
     };
     let mut page = ReviewPage::new(diff, patch.into());
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

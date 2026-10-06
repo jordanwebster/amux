@@ -1,3 +1,17 @@
+2026-10-06 — **Diff answers with the changed files, and builds a patch only when asked.**
+`Diff` now lists each changed file (path, lines added and removed, created,
+deleted or changed, binary) and carries a patch only for a request with
+`with_patch`; without it the host builds and stores nothing, so the overview
+can show what changed without writing a blob into the agent's folder on every
+look. The comparison moved into `git-facts`, the crate the agent process
+already reads its row's totals with, so the row and the call measure the same
+thing: a branch comparison now runs from where the branch left its base to the
+working tree, counting uncommitted and untracked work, where before it stopped
+at HEAD. The node's own git code is gone. The review page asks for the patch.
+New test target `node --test diff` covers an exited agent, both comparisons
+and the untouched blob store; the replication test covers a diff of another
+host's agent with and without its patch.
+
 2026-10-06 — **Git facts read any number of untracked files.**
 Counting untracked files toward a folder's totals put every untracked path
 on `git add --intent-to-add`'s command line, so a folder with enough of them

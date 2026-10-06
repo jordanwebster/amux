@@ -45,11 +45,12 @@ reference alone (`ui_view::AttachmentView`): the name, type and size of an
 image or file, the line count of pasted text, and the comment count of a
 review. No bytes are needed to draw a row.
 
-A review's `Diff` is exactly what the `Diff` call returned: the patch as a
-`text/x-diff` blob, the base (the working tree or a branch), the head commit,
-and the merge base for a branch. The file list, line counts and per-file
-identity are not carried beside the patch; the review document parses them
-from it, because a git patch already holds them in its index lines. A
+A review's `Diff` is exactly what the `Diff` call returned when asked for the
+patch: the patch as a `text/x-diff` blob, the base (the working tree or a
+branch), the head commit, the merge base for a branch, and the call's file
+list. The review document parses files, hunks and per-file identity from the
+patch, because a git patch already holds them in its index lines; the element a
+model reads does not repeat the file list either. A
 `ReviewComment` is a path, a new-side line, an old-side line for a comment on a
 removed line, and the text; line zero comments on the file as a whole.
 

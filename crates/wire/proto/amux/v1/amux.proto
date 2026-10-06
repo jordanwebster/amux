@@ -415,7 +415,7 @@ service ClientService {
   // The only put: written into that agent's directory.
   rpc PutBlob(PutBlobRequest) returns (BlobRef);
   rpc GetBlob(GetBlobRequest) returns (GetBlobResponse);
-  // Puts the patch blob on the host and returns the Diff value.
+  // The changed files; with_patch also puts the patch blob on the host.
   rpc Diff(DiffRequest) returns (amux.v1.Diff);
   rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse);
   // The one bundle format.
@@ -596,6 +596,8 @@ message GetBlobResponse {
 message DiffRequest {
   bytes agent_id = 1;
   DiffBase base = 2;
+  // Also build the patch and store it as the agent's blob.
+  bool with_patch = 3;
 }
 
 // Host-owned discovery; the client chooses a host, never a search root.

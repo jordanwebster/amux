@@ -1740,16 +1740,22 @@ public enum DecisionView: String, Codable, Hashable, Sendable, CaseIterable {
     case dismissed = "Dismissed"
 }
 
-/// A diff generated on the owning host. The patch is a text/x-diff blob;
-/// files, counts and per-file identity are parsed from its index lines.
+/// A comparison of an agent's working tree, made on the agent's host. It
+/// runs to the working tree, untracked files included, from HEAD or from
+/// where the branch left the named base. The patch is a text/x-diff blob of
+/// the agent, built only when asked for; its index lines carry each file's
+/// full object ids.
 public struct Diff: Codable, Hashable, Sendable {
+    /// Empty before the first commit.
     public var head: String
+    public var files: [DiffFile]
     public var base: DiffBase?
     public var mergeBase: String?
     public var patch: BlobRef?
 
-    public init(head: String, base: DiffBase?, mergeBase: String?, patch: BlobRef?) {
+    public init(head: String, files: [DiffFile], base: DiffBase?, mergeBase: String?, patch: BlobRef?) {
         self.head = head
+        self.files = files
         self.base = base
         self.mergeBase = mergeBase
         self.patch = patch
@@ -1757,6 +1763,7 @@ public struct Diff: Codable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case head
+        case files
         case base
         case mergeBase = "merge_base"
         case patch
@@ -1772,6 +1779,31 @@ public struct DiffBase: Codable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case base
+    }
+}
+
+public struct DiffFile: Codable, Hashable, Sendable {
+    public var path: String
+    /// Lines; none for a binary file.
+    public var added: UInt32
+    public var removed: UInt32
+    public var change: Int32
+    public var binary: Bool
+
+    public init(path: String, added: UInt32, removed: UInt32, change: Int32, binary: Bool) {
+        self.path = path
+        self.added = added
+        self.removed = removed
+        self.change = change
+        self.binary = binary
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case added
+        case removed
+        case change
+        case binary
     }
 }
 

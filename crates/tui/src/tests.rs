@@ -1211,6 +1211,22 @@ fn working_tree_diff() -> wire::Diff {
         }),
         head: "3f2a1c9e0000".into(),
         merge_base: None,
+        files: vec![
+            wire::DiffFile {
+                path: "src/lib.rs".into(),
+                added: 2,
+                removed: 1,
+                change: wire::DiffFileChange::Changed as i32,
+                binary: false,
+            },
+            wire::DiffFile {
+                path: "notes.md".into(),
+                added: 1,
+                removed: 0,
+                change: wire::DiffFileChange::Created as i32,
+                binary: false,
+            },
+        ],
     }
 }
 
