@@ -14,8 +14,6 @@
 ## 28 recorded 27: fact Stream type=system subtype=task_started uuid=567d587a-8058-4769-a05a-15bb0ea6eea0 tool_use_id=toolu_011tXt8wWZsDcqNkmr2GAzYp
   row    4 toolu_011tXt8wWZsDcqNkmr2GAzYp Subagent { description: "Count to three", running: true, tool_count: 0, last_tool: "", answer: "", duration_ms: None }
   composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
-## 30 recorded 29: fact Stream type=user uuid=2b31d72c-0a0f-46a6-9c87-dfb6ad9086ae
-  row    4 toolu_011tXt8wWZsDcqNkmr2GAzYp Subagent { description: "Count to three", running: true, tool_count: 0, last_tool: "", answer: "", duration_ms: None }
 ## 44 recorded 43: fact Stream type=assistant uuid=a918bfce-cd29-4dc2-95f2-8146a3ad774e
   row    5 msg_011CeW3XPJm4JjB5UX8mmfpP:0 Thinking { text: "The counter agent is running in the background. I need to wait for it to complete and then I'll be notified of the result. The user asked me to delegate to the counter subagent and reply with exactly what it said, so I should wait for the notification.\n\nThe system indicated that I will be notified automatically when the agent completes. I sho…
 ## 46 recorded 45: fact Stream type=assistant uuid=0ee89b87-5b61-4e94-85fa-decba585cd51

@@ -32,8 +32,6 @@
   row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "toolu_0197msubRxYrMAEYvpZ2dxbz" }) queue=[] outbox=[]
-## 50 recorded 49: fact Stream type=user uuid=6b82bbd9-fa57-4159-a5d8-5a1937558d6d
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
 ## 55 recorded 54: fact Stream type=assistant uuid=6a2accbb-fac8-42cf-aee0-10fbf23ea3a9
   row    9 msg_011CfREJwNwuaDJkNzqp91kH:0 Thinking { text: "", open: false, duration_ms: Some(1971) }
   composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]

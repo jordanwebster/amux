@@ -859,12 +859,10 @@ impl State {
             .as_ref()
             .is_some_and(|decision| decision.outcome == DecisionOutcome::Denied as i32);
         if tool.background && tool.task.as_ref().is_some_and(|task| !task.finished) {
-            // The result says the task was launched, for the model; the
-            // call is open until the task's notification.
-            if let Some(result) = result {
-                tool.outcome_json = compact_json(&without_image_bytes(result));
-            }
-            return self.emit_tool(emit, id);
+            // The result only tells the model the task was launched, and
+            // the call stays open until the task's notification: nothing a
+            // reader sees changes, so the item is not sent again for it.
+            return;
         }
         tool.state = if denied {
             ToolState::Denied

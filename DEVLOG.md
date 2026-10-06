@@ -1,3 +1,12 @@
+2026-10-06 — **A background launch's result no longer re-sends its call.**
+Headless Claude answers a background command or subagent at once with a
+result that only tells the model the job started; the call stays open until
+the job's notification. The interpreter used to keep that result and send the
+whole call again for it, though no reader looks at it and nothing drawn
+changes. It now leaves the call alone until the job ends. On the recorded
+background shell the command's sends drop from five to four, 1687 to 1086
+bytes (`just wire-size`).
+
 2026-10-06 — **The terminal shows changes, background jobs and usage from real facts.**
 The chat header's `[Diff +a −b]` reads the agent's row: the uncommitted totals,
 or everything since the branch left its base (`[Diff vs main +a −b]`), switched
