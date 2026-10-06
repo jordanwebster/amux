@@ -437,7 +437,11 @@ impl State {
             last_tool: String::new(),
             tool_key: String::new(),
             tokens: 0,
+            shell: false,
         });
+        if report.task_type == Some("local_bash") {
+            task.shell = true;
+        }
         if let Some(description) = written_opt(report.description) {
             task.description = description;
         }

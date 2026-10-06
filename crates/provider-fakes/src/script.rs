@@ -212,7 +212,8 @@ pub struct Tool {
     #[serde(default)]
     pub outcome: Outcome,
     /// The call runs until this file exists, as a long command does, so a
-    /// test can write to the provider while a tool is running.
+    /// test can write to the provider while a tool is running. A command
+    /// run in the background returns at once and its job runs until then.
     #[serde(default)]
     pub wait_for: Option<PathBuf>,
 }

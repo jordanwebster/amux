@@ -1,3 +1,15 @@
+2026-10-06 — **The fake headless Claude runs background commands, and a shell is not a subagent.**
+A `run_in_background` Bash in a fake headless Claude script now behaves as
+Claude's recordings show: the job list gains it, its task starts, the call's
+result only says it was launched, and the job ends (task updated, then
+notified) when the step's `wait_for` file exists, or at once without one. The
+queue set runs a memory watch beside its flood, so its chat overview lists a
+running job with its command and time. Doing so showed a real fault: headless
+Claude reports a background shell as a task, and the chat's activity line
+counted every running task as a subagent ("1 subagent working" while only a
+shell ran, as the recorded background shell shows). The interpreter now keeps
+shell tasks out of the snapshot's active tasks; the job list carries them.
+
 2026-10-06 — **On the base branch, the branch comparison counts the uncommitted work.**
 An agent working on `main` itself had no totals for "everything on this
 branch", so switching its chat header to `[Diff vs main]` dropped the numbers

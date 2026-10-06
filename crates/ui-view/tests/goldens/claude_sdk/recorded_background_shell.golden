@@ -34,7 +34,7 @@
   composer Send activity=Some(Running { key: "toolu_0197msubRxYrMAEYvpZ2dxbz" }) queue=[] outbox=[]
 ## 55 recorded 54: fact Stream type=assistant uuid=6a2accbb-fac8-42cf-aee0-10fbf23ea3a9
   row    9 msg_011CfREJwNwuaDJkNzqp91kH:0 Thinking { text: "", open: false, duration_ms: Some(1971) }
-  composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
+  composer Send activity=Some(Working) queue=[] outbox=[]
 ## 57 recorded 56: fact Stream type=assistant uuid=da105f2c-eefe-4e3f-84f9-8f07de74b9b8
   row   10 msg_011CfREJwNwuaDJkNzqp91kH:1 Prose { text: [Text("Now I'll wait 8 seconds:")], streaming: false, working_note: false }
 ## 59 recorded 58: fact Stream type=assistant uuid=901fd496-24c9-47e1-acc0-fa4de2908262

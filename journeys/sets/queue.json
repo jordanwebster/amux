@@ -1,5 +1,5 @@
 {
-  "description": "An agent part way through a long turn, with its task list on the row above the composer and prompts queued behind it: two of yours and one queued by another agent (relay keepalive, through amux's send tool). Type and send while it works to queue more; ↑ in the empty composer reaches the queue (send now, withdraw). ctrl+x ends the turn and the queue drains; or release the running command with `just tui-set queue --door '{\"OpenGate\": {\"name\": \"flood-done\"}}'`.",
+  "description": "An agent part way through a long turn, with its task list on the row above the composer and prompts queued behind it: two of yours and one queued by another agent (relay keepalive, through amux's send tool). Type and send while it works to queue more; ↑ in the empty composer reaches the queue (send now, withdraw). A memory watch runs in the background beside it. ctrl+x ends the turn and the queue drains; or release the running command and the watch with `just tui-set queue --door '{\"OpenGate\": {\"name\": \"flood-done\"}}'`.",
   "client": "laptop",
   "open": "flood bench",
   "topology": {
@@ -142,6 +142,18 @@
                 "chunks": [
                   "The cap is in. Now the flood, before and after, against the same build flags."
                 ]
+              }
+            },
+            {
+              "tool": {
+                "name": "Bash",
+                "class": "consequential",
+                "input": {
+                  "command": "scripts/memwatch --app phone --every 1s",
+                  "description": "Watch the phone's memory",
+                  "run_in_background": true
+                },
+                "wait_for": "flood-done"
               }
             },
             {

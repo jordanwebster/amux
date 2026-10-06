@@ -149,6 +149,17 @@ struct Engine {
     schema: Option<crate::script::Schema>,
     /// The tasks the session's task tools made, by id, with their status.
     tasks: Vec<(String, String)>,
+    /// Commands started in the background that have not finished.
+    jobs: Vec<Job>,
+}
+
+/// A command Claude runs in the background: it outlives its call and ends
+/// when its gate file exists, or at once without one.
+struct Job {
+    task: String,
+    call: String,
+    description: String,
+    gate: Option<std::path::PathBuf>,
 }
 
 impl Engine {
@@ -219,6 +230,7 @@ impl Engine {
             auth_failed: None,
             schema: None,
             tasks: Vec::new(),
+            jobs: Vec::new(),
         }
     }
 
@@ -253,6 +265,11 @@ impl Engine {
             if self.eof {
                 return 0;
             }
+            // A background command can end while no turn runs.
+            if !self.jobs.is_empty() {
+                self.pump().await;
+                continue;
+            }
             match self.input.recv().await {
                 Some(frame) => self.handle(frame).await,
                 None => self.eof = true,
@@ -281,6 +298,7 @@ impl Engine {
 
     /// Take whatever the host has written, without waiting.
     async fn drain(&mut self) {
+        self.finish_jobs().await;
         loop {
             match self.input.try_recv() {
                 Ok(frame) => self.handle(frame).await,
@@ -295,6 +313,7 @@ impl Engine {
 
     /// Wait for the next host frame, or for a moment to pass.
     async fn pump(&mut self) {
+        self.finish_jobs().await;
         if self.eof {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             return;
@@ -598,9 +617,13 @@ impl Engine {
                 Step::Tool(tool) => {
                     calls += 1;
                     let (id, input) = self.tool_use(&request, &message, &tool).await;
-                    self.run_tool(&tool).await;
-                    let outcome = self.outcome(&tool, &input).await;
-                    self.tool_result(&id, &tool, &input, outcome).await;
+                    if input["run_in_background"] == json!(true) {
+                        self.launch(&id, &tool, &input).await;
+                    } else {
+                        self.run_tool(&tool).await;
+                        let outcome = self.outcome(&tool, &input).await;
+                        self.tool_result(&id, &tool, &input, outcome).await;
+                    }
                     self.fold().await;
                     request = self.ids.next("req_fake");
                     message = self.ids.next("msg_fake");
@@ -739,6 +762,110 @@ impl Engine {
         while !path.exists() && self.cut != Some(Cut::Interrupted) {
             self.pump().await;
         }
+    }
+
+    /// Start a command in the background as Claude does: the job list
+    /// gains it, its task starts, and the call's result only says it was
+    /// launched. It ends in `finish_jobs`.
+    async fn launch(&mut self, call: &str, tool: &Tool, input: &Value) {
+        let job = Job {
+            task: self.ids.next("bfake"),
+            call: call.to_owned(),
+            description: input["description"]
+                .as_str()
+                .or(input["command"].as_str())
+                .unwrap_or_default()
+                .to_owned(),
+            gate: tool.wait_for.clone(),
+        };
+        let started = json!({
+            "type": "system",
+            "subtype": "task_started",
+            "task_id": job.task,
+            "tool_use_id": job.call,
+            "description": job.description,
+            "task_type": "local_bash",
+            "is_backgrounded": true,
+            "session_id": self.session,
+            "uuid": uuid(),
+        });
+        let content = format!(
+            "Command running in background with ID: {}. Output is being written to: /tmp/claude/tasks/{}.output",
+            job.task, job.task
+        );
+        let sidecar = json!({
+            "backgroundTaskId": job.task,
+            "interrupted": false,
+            "isImage": false,
+            "noOutputExpected": false,
+            "stderr": "",
+            "stdout": "",
+        });
+        self.jobs.push(job);
+        self.jobs_changed().await;
+        self.send(started).await;
+        self.user_result(call, json!(content), false, sidecar).await;
+    }
+
+    /// End every background command whose gate is open: the job list
+    /// loses it, its task completes, and Claude says how it ended.
+    async fn finish_jobs(&mut self) {
+        let (done, running): (Vec<Job>, Vec<Job>) = std::mem::take(&mut self.jobs)
+            .into_iter()
+            .partition(|job| job.gate.as_ref().is_none_or(|gate| gate.exists()));
+        self.jobs = running;
+        if done.is_empty() {
+            return;
+        }
+        self.jobs_changed().await;
+        for job in done {
+            let updated = json!({
+                "type": "system",
+                "subtype": "task_updated",
+                "task_id": job.task,
+                "patch": { "status": "completed", "end_time": now_s() * 1000 },
+                "session_id": self.session,
+                "uuid": uuid(),
+            });
+            self.send(updated).await;
+            let notified = json!({
+                "type": "system",
+                "subtype": "task_notification",
+                "task_id": job.task,
+                "tool_use_id": job.call,
+                "status": "completed",
+                "output_file": format!("/tmp/claude/tasks/{}.output", job.task),
+                "summary": format!(
+                    "Background command \"{}\" completed (exit code 0)",
+                    job.description
+                ),
+                "session_id": self.session,
+                "uuid": uuid(),
+            });
+            self.send(notified).await;
+        }
+    }
+
+    async fn jobs_changed(&mut self) {
+        let tasks: Vec<Value> = self
+            .jobs
+            .iter()
+            .map(|job| {
+                json!({
+                    "task_id": job.task,
+                    "task_type": "local_bash",
+                    "description": job.description,
+                })
+            })
+            .collect();
+        let frame = json!({
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": tasks,
+            "session_id": self.session,
+            "uuid": uuid(),
+        });
+        self.send(frame).await;
     }
 
     fn assistant(&mut self, request: &str, message: &str, block: Value) -> Value {

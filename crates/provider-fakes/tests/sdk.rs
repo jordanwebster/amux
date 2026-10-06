@@ -601,3 +601,54 @@ async fn account_and_session_facts_play_in_recorded_shapes() {
     assert_eq!(failed["api_error_status"], 401);
     assert_eq!(host.close().await, 0);
 }
+
+#[tokio::test]
+async fn a_background_command_returns_at_once_and_its_job_ends_when_its_gate_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let gate = dir.path().join("gate");
+    let mut host = Host::start(json!({"steps": [
+        {"tool": {"name": "Bash", "class": "consequential", "wait_for": gate, "input": {
+            "command": "scripts/watch", "description": "Watch memory", "run_in_background": true,
+        }}},
+        {"text": {"chunks": ["watching"]}},
+        "turn_end",
+    ]}))
+    .await;
+    host.prompt(A, "Watch it", None).await;
+    host.until(|frame| frame["state"] == "completed" && frame["command_uuid"] == A)
+        .await;
+    let running = host.trace();
+    assert!(
+        !running.contains(&"system task_notification".to_owned()),
+        "the job outlives the turn: {running:?}"
+    );
+
+    std::fs::write(&gate, "").unwrap();
+    let notified = host
+        .until(|frame| frame["subtype"] == "task_notification")
+        .await;
+    assert_eq!(notified["status"], "completed");
+    let trace = host.trace();
+    let launch = trace
+        .iter()
+        .position(|line| line == "assistant tool_use")
+        .unwrap();
+    assert_eq!(
+        trace[launch..launch + 4],
+        [
+            "assistant tool_use",
+            "system background_tasks_changed",
+            "system task_started",
+            "user tool_result",
+        ]
+    );
+    assert_eq!(
+        trace[trace.len() - 3..],
+        [
+            "system background_tasks_changed",
+            "system task_updated",
+            "system task_notification",
+        ]
+    );
+    assert_eq!(host.close().await, 0);
+}

@@ -183,6 +183,9 @@ struct TaskState {
     last_tool: String,
     tool_key: String,
     tokens: u64,
+    /// A shell Claude runs as a task: a background job, never a subagent.
+    #[serde(default)]
+    shell: bool,
 }
 
 /// Everything the Claude SDK interpreter holds; its checkpoint.
@@ -364,7 +367,7 @@ impl State {
             active_tasks: self
                 .active_tasks
                 .iter()
-                .filter(|(_, task)| task.state == wire::TaskState::Running as i32)
+                .filter(|(_, task)| task.state == wire::TaskState::Running as i32 && !task.shell)
                 .map(|(id, task)| task.to_wire(id))
                 .collect(),
             usage: Some(self.usage.clone().unwrap_or_else(unknown::claude_usage)),
