@@ -99,6 +99,15 @@ async fn replica_state(net: &Net, host: &str, agent: &str) -> Option<(u64, Optio
     Some((row.source_cursor, store.cut(&key, 0).unwrap().marker))
 }
 
+/// `work`, failing with `what` if it has not finished within twice the
+/// patience of a wait: a stage that hangs fails here, named, rather than
+/// at the run's own bound.
+async fn stage<T>(what: &str, work: impl Future<Output = T>) -> T {
+    tokio::time::timeout(PATIENCE * 2, work)
+        .await
+        .unwrap_or_else(|_| panic!("{what}: no answer within {:?}", PATIENCE * 2))
+}
+
 /// Waits until the origin's journal for `agent` holds a message saying
 /// `wanted`.
 async fn wait_origin_says(net: &Net, agent: &str, wanted: &str) {
@@ -520,10 +529,15 @@ async fn a_stream_dying_after_its_snapshot_replays_after_the_cursor_while_a_page
 /// its backoff; then it catches up again.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
+    // Once seen to hang past the workspace run's bound and never again, so
+    // every wait here is bounded and names the stage that stalled.
     const K: u32 = 6;
-    let mut net = Net::start_with(desk_and_laptop(), options(K, |_, _| {}))
-        .await
-        .unwrap();
+    let mut net = stage(
+        "start the desk and the laptop",
+        Net::start_with(desk_and_laptop(), options(K, |_, _| {})),
+    )
+    .await
+    .unwrap();
 
     // Once armed, the laptop's source drops the next record it is sent. A
     // source reads the hook when its stream opens, so it is set before the
@@ -543,23 +557,39 @@ async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
             }
         })));
     }
-    net.spawn(
-        AgentDecl::new("worker", "desk")
-            .steps(turns(2, 3))
-            .prompt("go"),
+    stage(
+        "spawn the worker",
+        net.spawn(
+            AgentDecl::new("worker", "desk")
+                .steps(turns(2, 3))
+                .prompt("go"),
+        ),
     )
     .await
     .unwrap();
-    wait_origin_says(&net, "worker", "t0-2").await;
-    net.current("laptop", "worker").await.unwrap();
-    let mut chat = net.observe("laptop", "worker", 10).await.unwrap();
+    stage(
+        "the worker's first turn at the desk",
+        wait_origin_says(&net, "worker", "t0-2"),
+    )
+    .await;
+    stage("the first replica", net.current("laptop", "worker"))
+        .await
+        .unwrap();
+    let mut chat = stage(
+        "open the laptop's chat",
+        net.observe("laptop", "worker", 10),
+    )
+    .await
+    .unwrap();
     chat.observe_until(observe::caught_up, PATIENCE)
         .await
         .unwrap();
     let seen = chat.events().len();
 
     armed.store(true, Ordering::SeqCst);
-    net.send("worker", "two").await.unwrap();
+    stage("send the second turn", net.send("worker", "two"))
+        .await
+        .unwrap();
     chat.observe_until(
         |events| marks(&events[seen..]).contains(&Mark::Detached),
         PATIENCE,
@@ -571,7 +601,13 @@ async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
     assert!(laptop.host_ready(desk), "the host was never lost");
     backoff_armed(&net).await;
     assert_eq!(
-        replica_state(&net, "laptop", "worker").await.unwrap().1,
+        stage(
+            "read the replica's marker",
+            replica_state(&net, "laptop", "worker")
+        )
+        .await
+        .unwrap()
+        .1,
         Some(Marker::Detached),
         "the marker reads Detached through the backoff"
     );
@@ -587,13 +623,18 @@ async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
     )
     .await
     .unwrap();
-    net.current("laptop", "worker").await.unwrap();
+    stage(
+        "the replica after the backoff",
+        net.current("laptop", "worker"),
+    )
+    .await
+    .unwrap();
     println!(
         "the laptop's chat through a stream lost with the link up:\n{}",
         chat.transcript()
     );
     drop(laptop);
-    net.shutdown().await.unwrap();
+    stage("shut the net down", net.shutdown()).await.unwrap();
 }
 
 /// A host that goes away and comes back between two of the follower's

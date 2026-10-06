@@ -1,3 +1,11 @@
+2026-10-06 — **The replication spec's stream-lost test names a stalled stage.**
+The test of a stream lost while the link stays up hung once in a full
+workspace run, past the run's own bound, and never again in a hundred
+reruns, loaded or not. Each wait in it that had no bound of its own —
+starting the net, spawning the worker, opening the chat, sending, reading
+the replica's marker, shutting down — now fails within a minute naming the
+stage, so a recurrence points at its cause instead of holding the run.
+
 2026-10-06 — **A chat row's height follows the row that lands below it.**
 A step on the chat's rail leaves a shorter gap under it when the rail runs
 on into the next row than when it ends a run, so a row's height depends on
