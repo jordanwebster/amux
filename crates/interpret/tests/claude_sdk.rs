@@ -591,3 +591,103 @@ fn a_commands_changed_event_rebuilds_the_offered_commands() {
     );
     assert!(again.step.snapshot.is_none());
 }
+
+/// Claude's permissions, as the catalogue lists them for a Claude launched
+/// with `args` whose initialize answer offers an auto-capable model and one
+/// that is not.
+fn permissions_launched_with(args: &[&str]) -> Vec<(String, Vec<String>, bool)> {
+    let spec = wire::AgentSpec {
+        agent_id: b"agent".to_vec(),
+        incarnation: 1,
+        provider_args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        ..Default::default()
+    };
+    let (mut state, _) = ClaudeSdk::initial(&spec, "test");
+    let mut answer = initialized(&["compact"]);
+    answer["response"]["response"]["models"] = json!([
+        {"value": "opus", "displayName": "Opus", "description": "", "supportsAutoMode": true},
+        {"value": "haiku", "displayName": "Haiku", "description": ""},
+    ]);
+    let stepped = ClaudeSdk::step(&mut state, stream(answer));
+    written_catalogue(&stepped)
+        .expect("the initialize answer writes a catalogue")
+        .permissions
+        .into_iter()
+        .map(|offered| (offered.value, offered.models, offered.settable))
+        .collect()
+}
+
+/// Ask, accept edits, plan and auto (for the models that take it); never
+/// ask only when Claude was launched allowing it.
+#[test]
+fn claude_offers_never_ask_only_when_launched_allowing_it() {
+    let auto = ("auto".to_owned(), vec!["opus".to_owned()], true);
+    let listed = |value: &str| (value.to_owned(), Vec::new(), true);
+    assert_eq!(
+        permissions_launched_with(&[]),
+        [
+            listed("default"),
+            listed("acceptEdits"),
+            listed("plan"),
+            auto.clone()
+        ]
+    );
+    for allowing in [
+        &["--allow-dangerously-skip-permissions"][..],
+        &["--dangerously-skip-permissions"],
+        &["--permission-mode", "bypassPermissions"],
+    ] {
+        assert_eq!(
+            permissions_launched_with(allowing).last(),
+            Some(&listed("bypassPermissions")),
+            "{allowing:?}"
+        );
+    }
+}
+
+/// A permission is set by a value the catalogue offers; any other is
+/// refused before it reaches Claude.
+#[test]
+fn a_permission_claude_does_not_offer_is_refused() {
+    let mut state = started();
+    let refused = ClaudeSdk::step(
+        &mut state,
+        sdk_input(
+            b"p1",
+            wire::claude_sdk_input::Of::Permission(wire::SetPermission {
+                value: "bypassPermissions".into(),
+            }),
+        ),
+    );
+    assert!(
+        refused
+            .effects
+            .iter()
+            .all(|effect| !matches!(effect, Effect::ProviderWrite(_))),
+        "{:?}",
+        refused.effects
+    );
+    let set = ClaudeSdk::step(
+        &mut state,
+        sdk_input(
+            b"p2",
+            wire::claude_sdk_input::Of::Permission(wire::SetPermission {
+                value: "acceptEdits".into(),
+            }),
+        ),
+    );
+    let written: Vec<_> = set
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::ProviderWrite(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        written
+            .iter()
+            .any(|line| line.contains("set_permission_mode") && line.contains("acceptEdits")),
+        "{written:?}"
+    );
+}

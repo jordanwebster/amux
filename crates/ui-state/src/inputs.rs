@@ -66,7 +66,10 @@ impl InputWhat {
                 Some(sdk::Of::SendNow(n)) => send_now(n),
                 Some(sdk::Of::Interrupt(_)) => InputWhat::Interrupt,
                 Some(
-                    sdk::Of::Mode(_) | sdk::Of::Model(_) | sdk::Of::Clear(_) | sdk::Of::Effort(_),
+                    sdk::Of::Permission(_)
+                    | sdk::Of::Model(_)
+                    | sdk::Of::Clear(_)
+                    | sdk::Of::Effort(_),
                 )
                 | None => InputWhat::Other,
             },
@@ -80,7 +83,8 @@ impl InputWhat {
                 Some(codex::Of::SendNow(n)) => send_now(n),
                 Some(codex::Of::Interrupt(_)) => InputWhat::Interrupt,
                 Some(
-                    codex::Of::Approval(_)
+                    codex::Of::Permission(_)
+                    | codex::Of::Mode(_)
                     | codex::Of::Model(_)
                     | codex::Of::Effort(_)
                     | codex::Of::Rename(_),

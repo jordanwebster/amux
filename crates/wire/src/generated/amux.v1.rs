@@ -1761,6 +1761,40 @@ impl ::prost::Name for Clear {
         "/amux.v1.Clear".into()
     }
 }
+/// How much the agent may do without asking, by a value its catalogue
+/// offers; the interpreter turns it into the provider's own settings.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetPermission {
+    #[prost(string, tag = "1")]
+    pub value: ::prost::alloc::string::String,
+}
+impl ::prost::Name for SetPermission {
+    const NAME: &'static str = "SetPermission";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.SetPermission".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.SetPermission".into()
+    }
+}
+/// How the agent works (Codex: default or plan), by a value its catalogue
+/// offers.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetMode {
+    #[prost(string, tag = "1")]
+    pub value: ::prost::alloc::string::String,
+}
+impl ::prost::Name for SetMode {
+    const NAME: &'static str = "SetMode";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.SetMode".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.SetMode".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SetModel {
     /// Absent restores the launch model.
@@ -2578,10 +2612,12 @@ pub struct ClaudeCreateConfig {
     pub args: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "2")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "3")]
-    pub permission_mode: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "4")]
     pub effort: ::core::option::Option<::prost::alloc::string::String>,
+    /// A permission Claude offers ("default", "acceptEdits", "plan", "auto",
+    /// "bypassPermissions").
+    #[prost(string, optional, tag = "5")]
+    pub permission: ::core::option::Option<::prost::alloc::string::String>,
 }
 impl ::prost::Name for ClaudeCreateConfig {
     const NAME: &'static str = "ClaudeCreateConfig";
@@ -2962,7 +2998,7 @@ impl ::prost::Name for ClaudeSdkSnapshot {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudeSdkInput {
-    #[prost(oneof = "claude_sdk_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
+    #[prost(oneof = "claude_sdk_input::Of", tags = "1, 2, 3, 10, 5, 6, 7, 8, 9")]
     pub of: ::core::option::Option<claude_sdk_input::Of>,
 }
 /// Nested message and enum types in `ClaudeSdkInput`.
@@ -2975,8 +3011,8 @@ pub mod claude_sdk_input {
         Answer(super::AnswerInput),
         #[prost(message, tag = "3")]
         Interrupt(super::Interrupt),
-        #[prost(message, tag = "4")]
-        Mode(super::SetPermissionMode),
+        #[prost(message, tag = "10")]
+        Permission(super::SetPermission),
         #[prost(message, tag = "5")]
         Model(super::SetModel),
         #[prost(message, tag = "6")]
@@ -2997,21 +3033,6 @@ impl ::prost::Name for ClaudeSdkInput {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.ClaudeSdkInput".into()
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct SetPermissionMode {
-    #[prost(string, tag = "1")]
-    pub mode: ::prost::alloc::string::String,
-}
-impl ::prost::Name for SetPermissionMode {
-    const NAME: &'static str = "SetPermissionMode";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.SetPermissionMode".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.SetPermissionMode".into()
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -3241,12 +3262,14 @@ impl TaskState {
 pub struct CodexCreateConfig {
     #[prost(string, optional, tag = "1")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "2")]
-    pub approval_policy: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "3")]
-    pub sandbox_policy: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "4")]
     pub effort: ::core::option::Option<::prost::alloc::string::String>,
+    /// A permission and a mode the catalogue offers: "read-only", "default",
+    /// "auto", "full-access"; "default", "plan".
+    #[prost(string, optional, tag = "6")]
+    pub permission: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "7")]
+    pub mode: ::core::option::Option<::prost::alloc::string::String>,
     /// Adopt an existing Codex thread instead of starting a new one.
     #[prost(string, optional, tag = "5")]
     pub resume_thread_id: ::core::option::Option<::prost::alloc::string::String>,
@@ -3593,10 +3616,24 @@ pub struct CodexSnapshot {
     /// is its id, else its id tidied. Absent while the model is.
     #[prost(string, optional, tag = "19")]
     pub model_name: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "5")]
+    /// The permission the raw settings below name; absent when they match no
+    /// name, which reads as custom.
+    #[prost(string, optional, tag = "20")]
+    pub permission: ::core::option::Option<::prost::alloc::string::String>,
+    /// The mode the collaboration mode names: "default" or "plan"; absent
+    /// until Codex says, or when it names neither.
+    #[prost(string, optional, tag = "21")]
+    pub mode: ::core::option::Option<::prost::alloc::string::String>,
+    /// Codex's own settings, absent until Codex says.
+    #[prost(string, optional, tag = "22")]
     pub approval_policy: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "6")]
+    #[prost(string, optional, tag = "23")]
     pub sandbox: ::core::option::Option<::prost::alloc::string::String>,
+    /// Who answers approvals: "user", or a reviewer model ("auto_review").
+    #[prost(string, optional, tag = "24")]
+    pub approvals_reviewer: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "25")]
+    pub collaboration_mode: ::core::option::Option<::prost::alloc::string::String>,
     /// Absent while no turn is known to be running.
     #[prost(string, optional, tag = "7")]
     pub active_turn: ::core::option::Option<::prost::alloc::string::String>,
@@ -3737,7 +3774,7 @@ impl ::prost::Name for McpToolApproval {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CodexInput {
-    #[prost(oneof = "codex_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10")]
+    #[prost(oneof = "codex_input::Of", tags = "1, 2, 3, 11, 12, 5, 6, 7, 8, 9, 10")]
     pub of: ::core::option::Option<codex_input::Of>,
 }
 /// Nested message and enum types in `CodexInput`.
@@ -3750,8 +3787,10 @@ pub mod codex_input {
         Approve(super::Approve),
         #[prost(message, tag = "3")]
         Interrupt(super::Interrupt),
-        #[prost(message, tag = "4")]
-        Approval(super::SetApproval),
+        #[prost(message, tag = "11")]
+        Permission(super::SetPermission),
+        #[prost(message, tag = "12")]
+        Mode(super::SetMode),
         #[prost(message, tag = "5")]
         Model(super::SetModel),
         #[prost(message, tag = "6")]
@@ -3809,23 +3848,6 @@ impl ::prost::Name for Approve {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.Approve".into()
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct SetApproval {
-    #[prost(string, tag = "1")]
-    pub approval_policy: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub sandbox: ::prost::alloc::string::String,
-}
-impl ::prost::Name for SetApproval {
-    const NAME: &'static str = "SetApproval";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.SetApproval".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.SetApproval".into()
     }
 }
 /// AnswerInput.body for Codex: questions, tool-server forms and links, and
@@ -4077,8 +4099,12 @@ pub struct EffectiveConfig {
     pub journal_segment_bytes: u64,
     #[prost(string, optional, tag = "6")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "7")]
-    pub permission_mode: ::core::option::Option<::prost::alloc::string::String>,
+    /// The permission and mode the agent was created with, as its catalogue
+    /// names them.
+    #[prost(string, optional, tag = "10")]
+    pub permission: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "11")]
+    pub mode: ::core::option::Option<::prost::alloc::string::String>,
     /// Environment additions for the provider child.
     #[prost(map = "string, string", tag = "8")]
     pub env: ::std::collections::HashMap<

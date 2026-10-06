@@ -338,9 +338,10 @@ only for the permission menus the resolved keymap can type (its verified menu
 shapes); on any other menu the card offers allow once and deny.
 
 Terminal Claude offers no list of models, efforts or commands a program could
-read, so it writes no catalogue and takes no model or effort input: a
-person types `/model <name>` or `/effort <level>` as a prompt and the
-command's own rows reflect it. The permission mode changes only by cycling,
+read, so its catalogue, written when its session starts, holds only Claude's
+permissions, each marked not settable, and it takes no model or effort
+input: a person types `/model <name>` or `/effort <level>` as a prompt and
+the command's own rows reflect it. The permission changes only by cycling,
 since the cycle's order depends on how Claude was launched. Its inputs are
 prompt, withdraw, send now, interrupt, clear, a named key, and answer.
 
@@ -439,11 +440,17 @@ nothing is inferred.
   request of any other subtype is answered with an error.
 - **Offers.** The answer to the agent process's `initialize` request lists
   the models, each with its effort levels, and the slash commands, which
-  make the agent's catalogue; `commands_changed` rebuilds it.
+  make the agent's catalogue; `commands_changed` rebuilds it. Its
+  permissions are Claude's own: ask (`default`), accept edits, plan, auto
+  (naming the models whose `supportsAutoMode` is set, and left out when
+  none is), and never ask (`bypassPermissions`) only when Claude was
+  launched allowing it (`--dangerously-skip-permissions`,
+  `--allow-dangerously-skip-permissions`, or that permission mode).
 - **Inputs.** Prompt, withdraw, send now (a message at default priority,
   which joins the running turn at its next tool boundary), interrupt (a
-  control request), clear (sent as `/clear`), permission mode and model
-  (control requests), effort (`apply_flag_settings` with `effortLevel`), and
+  control request), clear (sent as `/clear`), permission (a value the
+  catalogue offers, sent as `set_permission_mode`; any other is refused)
+  and model (control requests), effort (`apply_flag_settings` with `effortLevel`), and
   answer. The effort Claude runs at comes from `get_settings`, asked once
   Claude answers `initialize` and again after a model change: its
   `applied.effort` is what Claude applied from every settings source and
@@ -487,6 +494,19 @@ answer.
   reads the thread from its answer or from `thread/started`, and from then on
   writes every request with ids of its own (`amux-<n>`), so each
   acknowledgement is matched to what it acknowledges.
+- **Permissions and modes.** Codex has two settings of its own, when to
+  ask and how tightly commands are sandboxed, plus who answers approvals
+  (the person, or its `auto_review` model). The catalogue names four
+  combinations as permissions: read only (on-request, read-only), default
+  (on-request, workspace-write), auto (default with the reviewer answering)
+  and full access (never, danger-full-access). Its modes are Codex's
+  collaboration modes, default and plan. A permission or mode input names a
+  catalogue value, and the next `turn/start` carries the settings it names
+  (a mode with the model and effort in force); any other value is refused.
+  The snapshot reports the named permission, absent when the settings match
+  none (custom), the mode, and the raw settings, read from the handshake's
+  thread answer and from every `thread/settings/updated`. A mode chosen when
+  the agent was created is set by its first turn.
 - **The thread's name.** When the handshake's thread answer arrives, in
   every incarnation, the interpreter names the thread with the agent's name
   from the spec (`thread/name/set`, ids `amux-name-<n>`), and again on the

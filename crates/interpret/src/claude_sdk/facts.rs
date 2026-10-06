@@ -25,9 +25,9 @@ use wire::{
 use super::{AskMeta, AskShape, Request, State, TaskState, Tool, ToolDecisionState, item_body};
 use crate::claude_common::{
     BackgroundInput, JobInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool,
-    blocks_text, claude_limit, compact_json, message_text, offered_commands, offered_models,
-    permission_scopes, question_ask, split_tool_name, tool_class, tool_result_images,
-    tool_result_text, without_image_bytes,
+    auto_models, blocks_text, claude_limit, compact_json, message_text, offered_commands,
+    offered_models, permission_scopes, question_ask, split_tool_name, tool_class,
+    tool_result_images, tool_result_text, without_image_bytes,
 };
 use crate::shared::json_as_written;
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
@@ -1218,6 +1218,7 @@ impl State {
     fn agent_answer(&mut self, emit: &mut Emit, ok: bool, response: &ControlResponse) {
         if let Some(Ok(initialized)) = response.result::<InitializationResult>() {
             self.models = offered_models(&initialized.models);
+            self.auto_models = Some(auto_models(&initialized.models));
             self.commands_listed(emit, ok, &initialized.commands);
             let account = &initialized.account;
             self.sign_in = Some(SignIn {
@@ -1267,6 +1268,7 @@ impl State {
             wire::Catalogue {
                 models: self.models.clone(),
                 commands: self.commands.clone(),
+                permissions: self.permissions(),
                 ..Default::default()
             },
         );

@@ -35,7 +35,10 @@ use codex_protocol::client::{
 };
 use codex_protocol::items::{TextContent, UserInput};
 use codex_protocol::server::{FileSystemPermissions, NetworkPermissions, PermissionProfile};
-use codex_protocol::thread::{ApprovalPolicy, AskForApproval, ReasoningEffort, SandboxMode};
+use codex_protocol::thread::{
+    ApprovalPolicy, ApprovalsReviewer, AskForApproval, CollaborationMode, CollaborationSettings,
+    ModeKind, ReasoningEffort, SandboxMode,
+};
 use codex_protocol::{ClientMessage, ClientRequest, ClientResponse, RequestId, RpcError};
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
@@ -43,8 +46,9 @@ use serde_json::Value;
 use wire::{
     AgentSpec, AskClosed, AskItem, BackgroundJob, CodexAnswer, CodexAsk, CodexItem, CodexSnapshot,
     CodexUsage, ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction, Input,
-    OfferedCommand, OfferedModel, QueuedInput, Step, TaskList, TaskListEntry, ToolDecision,
-    ToolServerHealth, Work, codex_answer, codex_ask, codex_input, codex_item, input, sender, work,
+    OfferedCommand, OfferedMode, OfferedModel, OfferedPermission, QueuedInput, Step, TaskList,
+    TaskListEntry, ToolDecision, ToolServerHealth, Work, codex_answer, codex_ask, codex_input,
+    codex_item, input, sender, work,
 };
 
 use crate::claude_common::{clip, describe_tasks, or_dash};
@@ -191,7 +195,121 @@ enum Streamed {
 struct Overrides {
     model: Option<String>,
     effort: Option<Option<String>>,
-    approval: Option<(String, String)>,
+    /// A permission's value; its settings go out.
+    permission: Option<String>,
+    /// A mode's value: Codex's collaboration mode.
+    mode: Option<String>,
+}
+
+/// A permission Codex offers: amux's name for one combination of Codex's
+/// own settings. Settings that match none read as custom.
+pub struct NamedPermission {
+    pub value: &'static str,
+    pub display_name: &'static str,
+    pub approval_policy: &'static str,
+    pub sandbox: &'static str,
+    /// Who answers approvals: the person, or Codex's reviewer model.
+    pub approvals_reviewer: &'static str,
+    normal: bool,
+    never_asks: bool,
+}
+
+const fn named(
+    value: &'static str,
+    display_name: &'static str,
+    approval_policy: &'static str,
+    sandbox: &'static str,
+    approvals_reviewer: &'static str,
+) -> NamedPermission {
+    NamedPermission {
+        value,
+        display_name,
+        approval_policy,
+        sandbox,
+        approvals_reviewer,
+        normal: false,
+        never_asks: false,
+    }
+}
+
+/// Codex's permissions, from the least it may do alone to the most.
+pub const PERMISSIONS: [NamedPermission; 4] = [
+    named("read-only", "Read only", "on-request", "read-only", "user"),
+    NamedPermission {
+        normal: true,
+        ..named(
+            "default",
+            "Default",
+            "on-request",
+            "workspace-write",
+            "user",
+        )
+    },
+    named(
+        "auto",
+        "Auto",
+        "on-request",
+        "workspace-write",
+        "auto_review",
+    ),
+    NamedPermission {
+        never_asks: true,
+        ..named(
+            "full-access",
+            "Full access",
+            "never",
+            "danger-full-access",
+            "user",
+        )
+    },
+];
+
+/// Codex's modes: its collaboration modes, value and name.
+const MODES: [(&str, &str); 2] = [("default", "Default"), ("plan", "Plan")];
+
+/// The permission a catalogue value names.
+pub fn permission(value: &str) -> Option<&'static NamedPermission> {
+    PERMISSIONS.iter().find(|named| named.value == value)
+}
+
+/// The permission Codex's settings make, if any; a reviewer Codex has not
+/// named is the person.
+fn permission_of(approval: &str, sandbox: &str, reviewer: Option<&str>) -> Option<&'static str> {
+    let reviewer = reviewer.unwrap_or("user");
+    PERMISSIONS
+        .iter()
+        .find(|named| {
+            named.approval_policy == approval
+                && named.sandbox == sandbox
+                && named.approvals_reviewer == reviewer
+        })
+        .map(|named| named.value)
+}
+
+fn offered_permissions() -> Vec<OfferedPermission> {
+    PERMISSIONS
+        .iter()
+        .map(|named| OfferedPermission {
+            value: named.value.to_owned(),
+            display_name: named.display_name.to_owned(),
+            normal: named.normal,
+            never_asks: named.never_asks,
+            settable: true,
+            models: Vec::new(),
+        })
+        .collect()
+}
+
+fn offered_modes() -> Vec<OfferedMode> {
+    MODES
+        .iter()
+        .map(|(value, display_name)| OfferedMode {
+            value: (*value).to_owned(),
+            display_name: (*display_name).to_owned(),
+            normal: *value == "default",
+            settable: true,
+        })
+        .collect()
 }
 
 /// Everything the Codex interpreter holds; its checkpoint.
@@ -215,6 +333,12 @@ pub struct State {
     effort: Option<String>,
     approval: Option<String>,
     sandbox: Option<String>,
+    /// Who answers approvals, as Codex names it.
+    #[serde(default)]
+    reviewer: Option<String>,
+    /// The collaboration mode, as Codex names it.
+    #[serde(default)]
+    collaboration: Option<String>,
     /// What `model/list` and `skills/list` answered, whole: the catalogue.
     #[serde(with = "serde_pb::msgs")]
     models: Vec<OfferedModel>,
@@ -303,6 +427,11 @@ impl State {
     }
 
     fn new(spec: &AgentSpec, producer_version: &str, consumption: InjectConsumption) -> Self {
+        let created_mode = spec
+            .config
+            .as_ref()
+            .and_then(|config| config.mode.clone())
+            .filter(|mode| MODES.iter().any(|(value, _)| value == mode));
         Self {
             shared: Shared::new(spec, KIND, producer_version),
             consumption,
@@ -316,12 +445,18 @@ impl State {
             effort: None,
             approval: None,
             sandbox: None,
+            reviewer: None,
+            // The mode the agent was created in, which its first turn sets.
+            collaboration: created_mode.clone(),
             models: Vec::new(),
             commands: Vec::new(),
             offers_asked: false,
             skills_asked: 0,
             skills_stale: false,
-            overrides: Overrides::default(),
+            overrides: Overrides {
+                mode: created_mode,
+                ..Overrides::default()
+            },
             active_turn: None,
             turn_prompted: false,
             interrupt_pending: false,
@@ -370,8 +505,22 @@ impl State {
                 &self.models,
                 tidy_model,
             ),
+            permission: self
+                .approval
+                .as_deref()
+                .zip(self.sandbox.as_deref())
+                .and_then(|(approval, sandbox)| {
+                    permission_of(approval, sandbox, self.reviewer.as_deref())
+                })
+                .map(str::to_owned),
+            mode: self
+                .collaboration
+                .clone()
+                .filter(|mode| MODES.iter().any(|(value, _)| value == mode)),
             approval_policy: self.approval.clone(),
             sandbox: self.sandbox.clone(),
+            approvals_reviewer: self.reviewer.clone(),
+            collaboration_mode: self.collaboration.clone(),
             active_turn: self.active_turn.clone(),
             servers: Some(
                 self.servers
@@ -635,10 +784,22 @@ impl State {
                 self.interrupt(emit);
                 self.shared.accept(emit, &id, false);
             }
-            codex_input::Of::Approval(approval) => {
-                self.approval = Some(approval.approval_policy.clone());
-                self.sandbox = Some(approval.sandbox.clone());
-                self.overrides.approval = Some((approval.approval_policy, approval.sandbox));
+            codex_input::Of::Permission(set) => {
+                let Some(named) = permission(&set.value) else {
+                    return self.shared.reject(emit, &id, reason::UNSUPPORTED);
+                };
+                self.approval = Some(named.approval_policy.to_owned());
+                self.sandbox = Some(named.sandbox.to_owned());
+                self.reviewer = Some(named.approvals_reviewer.to_owned());
+                self.overrides.permission = Some(set.value);
+                self.shared.accept(emit, &id, false);
+            }
+            codex_input::Of::Mode(set) => {
+                if !MODES.iter().any(|(value, _)| *value == set.value) {
+                    return self.shared.reject(emit, &id, reason::UNSUPPORTED);
+                }
+                self.collaboration = Some(set.value.clone());
+                self.overrides.mode = Some(set.value);
                 self.shared.accept(emit, &id, false);
             }
             codex_input::Of::Model(model) => {
@@ -711,13 +872,23 @@ impl State {
 
     fn turn_params(&mut self, text: &str) -> TurnStartParams {
         let overrides = std::mem::take(&mut self.overrides);
-        let (approval_policy, sandbox_policy) = match overrides.approval {
-            Some((policy, sandbox)) => (
-                Some(AskForApproval::Named(ApprovalPolicy::parse(&policy))),
-                Some(SandboxMode::parse(&sandbox).policy()),
-            ),
-            None => (None, None),
-        };
+        let named = overrides.permission.as_deref().and_then(permission);
+        // A collaboration mode carries the model and effort it runs with:
+        // the ones in force, so changing the mode changes nothing else.
+        let collaboration_mode = overrides.mode.map(|mode| CollaborationMode {
+            mode: ModeKind::parse(&mode),
+            settings: CollaborationSettings {
+                model: overrides
+                    .model
+                    .clone()
+                    .or_else(|| self.model.clone())
+                    .unwrap_or_default(),
+                reasoning_effort: self.effort.as_deref().map(ReasoningEffort::parse),
+                developer_instructions: None,
+                extra: Default::default(),
+            },
+            extra: Default::default(),
+        });
         TurnStartParams {
             thread_id: self.thread(),
             input: if text.is_empty() {
@@ -729,8 +900,12 @@ impl State {
             effort: overrides
                 .effort
                 .map(|effort| effort.as_deref().map(ReasoningEffort::parse)),
-            approval_policy,
-            sandbox_policy,
+            approval_policy: named
+                .map(|named| AskForApproval::Named(ApprovalPolicy::parse(named.approval_policy))),
+            approvals_reviewer: named
+                .map(|named| ApprovalsReviewer::parse(named.approvals_reviewer)),
+            sandbox_policy: named.map(|named| SandboxMode::parse(named.sandbox).policy()),
+            collaboration_mode,
             ..Default::default()
         }
     }
@@ -1565,7 +1740,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             .map(|ask| (ask.key.clone(), ask.item_key.clone()))
             .collect(),
         text: format!(
-            "asks=[{}] thread={} turn={} model={} model_name={} effort={} approval={} sandbox={} context={} plan={} usage={} servers={} sign_in={} background={}",
+            "asks=[{}] thread={} turn={} model={} model_name={} effort={} permission={} mode={} approval={} sandbox={} reviewer={} collaboration={} context={} plan={} usage={} servers={} sign_in={} background={}",
             snapshot
                 .asks
                 .iter()
@@ -1577,8 +1752,12 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             snapshot.model.as_deref().unwrap_or("?"),
             crate::claude_common::describe_model_name(snapshot.model_name.as_deref()),
             snapshot.effort.as_deref().unwrap_or("?"),
+            snapshot.permission.as_deref().unwrap_or("custom"),
+            snapshot.mode.as_deref().unwrap_or("?"),
             snapshot.approval_policy.as_deref().unwrap_or("?"),
             snapshot.sandbox.as_deref().unwrap_or("?"),
+            snapshot.approvals_reviewer.as_deref().unwrap_or("?"),
+            snapshot.collaboration_mode.as_deref().unwrap_or("?"),
             if context.known {
                 format!(
                     "{}/{}",

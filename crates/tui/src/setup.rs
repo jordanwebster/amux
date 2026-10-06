@@ -416,30 +416,23 @@ impl Setup {
         let mode = if own { None } else { self.mode.clone() };
         let model = if own { None } else { self.model.clone() };
         let effort = if own { None } else { self.effort.clone() };
-        let (approval_policy, sandbox_policy) = match &mode {
-            Some(ModeValue::Codex {
-                approval_policy,
-                sandbox,
-                ..
-            }) => (Some(approval_policy.clone()), Some(sandbox.clone())),
-            _ => (None, None),
-        };
-        let permission_mode = match &mode {
+        let permission = match &mode {
             Some(ModeValue::Claude(mode)) => Some(mode.clone()),
-            _ => None,
+            Some(ModeValue::Codex { preset, .. }) => preset.clone(),
+            None => None,
         };
         let config = if self.claude() {
             wire::create_agent_request::Config::Claude(ClaudeCreateConfig {
                 args: Vec::new(),
                 model: model.clone(),
-                permission_mode,
+                permission,
                 effort: effort.clone(),
             })
         } else {
             wire::create_agent_request::Config::Codex(CodexCreateConfig {
                 model,
-                approval_policy,
-                sandbox_policy,
+                permission,
+                mode: None,
                 effort,
                 resume_thread_id: None,
             })

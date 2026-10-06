@@ -85,7 +85,11 @@ message EffectiveConfig {
   uint64 facts_ring_bytes = 4;
   uint64 journal_segment_bytes = 5;
   optional string model = 6;
-  optional string permission_mode = 7;
+  reserved 7;
+  // The permission and mode the agent was created with, as its catalogue
+  // names them.
+  optional string permission = 10;
+  optional string mode = 11;
   // Environment additions for the provider child.
   map<string, string> env = 8;
   // The canonical install path the hook binary and tool server run from.

@@ -292,12 +292,12 @@ fn shift_tab_sends_the_next_mode_that_still_asks() {
         panic!("{effects:?}");
     };
     let Some(wire::input::Of::ClaudeSdk(wire::ClaudeSdkInput {
-        of: Some(wire::claude_sdk_input::Of::Mode(mode)),
+        of: Some(wire::claude_sdk_input::Of::Permission(permission)),
     })) = &input.of
     else {
         panic!("{input:?}");
     };
-    assert_ne!(mode.mode, "bypassPermissions");
+    assert_ne!(permission.value, "bypassPermissions");
 }
 
 // --- asks ------------------------------------------------------------------

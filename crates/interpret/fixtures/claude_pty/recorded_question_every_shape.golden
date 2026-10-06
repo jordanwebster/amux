@@ -2,8 +2,10 @@
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? model_name=? mode=? context=? tasks=? background=?
 ## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","permission_menus":{"folded":[2],"per_suggestion":[1]},"type":"launch","version":"2.1.283"}}
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
+effect catalogue e1e7cada models=[] commands=0 permissions=[default,acceptEdits,plan,auto] modes=[]
 effect follow "<TRANSCRIPT_1>"
 item boundary:1 boundary final at=1790386538450 text="" BOUNDARY_KIND_STARTED session=5ff11f0a-07f2-42ca-871e-904ef2d17080 version=2.1.283 keymap=claude-2.1
+snapshot catalogue e1e7cada
 snapshot IDLE queue=[] working_on=- at=1790386538450 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=? context=? tasks=? background=?
 ## 7 recorded 5: fact Transcript type=permission-mode
 snapshot IDLE queue=[] working_on=- at=1790386538745 asks=[] session=5ff11f0a-07f2-42ca-871e-904ef2d17080 model=claude-sonnet-5 model_name="Sonnet 5" mode=auto context=? tasks=? background=?

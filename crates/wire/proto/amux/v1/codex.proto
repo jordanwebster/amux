@@ -10,9 +10,12 @@ import "amux/v1/records.proto";
 
 message CodexCreateConfig {
   optional string model = 1;
-  optional string approval_policy = 2;
-  optional string sandbox_policy = 3;
+  reserved 2, 3;
   optional string effort = 4;
+  // A permission and a mode the catalogue offers: "read-only", "default",
+  // "auto", "full-access"; "default", "plan".
+  optional string permission = 6;
+  optional string mode = 7;
   // Adopt an existing Codex thread instead of starting a new one.
   optional string resume_thread_id = 5;
 }
@@ -149,8 +152,19 @@ message CodexSnapshot {
   // The running model as a person reads it: the catalogue entry whose value
   // is its id, else its id tidied. Absent while the model is.
   optional string model_name = 19;
-  optional string approval_policy = 5;
-  optional string sandbox = 6;
+  reserved 5, 6;
+  // The permission the raw settings below name; absent when they match no
+  // name, which reads as custom.
+  optional string permission = 20;
+  // The mode the collaboration mode names: "default" or "plan"; absent
+  // until Codex says, or when it names neither.
+  optional string mode = 21;
+  // Codex's own settings, absent until Codex says.
+  optional string approval_policy = 22;
+  optional string sandbox = 23;
+  // Who answers approvals: "user", or a reviewer model ("auto_review").
+  optional string approvals_reviewer = 24;
+  optional string collaboration_mode = 25;
   // Absent while no turn is known to be running.
   optional string active_turn = 7;
   ToolServerHealth servers = 8;
@@ -210,11 +224,13 @@ message McpToolApproval {
 }
 
 message CodexInput {
+  reserved 4;
   oneof of {
     PromptInput prompt = 1;
     Approve approve = 2;
     Interrupt interrupt = 3;
-    SetApproval approval = 4;
+    SetPermission permission = 11;
+    SetMode mode = 12;
     SetModel model = 5;
     WithdrawQueued withdraw = 6;
     AnswerInput answer = 7;
@@ -246,11 +262,6 @@ enum Decision {
   DECISION_APPROVE_SIMILAR = 5;
   // Approve and add the ask's network rule.
   DECISION_APPROVE_NETWORK = 6;
-}
-
-message SetApproval {
-  string approval_policy = 1;
-  string sandbox = 2;
 }
 
 // AnswerInput.body for Codex: questions, tool-server forms and links, and

@@ -24,4 +24,3 @@
   mode  Claude("acceptEdits")
   mode  Claude("plan")
   mode  Claude("auto")
-  mode  Claude("bypassPermissions") stops_asking

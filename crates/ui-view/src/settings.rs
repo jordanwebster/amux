@@ -12,13 +12,9 @@ use ui_state::SessionState;
 use wire::Kind;
 
 /// Claude's permission modes, in the order its own interface cycles them.
-const CLAUDE_MODES: &[&str] = &[
-    "default",
-    "acceptEdits",
-    "plan",
-    "auto",
-    "bypassPermissions",
-];
+/// Never-ask is left out: Claude takes it only when launched allowing it,
+/// and an agent running under it reports it.
+const CLAUDE_MODES: &[&str] = &["default", "acceptEdits", "plan", "auto"];
 
 /// The Claude mode under which it never asks before acting.
 const CLAUDE_STOPS_ASKING: &str = "bypassPermissions";
@@ -286,8 +282,8 @@ pub fn settings(state: &SessionState) -> SettingsView {
 /// no such pick (it says why instead). The id is the sender's to fill.
 pub fn setting_input(kind: Kind, change: &SettingChange) -> Option<wire::Input> {
     use wire::{
-        ClaudePtyInput, ClaudeSdkInput, CodexInput, KeyName, SetApproval, SetEffort, SetModel,
-        SetPermissionMode, claude_pty_input, claude_sdk_input, codex_input, input,
+        ClaudePtyInput, ClaudeSdkInput, CodexInput, KeyName, SetEffort, SetModel, SetPermission,
+        claude_pty_input, claude_sdk_input, codex_input, input,
     };
     let model = |model: &String| SetModel {
         model: Some(model.clone()),
@@ -308,8 +304,8 @@ pub fn setting_input(kind: Kind, change: &SettingChange) -> Option<wire::Input> 
         }),
         (Kind::ClaudeSdk, SettingChange::Mode(ModeValue::Claude(mode))) => {
             input::Of::ClaudeSdk(ClaudeSdkInput {
-                of: Some(claude_sdk_input::Of::Mode(SetPermissionMode {
-                    mode: mode.clone(),
+                of: Some(claude_sdk_input::Of::Permission(SetPermission {
+                    value: mode.clone(),
                 })),
             })
         }
@@ -321,17 +317,17 @@ pub fn setting_input(kind: Kind, change: &SettingChange) -> Option<wire::Input> 
                 effort: Some(effort.clone()),
             })),
         }),
+        // A permission is set by its name; settings that match none have
+        // no name to send.
         (
             Kind::Codex,
             SettingChange::Mode(ModeValue::Codex {
-                approval_policy,
-                sandbox,
+                preset: Some(preset),
                 ..
             }),
         ) => input::Of::Codex(CodexInput {
-            of: Some(codex_input::Of::Approval(SetApproval {
-                approval_policy: approval_policy.clone(),
-                sandbox: sandbox.clone(),
+            of: Some(codex_input::Of::Permission(SetPermission {
+                value: preset.clone(),
             })),
         }),
         _ => return None,

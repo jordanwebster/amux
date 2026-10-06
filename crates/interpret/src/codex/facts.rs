@@ -495,7 +495,9 @@ impl State {
             wire::Catalogue {
                 models: self.models.clone(),
                 commands: self.commands.clone(),
-                ..Default::default()
+                permissions: super::offered_permissions(),
+                modes: super::offered_modes(),
+                hash: Vec::new(),
             },
         );
     }
@@ -688,6 +690,12 @@ impl State {
             }
             if let Some(sandbox) = response.sandbox.as_ref().and_then(sandbox_mode) {
                 self.sandbox = Some(sandbox);
+            }
+            if let Some(reviewer) = &response.approvals_reviewer {
+                self.reviewer = some(reviewer.as_str());
+            }
+            if let Some(collaboration) = &response.collaboration_mode {
+                self.collaboration = some(collaboration.mode.as_str());
             }
             if let Some(effort) = effort_name(response.reasoning_effort.as_ref()) {
                 self.effort = Some(effort);
@@ -1245,6 +1253,10 @@ impl State {
                 if let Some(sandbox) = sandbox_mode(&settings.sandbox_policy) {
                     self.sandbox = Some(sandbox);
                 }
+                if let Some(reviewer) = &settings.approvals_reviewer {
+                    self.reviewer = some(reviewer.as_str());
+                }
+                self.collaboration = some(settings.collaboration_mode.mode.as_str());
                 self.effort = settings.effort.map(|effort| effort.as_str().to_owned());
             }
             ServerNotification::ServerRequestResolved(resolved) => {

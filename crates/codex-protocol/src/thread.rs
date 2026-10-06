@@ -273,6 +273,8 @@ pub struct CollaborationSettings {
 #[serde(rename_all = "camelCase")]
 pub struct ThreadSettings {
     pub approval_policy: AskForApproval,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approvals_reviewer: Option<ApprovalsReviewer>,
     pub collaboration_mode: CollaborationMode,
     pub cwd: String,
     #[serde(default)]

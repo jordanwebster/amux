@@ -263,6 +263,16 @@ impl State {
 
     fn session_start(&mut self, emit: &mut Emit, start: &SessionStart) {
         self.shared.provider_started();
+        // A terminal offers nothing a program can read but its permissions,
+        // which only its own cycle key reaches.
+        let permissions = crate::claude_common::permissions(None, self.provider.never_ask, false);
+        self.shared.set_catalogue(
+            emit,
+            wire::Catalogue {
+                permissions,
+                ..Default::default()
+            },
+        );
         self.running.clear();
         // Claude starts its session only once its folder is trusted: No
         // exits.

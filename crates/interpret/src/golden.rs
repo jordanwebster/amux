@@ -120,8 +120,13 @@ pub enum FixtureInput {
         #[serde(default)]
         model: Option<String>,
     },
+    /// A permission by the value the catalogue offers.
+    Permission {
+        value: String,
+    },
+    /// A mode by the value the catalogue offers.
     Mode {
-        mode: String,
+        value: String,
     },
     Effort {
         #[serde(default)]
@@ -835,6 +840,7 @@ pub fn claude_pty_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input
         FixtureInput::AgentMessage { .. }
         | FixtureInput::Raw { .. }
         | FixtureInput::Model { .. }
+        | FixtureInput::Permission { .. }
         | FixtureInput::Mode { .. }
         | FixtureInput::Effort { .. }
         | FixtureInput::Rename { .. } => return None,
@@ -860,11 +866,14 @@ pub fn claude_sdk_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input
         FixtureInput::Model { model } => Of::Model(wire::SetModel {
             model: model.clone(),
         }),
-        FixtureInput::Mode { mode } => Of::Mode(wire::SetPermissionMode { mode: mode.clone() }),
+        FixtureInput::Permission { value } => Of::Permission(wire::SetPermission {
+            value: value.clone(),
+        }),
         FixtureInput::Effort { effort } => Of::Effort(wire::SetEffort {
             effort: effort.clone(),
         }),
         FixtureInput::Key { .. }
+        | FixtureInput::Mode { .. }
         | FixtureInput::AgentMessage { .. }
         | FixtureInput::Raw { .. }
         | FixtureInput::Rename { .. } => return None,
@@ -905,15 +914,12 @@ pub fn codex_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
         FixtureInput::Effort { effort } => Of::Effort(wire::SetEffort {
             effort: effort.clone(),
         }),
-        // Codex's mode is its approval policy and sandbox:
-        // "on-request/workspace-write".
-        FixtureInput::Mode { mode } => {
-            let (policy, sandbox) = mode.split_once('/')?;
-            Of::Approval(wire::SetApproval {
-                approval_policy: policy.to_owned(),
-                sandbox: sandbox.to_owned(),
-            })
-        }
+        FixtureInput::Permission { value } => Of::Permission(wire::SetPermission {
+            value: value.clone(),
+        }),
+        FixtureInput::Mode { value } => Of::Mode(wire::SetMode {
+            value: value.clone(),
+        }),
         FixtureInput::Rename { name } => Of::Rename(wire::RenameThread { name: name.clone() }),
         FixtureInput::Clear {}
         | FixtureInput::Key { .. }

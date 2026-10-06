@@ -41,12 +41,14 @@ pub fn kind_from_name(name: &str) -> Kind {
 pub struct Resolved {
     pub provider_args: Vec<String>,
     pub model: Option<String>,
-    pub permission_mode: Option<String>,
+    pub permission: Option<String>,
+    pub mode: Option<String>,
 }
 
 /// Resolves a creation's per-provider settings. Claude takes its model and
-/// permission mode as arguments; Codex takes the model in its thread start
-/// and the rest as configuration overrides.
+/// permission as arguments; Codex takes the model in its thread start, the
+/// settings a permission names as configuration overrides, and its mode
+/// in the first turn the interpreter starts.
 pub fn resolve(request: &CreateAgentRequest) -> Resolved {
     use wire::create_agent_request::Config;
     match &request.config {
@@ -55,8 +57,8 @@ pub fn resolve(request: &CreateAgentRequest) -> Resolved {
             if let Some(model) = &claude.model {
                 args.extend(["--model".to_owned(), model.clone()]);
             }
-            if let Some(mode) = &claude.permission_mode {
-                args.extend(["--permission-mode".to_owned(), mode.clone()]);
+            if let Some(permission) = &claude.permission {
+                args.extend(["--permission-mode".to_owned(), permission.clone()]);
             }
             if let Some(effort) = &claude.effort {
                 args.extend(["--effort".to_owned(), effort.clone()]);
@@ -64,15 +66,24 @@ pub fn resolve(request: &CreateAgentRequest) -> Resolved {
             Resolved {
                 provider_args: args,
                 model: claude.model.clone(),
-                permission_mode: claude.permission_mode.clone(),
+                permission: claude.permission.clone(),
+                mode: None,
             }
         }
         Some(Config::Codex(codex)) => {
             let mut args = Vec::new();
+            let named = codex
+                .permission
+                .as_deref()
+                .and_then(interpret::codex::permission);
             for (key, value) in [
-                ("approval_policy", &codex.approval_policy),
-                ("sandbox_mode", &codex.sandbox_policy),
-                ("model_reasoning_effort", &codex.effort),
+                ("approval_policy", named.map(|named| named.approval_policy)),
+                ("sandbox_mode", named.map(|named| named.sandbox)),
+                (
+                    "approvals_reviewer",
+                    named.map(|named| named.approvals_reviewer),
+                ),
+                ("model_reasoning_effort", codex.effort.as_deref()),
             ] {
                 if let Some(value) = value {
                     args.extend([
@@ -84,7 +95,8 @@ pub fn resolve(request: &CreateAgentRequest) -> Resolved {
             Resolved {
                 provider_args: args,
                 model: codex.model.clone(),
-                permission_mode: None,
+                permission: codex.permission.clone(),
+                mode: codex.mode.clone(),
             }
         }
         None => Resolved::default(),
@@ -160,7 +172,8 @@ pub fn build(launch: &Launch, at: Incarnation<'_>) -> AgentSpec {
             facts_ring_bytes: agent.facts_ring_mib.saturating_mul(1024 * 1024),
             journal_segment_bytes: launch.journal_segment_bytes,
             model: at.resolved.model.clone(),
-            permission_mode: at.resolved.permission_mode.clone(),
+            permission: at.resolved.permission.clone(),
+            mode: at.resolved.mode.clone(),
             env: HashMap::new(),
             install_path: launch.install_path.to_string_lossy().into_owned(),
         }),
@@ -220,4 +233,56 @@ pub fn newest(dir: &Path) -> io::Result<Option<AgentSpec>> {
     AgentSpec::decode(bytes.as_slice())
         .map(Some)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+#[cfg(test)]
+mod tests {
+    use wire::create_agent_request::Config;
+    use wire::{ClaudeCreateConfig, CodexCreateConfig};
+
+    use super::*;
+
+    fn creating(config: Config) -> CreateAgentRequest {
+        CreateAgentRequest {
+            config: Some(config),
+            ..CreateAgentRequest::default()
+        }
+    }
+
+    #[test]
+    fn a_claude_permission_is_its_permission_mode_argument() {
+        let resolved = resolve(&creating(Config::Claude(ClaudeCreateConfig {
+            permission: Some("acceptEdits".into()),
+            ..ClaudeCreateConfig::default()
+        })));
+        assert_eq!(resolved.provider_args, ["--permission-mode", "acceptEdits"]);
+        assert_eq!(resolved.permission.as_deref(), Some("acceptEdits"));
+    }
+
+    #[test]
+    fn a_codex_permission_is_the_settings_it_names_and_its_mode_rides_along() {
+        let resolved = resolve(&creating(Config::Codex(CodexCreateConfig {
+            permission: Some("auto".into()),
+            mode: Some("plan".into()),
+            ..CodexCreateConfig::default()
+        })));
+        assert_eq!(
+            resolved.provider_args,
+            [
+                "--config",
+                "approval_policy=\"on-request\"",
+                "--config",
+                "sandbox_mode=\"workspace-write\"",
+                "--config",
+                "approvals_reviewer=\"auto_review\"",
+            ]
+        );
+        assert_eq!(resolved.mode.as_deref(), Some("plan"));
+
+        let unnamed = resolve(&creating(Config::Codex(CodexCreateConfig {
+            permission: Some("on-request/read-only".into()),
+            ..CodexCreateConfig::default()
+        })));
+        assert!(unnamed.provider_args.is_empty(), "{unnamed:?}");
+    }
 }

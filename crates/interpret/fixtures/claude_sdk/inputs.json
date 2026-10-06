@@ -172,8 +172,8 @@
     {
       "input": {
         "id": "m2",
-        "mode": {
-          "mode": "plan"
+        "permission": {
+          "value": "plan"
         }
       },
       "expect": {

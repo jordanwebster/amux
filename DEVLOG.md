@@ -1,3 +1,22 @@
+2026-10-06 — **Permission and mode are set by value from what the agent offers.**
+A client used to set headless Claude's permission mode by Claude's own name
+and Codex's approval policy and sandbox as a raw pair. Both inputs are gone:
+`SetPermission` names a permission the agent's catalogue offers, and Codex
+also takes `SetMode`; the interpreter turns the value into the provider's
+settings and refuses one it does not offer. Claude's catalogue lists ask,
+accept edits, plan, auto (with the models Claude says take it) and never ask
+only when Claude was launched allowing it; terminal Claude lists the same as
+not settable, since only its own cycle key reaches them. Codex's lists read
+only, default, auto (Codex's reviewer model answering approvals) and full
+access as combinations of its raw settings, and the modes default and plan,
+which its next turn sets. The Codex snapshot reports the named permission
+(absent, read as custom, when the settings match none), the mode and the raw
+settings; the interpreter now reads who answers approvals and the
+collaboration mode from Codex's settings notice, which it used to drop.
+Create configs take a permission and, for Codex, a mode. The clients' own
+lists stay until they read the catalogue, minus never ask, which an agent
+not launched for it would refuse.
+
 2026-10-06 — **Clients fetch what an agent offers once per version, and only for a chat on screen.**
 `GetCatalogue` by agent id answers on both the client and the peer service: the
 host reads the file the agent process wrote under the hash its newest snapshot

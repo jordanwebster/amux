@@ -141,8 +141,10 @@ pub enum ServerMessage {
     Unknown(Unknown),
 }
 
-/// One line amux sends to Codex's server.
+/// One line amux sends to Codex's server. Each is built, encoded and
+/// dropped at once, so a large request is not worth boxing.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum ClientMessage {
     Request {
         id: RequestId,

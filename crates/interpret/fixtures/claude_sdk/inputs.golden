@@ -32,7 +32,7 @@ effect write "{\"request\":{\"subtype\":\"get_settings\"},\"request_id\":\"amux-
 snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-sonnet-5 model_name="Sonnet 5" effort=? mode=default context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
 ## 11 fact {"channel":"stream","json":{"response":{"request_id":"amux-3","response":{"applied":{"effort":"medium","model":"claude-sonnet-5"}},"subtype":"success"},"type":"control_response"}}
 snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-sonnet-5 model_name="Sonnet 5" effort=medium mode=default context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
-## 12 input {"id":"m2","mode":{"mode":"plan"}}
+## 12 input {"id":"m2","permission":{"value":"plan"}}
 effect write "{\"request\":{\"mode\":\"plan\",\"subtype\":\"set_permission_mode\"},\"request_id\":\"amux-4\",\"type\":\"control_request\"}"
 effect reply m2 accepted
 ## 13 fact {"channel":"stream","json":{"response":{"request_id":"amux-4","response":{"mode":"plan"},"subtype":"success"},"type":"control_response"}}

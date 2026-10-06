@@ -899,10 +899,8 @@ impl ProfileRuntime {
         let resolved = spec::Resolved {
             provider_args: previous.provider_args.clone(),
             model: previous.config.as_ref().and_then(|c| c.model.clone()),
-            permission_mode: previous
-                .config
-                .as_ref()
-                .and_then(|c| c.permission_mode.clone()),
+            permission: previous.config.as_ref().and_then(|c| c.permission.clone()),
+            mode: previous.config.as_ref().and_then(|c| c.mode.clone()),
         };
         let spec = spec::build(
             &launch,

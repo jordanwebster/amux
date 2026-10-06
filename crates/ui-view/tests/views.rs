@@ -1129,7 +1129,6 @@ fn settings_mark_the_current_model_effort_and_mode() {
             (ModeValue::Claude("acceptEdits".into()), false, false),
             (ModeValue::Claude("plan".into()), true, false),
             (ModeValue::Claude("auto".into()), false, false),
-            (ModeValue::Claude("bypassPermissions".into()), false, true),
         ]
     );
     assert_eq!(

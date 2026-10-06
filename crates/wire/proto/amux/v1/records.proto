@@ -873,6 +873,18 @@ message Interrupt {}
 
 message Clear {}
 
+// How much the agent may do without asking, by a value its catalogue
+// offers; the interpreter turns it into the provider's own settings.
+message SetPermission {
+  string value = 1;
+}
+
+// How the agent works (Codex: default or plan), by a value its catalogue
+// offers.
+message SetMode {
+  string value = 1;
+}
+
 message SetModel {
   // Absent restores the launch model.
   optional string model = 1;

@@ -611,8 +611,7 @@ impl Install {
                 cwd: self.project(scenario)?.to_string_lossy().into_owned(),
                 kind: Kind::Codex as i32,
                 config: Some(create_agent_request::Config::Codex(CodexCreateConfig {
-                    approval_policy: Some("on-request".into()),
-                    sandbox_policy: Some("read-only".into()),
+                    permission: Some("read-only".into()),
                     ..CodexCreateConfig::default()
                 })),
                 ..CreateAgentRequest::default()
@@ -1389,7 +1388,7 @@ fn known(state: &AgentState) -> BTreeSet<&'static str> {
         ("sandbox", state.sandbox.is_some()),
         ("session", state.provider_session.is_some()),
         ("context", state.context.known),
-        ("usage", state.usage.state != 0),
+        ("usage", state.usage.state() != wire::UsageState::Unknown),
         ("servers", state.servers.state != 0),
         ("sign_in", state.sign_in.state != 0),
     ]

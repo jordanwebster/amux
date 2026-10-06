@@ -17,34 +17,34 @@
   composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 50], text: [Text("Then summarise.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
 ## 11 input {"id":"w1","withdraw":{"target":"p2"}}
   composer Send activity=Some(Working) queue=[] outbox=[]
-## 16 input {"id":"p3","prompt":{"text":"Next."}}
+## 18 input {"id":"p3","prompt":{"text":"Next."}}
   composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 51], text: [Text("Next.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
-## 18 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-1","status":"interrupted"}}}}
+## 20 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-1","status":"interrupted"}}}}
   row    4 turn:1 Stopped
   row    5 prompt:7033 Prompt { text: [Text("Next.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
-## 19 fact {"channel":"rpc","json":{"error":{"code":-32600,"message":"model gpt-5.6 is not available"},"id":"amux-4"}}
+## 21 fact {"channel":"rpc","json":{"error":{"code":-32600,"message":"model gpt-5.6 is not available"},"id":"amux-4"}}
   row    6 error:rpc:amux-4 Error { error_kind: "request", message: "model gpt-5.6 is not available", attempts: 0, gave_up: true } attention
   composer Send activity=None queue=[] outbox=[]
-## 21 input {"id":"p4","prompt":{"text":"Try again."}}
+## 23 input {"id":"p4","prompt":{"text":"Try again."}}
   row    7 prompt:7034 Prompt { text: [Text("Try again.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
-## 24 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-2","status":"interrupted"}}}}
+## 26 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-2","status":"interrupted"}}}}
   row    8 turn:3 Stopped
   composer Send activity=None queue=[] outbox=[]
-## 25 input {"id":"p5","prompt":{"text":"/compact"}}
+## 27 input {"id":"p5","prompt":{"text":"/compact"}}
   row    9 prompt:7035 Prompt { text: [Text("/compact")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
-## 28 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"id":"cc-1","type":"contextCompaction"},"threadId":"t1","turnId":"turn-3"}}}
+## 30 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"id":"cc-1","type":"contextCompaction"},"threadId":"t1","turnId":"turn-3"}}}
   row   10 boundary:2 Boundary { kind: Compacted, cause: "" }
-## 29 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-3","status":"completed"}}}}
+## 31 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-3","status":"completed"}}}}
   row   11 turn:4 TurnEnd { duration_ms: Some(0), cost_usd: None, failed: false }
   composer Send activity=None queue=[] outbox=[]
-## 30 provider_exit {"code":1}
+## 32 provider_exit {"code":1}
   row   12 boundary:3 Boundary { kind: Exited, cause: "exit code 1" }
-## 31 input {"agent_message":{"envelope":"e9","from":"lead","text":"Status?"},"id":"m1"}
+## 33 input {"agent_message":{"envelope":"e9","from":"lead","text":"Status?"},"id":"m1"}
   row   13 agent-message:6539 AgentMessage { from: "lead", kind: Message, text: "Status?", to: "", sent: Unspecified, rejection: "" }
-## 32 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
+## 34 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
   row   14 boundary:4 Boundary { kind: Resumed, cause: "" }
   composer Send activity=Some(Working) queue=[] outbox=[]
 == chat

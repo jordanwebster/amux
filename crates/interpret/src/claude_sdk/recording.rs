@@ -23,7 +23,7 @@ use serde::Deserialize;
 use wire::{
     AnswerInput, ClaudeAnswer, ClaudeSdkInput, FormAction, FormAnswer, Input, Interrupt,
     PermissionAllow, PermissionAnswer, PermissionDeny, PlanAnswer, PlanApprove, PlanSendBack,
-    PromptInput, QuestionAnswer, QuestionResponse, SendQueuedNow, SetModel, SetPermissionMode,
+    PromptInput, QuestionAnswer, QuestionResponse, SendQueuedNow, SetModel, SetPermission,
     claude_answer, claude_sdk_input, input, permission_answer, plan_answer,
 };
 
@@ -146,8 +146,8 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                     Some(claude_sdk_input::Of::Model(SetModel { model: set.model }))
                 }
                 ControlRequestBody::SetPermissionMode(set) => {
-                    Some(claude_sdk_input::Of::Mode(SetPermissionMode {
-                        mode: set.mode.as_str().to_owned(),
+                    Some(claude_sdk_input::Of::Permission(SetPermission {
+                        value: set.mode.as_str().to_owned(),
                     }))
                 }
                 _ => None,

@@ -767,3 +767,110 @@ fn a_skills_changed_notice_asks_again_and_rebuilds_the_catalogue() {
         "nothing a client draws changed"
     );
 }
+
+/// Codex's settings notice says who answers approvals and which
+/// collaboration mode the thread is in: a reviewer model on the default
+/// sandbox is the auto permission, and plan is the mode.
+#[test]
+fn the_settings_notice_names_the_mode_and_who_answers_approvals() {
+    use prost::Message as _;
+    let spec = wire::AgentSpec {
+        agent_id: b"agent".to_vec(),
+        ..Default::default()
+    };
+    let (mut state, _) = Codex::initial(&spec, "test");
+    Codex::step(
+        &mut state,
+        rpc(
+            json!({"id": 2, "result": {"thread": {"id": "t1", "cliVersion": "0.160.0", "turns": []}, "model": "m"}}),
+        ),
+    );
+    let stepped = Codex::step(
+        &mut state,
+        rpc(json!({
+            "method": "thread/settings/updated",
+            "params": {
+                "threadId": "t1",
+                "threadSettings": {
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "auto_review",
+                    "collaborationMode": {
+                        "mode": "plan",
+                        "settings": {"model": "m", "reasoning_effort": "high"},
+                    },
+                    "cwd": "/work",
+                    "effort": "high",
+                    "model": "m",
+                    "sandboxPolicy": {"type": "workspaceWrite"},
+                },
+            },
+        })),
+    );
+    let snapshot = stepped
+        .step
+        .snapshot
+        .expect("the notice moves the snapshot");
+    let snapshot = wire::CodexSnapshot::decode(snapshot.body.as_slice()).unwrap();
+    println!(
+        "permission={:?} mode={:?} approval={:?} sandbox={:?} reviewer={:?} collaboration={:?}",
+        snapshot.permission,
+        snapshot.mode,
+        snapshot.approval_policy,
+        snapshot.sandbox,
+        snapshot.approvals_reviewer,
+        snapshot.collaboration_mode
+    );
+    assert_eq!(snapshot.approvals_reviewer.as_deref(), Some("auto_review"));
+    assert_eq!(snapshot.collaboration_mode.as_deref(), Some("plan"));
+    assert_eq!(snapshot.permission.as_deref(), Some("auto"));
+    assert_eq!(snapshot.mode.as_deref(), Some("plan"));
+}
+
+/// An agent created in plan mode reads plan from the start, and its first
+/// turn sets it.
+#[test]
+fn a_mode_chosen_at_creation_is_set_by_the_first_turn() {
+    use prost::Message as _;
+    let spec = wire::AgentSpec {
+        agent_id: b"agent".to_vec(),
+        config: Some(wire::EffectiveConfig {
+            mode: Some("plan".into()),
+            ..Default::default()
+        }),
+        initial_prompt: Some(wire::Input {
+            input_id: b"p1".to_vec(),
+            of: Some(wire::input::Of::Codex(wire::CodexInput {
+                of: Some(wire::codex_input::Of::Prompt(wire::PromptInput {
+                    text: "Plan it.".into(),
+                    ..Default::default()
+                })),
+            })),
+        }),
+        ..Default::default()
+    };
+    let (mut state, _) = Codex::initial(&spec, "test");
+    let stepped = Codex::step(
+        &mut state,
+        rpc(
+            json!({"id": 2, "result": {"thread": {"id": "t1", "cliVersion": "0.160.0", "turns": []}, "model": "m"}}),
+        ),
+    );
+    let turn = writes(&stepped.effects)
+        .into_iter()
+        .find(|write| write["method"] == "turn/start")
+        .expect("the first prompt starts a turn");
+    assert_eq!(
+        turn["params"]["collaborationMode"]["mode"], "plan",
+        "{turn}"
+    );
+    assert_eq!(
+        turn["params"]["collaborationMode"]["settings"]["model"],
+        "m"
+    );
+    let snapshot = stepped
+        .step
+        .snapshot
+        .expect("the thread moves the snapshot");
+    let snapshot = wire::CodexSnapshot::decode(snapshot.body.as_slice()).unwrap();
+    assert_eq!(snapshot.mode.as_deref(), Some("plan"));
+}

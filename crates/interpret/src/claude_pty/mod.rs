@@ -307,6 +307,9 @@ struct Provider {
     relaunched: bool,
     model: Option<String>,
     permission_mode: Option<String>,
+    /// Launched allowing the never-ask permission.
+    #[serde(default)]
+    never_ask: bool,
 }
 
 /// A tool call as its transcript rows report it.
@@ -501,7 +504,10 @@ impl State {
     fn new(spec: &AgentSpec, producer_version: &str) -> Self {
         Self {
             shared: Shared::new(spec, ClaudePty::KIND, producer_version),
-            provider: Provider::default(),
+            provider: Provider {
+                never_ask: crate::claude_common::allows_never_ask(&spec.provider_args),
+                ..Provider::default()
+            },
             tools: BTreeMap::new(),
             asks: BTreeMap::new(),
             seq: 0,

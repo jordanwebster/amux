@@ -217,12 +217,34 @@
     {
       "input": {
         "id": "c3",
-        "mode": {
-          "mode": "never/read-only"
+        "permission": {
+          "value": "auto"
         }
       },
       "expect": {
         "reply": "accepted"
+      }
+    },
+    {
+      "input": {
+        "id": "c4",
+        "mode": {
+          "value": "plan"
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "input": {
+        "id": "c5",
+        "permission": {
+          "value": "on-request/workspace-write"
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported"
       }
     },
     {

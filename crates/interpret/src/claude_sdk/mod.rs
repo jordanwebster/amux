@@ -202,6 +202,13 @@ pub struct State {
     chosen_model: Option<String>,
     effort: Option<String>,
     permission_mode: Option<String>,
+    /// The models that take the auto permission, once Claude listed its
+    /// models.
+    #[serde(default)]
+    auto_models: Option<Vec<String>>,
+    /// Launched allowing the never-ask permission.
+    #[serde(default)]
+    never_ask: bool,
     /// The models the initialize response offers and the commands Claude
     /// last listed: the catalogue.
     #[serde(with = "serde_pb::msgs")]
@@ -318,6 +325,8 @@ impl State {
             // The launch argument until Claude says what it applied.
             effort: launch_arg(&spec.provider_args, "--effort"),
             permission_mode: None,
+            auto_models: None,
+            never_ask: crate::claude_common::allows_never_ask(&spec.provider_args),
             models: Vec::new(),
             commands: Vec::new(),
             inits: 0,
@@ -344,6 +353,11 @@ impl State {
             slash: None,
             interrupted: false,
         }
+    }
+
+    /// The permissions Claude offers this session.
+    fn permissions(&self) -> Vec<wire::OfferedPermission> {
+        crate::claude_common::permissions(self.auto_models.as_deref(), self.never_ask, true)
     }
 
     fn body(&self) -> Vec<u8> {
@@ -499,12 +513,19 @@ impl State {
                     self.submit(emit, entry);
                 }
             }
-            claude_sdk_input::Of::Mode(mode) => {
+            claude_sdk_input::Of::Permission(permission) => {
+                let offered = self
+                    .permissions()
+                    .iter()
+                    .any(|offered| offered.value == permission.value);
+                if !offered {
+                    return self.shared.reject(emit, &id, reason::UNSUPPORTED);
+                }
                 self.control_request(
                     emit,
-                    Request::Mode(mode.mode.clone()),
+                    Request::Mode(permission.value.clone()),
                     ControlRequestBody::SetPermissionMode(SetPermissionModeRequest {
-                        mode: PermissionMode::parse(&mode.mode),
+                        mode: PermissionMode::parse(&permission.value),
                         extensions: Default::default(),
                     }),
                 );

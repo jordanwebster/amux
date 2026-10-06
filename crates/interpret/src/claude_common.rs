@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
     Ask, Attachment, BackgroundJob, BlobRef, ClaudeLimit, ClaudeUsage, DecisionOutcome,
-    OfferedCommand, OfferedModel, Question, QuestionAsk, QuestionOption, ScopeChoice, TaskList,
-    TaskListEntry, TaskListStatus, ToolCall, ToolClass, ToolState, UsageState, attachment,
+    OfferedCommand, OfferedModel, OfferedPermission, Question, QuestionAsk, QuestionOption,
+    ScopeChoice, TaskList, TaskListEntry, TaskListStatus, ToolCall, ToolClass, ToolState,
+    UsageState, attachment,
 };
 
 use crate::Effect;
@@ -823,6 +824,70 @@ pub(crate) fn describe_models(models: &[OfferedModel]) -> String {
 /// show them in full.
 pub(crate) fn describe_commands(commands: &[OfferedCommand]) -> String {
     commands.len().to_string()
+}
+
+/// Claude's never-ask permission, reachable only when Claude was launched
+/// allowing it.
+pub(crate) const NEVER_ASK: &str = "bypassPermissions";
+
+/// Whether launch arguments let Claude reach its never-ask permission.
+pub(crate) fn allows_never_ask(args: &[String]) -> bool {
+    args.iter().enumerate().any(|(at, arg)| {
+        arg == "--dangerously-skip-permissions"
+            || arg == "--allow-dangerously-skip-permissions"
+            || arg == "--permission-mode=bypassPermissions"
+            || (arg == "--permission-mode"
+                && args.get(at + 1).is_some_and(|mode| mode == NEVER_ASK))
+    })
+}
+
+/// The models an initialize answer says take Claude's auto permission.
+pub(crate) fn auto_models(models: &[ModelInfo]) -> Vec<String> {
+    models
+        .iter()
+        .filter(|model| model.supports_auto_mode == Some(true))
+        .map(|model| model.value.clone())
+        .collect()
+}
+
+/// The permissions Claude offers, ask first. Auto names the models that
+/// take it when Claude listed its models (None: unknown, so unrestricted),
+/// and is left out when none does; never-ask is listed only when it can be
+/// reached. Terminal Claude's can only be cycled through, so they are
+/// listed as not settable.
+pub(crate) fn permissions(
+    auto_models: Option<&[String]>,
+    never_ask: bool,
+    settable: bool,
+) -> Vec<OfferedPermission> {
+    let permission = |value: &str, display_name: &str| OfferedPermission {
+        value: value.to_owned(),
+        display_name: display_name.to_owned(),
+        settable,
+        ..OfferedPermission::default()
+    };
+    let mut offered = vec![
+        OfferedPermission {
+            normal: true,
+            ..permission("default", "Ask")
+        },
+        permission("acceptEdits", "Accept edits"),
+        permission("plan", "Plan"),
+    ];
+    match auto_models {
+        Some([]) => {}
+        models => offered.push(OfferedPermission {
+            models: models.unwrap_or_default().to_vec(),
+            ..permission("auto", "Auto")
+        }),
+    }
+    if never_ask {
+        offered.push(OfferedPermission {
+            never_asks: true,
+            ..permission(NEVER_ASK, "Never ask")
+        });
+    }
+    offered
 }
 
 /// The models an initialize answer lists, as headless Claude answers it.
