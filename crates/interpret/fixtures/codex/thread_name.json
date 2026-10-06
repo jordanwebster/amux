@@ -1,0 +1,80 @@
+{
+  "about": "The thread carries the agent's name: the interpreter names it when the handshake's thread answer arrives, and again when the daemon says the agent was renamed. Codex answers thread/name/set with an empty result and tells every client with thread/name/updated, which changes nothing amux shows.",
+  "spec": {
+    "created_at_ms": 1800000000000,
+    "name": "quiet-otter"
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "agent-thread",
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.160.0",
+              "turns": []
+            },
+            "model": "gpt-6-astra",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": "medium"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-name-1",
+          "result": {}
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "thread/name/updated",
+          "params": {
+            "threadId": "t1",
+            "threadName": "quiet-otter"
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "rename-1",
+        "rename": {
+          "name": "loud-heron"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-name-2",
+          "result": {}
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "thread/name/updated",
+          "params": {
+            "threadId": "t1",
+            "threadName": "loud-heron"
+          }
+        }
+      }
+    }
+  ]
+}

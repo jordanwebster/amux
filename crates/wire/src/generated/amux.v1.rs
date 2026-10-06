@@ -3380,7 +3380,7 @@ impl ::prost::Name for McpToolApproval {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CodexInput {
-    #[prost(oneof = "codex_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
+    #[prost(oneof = "codex_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10")]
     pub of: ::core::option::Option<codex_input::Of>,
 }
 /// Nested message and enum types in `CodexInput`.
@@ -3405,6 +3405,8 @@ pub mod codex_input {
         Effort(super::SetEffort),
         #[prost(message, tag = "9")]
         SendNow(super::SendQueuedNow),
+        #[prost(message, tag = "10")]
+        Rename(super::RenameThread),
     }
 }
 impl ::prost::Name for CodexInput {
@@ -3415,6 +3417,23 @@ impl ::prost::Name for CodexInput {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.CodexInput".into()
+    }
+}
+/// The daemon's word that the agent was renamed: Codex's thread takes the
+/// agent's name, so Codex's own app shows the name amux does.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RenameThread {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RenameThread {
+    const NAME: &'static str = "RenameThread";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.RenameThread".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.RenameThread".into()
     }
 }
 /// Rejected if the request is not open.
@@ -3630,7 +3649,8 @@ pub struct AgentSpec {
     /// spawn.
     #[prost(string, tag = "4")]
     pub cwd: ::prost::alloc::string::String,
-    /// At spawn; later renames live on the agents row only.
+    /// The agent's name when this incarnation was spawned; a rename while it
+    /// runs reaches the row, and a Codex agent hears it as an input.
     #[prost(string, tag = "5")]
     pub name: ::prost::alloc::string::String,
     /// The inventory row's parent, host and id, so a child resumed from its

@@ -214,7 +214,14 @@ message CodexInput {
     AnswerInput answer = 7;
     SetEffort effort = 8;
     SendQueuedNow send_now = 9;
+    RenameThread rename = 10;
   }
+}
+
+// The daemon's word that the agent was renamed: Codex's thread takes the
+// agent's name, so Codex's own app shows the name amux does.
+message RenameThread {
+  string name = 1;
 }
 
 // Rejected if the request is not open.

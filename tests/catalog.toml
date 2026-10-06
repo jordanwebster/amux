@@ -57,6 +57,22 @@ cargo = [
 ]
 
 [[suite]]
+name = "agent-codex-thread-name"
+contract = "The agent names its Codex thread with the agent's name straight after starting it and again when the agent is renamed, so Codex's own app shows the same name and can join a thread that has not run a turn."
+paths = ["crates/agent/tests/codex_thread_name.rs", "crates/interpret/src/codex", "crates/agent/src"]
+recipe = "just test-crate agent -- --test codex_thread_name"
+boundary = "Provider adapter"
+oracle = "The thread/name/set requests the fake Codex logged, with the thread and name each carried."
+real = ["agent process library", "provider child processes", "Unix sockets", "journal files"]
+substituted = ["Codex by the scripted fake"]
+time = "real"
+capabilities = ["Unix"]
+lane = "fast"
+evidence = "the fake's input log"
+update = ""
+cargo = [{ package = "agent", targets = ["codex_thread_name"], features = [] }]
+
+[[suite]]
 name = "agent-process-lifecycle"
 contract = "An agent process without a daemon finishes its turn, outlives its grace and drains; a daemon dialling back cancels the grace; abort, kill, a failed journal write and a provider exit each end the process as promised."
 paths = ["crates/agent/tests/lifecycle.rs"]

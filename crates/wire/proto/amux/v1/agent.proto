@@ -45,7 +45,8 @@ message AgentSpec {
   // The project directory the provider child is launched in, frozen at
   // spawn.
   string cwd = 4;
-  // At spawn; later renames live on the agents row only.
+  // The agent's name when this incarnation was spawned; a rename while it
+  // runs reaches the row, and a Codex agent hears it as an input.
   string name = 5;
   // The inventory row's parent, host and id, so a child resumed from its
   // spec on one host still addresses a parent on another.

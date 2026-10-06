@@ -137,6 +137,8 @@ enum Request {
         #[serde(with = "serde_pb::msgs")]
         listed: Vec<OfferedModel>,
     },
+    /// `thread/name/set`.
+    Name,
     /// `skills/list`.
     Skills,
 }
@@ -192,6 +194,12 @@ pub struct State {
     /// The spec's incarnation: a later one's first thread is a resume.
     #[serde(default)]
     incarnation: u32,
+    /// The agent's name, which the thread carries.
+    #[serde(default)]
+    name: String,
+    /// How many times the thread was named, for the requests' ids.
+    #[serde(default)]
+    names_set: u64,
     thread_id: Option<String>,
     version: Option<String>,
     model: Option<String>,
@@ -284,6 +292,8 @@ impl State {
             shared: Shared::new(spec, KIND, producer_version),
             consumption,
             incarnation: spec.incarnation,
+            name: spec.name.clone(),
+            names_set: 0,
             thread_id: None,
             version: (!spec.provider_version.is_empty()).then(|| spec.provider_version.clone()),
             model: None,
@@ -632,6 +642,13 @@ impl State {
             }
             codex_input::Of::Approve(approve) => self.approve(emit, &id, approve),
             codex_input::Of::Answer(answer) => self.answer(emit, &id, answer),
+            codex_input::Of::Rename(rename) => {
+                self.name = rename.name;
+                if self.thread_id.is_some() {
+                    self.name_thread(emit);
+                }
+                self.shared.accept(emit, &id, false);
+            }
         }
     }
 
@@ -1119,6 +1136,7 @@ impl<A: Arm> Interpreter for CodexWith<A> {
     fn reincarnate(mut state: State, spec: &AgentSpec, producer_version: &str) -> (State, Step) {
         state.shared.reincarnate(spec, producer_version);
         state.incarnation = spec.incarnation;
+        state.name = spec.name.clone();
         if !spec.provider_version.is_empty() {
             state.version = Some(spec.provider_version.clone());
         }

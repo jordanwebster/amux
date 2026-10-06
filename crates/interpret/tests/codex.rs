@@ -33,6 +33,7 @@ macro_rules! goldens {
 goldens! {
     amuxs_own_tools_draw_a_message_or_nothing => "amux_tools",
     another_client_drives_the_same_thread => "co_drive",
+    the_thread_carries_the_agents_name => "thread_name",
     amuxs_own_tools_are_approved_without_asking => "amux_tool_approval",
     a_failed_turn_start_drops_its_pending_interrupt => "interrupt_turn_start_failed",
     an_exit_drops_a_pending_interrupt => "interrupt_exited",

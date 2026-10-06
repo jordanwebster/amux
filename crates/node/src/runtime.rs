@@ -32,9 +32,10 @@ use tokio::sync::{Notify, oneshot, watch};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use wire::{
-    Agent, AgentHello, AgentParent, AgentRemoved, CaughtUp, CreateAgentRequest, CtlFrame,
-    DeleteAgentResponse, DumpPart, EnvelopeKind, ErrorCode, Input, Kind, Lifecycle,
-    SendInputResponse, Stop, StopMode, WorkingOn, ctl_frame, inventory_event, session_event,
+    Agent, AgentHello, AgentParent, AgentRemoved, CaughtUp, CodexInput, CreateAgentRequest,
+    CtlFrame, DeleteAgentResponse, DumpPart, EnvelopeKind, ErrorCode, Input, Kind, Lifecycle,
+    RenameThread, SendInputResponse, Stop, StopMode, WorkingOn, codex_input, ctl_frame, input,
+    inventory_event, session_event,
 };
 
 use crate::fanout::Fanout;
@@ -883,7 +884,9 @@ impl ProfileRuntime {
                 profile_id: self.profile.as_bytes(),
                 kind: spec::kind_from_name(&previous.kind),
                 cwd: &previous.cwd,
-                name: &previous.name,
+                // The name it has now: a rename while it was not running
+                // reaches its Codex thread this way.
+                name: row.name.as_deref().unwrap_or(&previous.name),
                 parent: previous.parent.clone(),
                 resolved: &resolved,
                 created_at_ms: self.clock.now_ms(),
@@ -1071,14 +1074,38 @@ impl ProfileRuntime {
         Ok(())
     }
 
-    /// Renames an agent. The name lives on the row only; specs keep the
-    /// name the agent was spawned with.
+    /// Renames an agent. The row takes the name now and the next
+    /// incarnation's spec when it is resumed; a spec already written keeps
+    /// the name it was spawned with. A live Codex agent is told, so its
+    /// thread takes the name; a missed word is made good at the next
+    /// resume.
     pub async fn rename(&self, id: AgentId, name: &str) -> Result<Agent, RegistryError> {
         let key = self.key(id);
-        let mut store = self.store.lock().await;
-        let mut row = store.agent(&key)?.ok_or(RegistryError::NotFound(id))?;
-        row.name = Some(name.to_owned()).filter(|name| !name.is_empty());
-        self.put_row(&mut store, &row)?;
+        let row = {
+            let mut store = self.store.lock().await;
+            let mut row = store.agent(&key)?.ok_or(RegistryError::NotFound(id))?;
+            row.name = Some(name.to_owned()).filter(|name| !name.is_empty());
+            self.put_row(&mut store, &row)?;
+            row
+        };
+        let handle = self.agents.lock().unwrap().get(&id).cloned();
+        if let Some(handle) = handle
+            && spec::kind_from_name(&row.kind) == Kind::Codex
+        {
+            let frame = CtlFrame {
+                of: Some(ctl_frame::Of::Input(Input {
+                    input_id: Uuid::new_v4().as_bytes().to_vec(),
+                    of: Some(input::Of::Codex(CodexInput {
+                        of: Some(codex_input::Of::Rename(RenameThread {
+                            name: row.name.clone().unwrap_or_default(),
+                        })),
+                    })),
+                })),
+            };
+            let _ = handle
+                .write_ctl(&frame, ms(self.launch().ctl_write_ms))
+                .await;
+        }
         Ok(to_wire(&row))
     }
 

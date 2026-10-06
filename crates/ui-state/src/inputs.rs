@@ -79,7 +79,12 @@ impl InputWhat {
                 Some(codex::Of::Withdraw(w)) => withdraw(w),
                 Some(codex::Of::SendNow(n)) => send_now(n),
                 Some(codex::Of::Interrupt(_)) => InputWhat::Interrupt,
-                Some(codex::Of::Approval(_) | codex::Of::Model(_) | codex::Of::Effort(_))
+                Some(
+                    codex::Of::Approval(_)
+                    | codex::Of::Model(_)
+                    | codex::Of::Effort(_)
+                    | codex::Of::Rename(_),
+                )
                 | None => InputWhat::Other,
             },
             Some(Of::AgentMessage(_) | Of::Dump(_)) | None => InputWhat::Other,

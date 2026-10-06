@@ -125,6 +125,10 @@ pub enum FixtureInput {
         #[serde(default)]
         effort: Option<String>,
     },
+    /// The daemon's word that the agent was renamed.
+    Rename {
+        name: String,
+    },
     /// An encoded Input, hex, for arms the vocabulary above does not name.
     Raw {
         hex: String,
@@ -152,6 +156,8 @@ struct Fixture {
 #[serde(deny_unknown_fields)]
 struct FixtureSpec {
     agent_id: Option<String>,
+    #[serde(default)]
+    name: String,
     #[serde(default)]
     created_at_ms: i64,
     #[serde(default)]
@@ -466,6 +472,7 @@ fn spec<I: Interpreter>(spec: &FixtureSpec) -> AgentSpec {
             .as_bytes()
             .to_vec(),
         kind: I::KIND.to_owned(),
+        name: spec.name.clone(),
         created_at_ms: spec.created_at_ms,
         incarnation: 1,
         provider_args: spec.provider_args.clone(),
@@ -735,7 +742,8 @@ pub fn claude_pty_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input
         | FixtureInput::Raw { .. }
         | FixtureInput::Model { .. }
         | FixtureInput::Mode { .. }
-        | FixtureInput::Effort { .. } => return None,
+        | FixtureInput::Effort { .. }
+        | FixtureInput::Rename { .. } => return None,
     };
     Some(Input {
         input_id,
@@ -762,9 +770,10 @@ pub fn claude_sdk_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input
         FixtureInput::Effort { effort } => Of::Effort(wire::SetEffort {
             effort: effort.clone(),
         }),
-        FixtureInput::Key { .. } | FixtureInput::AgentMessage { .. } | FixtureInput::Raw { .. } => {
-            return None;
-        }
+        FixtureInput::Key { .. }
+        | FixtureInput::AgentMessage { .. }
+        | FixtureInput::Raw { .. }
+        | FixtureInput::Rename { .. } => return None,
     };
     Some(Input {
         input_id,
@@ -811,6 +820,7 @@ pub fn codex_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
                 sandbox: sandbox.to_owned(),
             })
         }
+        FixtureInput::Rename { name } => Of::Rename(wire::RenameThread { name: name.clone() }),
         FixtureInput::Clear {}
         | FixtureInput::Key { .. }
         | FixtureInput::AgentMessage { .. }

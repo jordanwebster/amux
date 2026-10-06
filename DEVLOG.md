@@ -1,3 +1,16 @@
+2026-10-06 — **A Codex agent's thread carries the agent's name.**
+A Codex thread that has not run a turn has nothing on disk, so Codex's own
+app could not join a fresh agent until its first prompt; naming the thread
+writes it. The Codex interpreter now names the thread with the agent's name
+as soon as the handshake's thread answer arrives, in every incarnation, and
+again when the agent is renamed, so Codex's app also shows the name amux
+does. A rename reaches a running Codex agent as a new Codex input the daemon
+sends over the agent's control connection; a rename while the agent is not
+running reaches its next spec, since a resume now writes the row's current
+name there rather than the name it was first spawned with. The two Codex
+replay fixtures gained the naming exchange, and a hand fixture shows the
+writes at start and on rename.
+
 2026-10-06 — **The Codex interpreter believes what Codex reports, whoever caused it.**
 With Codex's server on a socket, Codex's own app can drive an agent beside
 amux. amux now sends every prompt and steer with its input id as Codex's

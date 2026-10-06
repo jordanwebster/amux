@@ -2,7 +2,7 @@
 
 use codex_protocol::client::{
     CommandApprovalResponse, ElicitationAction, ModelListParams, SkillsListParams,
-    ToolCallResponse, TurnInterruptParams,
+    ThreadSetNameParams, ToolCallResponse, TurnInterruptParams,
 };
 use codex_protocol::items::{
     CommandAction, DynamicToolCallItem, McpToolCallItem, MessagePhase, PatchChangeKind,
@@ -308,6 +308,9 @@ impl State {
             };
             if let Ok(response) = codex_protocol::result::<ThreadResponse>(&result) {
                 self.thread_started(emit, &response.thread, Some(&response));
+                if self.thread_id.as_ref() == Some(&response.thread.id) {
+                    self.name_thread(emit);
+                }
                 self.list_offers(emit);
             } else if let Ok(response) = codex_protocol::result::<AccountReadResponse>(&result) {
                 self.sign_in = Some(match response.account {
@@ -377,7 +380,10 @@ impl State {
                     Request::Inject { envelope_id, .. } => {
                         self.shared.message_consumed(&envelope_id);
                     }
-                    Request::Interrupt | Request::Models { .. } | Request::Skills => {}
+                    Request::Interrupt
+                    | Request::Models { .. }
+                    | Request::Name
+                    | Request::Skills => {}
                 }
                 return;
             }
@@ -414,6 +420,7 @@ impl State {
             | Request::Interrupt
             | Request::Compact
             | Request::Models { .. }
+            | Request::Name
             | Request::Skills => {}
         }
     }
@@ -477,6 +484,26 @@ impl State {
             Request::Skills,
         );
         emit.effect(Effect::ProviderWrite(skills));
+    }
+
+    /// Gives the thread the agent's name, so Codex's own app shows the name
+    /// amux does. A thread that has not run a turn has nothing on disk
+    /// until it is named, and another client cannot join it before then.
+    pub(super) fn name_thread(&mut self, emit: &mut Emit) {
+        if self.name.is_empty() {
+            return;
+        }
+        self.names_set += 1;
+        let bytes = self.request_as(
+            format!("amux-name-{}", self.names_set),
+            ClientRequest::ThreadSetName(ThreadSetNameParams {
+                thread_id: self.thread(),
+                name: self.name.clone(),
+                extra: Default::default(),
+            }),
+            Request::Name,
+        );
+        emit.effect(Effect::ProviderWrite(bytes));
     }
 
     /// Asks for one page of `model/list`, the first without a cursor.

@@ -559,7 +559,7 @@ async fn delete_aborts_first_and_cascades_to_children() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn rename_changes_the_row_and_never_the_spec() {
+async fn rename_changes_the_row_and_the_next_spec_never_a_written_one() {
     let install = Install::new();
     let daemon = install
         .start("boot-1", install.launch("idle", vec![]))
@@ -578,6 +578,74 @@ async fn rename_changes_the_row_and_never_the_spec() {
         Some("after")
     );
     assert_eq!(spec(&install.agent_dir(id), 1).name, "before");
+    kill_all(&runtime).await;
+    runtime.resume(id, None).await.unwrap();
+    assert_eq!(
+        spec(&install.agent_dir(id), 2).name,
+        "after",
+        "the next incarnation runs under the name it has now"
+    );
+    kill_all(&runtime).await;
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+/// The names a fake Codex was asked to give its thread, in order.
+fn thread_names(log: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|line| line["method"] == "thread/name/set")
+        .map(|line| {
+            line["params"]["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn renaming_a_live_codex_agent_renames_its_thread() {
+    let install = Install::new();
+    let log = install.path("codex-input.jsonl");
+    let mut launch = install.launch("idle", vec![]);
+    launch.provider_env.insert(
+        provider_fakes::INPUT_LOG_ENV.to_owned(),
+        log.to_string_lossy().into_owned(),
+    );
+    let daemon = install.start("boot-1", launch).await;
+    let runtime = runtime(&daemon, &install);
+    let id = id_of(
+        &runtime
+            .spawn(
+                wire::CreateAgentRequest {
+                    kind: wire::Kind::Codex as i32,
+                    config: Some(wire::create_agent_request::Config::Codex(
+                        wire::CodexCreateConfig::default(),
+                    )),
+                    ..create(&install.work, "before", None)
+                },
+                None,
+            )
+            .await
+            .unwrap(),
+    );
+    let named = |want: &'static [&'static str]| {
+        let log = log.clone();
+        move || {
+            let names = thread_names(&log);
+            std::future::ready((names == want).then_some(()).ok_or(format!("{names:?}")))
+        }
+    };
+    until("the thread named at start", named(&["before"]))
+        .await
+        .unwrap();
+    runtime.rename(id, "after").await.unwrap();
+    until("the thread renamed", named(&["before", "after"]))
+        .await
+        .unwrap();
     kill_all(&runtime).await;
     drop(runtime);
     daemon.shutdown().await.unwrap();
