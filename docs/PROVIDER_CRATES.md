@@ -87,3 +87,4 @@ specification.
 | Specification replay | `codex-specs/tests/spec_replay.rs`, `claude-specs/tests/spec_replay.rs` | The clients, on the protocol types, send exactly what the recordings show. |
 | Fakes' shape check | [`provider-fakes/src/shape.rs`](../crates/provider-fakes/src/shape.rs) | Every frame a fake provider composes has a recorded shape and decodes strictly with its protocol crate. The fakes never use the host crates, so a host bug cannot hide behind code the fakes share. |
 | Dependency policy | `scripts/check-dependency-policy.py` | The protocol crates stay pure, and only the crates listed there use them. |
+| Typed provider check | [`scripts/typed-provider-check.py`](../scripts/typed-provider-check.py) | The interpreters and the agent's provider handshake build and read no provider JSON by hand; each place that keeps a tool payload as JSON is listed with its reason. |

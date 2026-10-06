@@ -282,7 +282,8 @@ The agent runs the spec's command with the spec's arguments plus
 --permission-prompt-tool stdio --replay-user-messages`, `--session-id <id>`
 or `--resume <id>` (kept in `private/provider-session` as for terminal
 Claude), `--settings <json>` and `--mcp-config`. Claude reports nothing until
-asked, so the agent writes an `initialize` control request at once; its
+asked, so the agent writes an `initialize` control request at once, built
+from `claude_protocol::stream` types like every line written to Claude; its
 answer is what says Claude takes input, and it lists the models and commands
 the agent offers.
 
@@ -295,11 +296,11 @@ the element that names their blob. Closing the child is closing its stdin.
 
 The agent runs `codex <args> app-server --listen stdio://`, with amux's tool
 server added as `--config mcp_servers.amux.command=…` and
-`--config mcp_servers.amux.args=…`. It performs the handshake itself:
-`initialize` (client `amux`, experimental API on), `initialized`, then
-`thread/start`, or `thread/resume` with the thread id from
-`private/provider-session` for a later incarnation, with the spec's working
-directory and model. The thread id the server answers with is written to
+`--config mcp_servers.amux.args=…`. It performs the handshake itself, every
+message a `codex_protocol` value: `initialize` (client `amux`, experimental
+API on), `initialized`, then `thread/start`, or `thread/resume` with the
+thread id from `private/provider-session` for a later incarnation, with the
+spec's working directory and model. The thread id the server answers with is written to
 `private/provider-session`. Every line the server writes is a fact; the
 interpreter writes every request after the handshake with ids of its own
 (`amux-<n>`). A turn whose prompt carries attachments has them appended to
@@ -361,7 +362,8 @@ A hook reaches the agent like this:
    hook's exit code as a verdict, and 2 would block the action.
 4. The agent reads one connection at a time, in the order Claude ran its
    hooks. Messaging credentials go to the provider, which uses them to hand
-   agent messages to Claude; the payload Claude wrote becomes a hook fact.
+   agent messages to Claude; the payload Claude wrote becomes a hook fact,
+   unchanged, which the interpreter decodes with `claude_protocol::hooks`.
 
 The transcript is found through the hooks. `SessionStart` names the
 transcript file; when the path changes (a start, a resume, `/clear`, a

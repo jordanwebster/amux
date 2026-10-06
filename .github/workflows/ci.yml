@@ -57,6 +57,8 @@ jobs:
         run: just proto-check
       - name: Enforce dependency boundaries
         run: just dependency-policy
+      - name: Check provider messages go through the protocol crates
+        run: just typed-provider-check
       - name: Check the test suite catalogue
         run: just tests-check
       - name: Check the documentation's links, figures and map

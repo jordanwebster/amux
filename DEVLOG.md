@@ -1,3 +1,16 @@
+2026-10-06 — **A check holds the interpreters to the protocol types.**
+`just typed-provider-check` (part of `just ci` and the CI workflow) searches
+the three interpreters, the code they share and the agent's provider
+handshake for provider JSON handled by hand: `json!`, a field looked up by
+name or path, a value opened as an object or array, bytes parsed into a
+`serde_json::Value`. What stays JSON on purpose (a tool's input and result,
+a tool server's form content, Claude's settings file and Codex's `--config`
+values, a recorded line kept as a fact's payload) is an exemption naming its
+function and why; an exemption that matches nothing fails too. Its unit test
+plants each kind of violation and checks it fails. INTERPRETERS.md,
+AGENT_PROCESS.md, PROVIDER_CRATES.md and CI.md describe the typed layers as
+production uses them.
+
 2026-10-06 — **The terminal Claude interpreter reads through the protocol types.**
 Transcript rows and hook payloads now reach the terminal Claude interpreter
 as decoded `claude_protocol::transcript::Row` and `hooks::Payload` values,

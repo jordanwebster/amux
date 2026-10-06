@@ -20,6 +20,20 @@ committed by the daemon and served to clients unchanged (see
 [the journal and the store](JOURNAL_AND_STORE.md)). The items themselves are
 described from the client's side in [the chat vocabulary](CHAT_VOCABULARY.md).
 
+Provider messages reach an interpreter only as types. Every fact is decoded
+by its provider's protocol crate (`codex_protocol` for Codex,
+`claude_protocol::stream` for headless Claude, `claude_protocol::transcript`
+and `claude_protocol::hooks` for terminal Claude) and every line an
+interpreter writes is built from the same crate's types and encoded by it;
+see [the provider crates](PROVIDER_CRATES.md). Decoding is tolerant, so a
+provider update reads as `Unknown` where it is new rather than stopping the
+agent. What stays JSON is what no protocol fixes: a tool's input and result,
+which are whatever the tool wrote, and a tool server's form content; small
+`Deserialize` structs read the fields an interpreter needs out of them.
+`just typed-provider-check`, part of `just ci`, fails on `json!`, a field
+looked up by name or bytes parsed into a `serde_json::Value` anywhere else
+in the interpreters or the agent's provider handshake.
+
 ## The interface
 
 An interpreter is pure. It has no clock (time arrives as a tick), generates
@@ -158,9 +172,11 @@ changes nothing.
 
 ## Terminal Claude
 
-`claude_pty` reads four kinds of fact: rows of Claude's transcript file, hook
-payloads, the agent process's own facts (the launch with Claude's version and
-keymap, the folder-trust dialog, and "ready"), and the terminal's exit.
+`claude_pty` reads four kinds of fact: rows of Claude's transcript file
+(decoded as `claude_protocol::transcript::Row`), hook payloads
+(`claude_protocol::hooks::Payload`), the agent process's own facts (the launch
+with Claude's version and keymap, the folder-trust dialog, and "ready"), and
+the terminal's exit.
 Transcript rows arrive whole, so nothing here streams: every item is emitted
 complete and revised by re-emission.
 
@@ -336,7 +352,8 @@ resolves against the baked keymaps only.
 ## Headless Claude
 
 `claude_sdk` reads the stream-JSON lines headless Claude writes on stdout,
-events and control requests alike. Asks arrive as named control requests, so
+events and control requests alike, each decoded as a
+`claude_protocol::stream::Output`. Asks arrive as named control requests, so
 nothing is inferred.
 
 - **Streaming.** Text and thinking stream: `content_block_start` opens an
@@ -384,9 +401,11 @@ nothing is inferred.
 
 ## Codex
 
-`codex` reads the JSON-RPC messages the app server writes: notifications
-about the thread, its turns and their items, requests that ask the person
-something, and responses to the requests the interpreter sent.
+`codex` reads the JSON-RPC messages the app server writes, each decoded as a
+`codex_protocol::ServerMessage`: notifications about the thread, its turns and
+their items, requests that ask the person something, and responses to the
+requests the interpreter sent, read as the response type of the request they
+answer.
 
 - **Requests.** The agent process performs the handshake; the interpreter
   reads the thread from its answer or from `thread/started`, and from then on
@@ -439,10 +458,13 @@ something, and responses to the requests the interpreter sent.
 
 ## Provider transport crates
 
+The messages themselves are in the protocol crates, described with these in
+[the provider crates](PROVIDER_CRATES.md).
+
 | Crate | What it holds | Who uses it |
 |---|---|---|
-| [`claude`](../crates/claude/src/lib.rs) | Claude Code's surfaces as data: hook payloads and their forwarding over the hook socket (`hooks`), launch settings and the environment scrub (`launch`), the messaging socket client (`messaging`), keymaps and their program interpreter (`pty`, behind the `pty` feature), stream-JSON messages and the control protocol (`sdk`), transcript tailing (`transcript`), session files (`history`) and version probing (`version`); also a standalone `claude-hook` forwarder binary | The agent process (hooks, launch, messaging, keymaps, version, session files), `amux hooks claude`, and `claude-specs` |
-| [`codex`](../crates/codex/src/lib.rs) | A typed client for the Codex app server: spawn, initialize, threads, turns, approvals, notifications | `codex-specs`, which drives Codex to record scenarios. The agent process and the interpreter speak the app server's JSON-RPC directly |
+| [`claude`](../crates/claude/src/lib.rs) | Hosting Claude Code: hook forwarding over the hook socket (`hooks`), launch settings and the environment scrub (`launch`), the messaging socket client (`messaging`), keymaps and their program interpreter (`pty`, behind the `pty` feature), transcript tailing (`transcript`), session files (`history`) and version probing (`version`); also a standalone `claude-hook` forwarder binary | The agent process (hooks, launch, messaging, keymaps, version, session files), `amux hooks claude`, and `claude-specs` |
+| [`codex`](../crates/codex/src/lib.rs) | Hosting the Codex app server and a client for it: spawn, initialize, threads, turns, approvals, notifications, all on `codex-protocol` types | `codex-specs`, which drives Codex to record scenarios. The agent process and the interpreter write `codex-protocol` messages themselves |
 | [`pty-host`](../crates/pty-host/src/lib.rs) | Provider-neutral pseudo-terminal hosting: spawn in a process group, one output stream, input, resize, process-group signals, graceful termination | The agent process (terminal Claude and Codex views) and `claude-specs` |
 
 ## Recordings and re-recording
@@ -561,6 +583,9 @@ to the kind's bodies and to a golden, together. Run it on its own with
 
 - Keep every rule about a provider's facts in its module, and state the
   inference rules in the module's documentation.
+- Read and write provider messages through the protocol crate. When the
+  interpreter needs something the crate does not type yet, add it there
+  first, with the recording corpus still decoding strictly.
 - Put everything a restart must continue from in `State`; the checkpoint
   property will catch what is missing.
 - Give every item a key derived from the provider's own ids, stable across

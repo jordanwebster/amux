@@ -217,6 +217,11 @@ contracts-check *ARGS:
 docs-check:
     {{bounded}} 120 scripts/py scripts/docs-check.py
 
+# Fail if an interpreter or the agent's provider handshake builds or reads
+# provider JSON by hand instead of through the protocol crates.
+typed-provider-check:
+    {{bounded}} 60 scripts/py scripts/typed-provider-check.py
+
 # Fail when code, config, protos, recipes, scripts, workflows or docs still
 # name a mechanism amux removed.
 deletion-ledger-check:
@@ -228,7 +233,7 @@ no-update-flags:
     scripts/no-update-flags.sh
 
 # Run the same task sequence exercised across continuous-integration jobs.
-ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy deletion-ledger-check docs-check tests-check test contracts-check doctest release-check embedded-check embedded-test mobile-check
+ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy typed-provider-check deletion-ledger-check docs-check tests-check test contracts-check doctest release-check embedded-check embedded-test mobile-check
 
 # Run the live provider compatibility lane for one kind (claude_pty,
 # claude_sdk or codex) and scenario (initialize, respond, decide, interrupt,
