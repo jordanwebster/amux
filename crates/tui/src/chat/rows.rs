@@ -7,8 +7,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_view::{
     AnswerView, AskRow, AttachmentView, Decision, DecisionView, ExploreVerb, FileChangeView,
-    LineKind, PatchHead, PermissionGrant, PlanVerdict, QuestionView, Resolution, Row, RowKind,
-    RunInfo, Segment, ToolStateView,
+    LineKind, PatchHead, PlanVerdict, QuestionView, Resolution, Row, RowKind, RunInfo, Segment,
+    ToolStateView,
 };
 use wire::{BoundaryKind, EnvelopeKind, SendState};
 
@@ -375,7 +375,7 @@ fn decision_meta(decision: &Decision, said: bool) -> String {
         );
     }
     if let Some(granted) = &decision.granted {
-        parts.push(grant_words(granted));
+        parts.push(super::ask::grant_words(granted));
     }
     if let Some(note) = &decision.note {
         parts.push(format!("\"{}\"", first_line(note)));
@@ -384,16 +384,6 @@ fn decision_meta(decision: &Decision, said: bool) -> String {
         parts.push("in the terminal".into());
     }
     parts.join(" · ")
-}
-
-/// What a permission allowed from then on, in words.
-fn grant_words(granted: &PermissionGrant) -> String {
-    match granted {
-        PermissionGrant::Claude { saved_to, .. } => super::ask::scope_words(saved_to),
-        PermissionGrant::Session => "for this session".into(),
-        PermissionGrant::CommandPrefix { words } => format!("for {} …", words.join(" ")),
-        PermissionGrant::NetworkHosts { hosts } => format!("network {}", hosts.join(", ")),
-    }
 }
 
 /// The row's meta with its permission decision after it. The decision

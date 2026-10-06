@@ -12,8 +12,6 @@
 
 
 
-
-
   started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -29,6 +27,8 @@
   │ › 2. Stacked           │   Address  relay.amux.dev                                                     │
   │   3. Something else    │ Theme ──────────                                                              │
   │                        │   Palette  terminal                                                           │
+  │   Skip                 │                                                                               │
+  │   Reply instead  esc   │                                                                               │
   ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯
 
-  enter choose   ←/→ questions   ctrl+x stop   ctrl+a more
+  enter choose   ←/→ questions   tab note   ctrl+x stop

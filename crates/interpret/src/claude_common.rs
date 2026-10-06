@@ -610,7 +610,13 @@ fn questions_asked(questions: Vec<QuestionItem>) -> (QuestionAsk, Vec<QuestionSh
             secret: false,
         })
         .collect();
-    (QuestionAsk { questions }, shapes)
+    (
+        QuestionAsk {
+            questions,
+            provider_dialog: false,
+        },
+        shapes,
+    )
 }
 
 /// What a decision granted, as goldens print it.

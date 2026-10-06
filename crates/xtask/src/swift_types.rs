@@ -39,6 +39,7 @@ pub fn definitions() -> Map<String, Value> {
         ui_view::Row,
         ui_view::AskCard,
         ui_view::Pick,
+        ui_view::QuestionResponse,
         ui_view::Overview,
         ui_view::Comparison,
         ui_view::ComposerView,

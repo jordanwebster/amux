@@ -39,7 +39,7 @@ use model::{AgentKey, Key};
 use node::SourcePolicy;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use ui_view::{Comparison, Pick, SettingChange};
+use ui_view::{Comparison, QuestionResponse, SettingChange};
 
 // The tests drive real agent processes, which run on Unix.
 #[cfg(all(test, unix))]
@@ -1696,8 +1696,9 @@ pub unsafe extern "C" fn amux_session_answer_form(
     }
 }
 
-/// Answers the head question ask with one `Pick` per question, as a JSON
-/// array, and the optional note. The callback gets an `ActOutcome`.
+/// Answers the head question ask with one `QuestionResponse` per question, as a
+/// JSON array: the pick (no options and no text skips the question) and
+/// the person's note on it. The callback gets an `ActOutcome`.
 ///
 /// # Safety
 /// As for `amux_session_answer`.
@@ -1705,23 +1706,56 @@ pub unsafe extern "C" fn amux_session_answer_form(
 pub unsafe extern "C" fn amux_session_answer_questions(
     chat: *const AmuxChat,
     ask_key: *const c_char,
-    picks: *const c_char,
-    note: *const c_char,
+    responses: *const c_char,
     callback: AmuxCallback,
     context: *mut c_void,
 ) {
     // SAFETY: the caller's contract.
     let ask_key = unsafe { text(ask_key) }.unwrap_or_default().to_owned();
     // SAFETY: the caller's contract.
-    let picks: Option<Vec<Pick>> = unsafe { parse(picks) };
-    // SAFETY: the caller's contract.
-    let note = unsafe { text(note) }.unwrap_or_default().to_owned();
+    let given: Option<Vec<QuestionResponse>> = unsafe { parse(responses) };
     // SAFETY: the caller's contract.
     unsafe {
         act(chat, callback, context, move |chat| async move {
-            match picks {
-                Some(picks) => chat.answer_questions(&ask_key, &picks, &note).await,
-                None => ActOutcome::Rejected("the picks are not a list of Pick".into()),
+            match given {
+                Some(given) => chat.answer_questions(&ask_key, &given).await,
+                None => {
+                    ActOutcome::Rejected("the responses are not a list of QuestionResponse".into())
+                }
+            }
+        })
+    }
+}
+
+/// Replies to the head question ask in the person's own words instead of
+/// answering, with what they had answered so far as a JSON array of
+/// `QuestionResponse`, one per question. The callback gets an `ActOutcome`.
+///
+/// # Safety
+/// As for `amux_session_answer`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_reply_instead(
+    chat: *const AmuxChat,
+    ask_key: *const c_char,
+    reply: *const c_char,
+    so_far: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let ask_key = unsafe { text(ask_key) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    let reply = unsafe { text(reply) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    let so_far: Option<Vec<QuestionResponse>> = unsafe { parse(so_far) };
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, move |chat| async move {
+            match so_far {
+                Some(so_far) => chat.reply_instead(&ask_key, &reply, &so_far).await,
+                None => ActOutcome::Rejected(
+                    "the answers so far are not a list of QuestionResponse".into(),
+                ),
             }
         })
     }

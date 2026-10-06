@@ -31,4 +31,4 @@
   │ › Message keeper                                                                                       │
   ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯
 
-  shift+tab mode   ctrl+a more
+  shift+tab permission   ctrl+a more

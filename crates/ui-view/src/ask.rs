@@ -24,9 +24,15 @@ pub struct AskCard {
     pub body: AskBody,
     /// The likely choice first. Only what this agent offers.
     pub choices: Vec<Choice>,
-    /// A note may go out with a question's answers. Terminal Claude has no
-    /// place to type one for most questions, so it takes none.
+    /// A note may go out with each question's answer. Terminal Claude has
+    /// no place to type one, so it takes none.
     pub question_note: bool,
+    /// A question may be left unanswered. Terminal Claude's menu takes an
+    /// answer to every question.
+    pub question_skip: bool,
+    /// The person may reply in their own words instead of answering the
+    /// questions. Not for the provider's own dialogs, outside any turn.
+    pub question_reply: bool,
     pub state: CardState,
 }
 
@@ -219,8 +225,25 @@ pub fn ask_card(state: &SessionState) -> Option<AskCard> {
         body,
         choices,
         question_note: state.kind() != wire::Kind::ClaudePty,
+        question_skip: state.kind() != wire::Kind::ClaudePty,
+        question_reply: !provider_dialog(head),
         state: card_state,
     })
+}
+
+/// Whether the ask is a question the provider asks itself, outside a turn.
+fn provider_dialog(ask: &OpenAsk) -> bool {
+    match ask {
+        OpenAsk::Claude(wire::Ask {
+            body: Some(ask::Body::Question(question)),
+            ..
+        })
+        | OpenAsk::Codex(wire::CodexAsk {
+            body: Some(codex_ask::Body::Question(question)),
+            ..
+        }) => question.provider_dialog,
+        _ => false,
+    }
 }
 
 fn choice(outcome: ChoiceOutcome, answer: Answer) -> Choice {
@@ -713,37 +736,76 @@ fn codex(state: &SessionState, ask: &wire::CodexAsk) -> (AskBody, Vec<Choice>) {
 /// One question's answer as the person gave it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Pick {
+    /// The chosen options; none, with no text, skips the question.
     Options(Vec<u32>),
     Other(String),
 }
 
-/// The answer to a question ask: one pick per question, in order, with the
-/// optional note on the last question.
-pub fn question_answer(card: &AskCard, picks: &[Pick], note: &str) -> Answer {
-    let mut answers = wire::QuestionAnswer {
-        answers: picks
-            .iter()
-            .map(|pick| match pick {
-                Pick::Options(selected) => wire::QuestionResponse {
-                    selected: selected.clone(),
-                    other: None,
-                    note: None,
-                },
-                Pick::Other(text) => wire::QuestionResponse {
-                    selected: vec![],
-                    other: Some(text.clone()),
-                    note: None,
-                },
-            })
-            .collect(),
+/// One question's pick and the person's note on it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct QuestionResponse {
+    pub pick: Pick,
+    /// Empty when there is none.
+    #[serde(default)]
+    pub note: String,
+}
+
+impl QuestionResponse {
+    /// The question left unanswered.
+    pub fn skip() -> QuestionResponse {
+        QuestionResponse {
+            pick: Pick::Options(Vec::new()),
+            note: String::new(),
+        }
+    }
+}
+
+fn responses(given: &[QuestionResponse]) -> Vec<wire::QuestionResponse> {
+    given
+        .iter()
+        .map(|response| {
+            let (selected, other) = match &response.pick {
+                Pick::Options(selected) => (selected.clone(), None),
+                Pick::Other(text) => (vec![], Some(text.clone())),
+            };
+            wire::QuestionResponse {
+                selected,
+                other,
+                note: (!response.note.is_empty()).then(|| response.note.clone()),
+            }
+        })
+        .collect()
+}
+
+/// The answer to a question ask: one response per question, in order.
+pub fn question_answer(card: &AskCard, given: &[QuestionResponse]) -> Answer {
+    let answers = wire::QuestionAnswer {
+        answers: responses(given),
     };
-    note_last(&mut answers, note);
     match card.kind {
         wire::Kind::Codex => Answer::Codex(CodexAnswer {
             of: Some(wire::codex_answer::Of::Question(answers)),
         }),
         _ => Answer::Claude(ClaudeAnswer {
             of: Some(claude_answer::Of::Question(answers)),
+        }),
+    }
+}
+
+/// The person's own words instead of answering a question ask, with what
+/// they had answered so far: one response per question, a skip where
+/// nothing was.
+pub fn reply_answer(card: &AskCard, text: &str, so_far: &[QuestionResponse]) -> Answer {
+    let reply = wire::ReplyInstead {
+        text: text.to_owned(),
+        answers_so_far: responses(so_far),
+    };
+    match card.kind {
+        wire::Kind::Codex => Answer::Codex(CodexAnswer {
+            of: Some(wire::codex_answer::Of::Reply(reply)),
+        }),
+        _ => Answer::Claude(ClaudeAnswer {
+            of: Some(claude_answer::Of::Reply(reply)),
         }),
     }
 }
@@ -768,8 +830,7 @@ pub fn with_form_content(answer: &Answer, content_json: Vec<u8>) -> Answer {
 /// The input that sends `answer` to the card's ask, in the card's kind's
 /// arm: an answer body under the ask's key, or for a Codex approval the
 /// decision on the request the card names. `note` goes back to the agent
-/// with a choice that takes one and with a question answer; other choices
-/// ignore it. The input has no id: the session gives it a fresh one when it
+/// with a choice that takes one; other answers ignore it. The input has no id: the session gives it a fresh one when it
 /// sends it. None when the kind does not take this answer.
 pub fn answer_input(card: &AskCard, answer: &Answer, note: &str) -> Option<wire::Input> {
     use wire::{claude_pty_input, claude_sdk_input, codex_input, input};
@@ -831,28 +892,14 @@ fn with_note(answer: &Answer, note: &str) -> Answer {
             claude_answer::Of::Plan(plan) if plan.choice() == wire::PlanChoice::KeepPlanning => {
                 plan.note = Some(note.to_owned())
             }
-            claude_answer::Of::Question(question) => note_last(question, note),
             _ => {}
         },
-        Answer::Codex(CodexAnswer {
-            of: Some(wire::codex_answer::Of::Question(question)),
-        }) => note_last(question, note),
         Answer::Codex(CodexAnswer {
             of: Some(wire::codex_answer::Of::Plan(plan)),
         }) if plan.choice() == wire::PlanChoice::KeepPlanning => plan.note = Some(note.to_owned()),
         _ => {}
     }
     answer
-}
-
-/// The note on the last question's response, where a card with one note
-/// box puts it.
-fn note_last(answer: &mut wire::QuestionAnswer, note: &str) {
-    if let Some(last) = answer.answers.last_mut()
-        && !note.is_empty()
-    {
-        last.note = Some(note.to_owned());
-    }
 }
 
 #[cfg(test)]

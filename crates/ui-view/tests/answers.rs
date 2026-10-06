@@ -17,8 +17,8 @@ use interpret::{Checkpoint, Effect, Event, Interpreter, decode_checkpoint, encod
 use support::Committer;
 use ui_state::{InputOutcome, Msg, SessionState};
 use ui_view::{
-    Answer, AskBody, AskCard, CardState, Pick, SettingChange, answer_input, ask_card,
-    question_answer, setting_input, settings,
+    Answer, AskBody, AskCard, CardState, Pick, QuestionResponse, SettingChange, answer_input,
+    ask_card, question_answer, reply_answer, setting_input, settings,
 };
 use wire::{Kind, SessionEvent, send_input_response, session_event};
 
@@ -134,27 +134,45 @@ fn offered(card: &AskCard) -> Vec<(String, Answer, &'static str)> {
         })
         .collect();
     if let AskBody::Question(questions) = &card.body {
-        let first: Vec<Pick> = questions
+        let note = |text: &str| {
+            if card.question_note {
+                text.to_owned()
+            } else {
+                String::new()
+            }
+        };
+        let first: Vec<QuestionResponse> = questions
             .iter()
-            .map(|question| match question.options.is_empty() {
-                true => Pick::Other("typed".into()),
-                false => Pick::Options(vec![0]),
+            .map(|question| QuestionResponse {
+                pick: match question.options.is_empty() {
+                    true => Pick::Other("typed".into()),
+                    false => Pick::Options(vec![0]),
+                },
+                note: note("a note"),
             })
             .collect();
-        answers.push((
-            "first options".into(),
-            question_answer(card, &first, ""),
-            "",
-        ));
+        answers.push(("first options".into(), question_answer(card, &first), ""));
         if questions.iter().all(|question| question.allow_other) {
-            let typed: Vec<Pick> = questions
+            let typed: Vec<QuestionResponse> = questions
                 .iter()
-                .map(|_| Pick::Other("something else".into()))
+                .map(|_| QuestionResponse {
+                    pick: Pick::Other("something else".into()),
+                    note: String::new(),
+                })
                 .collect();
-            let note = if card.question_note { "a note" } else { "" };
+            answers.push(("something else".into(), question_answer(card, &typed), ""));
+        }
+        if card.question_skip {
+            let mut skipped = first.clone();
+            skipped[0] = QuestionResponse::skip();
+            answers.push(("one skipped".into(), question_answer(card, &skipped), ""));
+        }
+        if card.question_reply {
+            let mut so_far = vec![QuestionResponse::skip(); questions.len()];
+            so_far[0].pick = first[0].pick.clone();
             answers.push((
-                "something else".into(),
-                question_answer(card, &typed, note),
+                "reply instead".into(),
+                reply_answer(card, "Let's talk it through first", &so_far),
                 "",
             ));
         }

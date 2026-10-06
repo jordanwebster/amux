@@ -7,6 +7,7 @@
 //!
 //! The component goldens and the PNG renderer both draw this set.
 
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -108,11 +109,14 @@ pub fn components(theme: Theme) -> Vec<Component> {
         }
         add(name, shows, lines);
     }
-    for (name, shows, card, attach) in cards() {
+    for (name, shows, card, attach, keys) in cards() {
         let mut ui = AskUi::default();
         ui.sync(&card);
         // Room for the whole ask, as on a tall terminal.
         ui.set_room(60, attach);
+        for key in keys {
+            ui.box_key(&card, key);
+        }
         add(name, shows, ui.box_lines(&card, BOX_WIDTH, theme).lines);
     }
     add(
@@ -980,7 +984,7 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_command",
-            "A command waiting for the person's permission, one running, one denied with a note, one succeeded with its output head, one failed with its exit code, opened.",
+            "A command waiting for the person's permission, one running, one denied with a note, one succeeded with its output head, three allowed with what each allowance granted from then on (Claude's rule saved in the project, Codex's command prefix and its network hosts), one failed with its exit code, opened.",
             vec![
                 (
                     Row {
@@ -1005,6 +1009,43 @@ fn row_sets() -> Vec<RowSet> {
                         Some(0),
                         &["running 42 tests", "test result: ok. 42 passed"],
                         0,
+                    ),
+                    CLOSED,
+                ),
+                (
+                    decided(
+                        command(ToolStateView::Succeeded, Some(0), &[], 0),
+                        DecisionView::Allowed,
+                        Some(PermissionGrant::Claude {
+                            subjects: vec!["cargo test".into()],
+                            directories: vec![],
+                            mode: String::new(),
+                            mode_name: String::new(),
+                            saved_to: Scope::Project,
+                        }),
+                        None,
+                    ),
+                    CLOSED,
+                ),
+                (
+                    decided(
+                        command(ToolStateView::Succeeded, Some(0), &[], 0),
+                        DecisionView::Allowed,
+                        Some(PermissionGrant::CommandPrefix {
+                            words: vec!["cargo".into(), "test".into()],
+                        }),
+                        None,
+                    ),
+                    CLOSED,
+                ),
+                (
+                    decided(
+                        command(ToolStateView::Succeeded, Some(0), &[], 0),
+                        DecisionView::Allowed,
+                        Some(PermissionGrant::NetworkHosts {
+                            hosts: vec!["crates.io".into()],
+                        }),
+                        None,
                     ),
                     CLOSED,
                 ),
@@ -1166,7 +1207,7 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_ask",
-            "Asks that became rows: a question answered, several questions answered, a plan approved and one sent back with its note, a form sent with the fields it carried, a link declined, access granted for the turn, an open question, and two dismissed.",
+            "Asks that became rows: a question answered with a note, several questions answered, one of two skipped with a note on it, a reply instead quoting the person's words with the answer given before it, a plan approved and one sent back with its note, a form sent with the fields it carried, a link declined, access granted for the turn, an open question, and two dismissed.",
             vec![
                 (
                     row(RowKind::Ask(AskRow::Questions {
@@ -1194,6 +1235,32 @@ fn row_sets() -> Vec<RowSet> {
                         skipped: 0,
                         reply: None,
                         resolution: Resolution::Answered,
+                    })),
+                    CLOSED,
+                ),
+                (
+                    row(RowKind::Ask(AskRow::Questions {
+                        questions: vec![question(false), question(true)],
+                        answers: vec![
+                            answer(&["Behind a flag"], None),
+                            AnswerView {
+                                note: Some("ask me again once the flag ships".into()),
+                                ..answer(&[], None)
+                            },
+                        ],
+                        skipped: 1,
+                        reply: None,
+                        resolution: Resolution::Answered,
+                    })),
+                    CLOSED,
+                ),
+                (
+                    row(RowKind::Ask(AskRow::Questions {
+                        questions: vec![question(false), question(true)],
+                        answers: vec![answer(&["All at once"], None), answer(&[], None)],
+                        skipped: 1,
+                        reply: Some("Neither yet: show me what the flag would cost first.".into()),
+                        resolution: Resolution::Replied,
                     })),
                     CLOSED,
                 ),
@@ -1483,11 +1550,40 @@ fn card(body: AskBody, mut choices: Vec<Choice>) -> AskCard {
         body,
         choices,
         question_note: true,
+        question_skip: true,
+        question_reply: true,
         state: CardState::Open,
     }
 }
 
-type CardSet = (&'static str, &'static str, AskCard, bool);
+/// A card component: its name, what it shows, the card, whether the
+/// agent's terminal can be attached, and the keys pressed on it first.
+type CardSet = (&'static str, &'static str, AskCard, bool, Vec<KeyEvent>);
+
+/// The keys of `typed`, one per character; a word in angle brackets is a
+/// named key: `<tab>`, `<down>`, `<enter>`, `<esc>`.
+fn keys(typed: &str) -> Vec<KeyEvent> {
+    let mut out = Vec::new();
+    let mut rest = typed;
+    while let Some(c) = rest.chars().next() {
+        if c == '<'
+            && let Some(end) = rest.find('>')
+        {
+            out.push(KeyEvent::from(match &rest[1..end] {
+                "tab" => KeyCode::Tab,
+                "down" => KeyCode::Down,
+                "enter" => KeyCode::Enter,
+                "esc" => KeyCode::Esc,
+                other => panic!("no key named {other}"),
+            }));
+            rest = &rest[end + 1..];
+            continue;
+        }
+        out.push(KeyEvent::from(KeyCode::Char(c)));
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
 
 #[allow(clippy::too_many_lines)]
 fn cards() -> Vec<CardSet> {
@@ -1589,6 +1685,7 @@ fn cards() -> Vec<CardSet> {
             "A command permission in the composer's box: the command and why, every scope stated as what happens, and No with its note; one of three waiting.",
             second,
             false,
+            vec![],
         ),
         (
             "ask_edit",
@@ -1610,6 +1707,7 @@ fn cards() -> Vec<CardSet> {
                 ],
             ),
             false,
+            vec![],
         ),
         (
             "ask_tool",
@@ -1626,6 +1724,7 @@ fn cards() -> Vec<CardSet> {
                 ],
             ),
             false,
+            vec![],
         ),
         (
             "ask_codex_command",
@@ -1650,39 +1749,45 @@ fn cards() -> Vec<CardSet> {
                 ],
             ),
             false,
+            vec![],
         ),
         (
             "ask_question_single",
             "One pick-one question with the recommended option named and Something else.",
             card(AskBody::Question(vec![rollout.clone()]), vec![]),
             false,
+            vec![],
         ),
         (
             "ask_question_multi",
             "One multi-select question: square boxes before any pick.",
             card(AskBody::Question(vec![platforms.clone()]), vec![]),
             false,
+            vec![],
         ),
         (
             "ask_questions_steps",
             "Several questions: the header chips are the steps, the first open.",
             card(
-                AskBody::Question(vec![rollout, platforms, token.clone()]),
+                AskBody::Question(vec![rollout.clone(), platforms.clone(), token.clone()]),
                 vec![],
             ),
             false,
+            vec![],
         ),
         (
             "ask_question_previews",
             "A question with previews: the highlighted option's preview beside the options.",
             card(AskBody::Question(vec![layout]), vec![]),
             false,
+            vec![],
         ),
         (
             "ask_question_secret",
             "A question whose answer is secret: typed characters show as bullets.",
             card(AskBody::Question(vec![token]), vec![]),
             false,
+            vec![],
         ),
         (
             "ask_plan",
@@ -1705,6 +1810,73 @@ fn cards() -> Vec<CardSet> {
                 ],
             ),
             false,
+            vec![],
+        ),
+        (
+            "ask_question_note",
+            "A question's note being typed after Tab, under its options; Skip and Reply instead below.",
+            card(AskBody::Question(vec![rollout.clone()]), vec![]),
+            false,
+            keys("<down><tab>flip it on for the desk first"),
+        ),
+        (
+            "ask_question_skip",
+            "Skip highlighted: Enter leaves the question unanswered.",
+            card(AskBody::Question(vec![rollout.clone()]), vec![]),
+            false,
+            keys("<down><down><down>"),
+        ),
+        (
+            "ask_question_reply",
+            "Reply instead open and typed in: Enter sends the words in place of answers.",
+            card(AskBody::Question(vec![rollout.clone()]), vec![]),
+            false,
+            keys("<esc><enter>Neither yet, show me the cost first"),
+        ),
+        (
+            "ask_questions_review_skipped",
+            "The review after answering one question and skipping the next with a note on it: the skip reads skipped, and Send answers goes.",
+            card(
+                AskBody::Question(vec![rollout.clone(), platforms.clone()]),
+                vec![],
+            ),
+            false,
+            keys("<enter><tab>after the flag ships<tab><down><down><down><down><enter>"),
+        ),
+        (
+            "ask_question_terminal_claude",
+            "Terminal Claude's question: no note, no Skip, only Reply instead below the options.",
+            AskCard {
+                kind: wire::Kind::ClaudePty,
+                question_note: false,
+                question_skip: false,
+                ..card(AskBody::Question(vec![rollout.clone()]), vec![])
+            },
+            false,
+            vec![],
+        ),
+        (
+            "ask_plan_codex",
+            "Codex's plan to implement or keep planning with a note.",
+            AskCard {
+                kind: wire::Kind::Codex,
+                ..card(
+                    AskBody::Plan {
+                        plan: "## Plan\n\n1. Collapse the pairing failures into one error.".into(),
+                    },
+                    vec![
+                        choice(ChoiceOutcome::ApprovePlan {
+                            auto_accept_edits: false,
+                        }),
+                        Choice {
+                            takes_note: true,
+                            ..choice(ChoiceOutcome::SendBack)
+                        },
+                    ],
+                )
+            },
+            false,
+            vec![],
         ),
         (
             "ask_form",
@@ -1721,6 +1893,7 @@ fn cards() -> Vec<CardSet> {
                 ],
             ),
             false,
+            vec![],
         ),
         (
             "ask_link",
@@ -1737,6 +1910,7 @@ fn cards() -> Vec<CardSet> {
                 ],
             ),
             false,
+            vec![],
         ),
         (
             "ask_access",
@@ -1756,6 +1930,7 @@ fn cards() -> Vec<CardSet> {
                 ],
             ),
             false,
+            vec![],
         ),
         (
             "ask_unanswerable",
@@ -1767,24 +1942,28 @@ fn cards() -> Vec<CardSet> {
                 vec![],
             ),
             true,
+            vec![],
         ),
         (
             "ask_sending",
             "An answer on its way: the box says so and takes no second answer.",
             sending,
             false,
+            vec![],
         ),
         (
             "ask_rejected",
             "An answer the agent refused, with its reason.",
             rejected,
             false,
+            vec![],
         ),
         (
             "ask_not_confirmed",
             "An answer that was sent but never confirmed, with r to resend and d to discard.",
             not_confirmed,
             false,
+            vec![],
         ),
     ]
 }

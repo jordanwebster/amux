@@ -767,6 +767,7 @@ fn authored(kind: Kind) -> String {
                 allow_other: true,
                 ..Default::default()
             }],
+            ..Default::default()
         })),
         ..Default::default()
     };
@@ -1713,6 +1714,7 @@ fn each_row_says_what_its_state_calls_for() {
                 question: "Which environment?".into(),
                 ..Default::default()
             }],
+            ..Default::default()
         })),
         ..Default::default()
     };

@@ -819,7 +819,10 @@ impl State {
                     CodexAsk {
                         key: key.clone(),
                         item_key: String::new(),
-                        body: Some(codex_ask::Body::Question(QuestionAsk { questions })),
+                        body: Some(codex_ask::Body::Question(QuestionAsk {
+                            questions,
+                            provider_dialog: false,
+                        })),
                         decisions: Vec::new(),
                     },
                     AskMeta {

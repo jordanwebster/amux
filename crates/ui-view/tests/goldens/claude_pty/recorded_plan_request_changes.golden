@@ -18,17 +18,13 @@
   row    4 toolu_01Egc5HsizMsVn1xBhztAhiU Explore { verb: Search, subject: "select:ExitPlanMode", state: Succeeded }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 49 recorded 47: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_012mL17q3UZCtEJ343VAWHka
+  row    5 toolu_012mL17q3UZCtEJ343VAWHka Ask(Plan { plan: "# Context\n\nThe user asked to change README.md's only line from `CURRENT` to `UPDATED`. This is a trivial, explicitly-specified text change.\n\n# Plan\n\n- Edit `README.md`, replacing its sole line's content `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read README.md after the edit to confirm it contains `UPDATED` and not `CURRENT`.\n", ve…
   composer Send activity=Some(Running { key: "toolu_012mL17q3UZCtEJ343VAWHka" }) queue=[] outbox=[]
 ## 51 recorded 49: fact Hook hook_event_name=PermissionRequest
-  ask ask:1 -> "" 1/1 Open
-    choices ApprovePlan { auto_accept_edits: false }*, ApprovePlan { auto_accept_edits: true }, SendBack+note
-    body Plan { plan: "" }
-  composer Send activity=None queue=[] outbox=[]
-## 53 recorded 51: fact Transcript type=assistant uuid=bd52d0ae-efe1-451a-8f6d-64ff488a0802
-  row    5 toolu_012mL17q3UZCtEJ343VAWHka Ask(Plan { plan: "# Context\n\nThe user asked to change README.md's only line from `CURRENT` to `UPDATED`. This is a trivial, explicitly-specified text change.\n\n# Plan\n\n- Edit `README.md`, replacing its sole line's content `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read README.md after the edit to confirm it contains `UPDATED` and not `CURRENT`.\n", ve…
   ask ask:1 -> "toolu_012mL17q3UZCtEJ343VAWHka" 1/1 Open
     choices ApprovePlan { auto_accept_edits: false }*, ApprovePlan { auto_accept_edits: true }, SendBack+note
     body Plan { plan: "# Context\n\nThe user asked to change README.md's only line from `CURRENT` to `UPDATED`. This is a trivial, explicitly-specified text change.\n\n# Plan\n\n- Edit `README.md`, replacing its sole line's content `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read README.md after the edit to confirm it contains `UPDATED` and not `CURRENT`.\n" }
+  composer Send activity=None queue=[] outbox=[]
 ## 54 recorded 52: fact Transcript type=user uuid=8c2b6404-2e89-4148-a63b-7a535ea2e414
   row    5 toolu_012mL17q3UZCtEJ343VAWHka Ask(Plan { plan: "# Context\n\nThe user asked to change README.md's only line from `CURRENT` to `UPDATED`. This is a trivial, explicitly-specified text change.\n\n# Plan\n\n- Edit `README.md`, replacing its sole line's content `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read README.md after the edit to confirm it contains `UPDATED` and not `CURRENT`.\n", ve…
   ask none

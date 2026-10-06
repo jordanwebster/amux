@@ -187,9 +187,18 @@ pub fn row_lines(
             RowKind::Ask(AskRow::Questions {
                 questions,
                 answers,
+                reply,
                 resolution,
                 ..
-            }) => questions_step(&mut drawn, questions, answers, *resolution, width, theme),
+            }) => questions_step(
+                &mut drawn,
+                questions,
+                answers,
+                reply.as_deref(),
+                *resolution,
+                width,
+                theme,
+            ),
             RowKind::Ask(AskRow::Form {
                 server,
                 fields,
@@ -564,27 +573,6 @@ pub fn pending_prompt(
     drawn.lines
 }
 
-/// A plan waiting on the person whose own row has not arrived, drawn from
-/// the ask where that row will stand: terminal Claude writes the plan's
-/// call to its transcript only once the plan is decided.
-pub fn waiting_plan(id: &Key, plan: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    let mut drawn = Drawn::default();
-    plan_lines(
-        &mut drawn,
-        id,
-        &Plan {
-            text: plan,
-            verdict: PlanVerdict::Open,
-            note: None,
-            writing: false,
-        },
-        false,
-        width,
-        theme,
-    );
-    drawn.lines
-}
-
 /// A turn's prompt pinned under the header while that turn owns the top of
 /// the feed: one tinted line of the prompt, cut with "…" (its padding
 /// lines are the in-feed block's, not the pin's).
@@ -696,8 +684,10 @@ fn plan_title(text: &str, writing: bool) -> Option<(Option<String>, &str)> {
     };
     let heading = first.trim_start();
     if heading.starts_with('#') {
+        // A heading that only says "Plan" repeats the landmark's own word.
         let title = heading.trim_start_matches('#').trim();
-        Some(((!title.is_empty()).then(|| title.to_owned()), rest))
+        let named = !title.is_empty() && !title.eq_ignore_ascii_case("plan");
+        Some((named.then(|| title.to_owned()), rest))
     } else {
         Some((None, text))
     }
@@ -784,29 +774,26 @@ fn plan_lines(
 }
 
 /// Questions the agent asked, once the box is done with them: a step that
-/// says what happened ("Answered 2 questions") and a faint line per
-/// question with its answer. While they are open the box is the ask, and
-/// the feed draws nothing for them.
+/// says what happened ("Answered 2 of 3 questions", "Replied instead of a
+/// question") and a faint line per question with its answer, "skipped"
+/// where it was left, and the person's note on it. A reply instead quotes
+/// the words and lists only what was answered before them. While they are
+/// open the box is the ask, and the feed draws nothing for them.
 fn questions_step(
     drawn: &mut Drawn,
     questions: &[QuestionView],
     answers: &[AnswerView],
+    reply: Option<&str>,
     resolution: Resolution,
     width: usize,
     theme: Theme,
 ) {
-    if matches!(resolution, Resolution::Open) {
-        return;
-    }
     let count = if questions.len() == 1 {
         "a question".to_owned()
     } else {
         format!("{} questions", questions.len())
     };
-    let answered = answers
-        .iter()
-        .filter(|answer| !answer_words(answer).is_empty())
-        .count();
+    let answered = answers.iter().filter(|answer| !answer.skipped()).count();
     let words = match resolution {
         Resolution::Open => return,
         Resolution::Answered if answered == 0 => format!("Skipped {count}"),
@@ -827,27 +814,54 @@ fn questions_step(
         line
     };
     drawn.line(railed(words, theme.muted()));
-    if matches!(resolution, Resolution::Answered) {
-        // Each question as asked, faint, then "→ answer" under it.
-        let room = width.saturating_sub(WORDS + 2).max(1);
+    let room = width.saturating_sub(WORDS + 2).max(1);
+    let replied = matches!(resolution, Resolution::Replied);
+    if let Some(reply) = reply.filter(|_| replied) {
+        for part in text::wrap(&format!("\u{201c}{}\u{201d}", reply.trim()), room) {
+            drawn.line(railed(part, theme.text()));
+        }
+    }
+    if matches!(resolution, Resolution::Answered) || replied {
+        // Each question as asked, faint, then "→ answer" under it and the
+        // note under that. A reply lists only what was answered before it.
         for (at, question) in questions.iter().enumerate() {
+            let answer = answers.get(at);
+            if replied && answer.is_none_or(AnswerView::skipped) {
+                continue;
+            }
             for part in text::wrap(&question.question, room) {
                 drawn.line(railed(part, theme.faint()));
             }
-            let answer = answers.get(at).map(answer_words).unwrap_or_default();
-            let (answer, ink) = if answer.is_empty() {
-                ("not answered".to_owned(), theme.faint())
+            let words = answer.map(answer_words).unwrap_or_default();
+            let (words, ink) = if words.is_empty() {
+                ("skipped".to_owned(), theme.faint())
             } else {
-                (answer, theme.text())
+                (words, theme.text())
             };
-            for (i, part) in text::wrap(&answer, room.saturating_sub(4).max(1))
-                .into_iter()
-                .enumerate()
+            let under = |drawn: &mut Drawn, words: &str, ink: Style| {
+                for (i, part) in text::wrap(words, room.saturating_sub(4).max(1))
+                    .into_iter()
+                    .enumerate()
+                {
+                    let lead = if i == 0 { "  → " } else { "    " };
+                    let mut line = railed(lead.to_owned(), theme.faint());
+                    push(&mut line, part, ink, width.saturating_sub(2));
+                    drawn.line(line);
+                }
+            };
+            under(drawn, &words, ink);
+            if let Some(note) = answer
+                .and_then(|answer| answer.note.as_deref())
+                .filter(|note| !note.trim().is_empty())
             {
-                let lead = if i == 0 { "  → " } else { "    " };
-                let mut line = railed(lead.to_owned(), theme.faint());
-                push(&mut line, part, ink, width.saturating_sub(2));
-                drawn.line(line);
+                for part in text::wrap(
+                    &format!("\u{201c}{}\u{201d}", note.trim()),
+                    room.saturating_sub(4).max(1),
+                ) {
+                    let mut line = railed("    ".to_owned(), theme.faint());
+                    push(&mut line, part, theme.muted(), width.saturating_sub(2));
+                    drawn.line(line);
+                }
             }
         }
     }
@@ -1129,8 +1143,10 @@ fn decided(meta: String, row: &Row, verb: &str) -> String {
         .map(str::to_owned)
         .collect();
     match decision.outcome {
-        DecisionView::Allowed if decision.granted.is_some() => parts.push("always allowed".into()),
-        DecisionView::Allowed => parts.push("allowed".into()),
+        DecisionView::Allowed => parts.push(match &decision.granted {
+            Some(granted) => super::ask::grant_words(granted),
+            None => "allowed".into(),
+        }),
         DecisionView::AutoApproved => parts.push("auto-approved".into()),
         DecisionView::Denied if verb == "Denied" => {}
         DecisionView::Denied => parts.push("denied".into()),

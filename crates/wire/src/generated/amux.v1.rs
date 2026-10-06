@@ -1269,6 +1269,10 @@ impl ::prost::Name for ScopeChoice {
 pub struct QuestionAsk {
     #[prost(message, repeated, tag = "1")]
     pub questions: ::prost::alloc::vec::Vec<Question>,
+    /// The provider's own dialog rather than a question the agent asked in a
+    /// turn (Claude's folder trust): there is no turn to reply into instead.
+    #[prost(bool, tag = "2")]
+    pub provider_dialog: bool,
 }
 impl ::prost::Name for QuestionAsk {
     const NAME: &'static str = "QuestionAsk";

@@ -519,14 +519,13 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     let ask = card(chat);
     assert!(ask["body"]["Question"].is_array(), "{ask}");
     let ask_key = c(ask["key"].as_str().unwrap());
-    let picks = c(&json!([{"Options": [1]}]).to_string());
+    let picks = c(&json!([{"pick": {"Options": [1]}}]).to_string());
     // SAFETY: the chat is open; the strings live for the call.
     unsafe {
         amux_session_answer_questions(
             chat,
             ask_key.as_ptr(),
             picks.as_ptr(),
-            std::ptr::null(),
             on_result,
             phone.context(),
         )

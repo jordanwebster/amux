@@ -2078,6 +2078,8 @@ fn a_paste_into_a_secret_answer_shows_as_bullets() {
         body: AskBody::Question(vec![token]),
         choices: vec![],
         question_note: true,
+        question_skip: true,
+        question_reply: true,
         state: CardState::Open,
     };
     let mut ask = crate::chat::ask::AskUi::default();
@@ -3247,4 +3249,179 @@ fn scrolled_back_offers_the_way_to_the_newest() {
         theme(),
     );
     assert_eq!(view.anchor, crate::chat::layout::Anchor::Bottom);
+}
+
+/// Two questions as headless Claude asks them: pick one, then pick several.
+fn two_questions(kind: Kind) -> ui_view::AskCard {
+    let option = |label: &str| ui_view::OptionView {
+        label: label.into(),
+        description: String::new(),
+        preview: String::new(),
+        recommended: false,
+    };
+    let question = |header: &str, multi_select| ui_view::QuestionView {
+        header: header.into(),
+        question: format!("{header}?"),
+        multi_select,
+        options: vec![option("one"), option("two"), option("three")],
+        allow_other: true,
+        secret: false,
+    };
+    ui_view::AskCard {
+        kind,
+        key: "ask".into(),
+        item_key: "k".into(),
+        position: 1,
+        count: 1,
+        body: AskBody::Question(vec![
+            question("Rollout", false),
+            question("Platforms", true),
+        ]),
+        choices: vec![],
+        question_note: kind != Kind::ClaudePty,
+        question_skip: kind != Kind::ClaudePty,
+        question_reply: true,
+        state: CardState::Open,
+    }
+}
+
+/// Presses `keys` on the card's box; the answer the last one sent.
+fn pressed(card: &ui_view::AskCard, keys: &[KeyEvent]) -> Option<wire::ClaudeAnswer> {
+    let mut ask = crate::chat::ask::AskUi::default();
+    ask.sync(card);
+    let mut sent = None;
+    for key in keys {
+        if let crate::chat::ask::AskAction::Answer(input) = ask.box_key(card, *key) {
+            sent = Some(input);
+        }
+    }
+    let input = sent?;
+    let body = match input.of {
+        Some(wire::input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(wire::claude_sdk_input::Of::Answer(answer)),
+        }))
+        | Some(wire::input::Of::ClaudePty(wire::ClaudePtyInput {
+            of: Some(wire::claude_pty_input::Of::Answer(answer)),
+        })) => answer.body,
+        other => panic!("{other:?}"),
+    };
+    Some(wire::ClaudeAnswer::decode(body.as_slice()).unwrap())
+}
+
+fn chars(words: &str) -> Vec<KeyEvent> {
+    words.chars().map(|c| key(KeyCode::Char(c))).collect()
+}
+
+#[test]
+fn a_question_is_noted_with_tab_and_the_next_skipped() {
+    let card = two_questions(Kind::ClaudeSdk);
+    // Tab opens the first question's note; Enter answers with the
+    // highlighted option and the note. On the second, Esc then ↑ reaches
+    // Skip, which leaves it and goes to the review; Enter sends.
+    let mut keys = vec![key(KeyCode::Down), key(KeyCode::Tab)];
+    keys.extend(chars("behind the flag"));
+    keys.extend([
+        key(KeyCode::Enter),
+        key(KeyCode::Esc),
+        key(KeyCode::Up),
+        key(KeyCode::Enter),
+        key(KeyCode::Enter),
+    ]);
+    let answer = pressed(&card, &keys).expect("the review sends the answers");
+    let Some(wire::claude_answer::Of::Question(answers)) = answer.of else {
+        panic!("{answer:?}");
+    };
+    assert_eq!(
+        answers.answers,
+        vec![
+            wire::QuestionResponse {
+                selected: vec![1],
+                other: None,
+                note: Some("behind the flag".into()),
+            },
+            wire::QuestionResponse::default(),
+        ]
+    );
+}
+
+#[test]
+fn a_question_is_replied_to_instead_with_what_was_answered_so_far() {
+    let card = two_questions(Kind::ClaudeSdk);
+    // The first answered; on the second, Esc points at Reply instead and
+    // Enter opens it to type the words.
+    let mut keys = vec![key(KeyCode::Enter), key(KeyCode::Esc), key(KeyCode::Enter)];
+    keys.extend(chars("let's talk first"));
+    keys.push(key(KeyCode::Enter));
+    let answer = pressed(&card, &keys).expect("the reply is sent");
+    let Some(wire::claude_answer::Of::Reply(reply)) = answer.of else {
+        panic!("{answer:?}");
+    };
+    assert_eq!(reply.text, "let's talk first");
+    assert_eq!(
+        reply.answers_so_far,
+        vec![
+            wire::QuestionResponse {
+                selected: vec![0],
+                ..Default::default()
+            },
+            wire::QuestionResponse::default(),
+        ]
+    );
+}
+
+#[test]
+fn terminal_claude_questions_are_answered_whole() {
+    // Its menu takes no note and no skip: Tab moves on, there is no Skip
+    // row, and the review will not send with a question open.
+    let card = two_questions(Kind::ClaudePty);
+    let keys = [key(KeyCode::Tab), key(KeyCode::Tab), key(KeyCode::Enter)];
+    assert_eq!(pressed(&card, &keys), None);
+    let mut ask = crate::chat::ask::AskUi::default();
+    ask.sync(&card);
+    let screen: String = ask
+        .box_lines(&card, 100, theme())
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
+        .collect();
+    assert!(!screen.contains("Skip"), "{screen}");
+    assert!(screen.contains("Reply instead"), "{screen}");
+}
+
+#[test]
+fn a_plan_reads_under_its_heading_and_folds_once_decided() {
+    // For each kind, the plan fixture drawn while its last plan waits on
+    // the person (its text in the feed, the decision in the composer's
+    // box) and once it is decided (folded to its outcome).
+    for (kind, name) in [
+        (Kind::ClaudeSdk, "claude_sdk"),
+        (Kind::ClaudePty, "claude_pty"),
+        (Kind::Codex, "codex"),
+    ] {
+        let frames = fixtures::frames(kind, "plans");
+        let plan_card = |state: &SessionState| {
+            ask_card(state).filter(|card| {
+                matches!(card.body, AskBody::Plan { ref plan } if !plan.is_empty())
+                    && card.state == CardState::Open
+            })
+        };
+        // The fixture's last plan: an earlier one may have been dismissed.
+        let open = frames
+            .iter()
+            .rposition(|(_, state, _)| plan_card(state).is_some())
+            .unwrap_or_else(|| panic!("{name}: no plan waits on the person"));
+        let decided = frames[open..]
+            .iter()
+            .position(|(_, state, _)| ask_card(state).is_none())
+            .map(|after| open + after)
+            .unwrap_or_else(|| panic!("{name}: the plan is never decided"));
+        for (at, when) in [(open, "open"), (decided, "decided")] {
+            let (_, state, now) = &frames[at];
+            let mut view = ChatView::new(b"agent".to_vec(), *now, false);
+            let (buffer, _) = draw(&mut view, state, *now, W, H, theme());
+            let screen = text(&buffer);
+            assert!(screen.contains("Plan"), "{name} {when}:\n{screen}");
+            fixtures::assert_frame_golden(&format!("frame_plan_{name}_{when}"), &buffer, theme());
+        }
+    }
 }

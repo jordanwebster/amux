@@ -12,8 +12,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde_json::{Map, Value};
 use ui_view::{
-    AskBody, AskCard, CardState, Choice, ChoiceOutcome, Pick, QuestionView, Scope, answer_input,
-    question_answer, with_form_content,
+    AskBody, AskCard, CardState, Choice, ChoiceOutcome, PermissionGrant, Pick, QuestionResponse,
+    QuestionView, Scope, answer_input, question_answer, reply_answer, with_form_content,
 };
 
 use crate::editor::Editor;
@@ -39,11 +39,30 @@ pub enum AskAction {
 struct QuestionPick {
     selected: Vec<u32>,
     other: Option<String>,
+    /// Left unanswered on purpose: the person chose Skip.
+    skipped: bool,
+    /// The person's note on this question.
+    note: String,
 }
 
 impl QuestionPick {
     fn answered(&self) -> bool {
         !self.selected.is_empty() || self.other.as_ref().is_some_and(|o| !o.is_empty())
+    }
+
+    /// Answered or skipped: nothing more to ask of it.
+    fn done(&self) -> bool {
+        self.answered() || self.skipped
+    }
+
+    fn response(&self) -> QuestionResponse {
+        QuestionResponse {
+            pick: match self.other.as_ref().filter(|other| !other.is_empty()) {
+                Some(other) => Pick::Other(other.clone()),
+                None => Pick::Options(self.selected.clone()),
+            },
+            note: self.note.trim().to_owned(),
+        }
     }
 }
 
@@ -102,15 +121,63 @@ pub struct AskUi {
     /// Per question, what was typed in its field but not answered with:
     /// kept when Tab moves on, so coming back shows it.
     drafts: Vec<String>,
+    /// The current question's note is open for typing, in `note`.
+    annotating: bool,
+    /// "Reply instead" is open for typing, in `reply`.
+    replying: bool,
+    reply: Editor,
 }
 
-pub(crate) fn scope_words(scope: &Scope) -> String {
+fn scope_words(scope: &Scope) -> String {
     match scope {
         Scope::Session => "for this session".into(),
         Scope::Project => "in this project".into(),
         Scope::ProjectShared => "in this project, for everyone".into(),
         Scope::User => "in every project".into(),
         Scope::Other(other) => other.clone(),
+    }
+}
+
+/// What a decided permission allowed from then on, in words: "always
+/// allowed cargo test in this project", "allowed commands starting with
+/// curl".
+pub(crate) fn grant_words(granted: &PermissionGrant) -> String {
+    match granted {
+        PermissionGrant::Claude {
+            subjects,
+            directories,
+            mode,
+            mode_name,
+            saved_to,
+        } => {
+            if !subjects.is_empty() {
+                format!(
+                    "always allowed {} {}",
+                    subjects.join(", "),
+                    scope_words(saved_to)
+                )
+            } else if !directories.is_empty() {
+                format!(
+                    "allowed access to {} {}",
+                    directories.join(", "),
+                    scope_words(saved_to)
+                )
+            } else if !mode.is_empty() {
+                format!("switched to {}", crate::words::named(mode_name, mode))
+            } else {
+                format!("always allowed {}", scope_words(saved_to))
+            }
+        }
+        PermissionGrant::Session => "allowed for this session".into(),
+        PermissionGrant::CommandPrefix { words } => {
+            format!("allowed commands starting with {}", words.join(" "))
+        }
+        PermissionGrant::NetworkHosts { hosts } if hosts.is_empty() => {
+            "allowed network access".into()
+        }
+        PermissionGrant::NetworkHosts { hosts } => {
+            format!("allowed network access to {}", hosts.join(", "))
+        }
     }
 }
 
@@ -382,8 +449,11 @@ fn box_choices(card: &AskCard) -> Vec<usize> {
 
 /// A choice in the box, worded as what happens: "Yes", "Yes, and always
 /// allow cargo test in this project", "No, and stop".
-fn box_label(choice: &Choice) -> String {
+fn box_label(choice: &Choice, kind: wire::Kind) -> String {
     match &choice.outcome {
+        ChoiceOutcome::ApprovePlan {
+            auto_accept_edits: false,
+        } if kind == wire::Kind::Codex => "Yes, implement this plan".to_owned(),
         ChoiceOutcome::AllowOnce => "Yes".to_owned(),
         ChoiceOutcome::AllowForSession => "Yes, and don't ask again this session".to_owned(),
         ChoiceOutcome::AllowAlways {
@@ -456,24 +526,30 @@ fn asking_verb(card: &AskCard) -> &'static str {
 impl AskUi {
     /// Whether the boxed ask's note holds something, for Ctrl+C.
     pub fn box_note_text(&self, card: &AskCard) -> bool {
-        self.in_box_note(card) && !(self.note.is_empty() && self.other.is_empty())
+        self.in_box_note(card)
+            && !(self.note.is_empty() && self.other.is_empty() && self.reply.is_empty())
     }
 
     /// Clears the boxed ask's note, as a kill.
     pub fn kill_box_note(&mut self) -> bool {
         let note = self.note.kill_all();
         let other = self.other.kill_all();
-        note || other
+        let reply = self.reply.kill_all();
+        note || other || reply
     }
 
     /// A paste into the boxed ask's note, when it has the keys.
     pub fn paste_box_note(&mut self, card: &AskCard, text: &str) {
-        if self.in_box_note(card) {
-            if matches!(card.body, AskBody::Question(_) | AskBody::Form { .. }) {
-                self.other.insert_str(text);
-            } else {
-                self.note.insert_str(text);
-            }
+        if !self.in_box_note(card) {
+            return;
+        }
+        let questions = matches!(card.body, AskBody::Question(_) | AskBody::Form { .. });
+        if self.replying {
+            self.reply.insert_str(text);
+        } else if questions && !self.annotating {
+            self.other.insert_str(text);
+        } else {
+            self.note.insert_str(text);
         }
     }
 
@@ -497,7 +573,9 @@ impl AskUi {
     pub fn in_box_note(&self, card: &AskCard) -> bool {
         matches!(card.state, CardState::Open | CardState::Rejected(_))
             && match &card.body {
-                AskBody::Question(questions) => self.on_something_else(questions),
+                AskBody::Question(questions) => {
+                    self.annotating || self.replying || self.on_something_else(questions)
+                }
                 AskBody::Form { .. } => self.on_something_else(&form_questions(&self.fields)),
                 _ => self.box_note(card),
             }
@@ -927,7 +1005,7 @@ impl AskUi {
             );
             push(&mut row, format!("{}. ", at + 1), ink, width);
             let deny = refuses(&choice.outcome);
-            let said = box_label(choice);
+            let said = box_label(choice, card.kind);
             let typed = self.note.text();
             if deny && choice.takes_note && (self.noting || !typed.is_empty()) {
                 // "No: <note>", the note as typed.
@@ -986,22 +1064,26 @@ fn text_tail(words: &str, max: usize) -> String {
 }
 
 /// A question's rows in the box: its options, "Something else" when it
-/// takes one, then the way out when the box has one.
+/// takes one, then Skip and the way out when the box has them.
 struct QuestionRows {
     options: usize,
     other: Option<usize>,
+    skip: Option<usize>,
     out: Option<usize>,
 }
 
 impl QuestionRows {
-    fn of(question: &QuestionView, way_out: bool) -> QuestionRows {
+    fn of(question: &QuestionView, card: &AskCard) -> QuestionRows {
         let options = question.options.len();
         let other = question.allow_other.then_some(options);
         let numbered = options + usize::from(question.allow_other);
+        let skip = skips(card).then_some(numbered);
+        let out = way_out(card).then_some(numbered + usize::from(skip.is_some()));
         QuestionRows {
             options,
             other,
-            out: way_out.then_some(numbered),
+            skip,
+            out,
         }
     }
 
@@ -1012,24 +1094,39 @@ impl QuestionRows {
 
     /// The last row the highlight can reach.
     fn last(&self) -> usize {
-        self.out.unwrap_or(self.numbered().saturating_sub(1))
+        self.out
+            .or(self.skip)
+            .unwrap_or(self.numbered().saturating_sub(1))
     }
 }
 
 /// Whether a boxed question or form offers a way out besides answering: a
-/// tool server's form can be declined; an agent's questions only where its
-/// agent takes a decline.
+/// tool server's form can be declined; an agent's questions replied to in
+/// the person's own words.
 fn way_out(card: &AskCard) -> bool {
     match card.body {
         AskBody::Form { .. } => true,
-        AskBody::Question(_) => crate::pending::declines_questions(card.kind),
+        AskBody::Question(_) => card.question_reply,
         _ => false,
     }
+}
+
+/// Whether a boxed question can be left unanswered.
+fn skips(card: &AskCard) -> bool {
+    matches!(card.body, AskBody::Question(_)) && card.question_skip
+}
+
+/// Whether a boxed question takes a note on each question.
+fn takes_notes(card: &AskCard) -> bool {
+    matches!(card.body, AskBody::Question(_)) && card.question_note
 }
 
 /// "The shell", "The fleet, The chat", "\"tmux style\"": an answer in words,
 /// empty when the question was skipped.
 fn pick_words(question: &QuestionView, pick: &QuestionPick) -> String {
+    if !pick.answered() {
+        return String::new();
+    }
     if question.secret && pick.answered() {
         return "answered (hidden)".to_owned();
     }
@@ -1063,26 +1160,48 @@ impl AskUi {
     fn on_other_row(&self, questions: &[QuestionView]) -> bool {
         !self.in_review(questions)
             && questions.get(self.step).is_some_and(|question| {
-                QuestionRows::of(question, false).other == Some(self.selected)
+                question.allow_other && question.options.len() == self.selected
             })
     }
 
     /// "Something else" is open as a field and has the keys: opened by Tab,
     /// or by Enter while empty, and closed by Esc, as a permission's note.
     fn on_something_else(&self, questions: &[QuestionView]) -> bool {
-        self.noting && self.on_other_row(questions)
+        self.noting && !self.annotating && !self.replying && self.on_other_row(questions)
     }
 
-    fn question_picks(&self) -> Vec<Pick> {
+    /// Each question's response, a skip where it was not answered, with
+    /// the note being typed on the current one.
+    fn responses(&self) -> Vec<QuestionResponse> {
         self.picks
             .iter()
-            .map(
-                |pick| match pick.other.as_ref().filter(|other| !other.is_empty()) {
-                    Some(other) => Pick::Other(other.clone()),
-                    None => Pick::Options(pick.selected.clone()),
-                },
-            )
+            .enumerate()
+            .map(|(at, pick)| {
+                let mut response = if pick.answered() {
+                    pick.response()
+                } else {
+                    QuestionResponse {
+                        note: pick.note.trim().to_owned(),
+                        ..QuestionResponse::skip()
+                    }
+                };
+                if at == self.step && !self.in_review_count(self.picks.len()) {
+                    response.note = self.note.text().trim().to_owned();
+                }
+                response
+            })
             .collect()
+    }
+
+    fn in_review_count(&self, count: usize) -> bool {
+        count > 1 && self.step >= count
+    }
+
+    /// Keeps the current question's note with it, before moving off it.
+    fn stash_note(&mut self) {
+        if let Some(pick) = self.picks.get_mut(self.step) {
+            pick.note = self.note.text().to_owned();
+        }
     }
 
     /// To question `step`, or to the review past the last. The highlight
@@ -1094,7 +1213,11 @@ impl AskUi {
         self.drafts.resize(count, String::new());
         if self.step < count {
             self.drafts[self.step] = self.other.text().to_owned();
+            self.stash_note();
         }
+        self.annotating = false;
+        self.replying = false;
+        self.note = Editor::default();
         if step >= count && count > 1 {
             self.step = count;
             self.selected = count;
@@ -1102,12 +1225,13 @@ impl AskUi {
         }
         self.step = step.min(count.saturating_sub(1));
         let pick = &self.picks[self.step];
-        let rows = QuestionRows::of(&questions[self.step], false);
+        let other_row = questions[self.step].options.len();
         let draft = self.drafts[self.step].clone();
+        self.note.insert_str(&pick.note);
         self.selected = match (&pick.other, pick.selected.first()) {
-            (Some(other), _) if !other.is_empty() => rows.other.unwrap_or(0),
+            (Some(other), _) if !other.is_empty() => other_row,
             (_, Some(first)) => *first as usize,
-            _ if !draft.is_empty() => rows.other.unwrap_or(0),
+            _ if !draft.is_empty() => other_row,
             _ => 0,
         };
         // A tab that is only a text field has it live from the start.
@@ -1131,7 +1255,7 @@ impl AskUi {
         }
         let next = (1..count)
             .map(|ahead| (self.step + ahead) % count)
-            .find(|at| !self.picks[*at].answered());
+            .find(|at| !self.picks[*at].done());
         self.question_goto(questions, next.unwrap_or(count));
         AskAction::None
     }
@@ -1156,7 +1280,7 @@ impl AskUi {
     fn missing(&self, card: &AskCard) -> Option<usize> {
         match card.body {
             AskBody::Form { .. } => self.missing_field(),
-            AskBody::Question(_) if !crate::pending::skips_questions(card.kind) => {
+            AskBody::Question(_) if !card.question_skip => {
                 self.picks.iter().position(|pick| !pick.answered())
             }
             _ => None,
@@ -1165,7 +1289,20 @@ impl AskUi {
 
     /// Sends the answers, a skipped question with none.
     fn send_boxed_questions(&mut self, card: &AskCard) -> AskAction {
-        let answer = question_answer(card, &self.question_picks(), "");
+        let answer = question_answer(card, &self.responses());
+        match answer_input(card, &answer, "") {
+            Some(input) => AskAction::Answer(Box::new(input)),
+            None => AskAction::None,
+        }
+    }
+
+    /// Sends the person's own words instead, with what was answered so far.
+    fn send_reply(&mut self, card: &AskCard) -> AskAction {
+        let words = self.reply.text().trim().to_owned();
+        if words.is_empty() {
+            return AskAction::None;
+        }
+        let answer = reply_answer(card, &words, &self.responses());
         match answer_input(card, &answer, "") {
             Some(input) => AskAction::Answer(Box::new(input)),
             None => AskAction::None,
@@ -1183,16 +1320,15 @@ impl AskUi {
         confirm: bool,
     ) -> AskAction {
         let question = &questions[self.step];
-        let rows = QuestionRows::of(question, way_out(card));
+        let rows = QuestionRows::of(question, card);
         self.selected = at;
         if at < rows.options {
             let option = at as u32;
             let pick = &mut self.picks[self.step];
+            pick.skipped = false;
             if !question.multi_select {
-                *pick = QuestionPick {
-                    selected: vec![option],
-                    other: None,
-                };
+                pick.selected = vec![option];
+                pick.other = None;
                 return self.question_answered(card, questions);
             }
             if confirm {
@@ -1225,16 +1361,32 @@ impl AskUi {
                 return AskAction::None;
             }
             if confirm && !typed.is_empty() {
-                self.picks[self.step] = QuestionPick {
-                    selected: vec![],
-                    other: Some(typed),
-                };
+                let pick = &mut self.picks[self.step];
+                pick.selected.clear();
+                pick.other = Some(typed);
+                pick.skipped = false;
                 return self.question_answered(card, questions);
             }
             return AskAction::None;
         }
+        if rows.skip == Some(at) {
+            let pick = &mut self.picks[self.step];
+            pick.selected.clear();
+            pick.other = None;
+            pick.skipped = true;
+            self.other = Editor::default();
+            if let Some(draft) = self.drafts.get_mut(self.step) {
+                draft.clear();
+            }
+            return self.question_answered(card, questions);
+        }
         if rows.out == Some(at) {
-            return Self::choose(card, &ChoiceOutcome::Decline);
+            if matches!(card.body, AskBody::Form { .. }) {
+                return Self::choose(card, &ChoiceOutcome::Decline);
+            }
+            // "Reply instead" opens to type the words; Enter there sends.
+            self.replying = true;
+            self.annotating = false;
         }
         AskAction::None
     }
@@ -1253,9 +1405,49 @@ impl AskUi {
         let count = questions.len();
         let several = count > 1;
         let enter = key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT);
-        // Tab and Shift+Tab move between tabs from anywhere, a field's
-        // text included, skipping what is not answered.
+        let notes = takes_notes(card) && !self.in_review(questions);
+        if self.replying {
+            match key.code {
+                _ if enter => return self.send_reply(card),
+                KeyCode::Esc => {
+                    self.reply = Editor::default();
+                    self.replying = false;
+                }
+                _ => {
+                    self.reply.key(key);
+                }
+            }
+            return AskAction::None;
+        }
+        if self.annotating {
+            // The note is the question's: Enter answers with the highlighted
+            // row, Tab keeps it and goes back to the rows, Esc clears it.
+            match key.code {
+                _ if enter => {
+                    self.annotating = false;
+                    self.stash_note();
+                    return self.question_row(card, questions, self.selected, true);
+                }
+                KeyCode::Tab => self.annotating = false,
+                KeyCode::Esc => {
+                    self.note = Editor::default();
+                    self.annotating = false;
+                    self.stash_note();
+                }
+                _ => {
+                    self.note.key(key);
+                }
+            }
+            return AskAction::None;
+        }
+        // Tab opens the question's note where the agent takes one, from
+        // anywhere, a field's text included; otherwise Tab and Shift+Tab
+        // move between tabs.
         match key.code {
+            KeyCode::Tab if notes => {
+                self.annotating = true;
+                return AskAction::None;
+            }
             KeyCode::Tab if several => {
                 self.question_goto(questions, (self.step + 1).min(count));
                 return AskAction::None;
@@ -1280,7 +1472,7 @@ impl AskUi {
             return AskAction::None;
         }
         let question = &questions[self.step];
-        let rows = QuestionRows::of(question, way_out(card));
+        let rows = QuestionRows::of(question, card);
         let last = rows.last();
         // A tab that is only a text field has it live; ↓ steps out to the
         // way out and ↑ back in.
@@ -1297,13 +1489,13 @@ impl AskUi {
                     self.invalid = false;
                     if !text_only {
                         self.noting = false;
-                    } else if empty && let Some(out) = rows.out {
+                    } else if empty && let Some(out) = rows.out.or(rows.skip) {
                         // An empty live field: Esc points at the way out.
                         self.noting = false;
                         self.selected = out;
                     }
                 }
-                KeyCode::Down if text_only && rows.out.is_some() => {
+                KeyCode::Down if text_only && (rows.out.or(rows.skip)).is_some() => {
                     self.noting = false;
                     self.selected = last;
                 }
@@ -1340,7 +1532,7 @@ impl AskUi {
             }
             // Esc only points at the way out; Enter takes it.
             KeyCode::Esc => {
-                if let Some(out) = rows.out {
+                if let Some(out) = rows.out.or(rows.skip) {
                     self.selected = out;
                 }
             }
@@ -1421,6 +1613,12 @@ impl AskUi {
         }
         let several = questions.len() > 1;
         let tabs = if several { " · ←/→ questions" } else { "" };
+        if self.replying {
+            return Some("enter send · esc clear · ctrl+x stop".to_owned());
+        }
+        if self.annotating {
+            return Some("enter choose · tab done · esc clear · ctrl+x stop".to_owned());
+        }
         if self.in_review(questions) {
             if let Some(at) = self.missing(card) {
                 let name = question_name(&questions[at], at);
@@ -1438,7 +1636,13 @@ impl AskUi {
                 (false, true) => "enter submit",
                 (false, false) => "enter send",
             };
-            let tab = if several { " · tab next" } else { "" };
+            let tab = if takes_notes(card) {
+                " · tab note"
+            } else if several {
+                " · tab next"
+            } else {
+                ""
+            };
             return Some(format!("{enter}{tab} · esc clear · ctrl+x stop"));
         }
         if self.on_other_row(questions) {
@@ -1450,10 +1654,25 @@ impl AskUi {
             };
             return Some(format!("{enter}{tabs} · ctrl+x stop · ctrl+{leader} more"));
         }
-        if QuestionRows::of(&questions[self.step], way_out(card)).out == Some(self.selected) {
-            let enter = if form { "enter decline" } else { "enter reply" };
+        let rows = QuestionRows::of(&questions[self.step], card);
+        if rows.skip == Some(self.selected) {
+            return Some(format!(
+                "enter skip{tabs} · ctrl+x stop · ctrl+{leader} more"
+            ));
+        }
+        if rows.out == Some(self.selected) {
+            let enter = if form {
+                "enter decline"
+            } else {
+                "enter to type"
+            };
             return Some(format!("{enter}{tabs} · ctrl+x stop · ctrl+{leader} more"));
         }
+        let note = if takes_notes(card) {
+            " · tab note"
+        } else {
+            ""
+        };
         // What Enter does next: send a lone question, or move on to the next
         // unanswered one, or to the review when none is left.
         let others_open =
@@ -1467,10 +1686,12 @@ impl AskUi {
         };
         if questions[self.step].multi_select {
             // Four at most: the stop stays, the leader goes.
-            Some(format!("space select · {enter}{tabs} · ctrl+x stop"))
+            Some(format!("space select · {enter}{tabs}{note} · ctrl+x stop"))
+        } else if several && !note.is_empty() {
+            Some(format!("enter choose{tabs}{note} · ctrl+x stop"))
         } else {
             Some(format!(
-                "enter choose{tabs} · ctrl+x stop · ctrl+{leader} more"
+                "enter choose{tabs}{note} · ctrl+x stop · ctrl+{leader} more"
             ))
         }
     }
@@ -1612,7 +1833,9 @@ impl AskUi {
                     out.lines.push(row);
                 }
                 let words = pick_words(question, &self.picks[at]);
-                let (words, ink) = if words.is_empty() {
+                let (words, ink) = if words.is_empty() && card.question_skip {
+                    ("skipped".to_owned(), theme.faint())
+                } else if words.is_empty() {
                     ("not answered".to_owned(), theme.faint())
                 } else if lit {
                     (words, theme.bright())
@@ -1633,6 +1856,14 @@ impl AskUi {
                     push(&mut row, part, ink, width);
                     out.spots
                         .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
+                    out.lines.push(row);
+                }
+                let note = self.picks[at].note.trim();
+                if !note.is_empty() {
+                    let mut row = Line::default();
+                    push(&mut row, "      Note: ", theme.faint(), width);
+                    let shown = text::ellipsize(note, width.saturating_sub(12));
+                    push(&mut row, shown, theme.muted(), width);
                     out.lines.push(row);
                 }
             }
@@ -1688,7 +1919,7 @@ impl AskUi {
         }
 
         let question = &questions[self.step];
-        let rows = QuestionRows::of(question, way_out(card));
+        let rows = QuestionRows::of(question, card);
         for part in text::wrap(&question.question, width.max(1)) {
             let mut line = Line::default();
             push(&mut line, part, theme.text(), width);
@@ -1734,7 +1965,6 @@ impl AskUi {
         } else {
             "Reply instead"
         };
-        let footer = rows.out.map(|_| footer);
         let left = self.question_rows(question, &rows, left_width, !previews, footer, theme);
         let preview = question
             .options
@@ -1926,7 +2156,7 @@ impl AskUi {
         rows: &QuestionRows,
         width: usize,
         descriptions: bool,
-        footer: Option<&str>,
+        footer: &str,
         theme: Theme,
     ) -> BoxLines {
         let mut out = BoxLines {
@@ -2074,12 +2304,47 @@ impl AskUi {
                 .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
             out.lines.push(row);
         }
-        // The way out is a footer, not an answer: apart, unnumbered, faint
-        // until highlighted.
-        let (Some(footer), Some(at)) = (footer, rows.out) else {
+        // The question's note, once there is one or while it is typed.
+        let note = self.note.text();
+        if self.annotating || !note.is_empty() {
+            let mut row = Line::default();
+            push(&mut row, "  Note: ", theme.faint(), width);
+            let col = text::line_width(&row);
+            let shown = text_tail(note, width.saturating_sub(col + 1));
+            push(&mut row, shown.clone(), theme.text(), width);
+            if self.annotating {
+                out.cursor = Some((out.lines.len(), col + text::str_width(&shown)));
+            }
+            out.lines.push(row);
+        }
+        // Skip and the way out are a footer, not answers: apart,
+        // unnumbered, faint until highlighted.
+        if rows.skip.is_none() && rows.out.is_none() {
+            return out;
+        }
+        out.lines.push(Line::default());
+        if let Some(at) = rows.skip {
+            let lit = self.selected == at;
+            let mut row = Line::default();
+            push(
+                &mut row,
+                if lit { "› " } else { "  " },
+                theme.attention(),
+                width,
+            );
+            push(
+                &mut row,
+                "Skip",
+                if lit { theme.bright() } else { theme.faint() },
+                width,
+            );
+            out.spots
+                .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
+            out.lines.push(row);
+        }
+        let Some(at) = rows.out else {
             return out;
         };
-        out.lines.push(Line::default());
         let lit = self.selected == at;
         let mut row = Line::default();
         push(
@@ -2088,13 +2353,21 @@ impl AskUi {
             theme.attention(),
             width,
         );
-        push(
-            &mut row,
-            footer,
-            if lit { theme.bright() } else { theme.faint() },
-            width,
-        );
-        push(&mut row, "  esc", theme.faint(), width);
+        let ink = if lit { theme.bright() } else { theme.faint() };
+        let typed = self.reply.text();
+        if self.replying || !typed.is_empty() {
+            // "Reply instead: <words>", the words as typed.
+            push(&mut row, format!("{footer}: "), ink, width);
+            let col = text::line_width(&row);
+            let shown = text_tail(typed, width.saturating_sub(col + 1));
+            push(&mut row, shown.clone(), theme.bright(), width);
+            if self.replying {
+                out.cursor = Some((out.lines.len(), col + text::str_width(&shown)));
+            }
+        } else {
+            push(&mut row, footer, ink, width);
+            push(&mut row, "  esc", theme.faint(), width);
+        }
         out.spots
             .push((out.lines.len(), (0, width), BoxSpot::Choice(at)));
         out.lines.push(row);

@@ -646,6 +646,9 @@ message ScopeChoice {
 
 message QuestionAsk {
   repeated Question questions = 1;
+  // The provider's own dialog rather than a question the agent asked in a
+  // turn (Claude's folder trust): there is no turn to reply into instead.
+  bool provider_dialog = 2;
 }
 
 message Question {

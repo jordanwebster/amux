@@ -542,6 +542,19 @@ pub struct State {
     /// by input id: a prompt Claude folds into a running turn is reflected
     /// by its text alone.
     submitted: Vec<PendingMessage>,
+    /// Plans announced by their hook and not yet drawn: they wait for the
+    /// row of the prompt that began their turn.
+    #[serde(default)]
+    announced_plans: Vec<AnnouncedPlan>,
+}
+
+/// A plan its PreToolUse hook announced: the call's id, tool name and the
+/// input that holds the plan.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(super) struct AnnouncedPlan {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) input: serde_json::Value,
 }
 
 fn item_body(kind: claude_pty_item::Kind) -> Vec<u8> {
@@ -577,6 +590,7 @@ impl State {
             local_turn: false,
             running: Vec::new(),
             submitted: Vec::new(),
+            announced_plans: Vec::new(),
         }
     }
 

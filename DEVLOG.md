@@ -1,3 +1,27 @@
+2026-10-06 — **The terminal asks and records plans and questions the new way.**
+A question in the composer's box can now be skipped (a Skip row under the
+options), given a note with Tab (it shows under the options and goes with
+that question's answer), or replied to instead (the Reply instead row opens
+for the person's words, sent with whatever was answered so far). The review
+says "skipped" where a question was left. Terminal Claude's menu takes no
+note and no skip, and its folder-trust dialog is Claude's own, outside any
+turn, so the card says which of these each ask takes: the wire marks a
+provider's own dialog, and the shared card carries whether a question may be
+skipped, noted or replied to; the terminal's stand-ins for them are deleted.
+The records read "Answered 1 of 2 questions" with "skipped" and each note
+under its question, or "Replied instead of 2 questions" quoting the words; a
+decided permission says what it granted ("always allowed cargo test in this
+project", "allowed commands starting with cargo test"). Codex's plan box
+reads "Yes, implement this plan". The shared answer API takes one response
+per question with its note, plus a reply builder, and the phone's bridge
+follows. Terminal Claude writes its plan's own row only around the
+decision, so the plan now opens from its PreToolUse hook, which carries it,
+waiting for the turn's prompt row so it reads below the prompt; the ask then
+points at the plan from the start. Frames replayed from each kind's plan
+fixture pin an undecided plan with its box and a decided one folded. Five
+terminal journey goldens still said "shift+tab mode" from the permission
+rename and are refreshed.
+
 2026-10-06 — **The shared views read plans and asks only from their facts.**
 The chat rows still recognised a Claude plan on their own: the plan tool's
 name, its input, a Write under Claude's plans folder standing in for the

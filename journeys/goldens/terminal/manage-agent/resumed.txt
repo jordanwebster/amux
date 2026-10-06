@@ -31,4 +31,4 @@
   │ › Message helper                                                                                       │
   ╰────────────────────────────────────────────────────────────────────────────────────────── opus (high) ─╯
 
-  shift+tab mode   ctrl+a more
+  shift+tab permission   ctrl+a more

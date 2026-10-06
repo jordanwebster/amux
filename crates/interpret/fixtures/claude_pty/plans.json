@@ -181,7 +181,13 @@
             "plan": "# Plan\n\n- Edit README.md"
           }
         }
-      }
+      },
+      "expect": {
+        "items": [
+          "t1"
+        ]
+      },
+      "note": "the plan lands whole from its hook as its own item, undecided, before Claude writes its row"
     },
     {
       "fact": {
@@ -226,13 +232,7 @@
             ]
           }
         }
-      },
-      "expect": {
-        "items": [
-          "t1"
-        ]
-      },
-      "note": "the plan lands whole as its own item, undecided"
+      }
     },
     {
       "input": {
@@ -328,6 +328,11 @@
             "plan": "# Plan\n\n- Edit README.md"
           }
         }
+      },
+      "expect": {
+        "items": [
+          "t2"
+        ]
       }
     },
     {
@@ -373,11 +378,6 @@
             ]
           }
         }
-      },
-      "expect": {
-        "items": [
-          "t2"
-        ]
       }
     },
     {

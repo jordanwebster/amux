@@ -554,12 +554,18 @@ public struct AskCard: Codable, Hashable, Sendable {
     public var body: AskBody
     /// The likely choice first. Only what this agent offers.
     public var choices: [Choice]
-    /// A note may go out with a question's answers. Terminal Claude has no
-    /// place to type one for most questions, so it takes none.
+    /// A note may go out with each question's answer. Terminal Claude has
+    /// no place to type one, so it takes none.
     public var questionNote: Bool
+    /// A question may be left unanswered. Terminal Claude's menu takes an
+    /// answer to every question.
+    public var questionSkip: Bool
+    /// The person may reply in their own words instead of answering the
+    /// questions. Not for the provider's own dialogs, outside any turn.
+    public var questionReply: Bool
     public var state: CardState
 
-    public init(kind: Kind, key: String, itemKey: String, position: UInt, count: UInt, body: AskBody, choices: [Choice], questionNote: Bool, state: CardState) {
+    public init(kind: Kind, key: String, itemKey: String, position: UInt, count: UInt, body: AskBody, choices: [Choice], questionNote: Bool, questionSkip: Bool, questionReply: Bool, state: CardState) {
         self.kind = kind
         self.key = key
         self.itemKey = itemKey
@@ -568,6 +574,8 @@ public struct AskCard: Codable, Hashable, Sendable {
         self.body = body
         self.choices = choices
         self.questionNote = questionNote
+        self.questionSkip = questionSkip
+        self.questionReply = questionReply
         self.state = state
     }
 
@@ -580,6 +588,8 @@ public struct AskCard: Codable, Hashable, Sendable {
         case body
         case choices
         case questionNote = "question_note"
+        case questionSkip = "question_skip"
+        case questionReply = "question_reply"
         case state
     }
 }
@@ -3306,6 +3316,7 @@ public enum PhaseView: Codable, Hashable, Sendable {
 
 /// One question's answer as the person gave it.
 public enum Pick: Codable, Hashable, Sendable {
+    /// The chosen options; none, with no text, skips the question.
     case options([UInt32])
     case other(String)
 
@@ -3380,6 +3391,23 @@ public struct ProfileView: Codable, Hashable, Sendable {
         case label
         case subject
         case account
+    }
+}
+
+/// One question's pick and the person's note on it.
+public struct QuestionResponse: Codable, Hashable, Sendable {
+    public var pick: Pick
+    /// Empty when there is none.
+    public var note: String?
+
+    public init(pick: Pick, note: String?) {
+        self.pick = pick
+        self.note = note
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pick
+        case note
     }
 }
 

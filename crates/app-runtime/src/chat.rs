@@ -8,7 +8,9 @@ use model::AgentKey;
 use tokio::task::JoinHandle;
 use ui_runtime::{Fleet, InputError, PageError, Session};
 use ui_state::{InputOutcome, InputState, Key, SessionState};
-use ui_view::{AskCard, ChatOptions, Comparison, Overview, Pick, Row, SettingChange, SettingsView};
+use ui_view::{
+    AskCard, ChatOptions, Comparison, Overview, QuestionResponse, Row, SettingChange, SettingsView,
+};
 use wire::{BlobRef, send_input_response};
 
 use crate::coalesce::{Coalescer, WakeFn};
@@ -244,14 +246,33 @@ impl Chat {
         self.answer(input).await
     }
 
-    /// Answers the head question ask: one pick per question, in order.
-    pub async fn answer_questions(&self, ask_key: &str, picks: &[Pick], note: &str) -> ActOutcome {
+    /// Answers the head question ask: one response per question, in
+    /// order, a skip where the person left one unanswered.
+    pub async fn answer_questions(&self, ask_key: &str, given: &[QuestionResponse]) -> ActOutcome {
         let input = {
             let Some(card) = self.card_for(ask_key) else {
                 return moved_on();
             };
-            let answer = ui_view::question_answer(&card, picks, note);
-            ui_view::answer_input(&card, &answer, note)
+            let answer = ui_view::question_answer(&card, given);
+            ui_view::answer_input(&card, &answer, "")
+        };
+        self.answer(input).await
+    }
+
+    /// Replies to the head question ask in the person's own words instead
+    /// of answering, with what they had answered so far.
+    pub async fn reply_instead(
+        &self,
+        ask_key: &str,
+        text: &str,
+        so_far: &[QuestionResponse],
+    ) -> ActOutcome {
+        let input = {
+            let Some(card) = self.card_for(ask_key) else {
+                return moved_on();
+            };
+            let answer = ui_view::reply_answer(&card, text, so_far);
+            ui_view::answer_input(&card, &answer, "")
         };
         self.answer(input).await
     }

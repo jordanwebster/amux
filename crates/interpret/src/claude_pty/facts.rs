@@ -17,8 +17,8 @@ use wire::{
 };
 
 use super::{
-    AgentFact, AskMeta, AskShape, Decision, PendingMessage, PermissionMenus, Running, Slash, State,
-    Subagent, Tool, item_body,
+    AgentFact, AnnouncedPlan, AskMeta, AskShape, Decision, PendingMessage, PermissionMenus,
+    Running, Slash, State, Subagent, Tool, item_body,
 };
 use crate::claude_common::{
     AnsweredResult, BackgroundInput, JobInput, PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, Verdict,
@@ -160,6 +160,7 @@ impl State {
             Channel::Transcript => {
                 if let Ok(row) = transcript::decode(&fact.payload) {
                     self.row(emit, &row);
+                    self.open_announced_plans(emit);
                 }
             }
             Channel::Hook => {
@@ -264,7 +265,18 @@ impl State {
             Payload::SessionStart(start) => self.session_start(emit, start),
             Payload::SessionEnd(_) => self.close_all_unknown(emit),
             Payload::UserPromptSubmit(_) => self.shared.provider_started(),
-            Payload::PreToolUse(call) => self.pre_tool_use(call),
+            Payload::PreToolUse(call) => {
+                let (server, name) = split_tool_name(&call.tool_name);
+                if server.is_empty() && name == PLAN_TOOL {
+                    self.announced_plans.push(AnnouncedPlan {
+                        id: call.tool_use_id.clone(),
+                        name: call.tool_name.clone(),
+                        input: call.tool_input.clone(),
+                    });
+                    self.open_announced_plans(emit);
+                }
+                self.pre_tool_use(call)
+            }
             Payload::PermissionRequest(request) => self.permission_request(request),
             Payload::PostToolUse(PostToolUse { tool_use_id, .. })
             | Payload::PostToolUseFailure(PostToolUseFailure { tool_use_id, .. }) => {
@@ -530,6 +542,7 @@ impl State {
                     allow_other: false,
                     secret: false,
                 }],
+                provider_dialog: true,
             })),
             opened_at_ms: self.shared.now_ms(),
         };
@@ -588,6 +601,20 @@ impl State {
         self.shared.open_ask(ask.clone());
         if !awaits_row {
             self.emit_ask_item(emit, &ask, None);
+        }
+    }
+
+    /// Plans their hooks announced, opened from the hook: Claude's own row
+    /// of the plan may come only once it is decided, and the plan must show
+    /// while it waits. Hooks arrive ahead of the transcript, so a plan
+    /// waits for the row of the prompt that began its turn, to read below
+    /// it.
+    fn open_announced_plans(&mut self, emit: &mut Emit) {
+        if !self.shared.awaiting_reflection().is_empty() {
+            return;
+        }
+        for plan in std::mem::take(&mut self.announced_plans) {
+            self.tool_seen(emit, &plan.id, &plan.name, &plan.input, None, "");
         }
     }
 
@@ -679,6 +706,11 @@ impl State {
                     emitted: Vec::new(),
                 },
             );
+        } else if let Some(tool) = self.tools.get_mut(id)
+            && tool.message_id.is_empty()
+        {
+            // A call its hook opened: its row names the message.
+            tool.message_id = message_id.to_owned();
         }
         self.emit_tool(emit, id);
         self.emit_unanswerable_items_for(emit, id);
@@ -1236,7 +1268,11 @@ impl State {
                 .get(&key)
                 .and_then(|meta| meta.bound.as_ref())
                 .and_then(|bound| self.tools.get(bound))
-                .is_some_and(|tool| !message_id.is_empty() && tool.message_id != message_id);
+                .is_some_and(|tool| {
+                    !message_id.is_empty()
+                        && !tool.message_id.is_empty()
+                        && tool.message_id != message_id
+                });
             if later {
                 self.close(emit, &key, Decision::unknown());
             }

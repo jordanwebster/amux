@@ -6,29 +6,6 @@
 //! Each entry says what is missing. Against a real agent nothing here
 //! pretends: a feature is either built from facts that exist, or it is not
 //! offered.
-//!
-//! Held back outside this module, because the shared views never offer
-//! them: a decision on a Codex plan (Codex's protocol has none, so its
-//! plan reads as an ordinary message), and a Claude plan growing as it is written (the
-//! interpreter does not stream a tool call's input, so the plan arrives
-//! whole).
-
-use wire::Kind;
-
-/// Whether a question ask can be declined with the person's own message
-/// ("Reply instead"). Neither agent's protocol has a decline for its
-/// questions on the wire yet; until one exists the only ways out are
-/// answering and stopping the turn.
-pub fn declines_questions(_kind: Kind) -> bool {
-    false
-}
-
-/// Whether questions may be sent with some left unanswered. Codex takes a
-/// question with no answer; Claude's interpreter refuses one, so with
-/// Claude every question is answered before sending.
-pub fn skips_questions(kind: Kind) -> bool {
-    kind == Kind::Codex
-}
 
 /// Whether a new agent can start in a new worktree. The create request
 /// cannot ask for one yet, so the toggle is not offered.

@@ -24,7 +24,8 @@ terminal renders; `ChatFrame`, `ChatChanges`, `Draft`, `RowOptions`,
 `HostView` and the act outcomes are `app-runtime::values`. Byte strings such
 as agent and input ids are JSON arrays of numbers. Answers never carry a
 provider's answer body: the phone names a choice by its position on the
-card, or gives one `Pick` per question, and the answer is built in Rust.
+card, or gives one `QuestionResponse` (a `Pick` and a note) per question, and the
+answer is built in Rust.
 
 ## Lifecycle
 
@@ -107,7 +108,7 @@ does the work in the wake.
 Acts that wait on the agent take a callback, called once on a worker thread
 with a JSON result the callback borrows until it returns:
 `amux_session_send`, `amux_session_answer` (by choice index),
-`amux_session_answer_questions`, `amux_session_change_setting` (a pick from
+`amux_session_answer_questions`, `amux_session_reply_instead`, `amux_session_change_setting` (a pick from
 the settings view), `amux_session_withdraw`,
 `amux_session_send_now`, `amux_session_resend`, `amux_session_interrupt`,
 `amux_session_resume` (the exited composer's draft), `amux_session_page_older`,

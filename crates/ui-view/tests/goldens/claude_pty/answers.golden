@@ -46,29 +46,29 @@
   row    4 t2 Command { command: "rm -rf build", state: Denied, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."], more_lines: 0, output_tail: ["The user doesn't want to proceed with this tool use…
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 18 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"plan":"# Plan\n\n- Edit README.md"},"tool_name":"ExitPlanMode","tool_use_id":"t3"}}
+  row    5 t3 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: Open, note: None, writing: false })
   composer Send activity=Some(Running { key: "t3" }) queue=[] outbox=[]
 ## 19 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","tool_input":{"plan":"# Plan\n\n- Edit README.md"},"tool_name":"ExitPlanMode"}}
-  ask ask:3 -> "" 1/1 Open
+  ask ask:3 -> "t3" 1/1 Open
     choices ApprovePlan { auto_accept_edits: false }*, ApprovePlan { auto_accept_edits: true }, SendBack+note
-    body Plan { plan: "" }
+    body Plan { plan: "# Plan\n\n- Edit README.md" }
   composer Send activity=None queue=[] outbox=[]
 ## 20 input {"answer":{"answer":{"approve_plan":{"auto_accept_edits":true}},"ask":"ask:3"},"id":"a5"}
+  row    5 t3 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: ApprovedAcceptingEdits, note: None, writing: false })
   ask none
   composer Send activity=Some(Running { key: "t3" }) queue=[] outbox=[]
-## 21 fact {"channel":"transcript","json":{"message":{"content":[{"id":"t3","input":{"plan":"# Plan\n\n- Edit README.md"},"name":"ExitPlanMode","type":"tool_use"}],"id":"m3","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:00.030Z","type":"assistant","uuid":"a3"}}
-  row    5 t3 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: ApprovedAcceptingEdits, note: None, writing: false })
 ## 22 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"plan":"# Plan\n\n- Edit README.md"},"tool_name":"ExitPlanMode","tool_use_id":"t4"}}
+  row    6 t4 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: Open, note: None, writing: false })
   composer Send activity=Some(Running { key: "t4" }) queue=[] outbox=[]
 ## 23 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","tool_input":{"plan":"# Plan\n\n- Edit README.md"},"tool_name":"ExitPlanMode"}}
-  ask ask:4 -> "" 1/1 Open
+  ask ask:4 -> "t4" 1/1 Open
     choices ApprovePlan { auto_accept_edits: false }*, ApprovePlan { auto_accept_edits: true }, SendBack+note
-    body Plan { plan: "" }
+    body Plan { plan: "# Plan\n\n- Edit README.md" }
   composer Send activity=None queue=[] outbox=[]
 ## 24 input {"answer":{"answer":{"send_back":{"note":"explain why"}},"ask":"ask:4"},"id":"a6"}
+  row    6 t4 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: SentBack, note: Some("explain why"), writing: false })
   ask none
   composer Send activity=Some(Running { key: "t4" }) queue=[] outbox=[]
-## 25 fact {"channel":"transcript","json":{"message":{"content":[{"id":"t4","input":{"plan":"# Plan\n\n- Edit README.md"},"name":"ExitPlanMode","type":"tool_use"}],"id":"m4","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:00.040Z","type":"assistant","uuid":"a4"}}
-  row    6 t4 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: SentBack, note: Some("explain why"), writing: false })
 ## 26 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue","preview":"#00f"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"},{"description":"","label"…
   composer Send activity=Some(Running { key: "t5" }) queue=[] outbox=[]
 ## 27 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","tool_input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue","preview":"#00f"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"},{"description":"",…

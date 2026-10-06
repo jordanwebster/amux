@@ -31,4 +31,4 @@
   │ › Please check [pasted-1 · 12 lines] against [review · 1 comment]                                      │
   ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯
 
-  ctrl+j newline   shift+tab mode   ctrl+a more
+  ctrl+j newline   shift+tab permission   ctrl+a more
