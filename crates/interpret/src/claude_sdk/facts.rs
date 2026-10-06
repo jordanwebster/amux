@@ -1,7 +1,19 @@
 //! Stream-JSON lines from headless Claude, read into state and items.
 
+use std::collections::BTreeMap;
+
+use claude_protocol::stream::control::{CanUseToolRequest, ControlOutcome};
+use claude_protocol::stream::init::{ContextUsage, SlashCommand};
+use claude_protocol::stream::{
+    self, AssistantMessage, CompactTrigger, ContentBlock, ControlRequest, ControlRequestBody,
+    ControlResponse, InitializationResult, McpServerStatus, McpStatusResult, Message,
+    MessageContent, ModelUsage, Output, RateLimitInfo, ReloadPluginsResult, ResultCommon,
+    ResultError, ResultMessage, SettingsResult, StreamDelta, StreamEvent, SystemInitMessage,
+    TaskUsage, Usage, UserMessageOutput,
+};
 use prost::Message as _;
-use serde_json::{Value, json};
+use serde::Deserialize;
+use serde_json::Value;
 use wire::claude_sdk_item::Kind;
 use wire::{
     BoundaryKind, DecisionOutcome, FormAsk, HealthState, LinkAsk, PermissionAsk, PlanAsk, SignIn,
@@ -9,75 +21,282 @@ use wire::{
     ToolState, Turn, TurnOutcome, UsageLimits, UsageState, UsageWindow,
 };
 
-use super::{AskMeta, AskShape, Request, State, TaskState, Tool, ToolDecisionState, item_body};
+use super::{
+    AskMeta, AskShape, BackgroundInput, PlanInput, Request, State, TaskState, Tool,
+    ToolDecisionState, item_body,
+};
 use crate::claude_common::{
-    PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
-    offered_commands, offered_models, question_ask, result_images, scope_choices, split_tool_name,
-    text, tool_class, without_image_bytes,
+    PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, blocks_text, compact_json, message_text,
+    offered_commands, offered_models, permission_scopes, question_ask, split_tool_name, tool_class,
+    tool_result_images, tool_result_text, without_image_bytes,
 };
 use crate::shared::json_as_written;
-use crate::{Channel, Effect, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
+use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
 const INTERRUPTED: &str = "[Request interrupted by user";
 
-fn str_field(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
+/// Text Claude wrote, when it wrote any.
+fn written(text: &str) -> Option<String> {
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+fn written_opt(text: Option<&str>) -> Option<String> {
+    text.and_then(written)
 }
 
 /// The error Claude reports when the API rejects its credential.
 const AUTHENTICATION_FAILED: &str = "authentication_failed";
+
+/// What one of Claude's task frames says about a task: its start, an update,
+/// progress, or the notification that it ended.
+#[derive(Default)]
+struct TaskReport<'a> {
+    task_id: &'a str,
+    description: Option<&'a str>,
+    tool_use_id: Option<&'a str>,
+    last_tool_name: Option<&'a str>,
+    usage: Option<&'a TaskUsage>,
+    status: Option<&'a str>,
+    summary: Option<&'a str>,
+    task_type: Option<&'a str>,
+    backgrounded: bool,
+}
 
 impl State {
     pub(super) fn fact(&mut self, emit: &mut Emit, fact: Fact) {
         if fact.channel != Channel::Stream {
             return;
         }
-        let Ok(line) = serde_json::from_slice::<Value>(&fact.payload) else {
+        let Ok(output) = stream::decode(&fact.payload) else {
             return;
         };
-        match text(&line, "type") {
-            "system" => self.system(emit, &line),
-            "stream_event" => self.stream_event(emit, &line),
-            "assistant" => self.assistant(emit, &line),
-            "user" => self.user(emit, &line),
-            "result" => self.result(emit, &line),
-            "control_request" => self.control_request_in(emit, &line, &fact.payload),
-            "control_cancel_request" => self.request_cancelled(emit, text(&line, "request_id")),
-            "control_response" => self.control_response_in(emit, &line),
-            "command_lifecycle" => {
-                if text(&line, "state") == "started" {
-                    self.taken(text(&line, "command_uuid"));
+        match output {
+            Output::Message(message) => self.message(emit, message),
+            Output::ControlRequest(request) => {
+                self.control_request_in(emit, request, &fact.payload)
+            }
+            Output::ControlCancelRequest(cancel) => {
+                self.request_cancelled(emit, &cancel.request_id)
+            }
+            Output::ControlResponse(response) => self.control_response_in(emit, response),
+            Output::Unknown(_) => {}
+        }
+    }
+
+    fn message(&mut self, emit: &mut Emit, message: Message) {
+        match message {
+            Message::System(init) => self.init(emit, &init),
+            Message::StreamEvent(event) => self.stream_event(
+                emit,
+                &event.event,
+                event.parent_tool_use_id.as_deref().unwrap_or_default(),
+            ),
+            Message::Assistant(assistant) => self.assistant(emit, &assistant),
+            Message::User(user) => self.user(emit, &user),
+            Message::UserReplay(replay) => {
+                let whole = message_text(&replay.message.content);
+                if let Some(output) = local_output(&whole) {
+                    return self.slash_output(emit, replay.uuid, &output);
+                }
+                self.steer_replayed(emit, &replay.uuid);
+                self.taken(&replay.uuid);
+            }
+            Message::Result(result) => self.result(emit, &result),
+            Message::CommandLifecycle(lifecycle) => {
+                if lifecycle.state == "started" {
+                    self.taken(&lifecycle.command_uuid);
                 }
             }
-            "rate_limit_event" => self.rate_limit(&line),
-            "auth_status" => {
-                self.sign_in = Some(match str_field(&line, "error") {
+            Message::RateLimit(event) => self.rate_limit(&event.rate_limit_info),
+            Message::AuthStatus(status) => {
+                self.sign_in = Some(match written_opt(status.error.as_deref()) {
                     Some(error) => SignIn {
                         state: SignInState::Failed as i32,
                         account: String::new(),
                         message: error,
                     },
-                    None if line.get("isAuthenticating").and_then(Value::as_bool) == Some(true) => {
-                        SignIn {
-                            state: SignInState::SignedOut as i32,
-                            account: String::new(),
-                            message: text(&line, "output").to_owned(),
-                        }
-                    }
+                    None if status.is_authenticating => SignIn {
+                        state: SignInState::SignedOut as i32,
+                        ..Default::default()
+                    },
                     None => SignIn {
                         state: SignInState::SignedIn as i32,
                         ..Default::default()
                     },
                 })
             }
-            "conversation_reset" => {
-                self.session = str_field(&line, "new_conversation_id");
+            Message::ConversationReset(reset) => {
+                self.session = written(&reset.new_conversation_id);
                 self.context_tokens = None;
                 self.boundary(emit, BoundaryKind::Cleared, String::new());
+            }
+            Message::Status(status) => {
+                if let Some(mode) = status
+                    .permission_mode
+                    .as_ref()
+                    .and_then(|mode| written(mode.as_str()))
+                {
+                    self.permission_mode = Some(mode);
+                }
+            }
+            Message::CompactBoundary(compact) => {
+                let metadata = &compact.compact_metadata;
+                let after = metadata.post_tokens;
+                if after.is_some() {
+                    self.context_tokens = after;
+                }
+                self.shared.item(
+                    emit,
+                    ItemDraft {
+                        key: compact.uuid,
+                        body: item_body(Kind::Compaction(wire::Compaction {
+                            tokens_before: Some(metadata.pre_tokens),
+                            tokens_after: after,
+                            automatic: metadata.trigger == CompactTrigger::Auto,
+                        })),
+                        complete: true,
+                        ..Default::default()
+                    },
+                );
+                self.boundary(emit, BoundaryKind::Compacted, String::new());
+            }
+            Message::ApiRetry(retry) => {
+                let error = retry.error.as_str();
+                if error == AUTHENTICATION_FAILED {
+                    self.sign_in_failed(error);
+                }
+                let status = retry
+                    .error_status
+                    .map(|status| format!(" ({status})"))
+                    .unwrap_or_default();
+                let retry_at_ms = Some(self.shared.now_ms() + retry.retry_delay_ms as i64);
+                self.shared.item(
+                    emit,
+                    ItemDraft {
+                        key: retry.uuid.clone(),
+                        body: item_body(Kind::ApiError(wire::ApiError {
+                            error_kind: error.to_owned(),
+                            message: format!("{error}{status}"),
+                            will_retry: true,
+                            attempt: retry.attempt,
+                            max_attempts: retry.max_retries,
+                            retry_at_ms,
+                        })),
+                        complete: true,
+                        ..Default::default()
+                    },
+                );
+            }
+            Message::ModelRefusalFallback(fallback) => {
+                self.model = Some(fallback.fallback_model.clone());
+                let reason = written_opt(fallback.api_refusal_explanation.as_deref())
+                    .or_else(|| written_opt(fallback.api_refusal_category.as_deref()))
+                    .unwrap_or(fallback.content);
+                self.shared.item(
+                    emit,
+                    ItemDraft {
+                        key: fallback.uuid,
+                        body: item_body(Kind::ModelSwitch(wire::ModelSwitch {
+                            from: fallback.original_model,
+                            to: fallback.fallback_model,
+                            reason,
+                        })),
+                        complete: true,
+                        ..Default::default()
+                    },
+                );
+            }
+            Message::ModelRefusalNoFallback(refusal) => self.shared.item(
+                emit,
+                ItemDraft {
+                    key: refusal.uuid,
+                    body: item_body(Kind::ApiError(wire::ApiError {
+                        error_kind: "refusal".into(),
+                        message: written_opt(refusal.api_refusal_explanation.as_deref())
+                            .unwrap_or(refusal.content),
+                        ..Default::default()
+                    })),
+                    complete: true,
+                    ..Default::default()
+                },
+            ),
+            Message::LocalCommandOutput(output) => {
+                self.slash_output(emit, output.uuid, &output.content)
+            }
+            Message::TaskStarted(task) => self.task_event(
+                emit,
+                TaskReport {
+                    task_id: &task.task_id,
+                    description: Some(&task.description),
+                    tool_use_id: task.tool_use_id.as_deref(),
+                    task_type: task.task_type.as_deref(),
+                    backgrounded: task.is_backgrounded == Some(true),
+                    ..Default::default()
+                },
+            ),
+            Message::TaskUpdated(task) => self.task_event(
+                emit,
+                TaskReport {
+                    task_id: &task.task_id,
+                    status: task.patch.status.as_deref(),
+                    ..Default::default()
+                },
+            ),
+            Message::TaskProgress(task) => self.task_event(
+                emit,
+                TaskReport {
+                    task_id: &task.task_id,
+                    description: Some(&task.description),
+                    tool_use_id: task.tool_use_id.as_deref(),
+                    last_tool_name: task.last_tool_name.as_deref(),
+                    usage: Some(&task.usage),
+                    summary: task.summary.as_deref(),
+                    ..Default::default()
+                },
+            ),
+            Message::TaskNotification(task) => self.task_event(
+                emit,
+                TaskReport {
+                    task_id: &task.task_id,
+                    tool_use_id: task.tool_use_id.as_deref(),
+                    usage: task.usage.as_ref(),
+                    status: Some(&task.status),
+                    summary: Some(&task.summary),
+                    ..Default::default()
+                },
+            ),
+            Message::BackgroundTasksChanged(changed) => {
+                if let Some(tasks) = &changed.tasks {
+                    self.background = Some(tasks.len() as u32);
+                }
+            }
+            Message::PermissionDenied(denied) => {
+                let note = written_opt(denied.decision_reason.as_deref()).unwrap_or(denied.message);
+                self.decide(
+                    emit,
+                    &denied.tool_use_id,
+                    ToolDecisionState {
+                        outcome: DecisionOutcome::Denied as i32,
+                        scope: String::new(),
+                        note,
+                    },
+                );
+            }
+            Message::ElicitationComplete(complete) => {
+                let elicitation = complete.elicitation_id;
+                for key in self.open_ask_keys() {
+                    let matches = self.shared.asks().get(&key).is_some_and(|ask| {
+                        matches!(&ask.body, Some(wire::ask::Body::Link(link)) if link.url.contains(&elicitation))
+                    }) || key == elicitation;
+                    if matches && let Some(ask) = self.shared.close_ask(&key) {
+                        self.asks.remove(&key);
+                        self.emit_ask(
+                            emit,
+                            &ask,
+                            Some(ask_item::outcome(wire::AskOutcome::Answered)),
+                        );
+                    }
+                }
             }
             // Tool progress, summaries, suggestions and the rest are
             // Claude's own interface; they stay in the facts ring.
@@ -118,159 +337,28 @@ impl State {
 
     // --- system ----------------------------------------------------------
 
-    fn system(&mut self, emit: &mut Emit, line: &Value) {
-        let uuid = text(line, "uuid").to_owned();
-        match text(line, "subtype") {
-            "init" => self.init(emit, line),
-            "status" => {
-                if let Some(mode) = str_field(line, "permissionMode") {
-                    self.permission_mode = Some(mode);
-                }
-            }
-            "compact_boundary" => {
-                let metadata = line.get("compact_metadata").unwrap_or(&Value::Null);
-                let after = metadata.get("post_tokens").and_then(Value::as_u64);
-                if after.is_some() {
-                    self.context_tokens = after;
-                }
-                self.shared.item(
-                    emit,
-                    ItemDraft {
-                        key: uuid,
-                        body: item_body(Kind::Compaction(wire::Compaction {
-                            tokens_before: metadata.get("pre_tokens").and_then(Value::as_u64),
-                            tokens_after: after,
-                            automatic: text(metadata, "trigger") == "auto",
-                        })),
-                        complete: true,
-                        ..Default::default()
-                    },
-                );
-                self.boundary(emit, BoundaryKind::Compacted, String::new());
-            }
-            "api_retry" => {
-                if text(line, "error") == AUTHENTICATION_FAILED {
-                    self.sign_in_failed(text(line, "error"));
-                }
-                let attempt = line.get("attempt").and_then(Value::as_u64).unwrap_or(0) as u32;
-                let max_attempts =
-                    line.get("max_retries").and_then(Value::as_u64).unwrap_or(0) as u32;
-                let delay = line.get("retry_delay_ms").and_then(Value::as_i64);
-                let status = line
-                    .get("error_status")
-                    .and_then(Value::as_u64)
-                    .map(|status| format!(" ({status})"))
-                    .unwrap_or_default();
-                self.shared.item(
-                    emit,
-                    ItemDraft {
-                        key: uuid,
-                        body: item_body(Kind::ApiError(wire::ApiError {
-                            error_kind: text(line, "error").to_owned(),
-                            message: format!("{}{status}", text(line, "error")),
-                            will_retry: true,
-                            attempt,
-                            max_attempts,
-                            retry_at_ms: delay.map(|delay| self.shared.now_ms() + delay),
-                        })),
-                        complete: true,
-                        ..Default::default()
-                    },
-                );
-            }
-            "model_refusal_fallback" => {
-                let from = text(line, "original_model").to_owned();
-                let to = text(line, "fallback_model").to_owned();
-                self.model = Some(to.clone());
-                let reason = str_field(line, "api_refusal_explanation")
-                    .or_else(|| str_field(line, "api_refusal_category"))
-                    .unwrap_or_else(|| text(line, "content").to_owned());
-                self.shared.item(
-                    emit,
-                    ItemDraft {
-                        key: uuid,
-                        body: item_body(Kind::ModelSwitch(wire::ModelSwitch { from, to, reason })),
-                        complete: true,
-                        ..Default::default()
-                    },
-                );
-            }
-            "model_refusal_no_fallback" => self.shared.item(
-                emit,
-                ItemDraft {
-                    key: uuid,
-                    body: item_body(Kind::ApiError(wire::ApiError {
-                        error_kind: "refusal".into(),
-                        message: str_field(line, "api_refusal_explanation")
-                            .unwrap_or_else(|| text(line, "content").to_owned()),
-                        ..Default::default()
-                    })),
-                    complete: true,
-                    ..Default::default()
-                },
-            ),
-            "local_command_output" => self.slash_output(emit, uuid, text(line, "content")),
-            "task_started" | "task_updated" | "task_progress" | "task_notification" => {
-                self.task_event(emit, line)
-            }
-            "background_tasks_changed" => {
-                if let Some(tasks) = line.get("tasks").and_then(Value::as_array) {
-                    self.background = Some(tasks.len() as u32);
-                }
-            }
-            "permission_denied" => {
-                let id = text(line, "tool_use_id").to_owned();
-                let note = str_field(line, "decision_reason")
-                    .unwrap_or_else(|| text(line, "message").to_owned());
-                self.decide(
-                    emit,
-                    &id,
-                    ToolDecisionState {
-                        outcome: DecisionOutcome::Denied as i32,
-                        scope: String::new(),
-                        note,
-                    },
-                );
-            }
-            "elicitation_complete" => {
-                let elicitation = text(line, "elicitation_id").to_owned();
-                for key in self.open_ask_keys() {
-                    let matches = self.shared.asks().get(&key).is_some_and(|ask| {
-                        matches!(&ask.body, Some(wire::ask::Body::Link(link)) if link.url.contains(&elicitation))
-                    }) || key == elicitation;
-                    if matches && let Some(ask) = self.shared.close_ask(&key) {
-                        self.asks.remove(&key);
-                        self.emit_ask(
-                            emit,
-                            &ask,
-                            Some(ask_item::outcome(wire::AskOutcome::Answered)),
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn init(&mut self, emit: &mut Emit, line: &Value) {
+    fn init(&mut self, emit: &mut Emit, init: &SystemInitMessage) {
         self.shared.provider_started();
-        let session = str_field(line, "session_id");
+        let session = written(&init.session_id);
         let previous = self.session.clone();
         self.session = session.clone().or(previous.clone());
-        if let Some(version) = str_field(line, "claude_code_version") {
+        if let Some(version) = written(&init.claude_code_version) {
             self.version = Some(version);
         }
-        if let Some(model) = str_field(line, "model") {
+        if let Some(model) = written(&init.model) {
             self.model = Some(model);
         }
-        if let Some(mode) = str_field(line, "permissionMode") {
+        if let Some(mode) = written(init.permission_mode.as_str()) {
             self.permission_mode = Some(mode);
         }
-        if let Some(effort) = line.get("effort") {
-            self.effort = effort.as_str().map(str::to_owned);
+        if let Some(effort) = &init.effort {
+            self.effort = effort.clone();
         }
-        if let Some(servers) = line.get("mcp_servers").and_then(Value::as_array) {
-            self.servers = Some(server_health(servers));
+        if let Some(servers) = &init.mcp_servers {
+            self.servers =
+                Some(server_health(servers.iter().map(|server| {
+                    (server.name.as_str(), server.status.as_str(), "")
+                })));
         }
         // Claude repeats its init at every turn; only a new process or a
         // new session is a boundary.
@@ -293,35 +381,23 @@ impl State {
         }
     }
 
-    fn rate_limit(&mut self, line: &Value) {
-        let info = line.get("rate_limit_info").unwrap_or(&Value::Null);
-        let state = match text(info, "status") {
+    fn rate_limit(&mut self, info: &RateLimitInfo) {
+        let state = match info.status.as_str() {
             "allowed" => UsageState::Ok,
             "allowed_warning" => UsageState::NearLimit,
             "rejected" => UsageState::Blocked,
             _ => UsageState::Unknown,
         };
         let windows = info
-            .get("unifiedWindows")
-            .and_then(Value::as_object)
-            .map(|windows| {
-                windows
-                    .iter()
-                    .map(|(name, window)| UsageWindow {
-                        name: window_name(name),
-                        used_percent: window
-                            .get("utilization")
-                            .and_then(Value::as_f64)
-                            .unwrap_or(0.0)
-                            * 100.0,
-                        resets_at_ms: window
-                            .get("resetsAt")
-                            .and_then(Value::as_i64)
-                            .map(|at| at * 1000),
-                    })
-                    .collect()
+            .unified_windows
+            .iter()
+            .flatten()
+            .map(|(name, window)| UsageWindow {
+                name: window_name(name),
+                used_percent: window.utilization.unwrap_or(0.0) * 100.0,
+                resets_at_ms: window.resets_at.map(|at| at * 1000),
             })
-            .unwrap_or_default();
+            .collect();
         self.usage = Some(UsageLimits {
             state: state as i32,
             windows,
@@ -329,8 +405,8 @@ impl State {
         });
     }
 
-    fn task_event(&mut self, emit: &mut Emit, line: &Value) {
-        let id = text(line, "task_id").to_owned();
+    fn task_event(&mut self, emit: &mut Emit, report: TaskReport) {
+        let id = report.task_id.to_owned();
         if id.is_empty() {
             return;
         }
@@ -344,28 +420,20 @@ impl State {
             tool_key: String::new(),
             tokens: 0,
         });
-        if let Some(description) = str_field(line, "description") {
+        if let Some(description) = written_opt(report.description) {
             task.description = description;
         }
-        if let Some(tool) = str_field(line, "tool_use_id") {
+        if let Some(tool) = written_opt(report.tool_use_id) {
             task.tool_key = tool;
         }
-        if let Some(last) = str_field(line, "last_tool_name") {
+        if let Some(last) = written_opt(report.last_tool_name) {
             task.last_tool = last;
         }
-        if let Some(usage) = line.get("usage") {
-            if let Some(tools) = usage.get("tool_uses").and_then(Value::as_u64) {
-                task.tool_count = tools as u32;
-            }
-            if let Some(tokens) = usage.get("total_tokens").and_then(Value::as_u64) {
-                task.tokens = tokens;
-            }
+        if let Some(usage) = report.usage {
+            task.tool_count = usage.tool_uses;
+            task.tokens = usage.total_tokens;
         }
-        let status = line
-            .pointer("/patch/status")
-            .or_else(|| line.get("status"))
-            .and_then(Value::as_str);
-        if let Some(status) = status {
+        if let Some(status) = report.status {
             task.state = match status {
                 "completed" => WireTaskState::Completed,
                 "failed" => WireTaskState::Failed,
@@ -375,7 +443,7 @@ impl State {
         }
         let wire = task.to_wire(&id);
         let at_ms = task.at_ms;
-        let summary = str_field(line, "summary");
+        let summary = written_opt(report.summary);
         let key = task.tool_key.clone();
         // A task of a call this interpreter showed is progress on that call,
         // which stays open until the task ends: its own result only said the
@@ -385,7 +453,7 @@ impl State {
             let subagent = tool
                 .task
                 .as_ref()
-                .map_or(text(line, "task_type") == "local_agent", |task| {
+                .map_or(report.task_type == Some("local_agent"), |task| {
                     task.subagent
                 });
             tool.task = Some(super::TaskProgress {
@@ -394,7 +462,7 @@ impl State {
                 last_tool: wire.last_tool.clone(),
                 finished,
             });
-            if line.get("is_backgrounded") == Some(&Value::Bool(true)) {
+            if report.backgrounded {
                 tool.background = true;
             }
             if !finished {
@@ -430,53 +498,51 @@ impl State {
 
     // --- streams ---------------------------------------------------------
 
-    fn stream_event(&mut self, emit: &mut Emit, line: &Value) {
-        let event = line.get("event").unwrap_or(&Value::Null);
-        match text(event, "type") {
-            "message_start" => {
-                let message = event.get("message").unwrap_or(&Value::Null);
-                self.stream = str_field(message, "id");
+    fn stream_event(&mut self, emit: &mut Emit, event: &StreamEvent, parent: &str) {
+        match event {
+            StreamEvent::MessageStart { message, .. } => {
+                self.stream = written(&message.id);
                 self.stream_tools.clear();
-                self.usage_seen(message.get("usage"));
+                self.usage_seen(&message.usage);
                 self.shared.turn_started();
             }
-            "content_block_start" => {
+            StreamEvent::ContentBlockStart {
+                index,
+                content_block,
+                ..
+            } => {
                 let Some(message) = self.stream.clone() else {
                     return;
                 };
-                let index = event.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
-                let block = event.get("content_block").unwrap_or(&Value::Null);
                 let key = format!("{message}:{index}");
-                match text(block, "type") {
-                    "text" => self.open_block(emit, key, text(block, "text"), false),
-                    "thinking" => self.open_block(emit, key, text(block, "thinking"), true),
-                    "tool_use" => {
-                        let id = text(block, "id").to_owned();
-                        self.stream_tools.insert(index, id.clone());
-                        self.tool_seen(emit, &id, text(block, "name"), None, line);
+                match content_block {
+                    ContentBlock::Text { text, .. } => self.open_block(emit, key, text, false),
+                    ContentBlock::Thinking { thinking, .. } => {
+                        self.open_block(emit, key, thinking, true)
+                    }
+                    ContentBlock::ToolUse { id, name, .. } => {
+                        self.stream_tools.insert(*index, id.clone());
+                        self.tool_seen(emit, id, name, None, parent);
                     }
                     _ => {}
                 }
             }
-            "content_block_delta" => {
+            StreamEvent::ContentBlockDelta { index, delta, .. } => {
                 let Some(message) = self.stream.clone() else {
                     return;
                 };
-                let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
-                let delta = event.get("delta").unwrap_or(&Value::Null);
                 let key = format!("{message}:{index}");
-                let appended = match text(delta, "type") {
-                    "text_delta" => text(delta, "text"),
-                    "thinking_delta" => text(delta, "thinking"),
+                let appended = match delta {
+                    StreamDelta::Text { text, .. } => text,
+                    StreamDelta::Thinking { thinking, .. } => thinking,
                     _ => return,
                 };
                 self.shared.append(emit, &key, appended);
             }
-            "content_block_stop" => {
+            StreamEvent::ContentBlockStop { index, .. } => {
                 let Some(message) = self.stream.clone() else {
                     return;
                 };
-                let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
                 let key = format!("{message}:{index}");
                 if let Some(open) = self.shared.open_item(&key).cloned() {
                     let thinking = matches!(
@@ -486,9 +552,13 @@ impl State {
                     self.close_block(emit, key, open.text, thinking);
                 }
             }
-            "message_delta" => self.usage_seen(event.get("usage")),
-            "message_stop" => self.stream = None,
-            _ => {}
+            StreamEvent::MessageDelta { usage, .. } => self.context_seen(
+                usage.input_tokens,
+                usage.cache_creation_input_tokens,
+                usage.cache_read_input_tokens,
+            ),
+            StreamEvent::MessageStop { .. } => self.stream = None,
+            StreamEvent::Unknown(_) => {}
         }
     }
 
@@ -537,18 +607,17 @@ impl State {
         }
     }
 
-    fn usage_seen(&mut self, usage: Option<&Value>) {
-        let Some(usage) = usage else {
-            return;
-        };
-        let tokens = [
-            "input_tokens",
-            "cache_creation_input_tokens",
-            "cache_read_input_tokens",
-        ]
-        .iter()
-        .filter_map(|field| usage.get(*field).and_then(Value::as_u64))
-        .sum::<u64>();
+    fn usage_seen(&mut self, usage: &Usage) {
+        self.context_seen(
+            Some(usage.input_tokens),
+            usage.cache_creation_input_tokens,
+            usage.cache_read_input_tokens,
+        );
+    }
+
+    /// The tokens a request sent: what the context holds now.
+    fn context_seen(&mut self, input: Option<u64>, created: Option<u64>, read: Option<u64>) {
+        let tokens = [input, created, read].into_iter().flatten().sum::<u64>();
         if tokens > 0 {
             self.context_tokens = Some(tokens);
         }
@@ -571,33 +640,33 @@ impl State {
 
     // --- whole messages --------------------------------------------------
 
-    fn assistant(&mut self, emit: &mut Emit, line: &Value) {
+    fn assistant(&mut self, emit: &mut Emit, assistant: &AssistantMessage) {
         self.shared.turn_started();
-        let message = line.get("message").unwrap_or(&Value::Null);
-        let message_id = text(message, "id").to_owned();
-        if let Some(model) = str_field(message, "model")
+        let message = &assistant.message;
+        let message_id = message.id.clone();
+        if let Some(model) = written(&message.model)
             && model != "<synthetic>"
         {
             self.model = Some(model);
         }
-        self.usage_seen(message.get("usage"));
-        let blocks = message
-            .get("content")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        if let Some(error) = str_field(line, "error") {
-            let message = content_text(message.get("content").unwrap_or(&Value::Null));
+        self.usage_seen(&message.usage);
+        let blocks = &message.content;
+        if let Some(error) = assistant
+            .error
+            .as_ref()
+            .and_then(|error| written(error.as_str()))
+        {
+            let text = blocks_text(blocks);
             if error == AUTHENTICATION_FAILED {
-                self.sign_in_failed(&message);
+                self.sign_in_failed(&text);
             }
             self.shared.item(
                 emit,
                 ItemDraft {
-                    key: text(line, "uuid").to_owned(),
+                    key: assistant.uuid.clone(),
                     body: item_body(Kind::ApiError(wire::ApiError {
                         error_kind: error,
-                        message,
+                        message: text,
                         ..Default::default()
                     })),
                     complete: true,
@@ -606,27 +675,32 @@ impl State {
             );
             return;
         }
+        let parent = assistant.parent_tool_use_id.as_deref().unwrap_or_default();
         let base = self.blocks.get(&message_id).copied().unwrap_or(0);
         self.blocks
             .insert(message_id.clone(), base + blocks.len() as u32);
         for (offset, block) in blocks.iter().enumerate() {
             let key = format!("{message_id}:{}", base + offset as u32);
-            match text(block, "type") {
-                "text" => self.close_block(emit, key, text(block, "text").to_owned(), false),
-                "thinking" | "redacted_thinking" => {
-                    self.close_block(emit, key, text(block, "thinking").to_owned(), true)
+            match block {
+                ContentBlock::Text { text, .. } => self.close_block(emit, key, text.clone(), false),
+                ContentBlock::Thinking { thinking, .. } => {
+                    self.close_block(emit, key, thinking.clone(), true)
                 }
-                "tool_use" => {
-                    let id = text(block, "id").to_owned();
-                    let input = block.get("input").cloned().unwrap_or(Value::Null);
-                    self.tool_seen(emit, &id, text(block, "name"), Some(&input), line);
+                // Claude keeps a redacted block's thinking to itself.
+                ContentBlock::RedactedThinking { .. } => {
+                    self.close_block(emit, key, String::new(), true)
+                }
+                ContentBlock::ToolUse {
+                    id, name, input, ..
+                } => {
+                    self.tool_seen(emit, id, name, Some(input), parent);
                 }
                 other => self.shared.item(
                     emit,
                     ItemDraft {
                         key,
                         body: item_body(Kind::Unrecognized(wire::Unrecognized {
-                            fact_type: format!("assistant/{other}"),
+                            fact_type: format!("assistant/{}", other.kind()),
                             summary: String::new(),
                         })),
                         complete: true,
@@ -643,7 +717,7 @@ impl State {
         id: &str,
         name: &str,
         input: Option<&Value>,
-        line: &Value,
+        parent: &str,
     ) {
         if id.is_empty() {
             return;
@@ -670,42 +744,43 @@ impl State {
             background: false,
             decision: None,
             ended_at_ms: None,
-            parent_key: text(line, "parent_tool_use_id").to_owned(),
+            parent_key: parent.to_owned(),
             task: None,
             images: Vec::new(),
             emitted: Vec::new(),
         });
         if let Some(input) = input {
             tool.input = input.to_string();
-            tool.background = input
-                .get("run_in_background")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            tool.background =
+                BackgroundInput::deserialize(input).is_ok_and(|input| input.run_in_background);
         }
         self.emit_tool(emit, id);
     }
 
-    fn user(&mut self, emit: &mut Emit, line: &Value) {
-        let uuid = text(line, "uuid").to_owned();
-        let content = line.pointer("/message/content").unwrap_or(&Value::Null);
-        let whole = content_text(content);
-        if line.get("isReplay").and_then(Value::as_bool) == Some(true) {
-            if let Some(output) = local_output(&whole) {
-                return self.slash_output(emit, uuid, &output);
-            }
-            self.steer_replayed(emit, &uuid);
-            return self.taken(&uuid);
-        }
-        if let Value::Array(blocks) = content {
+    fn user(&mut self, emit: &mut Emit, user: &UserMessageOutput) {
+        let content = &user.message.content;
+        if let MessageContent::Blocks(blocks) = content {
             for block in blocks {
-                if text(block, "type") == "tool_result" {
-                    self.tool_result(emit, block, line);
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                    ..
+                } = block
+                {
+                    self.tool_result(
+                        emit,
+                        tool_use_id,
+                        content.as_ref(),
+                        is_error.unwrap_or(false),
+                        user.tool_use_result.as_ref(),
+                    );
                 }
             }
         }
         // The compaction summary Claude writes back is its own; the SDK's
         // compaction row carries the counts.
-        if whole.trim_start().starts_with(INTERRUPTED) {
+        if message_text(content).trim_start().starts_with(INTERRUPTED) {
             self.interrupted = true;
         }
     }
@@ -743,18 +818,17 @@ impl State {
         );
     }
 
-    fn tool_result(&mut self, emit: &mut Emit, block: &Value, line: &Value) {
-        let id = text(block, "tool_use_id").to_owned();
-        let output = content_text(block.get("content").unwrap_or(&Value::Null));
-        let is_error = block
-            .get("is_error")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let result = line
-            .get("tool_use_result")
-            .or_else(|| line.get("toolUseResult"));
+    fn tool_result(
+        &mut self,
+        emit: &mut Emit,
+        id: &str,
+        content: Option<&stream::ToolResultBody>,
+        is_error: bool,
+        result: Option<&Value>,
+    ) {
+        let output = tool_result_text(content);
         let now = self.shared.now_ms();
-        let Some(tool) = self.tools.get_mut(&id) else {
+        let Some(tool) = self.tools.get_mut(id) else {
             return;
         };
         let denied = tool
@@ -767,7 +841,7 @@ impl State {
             if let Some(result) = result {
                 tool.outcome_json = compact_json(&without_image_bytes(result));
             }
-            return self.emit_tool(emit, &id);
+            return self.emit_tool(emit, id);
         }
         tool.state = if denied {
             ToolState::Denied
@@ -783,7 +857,7 @@ impl State {
         } else {
             output
         };
-        let images = result_images(block.get("content").unwrap_or(&Value::Null));
+        let images = tool_result_images(content);
         if !images.is_empty() {
             tool.images = Vec::new();
             for (image, write) in images {
@@ -805,7 +879,7 @@ impl State {
                 result.unwrap_or(&Value::Null),
             );
         }
-        self.emit_tool(emit, &id);
+        self.emit_tool(emit, id);
     }
 
     fn slash_output(&mut self, emit: &mut Emit, key: String, output: &str) {
@@ -829,27 +903,40 @@ impl State {
         );
     }
 
-    fn result(&mut self, emit: &mut Emit, line: &Value) {
+    fn result(&mut self, emit: &mut Emit, result: &ResultMessage) {
         self.dismiss_asks(emit);
-        if let Some(window) = line
-            .get("modelUsage")
-            .and_then(Value::as_object)
-            .and_then(|models| {
-                let model = self.model.as_deref().unwrap_or_default();
-                models
-                    .get(model)
-                    .or_else(|| models.values().next())
-                    .and_then(|usage| usage.get("contextWindow"))
-                    .and_then(Value::as_u64)
-            })
+        // A result of a kind this build does not know still carries the
+        // fields every result does.
+        let unknown = match result {
+            ResultMessage::Unknown(raw) => ResultError::deserialize(&raw.raw).ok(),
+            _ => None,
+        };
+        let (common, errors): (Option<&ResultCommon>, &[String]) = match result {
+            ResultMessage::Success(success) => (Some(&success.common), &[]),
+            ResultMessage::ErrorDuringExecution(error)
+            | ResultMessage::ErrorMaxTurns(error)
+            | ResultMessage::ErrorMaxBudgetUsd(error)
+            | ResultMessage::ErrorMaxStructuredOutputRetries(error) => {
+                (Some(&error.common), &error.errors)
+            }
+            ResultMessage::Unknown(_) => match &unknown {
+                Some(error) => (Some(&error.common), &error.errors),
+                None => (None, &[]),
+            },
+        };
+        if let Some(window) = common
+            .and_then(|common| common.model_usage.as_ref())
+            .and_then(|models| context_window(models, self.model.as_deref().unwrap_or_default()))
         {
             self.context_window = Some(window);
         }
-        let subtype = text(line, "subtype");
-        let aborted = text(line, "terminal_reason").starts_with("aborted");
+        let subtype = result.subtype();
+        let aborted = common
+            .and_then(|common| common.terminal_reason.as_deref())
+            .is_some_and(|reason| reason.starts_with("aborted"));
         // An API failure ends the turn with subtype success and is_error;
         // the assistant row before it already carried the error.
-        let api_failure = line.get("is_error").and_then(Value::as_bool) == Some(true);
+        let api_failure = common.is_some_and(|common| common.is_error);
         let outcome = if std::mem::take(&mut self.interrupted) || aborted {
             TurnOutcome::Interrupted
         } else if subtype == "success" && !api_failure {
@@ -857,25 +944,17 @@ impl State {
         } else {
             TurnOutcome::Failed
         };
+        let uuid = common
+            .map(|common| common.uuid.as_str())
+            .unwrap_or_default();
         if outcome == TurnOutcome::Failed && subtype != "success" {
-            let errors = line
-                .get("errors")
-                .and_then(Value::as_array)
-                .map(|errors| {
-                    errors
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                })
-                .unwrap_or_default();
             self.shared.item(
                 emit,
                 ItemDraft {
-                    key: format!("{}:error", text(line, "uuid")),
+                    key: format!("{uuid}:error"),
                     body: item_body(Kind::ApiError(wire::ApiError {
                         error_kind: subtype.to_owned(),
-                        message: errors,
+                        message: errors.join("; "),
                         ..Default::default()
                     })),
                     complete: true,
@@ -887,10 +966,9 @@ impl State {
             return;
         };
         let at_ms = self.shared.now_ms();
-        let started_at_ms = line
-            .get("duration_ms")
-            .and_then(Value::as_i64)
-            .map_or(turn.started_at_ms, |duration| at_ms - duration);
+        let started_at_ms = common.map_or(turn.started_at_ms, |common| {
+            at_ms - common.duration_ms as i64
+        });
         self.shared.item(
             emit,
             ItemDraft {
@@ -899,7 +977,9 @@ impl State {
                     turn_id: turn.id,
                     outcome: outcome as i32,
                     started_at_ms,
-                    cost_usd: line.get("total_cost_usd").and_then(Value::as_f64),
+                    cost_usd: common
+                        .and_then(|common| common.total_cost_usd.as_ref())
+                        .and_then(serde_json::Number::as_f64),
                 })),
                 at_ms: Some(at_ms),
                 complete: true,
@@ -915,20 +995,19 @@ impl State {
 
     // --- control ---------------------------------------------------------
 
-    fn control_request_in(&mut self, emit: &mut Emit, line: &Value, payload: &[u8]) {
-        let request_id = text(line, "request_id").to_owned();
-        let request = line.get("request").unwrap_or(&Value::Null);
-        match text(request, "subtype") {
-            "can_use_tool" => self.can_use_tool(emit, &request_id, request),
-            "elicitation" => {
-                let server = text(request, "mcp_server_name").to_owned();
-                let message = text(request, "message").to_owned();
-                let (body, shape) = if text(request, "mode") == "url" {
+    fn control_request_in(&mut self, emit: &mut Emit, request: ControlRequest, payload: &[u8]) {
+        let request_id = request.request_id;
+        match request.request {
+            ControlRequestBody::CanUseTool(asked) => self.can_use_tool(emit, &request_id, asked),
+            ControlRequestBody::Elicitation(elicitation) => {
+                let server = elicitation.mcp_server_name;
+                let message = elicitation.message;
+                let (body, shape) = if elicitation.mode.as_deref() == Some("url") {
                     (
                         wire::ask::Body::Link(LinkAsk {
                             server,
                             message,
-                            url: text(request, "url").to_owned(),
+                            url: elicitation.url.unwrap_or_default(),
                         }),
                         AskShape::Link,
                     )
@@ -937,6 +1016,7 @@ impl State {
                         wire::ask::Body::Form(FormAsk {
                             server,
                             message,
+                            // The schema as Claude wrote it, key order kept.
                             schema_json: json_as_written(payload, &["request", "requested_schema"])
                                 .unwrap_or_default(),
                         }),
@@ -961,36 +1041,27 @@ impl State {
                 self.emit_ask(emit, &ask, None);
                 self.shared.open_ask(ask);
             }
-            other => emit.effect(Effect::ProviderWrite(
-                serde_json::to_vec(&json!({
-                    "type": "control_response",
-                    "response": {
-                        "subtype": "error",
-                        "request_id": request_id,
-                        "error": format!("amux does not handle {other}"),
-                    },
-                }))
-                .expect("json"),
-            )),
+            other => emit.effect(super::write(&stream::Input::ControlResponse(
+                ControlResponse::error(
+                    request_id,
+                    format!("amux does not handle {}", other.kind()),
+                ),
+            ))),
         }
     }
 
-    fn can_use_tool(&mut self, emit: &mut Emit, request_id: &str, request: &Value) {
-        let name = text(request, "tool_name");
-        let input = request.get("input").cloned().unwrap_or(Value::Null);
-        let tool_use_id = text(request, "tool_use_id").to_owned();
+    fn can_use_tool(&mut self, emit: &mut Emit, request_id: &str, asked: CanUseToolRequest) {
+        let name = &asked.tool_name;
+        let input = &asked.input;
+        let tool_use_id = asked.tool_use_id.clone();
         // The call's row may not have been written yet: the request names
         // it, so the ask always has an item to point at.
-        self.tool_seen(emit, &tool_use_id, name, Some(&input), request);
+        self.tool_seen(emit, &tool_use_id, name, Some(input), "");
         let (server, tool) = split_tool_name(name);
-        let suggestions = request
-            .get("permission_suggestions")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let suggestions = asked.permission_suggestions.clone().unwrap_or_default();
         let (body, shape) = match tool.as_str() {
             QUESTION_TOOL if server.is_empty() => {
-                let (question, _) = question_ask(&input);
+                let (question, _) = question_ask(input);
                 let questions = question
                     .questions
                     .iter()
@@ -1013,18 +1084,17 @@ impl State {
             }
             PLAN_TOOL if server.is_empty() => (
                 wire::ask::Body::Plan(PlanAsk {
-                    plan: text(&input, "plan").to_owned(),
+                    plan: PlanInput::deserialize(input)
+                        .map(|input| input.plan)
+                        .unwrap_or_default(),
                     offers_auto_accept: true,
                 }),
                 AskShape::Plan,
             ),
             _ => {
-                let reason = match request.get("decision_reason") {
-                    Some(Value::String(reason)) => reason.clone(),
-                    Some(reason @ Value::Object(_)) => str_field(reason, "reason")
-                        .or_else(|| str_field(reason, "type"))
-                        .unwrap_or_default(),
-                    _ => str_field(request, "blocked_path")
+                let reason = match &asked.decision_reason {
+                    Some(reason) => reason.clone(),
+                    None => written_opt(asked.blocked_path.as_deref())
                         .map(|path| format!("outside the allowed directories: {path}"))
                         .unwrap_or_default(),
                 };
@@ -1032,10 +1102,10 @@ impl State {
                     wire::ask::Body::Permission(PermissionAsk {
                         tool_name: tool.clone(),
                         input_json: input.to_string().into_bytes(),
-                        scopes: scope_choices(&suggestions),
+                        scopes: permission_scopes(&suggestions),
                         reason,
-                        description: str_field(request, "description")
-                            .or_else(|| str_field(request, "title"))
+                        description: written_opt(asked.description.as_deref())
+                            .or_else(|| written_opt(asked.title.as_deref()))
                             .unwrap_or_default(),
                         deny_stops: false,
                         deny_can_stop: true,
@@ -1050,7 +1120,14 @@ impl State {
             AskMeta {
                 tool_use_id: tool_use_id.clone(),
                 input: input.to_string(),
-                suggestions: suggestions.iter().map(Value::to_string).collect(),
+                suggestions: suggestions
+                    .iter()
+                    .map(|suggestion| {
+                        serde_json::to_value(suggestion)
+                            .expect("a permission change serializes")
+                            .to_string()
+                    })
+                    .collect(),
                 shape,
             },
         );
@@ -1072,19 +1149,16 @@ impl State {
         self.control_request(
             emit,
             Request::Settings,
-            json!({ "subtype": "get_settings" }),
+            ControlRequestBody::GetSettings(Default::default()),
         );
     }
 
     /// Responses to requests: the interpreter's own, matched by id, and
     /// the agent process's initialize, mcp_status and get_context_usage,
     /// recognised by their shape.
-    fn control_response_in(&mut self, emit: &mut Emit, line: &Value) {
-        let response = line.get("response").unwrap_or(&Value::Null);
-        let request_id = text(response, "request_id");
-        let ok = text(response, "subtype") == "success";
-        let body = response.get("response").unwrap_or(&Value::Null);
-        match self.requests.remove(request_id) {
+    fn control_response_in(&mut self, emit: &mut Emit, response: ControlResponse) {
+        let ok = response.response.subtype == ControlOutcome::Success;
+        match self.requests.remove(response.request_id()) {
             Some(Request::Model(model)) if ok => {
                 self.model = model.or(self.model.take());
                 self.ask_settings(emit);
@@ -1093,70 +1167,87 @@ impl State {
             Some(Request::Effort(Some(effort))) if ok => self.effort = Some(effort),
             Some(Request::Effort(None)) if ok => self.ask_settings(emit),
             Some(Request::Settings) if ok => {
-                if let Some(effort) = body.pointer("/applied/effort").and_then(Value::as_str) {
-                    self.effort = Some(effort.to_owned());
+                let Some(Ok(settings)) = response.result::<SettingsResult>() else {
+                    return;
+                };
+                if let Some(effort) = settings.applied.effort {
+                    self.effort = Some(effort);
                 }
                 // Claude names its model in its init only once a turn
                 // starts; until then the applied settings say which it is.
                 if self.model.is_none()
-                    && let Some(model) = body.pointer("/applied/model").and_then(Value::as_str)
+                    && let Some(model) = settings.applied.model
                 {
-                    self.model = Some(model.to_owned());
+                    self.model = Some(model);
                 }
             }
             Some(_) => {}
-            None => {
-                // Claude reports its init only once the first message
-                // arrives, so the answer to initialize is what says it
-                // takes input; without it a queued first prompt would wait
-                // for an init that only a prompt can bring.
-                if ok && body.get("commands").is_some() {
-                    self.shared.provider_started();
-                    self.ask_settings(emit);
-                }
-                if let Some(models) = body.get("models").and_then(Value::as_array) {
-                    self.models = offered_models(models);
-                }
-                if let Some(commands) = body.get("commands").and_then(Value::as_array) {
-                    self.commands = offered_commands(commands);
-                }
-                if let Some(account) = body.get("account") {
-                    self.sign_in = Some(SignIn {
-                        state: SignInState::SignedIn as i32,
-                        account: str_field(account, "email")
-                            .or_else(|| str_field(account, "subscriptionType"))
-                            .unwrap_or_default(),
-                        message: String::new(),
-                    });
-                }
-                if let Some(servers) = body.get("mcpServers").and_then(Value::as_array) {
-                    self.servers = Some(server_health(servers));
-                }
-                if let Some(total) = body.get("totalTokens").and_then(Value::as_u64) {
-                    self.context_tokens = Some(total);
-                    self.context_window = body
-                        .get("maxTokens")
-                        .and_then(Value::as_u64)
-                        .or(self.context_window);
-                    self.context_breakdown = body
-                        .get("categories")
-                        .and_then(Value::as_array)
-                        .map(|categories| {
-                            categories
-                                .iter()
-                                .map(|category| {
-                                    (
-                                        text(category, "name").to_owned(),
-                                        category.get("tokens").and_then(Value::as_u64).unwrap_or(0),
-                                    )
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                }
-            }
+            None => self.agent_answer(emit, ok, &response),
         }
     }
+
+    /// An answer to one of the agent process's own requests.
+    fn agent_answer(&mut self, emit: &mut Emit, ok: bool, response: &ControlResponse) {
+        if let Some(Ok(initialized)) = response.result::<InitializationResult>() {
+            self.commands_listed(emit, ok, &initialized.commands);
+            self.models = offered_models(&initialized.models);
+            let account = &initialized.account;
+            self.sign_in = Some(SignIn {
+                state: SignInState::SignedIn as i32,
+                account: written_opt(account.email.as_deref())
+                    .or_else(|| written_opt(account.subscription_type.as_deref()))
+                    .unwrap_or_default(),
+                message: String::new(),
+            });
+        } else if let Some(Ok(reloaded)) = response.result::<ReloadPluginsResult>() {
+            self.commands_listed(emit, ok, &reloaded.commands);
+            self.servers_listed(&reloaded.mcp_servers);
+        } else if let Some(Ok(status)) = response.result::<McpStatusResult>() {
+            self.servers_listed(&status.mcp_servers);
+        } else if let Some(Ok(usage)) = response.result::<ContextUsage>() {
+            self.context_tokens = Some(usage.total_tokens);
+            self.context_window = Some(usage.max_tokens);
+            self.context_breakdown = usage
+                .categories
+                .into_iter()
+                .map(|category| (category.name, category.tokens))
+                .collect();
+        }
+    }
+}
+
+impl State {
+    /// An answer listing Claude's commands: initialize's, or a plugin
+    /// reload's. Claude reports its init only once the first message
+    /// arrives, so this answer is what says it takes input; without it a
+    /// queued first prompt would wait for an init that only a prompt can
+    /// bring. What it applies may have changed with it.
+    fn commands_listed(&mut self, emit: &mut Emit, ok: bool, commands: &[SlashCommand]) {
+        if ok {
+            self.shared.provider_started();
+            self.ask_settings(emit);
+        }
+        self.commands = offered_commands(commands);
+    }
+
+    fn servers_listed(&mut self, servers: &[McpServerStatus]) {
+        self.servers = Some(server_health(servers.iter().map(|server| {
+            (
+                server.name.as_str(),
+                server.status.as_str(),
+                server.error.as_deref().unwrap_or_default(),
+            )
+        })));
+    }
+}
+
+/// The context window the turn's model ran with: the named model's, or the
+/// first Claude reports.
+fn context_window(models: &BTreeMap<String, ModelUsage>, model: &str) -> Option<u64> {
+    models
+        .get(model)
+        .or_else(|| models.values().next())
+        .map(|usage| usage.context_window)
 }
 
 /// A local command's output as Claude replays it.
@@ -1178,19 +1269,20 @@ fn local_output(text: &str) -> Option<String> {
     None
 }
 
-fn server_health(servers: &[Value]) -> ToolServerHealth {
+fn server_health<'a>(
+    servers: impl Iterator<Item = (&'a str, &'a str, &'a str)>,
+) -> ToolServerHealth {
     let servers = servers
-        .iter()
-        .map(|server| ToolServer {
-            name: text(server, "name").to_owned(),
-            status: match text(server, "status") {
+        .map(|(name, status, error)| ToolServer {
+            name: name.to_owned(),
+            status: match status {
                 "connected" => ToolServerStatus::Ready,
                 "pending" => ToolServerStatus::Starting,
                 "needs-auth" => ToolServerStatus::NeedsAuth,
                 "failed" => ToolServerStatus::Failed,
                 _ => ToolServerStatus::Unspecified,
             } as i32,
-            error: text(server, "error").to_owned(),
+            error: error.to_owned(),
         })
         .collect::<Vec<_>>();
     // A server waiting for sign-in is the person's choice, not a failure.

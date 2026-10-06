@@ -17,10 +17,11 @@ pub mod options;
 pub mod types;
 
 pub use control::{
-    BackgroundTaskSummary, ControlRequest, ControlRequestBody, ControlResponse, InterruptResult,
-    McpPermissionMode, McpPermissionModeOverrideResult, McpServerStatus, McpSetServersResult,
+    BackgroundTaskSummary, ControlCancelRequest, ControlRequest, ControlRequestBody,
+    ControlResponse, FlagSettings, InterruptResult, McpPermissionMode,
+    McpPermissionModeOverrideResult, McpServerStatus, McpSetServersResult, McpStatusResult,
     PluginInfo, ReloadPluginsResult, ReloadSkillsResult, RewindFilesResult,
-    SetPermissionModeResult,
+    SetPermissionModeResult, SettingsResult,
 };
 pub use error::ProtocolError;
 pub use init::InitializationResult;
@@ -41,6 +42,8 @@ pub enum Output {
     /// A conversation, status or result frame.
     Message(Message),
     ControlRequest(ControlRequest),
+    /// Claude withdrawing a request it asked, unanswered.
+    ControlCancelRequest(ControlCancelRequest),
     ControlResponse(ControlResponse),
     Unknown(Unknown),
 }
@@ -143,6 +146,7 @@ pub fn encode_output(output: &Output) -> Vec<u8> {
             serde_json::to_vec(&to_value(message)).expect("a JSON object serializes")
         }
         Output::ControlRequest(request) => framed("control_request", request),
+        Output::ControlCancelRequest(cancel) => framed("control_cancel_request", cancel),
         Output::ControlResponse(response) => framed("control_response", response),
         Output::Unknown(unknown) => unknown.raw.get().as_bytes().to_vec(),
     }
@@ -193,6 +197,7 @@ fn fields<T: for<'de> Deserialize<'de>>(object: &Map<String, Value>) -> Option<T
 fn decode_output(object: Map<String, Value>, raw: Box<RawValue>) -> Output {
     let decoded = match kind_of(&object).as_deref() {
         Some("control_request") => fields(&object).map(Output::ControlRequest),
+        Some("control_cancel_request") => fields(&object).map(Output::ControlCancelRequest),
         Some("control_response") => fields(&object).map(Output::ControlResponse),
         _ => match Message::parse(Value::Object(object.clone())) {
             Ok(Message::Unknown(_) | Message::UnknownSystem(_)) => None,

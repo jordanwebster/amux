@@ -3,6 +3,7 @@
 
 use super::{HAIKU, SessionSetup, SpecDef, SpecSession};
 use crate::driver::sdk::PermissionMode;
+use crate::driver::sdk::control::FlagSettings;
 use crate::expect;
 
 pub(super) static PERMISSION_MODE_AND_MODEL: SpecDef = SpecDef {
@@ -77,7 +78,10 @@ async fn effort(session: &mut SpecSession) {
     expect!(turn.succeeded(), "the session's first turn completes");
     for level in ["low", "high"] {
         session
-            .apply_flag_settings(serde_json::json!({ "effortLevel": level }))
+            .apply_flag_settings(FlagSettings {
+                effort_level: Some(Some(level.to_owned())),
+                ..FlagSettings::default()
+            })
             .await
             .expect("the flag settings control is acknowledged");
         let applied = session
@@ -239,7 +243,7 @@ async fn session_maintenance(session: &mut SpecSession) {
         .await
         .expect("the plugins reload control is answered");
     session
-        .apply_flag_settings(serde_json::json!({}))
+        .apply_flag_settings(FlagSettings::default())
         .await
         .expect("the flag settings control is answered");
     session

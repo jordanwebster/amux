@@ -19,7 +19,7 @@ ALLOWED_LOCAL = {
     "agent-dir": {"wire"},
     "redaction": set(),
     # The pure per-kind step, and the per-kind body redactor beside it.
-    "interpret": {"attachments", "codex-protocol", "redaction", "wire"},
+    "interpret": {"attachments", "claude-protocol", "codex-protocol", "redaction", "wire"},
     # The agent process: its lock, journal and sockets, the interpreter,
     # and the provider hosts.
     "agent": {

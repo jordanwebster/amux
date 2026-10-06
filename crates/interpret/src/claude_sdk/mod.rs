@@ -20,9 +20,16 @@ mod recording;
 
 use std::collections::BTreeMap;
 
+use claude_protocol::stream::control::{
+    ApplyFlagSettingsRequest, InterruptRequest, SetModelRequest, SetPermissionModeRequest,
+};
+use claude_protocol::stream::{
+    self as claude_stream, ControlRequest, ControlRequestBody, ControlResponse, ElicitationResult,
+    FlagSettings, PermissionMode, PermissionResult, PermissionUpdate, PermissionUpdateDestination,
+};
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use wire::{
     AgentSpec, Ask, AskClosed, Attachment, BackgroundProcesses, ClaudeAnswer, ClaudeSdkItem,
     ClaudeSdkSnapshot, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input,
@@ -235,14 +242,76 @@ fn item_body(kind: claude_sdk_item::Kind) -> Vec<u8> {
     ClaudeSdkItem { kind: Some(kind) }.encode_to_vec()
 }
 
-fn control_response(request_id: &str, response: Value) -> Effect {
-    Effect::ProviderWrite(
-        serde_json::to_vec(&json!({
-            "type": "control_response",
-            "response": { "subtype": "success", "request_id": request_id, "response": response },
-        }))
-        .expect("json"),
-    )
+/// A line for Claude's stdin.
+fn write(input: &claude_stream::Input) -> Effect {
+    Effect::ProviderWrite(claude_stream::encode(input))
+}
+
+/// What Bash's input says about where it runs.
+#[derive(Deserialize)]
+struct BackgroundInput {
+    #[serde(default)]
+    run_in_background: bool,
+}
+
+/// ExitPlanMode's input: the plan put to the person.
+#[derive(Deserialize)]
+struct PlanInput {
+    #[serde(default)]
+    plan: String,
+}
+
+/// AskUserQuestion's input, as far as reading an answer back needs it.
+#[derive(Deserialize)]
+pub(super) struct QuestionInput {
+    #[serde(default)]
+    questions: Vec<QuestionItem>,
+}
+
+#[derive(Deserialize)]
+struct QuestionItem {
+    #[serde(default)]
+    question: String,
+    #[serde(default)]
+    options: Vec<QuestionOptionItem>,
+}
+
+#[derive(Deserialize)]
+struct QuestionOptionItem {
+    #[serde(default)]
+    label: String,
+}
+
+/// AskUserQuestion's input once answered: each answer by its question's
+/// text.
+#[derive(Deserialize)]
+pub(super) struct AnsweredInput {
+    answers: serde_json::Map<String, Value>,
+}
+
+/// AskUserQuestion's input with the person's answers: Claude hands it to
+/// the tool.
+#[derive(Serialize)]
+struct AnsweringInput<'a> {
+    #[serde(flatten)]
+    input: serde_json::Map<String, Value>,
+    /// The picked labels and typed answers, by each question's text.
+    answers: BTreeMap<&'a str, String>,
+    /// Notes per question, by its text.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    annotations: BTreeMap<&'a str, QuestionNote<'a>>,
+}
+
+/// The note a person wrote on a question, as Claude takes it.
+#[derive(Serialize)]
+struct QuestionNote<'a> {
+    notes: &'a str,
+}
+
+/// The control response an answer sends.
+enum SdkAnswer {
+    Permission(PermissionResult),
+    Elicitation(ElicitationResult),
 }
 
 /// The value of `--flag value` or `--flag=value` in launch arguments.
@@ -359,14 +428,11 @@ impl State {
         id
     }
 
-    fn control_request(&mut self, emit: &mut Emit, request: Request, body: Value) {
+    fn control_request(&mut self, emit: &mut Emit, request: Request, body: ControlRequestBody) {
         let id = self.next_request_id(request);
-        emit.effect(Effect::ProviderWrite(
-            serde_json::to_vec(
-                &json!({ "type": "control_request", "request_id": id, "request": body }),
-            )
-            .expect("json"),
-        ));
+        emit.effect(write(&claude_stream::Input::ControlRequest(
+            ControlRequest::new(id, body),
+        )));
     }
 
     // --- inputs ----------------------------------------------------------
@@ -463,15 +529,18 @@ impl State {
                 self.control_request(
                     emit,
                     Request::Mode(mode.mode.clone()),
-                    json!({ "subtype": "set_permission_mode", "mode": mode.mode }),
+                    ControlRequestBody::SetPermissionMode(SetPermissionModeRequest {
+                        mode: PermissionMode::parse(&mode.mode),
+                        extensions: Default::default(),
+                    }),
                 );
                 self.shared.accept(emit, &id, false);
             }
             claude_sdk_input::Of::Model(model) => {
-                let mut body = json!({ "subtype": "set_model" });
-                if let Some(name) = &model.model {
-                    body["model"] = json!(name);
-                }
+                let body = ControlRequestBody::SetModel(SetModelRequest {
+                    model: model.model.clone(),
+                    extensions: Default::default(),
+                });
                 self.control_request(emit, Request::Model(model.model), body);
                 self.shared.accept(emit, &id, false);
             }
@@ -479,9 +548,12 @@ impl State {
                 self.control_request(
                     emit,
                     Request::Effort(effort.effort.clone()),
-                    json!({
-                        "subtype": "apply_flag_settings",
-                        "settings": { "effortLevel": effort.effort },
+                    ControlRequestBody::ApplyFlagSettings(ApplyFlagSettingsRequest {
+                        settings: FlagSettings {
+                            effort_level: Some(effort.effort),
+                            extensions: Default::default(),
+                        },
+                        extensions: Default::default(),
                     }),
                 );
                 self.shared.accept(emit, &id, false);
@@ -494,7 +566,11 @@ impl State {
     fn interrupt(&mut self, emit: &mut Emit) {
         if self.shared.is_busy() || !self.shared.asks().is_empty() {
             self.interrupted = true;
-            self.control_request(emit, Request::Interrupt, json!({ "subtype": "interrupt" }));
+            self.control_request(
+                emit,
+                Request::Interrupt,
+                ControlRequestBody::Interrupt(InterruptRequest::default()),
+            );
         }
     }
 
@@ -561,7 +637,12 @@ impl State {
         };
         let ask = self.shared.answer(emit, id, &key);
         let meta = self.asks.remove(&key);
-        emit.effect(control_response(&key, response));
+        emit.effect(write(&claude_stream::Input::ControlResponse(
+            match response {
+                SdkAnswer::Permission(result) => ControlResponse::success(&key, &result),
+                SdkAnswer::Elicitation(result) => ControlResponse::success(&key, &result),
+            },
+        )));
         if let (Some(meta), Some(decision)) = (meta, decision) {
             self.decide(emit, &meta.tool_use_id, decision);
         }
@@ -787,13 +868,20 @@ const REJECTED: &str = "The user doesn't want to proceed with this tool use. The
 fn sdk_answer(
     meta: &AskMeta,
     answer: claude_answer::Of,
-) -> Option<(Value, Option<ToolDecisionState>)> {
+) -> Option<(SdkAnswer, Option<ToolDecisionState>)> {
     let input = serde_json::from_str::<Value>(&meta.input).unwrap_or(Value::Null);
     let decided = |outcome: DecisionOutcome, scope: &str, note: &str| {
         Some(ToolDecisionState {
             outcome: outcome as i32,
             scope: scope.to_owned(),
             note: note.to_owned(),
+        })
+    };
+    let allow = |input: Value, permissions: Option<Vec<PermissionUpdate>>| {
+        SdkAnswer::Permission(PermissionResult::Allow {
+            updated_input: Some(input),
+            updated_permissions: permissions,
+            tool_use_id: None,
         })
     };
     // Claude hands the message to the model as the tool's error. A bare
@@ -805,29 +893,29 @@ fn sdk_answer(
             message.push_str(" To tell you how to proceed, the user said:\n");
             message.push_str(note);
         }
-        json!({
-            "behavior": "deny",
-            "message": message,
-            "interrupt": stop,
+        SdkAnswer::Permission(PermissionResult::Deny {
+            message,
+            interrupt: Some(stop),
+            tool_use_id: None,
         })
     };
     match (&meta.shape, answer) {
         (AskShape::Permission, claude_answer::Of::Permission(permission)) => match permission.of? {
-            permission_answer::Of::Allow(allow) => {
-                let mut response = json!({ "behavior": "allow", "updatedInput": input });
+            permission_answer::Of::Allow(chosen) => {
+                let mut permissions = None;
                 let mut scope = String::new();
-                if let Some(index) = allow.scope {
-                    let suggestion =
-                        serde_json::from_str::<Value>(meta.suggestions.get(index as usize)?)
-                            .ok()?;
-                    scope = suggestion
-                        .get("destination")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned();
-                    response["updatedPermissions"] = json!([suggestion]);
+                if let Some(index) = chosen.scope {
+                    let suggestion = serde_json::from_str::<PermissionUpdate>(
+                        meta.suggestions.get(index as usize)?,
+                    )
+                    .ok()?;
+                    scope = suggestion.destination().unwrap_or_default().to_owned();
+                    permissions = Some(vec![suggestion]);
                 }
-                Some((response, decided(DecisionOutcome::Allowed, &scope, "")))
+                Some((
+                    allow(input, permissions),
+                    decided(DecisionOutcome::Allowed, &scope, ""),
+                ))
             }
             permission_answer::Of::Deny(no) => Some((
                 deny(&no.note, no.stop),
@@ -836,15 +924,17 @@ fn sdk_answer(
         },
         (AskShape::Plan, claude_answer::Of::Plan(plan)) => match plan.of? {
             plan_answer::Of::Approve(approve) => Some((
-                json!({
-                    "behavior": "allow",
-                    "updatedInput": input,
-                    "updatedPermissions": [{
-                        "type": "setMode",
-                        "mode": if approve.auto_accept_edits { "acceptEdits" } else { "default" },
-                        "destination": "session",
-                    }],
-                }),
+                allow(
+                    input,
+                    Some(vec![PermissionUpdate::SetMode {
+                        mode: if approve.auto_accept_edits {
+                            PermissionMode::AcceptEdits
+                        } else {
+                            PermissionMode::Default
+                        },
+                        destination: PermissionUpdateDestination::Session,
+                    }]),
+                ),
                 // The mode it switched to, as the decision's scope, so the
                 // transcript says edits were accepted without asking.
                 decided(
@@ -866,7 +956,7 @@ fn sdk_answer(
             if answer.answers.len() != questions.len() {
                 return None;
             }
-            let mut answers = serde_json::Map::new();
+            let mut answers = BTreeMap::new();
             for ((question, labels, multi), response) in questions.iter().zip(&answer.answers) {
                 let mut picked = Vec::new();
                 for index in &response.selected {
@@ -876,47 +966,68 @@ fn sdk_answer(
                 if picked.is_empty() || (!multi && picked.len() > 1) {
                     return None;
                 }
-                answers.insert(question.clone(), json!(picked.join(", ")));
+                answers.insert(question.as_str(), picked.join(", "));
             }
             // Claude takes notes per question, keyed by the question's text;
             // the one note the person wrote goes on the last.
-            let mut annotations = serde_json::Map::new();
+            let mut annotations = BTreeMap::new();
             if let Some((question, _, _)) = questions.last()
                 && !answer.note.is_empty()
             {
-                annotations.insert(question.clone(), json!({ "notes": answer.note }));
+                annotations.insert(
+                    question.as_str(),
+                    QuestionNote {
+                        notes: &answer.note,
+                    },
+                );
             }
-            let mut updated = input;
-            updated["answers"] = Value::Object(answers);
-            if !annotations.is_empty() {
-                updated["annotations"] = Value::Object(annotations);
-            }
+            let updated = AnsweringInput {
+                input: match input {
+                    Value::Object(input) => input,
+                    _ => serde_json::Map::new(),
+                },
+                answers,
+                annotations,
+            };
             Some((
-                json!({ "behavior": "allow", "updatedInput": updated }),
+                allow(
+                    serde_json::to_value(updated).expect("an answered input serializes"),
+                    None,
+                ),
                 decided(DecisionOutcome::Allowed, "", &answer.note),
             ))
         }
         (AskShape::Form, claude_answer::Of::Form(form)) => {
-            let action = form_action(form.action)?;
-            let mut response = json!({ "action": action });
-            if action == "accept" {
-                response["content"] =
-                    serde_json::from_slice(&form.content_json).unwrap_or(json!({}));
-            }
-            Some((response, None))
+            let result = match FormAction::try_from(form.action).ok()? {
+                FormAction::Accept => ElicitationResult::Accept {
+                    content: Some(
+                        serde_json::from_slice(&form.content_json)
+                            .unwrap_or_else(|_| Value::Object(serde_json::Map::new())),
+                    ),
+                    extensions: Default::default(),
+                },
+                action => form_action(action)?,
+            };
+            Some((SdkAnswer::Elicitation(result), None))
         }
-        (AskShape::Link, claude_answer::Of::Link(link)) => {
-            Some((json!({ "action": form_action(link.action)? }), None))
-        }
+        (AskShape::Link, claude_answer::Of::Link(link)) => Some((
+            SdkAnswer::Elicitation(form_action(FormAction::try_from(link.action).ok()?)?),
+            None,
+        )),
         _ => None,
     }
 }
 
-fn form_action(action: i32) -> Option<&'static str> {
-    Some(match FormAction::try_from(action).ok()? {
-        FormAction::Accept => "accept",
-        FormAction::Decline => "decline",
-        FormAction::Cancel => "cancel",
+/// The answer an action gives a tool server's form or link, without content.
+fn form_action(action: FormAction) -> Option<ElicitationResult> {
+    let extensions = Default::default();
+    Some(match action {
+        FormAction::Accept => ElicitationResult::Accept {
+            content: None,
+            extensions,
+        },
+        FormAction::Decline => ElicitationResult::Decline { extensions },
+        FormAction::Cancel => ElicitationResult::Cancel { extensions },
         FormAction::Unspecified => return None,
     })
 }

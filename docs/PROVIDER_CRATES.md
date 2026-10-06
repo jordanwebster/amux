@@ -36,8 +36,10 @@ unknown kind of a nested object, or an unknown spelling of a string value,
 is kept as written; unknown fields of a known message are kept in its
 `extra` (Codex) or `extensions` (Claude) map. Encoding writes all of it
 back, so decoding and then encoding a recorded line gives the same JSON.
-Each crate also has a `strict` decoder that refuses every one of those
-fallbacks. The recording checks use it, which is how a change in what a
+A missing field the provider always writes, which amux's hand-written test
+inputs often leave out, reads as empty, zero, or none where amux treats it
+as optional. Each crate also has a `strict` decoder that refuses every one
+of those fallbacks. The recording checks use it, which is how a change in what a
 provider sends shows up: as a failed test naming the line, not as a quiet
 `Unknown` in production.
 

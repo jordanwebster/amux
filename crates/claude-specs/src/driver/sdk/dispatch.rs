@@ -230,6 +230,13 @@ async fn dispatch_line(
         Output::Message(message) => {
             let _ = turn_tx.send(Ok(SdkEvent::Message(message))).await;
         }
+        // Withdrawn requests reach the caller as a frame of their own, as
+        // the published SDK passes them on.
+        Output::ControlCancelRequest(_) => {
+            if let Ok(message) = Message::parse(frame()) {
+                let _ = turn_tx.send(Ok(SdkEvent::Message(message))).await;
+            }
+        }
         Output::Unknown(unknown) => {
             let error = match unknown.kind.as_deref() {
                 Some(kind @ ("control_request" | "control_response")) => {

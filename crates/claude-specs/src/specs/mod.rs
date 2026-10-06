@@ -449,7 +449,10 @@ impl SpecSession {
         self.control().reload_plugins().await
     }
 
-    pub async fn apply_flag_settings(&self, settings: serde_json::Value) -> Result<(), Error> {
+    pub async fn apply_flag_settings(
+        &self,
+        settings: claude_protocol::stream::FlagSettings,
+    ) -> Result<(), Error> {
         self.control().apply_flag_settings(settings).await
     }
 

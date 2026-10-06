@@ -2,6 +2,11 @@
 //! vocabulary, the question and scope shapes, the task list the task tools
 //! keep, and the one-line renderings goldens use.
 
+use claude_protocol::stream::init::{ModelInfo, SlashCommand};
+use claude_protocol::stream::{
+    ContentBlock, ImageSourceType, MessageContent, PermissionUpdate, ToolResultBody,
+    ToolResultContent,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
@@ -69,12 +74,62 @@ pub(crate) fn content_text(content: &Value) -> String {
     }
 }
 
+/// A message's content as text: the plain text, or its text blocks joined.
+pub(crate) fn message_text(content: &MessageContent) -> String {
+    match content {
+        MessageContent::Text(text) => text.clone(),
+        MessageContent::Blocks(blocks) => blocks_text(blocks),
+    }
+}
+
+/// Content blocks' text blocks, joined.
+pub(crate) fn blocks_text(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A tool result as text: the plain text, or its text blocks joined.
+pub(crate) fn tool_result_text(content: Option<&ToolResultBody>) -> String {
+    match content {
+        None => String::new(),
+        Some(ToolResultBody::Text(text)) => text.clone(),
+        Some(ToolResultBody::Blocks(blocks)) => blocks
+            .iter()
+            .filter_map(|block| match block {
+                ToolResultContent::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+/// The images in a tool result's content blocks, each as the attachment a
+/// tool row carries and the blob write that stores its bytes.
+pub(crate) fn tool_result_images(content: Option<&ToolResultBody>) -> Vec<(Attachment, Effect)> {
+    let Some(ToolResultBody::Blocks(blocks)) = content else {
+        return Vec::new();
+    };
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ToolResultContent::Image { source, .. } if source.r#type == ImageSourceType::Base64 => {
+                image_blob(&source.media_type, &source.data)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// The images in a tool result's content blocks, each as the attachment a
 /// tool row carries and the blob write that stores its bytes.
 pub(crate) fn result_images(content: &Value) -> Vec<(Attachment, Effect)> {
-    use base64::Engine as _;
-    use sha2::Digest as _;
-
     let Value::Array(blocks) = content else {
         return Vec::new();
     };
@@ -86,21 +141,30 @@ pub(crate) fn result_images(content: &Value) -> Vec<(Attachment, Effect)> {
             if text(source, "type") != "base64" {
                 return None;
             }
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(text(source, "data"))
-                .ok()?;
-            let hash = sha2::Sha256::digest(&bytes).to_vec();
-            let image = Attachment {
-                of: Some(attachment::Of::Image(BlobRef {
-                    hash: hash.clone(),
-                    name: String::new(),
-                    mime: text(source, "media_type").to_owned(),
-                    size: bytes.len() as u64,
-                })),
-            };
-            Some((image, Effect::WriteBlob { hash, bytes }))
+            image_blob(text(source, "media_type"), text(source, "data"))
         })
         .collect()
+}
+
+/// A base64 image as the attachment that names its blob and the write that
+/// stores it.
+fn image_blob(mime: &str, data: &str) -> Option<(Attachment, Effect)> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    let hash = sha2::Sha256::digest(&bytes).to_vec();
+    let image = Attachment {
+        of: Some(attachment::Of::Image(BlobRef {
+            hash: hash.clone(),
+            name: String::new(),
+            mime: mime.to_owned(),
+            size: bytes.len() as u64,
+        })),
+    };
+    Some((image, Effect::WriteBlob { hash, bytes }))
 }
 
 /// A tool's structured result without the base64 copy of an image it
@@ -326,6 +390,47 @@ pub(crate) fn scope_choices(suggestions: &[Value]) -> Vec<ScopeChoice> {
             directories: strings(suggestion, "directories"),
             mode: text(suggestion, "mode").to_owned(),
             label: String::new(),
+        })
+        .collect()
+}
+
+/// Every scope choice Claude offered with a permission request, in order.
+pub(crate) fn permission_scopes(suggestions: &[PermissionUpdate]) -> Vec<ScopeChoice> {
+    suggestions
+        .iter()
+        .enumerate()
+        .map(|(index, suggestion)| {
+            let (rules, directories, mode) = match suggestion {
+                PermissionUpdate::AddRules { rules, .. }
+                | PermissionUpdate::ReplaceRules { rules, .. }
+                | PermissionUpdate::RemoveRules { rules, .. } => (
+                    rules
+                        .iter()
+                        .map(|rule| match &rule.rule_content {
+                            Some(content) => format!("{}({content})", rule.tool_name),
+                            None => rule.tool_name.clone(),
+                        })
+                        .collect(),
+                    Vec::new(),
+                    String::new(),
+                ),
+                PermissionUpdate::AddDirectories { directories, .. }
+                | PermissionUpdate::RemoveDirectories { directories, .. } => {
+                    (Vec::new(), directories.clone(), String::new())
+                }
+                PermissionUpdate::SetMode { mode, .. } => {
+                    (Vec::new(), Vec::new(), mode.as_str().to_owned())
+                }
+                PermissionUpdate::Unknown(_) => (Vec::new(), Vec::new(), String::new()),
+            };
+            ScopeChoice {
+                index: index as u32,
+                destination: suggestion.destination().unwrap_or_default().to_owned(),
+                rules,
+                directories,
+                mode,
+                label: String::new(),
+            }
         })
         .collect()
 }
@@ -590,48 +695,35 @@ pub(crate) fn describe_commands(commands: &[OfferedCommand]) -> String {
 }
 
 /// The models an initialize answer lists, as headless Claude answers it.
-pub(crate) fn offered_models(models: &[Value]) -> Vec<OfferedModel> {
-    models.iter().map(offered_model).collect()
+pub(crate) fn offered_models(models: &[ModelInfo]) -> Vec<OfferedModel> {
+    models
+        .iter()
+        .map(|model| OfferedModel {
+            value: model.value.clone(),
+            display_name: model.display_name.clone(),
+            description: model.description.clone(),
+            efforts: model.supported_effort_levels.clone().unwrap_or_default(),
+            // Claude names no default effort per model.
+            default_effort: None,
+            resolved_model: model.resolved_model.clone().unwrap_or_default(),
+        })
+        .collect()
 }
 
-/// The commands an initialize answer lists.
-pub(crate) fn offered_commands(commands: &[Value]) -> Vec<OfferedCommand> {
-    commands.iter().map(offered_command).collect()
-}
-
-/// A model the initialize response lists.
-fn offered_model(model: &Value) -> OfferedModel {
-    OfferedModel {
-        value: text(model, "value").to_owned(),
-        display_name: text(model, "displayName").to_owned(),
-        description: text(model, "description").to_owned(),
-        efforts: model
-            .get("supportedEffortLevels")
-            .and_then(Value::as_array)
-            .map(|levels| {
-                levels
-                    .iter()
-                    .filter_map(|level| level.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        // Claude names no default effort per model.
-        default_effort: None,
-        resolved_model: text(model, "resolvedModel").to_owned(),
-    }
-}
-
-/// A command the initialize response lists. A plugin's command is named
+/// The commands an initialize answer lists. A plugin's command is named
 /// `plugin:command`; the plugin is its source.
-fn offered_command(command: &Value) -> OfferedCommand {
-    let name = text(command, "name");
-    OfferedCommand {
-        name: name.to_owned(),
-        description: text(command, "description").to_owned(),
-        argument_hint: text(command, "argumentHint").to_owned(),
-        source: name
-            .split_once(':')
-            .map(|(plugin, _)| plugin.to_owned())
-            .unwrap_or_default(),
-    }
+pub(crate) fn offered_commands(commands: &[SlashCommand]) -> Vec<OfferedCommand> {
+    commands
+        .iter()
+        .map(|command| OfferedCommand {
+            name: command.name.clone(),
+            description: command.description.clone(),
+            argument_hint: command.argument_hint.clone(),
+            source: command
+                .name
+                .split_once(':')
+                .map(|(plugin, _)| plugin.to_owned())
+                .unwrap_or_default(),
+        })
+        .collect()
 }

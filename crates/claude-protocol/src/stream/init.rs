@@ -92,6 +92,7 @@ pub struct AccountInfo {
 pub struct ContextUsageCategory {
     pub name: String,
     pub tokens: u64,
+    #[serde(default = "crate::absent::color")]
     pub color: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_deferred: Option<bool>,
@@ -119,12 +120,18 @@ pub struct ContextUsage {
     pub categories: Vec<ContextUsageCategory>,
     pub total_tokens: u64,
     pub max_tokens: u64,
+    #[serde(default = "crate::absent::raw_max_tokens")]
     pub raw_max_tokens: u64,
     /// As written: Claude writes a whole percentage without a fraction.
+    #[serde(default = "crate::absent::percentage")]
     pub percentage: serde_json::Number,
+    #[serde(default = "crate::absent::grid_rows")]
     pub grid_rows: Vec<Vec<serde_json::Value>>,
+    #[serde(default = "crate::absent::model")]
     pub model: String,
+    #[serde(default = "crate::absent::memory_files")]
     pub memory_files: Vec<serde_json::Value>,
+    #[serde(default = "crate::absent::mcp_tools")]
     pub mcp_tools: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_builtin_tools: Option<Vec<serde_json::Value>>,
@@ -132,6 +139,7 @@ pub struct ContextUsage {
     pub system_tools: Option<Vec<serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt_sections: Option<Vec<serde_json::Value>>,
+    #[serde(default = "crate::absent::agents")]
     pub agents: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slash_commands: Option<serde_json::Value>,
@@ -139,9 +147,11 @@ pub struct ContextUsage {
     pub skills: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_compact_threshold: Option<u64>,
+    #[serde(default = "crate::absent::is_auto_compact_enabled")]
     pub is_auto_compact_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_breakdown: Option<serde_json::Value>,
+    #[serde(default = "crate::absent::api_usage")]
     pub api_usage: Option<HashMap<String, u64>>,
     #[serde(flatten)]
     pub extensions: Extensions,

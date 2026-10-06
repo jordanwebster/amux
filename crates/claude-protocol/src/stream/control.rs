@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::Drift;
-use crate::stream::init::{AgentInfo, SlashCommand};
+use crate::stream::init::{AgentInfo, AppliedSettings, SlashCommand};
 use crate::stream::options::{AgentDefinition, McpServerConfig};
-use crate::stream::types::{Extensions, PermissionMode, PermissionUpdate};
+use crate::stream::types::{Extensions, PermissionMode, PermissionUpdate, present_nullable};
 use crate::strictness::{self, tagged_enum};
 
 /// A control request, in either direction: amux asking Claude to change or
@@ -26,6 +26,14 @@ impl ControlRequest {
             extensions: Extensions::new(),
         }
     }
+}
+
+/// Claude withdrawing a request it asked amux, which needs no answer now.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlCancelRequest {
+    pub request_id: String,
+    #[serde(flatten)]
+    pub extensions: Extensions,
 }
 
 tagged_enum! {
@@ -143,7 +151,23 @@ pub struct SetModelRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyFlagSettingsRequest {
-    pub settings: serde_json::Value,
+    pub settings: FlagSettings,
+    #[serde(flatten)]
+    pub extensions: Extensions,
+}
+
+/// Settings a session applies over its settings files.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FlagSettings {
+    /// The effort to run at; null clears the session's own, back to the
+    /// settings files'.
+    #[serde(
+        rename = "effortLevel",
+        default,
+        deserialize_with = "present_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub effort_level: Option<Option<String>>,
     #[serde(flatten)]
     pub extensions: Extensions,
 }
@@ -214,6 +238,8 @@ pub struct CanUseToolRequest {
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_suggestions: Option<Vec<PermissionUpdate>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -418,6 +444,23 @@ pub struct McpServerStatus {
     pub scope: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<serde_json::Value>>,
+    #[serde(flatten)]
+    pub extensions: Extensions,
+}
+
+/// The answer to `mcp_status`: every tool server and how it stands.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpStatusResult {
+    #[serde(rename = "mcpServers")]
+    pub mcp_servers: Vec<McpServerStatus>,
+    #[serde(flatten)]
+    pub extensions: Extensions,
+}
+
+/// The answer to `get_settings`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsResult {
+    pub applied: AppliedSettings,
     #[serde(flatten)]
     pub extensions: Extensions,
 }

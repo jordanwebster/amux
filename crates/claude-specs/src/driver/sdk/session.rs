@@ -11,9 +11,9 @@ use tokio::sync::watch;
 use crate::driver::sdk::Error;
 use crate::driver::sdk::abort::{AbortHandle, Shutdown, ShutdownReason};
 use crate::driver::sdk::control::{
-    self, ControlRequestBody, InterruptResult, McpPermissionMode, McpPermissionModeOverrideResult,
-    McpServerStatus, McpSetServersResult, ReloadPluginsResult, ReloadSkillsResult,
-    RewindFilesResult,
+    self, ControlRequestBody, FlagSettings, InterruptResult, McpPermissionMode,
+    McpPermissionModeOverrideResult, McpServerStatus, McpSetServersResult, ReloadPluginsResult,
+    ReloadSkillsResult, RewindFilesResult,
 };
 use crate::driver::sdk::dispatch::{IncomingRequestKind, QueryInner};
 use crate::driver::sdk::init::{
@@ -192,8 +192,11 @@ impl Control {
         &self,
         effort: Option<crate::driver::sdk::Effort>,
     ) -> Result<(), Error> {
-        self.apply_flag_settings(serde_json::json!({ "effortLevel": effort }))
-            .await
+        self.apply_flag_settings(FlagSettings {
+            effort_level: Some(effort.map(|effort| effort.as_str().to_owned())),
+            ..FlagSettings::default()
+        })
+        .await
     }
 
     pub async fn set_mcp_permission_mode_override(
@@ -222,12 +225,7 @@ impl Control {
         })
     }
 
-    pub async fn apply_flag_settings(&self, settings: serde_json::Value) -> Result<(), Error> {
-        if !settings.is_object() {
-            return Err(Error::InvalidOptions(
-                "flag settings must be a JSON object".into(),
-            ));
-        }
+    pub async fn apply_flag_settings(&self, settings: FlagSettings) -> Result<(), Error> {
         self.inner
             .send_control(ControlRequestBody::ApplyFlagSettings(
                 control::ApplyFlagSettingsRequest {

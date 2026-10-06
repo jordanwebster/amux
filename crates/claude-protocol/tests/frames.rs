@@ -8,7 +8,7 @@ use claude_protocol::stream::{
     self, ContentBlock, ControlRequest, ControlRequestBody, ControlResponse, Extensions,
     HookOutput, HookSpecificOutput, InitializationResult, Input, Message, MessageContent,
     MessageParam, Output, PermissionMode, PermissionResult, PermissionUpdate,
-    PermissionUpdateDestination, Role, SyncHookOutput, UserInput,
+    PermissionUpdateDestination, ResultMessage, Role, SyncHookOutput, UserInput,
 };
 use serde_json::Value;
 
@@ -190,4 +190,27 @@ fn a_line_that_is_not_an_object_is_the_only_decode_error() {
         stream::decode(br#"{"no":"type"}"#),
         Ok(Output::Unknown(_))
     ));
+}
+
+#[test]
+fn a_field_claude_always_writes_is_filled_in_and_refused_strictly() {
+    // A result without `total_cost_usd` or `session_id`, as amux's own test
+    // inputs write it.
+    let line = br#"{"type":"result","subtype":"success","uuid":"r","duration_ms":10,"duration_api_ms":8,"is_error":false,"num_turns":1,"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1},"modelUsage":{},"permission_denials":[],"result":"done"}"#;
+    let Output::Message(Message::Result(ResultMessage::Success(success))) =
+        stream::decode(line).expect("decodes")
+    else {
+        panic!("not a successful result");
+    };
+    assert_eq!(success.common.total_cost_usd, None);
+    assert_eq!(success.common.session_id, "");
+    assert_eq!(success.result, "done");
+
+    let drift = stream::strict(line).expect_err("refused");
+    let reasons = drift.to_string();
+    assert!(
+        reasons.contains("missing field `total_cost_usd`"),
+        "{reasons}"
+    );
+    assert!(reasons.contains("missing field `session_id`"), "{reasons}");
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -287,8 +287,10 @@ impl Serialize for Message {
 }
 
 wire_struct!(AssistantMessage {
-    pub uuid: String, pub session_id: String, pub message: ApiMessage,
-    #[serde(deserialize_with="required_option")] pub parent_tool_use_id: Option<String>,
+    pub uuid: String,
+    #[serde(default="crate::absent::session_id")] pub session_id: String,
+    pub message: ApiMessage,
+    #[serde(default="crate::absent::parent_tool_use_id",deserialize_with="required_option")] pub parent_tool_use_id: Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub error: Option<AssistantMessageError>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub request_id: Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub user_message_uuid: Option<String>,
@@ -305,7 +307,7 @@ wire_struct!(UserMessageOutput {
     #[serde(default,skip_serializing_if="Option::is_none")] pub uuid: Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub session_id: Option<String>,
     pub message: MessageParam,
-    #[serde(deserialize_with="required_option")] pub parent_tool_use_id: Option<String>,
+    #[serde(default="crate::absent::parent_tool_use_id",deserialize_with="required_option")] pub parent_tool_use_id: Option<String>,
     #[serde(rename="isSynthetic",default,skip_serializing_if="Option::is_none")] pub is_synthetic: Option<bool>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_result: Option<serde_json::Value>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub priority: Option<String>,
@@ -317,12 +319,15 @@ wire_struct!(UserMessageOutput {
 });
 
 wire_struct!(UserMessageReplay {
-    pub uuid: String, pub session_id: String, pub message: MessageParam,
-    #[serde(deserialize_with="required_option")] pub parent_tool_use_id: Option<String>,
+    pub uuid: String,
+    #[serde(default="crate::absent::session_id")] pub session_id: String,
+    pub message: MessageParam,
+    #[serde(default="crate::absent::parent_tool_use_id",deserialize_with="required_option")] pub parent_tool_use_id: Option<String>,
     #[serde(rename="isReplay")] pub is_replay: bool,
     #[serde(rename="isSynthetic",default,skip_serializing_if="Option::is_none")] pub is_synthetic: Option<bool>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_result: Option<serde_json::Value>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub file_attachments: Option<Vec<serde_json::Value>>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub timestamp: Option<String>,
 });
 
 #[derive(Debug, Clone)]
@@ -364,6 +369,17 @@ impl ResultMessage {
                 .unwrap_or("result.unknown"),
         }
     }
+    /// The result's `subtype` as written.
+    pub fn subtype(&self) -> &str {
+        match self {
+            Self::Success(_) => "success",
+            Self::ErrorDuringExecution(_) => "error_during_execution",
+            Self::ErrorMaxTurns(_) => "error_max_turns",
+            Self::ErrorMaxBudgetUsd(_) => "error_max_budget_usd",
+            Self::ErrorMaxStructuredOutputRetries(_) => "error_max_structured_output_retries",
+            Self::Unknown(v) => v.field("subtype").and_then(|v| v.as_str()).unwrap_or(""),
+        }
+    }
     pub fn session_id(&self) -> Option<&str> {
         match self {
             Self::Success(v) => Some(&v.common.session_id),
@@ -403,18 +419,35 @@ impl Serialize for ResultMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultCommon {
     pub uuid: String,
+    #[serde(default = "crate::absent::session_id")]
     pub session_id: String,
     pub duration_ms: u64,
+    #[serde(default = "crate::absent::duration_api_ms")]
     pub duration_api_ms: u64,
+    #[serde(default = "crate::absent::is_error")]
     pub is_error: bool,
+    #[serde(default = "crate::absent::num_turns")]
     pub num_turns: u32,
-    #[serde(deserialize_with = "required_option")]
+    #[serde(
+        default = "crate::absent::stop_reason",
+        deserialize_with = "required_option"
+    )]
     pub stop_reason: Option<String>,
     /// Written as Claude wrote it: `0` and `0.0` both occur.
-    pub total_cost_usd: serde_json::Number,
+    #[serde(
+        default = "crate::absent::total_cost_usd",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub total_cost_usd: Option<serde_json::Number>,
+    #[serde(default = "crate::absent::usage")]
     pub usage: Usage,
-    #[serde(rename = "modelUsage")]
-    pub model_usage: HashMap<String, ModelUsage>,
+    #[serde(
+        rename = "modelUsage",
+        default = "crate::absent::model_usage",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_usage: Option<BTreeMap<String, ModelUsage>>,
+    #[serde(default = "crate::absent::permission_denials")]
     pub permission_denials: Vec<PermissionDenial>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queued_turn_count: Option<u32>,
@@ -430,7 +463,7 @@ pub struct ResultCommon {
     pub origin: Option<serde_json::Value>,
 }
 wire_struct!(ResultSuccess {
-    #[serde(flatten)] pub common:ResultCommon,pub result:String,
+    #[serde(flatten)] pub common:ResultCommon,#[serde(default="crate::absent::result")] pub result:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub structured_output:Option<serde_json::Value>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub deferred_tool_use:Option<DeferredToolUse>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub ttft_ms:Option<u64>,
@@ -442,31 +475,37 @@ wire_struct!(ResultSuccess {
     #[serde(default,skip_serializing_if="Option::is_none")] pub time_origin_ms:Option<u64>,
     #[serde(default,deserialize_with="present_nullable",skip_serializing_if="Option::is_none")] pub api_error_status:Option<Option<u16>>,
 });
-wire_struct!(ResultError { #[serde(flatten)] pub common:ResultCommon,pub errors:Vec<String>, });
+wire_struct!(ResultError { #[serde(flatten)] pub common:ResultCommon,#[serde(default="crate::absent::errors")] pub errors:Vec<String>, });
 wire_struct!(DeferredToolUse { pub id:String,pub name:String,pub input:serde_json::Value, });
 
 wire_struct!(SystemInitMessage {
-    pub uuid:String,pub session_id:String,
+    pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub agents:Option<Vec<String>>,
-    #[serde(rename="apiKeySource")] pub api_key_source:ApiKeySource,
+    #[serde(rename="apiKeySource",default="crate::absent::api_key_source")] pub api_key_source:ApiKeySource,
     #[serde(default,skip_serializing_if="Option::is_none")] pub betas:Option<Vec<String>>,
-    pub claude_code_version:String,pub cwd:String,pub tools:Vec<String>,pub mcp_servers:Vec<McpServerInfo>,pub model:String,
-    #[serde(rename="permissionMode")] pub permission_mode:PermissionMode,
-    pub slash_commands:Vec<String>,
+    #[serde(default="crate::absent::claude_code_version")] pub claude_code_version:String,
+    #[serde(default="crate::absent::cwd")] pub cwd:String,
+    #[serde(default="crate::absent::tools")] pub tools:Vec<String>,
+    #[serde(default="crate::absent::mcp_servers",skip_serializing_if="Option::is_none")] pub mcp_servers:Option<Vec<McpServerInfo>>,
+    #[serde(default="crate::absent::model")] pub model:String,
+    #[serde(rename="permissionMode",default="crate::absent::permission_mode")] pub permission_mode:PermissionMode,
+    #[serde(default="crate::absent::slash_commands")] pub slash_commands:Vec<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub terminal_slash_commands:Option<Vec<String>>,
-    pub output_style:String,pub skills:Vec<String>,pub plugins:Vec<PluginInfo>,
+    #[serde(default="crate::absent::output_style")] pub output_style:String,
+    #[serde(default="crate::absent::skills")] pub skills:Vec<String>,
+    #[serde(default="crate::absent::plugins")] pub plugins:Vec<PluginInfo>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub capabilities:Option<Vec<String>>,
     #[serde(default,deserialize_with="present_nullable",skip_serializing_if="Option::is_none")] pub effort:Option<Option<String>>,
 });
 wire_struct!(McpServerInfo { pub name:String,pub status:String, });
 wire_struct!(PluginInfo { pub name:String,pub path:String,#[serde(default,skip_serializing_if="Option::is_none")] pub version:Option<String>, });
 wire_struct!(StreamEventMessage {
-    pub event:StreamEvent,#[serde(deserialize_with="required_option")] pub parent_tool_use_id:Option<String>,
-    pub uuid:String,pub session_id:String,
+    pub event:StreamEvent,#[serde(default="crate::absent::parent_tool_use_id",deserialize_with="required_option")] pub parent_tool_use_id:Option<String>,
+    #[serde(default="crate::absent::uuid")] pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub ttft_ms:Option<u64>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub user_message_uuid:Option<String>,
 });
-wire_struct!(CompactBoundaryMessage { pub uuid:String,pub session_id:String,pub compact_metadata:CompactMetadata, });
+wire_struct!(CompactBoundaryMessage { pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,pub compact_metadata:CompactMetadata, });
 wire_struct!(CompactMetadata {
     pub trigger:CompactTrigger,pub pre_tokens:u64,
     #[serde(default,skip_serializing_if="Option::is_none")] pub post_tokens:Option<u64>,
@@ -479,12 +518,12 @@ wire_struct!(StatusMessage {
     #[serde(rename="permissionMode",default,skip_serializing_if="Option::is_none")] pub permission_mode:Option<PermissionMode>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub compact_result:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub compact_error:Option<String>,
-    pub uuid:String,pub session_id:String,
+    pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(ApiRetryMessage {
     pub attempt:u32,pub max_retries:u32,pub retry_delay_ms:u64,
     #[serde(deserialize_with="required_option")] pub error_status:Option<u16>,
-    pub error:AssistantMessageError,pub uuid:String,pub session_id:String,
+    pub error:AssistantMessageError,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(ControlRequestProgressMessage {
     pub request_id:String,pub status:String,
@@ -492,7 +531,7 @@ wire_struct!(ControlRequestProgressMessage {
     #[serde(default,skip_serializing_if="Option::is_none")] pub max_retries:Option<u32>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub retry_delay_ms:Option<u64>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub error_status:Option<u16>,
-    pub uuid:String,pub session_id:String,
+    pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(ModelRefusalFallbackMessage {
     pub trigger:String,pub direction:String,
@@ -503,38 +542,38 @@ wire_struct!(ModelRefusalFallbackMessage {
     #[serde(default,skip_serializing_if="Option::is_none")] pub api_refusal_explanation:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub retracted_message_uuids:Option<Vec<String>>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub refused_user_message_uuid:Option<String>,
-    pub content:String,pub uuid:String,pub session_id:String,
+    pub content:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(ModelRefusalNoFallbackMessage {
     pub original_model:String,#[serde(deserialize_with="required_option")] pub request_id:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub api_refusal_category:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub api_refusal_explanation:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub refused_user_message_uuid:Option<String>,
-    pub content:String,pub uuid:String,pub session_id:String,
+    pub content:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
-wire_struct!(LocalCommandOutputMessage { pub content:String,pub uuid:String,pub session_id:String, });
-wire_struct!(HookStartedMessage { pub hook_id:String,pub hook_name:String,pub hook_event:String,pub uuid:String,pub session_id:String, });
-wire_struct!(HookProgressMessage { pub hook_id:String,pub hook_name:String,pub hook_event:String,pub stdout:String,pub stderr:String,pub output:String,pub uuid:String,pub session_id:String, });
+wire_struct!(LocalCommandOutputMessage { pub content:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
+wire_struct!(HookStartedMessage { pub hook_id:String,pub hook_name:String,pub hook_event:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
+wire_struct!(HookProgressMessage { pub hook_id:String,pub hook_name:String,pub hook_event:String,pub stdout:String,pub stderr:String,pub output:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(HookResponseMessage {
     pub hook_id:String,pub hook_name:String,pub hook_event:String,pub output:String,pub stdout:String,pub stderr:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub exit_code:Option<i32>,
-    pub outcome:String,pub uuid:String,pub session_id:String,
+    pub outcome:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(PluginInstallMessage {
     pub status:String,#[serde(default,skip_serializing_if="Option::is_none")] pub name:Option<String>,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub error:Option<String>,pub uuid:String,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub error:Option<String>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(ToolProgressMessage {
     pub tool_use_id:String,pub tool_name:String,#[serde(deserialize_with="required_option")] pub parent_tool_use_id:Option<String>,
     pub elapsed_time_seconds:f64,#[serde(default,skip_serializing_if="Option::is_none")] pub task_id:Option<String>,
-    pub uuid:String,pub session_id:String,
+    pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub heartbeat:Option<bool>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub subagent_type:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub subagent_retry:Option<serde_json::Value>,
 });
 wire_struct!(AuthStatusMessage {
     #[serde(rename="isAuthenticating")] pub is_authenticating:bool,pub output:Vec<String>,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub error:Option<String>,pub uuid:String,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub error:Option<String>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(TaskUsage { pub total_tokens:u64,pub tool_uses:u32,pub duration_ms:u64, });
 wire_struct!(TaskNotificationMessage {
@@ -542,7 +581,7 @@ wire_struct!(TaskNotificationMessage {
     pub status:String,pub output_file:String,pub summary:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub usage:Option<TaskUsage>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub skip_transcript:Option<bool>,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub ambient:Option<bool>,pub uuid:String,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub ambient:Option<bool>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(TaskStartedMessage {
     pub task_id:String,#[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_id:Option<String>,pub description:String,
@@ -553,7 +592,7 @@ wire_struct!(TaskStartedMessage {
     #[serde(default,skip_serializing_if="Option::is_none")] pub workflow_name:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub prompt:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub skip_transcript:Option<bool>,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub ambient:Option<bool>,pub uuid:String,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub ambient:Option<bool>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(TaskPatch {
     #[serde(default,skip_serializing_if="Option::is_none")] pub status:Option<String>,
@@ -563,29 +602,29 @@ wire_struct!(TaskPatch {
     #[serde(default,skip_serializing_if="Option::is_none")] pub error:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub is_backgrounded:Option<bool>,
 });
-wire_struct!(TaskUpdatedMessage { pub task_id:String,pub patch:TaskPatch,pub uuid:String,pub session_id:String, });
+wire_struct!(TaskUpdatedMessage { pub task_id:String,pub patch:TaskPatch,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(TaskProgressMessage {
     pub task_id:String,#[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_id:Option<String>,pub description:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub subagent_type:Option<String>,pub usage:TaskUsage,
     #[serde(default,skip_serializing_if="Option::is_none")] pub last_tool_name:Option<String>,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub summary:Option<String>,pub uuid:String,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub summary:Option<String>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
-wire_struct!(BackgroundTask { pub task_id:String,pub task_type:String,pub description:String,#[serde(default,skip_serializing_if="Option::is_none")] pub ambient:Option<bool>, });
-wire_struct!(BackgroundTasksChangedMessage { pub tasks:Vec<BackgroundTask>,pub uuid:String,pub session_id:String, });
-wire_struct!(ThinkingTokensMessage { pub estimated_tokens:u64,pub estimated_tokens_delta:u64,pub uuid:String,pub session_id:String, });
-wire_struct!(SessionStateChangedMessage { pub state:String,pub uuid:String,pub session_id:String, });
-wire_struct!(CommandsChangedMessage { pub commands:Vec<serde_json::Value>,pub uuid:String,pub session_id:String, });
+wire_struct!(BackgroundTask { #[serde(default="crate::absent::task_id")] pub task_id:String,#[serde(default="crate::absent::task_type")] pub task_type:String,#[serde(default="crate::absent::description")] pub description:String,#[serde(default,skip_serializing_if="Option::is_none")] pub ambient:Option<bool>, });
+wire_struct!(BackgroundTasksChangedMessage { #[serde(default="crate::absent::tasks",skip_serializing_if="Option::is_none")] pub tasks:Option<Vec<BackgroundTask>>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
+wire_struct!(ThinkingTokensMessage { pub estimated_tokens:u64,pub estimated_tokens_delta:u64,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
+wire_struct!(SessionStateChangedMessage { pub state:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
+wire_struct!(CommandsChangedMessage { pub commands:Vec<serde_json::Value>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(NotificationMessage {
     pub key:String,pub text:String,pub priority:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub color:Option<String>,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub timeout_ms:Option<u64>,pub uuid:String,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub timeout_ms:Option<u64>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 wire_struct!(PersistedFile { pub filename:String,pub file_id:String, });
 wire_struct!(FailedFile { pub filename:String,pub error:String, });
-wire_struct!(FilesPersistedEvent { pub files:Vec<PersistedFile>,pub failed:Vec<FailedFile>,pub processed_at:String,pub uuid:String,pub session_id:String, });
-wire_struct!(ToolUseSummaryMessage { pub summary:String,pub preceding_tool_use_ids:Vec<String>,pub uuid:String,pub session_id:String, });
+wire_struct!(FilesPersistedEvent { pub files:Vec<PersistedFile>,pub failed:Vec<FailedFile>,pub processed_at:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
+wire_struct!(ToolUseSummaryMessage { pub summary:String,pub preceding_tool_use_ids:Vec<String>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(RecalledMemory { pub path:String,pub scope:String,#[serde(default,skip_serializing_if="Option::is_none")] pub content:Option<String>, });
-wire_struct!(MemoryRecallMessage { pub mode:String,pub memories:Vec<RecalledMemory>,pub uuid:String,pub session_id:String, });
+wire_struct!(MemoryRecallMessage { pub mode:String,pub memories:Vec<RecalledMemory>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(RateLimitInfo {
     pub status:String,
     #[serde(rename="resetsAt",default,skip_serializing_if="Option::is_none")] pub resets_at:Option<u64>,
@@ -600,30 +639,36 @@ wire_struct!(RateLimitInfo {
     #[serde(rename="errorCode",default,skip_serializing_if="Option::is_none")] pub error_code:Option<String>,
     #[serde(rename="canUserPurchaseCredits",default,skip_serializing_if="Option::is_none")] pub can_user_purchase_credits:Option<bool>,
     #[serde(rename="hasChargeableSavedPaymentMethod",default,skip_serializing_if="Option::is_none")] pub has_chargeable_saved_payment_method:Option<bool>,
+    /// Each window's use by its name (`five_hour`, `seven_day`, a model's).
+    #[serde(rename="unifiedWindows",default,skip_serializing_if="Option::is_none")] pub unified_windows:Option<BTreeMap<String,RateLimitWindow>>,
 });
-wire_struct!(RateLimitEvent { pub rate_limit_info:RateLimitInfo,pub uuid:String,pub session_id:String, });
-wire_struct!(ElicitationCompleteMessage { pub mcp_server_name:String,pub elicitation_id:String,pub uuid:String,pub session_id:String, });
+wire_struct!(RateLimitWindow {
+    #[serde(default,skip_serializing_if="Option::is_none")] pub utilization:Option<f64>,
+    #[serde(rename="resetsAt",default,skip_serializing_if="Option::is_none")] pub resets_at:Option<i64>,
+});
+wire_struct!(RateLimitEvent { pub rate_limit_info:RateLimitInfo,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
+wire_struct!(ElicitationCompleteMessage { pub mcp_server_name:String,pub elicitation_id:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(PermissionDeniedMessage {
     pub tool_name:String,pub tool_use_id:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub agent_id:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub decision_reason_type:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")] pub decision_reason:Option<String>,
-    pub message:String,pub uuid:String,pub session_id:String,
+    pub message:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
-wire_struct!(PromptSuggestionMessage { pub suggestion:String,pub uuid:String,pub session_id:String, });
+wire_struct!(PromptSuggestionMessage { pub suggestion:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 wire_struct!(InformationalMessage {
     pub content:String,pub level:String,#[serde(default,skip_serializing_if="Option::is_none")] pub tool_use_id:Option<String>,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub prevent_continuation:Option<bool>,pub uuid:String,pub session_id:String,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub prevent_continuation:Option<bool>,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
 // Where a queued prompt is in its life, named by the sender's uuid.
-wire_struct!(CommandLifecycleMessage { pub command_uuid:String,pub state:String,pub uuid:String,pub session_id:String, });
+wire_struct!(CommandLifecycleMessage { pub command_uuid:String,pub state:String,#[serde(default="crate::absent::uuid")] pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 // A message from another session Claude is holding back, and why.
 wire_struct!(PeerMessageHoldMessage {
     pub message_uuid:String,pub state:String,
     #[serde(default,skip_serializing_if="Option::is_none")] pub cause:Option<String>,
-    pub uuid:String,pub session_id:String,
+    pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String,
 });
-wire_struct!(ConversationResetMessage { pub new_conversation_id:String,pub uuid:String,pub session_id:String, });
+wire_struct!(ConversationResetMessage { pub new_conversation_id:String,pub uuid:String,#[serde(default="crate::absent::session_id")] pub session_id:String, });
 
 fn required_string<'a>(raw: &'a serde_json::Value, field: &str) -> Result<&'a str, ProtocolError> {
     let object = raw.as_object().ok_or_else(|| {

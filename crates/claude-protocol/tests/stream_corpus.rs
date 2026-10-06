@@ -10,9 +10,9 @@ use claude_protocol::stream::control::ControlOutcome;
 use claude_protocol::stream::init::ContextUsage;
 use claude_protocol::stream::{
     self, ControlResponse, ElicitationResult, HookOutput, InitializationResult, Input,
-    InterruptResult, McpPermissionModeOverrideResult, McpSetServersResult, Output,
+    InterruptResult, McpPermissionModeOverrideResult, McpSetServersResult, McpStatusResult, Output,
     PermissionResult, ReloadPluginsResult, ReloadSkillsResult, RewindFilesResult,
-    SetPermissionModeResult, UserDialogResult,
+    SetPermissionModeResult, SettingsResult, UserDialogResult,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -122,8 +122,6 @@ fn every_recorded_line_encodes_back_to_the_same_json() {
 /// type to hold it to.
 const UNTYPED_ANSWERS: &[&str] = &[
     "mcp_message",
-    "mcp_status",
-    "get_settings",
     "background_tasks",
     "stop_task",
     "apply_flag_settings",
@@ -156,6 +154,8 @@ fn reread_as(subtype: &str, answer: &ControlResponse) -> Option<Result<Value, St
         "set_mcp_permission_mode_override" => reread::<McpPermissionModeOverrideResult>(answer),
         "mcp_set_servers" => reread::<McpSetServersResult>(answer),
         "get_context_usage" => reread::<ContextUsage>(answer),
+        "get_settings" => reread::<SettingsResult>(answer),
+        "mcp_status" => reread::<McpStatusResult>(answer),
         "reload_plugins" => reread::<ReloadPluginsResult>(answer),
         "reload_skills" => reread::<ReloadSkillsResult>(answer),
         "rewind_files" => reread::<RewindFilesResult>(answer),

@@ -7,6 +7,7 @@
 //! protocol crate. The crate is pure: no process, socket or async code, so
 //! the interpreter the phone links can depend on it.
 
+mod absent;
 mod decoding;
 mod strictness;
 

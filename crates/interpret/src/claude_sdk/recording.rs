@@ -14,8 +14,12 @@
 //! responses stay in as facts. Time is microseconds since the recording
 //! began, placed on the wall clock the first timestamped line uses.
 
+use claude_protocol::stream::{
+    self, ControlRequestBody, ControlResponse, ElicitationResult, Input as Written, Message,
+    Output, PermissionResult, PermissionUpdate,
+};
 use prost::Message as _;
-use serde_json::Value;
+use serde::Deserialize;
 use wire::{
     AnswerInput, ClaudeAnswer, ClaudeSdkInput, FormAction, FormAnswer, Input, Interrupt,
     PermissionAllow, PermissionAnswer, PermissionDeny, PlanAnswer, PlanApprove, PlanSendBack,
@@ -23,43 +27,69 @@ use wire::{
     claude_answer, claude_sdk_input, input, permission_answer, plan_answer,
 };
 
-use crate::claude_common::{PLAN_TOOL, QUESTION_TOOL, text, timestamp_ms};
+use super::{AnsweredInput, QuestionInput};
+use crate::claude_common::{PLAN_TOOL, QUESTION_TOOL, message_text};
 use crate::{Channel, Event, Fact};
+
+/// One line of a recording: when, which way, and what.
+#[derive(Deserialize)]
+struct Record {
+    #[serde(default)]
+    us: i64,
+    #[serde(default)]
+    dir: String,
+    #[serde(default)]
+    line: Option<String>,
+}
+
+/// A recorded line Claude wrote or read, decoded.
+#[allow(clippy::large_enum_variant)]
+enum Line {
+    Stdout(Output),
+    Stdin(Written),
+}
 
 pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
     if format != "claude_sdk_io" {
         return Err(format!("claude_sdk reads claude_sdk_io, not {format:?}"));
     }
     let text_bytes = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
-    let lines = text_bytes
+    let records = text_bytes
         .lines()
         .filter(|line| !line.trim().is_empty())
         .enumerate()
         .map(|(index, line)| {
-            serde_json::from_str::<Value>(line)
+            serde_json::from_str::<Record>(line)
                 .map_err(|error| format!("line {}: {error}", index + 1))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let us = |line: &Value| line.get("us").and_then(Value::as_i64).unwrap_or(0);
-    let parsed = |line: &Value| {
-        line.get("line")
-            .and_then(Value::as_str)
-            .and_then(|text| serde_json::from_str::<Value>(text).ok())
-    };
+    // Each line Claude wrote or read as a JSON value, the form the fact
+    // carries, and decoded.
+    let lines = records
+        .iter()
+        .map(|record| {
+            let written = record.line.as_deref()?;
+            let value = serde_json::from_str::<serde_json::Value>(written).ok()?;
+            let line = if record.dir == "stdout" {
+                Line::Stdout(stream::decode(written.as_bytes()).ok()?)
+            } else {
+                Line::Stdin(stream::decode_input(written.as_bytes()).ok()?)
+            };
+            Some((record.us, value, line))
+        })
+        .collect::<Vec<_>>();
     let origin = lines
         .iter()
-        .find_map(|line| Some(timestamp_ms(&parsed(line)?)? - us(line) / 1000))
+        .flatten()
+        .find_map(|(us, _, line)| Some(timestamp_ms(line)? - us / 1000))
         .unwrap_or(0);
     let mut events = Vec::new();
     let mut now = None;
-    let mut requests = std::collections::BTreeMap::<String, Value>::new();
+    let mut requests = std::collections::BTreeMap::<String, ControlRequestBody>::new();
     let mut inputs = 0;
     let mut turn_running = false;
-    for line in &lines {
-        let Some(message) = parsed(line) else {
-            continue;
-        };
-        let at_ms = origin + us(line) / 1000;
+    for (us, value, line) in lines.into_iter().flatten() {
+        let at_ms = origin + us / 1000;
         let mut push = |event: Event| {
             if now.is_none_or(|now| at_ms > now) {
                 now = Some(at_ms);
@@ -67,31 +97,31 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
             }
             events.push(event);
         };
-        let dir = line.get("dir").and_then(Value::as_str).unwrap_or_default();
-        if dir == "stdout" {
-            if text(&message, "type") == "result" {
-                turn_running = false;
+        let written = match line {
+            Line::Stdout(output) => {
+                match output {
+                    Output::Message(Message::Result(_)) => turn_running = false,
+                    Output::ControlRequest(request) => {
+                        requests.insert(request.request_id, request.request);
+                    }
+                    _ => {}
+                }
+                push(Event::Fact(Fact {
+                    channel: Channel::Stream,
+                    payload: value.to_string().into_bytes(),
+                }));
+                continue;
             }
-            if text(&message, "type") == "control_request" {
-                requests.insert(
-                    text(&message, "request_id").to_owned(),
-                    message.get("request").cloned().unwrap_or(Value::Null),
-                );
-            }
-            push(Event::Fact(Fact {
-                channel: Channel::Stream,
-                payload: message.to_string().into_bytes(),
-            }));
-            continue;
-        }
+            Line::Stdin(written) => written,
+        };
         inputs += 1;
         let mut id = format!("stdin-{inputs}").into_bytes();
         let mut send_now = None;
-        if text(&message, "type") == "user" {
-            if let Some(uuid) = message.get("uuid").and_then(Value::as_str) {
+        if let Written::User(user) = &written {
+            if let Some(uuid) = &user.uuid {
                 id = crate::serde_pb::from_hex(&uuid.replace('-', ""))?;
             }
-            if turn_running && message.get("priority").is_none() {
+            if turn_running && user.priority.is_none() {
                 send_now = Some(Input {
                     input_id: format!("stdin-{inputs}-now").into_bytes(),
                     of: Some(input::Of::ClaudeSdk(ClaudeSdkInput {
@@ -103,46 +133,39 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
             }
             turn_running = true;
         }
-        let arm = match text(&message, "type") {
-            "user" => Some(claude_sdk_input::Of::Prompt(PromptInput {
-                text: crate::claude_common::content_text(
-                    message.pointer("/message/content").unwrap_or(&Value::Null),
-                ),
+        let arm = match written {
+            Written::User(user) => Some(claude_sdk_input::Of::Prompt(PromptInput {
+                text: message_text(&user.message.content),
                 ..Default::default()
             })),
-            "control_request" => {
-                let request = message.get("request").unwrap_or(&Value::Null);
-                match text(request, "subtype") {
-                    "interrupt" => Some(claude_sdk_input::Of::Interrupt(Interrupt {})),
-                    "set_model" => Some(claude_sdk_input::Of::Model(SetModel {
-                        model: request
-                            .get("model")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                    })),
-                    "set_permission_mode" => Some(claude_sdk_input::Of::Mode(SetPermissionMode {
-                        mode: text(request, "mode").to_owned(),
-                    })),
-                    _ => None,
+            Written::ControlRequest(request) => match request.request {
+                ControlRequestBody::Interrupt(_) => {
+                    Some(claude_sdk_input::Of::Interrupt(Interrupt {}))
                 }
-            }
-            "control_response" => {
-                let response = message.get("response").unwrap_or(&Value::Null);
-                let request_id = text(response, "request_id");
+                ControlRequestBody::SetModel(set) => {
+                    Some(claude_sdk_input::Of::Model(SetModel { model: set.model }))
+                }
+                ControlRequestBody::SetPermissionMode(set) => {
+                    Some(claude_sdk_input::Of::Mode(SetPermissionMode {
+                        mode: set.mode.as_str().to_owned(),
+                    }))
+                }
+                _ => None,
+            },
+            Written::ControlResponse(response) => {
+                let request_id = response.request_id().to_owned();
                 requests
-                    .get(request_id)
-                    .and_then(|request| {
-                        answer(request, response.get("response").unwrap_or(&Value::Null))
-                    })
+                    .get(&request_id)
+                    .and_then(|request| answer(request, &response))
                     .map(|body| {
                         claude_sdk_input::Of::Answer(AnswerInput {
-                            ask_key: request_id.to_owned(),
+                            ask_key: request_id,
                             kind: "claude_sdk".into(),
                             body: ClaudeAnswer { of: Some(body) }.encode_to_vec(),
                         })
                     })
             }
-            _ => None,
+            Written::Unknown(_) => None,
         };
         if let Some(arm) = arm {
             push(Event::Input(Input {
@@ -157,62 +180,92 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
     Ok(events)
 }
 
+/// When Claude wrote a line, for the lines that say.
+fn timestamp_ms(line: &Line) -> Option<i64> {
+    let stamp = match line {
+        Line::Stdout(Output::Message(Message::Assistant(message))) => &message.timestamp,
+        Line::Stdout(Output::Message(Message::User(message))) => &message.timestamp,
+        Line::Stdout(Output::Message(Message::UserReplay(message))) => &message.timestamp,
+        _ => return None,
+    };
+    chrono::DateTime::parse_from_rfc3339(stamp.as_deref()?)
+        .ok()
+        .map(|at| at.timestamp_millis())
+}
+
 /// The answer a recorded control response gave to the request it answers.
-fn answer(request: &Value, response: &Value) -> Option<claude_answer::Of> {
-    match text(request, "subtype") {
-        "elicitation" => {
-            let action = match text(response, "action") {
-                "accept" => FormAction::Accept,
-                "decline" => FormAction::Decline,
-                _ => FormAction::Cancel,
+fn answer(request: &ControlRequestBody, response: &ControlResponse) -> Option<claude_answer::Of> {
+    match request {
+        ControlRequestBody::Elicitation(_) => {
+            let (action, content) = match response.result::<ElicitationResult>() {
+                Some(Ok(ElicitationResult::Accept { content, .. })) => {
+                    (FormAction::Accept, content)
+                }
+                Some(Ok(ElicitationResult::Decline { .. })) => (FormAction::Decline, None),
+                _ => (FormAction::Cancel, None),
             };
             Some(claude_answer::Of::Form(FormAnswer {
                 action: action as i32,
-                content_json: response
-                    .get("content")
+                content_json: content
                     .map(|content| content.to_string().into_bytes())
                     .unwrap_or_default(),
             }))
         }
-        "can_use_tool" => {
-            let allow = text(response, "behavior") == "allow";
-            let message = text(response, "message").to_owned();
-            let stop = response
-                .get("interrupt")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            match text(request, "tool_name") {
+        ControlRequestBody::CanUseTool(asked) => {
+            let result = response.result::<PermissionResult>().and_then(Result::ok);
+            let (allow, updated_input, chosen, message, stop) = match result {
+                Some(PermissionResult::Allow {
+                    updated_input,
+                    updated_permissions,
+                    ..
+                }) => (
+                    true,
+                    updated_input,
+                    updated_permissions.and_then(|chosen| chosen.into_iter().next()),
+                    String::new(),
+                    false,
+                ),
+                Some(PermissionResult::Deny {
+                    message, interrupt, ..
+                }) => (false, None, None, message, interrupt.unwrap_or(false)),
+                None => (false, None, None, String::new(), false),
+            };
+            match asked.tool_name.as_str() {
                 PLAN_TOOL => Some(claude_answer::Of::Plan(PlanAnswer {
                     of: Some(if allow {
                         plan_answer::Of::Approve(PlanApprove {
-                            auto_accept_edits: response
-                                .pointer("/updatedPermissions/0/mode")
-                                .and_then(Value::as_str)
-                                == Some("acceptEdits"),
+                            auto_accept_edits: matches!(
+                                chosen,
+                                Some(PermissionUpdate::SetMode {
+                                    mode: stream::PermissionMode::AcceptEdits,
+                                    ..
+                                })
+                            ),
                         })
                     } else {
                         plan_answer::Of::SendBack(PlanSendBack { note: message })
                     }),
                 })),
                 QUESTION_TOOL if allow => {
-                    let answers = response.pointer("/updatedInput/answers")?;
-                    let questions = request.pointer("/input/questions")?.as_array()?;
+                    let answered = AnsweredInput::deserialize(updated_input.as_ref()?).ok()?;
+                    let questions = QuestionInput::deserialize(&asked.input).ok()?;
                     Some(claude_answer::Of::Question(QuestionAnswer {
                         answers: questions
+                            .questions
                             .iter()
                             .map(|question| {
-                                let picked = text(answers, text(question, "question"));
-                                let labels = question
-                                    .get("options")
-                                    .and_then(Value::as_array)
-                                    .cloned()
+                                let picked = answered
+                                    .answers
+                                    .get(&question.question)
+                                    .and_then(serde_json::Value::as_str)
                                     .unwrap_or_default();
                                 let mut selected = Vec::new();
                                 let mut other = Vec::new();
                                 for pick in picked.split(", ") {
-                                    match labels
+                                    match question
+                                        .options
                                         .iter()
-                                        .position(|label| text(label, "label") == pick)
+                                        .position(|option| option.label == pick)
                                     {
                                         Some(index) => selected.push(index as u32),
                                         None => other.push(pick),
@@ -229,14 +282,9 @@ fn answer(request: &Value, response: &Value) -> Option<claude_answer::Of> {
                 }
                 _ => Some(claude_answer::Of::Permission(PermissionAnswer {
                     of: Some(if allow {
-                        let offered = request
-                            .get("permission_suggestions")
-                            .and_then(Value::as_array)
-                            .cloned()
-                            .unwrap_or_default();
-                        let scope = response
-                            .pointer("/updatedPermissions/0")
-                            .and_then(|chosen| offered.iter().position(|offer| offer == chosen))
+                        let offered = asked.permission_suggestions.as_deref().unwrap_or_default();
+                        let scope = chosen
+                            .and_then(|chosen| offered.iter().position(|offer| *offer == chosen))
                             .map(|index| index as u32);
                         permission_answer::Of::Allow(PermissionAllow { scope })
                     } else {

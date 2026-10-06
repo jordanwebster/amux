@@ -39,16 +39,38 @@ macro_rules! open_string_enum {
             Unknown(String),
         }
 
+        impl $name {
+            /// The value a spelling names, an unknown one kept as is.
+            pub fn parse(value: &str) -> Self {
+                match value {
+                    $($wire => Self::$variant,)+
+                    _ => Self::Unknown(value.to_owned()),
+                }
+            }
+
+            /// The spelling on the wire.
+            pub fn as_str(&self) -> &str {
+                match self {
+                    $(Self::$variant => $wire,)+
+                    Self::Unknown(value) => value,
+                }
+            }
+        }
+
+        /// No spelling: what a field Claude always writes reads as when a
+        /// line leaves it out.
+        impl Default for $name {
+            fn default() -> Self {
+                Self::Unknown(String::new())
+            }
+        }
+
         impl Serialize for $name {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
             {
-                let value = match self {
-                    $(Self::$variant => $wire,)+
-                    Self::Unknown(value) => value,
-                };
-                serializer.serialize_str(value)
+                serializer.serialize_str(self.as_str())
             }
         }
 
@@ -79,20 +101,6 @@ open_string_enum!(PermissionMode {
     DontAsk => "dontAsk",
     Auto => "auto",
 });
-
-impl PermissionMode {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Default => "default",
-            Self::AcceptEdits => "acceptEdits",
-            Self::BypassPermissions => "bypassPermissions",
-            Self::Plan => "plan",
-            Self::DontAsk => "dontAsk",
-            Self::Auto => "auto",
-            Self::Unknown(value) => value,
-        }
-    }
-}
 
 // ── Role ────────────────────────────────────────────────────────────
 
@@ -156,6 +164,24 @@ pub enum ContentBlock {
     },
     #[serde(untagged)]
     Unknown(RawFrame),
+}
+
+impl ContentBlock {
+    /// The block's `type` as written.
+    pub fn kind(&self) -> &str {
+        match self {
+            Self::Text { .. } => "text",
+            Self::Image { .. } => "image",
+            Self::ToolUse { .. } => "tool_use",
+            Self::ToolResult { .. } => "tool_result",
+            Self::Thinking { .. } => "thinking",
+            Self::RedactedThinking { .. } => "redacted_thinking",
+            Self::Unknown(raw) => raw
+                .field("type")
+                .and_then(|kind| kind.as_str())
+                .unwrap_or(""),
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for ContentBlock {
@@ -302,7 +328,7 @@ open_string_enum!(ImageSourceType { Base64 => "base64" });
 
 // ── Usage ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -343,9 +369,13 @@ pub struct ModelUsage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiMessage {
     pub id: String,
+    #[serde(default = "crate::absent::message_type")]
     pub r#type: String,
+    #[serde(default = "crate::absent::role")]
     pub role: Role,
+    #[serde(default = "crate::absent::content")]
     pub content: Vec<ContentBlock>,
+    #[serde(default = "crate::absent::model")]
     pub model: String,
     /// Outer None means absent; Some(None) preserves an explicit null at stream start.
     #[serde(
@@ -361,6 +391,7 @@ pub struct ApiMessage {
         skip_serializing_if = "Option::is_none"
     )]
     pub stop_sequence: Option<Option<String>>,
+    #[serde(default = "crate::absent::usage")]
     pub usage: Usage,
     #[serde(flatten)]
     pub extensions: Extensions,
@@ -780,7 +811,7 @@ fn parse_payload<T: DeserializeOwned>(
 
 // ── Permission types ────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -814,9 +845,40 @@ pub enum PermissionUpdate {
         directories: Vec<String>,
         destination: PermissionUpdateDestination,
     },
+    /// A change this crate does not know, as written.
+    #[serde(untagged)]
+    Unknown(UnknownPermissionUpdate),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl PermissionUpdate {
+    /// Where the change would be saved, as written.
+    pub fn destination(&self) -> Option<&str> {
+        Some(match self {
+            Self::AddRules { destination, .. }
+            | Self::ReplaceRules { destination, .. }
+            | Self::RemoveRules { destination, .. }
+            | Self::SetMode { destination, .. }
+            | Self::AddDirectories { destination, .. }
+            | Self::RemoveDirectories { destination, .. } => destination.as_str(),
+            Self::Unknown(unknown) => unknown.0.field("destination")?.as_str()?,
+        })
+    }
+}
+
+/// A permission change this crate does not know; a strict decode refuses
+/// the line.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct UnknownPermissionUpdate(pub RawFrame);
+
+impl<'de> Deserialize<'de> for UnknownPermissionUpdate {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        Ok(Self(RawFrame::unknown("PermissionUpdate", raw)))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionRuleValue {
     pub tool_name: String,
@@ -824,7 +886,7 @@ pub struct PermissionRuleValue {
     pub rule_content: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionBehavior {
     Allow,
@@ -832,7 +894,7 @@ pub enum PermissionBehavior {
     Ask,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionUpdateDestination {
     UserSettings,
@@ -840,6 +902,18 @@ pub enum PermissionUpdateDestination {
     LocalSettings,
     Session,
     CliArg,
+}
+
+impl PermissionUpdateDestination {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::UserSettings => "userSettings",
+            Self::ProjectSettings => "projectSettings",
+            Self::LocalSettings => "localSettings",
+            Self::Session => "session",
+            Self::CliArg => "cliArg",
+        }
+    }
 }
 
 // ── PermissionResult ────────────────────────────────────────────────

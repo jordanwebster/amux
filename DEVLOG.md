@@ -1,3 +1,24 @@
+2026-10-06 — **The headless Claude interpreter reads and writes through the protocol types.**
+Every line headless Claude prints now reaches the interpreter as a decoded
+`claude_protocol::stream::Output`, and every line it writes (control
+requests for mode, model, effort, interrupt and settings, answers to
+permission, plan, question, form and link asks, the refusal of a request it
+does not handle) is built from the crate's types and encoded by
+`stream::encode`; no `json!` or field lookup by name is left under
+`interpret/src/claude_sdk`. The recording reader decodes each recorded line
+the same way. The interpreter's hand-written test inputs leave out many
+fields real Claude always writes (`session_id`, `parent_tool_use_id`, a
+message's `type` and `usage`, most of a result's and an init's fields), so
+claude-protocol now fills such a field with its default and reports it
+missing: `decode` reads the line as before, `strict` still refuses it. The
+protocol also gained what the interpreter reads: Claude's
+`control_cancel_request` frame, a rate limit's per-window use, a
+permission request's title, flag settings with an effort that can be
+cleared with null, typed answers to `get_settings` and `mcp_status`, a
+permission change of a kind it does not know kept as written, and a
+result's per-model usage ordered by model name. Goldens, fixtures and the
+fakes' conformance run are unchanged.
+
 2026-10-06 — **The Codex interpreter writes through the protocol types.**
 Every request and answer the Codex interpreter sends (turn start, steer,
 interrupt, compaction, injected items, the model and skill lists, approval
