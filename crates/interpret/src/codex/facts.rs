@@ -492,8 +492,9 @@ impl State {
     }
 
     /// Gives the thread the agent's name, so Codex's own app shows the name
-    /// amux does. A thread that has not run a turn has nothing on disk
-    /// until it is named, and another client cannot join it before then.
+    /// amux does. Naming a thread that has not run a turn lets another
+    /// client resume it plainly, but not Codex's own app, which resumes
+    /// from history on disk; `persist_thread` is what lets the app attach.
     pub(super) fn name_thread(&mut self, emit: &mut Emit) {
         if self.name.is_empty() {
             return;

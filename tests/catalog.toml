@@ -58,7 +58,7 @@ cargo = [
 
 [[suite]]
 name = "agent-codex-thread-name"
-contract = "The agent names its Codex thread with the agent's name straight after starting it and again when the agent is renamed, so Codex's own app shows the same name and can join a thread that has not run a turn."
+contract = "The agent names its Codex thread with the agent's name straight after starting it and again when the agent is renamed, so Codex's own app shows the same name."
 paths = ["crates/agent/tests/codex_thread_name.rs", "crates/interpret/src/codex", "crates/agent/src"]
 recipe = "just test-crate agent -- --test codex_thread_name"
 boundary = "Provider adapter"

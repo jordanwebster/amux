@@ -1,3 +1,10 @@
+2026-10-06 — **Naming a Codex thread no longer claims to make it attachable.**
+The attach section of the agent process doc, the thread-naming doc comment,
+the thread-name test's module doc and its catalog contract still said naming
+a fresh Codex thread is what lets Codex's own app join it. Naming only allows
+a plain resume; the app attaches because the interpreter reads the fresh
+thread with its turns, which has Codex write it to disk. They now say so.
+
 2026-10-06 — **Codex view goldens follow the co-drive reading.**
 The view goldens still showed an approval Codex resolved without amux's
 answer as plainly dismissed; since the co-drive work it reads as answered

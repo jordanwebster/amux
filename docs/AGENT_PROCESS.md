@@ -451,8 +451,8 @@ bytes arrive as `output` frames and are never retained; its TUI repaints the
 thread each time it starts. The view ends with its connection, and two
 connections are two views on one thread. A client that attaches before the
 thread exists is told so in a `closed` frame. A thread that has not run a
-turn can be joined because the agent names it as soon as it starts (see
-[Codex](#codex)). On Windows, where the server is on stdio and has room for
+turn can be attached to because the agent has Codex write it to disk as soon
+as it starts (see [Codex](#codex)). On Windows, where the server is on stdio and has room for
 the agent alone, `amux attach` on a Codex agent says attach is not available
 and starts nothing.
 

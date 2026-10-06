@@ -1,6 +1,5 @@
 //! A Codex thread carries the agent's name: Codex's own app shows the name
-//! amux does, and a thread that has not run a turn can only be joined by a
-//! second client once it is named.
+//! amux does.
 
 mod support;
 
