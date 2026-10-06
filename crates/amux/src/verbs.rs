@@ -71,14 +71,6 @@ pub async fn resolve(client: &mut Client, reference: &str) -> Result<Agent> {
         .map_err(crate::plain)
 }
 
-pub fn display_name(agent: &Agent) -> String {
-    if agent.name.is_empty() {
-        short_id(&agent.agent_id)
-    } else {
-        agent.name.clone()
-    }
-}
-
 fn short_id(id: &[u8]) -> String {
     Uuid::from_slice(id)
         .map(|id| id.simple().to_string()[..8].to_owned())
@@ -168,7 +160,7 @@ pub async fn ls(client: &mut Client) -> Result<()> {
     let names: Vec<String> = rows
         .iter()
         .map(|(depth, agent)| {
-            let name = display_name(agent);
+            let name = agent.name.clone();
             let name = if several_hosts {
                 format!("{}/{name}", host_name(&agent.host_id))
             } else {
@@ -287,7 +279,7 @@ pub async fn create(client: &mut Client, create: Create) -> Result<()> {
         .into_inner();
     println!(
         "Created {} ({}): {}",
-        display_name(&agent),
+        agent.name,
         Uuid::from_slice(&agent.agent_id)?,
         state(&agent)
     );
@@ -306,12 +298,12 @@ pub async fn send(client: &mut Client, reference: &str, text: &str) -> Result<()
         .into_inner();
     match response.of {
         Some(send_input_response::Of::Accepted(_)) => {
-            println!("Sent to {}.", display_name(&agent));
+            println!("Sent to {}.", agent.name);
             Ok(())
         }
         Some(send_input_response::Of::Rejected(rejected)) => Err(anyhow!(
             "{} did not take it: {}",
-            display_name(&agent),
+            agent.name,
             rejected.reason
         )),
         None => Err(anyhow!("the daemon gave no verdict")),
@@ -332,7 +324,7 @@ pub async fn stop(client: &mut Client, reference: &str, mode: CliStopMode) -> Re
         })
         .await
         .map_err(crate::plain)?;
-    println!("Stopped {}.", display_name(&agent));
+    println!("Stopped {}.", agent.name);
     Ok(())
 }
 
@@ -345,14 +337,14 @@ pub async fn delete(client: &mut Client, reference: &str) -> Result<()> {
         .await
         .map_err(crate::plain)?
         .into_inner();
-    println!("Deleted {}.", display_name(&agent));
+    println!("Deleted {}.", agent.name);
     for child in &response.removed_children {
-        println!("Deleted its child {}.", display_name(child));
+        println!("Deleted its child {}.", child.name);
     }
     for child in &response.unreachable_children {
         println!(
             "Could not reach its child {}; it stays listed on its own.",
-            display_name(child)
+            child.name
         );
     }
     Ok(())
@@ -368,7 +360,7 @@ pub async fn resume(client: &mut Client, reference: &str, text: Option<&str>) ->
         .await
         .map_err(crate::plain)?
         .into_inner();
-    println!("Resumed {}: {}", display_name(&resumed), state(&resumed));
+    println!("Resumed {}: {}", resumed.name, state(&resumed));
     Ok(())
 }
 
@@ -382,11 +374,7 @@ pub async fn rename(client: &mut Client, reference: &str, name: &str) -> Result<
         .await
         .map_err(crate::plain)?
         .into_inner();
-    println!(
-        "Renamed {} to {}.",
-        display_name(&agent),
-        display_name(&renamed)
-    );
+    println!("Renamed {} to {}.", agent.name, renamed.name);
     Ok(())
 }
 

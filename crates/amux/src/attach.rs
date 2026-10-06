@@ -24,8 +24,6 @@ use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 use wire::{Agent, Kind, ProfileInfo};
 
-use crate::verbs::display_name;
-
 /// How a stretch of raw attach ended.
 #[derive(Debug, PartialEq)]
 pub enum Outcome {
@@ -69,7 +67,7 @@ impl Attacher {
     /// Why this agent's terminal cannot be attached here, pointing at its
     /// chat, which reaches every agent.
     pub fn refusal(&self, agent: &Agent) -> Option<String> {
-        let name = display_name(agent);
+        let name = agent.name.clone();
         if agent.host_id != self.local_host {
             Some(format!(
                 "{name} runs on another host, and raw attach is only for agents on this \
@@ -112,7 +110,7 @@ impl Attacher {
             let attached = Attached::connect(&dir).await.with_context(|| {
                 format!(
                     "attaching to {}'s terminal at {}",
-                    display_name(agent),
+                    agent.name.clone(),
                     dir.join(agent::PTY_SOCK).display()
                 )
             })?;
@@ -131,7 +129,7 @@ impl Attacher {
 
 /// What the passthrough says on the way back to the shell.
 pub fn farewell(agent: &Agent, outcome: &Outcome) -> String {
-    let name = display_name(agent);
+    let name = agent.name.clone();
     match outcome {
         Outcome::Detached | Outcome::Fleet => format!("[detached from {name}]"),
         Outcome::Ended(Some(why)) => format!("[{name}: {why}]"),

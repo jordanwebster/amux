@@ -1,11 +1,14 @@
 //! The fleet: home, where a chat always returns, and what its keys ask the
 //! event loop to do.
 
+use std::collections::HashMap;
+
 use crossterm::event::{KeyEvent, MouseEvent};
 use ratatui::Frame as Paint;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ui_state::{AgentKey, FleetState};
+use ui_view::SessionLine;
 use wire::Attachment;
 
 use crate::home::{self, Home};
@@ -82,11 +85,13 @@ impl FleetView {
         self.home.mouse(fleet, event, self.attach)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         paint: &mut Paint<'_>,
         area: Rect,
         fleet: &FleetState,
+        lines: &HashMap<AgentKey, SessionLine>,
         footer: Option<Line<'static>>,
         now_ms: i64,
         theme: Theme,
@@ -100,6 +105,6 @@ impl FleetView {
             defaults: &self.defaults,
         };
         self.home
-            .draw(paint, area, fleet, footer, now_ms, theme, &place);
+            .draw(paint, area, fleet, lines, footer, now_ms, theme, &place);
     }
 }

@@ -42,15 +42,15 @@ const UNANSWERABLE: &str = "Claude is showing a form from a tool server this bui
 pub const FRAMES: &[(&str, &str)] = &[
     (
         "home",
-        "Home at 110 columns as the laptop sees it: a terminal Claude, a headless Claude and a Codex on the desk, every one idle, newest first, each row with its mark, name, folder and host and its age; the first selected, its age giving way to the close mark; the keys under the list.",
+        "Home at 110 columns as the laptop sees it: a terminal Claude, a headless Claude and a Codex on the desk, every one idle, the one whose turn ended last first, each row with its mark, name, folder and host and how long it has been idle, and under it the first line of what it last said; the first selected, its age giving way to the close mark; the keys under the list.",
     ),
     (
         "home_60col",
-        "The same home at 60 columns: rows keep their mark, name, folder and host.",
+        "The same home at 60 columns: rows keep their mark, name, folder and host, and what each last said.",
     ),
     (
         "home_standings",
-        "Home with every standing at 110 columns: the top line says the studio is away and counts who is working and who needs you; a headless Claude asking for permission under Needs you; under Running, an unfolded family whose one-shot child finished, an agent on the offline studio saying so, an idle agent and a working one; and the exited Codex folded under Exited.",
+        "Home with every standing at 110 columns: the top line says the studio is away and counts who is working and who needs you; a headless Claude asking to run a command under Needs you; under Running, an unfolded family whose one-shot child finished, an agent on the offline studio saying so, an idle agent with what it last said and a working one; and the exited Codex folded under Exited.",
     ),
     ("home_standings_80col", "The same home at 80 columns."),
     (
@@ -123,6 +123,11 @@ pub fn components(theme: Theme) -> Vec<Component> {
         let lines = composer_lines(&editor, &composer, "fixer", "studio", away, w, theme);
         add(name, shows, lines);
     }
+    out.push(Component {
+        name: "home_rows",
+        shows: "Home with a row in every state, each with its name (word pairs where amux named the agent), its branch where it works in a repository, and its second line: a family placed under Needs you by its child's question, a command asked for with another ask behind it; under Running a step being run, what an idle agent last said, a signed-out and a usage-limited agent, a starting agent with nothing to say yet, and an agent on a host that is away; under Exited, unfolded, one that finished and one that failed with its cause.",
+        buffer: home_rows(theme),
+    });
     out.push(Component {
         name: "review_page",
         shows: "The full-screen review page over a working-tree diff: the file list beside one stream of files and hunks, added and removed lines tinted, a saved comment under its line and the comment editor open on another.",
@@ -210,6 +215,281 @@ fn paint_lines(lines: Vec<Line<'static>>) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(WIDTH, height)).expect("test terminal");
     terminal
         .draw(|frame| frame.render_widget(Paragraph::new(lines), frame.area()))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+/// Rows the home component is drawn at: tall enough for a blank line
+/// between rows.
+const HOME_HEIGHT: u16 = 48;
+
+/// Home over an authored fleet: one agent in each state, with what its
+/// session says for its second line.
+fn home_rows(theme: Theme) -> Buffer {
+    use std::collections::HashMap;
+
+    use ui_state::{Activity, ActivityKind, Connection, FleetMsg, FleetState};
+    use ui_view::{ActivityLine, AskSubject, AskSummary, SessionLine, StuckReason};
+    use wire::inventory_event::Of;
+    use wire::{Kind, Lifecycle, Phase, Presence};
+
+    const NOW: i64 = 1_800_000_000_000;
+    const MINUTE: i64 = 60_000;
+    let mut fleet = FleetState::new();
+    let mut event = |of| {
+        fleet.update(FleetMsg::Event(Box::new(wire::InventoryEvent {
+            of: Some(of),
+        })))
+    };
+    for (id, name, presence) in [
+        (b"desk".as_slice(), "desk", Presence::Online),
+        (b"studio".as_slice(), "studio", Presence::Offline),
+    ] {
+        event(Of::Host(wire::HostEntry {
+            host_id: id.to_vec(),
+            name: name.into(),
+            trust: wire::Trust::Trusted as i32,
+            presence: presence as i32,
+            via: wire::HostVia::Direct as i32,
+            ..Default::default()
+        }));
+    }
+    let mut lines = HashMap::new();
+    let line = |ask: Option<AskSubject>, step: Option<&str>, said: Option<&str>| SessionLine {
+        ask: ask.map(|subject| AskSummary { subject, count: 1 }),
+        step: step.map(|step| ActivityLine {
+            activity: Activity {
+                kind: ActivityKind::Running { key: "call".into() },
+                since_ms: NOW,
+                elapsed_ms: 0,
+            },
+            step: Some(step.to_owned()),
+        }),
+        last_said: said.map(str::to_owned),
+        stuck: None,
+    };
+    #[allow(clippy::type_complexity)]
+    let agents: [(
+        &str,
+        &str,
+        Kind,
+        Phase,
+        Option<&str>,
+        i64,
+        Option<&str>,
+        Option<SessionLine>,
+    ); 12] = [
+        (
+            "planner",
+            "desk",
+            Kind::ClaudeSdk,
+            Phase::Idle,
+            Some("specs"),
+            50,
+            None,
+            None,
+        ),
+        (
+            "nimble-wren",
+            "desk",
+            Kind::ClaudeSdk,
+            Phase::NeedsYou,
+            Some("specs"),
+            12,
+            Some("planner"),
+            Some(line(
+                Some(AskSubject::Question {
+                    question: "Should the old specs be deleted or kept?".into(),
+                    count: 1,
+                }),
+                None,
+                None,
+            )),
+        ),
+        (
+            "brisk-otter",
+            "desk",
+            Kind::ClaudeSdk,
+            Phase::NeedsYou,
+            Some("fix-auth"),
+            3,
+            None,
+            Some(SessionLine {
+                ask: Some(AskSummary {
+                    subject: AskSubject::Command {
+                        command: "cargo test -p auth".into(),
+                    },
+                    count: 2,
+                }),
+                ..SessionLine::default()
+            }),
+        ),
+        (
+            "quiet-heron",
+            "desk",
+            Kind::Codex,
+            Phase::Working,
+            Some("relay-retry"),
+            1,
+            None,
+            Some(line(None, Some("cargo test -p relay"), None)),
+        ),
+        (
+            "fixer",
+            "desk",
+            Kind::ClaudePty,
+            Phase::Idle,
+            Some("main"),
+            8,
+            None,
+            Some(line(
+                None,
+                None,
+                Some("The relay now retries after a dropped link."),
+            )),
+        ),
+        (
+            "amber-finch",
+            "desk",
+            Kind::Codex,
+            Phase::Idle,
+            Some("main"),
+            20,
+            None,
+            Some(SessionLine {
+                stuck: Some(StuckReason::SignedOut {
+                    state: wire::SignInState::SignedOut,
+                    account: String::new(),
+                }),
+                ..SessionLine::default()
+            }),
+        ),
+        (
+            "tidy-lynx",
+            "desk",
+            Kind::ClaudeSdk,
+            Phase::Idle,
+            None,
+            30,
+            None,
+            Some(SessionLine {
+                stuck: Some(StuckReason::UsageLimit { resets_at_ms: None }),
+                ..SessionLine::default()
+            }),
+        ),
+        (
+            "pale-moth",
+            "desk",
+            Kind::ClaudeSdk,
+            Phase::Starting,
+            Some("main"),
+            0,
+            None,
+            None,
+        ),
+        (
+            "archivist",
+            "studio",
+            Kind::ClaudePty,
+            Phase::Idle,
+            Some("logs"),
+            90,
+            None,
+            None,
+        ),
+        (
+            "doc-sweep",
+            "desk",
+            Kind::ClaudeSdk,
+            Phase::Idle,
+            Some("docs"),
+            60,
+            None,
+            None,
+        ),
+        (
+            "crasher",
+            "desk",
+            Kind::Codex,
+            Phase::Idle,
+            None,
+            70,
+            None,
+            None,
+        ),
+        (
+            "clean-up",
+            "desk",
+            Kind::Codex,
+            Phase::Idle,
+            Some("main"),
+            600,
+            None,
+            None,
+        ),
+    ];
+    for (name, host, kind, phase, branch, minutes, parent, said) in agents {
+        let exit_cause = match name {
+            "doc-sweep" => Some("finished"),
+            "crasher" => Some("provider exited with code 1"),
+            "clean-up" => Some("stopped"),
+            _ => None,
+        };
+        let agent = wire::Agent {
+            agent_id: name.as_bytes().to_vec(),
+            host_id: host.as_bytes().to_vec(),
+            kind: kind as i32,
+            name: name.into(),
+            cwd: "/home/sam/src/amux".into(),
+            lifecycle: if exit_cause.is_some() {
+                Lifecycle::Exited
+            } else {
+                Lifecycle::Live
+            } as i32,
+            exit_cause: exit_cause.map(str::to_owned),
+            phase: phase as i32,
+            phase_since_ms: NOW - minutes * MINUTE,
+            parent: parent.map(|parent| wire::AgentParent {
+                host_id: host.as_bytes().to_vec(),
+                agent_id: parent.as_bytes().to_vec(),
+            }),
+            git: Some(wire::Git {
+                branch: branch.map(str::to_owned),
+                ..Default::default()
+            }),
+            incarnation: 1,
+            ..Default::default()
+        };
+        if let Some(said) = said {
+            lines.insert(ui_state::agent_key(&agent), said);
+        }
+        event(Of::Agent(agent));
+    }
+    event(Of::CaughtUp(wire::CaughtUp { revision: 0 }));
+    fleet.update(FleetMsg::Connection(Connection::Live));
+
+    let defaults = crate::setup::Defaults::default();
+    let place = crate::home::Place {
+        local_host: b"desk",
+        version: "",
+        working_dir: "~/src/amux",
+        attach: false,
+        chat_in: crate::setup::ChatIn::Amux,
+        defaults: &defaults,
+    };
+    let mut home = crate::home::Home::default();
+    // Exited unfolded, as the person would open it; the highlight back on
+    // the first agent.
+    let key = crossterm::event::KeyEvent::from;
+    home.key(&fleet, key(crossterm::event::KeyCode::End), false);
+    home.key(&fleet, key(crossterm::event::KeyCode::Enter), false);
+    home.select(ui_state::agent_key(fleet.find(b"planner").expect("listed")));
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HOME_HEIGHT)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            home.draw(frame, area, &fleet, &lines, None, NOW, theme, &place);
+        })
         .expect("draw");
     terminal.backend().buffer().clone()
 }

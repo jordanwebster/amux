@@ -1198,9 +1198,22 @@ impl App {
                 page
             }
             None => {
+                // Each session is read on its own, before the fleet is.
+                let lines = self
+                    .fleet
+                    .sessions()
+                    .into_iter()
+                    .map(|session| {
+                        let state = session.state();
+                        (
+                            ui_state::agent_key(state.agent()),
+                            ui_view::session_line(&state, now),
+                        )
+                    })
+                    .collect();
                 let fleet = self.fleet.state();
                 self.fleet_view
-                    .draw(paint, area, &fleet, footer, now, theme);
+                    .draw(paint, area, &fleet, &lines, footer, now, theme);
                 None
             }
         };

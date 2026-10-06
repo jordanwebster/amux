@@ -1,3 +1,20 @@
+2026-10-06 — **The terminal's home draws the shared fleet view.**
+Home's list is now `ui_view::fleet_view`: its sections, their order by
+since-when and each row's second line, with the client reading each live
+agent's session through `session_line` before it takes the fleet. Home's own
+section and ordering code is gone, along with the terminal's stand-ins for
+the branch, the second line and the order. A row shows the agent's branch
+after its name, and its second line says what it asks, the step it runs, what
+it last said, why it is stuck, why it exited or that its host is away. The
+chat header's branch comes from the row's git facts. Every agent has a name,
+so the "unnamed" and "the agent" fallbacks in the terminal, the id fallbacks
+in the `amux` verbs and the agent tools' hex fallback are deleted. The served
+home frames now carry second lines read from each agent's session, and a new
+component golden draws home with a row in every state, branches and assigned
+word-pair names. The order test now checks that streamed steps change only a
+row's second line while a turn ending moves its agent up, which is what
+ordering by since-when means.
+
 2026-10-06 — **Home's sections and second line are a shared view.**
 `ui_view::fleet_view` replaces `fleet_list`: it returns home's sections
 (needs you, running, exited), each family in its loudest member's section,

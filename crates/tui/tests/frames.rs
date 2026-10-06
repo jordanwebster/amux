@@ -18,6 +18,7 @@
 
 mod common;
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use common::{assert_golden, capture};
@@ -30,7 +31,10 @@ use testnet::{AgentDecl, FakeKind, JournalCut, Net, PATIENCE, Topology};
 use tui::chat::ChatView;
 use tui::fleet::FleetView;
 use tui::{ColorMode, Theme};
-use ui_state::{Connection, FleetMsg, FleetState, ItemClass, Msg, SessionState};
+use ui_state::{
+    AgentKey, Attention, Connection, FleetMsg, FleetState, ItemClass, Msg, SessionState,
+};
+use ui_view::SessionLine;
 use wire::{InventoryEvent, SessionEvent, session_event};
 
 fn theme() -> Theme {
@@ -185,6 +189,46 @@ fn chat_state(fleet: &FleetState, agent: &[u8], events: &[SessionEvent]) -> Sess
     state
 }
 
+/// What each named agent's session on `host` says for its home row, read
+/// once the session holds what the agent's state in `fleet` calls for: its
+/// ask, its step, or what it last said.
+async fn session_lines(
+    net: &Net,
+    fleet: &FleetState,
+    host: &str,
+    names: &[&str],
+) -> HashMap<AgentKey, SessionLine> {
+    let mut lines = HashMap::new();
+    for name in names {
+        let id = net.agent(name).unwrap().id;
+        let entry = fleet.find(id.as_bytes()).expect("the agent is listed");
+        let attention = ui_state::attention(entry);
+        let line_of = |events: &[SessionEvent]| {
+            ui_view::session_line(&chat_state(fleet, id.as_bytes(), events), 0)
+        };
+        let mut session = net.observe(host, name, 20).await.unwrap();
+        let events = session
+            .observe_until(
+                |events| {
+                    let line = line_of(events);
+                    caught_up(events)
+                        && match attention {
+                            Attention::NeedsYou => line.ask.is_some(),
+                            Attention::Working => line.step.is_some(),
+                            Attention::Idle => line.last_said.is_some(),
+                            Attention::Starting | Attention::Exited => true,
+                        }
+                },
+                PATIENCE,
+            )
+            .await
+            .unwrap()
+            .to_vec();
+        lines.insert(ui_state::agent_key(entry), line_of(&events));
+    }
+    lines
+}
+
 /// The newest item's time: "now" for ages, so none of them moves.
 fn now_of(events: &[SessionEvent]) -> i64 {
     events
@@ -209,13 +253,27 @@ fn draw_chat(state: &SessionState, width: u16, height: u16) -> Buffer {
     terminal.backend().buffer().clone()
 }
 
-fn draw_fleet(fleet: &FleetState, now_ms: i64, width: u16, height: u16) -> Buffer {
-    draw_fleet_view(&mut FleetView::default(), fleet, now_ms, width, height)
+fn draw_fleet(
+    fleet: &FleetState,
+    lines: &HashMap<AgentKey, SessionLine>,
+    now_ms: i64,
+    width: u16,
+    height: u16,
+) -> Buffer {
+    draw_fleet_view(
+        &mut FleetView::default(),
+        fleet,
+        lines,
+        now_ms,
+        width,
+        height,
+    )
 }
 
 fn draw_fleet_view(
     view: &mut FleetView,
     fleet: &FleetState,
+    lines: &HashMap<AgentKey, SessionLine>,
     now_ms: i64,
     width: u16,
     height: u16,
@@ -224,7 +282,7 @@ fn draw_fleet_view(
     terminal
         .draw(|frame| {
             let area = frame.area();
-            view.draw(frame, area, fleet, None, now_ms, theme());
+            view.draw(frame, area, fleet, lines, None, now_ms, theme());
         })
         .unwrap();
     terminal.backend().buffer().clone()
@@ -322,8 +380,9 @@ async fn served_frames_match_their_goldens() {
         .unwrap()
         .to_vec();
     let now = now_of(&events) + 1_000;
-    frame("home", &draw_fleet(&fleet, now, 110, 16));
-    frame("home_60col", &draw_fleet(&fleet, now, 60, 16));
+    let lines = session_lines(&net, &fleet, "laptop", &["coder", "worker", "scout"]).await;
+    frame("home", &draw_fleet(&fleet, &lines, now, 110, 16));
+    frame("home_60col", &draw_fleet(&fleet, &lines, now, 60, 16));
     let state = chat_state(&fleet, worker.as_bytes(), &events);
     frame("chat", &draw_chat(&state, 110, 24));
 
@@ -623,6 +682,13 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
                 .any(|host| host.name == "studio" && host.presence() == wire::Presence::Offline)
     })
     .await;
+    let lines = session_lines(
+        &net,
+        &fleet,
+        "laptop",
+        &["fixer", "runner", "scout", "planner"],
+    )
+    .await;
     // Ages are drawn against the newest activity, so every one reads alike.
     let now = fleet
         .agents()
@@ -647,17 +713,20 @@ async fn a_fleet_of_every_standing_matches_its_golden() {
     );
     frame(
         "home_standings",
-        &draw_fleet_view(&mut view, &fleet, now, 110, 30),
+        &draw_fleet_view(&mut view, &fleet, &lines, now, 110, 34),
     );
     frame(
         "home_standings_80col",
-        &draw_fleet_view(&mut view, &fleet, now, 80, 30),
+        &draw_fleet_view(&mut view, &fleet, &lines, now, 80, 34),
     );
     view.key(
         &fleet,
         crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('h')),
     );
-    frame("hosts", &draw_fleet_view(&mut view, &fleet, now, 110, 30));
+    frame(
+        "hosts",
+        &draw_fleet_view(&mut view, &fleet, &lines, now, 110, 34),
+    );
 
     tokio::time::timeout(Duration::from_secs(60), net.shutdown())
         .await

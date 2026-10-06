@@ -180,7 +180,7 @@ pub fn limit_reached(strip: &Strip, now_ms: i64) -> Option<String> {
 }
 
 /// When a limit resets: the time today, else the weekday.
-fn resets(at_ms: i64, now_ms: i64) -> String {
+pub(crate) fn resets(at_ms: i64, now_ms: i64) -> String {
     use chrono::TimeZone;
     let Some(at) = chrono::Local.timestamp_millis_opt(at_ms).single() else {
         return String::new();

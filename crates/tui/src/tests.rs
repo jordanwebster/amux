@@ -3,11 +3,11 @@
 //! runs keyed by item keys, every ask body, the composer's gates and
 //! controls, Detached and Reset, the hosts overlay and the fleet.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use prost::Message as _;
-use ui_state::{FleetMsg, FleetState, InputOutcome, Msg, SessionState};
+use ui_state::{AgentKey, FleetMsg, FleetState, InputOutcome, Msg, SessionState};
 use ui_view::{AskBody, CardState, ask_card, queue_rows};
 use wire::{Item, Kind, Phase, SessionEvent, ToolClass, ToolState, session_event};
 
@@ -1084,7 +1084,7 @@ fn fleet_screen(view: &mut FleetView, fleet: &FleetState) -> String {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            view.draw(frame, area, fleet, None, 0, theme());
+            view.draw(frame, area, fleet, &HashMap::new(), None, 0, theme());
         })
         .unwrap();
     text(terminal.backend().buffer())
@@ -2113,11 +2113,21 @@ static HOME_PLACE: std::sync::LazyLock<crate::home::Place<'static>> =
     });
 
 fn home_screen(home: &mut crate::home::Home, fleet: &FleetState, theme: Theme) -> String {
+    home_screen_with(home, fleet, &HashMap::new(), theme)
+}
+
+/// Home with what each agent's session says for its second line.
+fn home_screen_with(
+    home: &mut crate::home::Home,
+    fleet: &FleetState,
+    lines: &HashMap<AgentKey, ui_view::SessionLine>,
+    theme: Theme,
+) -> String {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
     terminal
         .draw(|frame| {
             let area = frame.area();
-            home.draw(frame, area, fleet, None, now(), theme, &HOME_PLACE);
+            home.draw(frame, area, fleet, lines, None, now(), theme, &HOME_PLACE);
         })
         .unwrap();
     text(terminal.backend().buffer())
@@ -2155,31 +2165,46 @@ fn home_leads_with_what_needs_you_and_folds_the_exited() {
     assert!(!screen.contains('┌'), "home has no frame: {screen}");
 }
 
-/// Home lists agents in the order they were made: work streaming in and a
-/// turn ending leave every row where it was.
+/// Home orders agents by when each last changed state: work streaming in
+/// changes only a row's second line, and a turn ending moves its agent up.
 #[test]
-fn home_keeps_its_order_while_agents_stream_and_finish() {
+fn home_keeps_its_order_while_agents_stream_and_moves_one_whose_turn_ended() {
     let mut fleet = home_fleet();
     let mut home = crate::home::Home::default();
-    home_screen(&mut home, &fleet, theme());
-    // beta streams: its activity time moves past alpha's.
-    inventory(
-        &mut fleet,
-        home_agent(b"w2", "beta", Phase::Working, None, now()),
-    );
-    let screen = home_screen(&mut home, &fleet, theme());
-    assert!(
-        row_of(&screen, "alpha") < row_of(&screen, "beta"),
-        "{screen}"
-    );
-    // beta's turn ends, and it stays put.
+    let beta = AgentKey {
+        host: b"a".to_vec(),
+        agent: b"w2".to_vec(),
+    };
+    let step = |subject: &str| ui_view::SessionLine {
+        step: Some(ui_view::ActivityLine {
+            activity: ui_state::Activity {
+                kind: ui_state::ActivityKind::Running { key: "call".into() },
+                since_ms: 0,
+                elapsed_ms: 0,
+            },
+            step: Some(subject.to_owned()),
+        }),
+        ..Default::default()
+    };
+    // beta streams: each step it takes shows on its second line, and it
+    // stays below alpha, which changed state more recently.
+    for subject in ["cargo build", "cargo test -p relay"] {
+        let lines = HashMap::from([(beta.clone(), step(subject))]);
+        let screen = home_screen_with(&mut home, &fleet, &lines, theme());
+        assert!(
+            row_of(&screen, "alpha") < row_of(&screen, "beta"),
+            "{screen}"
+        );
+        assert_eq!(row_of(&screen, subject), row_of(&screen, "beta") + 1);
+    }
+    // beta's turn ends: its state changed last, so it leads.
     inventory(
         &mut fleet,
         home_agent(b"w2", "beta", Phase::Idle, None, now()),
     );
     let screen = home_screen(&mut home, &fleet, theme());
     assert!(
-        row_of(&screen, "alpha") < row_of(&screen, "beta"),
+        row_of(&screen, "beta") < row_of(&screen, "alpha"),
         "{screen}"
     );
 }
@@ -2241,7 +2266,16 @@ fn a_known_ground_tints_the_highlight_instead_of_marking_it() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            home.draw(frame, area, &fleet, None, now(), tinted, &HOME_PLACE);
+            home.draw(
+                frame,
+                area,
+                &fleet,
+                &HashMap::new(),
+                None,
+                now(),
+                tinted,
+                &HOME_PLACE,
+            );
         })
         .unwrap();
     let buffer = terminal.backend().buffer().clone();

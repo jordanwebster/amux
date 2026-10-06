@@ -17,6 +17,7 @@ pub mod rows;
 
 use std::collections::{HashMap, HashSet};
 
+pub(crate) use composer::resets;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
@@ -1656,10 +1657,7 @@ impl ChatView {
         let pane_width = (full / 3).clamp(PANE_MIN, PANE_MAX).min(full);
         let beside = side && full.saturating_sub(pane_width) >= CHAT_MIN;
         let width = if beside { full - pane_width } else { full };
-        let name = match state.agent().name.as_str() {
-            "" => "the agent".to_owned(),
-            name => name.to_owned(),
-        };
+        let name = state.agent().name.clone();
         let host = state
             .host()
             .map(|host| host.name.clone())
@@ -2584,7 +2582,12 @@ impl ChatView {
         } else {
             cwd.clone()
         };
-        if let Some(branch) = crate::pending::branch(state.agent()) {
+        if let Some(branch) = state
+            .agent()
+            .git
+            .as_ref()
+            .and_then(|git| git.branch.as_deref())
+        {
             place = format!("{branch} {place}");
         }
         if !self.local && !host.is_empty() {
@@ -2861,9 +2864,9 @@ fn not_sent_words(reason: &str) -> String {
     format!("not sent: {why}")
 }
 
-fn quiet_activity(activity: &ui_state::Activity, width: usize, theme: Theme) -> Line<'static> {
-    let elapsed = text::duration(activity.elapsed_ms - activity.elapsed_ms % 1_000);
-    let words = match &activity.kind {
+/// What an agent is doing, as the activity line names it.
+pub(crate) fn activity_words(kind: &ActivityKind) -> String {
+    match kind {
         ActivityKind::Thinking => "Thinking".to_owned(),
         ActivityKind::Subagents { count } => format!(
             "{count} subagent{} working",
@@ -2872,7 +2875,12 @@ fn quiet_activity(activity: &ui_state::Activity, width: usize, theme: Theme) -> 
         ActivityKind::Compacting => "Compacting".to_owned(),
         ActivityKind::Retrying { attempt, .. } => format!("Retrying · attempt {attempt}"),
         ActivityKind::Working | ActivityKind::Running { .. } => "Working".to_owned(),
-    };
+    }
+}
+
+fn quiet_activity(activity: &ui_state::Activity, width: usize, theme: Theme) -> Line<'static> {
+    let elapsed = text::duration(activity.elapsed_ms - activity.elapsed_ms % 1_000);
+    let words = activity_words(&activity.kind);
     let mut line = Line::from(Span::raw("    "));
     push(&mut line, words, theme.muted(), width);
     push(&mut line, format!(" · {elapsed}"), theme.faint(), width);
@@ -3386,14 +3394,7 @@ fn state_words(
 fn family_line(family: &FamilyHeader, width: usize, theme: Theme) -> Line<'static> {
     let mut parts = Vec::new();
     if let Some(parent) = &family.parent {
-        parts.push(format!(
-            "↑ {}",
-            if parent.name.is_empty() {
-                "parent"
-            } else {
-                &parent.name
-            }
-        ));
+        parts.push(format!("↑ {}", parent.name));
     }
     let count = family.children.len();
     if count > 0 {

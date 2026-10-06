@@ -243,13 +243,16 @@ impl Server {
             agents
                 .iter()
                 .find(|agent| agent.agent_id == parent.agent_id)
-                .map_or_else(|| interpret::to_hex(&parent.agent_id), display_name)
+                .map_or_else(
+                    || interpret::to_hex(&parent.agent_id),
+                    |agent| agent.name.clone(),
+                )
         };
         let rows = agents
             .iter()
             .map(|agent| {
                 let mut row = json!({
-                    "name": display_name(agent),
+                    "name": agent.name,
                     "id": interpret::to_hex(&agent.agent_id),
                     "kind": kind_name(agent.kind()),
                     "host": host_name(&agent.host_id),
@@ -385,7 +388,7 @@ impl Server {
             .await
             .map_err(|refusal| refusal.or_else(|status| Refusal(plain(&status))))?;
         Ok(json!({
-            "name": display_name(&agent),
+            "name": agent.name,
             "id": interpret::to_hex(&agent.agent_id),
         })
         .to_string())
@@ -628,11 +631,7 @@ fn refused(status: &Status, name: &str) -> Refusal {
             ambiguous
                 .candidates
                 .iter()
-                .map(|agent| format!(
-                    "{} ({})",
-                    display_name(agent),
-                    interpret::to_hex(&agent.agent_id)
-                ))
+                .map(|agent| format!("{} ({})", agent.name, interpret::to_hex(&agent.agent_id)))
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
@@ -660,14 +659,6 @@ fn plain(status: &Status) -> String {
     match status.message() {
         "" => status.code().description().to_owned(),
         message => message.to_owned(),
-    }
-}
-
-fn display_name(agent: &Agent) -> String {
-    if agent.name.is_empty() {
-        interpret::to_hex(&agent.agent_id)
-    } else {
-        agent.name.clone()
     }
 }
 

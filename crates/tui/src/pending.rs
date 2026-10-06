@@ -15,7 +15,7 @@
 //! whole).
 
 use ui_state::SessionState;
-use wire::{Agent, Kind};
+use wire::Kind;
 
 use crate::chat::pane::Job;
 use crate::setup;
@@ -41,35 +41,12 @@ pub fn offers_worktree() -> bool {
     false
 }
 
-/// The agent's git branch, for the chat header. The inventory row does not
-/// carry one yet.
-pub fn branch(_agent: &Agent) -> Option<&str> {
-    None
-}
-
 /// The background jobs still running, for the row above the composer and
 /// the Overview. The wire counts them but does not list them, and a list
 /// rebuilt from the transcript misses what the agent did not show as a
 /// step, so they are not shown until the wire lists them.
 pub fn background_jobs(_state: &SessionState) -> Vec<Job> {
     Vec::new()
-}
-
-/// What home's second line says of an agent: what it asks, or what it is
-/// doing or last said. The inventory row carries neither summary (only
-/// `working_on`, which agents rarely set), so the line holds only what is
-/// known for certain: a host away, why it exited, a folded family's member
-/// that needs you.
-pub fn home_summary(_agent: &Agent) -> Option<String> {
-    None
-}
-
-/// What orders agents within a home section, newest first. A daemon-kept
-/// moment of the last send, turn start or turn end would order by
-/// activity without rows moving while an agent streams; until the row
-/// carries one, home orders by when each agent was created.
-pub fn home_order(agent: &Agent) -> i64 {
-    agent.created_at_ms
 }
 
 /// Whether the working tree's change counts are shown: the header's

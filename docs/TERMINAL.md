@@ -49,18 +49,24 @@ The client opens on home, and every chat returns to it. The top line is `amux` a
 right: hosts that are away, how many agents are working and how many need you, a daemon running another build
 (`amux 0.8.0 running · restart to update`) and, when this machine's hosts are away because it is signed out,
 `signed out · amux login`. `/` turns the top line into a filter over names, folders and hosts; Enter keeps it, Esc
-clears it, and it looks into folded sections too.
+clears it, and it looks into folded sections too. It matches names, branches, folders and hosts.
 
 Below it, `+ New Agent`, then the agents in sections drawn alike (a fold marker, the label, a count, a faint rule):
 **Needs you**, **Running** (working and idle) and **Exited**, folded until opened. Within a section agents are
-listed newest first, so a row never moves while an agent streams. A family sits in its loudest member's section;
+listed by when each last changed state (a turn starting or ending, an ask opening or answered), newest first, so a
+row never moves while an agent streams. The sections, their order and each row's second line come from the shared
+fleet view every client draws. A family sits in its loudest member's section;
 `→`, `←` or Space shows and hides its members, indented under their parent.
 
 Each row is the agent's mark (`○` idle, starting, exited or on a host that is away; `●` working; `●` in the
-attention ink when it needs you), its name, then faint which agent it is (`Claude`, `Claude (terminal)` or
-`Codex`), its folder from `~` and its host when that is not this machine, and its age at the right. Short of room,
-the folder is cut from the left down to its last name, then the host goes, then the agent. A second line says what only words can: why it exited (`finished`, a crash in red), that its
-host is away. The highlighted row is tinted, with half a line of the tint above and below; under the pointer or the
+attention ink when it needs you), its name, its branch when it works in a repository, then faint which agent it is
+(`Claude`, `Claude (terminal)` or `Codex`), its folder from `~` and its host when that is not this machine, and at
+the right how long it has been in its state. Short of room, the folder is cut from the left down to its last name,
+then the host goes, then the agent. The second line says what the agent's state calls for: what it asks (`wants to
+run cargo test -p auth`), the step it is running, what it last said, or why it cannot go on (`signed out of
+Codex`, `usage limit reached`); why it exited (`finished`, a crash in red); that its host is away. A starting
+agent has no second line. A folded family whose member needs you says that member's name and what it asks. The
+highlighted row is tinted, with half a line of the tint above and below; under the pointer or the
 keys alike, and it shows `[x]` in place of its age to stop the agent, or delete it once it has exited, after asking.
 
 On a row, `r` renames it in place (Enter saves, Esc cancels), `s` stops it and `x` deletes it, each asking first
