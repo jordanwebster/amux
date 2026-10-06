@@ -60,6 +60,7 @@ agents/<agent id>/
   private/               the agent's own state; the daemon never reads it
     hooks.sock           terminal Claude's hook command connects here
     messaging.sock       terminal Claude's messaging socket (Claude binds it)
+    codex.sock           Codex's app server listens here; the agent is one client
     facts/               the facts ring and its checkpoints
     transcript-cursor    how far Claude's transcript has been read, and which file
     provider-session     the provider's session or thread id, for the next incarnation
@@ -224,7 +225,7 @@ any transcript rows a follower has not read yet.
 |---|---|---|---|
 | `claude_pty` | `claude` in a pseudo-terminal | Hook payloads on `private/hooks.sock`, transcript rows, and the agent's own launch, trust-dialog and ready facts | Keystrokes, typed through the keymap resolved for the running Claude |
 | `claude_sdk` | `claude --print` over stream-JSON on stdin and stdout | Each stdout line | Stream-JSON lines on stdin |
-| `codex` | `codex app-server` over JSON-RPC on stdin and stdout | Each stdout line | JSON-RPC lines on stdin |
+| `codex` | `codex app-server` listening on `private/codex.sock` (stdio on Windows), the agent one of its clients | Each JSON-RPC message the server sends the agent | JSON-RPC messages from the agent's client |
 
 Terminal Claude is hosted on Unix only. On Windows an agent of kind
 `claude_pty` ends before spawning anything, with the cause "could not start
@@ -294,18 +295,36 @@ the element that names their blob. Closing the child is closing its stdin.
 
 ### Codex
 
-The agent runs `codex <args> app-server --listen stdio://`, with amux's tool
-server added as `--config mcp_servers.amux.command=…` and
-`--config mcp_servers.amux.args=…`. It performs the handshake itself, every
+The agent runs `codex <args> app-server --listen unix://<private/codex.sock>`
+(the socket's address, through a short link when the path is too long), with
+amux's tool server added as `--config mcp_servers.amux.command=…` and
+`--config mcp_servers.amux.args=…`, and connects to it as one client. Codex's
+socket speaks WebSocket: one JSON-RPC message per text frame. The server
+outlives any one client, so other clients (Codex's own app) can join the same
+thread there. A socket file a killed server left is removed before the next
+start. The agent waits up to 30 seconds for the server to listen; a server
+that exits first ends the incarnation with its exit code. On Windows the
+agent runs `--listen stdio://` and speaks JSON lines on the child's stdin and
+stdout instead. It performs the handshake itself, every
 message a `codex_protocol` value: `initialize` (client `amux`, experimental
 API on), `initialized`, then `thread/start`, or `thread/resume` with the
 thread id from `private/provider-session` for a later incarnation, with the
 spec's working directory and model. The thread id the server answers with is written to
-`private/provider-session`. Every line the server writes is a fact; the
+`private/provider-session`. Every message the server sends the agent is a fact; the
 interpreter writes every request after the handshake with ids of its own
 (`amux-<n>`). A turn whose prompt carries attachments has them appended to
 its input: an image as a local image at its blob's path, anything else as the
 element text the model reads.
+
+Closing the agent's connection ends a stdio server. On a socket, the end of
+the agent's connection (closed by the agent, or dropped by the server) is
+when the agent sends the server SIGTERM; Codex then finishes any running
+turn and exits. Nothing tells a socket server that the agent died, so the
+agent also starts a tether beside it: a shell in the server's process group
+reading a pipe only the agent holds. When the agent dies, however it dies,
+the pipe closes and the shell sends the server's group SIGTERM; after the
+server exits on its own, the agent lets the tether go, which ends whatever
+the server left in its group.
 
 ## The facts ring
 

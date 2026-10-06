@@ -49,6 +49,76 @@ async fn a_codex_agent_handshakes_runs_a_turn_and_resumes_its_thread() {
     assert_eq!(agent.exit().await, ExitCause::Stopped);
 }
 
+/// Codex's server listens on a socket in the agent's private folder with
+/// the agent as one of its clients: another client is served there while
+/// the agent works, and the agent's stop finishes the server for everyone.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_codex_agent_is_one_client_of_a_server_on_its_private_socket() {
+    use futures_util::{SinkExt as _, StreamExt as _};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let agent = Agent::start(Setup {
+        kind: "codex",
+        steps: vec![
+            Step::Text {
+                chunks: vec!["hello".into()],
+            },
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+
+    let socket = agent.dir.join(agent::PRIVATE).join("codex.sock");
+    let address = agent::local_socket::unix_address(&socket).unwrap();
+    let mut other = provider_fakes::clients::connect(&address, PATIENCE)
+        .await
+        .expect("the server takes a second client");
+    other
+        .send(Message::text(
+            serde_json::json!({
+                "id": "other-1",
+                "method": "initialize",
+                "params": {
+                    "capabilities": {"experimentalApi": true},
+                    "clientInfo": {"name": "other", "title": null, "version": "0.1.0"},
+                },
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+    let answered = tokio::time::timeout(PATIENCE, async {
+        while let Some(Ok(message)) = other.next().await {
+            if let Message::Text(text) = message
+                && serde_json::from_str::<serde_json::Value>(&text).unwrap()["id"] == "other-1"
+            {
+                return true;
+            }
+        }
+        false
+    })
+    .await;
+    assert_eq!(answered, Ok(true), "the second client is answered");
+
+    assert_eq!(daemon.prompt(b"p1", "hi").await, Verdict::Accepted);
+    agent
+        .wait("the turn ends", |log| log.turn_ends() == 1)
+        .await;
+    assert!(agent.log().has_text("hello"));
+
+    daemon.stop(StopMode::Graceful).await;
+    assert_eq!(agent.exit().await, ExitCause::Stopped);
+    let ended = tokio::time::timeout(PATIENCE, async {
+        while let Some(Ok(_)) = other.next().await {}
+    })
+    .await;
+    assert!(ended.is_ok(), "the server finished with the agent");
+}
+
 /// The thread id Codex answers with is what the next incarnation resumes;
 /// an incarnation that cannot keep it ends rather than run a thread nobody
 /// can find again. A read-only session file stands in for the full disk.

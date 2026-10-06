@@ -537,6 +537,15 @@ async fn life_of_an_agent(kind: &'static str) {
     .unwrap();
     agent.assert_released();
 
+    // The killed Codex server's socket is left where the next one listens.
+    let codex_socket = agent.dir.join(agent::PRIVATE).join("codex.sock");
+    if kind == "codex" {
+        assert!(
+            std::fs::symlink_metadata(&codex_socket).is_ok(),
+            "the killed server left its socket"
+        );
+    }
+
     // The next incarnation records the end the killed one never wrote.
     agent.spec(3, "third", vec![]);
     let mut process = agent.spawn(3);
@@ -557,6 +566,15 @@ async fn life_of_an_agent(kind: &'static str) {
             "EXITED ended unexpectedly",
         ]
     );
+    if kind == "codex" {
+        // Codex resumes the thread at once: its server listens despite the
+        // socket the killed one left.
+        agent
+            .wait("the third incarnation's Codex resumes", |log| {
+                log.boundaries().get(4).map(String::as_str) == Some("RESUMED")
+            })
+            .await;
+    }
     daemon.stop(StopMode::Kill).await;
     exits(&mut process).await;
     agent.assert_released();

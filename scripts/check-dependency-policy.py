@@ -23,7 +23,7 @@ ALLOWED_LOCAL = {
     # The agent process: its lock, journal and sockets, the interpreter,
     # and the provider hosts.
     "agent": {
-        "agent-dir", "attachments", "claude", "claude-protocol", "codex-protocol", "interpret",
+        "agent-dir", "attachments", "claude", "claude-protocol", "codex", "codex-protocol", "interpret",
         "journal", "pty-host", "wire",
     },
     "claude": {"claude-protocol", "pty-host"},

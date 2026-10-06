@@ -19,7 +19,9 @@
 //! goes on and its pending request stays open for the others, and one that
 //! joins later is sent the requests still pending. A thread can be resumed
 //! by a second client only once it exists on disk, which for Codex is after
-//! its first turn starts or it is named.
+//! its first turn starts or it is named. Asked to finish (SIGTERM), it
+//! finishes the running turn and exits, as a stdio server does at the end of
+//! its input.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -114,8 +116,8 @@ async fn play(
     let (client, mut writer) = loop {
         match events.recv().await {
             Some(Event::Opened(id, writer)) => break (id, writer),
+            Some(Event::Terminated) | None => return Err("no client connected".into()),
             Some(_) => {}
-            None => return Err("no client connected".into()),
         }
     };
     for (index, event) in process.events.iter().enumerate() {
@@ -159,6 +161,7 @@ async fn next_frame(
         match events.recv().await? {
             Event::Frame(id, text) if id == client => return Some(text),
             Event::Closed(id) if id == client => return None,
+            Event::Terminated => return None,
             _ => {}
         }
     }
@@ -281,6 +284,7 @@ impl Engine {
             Some(Event::Closed(id)) => {
                 self.clients.remove(&id);
             }
+            Some(Event::Terminated) => self.eof = true,
         }
     }
 

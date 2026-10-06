@@ -2,12 +2,14 @@
 //!
 //! Every message this crate sends or reads is a `codex_protocol` type; this
 //! crate owns only the process, the lines in and out, and routing what the
-//! server sends to the thread it names.
+//! server sends to the thread it names. [`host`] is how an agent runs one
+//! server on a socket that other clients can join.
 
 pub mod config;
 pub(crate) mod dispatch;
 pub mod error;
 pub mod event;
+pub mod host;
 pub mod server;
 pub mod thread;
 pub mod thread_event_stream;

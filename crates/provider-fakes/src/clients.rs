@@ -22,6 +22,10 @@ pub enum Event {
     /// One message the client wrote, as written.
     Frame(ClientId, String),
     Closed(ClientId),
+    /// A socket server was asked to finish (SIGTERM). Codex then finishes
+    /// what is running and exits; for a stdio host the end of its input
+    /// says the same.
+    Terminated,
 }
 
 /// Where `app-server --listen` was told to serve.
@@ -162,12 +166,20 @@ mod socket {
     }
 
     /// Binds the socket, replacing one a dead server left, and accepts
-    /// clients until the process ends.
+    /// clients until the process ends or is asked to finish.
     pub async fn serve(path: &Path, tx: mpsc::UnboundedSender<Event>) -> std::io::Result<()> {
         if std::fs::symlink_metadata(path).is_ok() {
             std::fs::remove_file(path)?;
         }
         let listener = UnixListener::bind(path)?;
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let terminated = tx.clone();
+        tokio::spawn(async move {
+            if terminate.recv().await.is_some() {
+                let _ = terminated.send(Event::Terminated);
+            }
+        });
         tokio::spawn(async move {
             let mut next = 0;
             while let Ok((stream, _)) = listener.accept().await {

@@ -9,6 +9,10 @@ pub use agent_dir::{BLOBS, CTL_SOCK, JOURNAL, LOCK, PRIVATE, PTY, PTY_SOCK, lock
 use prost::Message as _;
 use wire::AgentSpec;
 pub const HOOKS_SOCK: &str = "hooks.sock";
+/// The socket the agent's Codex app server listens on, under private/.
+/// Windows hosts Codex over stdio.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub const CODEX_SOCK: &str = "codex.sock";
 /// Terminal Claude's messaging socket, under private/, which Claude binds.
 pub const MESSAGING_SOCK: &str = "messaging.sock";
 /// How far the agent has read Claude's transcript, and which one.

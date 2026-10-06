@@ -1,3 +1,21 @@
+2026-10-06 — **A Codex agent's app server listens on a socket in its folder.**
+On macOS and Linux the agent process now starts `codex app-server --listen
+unix://…/private/codex.sock` and connects to it as one client, over
+WebSocket as Codex's socket speaks, instead of owning the server's stdin and
+stdout. The server outlives any one client, which is what lets Codex's own
+app join the same live thread later. Every message the server sends the
+agent is still a fact and every write still an interpreter effect; the
+handshake, replay fixtures and goldens are unchanged. Windows keeps stdio.
+The new `codex::host` layer starts the server (removing a socket file a
+killed server left, so it cannot stop the next start), waits for it to
+listen (failing at once if it exits first), and splits the connection into
+halves. Since nothing tells a socket server its starter died, a tether
+shell in the server's process group watches a pipe only the agent holds and
+sends the group SIGTERM when it closes; a group-killed agent still leaves
+nothing running. A graceful stop closes the agent's connection, and once
+the server has closed it in turn the agent sends it SIGTERM, on which Codex
+finishes what is running and exits; the fake Codex now does the same.
+
 2026-10-06 — **The fake Codex serves several clients on a Unix socket.**
 `fake-codex app-server --listen unix://PATH` now serves the socket the way
 Codex 0.160.0 does: a WebSocket upgrade, then one JSON-RPC message per text

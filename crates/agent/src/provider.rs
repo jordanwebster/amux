@@ -4,8 +4,9 @@
 //! Headless Claude is a plain child speaking stream-JSON on stdin and
 //! stdout. Claude in a terminal runs on a pseudo-terminal whose raw bytes
 //! go to the terminal log; its facts are hook payloads (on
-//! private/hooks.sock) and its transcript rows. Every child runs in its own
-//! process group so a kill reaches whatever it started.
+//! private/hooks.sock) and its transcript rows. Codex's app server listens
+//! on private/codex.sock with the agent as one of its clients. Every child
+//! runs in its own process group so a kill reaches whatever it started.
 //!
 //! The child's exit is what ends the agent, never the end of its output: a
 //! straggler the provider left behind can hold a terminal or a pipe open
@@ -45,6 +46,8 @@ const FIRST_SCREEN_WAIT: Duration = Duration::from_millis(500);
 /// requests are numbered amux-N.
 const CODEX_INITIALIZE: &str = "agent-initialize";
 const CODEX_THREAD: &str = "agent-thread";
+/// The longest a starting Codex server is waited for to listen.
+const CODEX_LISTEN_WAIT: Duration = Duration::from_secs(30);
 /// How often a followed transcript is read for new rows.
 const TRANSCRIPT_POLL: Duration = Duration::from_millis(25);
 /// The hook events terminal Claude reports to the agent, when the spec's
@@ -117,9 +120,13 @@ pub enum ProviderError {
 
 /// A plain child's stdin, shared with the handshake that writes first.
 type Stdin = Arc<tokio::sync::Mutex<Option<ChildStdin>>>;
+/// The agent's connection to its Codex server, shared the same way; None
+/// once closed, or when the server ended before it took a client.
+type CodexSender = Arc<tokio::sync::Mutex<Option<codex::host::Sender>>>;
 
 enum Input {
     Stdin(Stdin),
+    Codex(CodexSender),
     /// Keystrokes for the typing task.
     Terminal(mpsc::UnboundedSender<Vec<claude::pty::keymap::KeyStep>>),
     Closed,
@@ -153,7 +160,7 @@ impl Provider {
         match spec.kind.as_str() {
             "claude_sdk" => Self::spawn_sdk(spec, dir, events).await,
             "claude_pty" => Self::spawn_terminal(spec, dir, events).await,
-            "codex" => Self::spawn_codex(spec, dir, events),
+            "codex" => Self::spawn_codex(spec, dir, events).await,
             other => Err(ProviderError::Unhosted(other.to_owned())),
         }
     }
@@ -257,11 +264,14 @@ impl Provider {
         Ok(provider)
     }
 
-    /// Codex: one app server per agent over stdio. The agent does the
-    /// handshake (initialize, initialized, then thread/start or, for a later
-    /// incarnation, thread/resume); every line the server writes is a fact,
-    /// and the interpreter writes everything after the handshake.
-    fn spawn_codex(
+    /// Codex: one app server per agent, listening on a socket in the
+    /// agent's private folder (over stdio on Windows), with the agent as one
+    /// client; Codex's own app can join the same thread on that socket. The
+    /// agent does the handshake (initialize, initialized, then thread/start
+    /// or, for a later incarnation, thread/resume); every message the server
+    /// sends the agent is a fact, and the interpreter writes everything after
+    /// the handshake.
+    async fn spawn_codex(
         spec: &AgentSpec,
         dir: &Path,
         events: mpsc::Sender<ProviderEvent>,
@@ -271,33 +281,69 @@ impl Provider {
             .ok()
             .map(|thread| thread.trim().to_owned())
             .filter(|thread| !thread.is_empty() && spec.incarnation > 1);
+        let listen = codex_listen(dir)?;
         let mut command = tokio::process::Command::new(&spec.provider_command);
         command
             .args(codex_args(spec, dir))
-            .args(["app-server", "--listen", "stdio://"])
             .current_dir(&spec.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
             .stderr(provider_log(dir)?)
             .kill_on_drop(false);
         environment(&mut command, spec);
         #[cfg(unix)]
         command.process_group(0);
-        let mut child = command.spawn().map_err(|source| ProviderError::Spawn {
-            command: spec.provider_command.clone(),
-            source,
-        })?;
+        let mut child =
+            codex::host::spawn_server(command, &listen).map_err(|source| ProviderError::Spawn {
+                command: spec.provider_command.clone(),
+                source,
+            })?;
         let pid = child.id();
-        let stdin: Stdin = Arc::new(tokio::sync::Mutex::new(child.stdin.take()));
-        let stdout = child.stdout.take().expect("stdout is piped");
+        #[cfg(unix)]
+        let tether = match &listen {
+            codex::host::Listen::Unix(_) => match codex::host::Tether::new(&child) {
+                Ok(tether) => Some(tether),
+                Err(source) => {
+                    let _ = child.start_kill();
+                    return Err(ProviderError::Spawn {
+                        command: "Codex's tether".to_owned(),
+                        source,
+                    });
+                }
+            },
+            codex::host::Listen::Stdio => None,
+        };
+        let connection =
+            match codex::host::Connection::connect(&listen, &mut child, CODEX_LISTEN_WAIT).await {
+                Ok(connection) => Some(connection),
+                // A server that ends at its start ends the incarnation as
+                // any provider exit does, with its code.
+                Err(codex::host::ConnectError::Exited(_)) => None,
+                Err(error) => {
+                    let _ = child.start_kill();
+                    return Err(ProviderError::Spawn {
+                        command: spec.provider_command.clone(),
+                        source: io::Error::other(error),
+                    });
+                }
+            };
+        let (sender, mut receiver) = match connection {
+            Some(connection) => {
+                let (sender, receiver) = connection.into_split();
+                (Some(sender), Some(receiver))
+            }
+            None => (None, None),
+        };
+        let sender: CodexSender = Arc::new(tokio::sync::Mutex::new(sender));
 
         let (initialized, on_initialized) = oneshot::channel();
+        let (ended, on_ended) = oneshot::channel::<()>();
         let lines = events.clone();
         let reader = tokio::spawn(async move {
             let mut initialized = Some(initialized);
-            let mut stdout = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = stdout.next_line().await {
-                let answer = match codex_protocol::decode(line.as_bytes()) {
+            while let Some(Some(Ok(line))) = match &mut receiver {
+                Some(receiver) => Some(receiver.next().await),
+                None => None,
+            } {
+                let answer = match codex_protocol::decode(&line) {
                     Ok(ServerMessage::Response { id, result, .. }) => Some((id, result.ok())),
                     Ok(ServerMessage::Unknown(unknown)) => unknown.id.map(|id| (id, None)),
                     _ => None,
@@ -322,29 +368,50 @@ impl Provider {
                 }
                 let fact = Fact {
                     channel: Channel::Rpc,
-                    payload: line.into_bytes(),
+                    payload: line,
                 };
                 if lines.send(ProviderEvent::Fact(fact)).await.is_err() {
                     break;
                 }
             }
+            let _ = ended.send(());
         });
         let (kill, killed) = oneshot::channel();
         let exited = events.clone();
+        let on_socket = matches!(listen, codex::host::Listen::Unix(_));
         tokio::spawn(async move {
-            let status = tokio::select! {
-                status = child.wait() => status,
-                _ = killed => {
-                    let _ = child.start_kill();
-                    child.wait().await
+            let mut killed = killed;
+            let mut on_ended = Some(on_ended);
+            let status = loop {
+                tokio::select! {
+                    status = child.wait() => break status,
+                    _ = &mut killed => {
+                        let _ = child.start_kill();
+                        break child.wait().await;
+                    }
+                    // On a socket the server outlives its clients, so the
+                    // end of the agent's connection, whether the agent
+                    // closed it or the server dropped it, is when the server
+                    // is asked to finish. It finishes what is running and
+                    // exits.
+                    _ = async { on_ended.as_mut().expect("guarded").await },
+                        if on_socket && on_ended.is_some() =>
+                    {
+                        on_ended = None;
+                        terminate(&child);
+                    }
                 }
             };
+            #[cfg(unix)]
+            if let Some(tether) = tether {
+                tether.release().await;
+            }
             let _ = tokio::time::timeout(TRAILING_OUTPUT, reader).await;
             let code = status.ok().and_then(|status| status.code());
             let _ = exited.send(ProviderEvent::Exited(code)).await;
         });
 
-        let handshake = stdin.clone();
+        let handshake = sender.clone();
         let cwd = spec.cwd.clone();
         let model = spec.config.as_ref().and_then(|config| config.model.clone());
         tokio::spawn(async move {
@@ -364,7 +431,7 @@ impl Provider {
                     extra: Default::default(),
                 }),
             );
-            if write_line(&handshake, &codex_protocol::encode(&initialize))
+            if send_codex(&handshake, &codex_protocol::encode(&initialize))
                 .await
                 .is_err()
                 || on_initialized.await.is_err()
@@ -386,12 +453,12 @@ impl Provider {
             };
             let start = ClientMessage::request(RequestId::String(CODEX_THREAD.into()), start);
             let initialized = ClientMessage::notification(ClientNotification::Initialized(()));
-            let _ = write_line(&handshake, &codex_protocol::encode(&initialized)).await;
-            let _ = write_line(&handshake, &codex_protocol::encode(&start)).await;
+            let _ = send_codex(&handshake, &codex_protocol::encode(&initialized)).await;
+            let _ = send_codex(&handshake, &codex_protocol::encode(&start)).await;
         });
 
         Ok(Self {
-            input: Input::Stdin(stdin),
+            input: Input::Codex(sender),
             pid,
             kill: Some(kill),
             terminal: None,
@@ -742,6 +809,7 @@ impl Provider {
     async fn write_line(&mut self, bytes: &[u8]) -> io::Result<()> {
         match &mut self.input {
             Input::Stdin(stdin) => write_line(stdin, bytes).await,
+            Input::Codex(sender) => send_codex(sender, bytes).await,
             Input::Terminal(_) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "terminal Claude takes keystrokes, not lines",
@@ -817,11 +885,19 @@ impl Provider {
     }
 
     /// Asks the provider to finish: end of input for a plain child, a
-    /// terminate signal for a terminal one.
+    /// terminate signal for a terminal one. Codex on a socket is sent its
+    /// signal once its server has closed the agent's connection in turn.
     pub fn close(&mut self) {
         match std::mem::replace(&mut self.input, Input::Closed) {
             Input::Stdin(stdin) => {
                 tokio::spawn(async move { stdin.lock().await.take() });
+            }
+            Input::Codex(sender) => {
+                tokio::spawn(async move {
+                    if let Some(mut sender) = sender.lock().await.take() {
+                        let _ = sender.close().await;
+                    }
+                });
             }
             Input::Terminal(_) => {
                 if let Some(terminal) = &self.terminal {
@@ -1140,6 +1216,43 @@ fn messaging_address(path: &Path) -> io::Result<PathBuf> {
     #[cfg(not(unix))]
     {
         Ok(path.to_owned())
+    }
+}
+
+async fn send_codex(sender: &CodexSender, bytes: &[u8]) -> io::Result<()> {
+    match sender.lock().await.as_mut() {
+        Some(sender) => sender.send(bytes).await,
+        None => Err(closed()),
+    }
+}
+
+/// Asks a Codex server to finish, while it is still running.
+fn terminate(child: &tokio::process::Child) {
+    // A reaped child has no id, so this never signals a reused pid.
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        // SAFETY: kill only sends a signal.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = child;
+}
+
+/// Where this agent's Codex server listens: a socket in its private
+/// folder, which Codex's own app joins to attach; stdio on Windows.
+pub fn codex_listen(dir: &Path) -> io::Result<codex::host::Listen> {
+    #[cfg(unix)]
+    {
+        Ok(codex::host::Listen::Unix(socket_address(
+            &dir.join(dir::PRIVATE).join(dir::CODEX_SOCK),
+        )?))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(codex::host::Listen::Stdio)
     }
 }
 
