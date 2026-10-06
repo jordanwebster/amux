@@ -1,5 +1,5 @@
 {
-  "description": "A day's fleet across four machines: families, every standing (needs you, working, idle, stopped), a host away from the start, and agents that change while you watch: docs pass starts a turn and asks, studio drops away and comes back, and a new agent appears.",
+  "description": "A day's fleet across four machines: families, every standing (needs you, working, idle, signed out, stopped), each on its branch, a host away from the start, and agents that change while you watch: docs pass starts a turn and asks, studio drops away and comes back, and a new agent appears.",
   "client": "laptop",
   "topology": {
     "hosts": [
@@ -48,7 +48,8 @@
             "turn_end"
           ]
         },
-        "cwd": "garage"
+        "cwd": "garage",
+        "branch": "main"
       },
       {
         "name": "licensing",
@@ -67,7 +68,8 @@
             "turn_end"
           ]
         },
-        "cwd": "amux"
+        "cwd": "amux-licensing",
+        "branch": "licensing-page"
       },
       {
         "name": "marketing copy",
@@ -86,7 +88,25 @@
             "turn_end"
           ]
         },
-        "cwd": "amuxcloud"
+        "cwd": "amuxcloud-taglines",
+        "branch": "taglines"
+      },
+      {
+        "name": "changelog",
+        "host": "desk",
+        "kind": "codex",
+        "prompt": "Write the 0.9 changelog from the merged pull requests.",
+        "script": {
+          "steps": [
+            {
+              "auth_failed": {
+                "message": "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses"
+              }
+            }
+          ]
+        },
+        "cwd": "amuxcloud-changelog",
+        "branch": "changelog"
       },
       {
         "name": "docs pass",
@@ -149,7 +169,8 @@
             "turn_end"
           ]
         },
-        "cwd": "amux"
+        "cwd": "amux-docs",
+        "branch": "docs-pass"
       },
       {
         "name": "rearchitect flight",
@@ -186,7 +207,8 @@
             }
           ]
         },
-        "cwd": "amux"
+        "cwd": "amux",
+        "branch": "rearchitect"
       },
       {
         "name": "implementer · task 199",
@@ -211,8 +233,9 @@
             }
           ]
         },
+        "parent": "rearchitect flight",
         "cwd": "amux",
-        "parent": "rearchitect flight"
+        "branch": "rearchitect"
       },
       {
         "name": "closer · audit 3",
@@ -231,8 +254,9 @@
             "turn_end"
           ]
         },
+        "parent": "rearchitect flight",
         "cwd": "amux",
-        "parent": "rearchitect flight"
+        "branch": "rearchitect"
       },
       {
         "name": "pricing page",
@@ -251,7 +275,8 @@
             "turn_end"
           ]
         },
-        "cwd": "amuxcloud"
+        "cwd": "amuxcloud",
+        "branch": "pricing-tiers"
       },
       {
         "name": "iOS goldens",
@@ -273,7 +298,8 @@
             }
           ]
         },
-        "cwd": "amux"
+        "cwd": "amux",
+        "branch": "goldens-transparency"
       },
       {
         "name": "e2e reconnect flake",
@@ -305,7 +331,8 @@
             }
           ]
         },
-        "cwd": "amux"
+        "cwd": "amux-reconnect",
+        "branch": "reconnect-flake"
       }
     ]
   },
@@ -327,6 +354,9 @@
     },
     {
       "settle": "pricing page"
+    },
+    {
+      "settle": "changelog"
     },
     {
       "settle": "e2e reconnect flake"
@@ -380,7 +410,8 @@
             "name": "triage inbox",
             "host": "laptop",
             "kind": "claude_sdk",
-            "cwd": "amux",
+            "cwd": "inbox",
+            "branch": "main",
             "prompt": "Triage today's Linear inbox.",
             "script": {
               "steps": [

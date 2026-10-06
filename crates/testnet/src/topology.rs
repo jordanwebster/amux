@@ -138,6 +138,12 @@ pub struct AgentDecl {
     /// starts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// The branch the folder it starts in is on: the net makes that folder
+    /// a git repository on this branch when it is not one yet, so the
+    /// agent has git facts to report. Needs a relative `cwd`; agents
+    /// sharing a folder share its branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// Which fake provider an agent runs, and so which interpreter reads it.
@@ -160,6 +166,22 @@ impl HostDecl {
                     .is_some_and(|rest| rest.starts_with('/'))
             })
             .map(String::as_str)
+    }
+}
+
+impl AgentDecl {
+    /// A branch needs a folder of the agent's own below its host's work
+    /// directory: never a declared repository, the work directory itself or
+    /// a path outside the net.
+    pub(crate) fn check_branch(&self) -> Result<(), TopologyError> {
+        let folder = self
+            .cwd
+            .as_deref()
+            .is_some_and(|cwd| !cwd.is_empty() && !Path::new(cwd).is_absolute());
+        if self.branch.is_some() && (self.repository.is_some() || !folder) {
+            return Err(TopologyError::BranchWithoutFolder(self.name.clone()));
+        }
+        Ok(())
     }
 }
 
@@ -230,6 +252,8 @@ pub enum TopologyError {
     UnknownRepository { agent: String, repository: String },
     #[error("host {host:?} commits {path:?} outside the repositories it declares")]
     FileOutsideRepositories { host: String, path: String },
+    #[error("agent {0:?} names a branch without a relative cwd to put it in")]
+    BranchWithoutFolder(String),
     #[error("agent {0:?} has both an inline script and a script file")]
     TwoScripts(String),
     #[error("agent {agent:?}'s script {path}: {error}")]
@@ -404,6 +428,7 @@ impl Topology {
             if agent.script.is_some() && agent.script_file.is_some() {
                 return Err(TopologyError::TwoScripts(agent.name.clone()));
             }
+            agent.check_branch()?;
             if let Some(repository) = &agent.repository
                 && !self
                     .hosts
@@ -467,6 +492,11 @@ impl AgentDecl {
 
     pub fn cwd(mut self, cwd: &str) -> Self {
         self.cwd = Some(cwd.to_owned());
+        self
+    }
+
+    pub fn branch(mut self, branch: &str) -> Self {
+        self.branch = Some(branch.to_owned());
         self
     }
 }

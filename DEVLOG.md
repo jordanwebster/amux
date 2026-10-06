@@ -1,3 +1,13 @@
+2026-10-06 — **Served agents can work on a branch, and busy-fleet shows one per row.**
+A test network agent may declare `branch` with a relative `cwd`: the net
+makes that folder a git repository on the branch (agents sharing a folder must
+agree on it), so the agent reports git facts and its fleet row has a branch.
+Before this, served agents worked in plain folders and home showed no branch
+on any served set. busy-fleet now gives every agent, local and remote, its
+own folder and branch, and adds `changelog`, a Codex agent on another host
+whose provider refuses its credential, so home on a served fleet shows the
+signed-out second line ("Codex sign-in failed") beside the other states.
+
 2026-10-06 — **The terminal's home draws the shared fleet view.**
 Home's list is now `ui_view::fleet_view`: its sections, their order by
 since-when and each row's second line, with the client reading each live

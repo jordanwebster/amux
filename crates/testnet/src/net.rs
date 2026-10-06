@@ -533,8 +533,21 @@ impl Net {
             Some(parent) => Some(self.agent(parent)?.parent()),
             None => None,
         };
+        decl.check_branch()?;
         let script = self.write_script(&decl.name, decl.script.clone().unwrap_or_default())?;
         let id = Uuid::new_v4();
+        let cwd = match &decl.repository {
+            Some(repository) => host
+                .work
+                .with_file_name(REPOSITORIES)
+                .join(repository)
+                .to_string_lossy()
+                .into_owned(),
+            None => work_dir(&host.work, decl.cwd.as_deref())?,
+        };
+        if let Some(branch) = &decl.branch {
+            on_branch(&decl.host, Path::new(&cwd), branch)?;
+        }
         let request = CreateAgentRequest {
             agent_id: id.as_bytes().to_vec(),
             host_id: None,
@@ -544,15 +557,7 @@ impl Net {
                 .prompt
                 .as_deref()
                 .map(|text| prompt(decl.kind, b"testnet-first", text)),
-            cwd: match &decl.repository {
-                Some(repository) => host
-                    .work
-                    .with_file_name(REPOSITORIES)
-                    .join(repository)
-                    .to_string_lossy()
-                    .into_owned(),
-                None => work_dir(&host.work, decl.cwd.as_deref())?,
-            },
+            cwd,
             kind: decl.kind.wire() as i32,
             config: Some(match decl.kind {
                 FakeKind::Codex => {
@@ -739,6 +744,15 @@ impl Net {
     ) -> Result<wire::Agent, NetError> {
         if self.agents.contains_key(&decl.name) {
             return Err(NetError::AgentExists(decl.name));
+        }
+        if decl.branch.is_some() {
+            return Err(NetError::Host {
+                host: decl.host,
+                error: format!(
+                    "child {:?} names a branch; only the net's own spawns make one",
+                    decl.name
+                ),
+            });
         }
         let host = self.host(&decl.host)?.clone();
         let script = self.write_script(&decl.name, decl.script.clone().unwrap_or_default())?;
@@ -950,31 +964,7 @@ impl Net {
         for repository in &decl.repositories {
             let path = dir.join(REPOSITORIES).join(repository);
             std::fs::create_dir_all(&path)?;
-            let git = |args: &[&str]| -> Result<(), NetError> {
-                // Named here, so a machine with no git identity commits too.
-                let ran = std::process::Command::new("git")
-                    .args([
-                        "-c",
-                        "user.name=testnet",
-                        "-c",
-                        "user.email=testnet@localhost",
-                    ])
-                    .args(args)
-                    .current_dir(&path)
-                    .status()?;
-                if ran.success() {
-                    Ok(())
-                } else {
-                    Err(NetError::Host {
-                        host: decl.name.clone(),
-                        error: format!(
-                            "git {} in {} failed: {ran}",
-                            args.join(" "),
-                            path.display()
-                        ),
-                    })
-                }
-            };
+            let git = |args: &[&str]| git(&decl.name, &path, args);
             git(&["init", "--quiet"])?;
             let mut files = false;
             for (file, text) in &decl.files {
@@ -1950,6 +1940,51 @@ fn agent_dirs(dir: &Path) -> Vec<PathBuf> {
         }
     }
     found
+}
+
+/// Runs git in `dir` for `host`'s setup.
+fn git(host: &str, dir: &Path, args: &[&str]) -> Result<String, NetError> {
+    // Named here, so a machine with no git identity commits too.
+    let ran = std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=testnet",
+            "-c",
+            "user.email=testnet@localhost",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()?;
+    if ran.status.success() {
+        Ok(String::from_utf8_lossy(&ran.stdout).trim().to_owned())
+    } else {
+        Err(NetError::Host {
+            host: host.to_owned(),
+            error: format!(
+                "git {} in {} failed: {}",
+                args.join(" "),
+                dir.display(),
+                String::from_utf8_lossy(&ran.stderr).trim()
+            ),
+        })
+    }
+}
+
+/// Puts an agent's start folder on `branch`: a new repository there, or
+/// one another agent's declaration made, which must be on the same branch.
+fn on_branch(host: &str, dir: &Path, branch: &str) -> Result<(), NetError> {
+    if !dir.join(".git").exists() {
+        git(host, dir, &["init", "--quiet", "--initial-branch", branch])?;
+        return Ok(());
+    }
+    let current = git(host, dir, &["symbolic-ref", "--short", "HEAD"])?;
+    if current != branch {
+        return Err(NetError::Host {
+            host: host.to_owned(),
+            error: format!("{} is on branch {current}, not {branch}", dir.display()),
+        });
+    }
+    Ok(())
 }
 
 /// The directory an agent starts in: its host's work directory, a folder

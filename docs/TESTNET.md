@@ -80,6 +80,7 @@ The same network as JSON, as `testnet serve` reads it:
 | `agents[].parent` | An agent declared earlier, on any host. |
 | `agents[].cwd` | Its working directory; none is the host's work directory, and a relative path a folder below it. |
 | `agents[].repository` | One of its host's repositories to work in, instead of `cwd`. |
+| `agents[].branch` | The branch its `cwd` folder is on: the net makes that folder a git repository on this branch, so its fleet row has a branch. Needs a relative `cwd`; agents sharing a folder share its branch. |
 
 JSON topologies live in `journeys/topologies`; scripts shared between them in `journeys/scripts`.
 

@@ -83,6 +83,14 @@ fn a_topology_rejects_unknown_and_duplicate_names_before_anything_starts() {
                 .agent(AgentDecl::new("parent", "b")),
             "not declared before it",
         ),
+        (
+            two().agent(AgentDecl::new("x", "a").branch("feature")),
+            "names a branch",
+        ),
+        (
+            two().agent(AgentDecl::new("x", "a").cwd("/tmp").branch("feature")),
+            "names a branch",
+        ),
     ];
     for (topology, expected) in cases {
         let error = topology.validate().expect_err(expected).to_string();
@@ -163,7 +171,9 @@ async fn a_real_agent_runs_on_each_fake_and_its_stream_opens_with_a_snapshot() {
             AgentDecl::new(name, "desk")
                 .kind(kind)
                 .steps(vec![text(&format!("hello from {name}")), Step::TurnEnd])
-                .prompt("say hello"),
+                .prompt("say hello")
+                .cwd(name)
+                .branch(&format!("{name}-work")),
         );
     }
     let net = Net::start(topology).await.unwrap();
@@ -179,6 +189,24 @@ async fn a_real_agent_runs_on_each_fake_and_its_stream_opens_with_a_snapshot() {
             "{name}: a stream opens with its generation and the snapshot"
         );
         println!("{name}:\n{}", observer.transcript());
+        // Its folder is a repository on the branch it declares, which its
+        // row reports.
+        let branch = format!("{name}-work");
+        observer
+            .observe_until(
+                |events| {
+                    events.iter().any(|event| match &event.of {
+                        Some(session_event::Of::Snapshot(snapshot)) => snapshot
+                            .git
+                            .as_ref()
+                            .is_some_and(|git| git.branch.as_deref() == Some(branch.as_str())),
+                        _ => false,
+                    })
+                },
+                PATIENCE,
+            )
+            .await
+            .unwrap();
     }
     net.shutdown().await.unwrap();
 }
