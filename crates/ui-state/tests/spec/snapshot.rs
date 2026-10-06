@@ -128,7 +128,8 @@ fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
                 context: Some(context.clone()),
                 model: Some("opus".into()),
                 effort: Some("high".into()),
-                approval_policy: Some("plan".into()),
+                permission: Some("plan".into()),
+                approval_policy: Some("on-request".into()),
                 sandbox: Some("workspace-write".into()),
                 usage: Some(codex_usage.clone()),
                 servers: Some(servers.clone()),
@@ -144,7 +145,7 @@ fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
         assert_eq!(state.tasks, tasks);
         assert_eq!(state.context, context);
         assert_eq!(state.model.as_deref(), Some("opus"));
-        assert_eq!(state.mode.as_deref(), Some("plan"));
+        assert_eq!(state.permission.as_deref(), Some("plan"));
         let usage = match kind {
             Kind::Codex => ui_state::Usage::Codex(codex_usage.clone()),
             _ => ui_state::Usage::Claude(claude_usage.clone()),

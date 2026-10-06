@@ -1,3 +1,23 @@
+2026-10-06 — **The terminal reads permissions and modes from what the agent offers.**
+The shared settings view held its own lists: Claude's permission modes and
+three Codex presets as approval-and-sandbox pairs, and the terminal tidied
+model ids into names itself. Both are gone. The view now lists the
+catalogue's permissions and modes with the current one marked, a reported one
+the agent does not offer added after them, and Codex settings that match no
+named permission reported without a value, which the terminal reads as
+custom. A permission that names its models (Claude's auto) is settable only
+while one of them runs. Shift+Tab moves through the modes where the agent
+offers them (Codex's default and plan) and otherwise through the settable
+permissions that still ask; terminal Claude keeps its own cycle key. Codex's
+permission, and headless Claude's, change from Ctrl+S then p. The composer's
+edge names the permission and the mode when they are not the agent's normal
+ones, and what it and the key line called mode now reads permission. The
+allow-always choice that switches Claude's permission names it by the
+catalogue's word. Session state carries the permission, the mode and Codex's
+raw settings apart, and the phone's chat frame reports the permission beside
+the mode. The served chat frames now fetch the catalogue as a chat on screen
+does, so they show the key the agent offers rather than one assumed.
+
 2026-10-06 — **A host says what its providers offer with no agent running.**
 The daemon holds no provider code, so a hidden helper, `amux catalogue
 <provider>`, runs Claude headless just long enough to answer initialize, or

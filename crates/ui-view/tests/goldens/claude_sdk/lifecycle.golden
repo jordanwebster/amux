@@ -29,7 +29,4 @@
 == context None sign-in None
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
-  mode* Claude("default")
-  mode  Claude("acceptEdits")
-  mode  Claude("plan")
-  mode  Claude("auto")
+  permission* reported "default" "" unsettable

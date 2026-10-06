@@ -41,6 +41,10 @@
 == context None sign-in None
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
-  mode: cycle to the next
-  refused mode: Terminal Claude changes mode only by cycling through its modes.
+  permission  "default" "Ask" normal unsettable
+  permission  "acceptEdits" "Accept edits" unsettable
+  permission  "plan" "Plan" unsettable
+  permission  "auto" "Auto" unsettable
+  permission: cycle to the next
+  refused permission: Terminal Claude changes permission only by cycling through its permissions.
   by typing: To change the model or effort, type /model <name> or /effort <level> in the composer.

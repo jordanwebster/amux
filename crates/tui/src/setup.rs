@@ -15,7 +15,6 @@ use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 use ui_state::FleetState;
-use ui_view::ModeValue;
 use wire::{ClaudeCreateConfig, CodexCreateConfig, CreateAgentRequest, Input, Kind, Presence};
 
 use crate::editor::Editor;
@@ -94,35 +93,20 @@ impl Defaults {
     }
 }
 
-/// A mode as the agent takes it, from its name in the settings: Claude's
-/// permission mode as it is, Codex's preset looked up (its first preset
-/// when the name is not one).
-fn mode_value(agent: Agent, name: &str) -> ModeValue {
-    match agent {
-        Agent::Claude => ModeValue::Claude(name.to_owned()),
-        Agent::Codex => {
-            let (preset, approval, sandbox) = CODEX_MODES
-                .iter()
-                .find(|(preset, _, _)| *preset == name)
-                .unwrap_or(&CODEX_MODES[0]);
-            ModeValue::Codex {
-                preset: Some((*preset).to_owned()),
-                approval_policy: (*approval).to_owned(),
-                sandbox: (*sandbox).to_owned(),
-            }
-        }
-    }
-}
-
 const CLAUDE_EFFORTS: [&str; 3] = ["low", "medium", "high"];
 const CODEX_EFFORTS: [&str; 4] = ["minimal", "low", "medium", "high"];
 
-/// The modes shift+tab moves through: those that still ask before acting.
-const CLAUDE_MODES: [&str; 3] = ["default", "acceptEdits", "plan"];
-const CODEX_MODES: [(&str, &str, &str); 3] = [
-    ("default", "on-request", "workspace-write"),
-    ("read-only", "on-request", "read-only"),
-    ("full-access", "never", "danger-full-access"),
+/// The permissions shift+tab moves through, value and words: those that
+/// still ask before acting.
+const CLAUDE_MODES: [(&str, &str); 3] = [
+    ("default", "ask"),
+    ("acceptEdits", "accept edits"),
+    ("plan", "plan"),
+];
+const CODEX_MODES: [(&str, &str); 3] = [
+    ("default", "default"),
+    ("read-only", "read only"),
+    ("full-access", "full access"),
 ];
 
 /// One of the settings, as the composer's edge shows it and a flyover
@@ -133,7 +117,7 @@ pub enum Item {
     Kind,
     Model,
     Effort,
-    Mode,
+    Permission,
     Folder,
     Worktree,
     Host,
@@ -149,7 +133,8 @@ pub struct Setup {
     /// None runs the provider's default.
     pub model: Option<String>,
     pub effort: Option<String>,
-    pub mode: Option<ModeValue>,
+    /// The permission by its value.
+    pub permission: Option<String>,
     /// Where it works, as the request names it.
     pub folder: String,
     pub host: Vec<u8>,
@@ -174,7 +159,7 @@ impl Setup {
             chat_in,
             model: None,
             effort: None,
-            mode: None,
+            permission: None,
             folder: working_dir.to_owned(),
             host: local_host.to_vec(),
             worktree: false,
@@ -184,12 +169,12 @@ impl Setup {
         setup
     }
 
-    /// The agent's model, effort and mode from the settings.
+    /// The agent's model, effort and permission from the settings.
     fn start_from_defaults(&mut self) {
         let defaults = self.defaults.of(self.agent).clone();
         self.model = Some(defaults.model);
         self.effort = Some(defaults.effort);
-        self.mode = Some(mode_value(self.agent, &defaults.mode));
+        self.permission = Some(defaults.mode);
     }
 
     /// A running agent's settings, to start a sibling where the person
@@ -200,9 +185,7 @@ impl Setup {
         let defaults = self.defaults.of(self.agent).clone();
         self.model.get_or_insert(defaults.model);
         self.effort.get_or_insert(defaults.effort);
-        if self.mode.is_none() {
-            self.mode = Some(mode_value(self.agent, &defaults.mode));
-        }
+        self.permission.get_or_insert(defaults.mode);
         self
     }
 
@@ -219,16 +202,16 @@ impl Setup {
     /// on which machine. Without a name the first item invites one; "new
     /// worktree" shows only when it is on.
     pub fn edge(&self, fleet: &FleetState) -> Vec<Vec<(Item, String)>> {
-        // Always the values it will start with, the mode too: here it is a
-        // setting to pick, so even the normal mode is named.
+        // Always the values it will start with, the permission too: here it
+        // is a setting to pick, so even the normal one is named.
         let mut model = self.model.as_deref().map(model_label).unwrap_or_default();
         if let Some(effort) = &self.effort {
             model.push_str(&format!(" ({effort})"));
         }
-        let mode = self
-            .mode
-            .as_ref()
-            .map(crate::words::mode_name)
+        let permission = self
+            .permission
+            .as_deref()
+            .map(|value| self.permission_words(value))
             .unwrap_or_default();
         let mut place = vec![(Item::Folder, text::tilde(&self.folder))];
         if self.worktree {
@@ -240,7 +223,7 @@ impl Setup {
             vec![
                 (Item::Kind, self.agent.name().to_owned()),
                 (Item::Model, model),
-                (Item::Mode, mode),
+                (Item::Permission, permission),
             ],
             place,
             vec![(Item::Host, host_name(fleet, &self.host))],
@@ -303,16 +286,16 @@ impl Setup {
                     })
                     .collect()
             }
-            Item::Mode => self
-                .modes()
-                .into_iter()
+            Item::Permission => self
+                .permissions()
+                .iter()
                 .enumerate()
-                .map(|(at, mode)| {
-                    let current = match &self.mode {
-                        Some(chosen) => *chosen == mode,
+                .map(|(at, (value, words))| {
+                    let current = match &self.permission {
+                        Some(chosen) => chosen == value,
                         None => at == 0,
                     };
-                    choice(crate::words::mode_name(&mode), at.to_string(), current)
+                    choice((*words).to_owned(), (*value).to_owned(), current)
                 })
                 .collect(),
             Item::Folder => recent_folders(fleet, &self.host, &self.folder)
@@ -341,38 +324,40 @@ impl Setup {
         }
     }
 
-    /// The modes shift+tab and the mode flyover move through.
-    fn modes(&self) -> Vec<ModeValue> {
+    /// The permissions shift+tab and the permission flyover move through.
+    fn permissions(&self) -> &'static [(&'static str, &'static str)] {
         if self.claude() {
-            CLAUDE_MODES
-                .iter()
-                .map(|mode| ModeValue::Claude((*mode).to_owned()))
-                .collect()
+            &CLAUDE_MODES
         } else {
-            CODEX_MODES
-                .iter()
-                .map(|(preset, approval, sandbox)| ModeValue::Codex {
-                    preset: Some((*preset).to_owned()),
-                    approval_policy: (*approval).to_owned(),
-                    sandbox: (*sandbox).to_owned(),
-                })
-                .collect()
+            &CODEX_MODES
         }
     }
 
-    /// Shift+Tab: the next mode.
-    pub fn next_mode(&mut self) {
-        let modes = self.modes();
+    /// A permission by the words a person reads; one outside the list keeps
+    /// its value.
+    fn permission_words(&self, value: &str) -> String {
+        self.permissions()
+            .iter()
+            .find(|(offered, _)| *offered == value)
+            .map_or(value, |(_, words)| words)
+            .to_owned()
+    }
+
+    /// Shift+Tab: the next permission.
+    pub fn next_permission(&mut self) {
+        let permissions = self.permissions();
         let at = self
-            .mode
-            .as_ref()
-            .and_then(|mode| modes.iter().position(|m| m == mode))
+            .permission
+            .as_deref()
+            .and_then(|chosen| permissions.iter().position(|(value, _)| *value == chosen))
             .unwrap_or(0);
-        self.mode = modes.get((at + 1) % modes.len().max(1)).cloned();
+        self.permission = permissions
+            .get((at + 1) % permissions.len().max(1))
+            .map(|(value, _)| (*value).to_owned());
     }
 
     /// Takes a picked value for `item`. Another agent starts its model,
-    /// effort and mode afresh: they do not carry across providers.
+    /// effort and permission afresh: they do not carry across providers.
     pub fn pick(&mut self, item: Item, value: &str) {
         let some = |value: &str| (!value.is_empty()).then(|| value.to_owned());
         match item {
@@ -387,12 +372,7 @@ impl Setup {
             }
             Item::Model => self.model = some(value).or(self.model.take()),
             Item::Effort => self.effort = some(value).or(self.effort.take()),
-            Item::Mode => {
-                self.mode = value
-                    .parse::<usize>()
-                    .ok()
-                    .and_then(|at| self.modes().get(at).cloned());
-            }
+            Item::Permission => self.permission = some(value),
             Item::Folder => {
                 if !value.trim().is_empty() {
                     self.folder = expand_tilde(value.trim());
@@ -413,14 +393,9 @@ impl Setup {
     pub fn request(&self, agent_id: Vec<u8>, prompt: Option<Input>) -> CreateAgentRequest {
         // Used in its own terminal, the agent's terminal sets these.
         let own = self.chat_in == ChatIn::Terminal;
-        let mode = if own { None } else { self.mode.clone() };
+        let permission = if own { None } else { self.permission.clone() };
         let model = if own { None } else { self.model.clone() };
         let effort = if own { None } else { self.effort.clone() };
-        let permission = match &mode {
-            Some(ModeValue::Claude(mode)) => Some(mode.clone()),
-            Some(ModeValue::Codex { preset, .. }) => preset.clone(),
-            None => None,
-        };
         let config = if self.claude() {
             wire::create_agent_request::Config::Claude(ClaudeCreateConfig {
                 args: Vec::new(),
@@ -450,7 +425,8 @@ impl Setup {
     }
 }
 
-/// A model by the name a person reads: an alias capitalised, an id tidied.
+/// A model by the name a person reads: an alias capitalised, an id as the
+/// provider writes it.
 fn model_label(model: &str) -> String {
     if model.chars().all(|c| c.is_ascii_lowercase()) {
         let mut chars = model.chars();
@@ -459,7 +435,7 @@ fn model_label(model: &str) -> String {
             .map(|first| first.to_ascii_uppercase().to_string() + chars.as_str())
             .unwrap_or_default();
     }
-    crate::words::model_name(model)
+    model.to_owned()
 }
 
 fn host_name(fleet: &FleetState, host: &[u8]) -> String {

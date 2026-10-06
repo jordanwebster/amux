@@ -1307,11 +1307,11 @@ fn sibling_setup(
             .iter()
             .find(|effort| effort.current)
             .map(|effort| effort.value.clone()),
-        mode: view
-            .modes
+        permission: view
+            .permissions
             .iter()
-            .find(|mode| mode.current)
-            .map(|mode| mode.value.clone()),
+            .find(|permission| permission.current && !permission.value.is_empty())
+            .map(|permission| permission.value.clone()),
         folder: agent.map(|agent| agent.cwd.clone()).unwrap_or_default(),
         host: agent.map(|agent| agent.host_id.clone()).unwrap_or_default(),
         worktree: false,
@@ -1401,10 +1401,13 @@ fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
         ("ctrl+x", "stop the turn; the agent stays".into()),
         ("ctrl+c", "clear the draft; twice on nothing quits".into()),
         ("ctrl+o", "the overview of what is in flight".into()),
-        ("shift+tab", "the agent's next mode".into()),
         (
-            "ctrl+s then m / e",
-            "the agent's model or effort, where it can change from here".into(),
+            "shift+tab",
+            "the agent's next mode, or its next permission".into(),
+        ),
+        (
+            "ctrl+s then m / e / p",
+            "the agent's model, effort or permission, where it can change from here".into(),
         ),
         (
             "pgup / pgdn, wheel",
@@ -1412,7 +1415,7 @@ fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
         ),
         (
             "click",
-            "hints, [Diff], [Home], the mode, a pinned message, a folded line".into(),
+            "hints, [Diff], [Home], the permission, a pinned message, a folded line".into(),
         ),
         (
             "shift+drag",

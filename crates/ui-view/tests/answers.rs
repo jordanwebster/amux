@@ -312,12 +312,26 @@ where
             let change = SettingChange::Effort(effort.value.clone());
             picks.push(("effort", change, view.effort_refusal.is_none()));
         }
-        for mode in view.modes.iter().filter(|mode| !mode.current) {
-            let change = SettingChange::Mode(mode.value.clone());
-            picks.push(("mode", change, view.mode_refusal.is_none()));
+        // A permission or mode the view marks not settable is not offered
+        // as a pick; those it offers must be accepted.
+        for permission in view
+            .permissions
+            .iter()
+            .filter(|permission| !permission.current && permission.settable)
+        {
+            let change = SettingChange::Permission(permission.value.clone());
+            picks.push(("permission", change, view.permission_refusal.is_none()));
         }
-        if view.cycle_mode {
-            picks.push(("cycle", SettingChange::CycleMode, true));
+        for mode in view
+            .modes
+            .iter()
+            .filter(|mode| !mode.current && mode.settable)
+        {
+            let change = SettingChange::Mode(mode.value.clone());
+            picks.push(("mode", change, true));
+        }
+        if view.cycle_permission {
+            picks.push(("cycle", SettingChange::CyclePermission, true));
         }
         for (setting, change, offered) in picks {
             let at = format!("{dir}/{name}: {change:?}");
@@ -358,12 +372,12 @@ fn settings_picks_reach_the_interpreter() {
     );
     assert_eq!(
         pick_all::<ClaudeSdk>(Kind::ClaudeSdk, "claude_sdk"),
-        BTreeSet::from(["effort", "mode", "model"]),
+        BTreeSet::from(["effort", "model", "permission"]),
         "headless Claude's picks"
     );
     assert_eq!(
         pick_all::<Codex>(Kind::Codex, "codex"),
-        BTreeSet::from(["effort", "mode", "model"]),
+        BTreeSet::from(["effort", "mode", "model", "permission"]),
         "Codex's picks"
     );
 }

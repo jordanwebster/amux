@@ -45,7 +45,7 @@ pub use rows::{
 };
 pub use segments::{AttachmentView, Segment, segments};
 pub use settings::{
-    CommandView, EffortChoice, ModeChoice, ModeValue, ModelChoice, SettingChange, SettingsView,
-    effort_in_force, setting_input, settings,
+    CommandView, EffortChoice, ModeChoice, ModelChoice, PermissionChoice, SettingChange,
+    SettingsView, effort_in_force, setting_input, settings,
 };
 pub use stretch::{Stretch, StretchCounts, stretch_at, stretch_steps};

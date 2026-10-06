@@ -277,27 +277,167 @@ fn scrolling_down_past_the_newest_row_follows_again() {
     assert_eq!(view.anchor, Anchor::Bottom);
 }
 
-// --- modes -----------------------------------------------------------------
+// --- permissions and modes ------------------------------------------------
 
-/// Shift+Tab moves a headless Claude to the next mode that still asks
-/// before acting, and the composer names the key.
+/// A fixture's last frame where the agent's catalogue is held and its
+/// snapshot names `permission`, with a fresh view drawn over it.
+fn offering(kind: Kind, name: &str, pred: impl Fn(&SessionState) -> bool) -> SessionState {
+    fixtures::frame_where(kind, name, |state| {
+        !state.agent_state().permissions.is_empty() && pred(state)
+    })
+    .0
+}
+
+/// The same chat with its Codex snapshot replaced: the settings given, the
+/// catalogue kept.
+fn codex_settings(mut state: SessionState, settings: wire::CodexSnapshot) -> SessionState {
+    let agent = state.agent_state();
+    state.update(event(session_event::Of::Snapshot(wire::Snapshot {
+        kind: wire::kind_tag(Kind::Codex).into(),
+        body: wire::CodexSnapshot {
+            model: agent.model.clone(),
+            model_name: agent.model_name.clone(),
+            ..settings
+        }
+        .encode_to_vec(),
+        phase: Phase::Idle as i32,
+        revision: agent.revision + 1,
+        catalogue: agent.catalogue.clone(),
+        ..wire::Snapshot::default()
+    })));
+    state
+}
+
+/// The settings input a key sent, if it sent one.
+fn sent(effects: &[ChatEffect]) -> Option<&wire::input::Of> {
+    match effects {
+        [ChatEffect::Answer(input)] => input.of.as_ref(),
+        _ => None,
+    }
+}
+
+/// Headless Claude has no modes: Shift+Tab moves it to the next settable
+/// permission that still asks before acting, the composer names the key
+/// and the edge names a permission other than its normal one.
 #[test]
-fn shift_tab_sends_the_next_mode_that_still_asks() {
-    let state = chat(replies(1, 1));
+fn shift_tab_moves_claude_to_the_next_permission_that_still_asks() {
+    let state = offering(Kind::ClaudeSdk, "recorded_controls", |state| {
+        state.agent_state().permission.as_deref() == Some("acceptEdits")
+    });
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(screen.contains("shift+tab permission"), "{screen}");
+    assert!(screen.contains(" accept edits ─╯"), "{screen}");
+    let effects = view.key(&state, key(KeyCode::BackTab), theme());
+    let Some(wire::input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+        of: Some(wire::claude_sdk_input::Of::Permission(permission)),
+    })) = sent(&effects)
+    else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(permission.value, "plan", "the one after accept edits");
+}
+
+/// Codex offers modes, so Shift+Tab moves through them; its permission
+/// changes from the settings key, Ctrl+S then p.
+#[test]
+fn codex_moves_mode_with_shift_tab_and_permission_from_the_settings_key() {
+    let state = offering(Kind::Codex, "offered", |_| true);
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
     let (screen, _) = feed(&mut view, &state);
     assert!(screen.contains("shift+tab mode"), "{screen}");
     let effects = view.key(&state, key(KeyCode::BackTab), theme());
-    let [ChatEffect::Answer(input)] = effects.as_slice() else {
+    let Some(wire::input::Of::Codex(wire::CodexInput {
+        of: Some(wire::codex_input::Of::Mode(mode)),
+    })) = sent(&effects)
+    else {
         panic!("{effects:?}");
     };
-    let Some(wire::input::Of::ClaudeSdk(wire::ClaudeSdkInput {
-        of: Some(wire::claude_sdk_input::Of::Permission(permission)),
-    })) = &input.of
+    assert_eq!(
+        mode.value, "plan",
+        "from the normal mode, unsaid until Codex says"
+    );
+
+    view.key(&state, ctrl('s'), theme());
+    let (screen, _) = feed(&mut view, &state);
+    assert!(screen.contains("p permission"), "{screen}");
+    view.key(&state, key(KeyCode::Char('p')), theme());
+    let (screen, _) = feed(&mut view, &state);
+    for words in [
+        "read only",
+        "default",
+        "auto",
+        "full access",
+        "acts without asking",
+    ] {
+        assert!(screen.contains(words), "{words}: {screen}");
+    }
+    view.key(&state, key(KeyCode::Up), theme());
+    let effects = view.key(&state, key(KeyCode::Enter), theme());
+    let Some(wire::input::Of::Codex(wire::CodexInput {
+        of: Some(wire::codex_input::Of::Permission(permission)),
+    })) = sent(&effects)
     else {
-        panic!("{input:?}");
+        panic!("{effects:?}");
     };
-    assert_ne!(permission.value, "bypassPermissions");
+    assert_eq!(permission.value, "read-only");
+
+    let planning = codex_settings(
+        state.clone(),
+        wire::CodexSnapshot {
+            permission: Some("full-access".into()),
+            mode: Some("plan".into()),
+            approval_policy: Some("never".into()),
+            sandbox: Some("danger-full-access".into()),
+            ..Default::default()
+        },
+    );
+    let (screen, _) = feed(&mut ChatView::new(b"agent".to_vec(), 0, false), &planning);
+    assert!(screen.contains("· full access · plan"), "{screen}");
+}
+
+/// Codex settings that match no named permission read custom, and Shift+Tab
+/// still moves the mode.
+#[test]
+fn codex_settings_outside_every_permission_read_custom() {
+    let state = codex_settings(
+        offering(Kind::Codex, "offered", |_| true),
+        wire::CodexSnapshot {
+            approval_policy: Some("untrusted".into()),
+            sandbox: Some("workspace-write".into()),
+            ..Default::default()
+        },
+    );
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(screen.contains("· custom"), "{screen}");
+    assert!(screen.contains("shift+tab mode"), "{screen}");
+}
+
+/// Terminal Claude's permissions are reached only by its own cycle key:
+/// Shift+Tab presses it, and Ctrl+S then p says so.
+#[test]
+fn terminal_claude_keeps_its_cycle_key() {
+    let state = offering(Kind::ClaudePty, "recorded_mode_cycle", |state| {
+        state.agent_state().permission.is_some()
+    });
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(screen.contains("shift+tab permission"), "{screen}");
+    let effects = view.key(&state, key(KeyCode::BackTab), theme());
+    let Some(wire::input::Of::ClaudePty(wire::ClaudePtyInput {
+        of: Some(wire::claude_pty_input::Of::Key(pressed)),
+    })) = sent(&effects)
+    else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(pressed.key(), wire::KeyName::CyclePermissionMode);
+    view.key(&state, ctrl('s'), theme());
+    let effects = view.key(&state, key(KeyCode::Char('p')), theme());
+    assert!(
+        matches!(effects.as_slice(), [ChatEffect::Notice(words)] if words.contains("cycling")),
+        "{effects:?}"
+    );
 }
 
 // --- asks ------------------------------------------------------------------
@@ -2327,7 +2467,7 @@ fn a_new_agent_starts_from_a_draft_with_its_first_prompt() {
         "{screen}"
     );
     assert!(
-        screen.contains("Claude · Opus (high) · default │ ~/work/amux"),
+        screen.contains("Claude · Opus (high) · ask │ ~/work/amux"),
         "{screen}"
     );
     // Enter on an empty draft does nothing.

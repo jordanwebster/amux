@@ -291,7 +291,7 @@ impl SessionState {
         &self.state
     }
 
-    /// A catalogue fetched for the agent. Its models and commands show while
+    /// A catalogue fetched for the agent. What it offers shows while
     /// the newest snapshot names it.
     pub fn set_catalogue(&mut self, catalogue: wire::Catalogue) {
         self.catalogue = Some(catalogue);
@@ -307,14 +307,16 @@ impl SessionState {
     }
 
     fn offer(&mut self) {
-        let (models, commands) = match &self.catalogue {
+        let offered = match &self.catalogue {
             Some(catalogue) if self.state.catalogue.as_ref() == Some(&catalogue.hash) => {
-                (catalogue.models.clone(), catalogue.commands.clone())
+                catalogue.clone()
             }
-            _ => Default::default(),
+            _ => wire::Catalogue::default(),
         };
-        self.state.models = models;
-        self.state.commands = commands;
+        self.state.models = offered.models;
+        self.state.commands = offered.commands;
+        self.state.permissions = offered.permissions;
+        self.state.modes = offered.modes;
     }
 
     pub fn has_snapshot(&self) -> bool {

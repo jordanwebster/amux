@@ -1039,19 +1039,32 @@ fn settings_of(kind: Kind, body: Vec<u8>) -> SettingsView {
 }
 
 /// Settings for an agent whose fetched catalogue offers `models` and
-/// `commands`.
+/// `commands`, and the permissions and modes its kind's interpreter offers.
 fn settings_offering(
     kind: Kind,
     body: Vec<u8>,
     models: Vec<wire::OfferedModel>,
     commands: Vec<wire::OfferedCommand>,
 ) -> SettingsView {
+    let (permissions, modes) = offered_controls(kind);
+    settings_with(
+        kind,
+        body,
+        wire::Catalogue {
+            models,
+            commands,
+            permissions,
+            modes,
+            ..Default::default()
+        },
+    )
+}
+
+fn settings_with(kind: Kind, body: Vec<u8>, catalogue: wire::Catalogue) -> SettingsView {
     let mut state = SessionState::new(agent(kind), CAP);
     state.set_catalogue(wire::Catalogue {
         hash: b"offered".to_vec(),
-        models,
-        commands,
-        ..Default::default()
+        ..catalogue
     });
     state.update(event(session_event::Of::Snapshot(wire::Snapshot {
         kind: wire::kind_tag(kind).into(),
@@ -1061,6 +1074,58 @@ fn settings_offering(
         ..wire::Snapshot::default()
     })));
     settings(&state)
+}
+
+/// What each kind's interpreter offers to set: Claude's permissions (auto
+/// for the `sonnet` model only; terminal Claude's not settable), Codex's
+/// permissions and modes.
+fn offered_controls(kind: Kind) -> (Vec<wire::OfferedPermission>, Vec<wire::OfferedMode>) {
+    let permission = |value: &str, name: &str| wire::OfferedPermission {
+        value: value.into(),
+        display_name: name.into(),
+        normal: value == "default",
+        settable: kind != Kind::ClaudePty,
+        ..Default::default()
+    };
+    match kind {
+        Kind::Codex => (
+            vec![
+                permission("read-only", "Read only"),
+                permission("default", "Default"),
+                permission("auto", "Auto"),
+                wire::OfferedPermission {
+                    never_asks: true,
+                    ..permission("full-access", "Full access")
+                },
+            ],
+            vec![
+                wire::OfferedMode {
+                    value: "default".into(),
+                    display_name: "Default".into(),
+                    normal: true,
+                    settable: true,
+                },
+                wire::OfferedMode {
+                    value: "plan".into(),
+                    display_name: "Plan".into(),
+                    normal: false,
+                    settable: true,
+                },
+            ],
+        ),
+        _ => (
+            vec![
+                permission("default", "Ask"),
+                permission("acceptEdits", "Accept edits"),
+                permission("plan", "Plan"),
+                wire::OfferedPermission {
+                    models: vec!["sonnet".into()],
+                    ..permission("auto", "Auto")
+                },
+            ],
+            Vec::new(),
+        ),
+    }
 }
 
 fn offered(value: &str, efforts: &[&str], default: Option<&str>) -> wire::OfferedModel {
@@ -1082,7 +1147,7 @@ fn command(name: &str) -> wire::OfferedCommand {
 }
 
 #[test]
-fn settings_mark_the_current_model_effort_and_mode() {
+fn settings_mark_the_current_model_effort_and_permission() {
     let view = settings_offering(
         Kind::ClaudeSdk,
         wire::ClaudeSdkSnapshot {
@@ -1117,20 +1182,28 @@ fn settings_mark_the_current_model_effort_and_mode() {
         [("low", false), ("medium", false), ("high", true)],
         "the current model's efforts"
     );
-    let modes: Vec<(ModeValue, bool, bool)> = view
-        .modes
+    let permissions: Vec<(&str, bool, bool)> = view
+        .permissions
         .iter()
-        .map(|mode| (mode.value.clone(), mode.current, mode.stops_asking))
+        .map(|permission| {
+            (
+                permission.value.as_str(),
+                permission.current,
+                permission.settable,
+            )
+        })
         .collect();
     assert_eq!(
-        modes,
+        permissions,
         [
-            (ModeValue::Claude("default".into()), false, false),
-            (ModeValue::Claude("acceptEdits".into()), false, false),
-            (ModeValue::Claude("plan".into()), true, false),
-            (ModeValue::Claude("auto".into()), false, false),
-        ]
+            ("default", false, true),
+            ("acceptEdits", false, true),
+            ("plan", true, true),
+            ("auto", false, true),
+        ],
+        "auto is settable while a model it names runs"
     );
+    assert!(view.modes.is_empty(), "Claude has no modes");
     assert_eq!(
         view.commands
             .iter()
@@ -1141,7 +1214,7 @@ fn settings_mark_the_current_model_effort_and_mode() {
     );
     assert_eq!(view.model_refusal, None);
     assert_eq!(view.effort_refusal, None, "headless Claude takes effort");
-    assert_eq!(view.mode_refusal, None);
+    assert_eq!(view.permission_refusal, None);
 }
 
 #[test]
@@ -1164,49 +1237,73 @@ fn a_reported_value_outside_the_offer_is_shown_as_current() {
     assert!(!view.models[0].current);
     assert_eq!(view.efforts.len(), 1);
     assert!(view.efforts[0].current && view.efforts[0].reported);
-    let mode = view.modes.last().unwrap();
-    assert_eq!(mode.value, ModeValue::Claude("dontAsk".into()));
-    assert!(mode.current && mode.reported);
-    assert_eq!(view.modes.iter().filter(|mode| mode.current).count(), 1);
+    let permission = view.permissions.last().unwrap();
+    assert_eq!(permission.value, "dontAsk");
+    assert!(permission.current && permission.reported && !permission.settable);
+    assert_eq!(
+        view.permissions
+            .iter()
+            .filter(|permission| permission.current)
+            .count(),
+        1
+    );
+    assert!(
+        !view.permissions[3].settable,
+        "auto names sonnet, and haiku runs"
+    );
 
     let nothing = settings_of(Kind::ClaudeSdk, Vec::new());
     assert!(nothing.models.is_empty() && nothing.efforts.is_empty());
-    assert!(nothing.modes.iter().all(|mode| !mode.current));
+    assert!(nothing.permissions.iter().all(|mode| !mode.current));
 }
 
 #[test]
-fn codex_modes_are_presets_and_a_pair_outside_them_is_reported() {
-    let codex = |approval: &str, sandbox: &str| {
+fn codex_offers_permissions_and_modes_and_settings_outside_them_read_custom() {
+    let codex = |snapshot: wire::CodexSnapshot| {
         settings_offering(
             Kind::Codex,
             wire::CodexSnapshot {
                 model: Some("gpt-a".into()),
-                approval_policy: Some(approval.into()),
-                sandbox: Some(sandbox.into()),
-                ..Default::default()
+                ..snapshot
             }
             .encode_to_vec(),
             vec![offered("gpt-a", &["low", "medium"], Some("medium"))],
             vec![command("config")],
         )
     };
-    let view = codex("never", "danger-full-access");
-    let presets: Vec<(Option<String>, bool, bool)> = view
-        .modes
+    let view = codex(wire::CodexSnapshot {
+        permission: Some("full-access".into()),
+        mode: Some("plan".into()),
+        approval_policy: Some("never".into()),
+        sandbox: Some("danger-full-access".into()),
+        ..Default::default()
+    });
+    let permissions: Vec<(&str, bool, bool)> = view
+        .permissions
         .iter()
-        .map(|mode| match &mode.value {
-            ModeValue::Codex { preset, .. } => (preset.clone(), mode.current, mode.stops_asking),
-            other => panic!("{other:?}"),
+        .map(|permission| {
+            (
+                permission.value.as_str(),
+                permission.current,
+                permission.never_asks,
+            )
         })
         .collect();
     assert_eq!(
-        presets,
+        permissions,
         [
-            (Some("read-only".into()), false, false),
-            (Some("default".into()), false, false),
-            (Some("full-access".into()), true, true),
+            ("read-only", false, false),
+            ("default", false, false),
+            ("auto", false, false),
+            ("full-access", true, true),
         ]
     );
+    let modes: Vec<(&str, bool)> = view
+        .modes
+        .iter()
+        .map(|mode| (mode.value.as_str(), mode.current))
+        .collect();
+    assert_eq!(modes, [("default", false), ("plan", true)]);
     assert_eq!(
         view.efforts
             .iter()
@@ -1220,23 +1317,34 @@ fn codex_modes_are_presets_and_a_pair_outside_them_is_reported() {
         (
             &view.model_refusal,
             &view.effort_refusal,
-            &view.mode_refusal
+            &view.permission_refusal
         ),
         (&None, &None, &None)
     );
+    assert!(!view.cycle_permission);
 
-    let view = codex("untrusted", "workspace-write");
-    let mode = view.modes.last().unwrap();
+    let view = codex(wire::CodexSnapshot {
+        approval_policy: Some("untrusted".into()),
+        sandbox: Some("workspace-write".into()),
+        ..Default::default()
+    });
+    let custom = view.permissions.last().unwrap();
+    assert_eq!(custom.value, "", "settings that match no name");
+    assert!(custom.current && custom.reported && !custom.settable);
+    assert_eq!(view.permissions.len(), 5);
     assert_eq!(
-        mode.value,
-        ModeValue::Codex {
-            preset: None,
-            approval_policy: "untrusted".into(),
-            sandbox: "workspace-write".into(),
-        }
+        setting_input(Kind::Codex, &SettingChange::Permission(String::new())),
+        None
     );
-    assert!(mode.current && mode.reported);
-    assert_eq!(view.modes.len(), 4);
+
+    let unsaid = codex(wire::CodexSnapshot::default());
+    assert!(
+        unsaid
+            .permissions
+            .iter()
+            .all(|permission| !permission.current),
+        "nothing reported yet is not custom"
+    );
 }
 
 #[test]
@@ -1269,7 +1377,8 @@ fn an_offered_alias_is_marked_for_the_model_id_it_resolves_to() {
 
 #[test]
 fn terminal_claude_shows_what_it_reports_and_says_how_to_type_a_change() {
-    let view = settings_of(
+    let (permissions, _) = offered_controls(Kind::ClaudePty);
+    let view = settings_with(
         Kind::ClaudePty,
         wire::ClaudePtySnapshot {
             model: Some("claude-sonnet-5".into()),
@@ -1277,6 +1386,10 @@ fn terminal_claude_shows_what_it_reports_and_says_how_to_type_a_change() {
             ..Default::default()
         }
         .encode_to_vec(),
+        wire::Catalogue {
+            permissions,
+            ..Default::default()
+        },
     );
     assert_eq!(
         view.models
@@ -1289,21 +1402,33 @@ fn terminal_claude_shows_what_it_reports_and_says_how_to_type_a_change() {
     assert!(view.efforts.is_empty(), "nothing reports the effort");
     assert!(view.commands.is_empty());
     assert_eq!(
-        view.modes
+        view.permissions
             .iter()
-            .map(|mode| (mode.value.clone(), mode.current))
+            .map(|permission| (
+                permission.value.as_str(),
+                permission.current,
+                permission.settable
+            ))
             .collect::<Vec<_>>(),
-        [(ModeValue::Claude("acceptEdits".into()), true)],
-        "the current mode alone: there is no pick"
+        [
+            ("default", false, false),
+            ("acceptEdits", true, false),
+            ("plan", false, false),
+            ("auto", false, false),
+        ],
+        "listed, but reached only by cycling"
     );
-    assert!(view.cycle_mode);
+    assert!(view.cycle_permission);
     assert_eq!((&view.model_refusal, &view.effort_refusal), (&None, &None));
-    assert!(view.mode_refusal.is_some());
+    assert!(view.permission_refusal.is_some());
     let typing = view.change_by_typing.expect("the typing sentence");
     assert!(typing.contains("/model <name>") && typing.contains("/effort <level>"));
 
     let sdk = settings_of(Kind::ClaudeSdk, Vec::new());
-    assert!(!sdk.cycle_mode, "headless Claude picks its mode");
+    assert!(
+        !sdk.cycle_permission,
+        "headless Claude picks its permission"
+    );
     assert_eq!(sdk.change_by_typing, None);
 }
 

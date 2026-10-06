@@ -22,6 +22,4 @@
 == context None sign-in None
 == settings
   model* reported gpt-5.6-luna "" efforts=[]
-  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
-  mode* Codex { preset: Some("default"), approval_policy: "on-request", sandbox: "workspace-write" }
-  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking
+  permission* reported "default" "" unsettable

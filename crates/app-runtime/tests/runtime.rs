@@ -16,7 +16,7 @@ use model::{AgentKey, InputState, PhaseView};
 use provider_fakes::script::{Ask, Question, Step, Tool, ToolClass};
 use testnet::{AgentDecl, FakeKind, Net, Topology};
 use tokio::sync::mpsc;
-use ui_view::{AskBody, ChoiceOutcome, Comparison, ModeValue, Pick, RowKind, SettingChange};
+use ui_view::{AskBody, ChoiceOutcome, Comparison, Pick, RowKind, SettingChange};
 
 const PATIENCE: Duration = Duration::from_secs(20);
 
@@ -478,23 +478,20 @@ async fn a_settings_pick_reaches_the_agent_and_the_frame_shows_it() {
         "headless Claude takes an effort pick"
     );
     let plan = view
-        .modes
+        .permissions
         .iter()
-        .find(|mode| mode.value == ModeValue::Claude("plan".into()))
+        .find(|permission| permission.value == "plan")
         .expect("plan is offered");
-    assert!(!plan.current);
-    let pick = SettingChange::Mode(plan.value.clone());
+    assert!(!plan.current && plan.settable);
+    let pick = SettingChange::Permission(plan.value.clone());
     assert_eq!(chat.change_setting(&pick).await, ActOutcome::Done);
-    until(&mut host, &chat, "the plan mode", |chat| {
-        chat.frame().mode.as_deref() == Some("plan")
+    until(&mut host, &chat, "the plan permission", |chat| {
+        chat.frame().permission.as_deref() == Some("plan")
     })
     .await;
-    assert!(
-        chat.settings()
-            .modes
-            .iter()
-            .any(|mode| mode.current && SettingChange::Mode(mode.value.clone()) == pick)
-    );
+    assert!(chat.settings().permissions.iter().any(|permission| {
+        permission.current && SettingChange::Permission(permission.value.clone()) == pick
+    }));
     assert_eq!(
         chat.change_setting(&SettingChange::Effort("high".into()))
             .await,

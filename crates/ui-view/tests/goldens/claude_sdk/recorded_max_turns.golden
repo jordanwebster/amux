@@ -13,7 +13,7 @@
   composer Send activity=Some(Running { key: "toolu_01BKZvAXFn8dyHs4jMMgWxEc" }) queue=[] outbox=[]
 ## 21 recorded 20: fact Stream type=control_request
   ask 0b05a30e-e39d-4ed4-8128-68436829707d -> "toolu_01BKZvAXFn8dyHs4jMMgWxEc" 1/1 Open
-    choices AllowOnce*, AllowAlways { subjects: [], directories: [], mode: "acceptEdits", scope: Session, label: "" }, Deny { stops: false }+note, DenyAndStop+note
+    choices AllowOnce*, AllowAlways { subjects: [], directories: [], mode: "acceptEdits", mode_name: "Accept edits", scope: Session, label: "" }, Deny { stops: false }+note, DenyAndStop+note
     body Edit { path: "<MACHINE_PATH>", files: 1, added: 1, removed: 0, diff: "+A\n", reason: "", created: true }
   composer Send activity=None queue=[] outbox=[]
 ## 23 recorded 22: input stdin-3
@@ -28,7 +28,7 @@
   composer Send activity=Some(Running { key: "toolu_01HdQGvREG7VZBP1bzkm6xCa" }) queue=[] outbox=[]
 ## 29 recorded 28: fact Stream type=control_request
   ask 0aface3b-0270-45a5-b4be-9d5f7f5b817a -> "toolu_01HdQGvREG7VZBP1bzkm6xCa" 1/1 Open
-    choices AllowOnce*, AllowAlways { subjects: [], directories: [], mode: "acceptEdits", scope: Session, label: "" }, Deny { stops: false }+note, DenyAndStop+note
+    choices AllowOnce*, AllowAlways { subjects: [], directories: [], mode: "acceptEdits", mode_name: "Accept edits", scope: Session, label: "" }, Deny { stops: false }+note, DenyAndStop+note
     body Edit { path: "<MACHINE_PATH>", files: 1, added: 1, removed: 0, diff: "+B\n", reason: "", created: true }
   composer Send activity=None queue=[] outbox=[]
 ## 30 recorded 29: input stdin-4
@@ -58,10 +58,10 @@
   model  claude-fable-5[1m] "Fable" efforts=[low,medium,high,xhigh,max]
   model  sonnet "Sonnet" efforts=[low,medium,high,xhigh,max]
   model* haiku "Haiku" efforts=[]
-  mode* Claude("default")
-  mode  Claude("acceptEdits")
-  mode  Claude("plan")
-  mode  Claude("auto")
+  permission* "default" "Ask" normal
+  permission  "acceptEdits" "Accept edits"
+  permission  "plan" "Plan"
+  permission  "auto" "Auto" unsettable
   command /autopilot source="" hint="" "Execute confirmed software work on an unattended loop of fresh agents when it spans contexts or must continue while the operator is away. Requires an approved plan; decline work that fits one sitting unless explicitly requested. (user)"
   command /delegate source="" hint="" "Resolve or diagnose agent staffing by mapping a requested role and effort through the operator-owned roster to a mind and dispatch specification. Use when an agent or driver will dispatch work, or when a binding cannot launch. Do not use merely because ordinary work is being discussed or performed locally. (user)"
   command /frontend-design source="" hint="" "Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.…

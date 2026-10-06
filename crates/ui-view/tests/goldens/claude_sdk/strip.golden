@@ -8,7 +8,4 @@
 == context Some(ContextView { used_tokens: 41000, window_tokens: Some(200000), percent: Some(20), near_full: false }) sign-in Some(SignInView { state: Failed, account: "", message: "OAuth token expired" })
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
-  mode* Claude("default")
-  mode  Claude("acceptEdits")
-  mode  Claude("plan")
-  mode  Claude("auto")
+  permission* reported "default" "" unsettable

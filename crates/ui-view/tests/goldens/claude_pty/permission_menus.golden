@@ -11,12 +11,12 @@
   composer Send activity=Some(Running { key: "t1" }) queue=[] outbox=[]
 ## 6 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","permission_suggestions":[{"destination":"session","directories":["/private/tmp/work"],"type":"addDirectories"},{"destination":"session","mode":"acceptEdits","type":"setMode"}],"tool_input":{"command":"rm stamp.txt"},"tool_name":"Bash"}}
   ask ask:1 -> "" 1/1 Open
-    choices AllowOnce*, AllowAlways { subjects: [], directories: ["/private/tmp/work"], mode: "", scope: Session, label: "" }, Deny { stops: true }+note
+    choices AllowOnce*, AllowAlways { subjects: [], directories: ["/private/tmp/work"], mode: "", mode_name: "", scope: Session, label: "" }, Deny { stops: true }+note
     body Command { command: "rm stamp.txt", cwd: "", reason: "", description: "" }
   composer Send activity=None queue=[] outbox=[]
 ## 7 input {"answer":{"answer":{"allow":{"scope":1}},"ask":"ask:1"},"id":"a1"}
   ask ask:1 -> "" 1/1 Rejected("Claude's terminal menu has no entry amux can type for this answer")
-    choices AllowOnce*, AllowAlways { subjects: [], directories: ["/private/tmp/work"], mode: "", scope: Session, label: "" }, Deny { stops: true }+note
+    choices AllowOnce*, AllowAlways { subjects: [], directories: ["/private/tmp/work"], mode: "", mode_name: "", scope: Session, label: "" }, Deny { stops: true }+note
     body Command { command: "rm stamp.txt", cwd: "", reason: "", description: "" }
 ## 8 input {"answer":{"answer":{"allow":{"scope":0}},"ask":"ask:1"},"id":"a2"}
   ask none
@@ -58,6 +58,10 @@
 == context None sign-in None
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
-  mode: cycle to the next
-  refused mode: Terminal Claude changes mode only by cycling through its modes.
+  permission  "default" "Ask" normal unsettable
+  permission  "acceptEdits" "Accept edits" unsettable
+  permission  "plan" "Plan" unsettable
+  permission  "auto" "Auto" unsettable
+  permission: cycle to the next
+  refused permission: Terminal Claude changes permission only by cycling through its permissions.
   by typing: To change the model or effort, type /model <name> or /effort <level> in the composer.

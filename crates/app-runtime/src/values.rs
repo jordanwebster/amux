@@ -78,9 +78,11 @@ pub struct ChatFrame {
     pub phase: PhaseView,
     pub composer: ComposerView,
     pub waiting: Option<Waiting>,
-    /// The agent's model, effort in force and mode, as it reports them.
+    /// The agent's model, effort in force, permission and mode, as it
+    /// reports them (values from its catalogue; see the settings view).
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub permission: Option<String>,
     pub mode: Option<String>,
     pub context: Option<ContextView>,
     /// Only a problem; it replaces the composer with a foot card.

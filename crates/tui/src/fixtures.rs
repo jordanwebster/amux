@@ -120,6 +120,10 @@ pub fn frames(kind: Kind, name: &str) -> Vec<(String, SessionState, i64)> {
         if index == 0 {
             state.update(caught_up(committer.revision));
         }
+        // The catalogue as a client fetches it once the snapshot names it.
+        if let Some(catalogue) = &frame.catalogue {
+            state.update(Msg::Catalogue(catalogue.clone()));
+        }
         at = frame
             .step
             .items

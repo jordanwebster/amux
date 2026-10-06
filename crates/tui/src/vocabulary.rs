@@ -126,7 +126,10 @@ pub fn components(theme: Theme) -> Vec<Component> {
         let lines = composer_lines(&editor, &composer, "fixer", "studio", away, w, theme);
         add(name, shows, lines);
     }
-    for (name, shows, buffer) in chat_surroundings(theme) {
+    for (name, shows, buffer) in chat_surroundings(theme)
+        .into_iter()
+        .chain(chat_controls(theme))
+    {
         out.push(Component {
             name,
             shows,
@@ -1483,6 +1486,7 @@ fn cards() -> Vec<CardSet> {
                 subjects: vec!["deploy --check".into()],
                 directories: vec![],
                 mode: String::new(),
+                mode_name: String::new(),
                 scope: Scope::Project,
                 label: String::new(),
             }),
@@ -2032,6 +2036,7 @@ fn chat_surroundings(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> 
 
     let claude_working = wire::ClaudeSdkSnapshot {
         model: Some("opus".into()),
+        model_name: Some("Opus".into()),
         permission_mode: Some("default".into()),
         background_jobs: Some(jobs.clone()),
         ..Default::default()
@@ -2042,6 +2047,7 @@ fn chat_surroundings(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> 
         Kind::ClaudeSdk,
         wire::ClaudeSdkSnapshot {
             model: Some("opus".into()),
+            model_name: Some("Opus".into()),
             permission_mode: Some("default".into()),
             usage: Some(claude_usage),
             ..Default::default()
@@ -2052,6 +2058,7 @@ fn chat_surroundings(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> 
         Kind::Codex,
         wire::CodexSnapshot {
             model: Some("gpt-5.5".into()),
+            model_name: Some("GPT-5.5".into()),
             approval_policy: Some("on-request".into()),
             sandbox: Some("workspace-write".into()),
             usage: Some(codex_usage),
@@ -2079,6 +2086,275 @@ fn chat_surroundings(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> 
             "chat_usage_codex",
             "A Codex chat near a usage limit, the overview listing its 5-hour limit near and its weekly limit fine, each with its fullness and reset time, and the credits left.",
             draw(&codex, Comparison::Uncommitted, None),
+        ),
+    ]
+}
+
+/// The permission and mode controls on a chat's composer, each agent with
+/// the catalogue its interpreter writes: the edge naming what is not the
+/// agent's normal one, the key under it that changes it, and the
+/// permission picker Ctrl+S then p opens.
+fn chat_controls(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use prost::Message as _;
+    use ui_state::{Connection, Msg, SessionState};
+    use wire::{Kind, OfferedMode, OfferedPermission, session_event};
+
+    use crate::chat::ChatView;
+
+    let now = written_at();
+    let permission = |value: &str, name: &str, settable: bool| OfferedPermission {
+        value: value.into(),
+        display_name: name.into(),
+        normal: value == "default",
+        settable,
+        ..Default::default()
+    };
+    let claude = |settable: bool| {
+        vec![
+            permission("default", "Ask", settable),
+            permission("acceptEdits", "Accept edits", settable),
+            permission("plan", "Plan", settable),
+            OfferedPermission {
+                models: vec!["opus".into(), "sonnet".into()],
+                ..permission("auto", "Auto", settable)
+            },
+        ]
+    };
+    let codex = vec![
+        permission("read-only", "Read only", true),
+        permission("default", "Default", true),
+        permission("auto", "Auto", true),
+        OfferedPermission {
+            never_asks: true,
+            ..permission("full-access", "Full access", true)
+        },
+    ];
+    let codex_modes = vec![
+        OfferedMode {
+            value: "default".into(),
+            display_name: "Default".into(),
+            normal: true,
+            settable: true,
+        },
+        OfferedMode {
+            value: "plan".into(),
+            display_name: "Plan".into(),
+            normal: false,
+            settable: true,
+        },
+    ];
+    let model = |value: &str, name: &str, efforts: &[&str]| wire::OfferedModel {
+        value: value.into(),
+        display_name: name.into(),
+        efforts: efforts.iter().map(|effort| (*effort).into()).collect(),
+        ..Default::default()
+    };
+    let item = |order: u64, prompt: bool, words: &str, kind: Kind| {
+        let body = match kind {
+            Kind::Codex => {
+                use wire::codex_item::Kind as K;
+                wire::CodexItem {
+                    kind: Some(if prompt {
+                        K::Prompt(wire::Prompt {})
+                    } else {
+                        K::Message(wire::Text { complete: true })
+                    }),
+                }
+                .encode_to_vec()
+            }
+            Kind::ClaudePty => {
+                use wire::claude_pty_item::Kind as K;
+                wire::ClaudePtyItem {
+                    kind: Some(if prompt {
+                        K::Prompt(wire::Prompt {})
+                    } else {
+                        K::Message(wire::Text { complete: true })
+                    }),
+                }
+                .encode_to_vec()
+            }
+            _ => {
+                use wire::claude_sdk_item::Kind as K;
+                wire::ClaudeSdkItem {
+                    kind: Some(if prompt {
+                        K::Prompt(wire::Prompt {})
+                    } else {
+                        K::Message(wire::Text { complete: true })
+                    }),
+                }
+                .encode_to_vec()
+            }
+        };
+        wire::Item {
+            key: format!("k{order}"),
+            order,
+            revision: order,
+            text: words.into(),
+            kind: wire::kind_tag(kind).into(),
+            body,
+            at_ms: now - 60_000 + order as i64 * 1_000,
+            ..Default::default()
+        }
+    };
+    let session = |kind: Kind, body: Vec<u8>, catalogue: wire::Catalogue| {
+        let agent = wire::Agent {
+            agent_id: b"agent".to_vec(),
+            host_id: b"host".to_vec(),
+            kind: kind as i32,
+            name: "fixer".into(),
+            cwd: "/srv/amux".into(),
+            lifecycle: wire::Lifecycle::Live as i32,
+            phase: wire::Phase::Idle as i32,
+            incarnation: 1,
+            ..Default::default()
+        };
+        let mut state = SessionState::new(agent, crate::chat::layout::CAP as usize);
+        let event = |of| Msg::Event(wire::SessionEvent { of: Some(of) });
+        state.update(Msg::Connection(Connection::Live));
+        state.update(event(session_event::Of::Snapshot(wire::Snapshot {
+            kind: wire::kind_tag(kind).into(),
+            body,
+            phase: wire::Phase::Idle as i32,
+            catalogue: Some(b"offered".to_vec()),
+            ..Default::default()
+        })));
+        state.update(Msg::Catalogue(wire::Catalogue {
+            hash: b"offered".to_vec(),
+            ..catalogue
+        }));
+        for item in [
+            item(
+                1,
+                true,
+                "Plan the overview's file list before changing it",
+                kind,
+            ),
+            item(
+                2,
+                false,
+                "Ready: I'll group the changed files by folder, root files first.",
+                kind,
+            ),
+        ] {
+            state.update(event(session_event::Of::Item(item)));
+        }
+        state.update(event(session_event::Of::CaughtUp(wire::CaughtUp {
+            revision: 2,
+        })));
+        state
+    };
+    let draw = |state: &SessionState, keys: &[KeyEvent]| {
+        let mut view = ChatView::new(b"agent".to_vec(), now, false);
+        let (width, height) = CHAT_SIZE;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
+        let mut paint = |view: &mut ChatView| {
+            terminal
+                .draw(|frame| {
+                    let area = frame.area();
+                    view.draw(frame, area, state, None, None, now, theme);
+                })
+                .expect("draw");
+        };
+        paint(&mut view);
+        for key in keys {
+            view.key(state, *key, theme);
+            paint(&mut view);
+        }
+        terminal.backend().buffer().clone()
+    };
+    let permission_picker = [
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
+    ];
+
+    let claude_sdk = session(
+        Kind::ClaudeSdk,
+        wire::ClaudeSdkSnapshot {
+            model: Some("claude-opus-5-5".into()),
+            model_name: Some("Opus 5.5".into()),
+            effort: Some("high".into()),
+            permission_mode: Some("acceptEdits".into()),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+        wire::Catalogue {
+            models: vec![
+                wire::OfferedModel {
+                    resolved_model: "claude-opus-5-5".into(),
+                    ..model("opus", "Opus 5.5", &["low", "medium", "high"])
+                },
+                model("haiku", "Haiku 4.5", &[]),
+            ],
+            permissions: claude(true),
+            ..Default::default()
+        },
+    );
+    let codex_settings = |settings: wire::CodexSnapshot| {
+        session(
+            Kind::Codex,
+            wire::CodexSnapshot {
+                model: Some("gpt-5.5".into()),
+                model_name: Some("GPT-5.5".into()),
+                effort: Some("medium".into()),
+                ..settings
+            }
+            .encode_to_vec(),
+            wire::Catalogue {
+                models: vec![model("gpt-5.5", "GPT-5.5", &["low", "medium", "high"])],
+                permissions: codex.clone(),
+                modes: codex_modes.clone(),
+                ..Default::default()
+            },
+        )
+    };
+    let codex_plan = codex_settings(wire::CodexSnapshot {
+        permission: Some("full-access".into()),
+        mode: Some("plan".into()),
+        approval_policy: Some("never".into()),
+        sandbox: Some("danger-full-access".into()),
+        ..Default::default()
+    });
+    let codex_custom = codex_settings(wire::CodexSnapshot {
+        mode: Some("default".into()),
+        approval_policy: Some("untrusted".into()),
+        sandbox: Some("workspace-write".into()),
+        ..Default::default()
+    });
+    let claude_pty = session(
+        Kind::ClaudePty,
+        wire::ClaudePtySnapshot {
+            model: Some("claude-opus-5-5".into()),
+            model_name: Some("Opus 5.5".into()),
+            permission_mode: Some("plan".into()),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+        wire::Catalogue {
+            permissions: claude(false),
+            ..Default::default()
+        },
+    );
+    vec![
+        (
+            "chat_controls_claude",
+            "A headless Claude chat in accept edits: the composer's edge names the model, its effort and the permission, the keys under it offer shift+tab for the next permission, and Ctrl+S then p has opened the permission picker over the edge, accept edits marked, ask, plan and auto beside it.",
+            draw(&claude_sdk, &permission_picker),
+        ),
+        (
+            "chat_controls_codex",
+            "A Codex chat with full access in plan mode: the edge names both, shift+tab moves the mode, and Ctrl+S then p has opened the permission picker with read only, default, auto and full access, full access marked as acting without asking.",
+            draw(&codex_plan, &permission_picker),
+        ),
+        (
+            "chat_controls_codex_custom",
+            "A Codex chat whose approval policy and sandbox match no named permission: the edge reads custom, and shift+tab still moves the mode.",
+            draw(&codex_custom, &[]),
+        ),
+        (
+            "chat_controls_claude_terminal",
+            "A terminal Claude chat in plan: the edge names the permission, and shift+tab presses Claude's own cycle key, the only way its permission changes.",
+            draw(&claude_pty, &[]),
         ),
     ]
 }

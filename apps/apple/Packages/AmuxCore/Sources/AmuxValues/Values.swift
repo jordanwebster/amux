@@ -1428,13 +1428,15 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     /// The runtime no longer serves this chat: the agent is gone.
     public var ended: String?
     public var mode: String?
-    /// The agent's model, effort in force and mode, as it reports them.
+    /// The agent's model, effort in force, permission and mode, as it
+    /// reports them (values from its catalogue; see the settings view).
     public var model: String?
+    public var permission: String?
     /// Only a problem; it replaces the composer with a foot card.
     public var signIn: SignInView?
     public var waiting: Waiting?
 
-    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], outbox: [OutboxRow], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, mode: String?, model: String?, signIn: SignInView?, waiting: Waiting?) {
+    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], outbox: [OutboxRow], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, mode: String?, model: String?, permission: String?, signIn: SignInView?, waiting: Waiting?) {
         self.agent = agent
         self.name = name
         self.kind = kind
@@ -1452,6 +1454,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         self.ended = ended
         self.mode = mode
         self.model = model
+        self.permission = permission
         self.signIn = signIn
         self.waiting = waiting
     }
@@ -1474,6 +1477,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         case ended
         case mode
         case model
+        case permission
         case signIn = "sign_in"
         case waiting
     }
@@ -1510,7 +1514,7 @@ public enum ChoiceOutcome: Codable, Hashable, Sendable {
     case grantForTurn
     case grantForSession
     /// "Always allow cargo test in this project": what, and for how long.
-    case allowAlways(subjects: [String], directories: [String], mode: String, scope: Scope, label: String)
+    case allowAlways(subjects: [String], directories: [String], mode: String, modeName: String, scope: Scope, label: String)
     /// Codex: the exact command prefix it would allow.
     case allowSimilar(prefix: [String])
     case allowNetwork(hosts: [String])
@@ -1530,6 +1534,7 @@ public enum ChoiceOutcome: Codable, Hashable, Sendable {
         case subjects
         case directories
         case mode
+        case modeName = "mode_name"
         case scope
         case label
     }
@@ -1585,6 +1590,7 @@ public enum ChoiceOutcome: Codable, Hashable, Sendable {
                 subjects: try _fields.decode([String].self, forKey: .subjects),
                 directories: try _fields.decode([String].self, forKey: .directories),
                 mode: try _fields.decode(String.self, forKey: .mode),
+                modeName: try _fields.decode(String.self, forKey: .modeName),
                 scope: try _fields.decode(Scope.self, forKey: .scope),
                 label: try _fields.decode(String.self, forKey: .label))
         case .allowSimilar:
@@ -1639,12 +1645,13 @@ public enum ChoiceOutcome: Codable, Hashable, Sendable {
         case .grantForSession:
             var _container = encoder.singleValueContainer()
             try _container.encode("GrantForSession")
-        case .allowAlways(let subjects, let directories, let mode, let scope, let label):
+        case .allowAlways(let subjects, let directories, let mode, let modeName, let scope, let label):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: AllowAlwaysKeys.self, forKey: .allowAlways)
             try _fields.encode(subjects, forKey: .subjects)
             try _fields.encode(directories, forKey: .directories)
             try _fields.encode(mode, forKey: .mode)
+            try _fields.encode(modeName, forKey: .modeName)
             try _fields.encode(scope, forKey: .scope)
             try _fields.encode(label, forKey: .label)
         case .allowSimilar(let prefix):
@@ -2712,80 +2719,33 @@ public struct LoudMember: Codable, Hashable, Sendable {
     }
 }
 
+/// A mode: how the agent works (Codex's default or plan).
 public struct ModeChoice: Codable, Hashable, Sendable {
-    public var value: ModeValue
+    /// What a mode input names.
+    public var value: String
+    /// The catalogue's name for it; empty for a reported one.
+    public var displayName: String
     public var current: Bool
     public var reported: Bool
-    /// Under this mode the agent acts without asking first.
-    public var stopsAsking: Bool
+    public var normal: Bool
+    public var settable: Bool
 
-    public init(value: ModeValue, current: Bool, reported: Bool, stopsAsking: Bool) {
+    public init(value: String, displayName: String, current: Bool, reported: Bool, normal: Bool, settable: Bool) {
         self.value = value
+        self.displayName = displayName
         self.current = current
         self.reported = reported
-        self.stopsAsking = stopsAsking
+        self.normal = normal
+        self.settable = settable
     }
 
     private enum CodingKeys: String, CodingKey {
         case value
+        case displayName = "display_name"
         case current
         case reported
-        case stopsAsking = "stops_asking"
-    }
-}
-
-/// What a mode input sets.
-public enum ModeValue: Codable, Hashable, Sendable {
-    /// Claude's permission mode.
-    case claude(String)
-    /// Codex's approval policy and sandbox; `preset` names the preset the
-    /// pair is, None for a reported pair outside the presets.
-    case codex(approvalPolicy: String, sandbox: String, preset: String?)
-
-    private enum Tag: String, CodingKey {
-        case claude = "Claude"
-        case codex = "Codex"
-    }
-
-    private enum CodexKeys: String, CodingKey {
-        case approvalPolicy = "approval_policy"
-        case sandbox
-        case preset
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let _container = try decoder.container(keyedBy: Tag.self)
-        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
-            throw DecodingError.dataCorrupted(
-                .init(
-                    codingPath: decoder.codingPath,
-                    debugDescription: "a ModeValue names exactly one variant"))
-        }
-        switch _tag {
-        case .claude:
-            self = .claude(try _container.decode(String.self, forKey: .claude))
-        case .codex:
-            let _fields = try _container.nestedContainer(
-                keyedBy: CodexKeys.self, forKey: .codex)
-            self = .codex(
-                approvalPolicy: try _fields.decode(String.self, forKey: .approvalPolicy),
-                sandbox: try _fields.decode(String.self, forKey: .sandbox),
-                preset: try _fields.decodeIfPresent(String.self, forKey: .preset))
-        }
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        switch self {
-        case .claude(let _value):
-            var _container = encoder.container(keyedBy: Tag.self)
-            try _container.encode(_value, forKey: .claude)
-        case .codex(let approvalPolicy, let sandbox, let preset):
-            var _container = encoder.container(keyedBy: Tag.self)
-            var _fields = _container.nestedContainer(keyedBy: CodexKeys.self, forKey: .codex)
-            try _fields.encode(approvalPolicy, forKey: .approvalPolicy)
-            try _fields.encode(sandbox, forKey: .sandbox)
-            try _fields.encodeIfPresent(preset, forKey: .preset)
-        }
+        case normal
+        case settable
     }
 }
 
@@ -3129,6 +3089,45 @@ public struct PendingPair: Codable, Hashable, Sendable {
         case fingerprint
         case expiresAtMs = "expires_at_ms"
         case via
+    }
+}
+
+/// A permission: how much the agent may do without asking.
+public struct PermissionChoice: Codable, Hashable, Sendable {
+    /// What a permission input names. Empty for Codex settings that match
+    /// no named permission, which read as custom.
+    public var value: String
+    /// The catalogue's name for it; empty for a reported one.
+    public var displayName: String
+    public var current: Bool
+    /// The agent reports it but does not offer it.
+    public var reported: Bool
+    /// The agent's ordinary one, which a client may leave unsaid.
+    public var normal: Bool
+    /// Under it the agent acts without asking first.
+    public var neverAsks: Bool
+    /// A pick sets it now: the agent offers it to be set and the running
+    /// model takes it.
+    public var settable: Bool
+
+    public init(value: String, displayName: String, current: Bool, reported: Bool, normal: Bool, neverAsks: Bool, settable: Bool) {
+        self.value = value
+        self.displayName = displayName
+        self.current = current
+        self.reported = reported
+        self.normal = normal
+        self.neverAsks = neverAsks
+        self.settable = settable
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value
+        case displayName = "display_name"
+        case current
+        case reported
+        case normal
+        case neverAsks = "never_asks"
+        case settable
     }
 }
 
@@ -4279,13 +4278,17 @@ public struct ServerView: Codable, Hashable, Sendable {
 public enum SettingChange: Codable, Hashable, Sendable {
     case model(String)
     case effort(String)
-    case mode(ModeValue)
-    /// The next mode in the agent's own cycle.
-    case cycleMode
+    /// A permission by its value.
+    case permission(String)
+    /// A mode by its value.
+    case mode(String)
+    /// The next permission in the agent's own cycle.
+    case cyclePermission
 
     private enum Tag: String, CodingKey {
         case model = "Model"
         case effort = "Effort"
+        case permission = "Permission"
         case mode = "Mode"
     }
 
@@ -4294,7 +4297,7 @@ public enum SettingChange: Codable, Hashable, Sendable {
            let _name = try? _single.decode(String.self)
         {
             switch _name {
-            case "CycleMode": self = .cycleMode
+            case "CyclePermission": self = .cyclePermission
             default:
                 throw DecodingError.dataCorruptedError(
                     in: _single, debugDescription: "no SettingChange is named \(_name)")
@@ -4313,8 +4316,10 @@ public enum SettingChange: Codable, Hashable, Sendable {
             self = .model(try _container.decode(String.self, forKey: .model))
         case .effort:
             self = .effort(try _container.decode(String.self, forKey: .effort))
+        case .permission:
+            self = .permission(try _container.decode(String.self, forKey: .permission))
         case .mode:
-            self = .mode(try _container.decode(ModeValue.self, forKey: .mode))
+            self = .mode(try _container.decode(String.self, forKey: .mode))
         }
     }
 
@@ -4326,12 +4331,15 @@ public enum SettingChange: Codable, Hashable, Sendable {
         case .effort(let _value):
             var _container = encoder.container(keyedBy: Tag.self)
             try _container.encode(_value, forKey: .effort)
+        case .permission(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .permission)
         case .mode(let _value):
             var _container = encoder.container(keyedBy: Tag.self)
             try _container.encode(_value, forKey: .mode)
-        case .cycleMode:
+        case .cyclePermission:
             var _container = encoder.singleValueContainer()
-            try _container.encode("CycleMode")
+            try _container.encode("CyclePermission")
         }
     }
 }
@@ -4342,43 +4350,48 @@ public struct SettingsView: Codable, Hashable, Sendable {
     public var models: [ModelChoice]
     /// The current model's efforts, then a reported effort outside them.
     public var efforts: [EffortChoice]
-    /// The modes to pick from; for a kind that only cycles, the current
-    /// mode alone.
+    /// The offered permissions, then a reported one the agent does not
+    /// offer.
+    public var permissions: [PermissionChoice]
+    /// The offered modes, then a reported one the agent does not offer;
+    /// empty for an agent without modes (Claude).
     public var modes: [ModeChoice]
-    /// The mode changes by cycling to the next (the cycle key), never by a
-    /// pick: offered beside the current mode.
-    public var cycleMode: Bool
+    /// The permission changes by cycling to the next (the cycle key),
+    /// never by a pick.
+    public var cyclePermission: Bool
     public var commands: [CommandView]
     /// How a person changes the model and effort of a kind that offers no
     /// pick: by typing the agent's own command in the composer.
     public var changeByTyping: String?
     public var effortRefusal: String?
-    public var modeRefusal: String?
     /// Why the model cannot change from here, when it cannot.
     public var modelRefusal: String?
+    public var permissionRefusal: String?
 
-    public init(models: [ModelChoice], efforts: [EffortChoice], modes: [ModeChoice], cycleMode: Bool, commands: [CommandView], changeByTyping: String?, effortRefusal: String?, modeRefusal: String?, modelRefusal: String?) {
+    public init(models: [ModelChoice], efforts: [EffortChoice], permissions: [PermissionChoice], modes: [ModeChoice], cyclePermission: Bool, commands: [CommandView], changeByTyping: String?, effortRefusal: String?, modelRefusal: String?, permissionRefusal: String?) {
         self.models = models
         self.efforts = efforts
+        self.permissions = permissions
         self.modes = modes
-        self.cycleMode = cycleMode
+        self.cyclePermission = cyclePermission
         self.commands = commands
         self.changeByTyping = changeByTyping
         self.effortRefusal = effortRefusal
-        self.modeRefusal = modeRefusal
         self.modelRefusal = modelRefusal
+        self.permissionRefusal = permissionRefusal
     }
 
     private enum CodingKeys: String, CodingKey {
         case models
         case efforts
+        case permissions
         case modes
-        case cycleMode = "cycle_mode"
+        case cyclePermission = "cycle_permission"
         case commands
         case changeByTyping = "change_by_typing"
         case effortRefusal = "effort_refusal"
-        case modeRefusal = "mode_refusal"
         case modelRefusal = "model_refusal"
+        case permissionRefusal = "permission_refusal"
     }
 }
 

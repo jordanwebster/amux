@@ -383,7 +383,11 @@ async fn served_frames_match_their_goldens() {
     let lines = session_lines(&net, &fleet, "laptop", &["coder", "worker", "scout"]).await;
     frame("home", &draw_fleet(&fleet, &lines, now, 110, 16));
     frame("home_60col", &draw_fleet(&fleet, &lines, now, 60, 16));
-    let state = chat_state(&fleet, worker.as_bytes(), &events);
+    let mut state = chat_state(&fleet, worker.as_bytes(), &events);
+    // What the agent offers, fetched as a chat on screen fetches it.
+    state.update(Msg::Catalogue(
+        net.catalogue("laptop", "worker").await.unwrap(),
+    ));
     frame("chat", &draw_chat(&state, 110, 24));
 
     // A terminal Claude on the desk shows a tool server's dialog in its own
@@ -548,10 +552,13 @@ async fn served_frames_match_their_goldens() {
             .iter()
             .position(|event| matches!(event.of, Some(session_event::Of::CaughtUp(_))))
             .unwrap();
-    let pending = chat_state(&fleet, worker.as_bytes(), &events[..swap]);
+    let offered = net.catalogue("laptop", "worker").await.unwrap();
+    let mut pending = chat_state(&fleet, worker.as_bytes(), &events[..swap]);
+    pending.update(Msg::Catalogue(offered.clone()));
     assert!(pending.reset_pending(), "the Reset waits for its CaughtUp");
     frame("rewind_before_swap", &draw_chat(&pending, 110, 24));
-    let swapped = chat_state(&fleet, worker.as_bytes(), &events[..=swap]);
+    let mut swapped = chat_state(&fleet, worker.as_bytes(), &events[..=swap]);
+    swapped.update(Msg::Catalogue(offered));
     assert!(!swapped.reset_pending());
     frame("rewind_after_swap", &draw_chat(&swapped, 110, 24));
 

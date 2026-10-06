@@ -81,11 +81,11 @@ chats with their agents, the installation's `ui.chat_in`:
 - **In amux** (`amux`, the default): the composer, first. Type what the new agent should work on and Enter starts
   it and opens its chat (Ctrl+Enter starts it and stays home). The composer's bottom edge is the settings:
   `+ Name │ Claude · Opus (high) · default │ ~/source/amux │ laptop`, that is the name (named automatically
-  unless given one), the agent with its model, effort and mode, the folder and the host. `ctrl+s` then a letter
+  unless given one), the agent with its model, effort and permission, the folder and the host. `ctrl+s` then a letter
   opens one in a small panel rising from its place on the edge: `n` name, `m` model, `e` effort, `d` folder, `h`
   host, `a` agent (Claude or Codex); clicking an item does the same. Long lists filter as you type; the folder's
   panel lists that host's recent folders and takes a typed path; hosts that are away cannot be picked. Shift+Tab
-  steps the mode. Claude runs headless here, Codex on its app server.
+  steps the permission. Claude runs headless here, Codex on its app server.
 - **In each agent's own terminal** (`terminal`): a small window over home with the name, the agent (Claude or
   Codex), the folder and the host, and no prompt or model, which the agent's own terminal sets. Enter moves from
   row to row and starts the agent from the last; ←/→ change a choice. Started on this machine, the terminal is
@@ -158,7 +158,8 @@ Enter on a row opens its chat. From top to bottom:
   top edge says what stands in the way of sending, most pressing first: a prompt the
   agent refused (`not sent: it is shutting down`, in red), the host away (`desk is away`), an exited agent (`Enter
   resumes`), a usage limit reached (`5-hour limit reached · resets 23:24`, in the warning ink; sending stays
-  open). One blank line below it, the key line: `shift+tab mode · ctrl+a more` at rest, `enter queue · ctrl+x
+  open). One blank line below it, the key line: `shift+tab permission · ctrl+a more` at rest
+  (`shift+tab mode` for an agent with modes), `enter queue · ctrl+x
   stop` added while the agent works, `enter resume` once it has exited, `Draft kept · sending waits` while the
   host is away. What everyone knows (Enter sends, pasting attaches) is not said.
 
@@ -255,11 +256,15 @@ lists what the report holds.
 
 ### Settings
 
-The terminal client has no settings screen. Shift+Tab moves the agent to its next mode where it has one, and
-`ctrl+s` then `m` or `e` changes a running agent's model or effort where it lets a client change them, and
-otherwise says how (terminal Claude's change by typing its own `/model` or `/effort`); each model in the list carries the agent's own line on
-it, which says what an alias such as Claude's Default stands for. The phone's settings sheet offers every model, effort and
-mode the agent reports.
+The terminal client has no settings screen; everything it offers comes from the agent's catalogue. Shift+Tab
+moves the agent to its next mode where it offers modes (Codex: default and plan), and otherwise to its next
+permission that still asks before acting (terminal Claude: Claude's own cycle key). `ctrl+s` then `m`, `e` or `p`
+changes a running agent's model, effort or permission where it lets a client change them, and otherwise says how
+(terminal Claude's model and effort change by typing its own `/model` or `/effort`, its permission only by
+cycling); each model in the list carries the agent's own line on it, which says what an alias such as Claude's
+Default stands for. The composer's edge names the permission and the mode when they are not the agent's normal
+ones, and Codex settings that match no named permission read custom. The phone's settings sheet offers every
+model, effort, permission and mode the agent offers.
 
 The terminal's appearance, its leader key and how new agents start come from the installation config file
 (`~/.config/amux/config.yaml` unless `--config` or `AMUX_CONFIG` names another), read by
@@ -288,7 +293,7 @@ Keys come in three layers. **amux** keys are about amux itself (home, a new agen
 home they are bare letters, and in a chat the leader then a letter, mostly the same one (`<leader> s` goes home,
 while `s` on home stops an agent). **This chat** keys act on the open chat (review, attach, focus rows), also under
 the leader. **Local** keys belong to whatever has focus (an ask, a panel, the overview, home's list, a window) and
-never leak out of it. Control chords are kept for speed and habit only: Ctrl+X stops the turn, Shift+Tab steps the mode, Ctrl+C
+never leak out of it. Control chords are kept for speed and habit only: Ctrl+X stops the turn, Shift+Tab steps the mode or permission, Ctrl+C
 clears the field, Ctrl+O opens the overview, Ctrl+S opens the settings letters. Esc backs out one level and never
 stops the agent or answers an ask; clearing a field and stopping the agent are never the same key.
 
@@ -328,8 +333,8 @@ stops the agent or answers an ask; clearing a field and stopping the agent are n
 | Ctrl+V | Attach an image or file from the clipboard |
 | ↑ in an empty composer | Into the queue |
 | Ctrl+X | Stop the turn; the agent stays live and idle, and the draft is untouched |
-| Shift+Tab | The agent's next mode, where it has one |
-| Ctrl+S then `m` or `e` | The agent's model or effort, where it can change from here |
+| Shift+Tab | The agent's next mode, or where it has none its next permission |
+| Ctrl+S then `m`, `e` or `p` | The agent's model, effort or permission, where it can change from here |
 | Ctrl+O | The overview |
 | Page Up, Page Down, mouse wheel | Scroll |
 | Ctrl+Home, Ctrl+End | The oldest held row; follow the newest |

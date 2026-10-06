@@ -274,8 +274,16 @@ pub struct AgentState {
     /// The running model as a person reads it, as the interpreter names it.
     pub model_name: Option<String>,
     pub effort: Option<String>,
-    /// Claude's permission mode; Codex's approval policy.
+    /// The permission in force by its catalogue value: Claude's permission
+    /// mode; for Codex, the named permission its settings make, None when
+    /// they make none (see `approval_policy`).
+    pub permission: Option<String>,
+    /// The mode in force by its catalogue value (Codex's collaboration
+    /// mode); None for Claude, which has none.
     pub mode: Option<String>,
+    /// Codex's own settings, None until Codex says. Set with no
+    /// `permission`, they match no named permission.
+    pub approval_policy: Option<String>,
     pub sandbox: Option<String>,
     /// The hash of the catalogue the agent offers now; None until its
     /// provider says.
@@ -285,6 +293,9 @@ pub struct AgentState {
     pub models: Vec<OfferedModel>,
     /// The commands (Codex: skills) the agent's catalogue offers.
     pub commands: Vec<OfferedCommand>,
+    /// The permissions and modes the agent's catalogue offers.
+    pub permissions: Vec<wire::OfferedPermission>,
+    pub modes: Vec<wire::OfferedMode>,
     /// Claude's task list; Codex's plan.
     pub tasks: TaskList,
     pub context: ContextMeter,
@@ -341,7 +352,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.context = snapshot.context.unwrap_or_default();
             state.model = snapshot.model;
             state.model_name = snapshot.model_name;
-            state.mode = snapshot.permission_mode;
+            state.permission = snapshot.permission_mode;
             state.provider_session = snapshot.provider_session;
             state.usage = snapshot.usage.map_or(Usage::Unknown, Usage::Claude);
             state.servers = snapshot.servers.unwrap_or_default();
@@ -359,7 +370,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.model = snapshot.model;
             state.model_name = snapshot.model_name;
             state.effort = snapshot.effort;
-            state.mode = snapshot.permission_mode;
+            state.permission = snapshot.permission_mode;
             state.active_tasks = snapshot.active_tasks;
             state.provider_session = snapshot.provider_session;
             state.usage = snapshot.usage.map_or(Usage::Unknown, Usage::Claude);
@@ -377,7 +388,9 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.model = snapshot.model;
             state.model_name = snapshot.model_name;
             state.effort = snapshot.effort;
-            state.mode = snapshot.approval_policy;
+            state.permission = snapshot.permission;
+            state.mode = snapshot.mode;
+            state.approval_policy = snapshot.approval_policy;
             state.sandbox = snapshot.sandbox;
             state.active_turn = snapshot.active_turn;
             state.provider_session = snapshot.thread_id;

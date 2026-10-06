@@ -222,16 +222,19 @@ Beside it, read from the same state:
 | Function | Shown | claude_pty | claude_sdk | codex |
 |---|---|---|---|---|
 | `context(state)` | Always in settings; set apart from 80% used (`CONTEXT_NEAR_FULL_PERCENT`, `near_full`) | partial: tokens, no window | full | full |
-| `effort_in_force(agent)`, the agent's `model` and `mode` | Composer facts and the settings view | partial | full | full |
+| `effort_in_force(agent)`, the agent's `model`, `permission` and `mode` | Composer facts and the settings view | partial | full | full |
 | `sign_in(state)` | A foot card in place of the composer when there is a problem | partial: as an API error | full | full |
 
 `diff_base(state, comparison)` names what the changed files are counted against: the uncommitted work, or
 everything on the branch since it left its base branch.
 
-`settings(state)` is the settings view: the offered models with their efforts, the modes, the commands the agent
-offers, and for each setting the sentence saying why it cannot change from here when it cannot. Terminal Claude
-offers no model or effort pick (you type its own command in the composer), and its mode changes only by cycling
-(`cycle_mode`).
+`settings(state)` is the settings view, read from the agent's catalogue: the offered models with their efforts,
+the permissions (how much the agent may do without asking), the modes (how it works: Codex's default and plan;
+Claude has none, its plan is a permission), the commands the agent offers, and for each setting the sentence
+saying why it cannot change from here when it cannot. A permission is settable only while a model it names runs.
+Codex settings that match no named permission are reported with no value and read as custom. Terminal Claude
+offers no model or effort pick (you type its own command in the composer), and its permission changes only by
+cycling (`cycle_permission`).
 
 ## Hidden
 

@@ -135,7 +135,11 @@ pub enum ChoiceOutcome {
     AllowAlways {
         subjects: Vec<String>,
         directories: Vec<String>,
+        /// The permission it switches to, by its value; empty when none.
         mode: String,
+        /// That permission by the catalogue's name; empty when the
+        /// catalogue does not name it.
+        mode_name: String,
         scope: Scope,
         label: String,
     },
@@ -191,7 +195,7 @@ pub fn ask_card(state: &SessionState) -> Option<AskCard> {
     let asks = state.open_asks();
     let head = asks.first()?;
     let (body, choices) = match head {
-        OpenAsk::Claude(ask) => claude(ask),
+        OpenAsk::Claude(ask) => claude(ask, &state.agent_state().permissions),
         OpenAsk::Codex(ask) => codex(ask),
     };
     let card_state = if state.asks_dismissed() {
@@ -249,7 +253,7 @@ fn permission(of: wire::permission_answer::Of) -> Answer {
     }))
 }
 
-fn claude(ask: &wire::Ask) -> (AskBody, Vec<Choice>) {
+fn claude(ask: &wire::Ask, offered: &[wire::OfferedPermission]) -> (AskBody, Vec<Choice>) {
     use wire::permission_answer::Of as P;
     let (body, mut choices) = match &ask.body {
         Some(ask::Body::Permission(p)) => {
@@ -264,6 +268,11 @@ fn claude(ask: &wire::Ask) -> (AskBody, Vec<Choice>) {
                         subjects: scope.rules.iter().map(|rule| lift_rule(rule)).collect(),
                         directories: scope.directories.clone(),
                         mode: scope.mode.clone(),
+                        mode_name: offered
+                            .iter()
+                            .find(|permission| permission.value == scope.mode)
+                            .map(|permission| permission.display_name.clone())
+                            .unwrap_or_default(),
                         scope: scope_of(&scope.destination),
                         label: scope.label.clone(),
                     },

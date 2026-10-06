@@ -729,7 +729,7 @@ impl Home {
             KeyCode::Char('s') if ctrl => self.draft.prefix = true,
             KeyCode::BackTab => {
                 if let Some(setup) = &mut self.draft.setup {
-                    setup.next_mode();
+                    setup.next_permission();
                 }
             }
             KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -774,7 +774,7 @@ impl Home {
             Setting::Kind => "Agent",
             Setting::Model => "Model",
             Setting::Effort => "Effort",
-            Setting::Mode => "Mode",
+            Setting::Permission => "Permission",
             Setting::Folder => "Folder",
             Setting::Host => "Host",
             Setting::Worktree => "Worktree",
@@ -1497,7 +1497,7 @@ impl Home {
         };
         // Too long for the edge: the mode drops, then the model (ctrl+s
         // still reaches them), then the folder shortens in the middle.
-        for dropped in [Setting::Mode, Setting::Model] {
+        for dropped in [Setting::Permission, Setting::Model] {
             if measure(&groups) > room {
                 for group in &mut groups {
                     group.retain(|(item, _)| *item != dropped);
@@ -1628,7 +1628,7 @@ impl Home {
                         "settings",
                         Hit::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
                     ),
-                    ("shift+tab", "mode", key(KeyCode::BackTab)),
+                    ("shift+tab", "permission", key(KeyCode::BackTab)),
                     ("esc", "back", key(KeyCode::Esc)),
                 ],
             },

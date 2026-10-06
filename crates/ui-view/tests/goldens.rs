@@ -286,21 +286,39 @@ fn describe_settings(out: &mut String, state: &SessionState) {
             if effort.default { " (default)" } else { "" }
         );
     }
-    for mode in &view.modes {
+    for permission in &view.permissions {
         let _ = writeln!(
             out,
-            "  mode{} {:?}{}",
-            marks(mode.current, mode.reported),
-            mode.value,
-            if mode.stops_asking {
-                " stops_asking"
+            "  permission{} {:?} {:?}{}{}{}",
+            marks(permission.current, permission.reported),
+            permission.value,
+            permission.display_name,
+            if permission.normal { " normal" } else { "" },
+            if permission.never_asks {
+                " never_asks"
             } else {
                 ""
+            },
+            if permission.settable {
+                ""
+            } else {
+                " unsettable"
             }
         );
     }
-    if view.cycle_mode {
-        let _ = writeln!(out, "  mode: cycle to the next");
+    for mode in &view.modes {
+        let _ = writeln!(
+            out,
+            "  mode{} {:?} {:?}{}{}",
+            marks(mode.current, mode.reported),
+            mode.value,
+            mode.display_name,
+            if mode.normal { " normal" } else { "" },
+            if mode.settable { "" } else { " unsettable" }
+        );
+    }
+    if view.cycle_permission {
+        let _ = writeln!(out, "  permission: cycle to the next");
     }
     for command in &view.commands {
         let _ = writeln!(
@@ -315,7 +333,7 @@ fn describe_settings(out: &mut String, state: &SessionState) {
     for (setting, refusal) in [
         ("model", &view.model_refusal),
         ("effort", &view.effort_refusal),
-        ("mode", &view.mode_refusal),
+        ("permission", &view.permission_refusal),
     ] {
         if let Some(refusal) = refusal {
             let _ = writeln!(out, "  refused {setting}: {refusal}");

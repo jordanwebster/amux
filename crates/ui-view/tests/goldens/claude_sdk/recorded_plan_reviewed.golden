@@ -23,7 +23,7 @@
   composer Send activity=Some(Running { key: "toolu_01Vc9B91WwArPGgg7nCq56LW" }) queue=[] outbox=[]
 ## 32 recorded 31: fact Stream type=control_request
   ask 0264cfd5-1809-4ebe-9eb4-efcf6fb42153 -> "toolu_01Vc9B91WwArPGgg7nCq56LW" 1/1 Open
-    choices AllowOnce*, AllowAlways { subjects: ["find /private<MACHINE_PATH> -name \"README.md\" -type f"], directories: [], mode: "", scope: Project, label: "" }, AllowAlways { subjects: ["//private<MACHINE_PATH>"], directories: [], mode: "", scope: Session, label: "" }, Deny { stops: false }+note, DenyAndStop+note
+    choices AllowOnce*, AllowAlways { subjects: ["find /private<MACHINE_PATH> -name \"README.md\" -type f"], directories: [], mode: "", mode_name: "", scope: Project, label: "" }, AllowAlways { subjects: ["//private<MACHINE_PATH>"], directories: [], mode: "", mode_name: "", scope: Session, label: "" }, Deny { stops: false }+note, DenyAndStop+note
     body Command { command: "find /private<MACHINE_PATH> -name \"README.md\" -type f", cwd: "", reason: "outside the allowed directories: <MACHINE_PATH>", description: "find <MACHINE_PATH>" }
   composer Send activity=None queue=[] outbox=[]
 ## 34 recorded 33: input stdin-3
@@ -190,10 +190,10 @@
   model  claude-fable-5-1[1m] "Fable" efforts=[low,medium,high,xhigh,max]
   model  sonnet "Sonnet" efforts=[low,medium,high,xhigh,max]
   model* haiku "Haiku" efforts=[]
-  mode  Claude("default")
-  mode  Claude("acceptEdits")
-  mode* Claude("plan")
-  mode  Claude("auto")
+  permission  "default" "Ask" normal
+  permission  "acceptEdits" "Accept edits"
+  permission* "plan" "Plan"
+  permission  "auto" "Auto" unsettable
   command /autopilot source="" hint="" "Execute confirmed software work on an unattended loop of fresh agents when it spans contexts or must continue while the operator is away. Requires an approved plan; decline work that fits one sitting unless explicitly requested. (user)"
   command /delegate source="" hint="" "Resolve or diagnose agent staffing by mapping a requested role and effort through the operator-owned roster to a mind and dispatch specification. Use when an agent or driver will dispatch work, or when a binding cannot launch. Do not use merely because ordinary work is being discussed or performed locally. (user)"
   command /frontend-design source="" hint="" "Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.…

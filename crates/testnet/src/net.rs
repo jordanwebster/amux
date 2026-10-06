@@ -688,6 +688,22 @@ impl Net {
         Ok(self.ack(format!("{name} stopped")))
     }
 
+    /// What `name` offers, as a person on `host` fetches it: forwarded to
+    /// the agent's own host when it lives elsewhere.
+    pub async fn catalogue(&self, host: &str, name: &str) -> Result<wire::Catalogue, NetError> {
+        let agent = self.agent(name)?;
+        let request = wire::GetCatalogueRequest {
+            of: Some(wire::get_catalogue_request::Of::AgentId(
+                agent.id.as_bytes().to_vec(),
+            )),
+        };
+        self.client(host)?
+            .get_catalogue(tonic::Request::new(request))
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(|status| NetError::Refused(Box::new(status)))
+    }
+
     /// Deletes the agent on its own host.
     pub async fn delete(&mut self, name: &str) -> Result<Ack, NetError> {
         let answer = self.delete_family(name).await?;

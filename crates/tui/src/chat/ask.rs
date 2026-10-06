@@ -122,6 +122,7 @@ pub fn choice_label(choice: &Choice) -> String {
             subjects,
             directories,
             mode,
+            mode_name,
             scope,
             label,
         } => {
@@ -138,7 +139,7 @@ pub fn choice_label(choice: &Choice) -> String {
                     scope_words(scope)
                 )
             } else if !mode.is_empty() {
-                format!("Switch to {mode} mode")
+                format!("Switch to {}", crate::words::named(mode_name, mode))
             } else if !label.is_empty() {
                 label.clone()
             } else {
@@ -385,10 +386,14 @@ fn box_label(choice: &Choice) -> String {
     match &choice.outcome {
         ChoiceOutcome::AllowOnce => "Yes".to_owned(),
         ChoiceOutcome::AllowForSession => "Yes, and don't ask again this session".to_owned(),
-        ChoiceOutcome::AllowAlways { mode, .. } if !mode.is_empty() => format!(
-            "Yes, and switch to {}",
-            crate::words::mode_name(&ui_view::ModeValue::Claude(mode.clone()))
-        ),
+        ChoiceOutcome::AllowAlways {
+            mode, mode_name, ..
+        } if !mode.is_empty() => {
+            format!(
+                "Yes, and switch to {}",
+                crate::words::named(mode_name, mode)
+            )
+        }
         ChoiceOutcome::Deny { stops: true } | ChoiceOutcome::DenyAndStop => {
             "No, and stop".to_owned()
         }

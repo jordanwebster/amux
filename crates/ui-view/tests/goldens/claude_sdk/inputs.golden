@@ -36,7 +36,4 @@
 == settings
   model* reported claude-sonnet-5 "" efforts=[]
   effort* reported high
-  mode  Claude("default")
-  mode  Claude("acceptEdits")
-  mode* Claude("plan")
-  mode  Claude("auto")
+  permission* reported "plan" "" unsettable
