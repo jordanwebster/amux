@@ -179,4 +179,21 @@ mod tests {
             }
         }
     }
+
+    /// Plan mode's agents each propose their plan as a plan, which is what
+    /// opens its decision; a plan written as an ordinary message would read
+    /// as one and leave nothing to decide.
+    #[test]
+    fn every_planner_proposes_a_plan() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let set = Set::load(&root, "plan-mode").unwrap();
+        for agent in set.topology["agents"].as_array().unwrap() {
+            let steps = agent["script"]["steps"].as_array().unwrap();
+            assert!(
+                steps.iter().any(|step| step.pointer("/ask/plan").is_some()),
+                "{} proposes no plan",
+                agent["name"]
+            );
+        }
+    }
 }

@@ -1,3 +1,12 @@
+2026-10-06 — **The plan-mode set's Codex agent proposes its plan as a plan.**
+Served with `just tui-set plan-mode`, the Codex agent wrote its plan as an
+ordinary message, so after a plan-mode turn no Plan ready decision opened
+and home never listed it under Needs you. Its script now proposes the plan
+as Codex does in plan mode, followed by a short turn of work, and the set no
+longer says Codex cannot plan from amux. Implementing and keeping planning
+both record their decision on the plan. A tui-set test now fails if any of
+the set's agents stops proposing a plan.
+
 2026-10-06 — **Terminal stories decide a Codex plan, skip and reply to questions, and hide the plan file.**
 A new terminal story puts Codex in plan mode with Shift+Tab and asks for
 work: the plan shows in the feed while the turn still runs, the agent needs

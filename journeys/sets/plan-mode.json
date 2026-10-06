@@ -1,5 +1,5 @@
 {
-  "description": "Three idle agents to plan with: headless Claude, Claude in its own terminal and Codex. With Claude, press shift+tab into plan mode, send any prompt, and decide the plan each way; a plan arrives whole (headless Claude writes it to its plan file first). Codex cannot be put in Plan mode from amux yet, and its plan reads as an ordinary message.",
+  "description": "Three idle agents to plan with: headless Claude, Claude in its own terminal and Codex. Press shift+tab into plan mode, send any prompt, and decide the plan each way; a plan arrives whole (headless Claude writes it to its plan file first).",
   "client": "laptop",
   "open": "relay keepalive",
   "topology": {
@@ -458,9 +458,17 @@
               }
             },
             {
+              "ask": {
+                "plan": {
+                  "markdown": "# Retry blob uploads with a budget\n\nUploads fail on the first dropped connection and the attachment is lost. The\nclient already has a retry helper for requests; uploads will use it with a\nbudget suited to large bodies, and resume from what the server already holds.\n\n## Steps\n\n1. Wrap `put_blob` in `client::retry` with a budget of 4 attempts over 60 seconds.\n   - Only connection errors and 5xx retry; a 4xx is the request's fault.\n2. Before each retry, ask the server how many bytes it holds for the blob's\n   digest, and resume from there.\n   - A server without resume support answers 0, and the upload starts over.\n3. Show \"retrying\" on the attachment chip while a retry waits.\n4. After the budget is spent, keep the error the person sees today.\n\n## Shape\n\n```rust\npub async fn upload(blob: &Blob, client: &Client) -> Result<BlobRef, UploadError> {\n    retry(UPLOAD_BUDGET, |attempt| async move {\n        let held = if attempt > 0 { client.held_bytes(&blob.digest).await? } else { 0 };\n        client.put_blob(&blob.digest, blob.bytes_from(held)).await\n    })\n    .await\n}\n```\n\n## Risks\n\n- A resumed upload must hash to the same digest; the server already checks\n  the whole blob's digest before it keeps it, so a bad resume fails loudly.\n- Four attempts on a 50 MB video can take a minute; the chip says so.\n\n## Tests\n\n- A fixture server that drops the connection halfway resumes and keeps the blob.\n- A 403 fails at once, without retrying."
+                }
+              }
+            },
+            "turn_end",
+            {
               "text": {
                 "chunks": [
-                  "# Retry blob uploads with a budget\n\nUploads fail on the first dropped connection and the attachment is lost. The\nclient already has a retry helper for requests; uploads will use it with a\nbudget suited to large bodies, and resume from what the server already holds.\n\n## Steps\n\n1. Wrap `put_blob` in `client::retry` with a budget of 4 attempts over 60 seconds.\n   - Only connection errors and 5xx retry; a 4xx is the request's fault.\n2. Before each retry, ask the server how many bytes it holds for the blob's\n   digest, and resume from there.\n   - A server without resume support answers 0, and the upload starts over.\n3. Show \"retrying\" on the attachment chip while a retry waits.\n4. After the budget is spent, keep the error the person sees today.\n\n## Shape\n\n```rust\npub async fn upload(blob: &Blob, client: &Client) -> Result<BlobRef, UploadError> {\n    retry(UPLOAD_BUDGET, |attempt| async move {\n        let held = if attempt > 0 { client.held_bytes(&blob.digest).await? } else { 0 };\n        client.put_blob(&blob.digest, blob.bytes_from(held)).await\n    })\n    .await\n}\n```\n\n## Risks\n\n- A resumed upload must hash to the same digest; the server already checks\n  the whole blob's digest before it keeps it, so a bad resume fails loudly.\n- Four attempts on a 50 MB video can take a minute; the chip says so.\n\n## Tests\n\n- A fixture server that drops the connection halfway resumes and keeps the blob.\n- A 403 fails at once, without retrying."
+                  "Starting with the retry wrapper around `put_blob`."
                 ]
               }
             },

@@ -765,7 +765,7 @@ cargo = [
 
 [[suite]]
 name = "tui-set"
-contract = "Every declared world under journeys/sets loads, runs its client on a host it declares, and names only agents it declares or spawns."
+contract = "Every declared world under journeys/sets loads, runs its client on a host it declares, and names only agents it declares or spawns; every plan-mode agent proposes a plan."
 paths = ["crates/tui-set/src", "journeys/sets"]
 recipe = "just test-crate tui-set"
 boundary = "Journeys"
