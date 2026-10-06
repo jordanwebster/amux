@@ -23,8 +23,10 @@ pub enum CatalogueError {
     /// A peer's agent whose catalogue this host has not read yet.
     #[error("this host holds no copy of the agent's catalogue {0}")]
     NotHeld(String),
-    #[error("a catalogue for a host is not served yet")]
-    HostForm,
+    #[error("no provider named {0:?}")]
+    NoProvider(String),
+    #[error("asking the provider what it offers: {0}")]
+    Helper(String),
     #[error("the request names neither an agent nor a host")]
     NoTarget,
     #[error("reading the catalogue: {0}")]
@@ -43,8 +45,8 @@ impl CatalogueError {
     pub fn to_wire(&self) -> wire::Error {
         let code = match self {
             Self::NoAgent | Self::NotOffered | Self::NotHeld(_) => ErrorCode::NotFound,
-            Self::HostForm => ErrorCode::Unimplemented,
-            Self::NoTarget => ErrorCode::InvalidArgument,
+            Self::NoTarget | Self::NoProvider(_) => ErrorCode::InvalidArgument,
+            Self::Helper(_) => ErrorCode::Unavailable,
             Self::Read(_)
             | Self::Decode(_)
             | Self::Mismatch(_)

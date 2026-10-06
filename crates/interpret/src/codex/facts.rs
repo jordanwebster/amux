@@ -11,7 +11,7 @@ use codex_protocol::items::{
 use codex_protocol::server::{
     AccountReadResponse, AutoApprovalReview, BackgroundTerminalsResponse, CommandApprovalParams,
     CommandDecision, Decision as Offered, ElicitationParams, ErrorNotification,
-    McpServerStatusUpdated, ModelListResponse, SkillsListResponse, ThreadResponse,
+    McpServerStatusUpdated, Model, ModelListResponse, SkillsListResponse, ThreadResponse,
     TurnStartResponse,
 };
 use codex_protocol::thread::{
@@ -127,12 +127,16 @@ fn no_content() -> Option<Value> {
     Some(Value::Object(Default::default()))
 }
 
-/// The skills `skills/list` answers, across every folder it lists; a skill
-/// the person turned off is left out.
+/// The skills `skills/list` answers.
 fn skills(result: &Value) -> Vec<OfferedCommand> {
-    let Ok(listed) = codex_protocol::result::<SkillsListResponse>(result) else {
-        return Vec::new();
-    };
+    codex_protocol::result::<SkillsListResponse>(result)
+        .map(offered_skills)
+        .unwrap_or_default()
+}
+
+/// The skills a `skills/list` answer names, across every folder it lists;
+/// a skill the person turned off is left out.
+pub(crate) fn offered_skills(listed: SkillsListResponse) -> Vec<OfferedCommand> {
     listed
         .data
         .into_iter()
@@ -143,6 +147,25 @@ fn skills(result: &Value) -> Vec<OfferedCommand> {
             description: skill.description,
             argument_hint: String::new(),
             source: skill.scope,
+        })
+        .collect()
+}
+
+/// The models a page of `model/list` offers; a hidden one is left out.
+pub(crate) fn offered_models(page: &[Model]) -> Vec<OfferedModel> {
+    page.iter()
+        .filter(|model| !model.hidden)
+        .map(|model| OfferedModel {
+            value: model.id.clone(),
+            display_name: model.display_name.clone(),
+            description: model.description.clone(),
+            efforts: model
+                .supported_reasoning_efforts
+                .iter()
+                .filter_map(|effort| some(effort.reasoning_effort.as_str()))
+                .collect(),
+            default_effort: some(model.default_reasoning_effort.as_str()),
+            resolved_model: model.model.clone(),
         })
         .collect()
 }
@@ -459,20 +482,7 @@ impl State {
             .as_ref()
             .map(|page| page.data.as_slice())
             .unwrap_or_default();
-        listed.extend(data.iter().filter(|model| !model.hidden).map(|model| {
-            OfferedModel {
-                value: model.id.clone(),
-                display_name: model.display_name.clone(),
-                description: model.description.clone(),
-                efforts: model
-                    .supported_reasoning_efforts
-                    .iter()
-                    .filter_map(|effort| some(effort.reasoning_effort.as_str()))
-                    .collect(),
-                default_effort: some(model.default_reasoning_effort.as_str()),
-                resolved_model: model.model.clone(),
-            }
-        }));
+        listed.extend(offered_models(data));
         match page
             .as_ref()
             .and_then(|page| some_of(page.next_cursor.as_deref()))

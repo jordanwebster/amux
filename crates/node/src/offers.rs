@@ -1,0 +1,311 @@
+//! What each provider offers on this host with no agent running, and
+//! whether it is signed in. The daemon holds no provider code: it starts
+//! the hidden helper `amux catalogue <provider>` the way it starts an agent
+//! process, and the helper runs the provider just long enough to ask. One
+//! copy per provider, kept in `providers/<provider>` under the profile, so
+//! it outlives a restart; both Claude kinds share Claude's.
+//!
+//! A copy is asked again when it is old, when it says signed out and a
+//! recheck is due (signing in should show soon), or when the provider's
+//! `--version` prints something else than when it was asked. The version
+//! is read at most once per recheck interval.
+
+use std::collections::HashMap;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::Mutex;
+use std::time::Duration;
+
+use prost::Message as _;
+use wire::{Catalogue, ProviderOffer, ProviderOnHost};
+
+use crate::catalogue::{CatalogueError, catalogue_hash};
+use crate::runtime::{Launch, ProfileRuntime};
+
+/// The profile's directory of host copies, one file per provider. The
+/// helper also runs in it, so a provider sees no project's own commands.
+pub const PROVIDERS: &str = "providers";
+
+/// How long `<provider> --version` may take.
+const VERSION_PATIENCE: Duration = Duration::from_secs(10);
+
+/// A provider a host can be asked about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Provider {
+    Claude,
+    Codex,
+}
+
+impl Provider {
+    pub const ALL: [Self; 2] = [Self::Claude, Self::Codex];
+
+    /// As an agent's kind names its provider.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|provider| provider.name() == name)
+    }
+
+    fn command(self, launch: &Launch) -> &str {
+        match self {
+            Self::Claude => &launch.claude_command,
+            Self::Codex => &launch.codex_command,
+        }
+    }
+}
+
+/// What a provider offers on this host, as last asked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HostCatalogue {
+    /// With its hash.
+    pub catalogue: Catalogue,
+    pub signed_in: bool,
+    /// What `--version` printed when it was asked.
+    pub provider_version: String,
+}
+
+struct Held {
+    offer: HostCatalogue,
+    asked_at_ms: i64,
+    /// When the provider's version was last read and matched.
+    version_read_at_ms: i64,
+}
+
+/// The copies, and one run at a time per provider.
+pub(crate) struct Offers {
+    held: Mutex<HashMap<Provider, Held>>,
+    runs: HashMap<Provider, tokio::sync::Mutex<()>>,
+}
+
+impl Offers {
+    /// The copies the profile kept; an unreadable one is asked again.
+    pub(crate) fn load(profile_dir: &Path) -> Self {
+        let mut held = HashMap::new();
+        for provider in Provider::ALL {
+            let Ok(bytes) = std::fs::read(copy_path(profile_dir, provider)) else {
+                continue;
+            };
+            let Ok(offer) = ProviderOffer::decode(bytes.as_slice()) else {
+                continue;
+            };
+            let asked_at_ms = offer.asked_at_ms;
+            held.insert(
+                provider,
+                Held {
+                    offer: host_catalogue(offer),
+                    asked_at_ms,
+                    version_read_at_ms: i64::MIN,
+                },
+            );
+        }
+        Self {
+            held: Mutex::new(held),
+            runs: Provider::ALL
+                .into_iter()
+                .map(|provider| (provider, tokio::sync::Mutex::new(())))
+                .collect(),
+        }
+    }
+
+    /// Per provider asked, its hash and whether it is signed in: what this
+    /// host's entry in the fleet list says.
+    pub(crate) fn on_host(&self) -> Vec<ProviderOnHost> {
+        let held = self.held.lock().unwrap();
+        Provider::ALL
+            .into_iter()
+            .filter_map(|provider| {
+                let held = held.get(&provider)?;
+                Some(ProviderOnHost {
+                    provider: provider.name().to_owned(),
+                    catalogue: Some(held.offer.catalogue.hash.clone()),
+                    signed_in: held.offer.signed_in,
+                })
+            })
+            .collect()
+    }
+}
+
+fn copy_path(profile_dir: &Path, provider: Provider) -> PathBuf {
+    profile_dir.join(PROVIDERS).join(provider.name())
+}
+
+fn host_catalogue(offer: ProviderOffer) -> HostCatalogue {
+    let mut catalogue = offer.catalogue.unwrap_or_default();
+    catalogue.hash = catalogue_hash(&catalogue);
+    HostCatalogue {
+        catalogue,
+        signed_in: offer.signed_in,
+        provider_version: offer.provider_version,
+    }
+}
+
+impl ProfileRuntime {
+    /// What `provider` offers on this host, from the copy while it holds,
+    /// else from the helper. A failed ask answers with the copy when there
+    /// is one.
+    pub async fn host_catalogue(
+        &self,
+        provider: Provider,
+    ) -> Result<HostCatalogue, CatalogueError> {
+        let offers = self.offers();
+        let _run = offers.runs[&provider].lock().await;
+        let launch = self.launch();
+        let command = provider.command(&launch).to_owned();
+        let now = self.clock_now();
+        let held = {
+            let held = offers.held.lock().unwrap();
+            held.get(&provider).map(|held| {
+                let age = now.saturating_sub(held.asked_at_ms);
+                let current = age < launch.catalogue_max_age_ms
+                    && (held.offer.signed_in || age < launch.catalogue_recheck_ms);
+                let version_due =
+                    now.saturating_sub(held.version_read_at_ms) >= launch.catalogue_recheck_ms;
+                (held.offer.clone(), current, version_due)
+            })
+        };
+        let version = match &held {
+            Some((offer, true, false)) => return Ok(offer.clone()),
+            _ => provider_version(&command, &launch).await,
+        };
+        if let (Some((offer, true, _)), Some(version)) = (&held, &version)
+            && *version == offer.provider_version
+        {
+            if let Some(held) = offers.held.lock().unwrap().get_mut(&provider) {
+                held.version_read_at_ms = now;
+            }
+            return Ok(offer.clone());
+        }
+
+        let asked = match self.ask_provider(provider, &command, &launch).await {
+            Ok(asked) => asked,
+            Err(error) => {
+                tracing::warn!(provider = provider.name(), %error, "asking what the provider offers failed");
+                return match held {
+                    Some((offer, _, _)) => Ok(offer),
+                    None => Err(error),
+                };
+            }
+        };
+        let offer = ProviderOffer {
+            provider_version: version.unwrap_or_default(),
+            asked_at_ms: now,
+            ..asked
+        };
+        let path = copy_path(self.dir(), provider);
+        let bytes = offer.encode_to_vec();
+        tokio::task::spawn_blocking(move || write_copy(&path, &bytes))
+            .await
+            .map_err(|error| CatalogueError::Write(io::Error::other(error)))?
+            .map_err(CatalogueError::Write)?;
+        let answer = host_catalogue(offer);
+        offers.held.lock().unwrap().insert(
+            provider,
+            Held {
+                offer: answer.clone(),
+                asked_at_ms: now,
+                version_read_at_ms: now,
+            },
+        );
+        self.sync_hosts().await;
+        Ok(answer)
+    }
+
+    /// The copy for `provider` as held, asking nothing.
+    pub fn held_host_catalogue(&self, provider: Provider) -> Option<HostCatalogue> {
+        let held = self.offers().held.lock().unwrap();
+        held.get(&provider).map(|held| held.offer.clone())
+    }
+
+    /// Runs `amux catalogue <provider>` in the profile's providers
+    /// directory, in its own process group, and reads what it wrote.
+    async fn ask_provider(
+        &self,
+        provider: Provider,
+        command: &str,
+        launch: &Launch,
+    ) -> Result<ProviderOffer, CatalogueError> {
+        let dir = self.dir().join(PROVIDERS);
+        std::fs::create_dir_all(&dir).map_err(CatalogueError::Write)?;
+        let out = dir.join(format!("{}.asked", provider.name()));
+        let _ = std::fs::remove_file(&out);
+        let mut helper = tokio::process::Command::new(&launch.install_path);
+        helper
+            .arg("catalogue")
+            .arg(provider.name())
+            .arg("--command")
+            .arg(command)
+            .arg("--out")
+            .arg(&out)
+            .envs(&launch.provider_env)
+            .current_dir(&dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(unix)]
+        helper.process_group(0);
+        let child = helper
+            .spawn()
+            .map_err(|error| CatalogueError::Helper(error.to_string()))?;
+        let pid = child.id();
+        let deadline = Duration::from_millis(u64::try_from(launch.start_deadline_ms).unwrap_or(0));
+        let output = match tokio::time::timeout(deadline, child.wait_with_output()).await {
+            Ok(output) => output.map_err(|error| CatalogueError::Helper(error.to_string()))?,
+            Err(_) => {
+                // The provider runs in the helper's group: both go.
+                if let Some(pid) = pid {
+                    crate::runtime::kill_group(pid);
+                }
+                return Err(CatalogueError::Helper(format!(
+                    "asking {} took longer than {}ms",
+                    provider.name(),
+                    launch.start_deadline_ms
+                )));
+            }
+        };
+        if !output.status.success() {
+            return Err(CatalogueError::Helper(
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            ));
+        }
+        let bytes = std::fs::read(&out).map_err(CatalogueError::Read)?;
+        let _ = std::fs::remove_file(&out);
+        ProviderOffer::decode(bytes.as_slice())
+            .map_err(|_| CatalogueError::Decode(out.display().to_string()))
+    }
+}
+
+/// What `<command> --version` prints, as printed; None when it cannot be
+/// read.
+async fn provider_version(command: &str, launch: &Launch) -> Option<String> {
+    let mut probe = tokio::process::Command::new(command);
+    probe
+        .arg("--version")
+        .envs(&launch.provider_env)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(VERSION_PATIENCE, probe.output())
+        .await
+        .ok()?
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// Through a temporary file, so a reader never sees half a copy.
+fn write_copy(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let temporary = path.with_extension("tmp");
+    std::fs::write(&temporary, bytes)?;
+    std::fs::rename(&temporary, path)
+}

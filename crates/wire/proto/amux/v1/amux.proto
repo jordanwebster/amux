@@ -310,6 +310,16 @@ message HostEntry {
   // they were remembered. Cleared when the host is lost; a client that
   // reads every trusted host current has reconciled with its fleet.
   optional bool current = 16;
+  // What each provider offers on the host, once the host has asked it.
+  repeated ProviderOnHost providers = 17;
+}
+
+message ProviderOnHost {
+  // As an agent's kind names its provider: "claude" or "codex".
+  string provider = 1;
+  // The hash GetCatalogue's host form answers with.
+  optional bytes catalogue = 2;
+  bool signed_in = 3;
 }
 
 enum Trust {

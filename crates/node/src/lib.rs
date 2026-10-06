@@ -32,6 +32,7 @@ mod install;
 mod link;
 mod names;
 mod net_error;
+mod offers;
 mod outbox;
 mod pairing;
 mod profiles;
@@ -72,6 +73,7 @@ pub use install::{
 };
 pub use link::{PeerChannel, PeerClient, TRUST_REVOKED};
 pub use names::{assign_name, word_pairs};
+pub use offers::{HostCatalogue, PROVIDERS, Provider};
 pub use outbox::{DrainReport, HttpSender, NoopSender, Push, PushError, PushFuture, PushSender};
 pub use pairing::PairingAdmin;
 pub use pairing::qr::{

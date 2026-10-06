@@ -95,7 +95,7 @@ pub fn answered_version(args: &[String]) -> bool {
     if args.first().map(String::as_str) != Some("--version") {
         return false;
     }
-    println!("{VERSION} (Claude Code)");
+    println!("{} (Claude Code)", crate::scripted_version(VERSION));
     true
 }
 

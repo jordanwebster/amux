@@ -1,6 +1,9 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] session=? model=? model_name=? mode=? context=? tasks=? background=?
 ## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","permission_menus":{"folded":[2],"per_suggestion":[1]},"type":"launch","version":"2.1.283"}}
+effect catalogue e1e7cada models=[] commands=0 permissions=[default,acceptEdits,plan,auto] modes=[]
+snapshot catalogue e1e7cada
+snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] session=? model=? model_name=? mode=? context=? tasks=? background=?
 ## 2 fact {"channel":"agent","json":{"type":"ready"}}
 snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] session=? model=? model_name=? mode=? context=? tasks=? background=?
 ## 3 input {"id":"p1","prompt":{"text":"clean up"}}
@@ -8,10 +11,8 @@ effect reply p1 accepted
 effect terminal prompt "clean up"
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] session=? model=? model_name=? mode=? context=? tasks=? background=?
 ## 4 fact {"channel":"hook","json":{"hook_event_name":"SessionStart","model":"claude-opus-5-5","session_id":"s1","source":"startup","transcript_path":"/t/s1.jsonl"}}
-effect catalogue e1e7cada models=[] commands=0 permissions=[default,acceptEdits,plan,auto] modes=[]
 effect follow "/t/s1.jsonl"
 item boundary:1 boundary final at=1800000000000 text="" BOUNDARY_KIND_STARTED session=s1 version=2.1.283 keymap=claude-2.1
-snapshot catalogue e1e7cada
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 model_name="Opus 5.5" mode=? context=? tasks=? background=?
 ## 5 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","permission_suggestions":[],"tool_input":{"command":"rm -rf build"},"tool_name":"Bash"}}
 snapshot NEEDS_YOU queue=[] working_on=- at=1800000000000 asks=[ask:1->- permission:Bash deny-stops] session=s1 model=claude-opus-5-5 model_name="Opus 5.5" mode=? context=? tasks=? background=?

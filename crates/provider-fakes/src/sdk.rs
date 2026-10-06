@@ -151,6 +151,8 @@ struct Engine {
     tasks: Vec<(String, String)>,
     /// Commands started in the background that have not finished.
     jobs: Vec<Job>,
+    /// Initialize names no account.
+    signed_out: bool,
 }
 
 /// A command Claude runs in the background: it outlives its call and ends
@@ -231,6 +233,7 @@ impl Engine {
             schema: None,
             tasks: Vec::new(),
             jobs: Vec::new(),
+            signed_out: script.signed_out,
         }
     }
 
@@ -490,7 +493,17 @@ impl Engine {
                 "argumentHint": command.argument_hint,
             })).collect::<Vec<_>>(),
             "agents": [],
-            "account": {},
+            // Signed out, Claude leaves out every field but the backend.
+            "account": if self.signed_out {
+                json!({ "apiProvider": "firstParty" })
+            } else {
+                json!({
+                    "email": "fake@example.com",
+                    "subscriptionType": "Claude Max",
+                    "tokenSource": "claude.ai",
+                    "apiProvider": "firstParty",
+                })
+            },
             "models": self.models.iter().map(|model| {
                 let mut offered = json!({
                     "value": model.value,

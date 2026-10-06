@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use store::Store as _;
-use wire::{HostEntry, HostRemoved, Presence, Trust, inventory_event};
+use wire::{HostEntry, HostRemoved, Presence, ProviderOnHost, Trust, inventory_event};
 
 use crate::routing::HostVia;
 use crate::runtime::ProfileRuntime;
@@ -44,8 +44,16 @@ impl ProfileRuntime {
             version: Some(crate::version().to_owned()),
             platform: Some(crate::routing::local_platform().to_owned()),
             current: Some(true),
+            providers: self.offers().on_host(),
             ..HostEntry::default()
         }
+    }
+
+    /// `host`'s entry as last published.
+    pub fn host_entry_of(&self, host: crate::HostId) -> Option<HostEntry> {
+        self.published_hosts()
+            .into_iter()
+            .find(|entry| entry.host_id == host.as_bytes())
     }
 
     /// The host set as last published: what an inventory opening lists.
@@ -93,6 +101,13 @@ impl ProfileRuntime {
                         trust: Trust::Trusted as i32,
                         presence: presence as i32,
                         current: Some(self.host_ready(host)),
+                        providers: self
+                            .peer_providers
+                            .lock()
+                            .unwrap()
+                            .get(host.as_bytes().as_slice())
+                            .cloned()
+                            .unwrap_or_default(),
                         ..HostEntry::default()
                     },
                 );
@@ -161,6 +176,17 @@ impl ProfileRuntime {
             }
         }
         *published = fresh;
+    }
+
+    /// Keeps what a trusted host said its providers offer; true when it
+    /// changed.
+    pub(crate) fn peer_providers_said(&self, host: &[u8], providers: Vec<ProviderOnHost>) -> bool {
+        let mut said = self.peer_providers.lock().unwrap();
+        if said.get(host) == Some(&providers) {
+            return false;
+        }
+        said.insert(host.to_vec(), providers);
+        true
     }
 
     /// Records whether a trusted host's inventory is current on its

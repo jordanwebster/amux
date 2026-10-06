@@ -87,6 +87,14 @@ pub fn mode_from_env() -> Result<Mode, String> {
     }
 }
 
+/// The version the script in [`SCRIPT_ENV`] names, else `own`.
+pub fn scripted_version(own: &str) -> String {
+    std::env::var_os(SCRIPT_ENV)
+        .and_then(|path| Script::load(std::path::Path::new(&path)).ok())
+        .and_then(|script| script.version)
+        .unwrap_or_else(|| own.to_owned())
+}
+
 /// Exit status a fake uses when the host did not do what the recording or
 /// protocol says it must.
 pub const DRIFT_EXIT: i32 = 70;

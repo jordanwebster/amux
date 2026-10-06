@@ -12,7 +12,7 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use prost::Message as _;
-use wire::{AgentParent, AgentSpec, CreateAgentRequest, EffectiveConfig, Input, Kind};
+use wire::{AgentParent, AgentSpec, Catalogue, CreateAgentRequest, EffectiveConfig, Input, Kind};
 
 use crate::runtime::Launch;
 
@@ -142,6 +142,8 @@ pub struct Incarnation<'a> {
     pub created_at_ms: i64,
     pub incarnation: u32,
     pub initial_prompt: Option<Input>,
+    /// What the host's provider offers, for a kind that cannot be asked.
+    pub offered: Option<Catalogue>,
 }
 
 pub fn build(launch: &Launch, at: Incarnation<'_>) -> AgentSpec {
@@ -181,6 +183,7 @@ pub fn build(launch: &Launch, at: Incarnation<'_>) -> AgentSpec {
         created_at_ms: at.created_at_ms,
         incarnation: at.incarnation,
         initial_prompt: at.initial_prompt,
+        offered: at.offered,
     }
 }
 

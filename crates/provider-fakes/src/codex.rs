@@ -47,6 +47,10 @@ pub const VERSION: &str = "0.157.0";
 
 pub fn main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--version") {
+        println!("codex-cli {}", crate::scripted_version(VERSION));
+        return 0;
+    }
     if let Some(thread) = crate::codex_view::resumed_thread(&args) {
         return crate::codex_view::run(thread, crate::codex_view::remote(&args));
     }
@@ -214,6 +218,8 @@ struct Engine {
     chunk_ms: u64,
     /// A form schema the next frame carries, as the script wrote it.
     schema: Option<crate::script::Schema>,
+    /// `account/read` answers no account.
+    signed_out: bool,
 }
 
 impl Engine {
@@ -252,6 +258,7 @@ impl Engine {
             edit_files: script.edit_files,
             chunk_ms: script.chunk_ms,
             schema: None,
+            signed_out: script.signed_out,
         }
     }
 
@@ -450,7 +457,8 @@ impl Engine {
             }
             "turn/start" => {
                 if self.turn.is_some() {
-                    self.refuse(client, &id, -32600, "a turn is already running").await;
+                    self.refuse(client, &id, -32600, "a turn is already running")
+                        .await;
                 } else {
                     self.starts.push_back((client, id, params.clone()));
                 }
@@ -462,7 +470,10 @@ impl Engine {
                         self.respond(client, &id, json!({ "turnId": turn })).await;
                         self.user_message(&turn, params).await;
                     }
-                    _ => self.refuse(client, &id, -32600, "no active turn to steer").await,
+                    _ => {
+                        self.refuse(client, &id, -32600, "no active turn to steer")
+                            .await
+                    }
                 }
             }
             "turn/interrupt" => {
@@ -515,7 +526,12 @@ impl Engine {
                                 .iter()
                                 .map(|effort| json!({ "reasoningEffort": effort, "description": "" }))
                                 .collect::<Vec<_>>(),
-                            "defaultReasoningEffort": model.default_effort,
+                            // Codex always names one.
+                            "defaultReasoningEffort": model
+                                .default_effort
+                                .as_deref()
+                                .or(model.efforts.first().map(String::as_str))
+                                .unwrap_or("medium"),
                             "isDefault": model.value == self.model,
                         })
                     })
@@ -542,10 +558,15 @@ impl Engine {
                 self.respond(client, &id, json!({ "data": [folder] })).await
             }
             "account/read" => {
+                let account = if self.signed_out {
+                    Value::Null
+                } else {
+                    json!({ "type": "chatgpt", "planType": "pro" })
+                };
                 self.respond(
                     client,
                     &id,
-                    json!({ "account": { "type": "chatgpt", "planType": "pro" }, "requiresOpenaiAuth": true }),
+                    json!({ "account": account, "requiresOpenaiAuth": true }),
                 )
                 .await
             }

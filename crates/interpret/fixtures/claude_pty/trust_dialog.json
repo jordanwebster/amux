@@ -122,7 +122,6 @@
       },
       "expect": {
         "effects": [
-          "catalogue e1e7cada models=[] commands=0 permissions=[default,acceptEdits,plan,auto] modes=[]",
           "follow \"/t/s1.jsonl\"",
           "terminal prompt \"look around\""
         ]

@@ -116,6 +116,36 @@ impl ClientApi {
         }
     }
 
+    /// What a provider offers on a host with no agent running: this host
+    /// answers its own, a peer's is forwarded to the peer.
+    async fn host_catalogue(
+        &self,
+        asked: wire::HostProvider,
+        request: wire::GetCatalogueRequest,
+    ) -> Result<Response<wire::Catalogue>, Status> {
+        let runtime = self.runtime()?;
+        let host = host_id(&asked.host_id)?;
+        if host != runtime.host() {
+            if !self.forwards {
+                return Err(status(wire_error(
+                    ErrorCode::InvalidArgument,
+                    "a paired host answers only for its own providers",
+                )));
+            }
+            return forwarded(&runtime, host, |mut client| async move {
+                client.get_catalogue(request).await
+            })
+            .await;
+        }
+        let provider = crate::Provider::from_name(&asked.provider)
+            .ok_or_else(|| status(CatalogueError::NoProvider(asked.provider.clone()).to_wire()))?;
+        runtime
+            .host_catalogue(provider)
+            .await
+            .map(|offered| Response::new(offered.catalogue))
+            .map_err(|error| status(error.to_wire()))
+    }
+
     fn runtime(&self) -> Result<Arc<ProfileRuntime>, Status> {
         self.runtime
             .upgrade()
@@ -497,10 +527,11 @@ impl ClientService for ClientApi {
         &self,
         request: Request<wire::GetCatalogueRequest>,
     ) -> Result<Response<wire::Catalogue>, Status> {
-        let agent_id = match request.into_inner().of {
-            Some(wire::get_catalogue_request::Of::AgentId(agent_id)) => agent_id,
-            Some(wire::get_catalogue_request::Of::Host(_)) => {
-                return Err(status(CatalogueError::HostForm.to_wire()));
+        let request = request.into_inner();
+        let agent_id = match &request.of {
+            Some(wire::get_catalogue_request::Of::AgentId(agent_id)) => agent_id.clone(),
+            Some(wire::get_catalogue_request::Of::Host(asked)) => {
+                return self.host_catalogue(asked.clone(), request).await;
             }
             None => return Err(status(CatalogueError::NoTarget.to_wire())),
         };

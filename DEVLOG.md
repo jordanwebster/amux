@@ -1,3 +1,24 @@
+2026-10-06 — **A host says what its providers offer with no agent running.**
+The daemon holds no provider code, so a hidden helper, `amux catalogue
+<provider>`, runs Claude headless just long enough to answer initialize, or
+Codex's app server just long enough to list its models and skills and read its
+account, and writes what they offer and whether they are signed in. The
+daemon starts it like an agent process, one run per provider at a time, keeps
+the answer per provider under the profile so it outlives a restart, and asks
+again when the copy is half an hour old, when `<provider> --version` prints
+something new (read at most once a minute), or, for a signed-out copy, once a
+minute has passed. `GetCatalogue` answers the host form from it, and a paired
+host forwards a call for its peer's providers. Each host's fleet entry lists
+per provider the copy's hash and whether it is signed in; a paired host
+carries its peer's word for them from the peer's own entry. Terminal Claude,
+which offers nothing a program can read, now offers its host's Claude models
+and commands beside its own unsettable permissions, from the spec, and says so
+at launch rather than at its session start, which Claude only reaches with a
+first prompt. The terminal fake also runs headless, as the real `claude`
+does; the fakes take a scripted version and a signed-out account; and the
+fake Codex no longer sends a null default effort, which the real one never
+does and which made the whole model list unreadable.
+
 2026-10-06 — **Permission and mode are set by value from what the agent offers.**
 A client used to set headless Claude's permission mode by Claude's own name
 and Codex's approval policy and sandbox as a raw pair. Both inputs are gone:

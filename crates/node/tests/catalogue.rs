@@ -224,7 +224,8 @@ async fn an_agent_that_has_offered_nothing_is_not_found() {
         }))
         .await
         .unwrap_err();
-    assert_eq!(host.code(), Code::Unimplemented, "{host:?}");
+    // This host cannot start the helper that would ask its Codex.
+    assert_eq!(host.code(), Code::Unavailable, "{host:?}");
 
     drop((api, runtime));
     daemon.shutdown().await.unwrap();

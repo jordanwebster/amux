@@ -310,6 +310,10 @@ struct Provider {
     /// Launched allowing the never-ask permission.
     #[serde(default)]
     never_ask: bool,
+    /// What the host's Claude offers, from the spec: a terminal offers
+    /// nothing a program can read.
+    #[serde(default, with = "serde_pb::opt_msg")]
+    offered: Option<wire::Catalogue>,
 }
 
 /// A tool call as its transcript rows report it.
@@ -506,6 +510,7 @@ impl State {
             shared: Shared::new(spec, ClaudePty::KIND, producer_version),
             provider: Provider {
                 never_ask: crate::claude_common::allows_never_ask(&spec.provider_args),
+                offered: spec.offered.clone(),
                 ..Provider::default()
             },
             tools: BTreeMap::new(),
@@ -1247,6 +1252,7 @@ impl Interpreter for ClaudePty {
         // The new process's transcript is followed anew, from wherever the
         // agent process last read it.
         state.provider.transcript = None;
+        state.provider.offered = spec.offered.clone();
         state.resume()
     }
 

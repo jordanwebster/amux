@@ -22,7 +22,9 @@
         }
       },
       "expect": {
-        "silent": true
+        "effects": [
+          "catalogue e1e7cada models=[] commands=0 permissions=[default,acceptEdits,plan,auto] modes=[]"
+        ]
       }
     },
     {

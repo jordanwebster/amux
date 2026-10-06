@@ -86,7 +86,7 @@ failed and whether the call took effect is unknown. Codes a client meets often:
 | `PutBlob(PutBlobRequest)` | `BlobRef` | Bytes into an agent's directory |
 | `GetBlob(GetBlobRequest)` | `GetBlobResponse` | Bytes out |
 | `Diff(DiffRequest)` | `Diff` | The changed files on the owning host; the patch, stored as a blob, only when asked |
-| `GetCatalogue(GetCatalogueRequest)` | `Catalogue` | What an agent offers now, by agent id, with its hash |
+| `GetCatalogue(GetCatalogueRequest)` | `Catalogue` | What an agent offers now, by agent id, or a provider on a host with no agent running, with its hash |
 | `ListRepositories` | `ListRepositoriesResponse` | Repositories a host offers to spawn agents in |
 | `Dump(DumpRequest)` | `DumpResponse` | A debug bundle (see [debugging](DEBUGGING.md)) |
 
@@ -450,8 +450,20 @@ catalogues are one. For a paired host's agent the local runtime answers from
 its copy under `replicas/` when it holds the hash its replica names, and
 otherwise asks the origin, checks the hash and keeps the copy, so it answers
 again with the origin away. An agent that has not said what it offers is
-`NOT_FOUND`. The host form, a provider's catalogue on a host with no agent
-running, is `UNIMPLEMENTED` for now.
+`NOT_FOUND`.
+
+The host form names a host and a provider (`claude` or `codex`) and answers
+what that provider offers there with no agent running. The daemon holds no
+provider code: it runs the hidden helper `amux catalogue <provider>`, which
+starts the provider just long enough to ask what it offers and whether it is
+signed in, and keeps the answer per provider under the profile's `providers/`
+folder. It asks again when the copy is half an hour old, when the provider's
+`--version` prints something new (read at most once a minute), and for a copy
+that says signed out once a minute has passed. Both Claude kinds share
+Claude's copy; terminal Claude, which offers nothing a program can read,
+offers its host's Claude models and commands. A paired host's providers are
+asked on that host. A helper that fails answers with the copy when there is
+one, else `UNAVAILABLE`; an unknown provider is `INVALID_ARGUMENT`.
 
 A blob lives as long as its agent's directory. See
 [attachments](ATTACHMENTS.md) for the attachment types and lifetimes.
@@ -477,6 +489,9 @@ row stays small.
 `trust` (`TRUSTED` or `CANDIDATE`), its `presence` (`ONLINE`, `OFFLINE` or
 `AWAY`), how it is reached, and its `generation`, which changes only after an
 unclean reboot of that host (see [the journal and store](JOURNAL_AND_STORE.md)).
+Its `providers` list, per provider the host has been asked about, the hash of
+what that provider offers there and whether it is signed in; a paired host's
+come from that host's own entry.
 
 `AgentRemoved` names a reason when there is one, such as retention or a host
 that stopped listing the agent. A client subscribed to that agent sees its

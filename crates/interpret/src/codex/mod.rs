@@ -286,6 +286,21 @@ fn permission_of(approval: &str, sandbox: &str, reviewer: Option<&str>) -> Optio
         .map(|named| named.value)
 }
 
+/// What Codex offers on a host with no agent running, from its
+/// `model/list` pages and its `skills/list` answer.
+pub fn host_catalogue(
+    models: &[codex_protocol::server::Model],
+    skills: codex_protocol::server::SkillsListResponse,
+) -> wire::Catalogue {
+    wire::Catalogue {
+        hash: Vec::new(),
+        models: facts::offered_models(models),
+        commands: facts::offered_skills(skills),
+        permissions: offered_permissions(),
+        modes: offered_modes(),
+    }
+}
+
 fn offered_permissions() -> Vec<OfferedPermission> {
     PERMISSIONS
         .iter()

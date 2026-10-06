@@ -71,6 +71,22 @@ message AgentSpec {
   // The spawn's prompt, or a parent's message on a parent-driven resume,
   // with its input id; the child seeds its queue from it.
   optional Input initial_prompt = 16;
+  // What the host's provider offers, from the daemon's copy for the host,
+  // for a kind that cannot be asked itself: terminal Claude. Absent when
+  // the host has no copy.
+  optional Catalogue offered = 17;
+}
+
+// What `amux catalogue <provider>` learned by running the provider just
+// long enough to ask. The helper writes it; the daemon keeps it as its copy
+// for the host, stamped with when it was asked.
+message ProviderOffer {
+  // With `hash` empty: the daemon names it.
+  Catalogue catalogue = 1;
+  bool signed_in = 2;
+  // What `<provider> --version` printed, as printed.
+  string provider_version = 3;
+  int64 asked_at_ms = 4;
 }
 
 message EffectiveConfig {

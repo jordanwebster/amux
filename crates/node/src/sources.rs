@@ -986,6 +986,9 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
         match message.of {
             Some(inventory_event::Of::Host(entry)) if entry.host_id == host_bytes => {
                 generation = Some(entry.generation);
+                if let Some(me) = runtime.upgrade() {
+                    me.peer_providers_said(&host_bytes, entry.providers);
+                }
             }
             Some(inventory_event::Of::Agent(agent)) if agent.host_id == host_bytes => {
                 listed.insert(agent.agent_id.clone(), agent);
@@ -1024,6 +1027,13 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
             return true;
         };
         let changed = match message.of {
+            // What its providers offer is said on its own entry.
+            Some(inventory_event::Of::Host(entry)) if entry.host_id == host_bytes => {
+                if me.peer_providers_said(&host_bytes, entry.providers) {
+                    me.sync_hosts().await;
+                }
+                continue;
+            }
             Some(inventory_event::Of::Agent(agent)) if agent.host_id == host_bytes => {
                 let mut store = me.store.lock().await;
                 me.put_replica_row(&mut store, &agent)
@@ -1038,7 +1048,7 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
                 }
             }
             // A generation changes only across a restart, which ends this
-            // stream; a Host entry on it is presence, not a generation.
+            // stream.
             _ => continue,
         };
         if let Err(error) = changed {

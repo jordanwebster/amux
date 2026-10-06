@@ -4069,6 +4069,11 @@ pub struct AgentSpec {
     /// with its input id; the child seeds its queue from it.
     #[prost(message, optional, tag = "16")]
     pub initial_prompt: ::core::option::Option<Input>,
+    /// What the host's provider offers, from the daemon's copy for the host,
+    /// for a kind that cannot be asked itself: terminal Claude. Absent when
+    /// the host has no copy.
+    #[prost(message, optional, tag = "17")]
+    pub offered: ::core::option::Option<Catalogue>,
 }
 impl ::prost::Name for AgentSpec {
     const NAME: &'static str = "AgentSpec";
@@ -4078,6 +4083,32 @@ impl ::prost::Name for AgentSpec {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.AgentSpec".into()
+    }
+}
+/// What `amux catalogue <provider>` learned by running the provider just
+/// long enough to ask. The helper writes it; the daemon keeps it as its copy
+/// for the host, stamped with when it was asked.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ProviderOffer {
+    /// With `hash` empty: the daemon names it.
+    #[prost(message, optional, tag = "1")]
+    pub catalogue: ::core::option::Option<Catalogue>,
+    #[prost(bool, tag = "2")]
+    pub signed_in: bool,
+    /// What `<provider> --version` printed, as printed.
+    #[prost(string, tag = "3")]
+    pub provider_version: ::prost::alloc::string::String,
+    #[prost(int64, tag = "4")]
+    pub asked_at_ms: i64,
+}
+impl ::prost::Name for ProviderOffer {
+    const NAME: &'static str = "ProviderOffer";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.ProviderOffer".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.ProviderOffer".into()
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -4953,14 +4984,14 @@ impl ::prost::Name for PairingIdentity {
 }
 /// Hosts and agent rows: the current set, CaughtUp, then deltas. A listing is
 /// this stream read to CaughtUp.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct InventoryEvent {
     #[prost(oneof = "inventory_event::Of", tags = "1, 2, 3, 4, 100")]
     pub of: ::core::option::Option<inventory_event::Of>,
 }
 /// Nested message and enum types in `InventoryEvent`.
 pub mod inventory_event {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Of {
         #[prost(message, tag = "1")]
         Host(super::HostEntry),
@@ -4987,7 +5018,7 @@ impl ::prost::Name for InventoryEvent {
 /// One host set: every trusted host is in every snapshot whatever its
 /// presence; candidates come and go with discovery. HostRemoved only on
 /// untrust, or when a candidate disappears.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HostEntry {
     #[prost(bytes = "vec", tag = "1")]
     pub host_id: ::prost::alloc::vec::Vec<u8>,
@@ -5029,6 +5060,9 @@ pub struct HostEntry {
     /// reads every trusted host current has reconciled with its fleet.
     #[prost(bool, optional, tag = "16")]
     pub current: ::core::option::Option<bool>,
+    /// What each provider offers on the host, once the host has asked it.
+    #[prost(message, repeated, tag = "17")]
+    pub providers: ::prost::alloc::vec::Vec<ProviderOnHost>,
 }
 impl ::prost::Name for HostEntry {
     const NAME: &'static str = "HostEntry";
@@ -5038,6 +5072,27 @@ impl ::prost::Name for HostEntry {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.HostEntry".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProviderOnHost {
+    /// As an agent's kind names its provider: "claude" or "codex".
+    #[prost(string, tag = "1")]
+    pub provider: ::prost::alloc::string::String,
+    /// The hash GetCatalogue's host form answers with.
+    #[prost(bytes = "vec", optional, tag = "2")]
+    pub catalogue: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bool, tag = "3")]
+    pub signed_in: bool,
+}
+impl ::prost::Name for ProviderOnHost {
+    const NAME: &'static str = "ProviderOnHost";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.ProviderOnHost".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.ProviderOnHost".into()
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

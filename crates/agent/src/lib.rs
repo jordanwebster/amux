@@ -15,6 +15,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod attach;
+pub mod catalogue;
 mod dir;
 mod dump;
 mod git;

@@ -197,6 +197,14 @@ impl Codex {
         self.inner.request(ClientRequest::AccountRead(params)).await
     }
 
+    /// Send any request and read its answer as `R`.
+    pub async fn request<R: serde::de::DeserializeOwned>(
+        &self,
+        request: ClientRequest,
+    ) -> Result<R, Error> {
+        self.inner.request(request).await
+    }
+
     /// Take the receiver for what names no thread. `None` once taken.
     pub fn take_notifications(&self) -> Option<mpsc::Receiver<Event>> {
         self.global_rx.try_lock().ok()?.take()

@@ -183,6 +183,18 @@ enum Command {
     /// Host one agent: the directory holds its lock, specs and sockets.
     #[command(hide = true)]
     Agent { dir: PathBuf },
+    /// Ask a provider what it offers on this host and whether it is signed
+    /// in, and write the answer to a file.
+    #[command(hide = true)]
+    Catalogue {
+        /// "claude" or "codex".
+        provider: String,
+        /// How the provider is started.
+        #[arg(long)]
+        command: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Serve amux's tools over stdio to the agent in the directory.
     #[command(hide = true)]
     Mcp { dir: PathBuf },
@@ -251,6 +263,11 @@ fn main() -> ExitCode {
     };
     match command {
         Command::Agent { dir } => ExitCode::from(agent::main(dir).clamp(0, 255) as u8),
+        Command::Catalogue {
+            provider,
+            command,
+            out,
+        } => ExitCode::from(agent::catalogue::main(&provider, &command, &out).clamp(0, 255) as u8),
         Command::Hooks {
             provider: Hooks::Claude,
         } => {

@@ -307,6 +307,20 @@ fn launch_arg(args: &[String], flag: &str) -> Option<String> {
     })
 }
 
+/// What Claude offers on a host with no agent running, from its initialize
+/// answer. Never-ask is listed: a new agent can be created allowing it.
+pub fn host_catalogue(
+    initialized: &claude_protocol::stream::InitializationResult,
+) -> wire::Catalogue {
+    use crate::claude_common::{auto_models, offered_commands, offered_models, permissions};
+    wire::Catalogue {
+        models: offered_models(&initialized.models),
+        commands: offered_commands(&initialized.commands),
+        permissions: permissions(Some(&auto_models(&initialized.models)), true, true),
+        ..Default::default()
+    }
+}
+
 impl State {
     /// The kind-neutral state: the agent process reads the pending
     /// agent-message set and quiescence from here.

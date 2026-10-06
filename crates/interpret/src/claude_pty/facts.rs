@@ -198,6 +198,38 @@ impl State {
         provider.send_now_refused = send_now_refused;
         provider.relaunched = provider.launches > 0;
         provider.launches += 1;
+        self.publish_catalogue(emit);
+    }
+
+    /// A terminal offers nothing a program can read: its models and
+    /// commands are what the host's Claude offers, and its permissions only
+    /// its own cycle key reaches. Published at launch, since Claude starts
+    /// its session only once a prompt arrives.
+    fn publish_catalogue(&mut self, emit: &mut Emit) {
+        let offered = self.provider.offered.clone().unwrap_or_default();
+        let auto_models = offered
+            .permissions
+            .iter()
+            .find(|permission| permission.value == "auto")
+            .map(|auto| auto.models.clone());
+        let permissions = crate::claude_common::permissions(
+            if offered.permissions.is_empty() {
+                None
+            } else {
+                Some(auto_models.as_deref().unwrap_or_default())
+            },
+            self.provider.never_ask,
+            false,
+        );
+        self.shared.set_catalogue(
+            emit,
+            wire::Catalogue {
+                models: offered.models,
+                commands: offered.commands,
+                permissions,
+                ..Default::default()
+            },
+        );
     }
 
     pub(super) fn exited(&mut self, emit: &mut Emit, cause: String) {
@@ -263,16 +295,6 @@ impl State {
 
     fn session_start(&mut self, emit: &mut Emit, start: &SessionStart) {
         self.shared.provider_started();
-        // A terminal offers nothing a program can read but its permissions,
-        // which only its own cycle key reaches.
-        let permissions = crate::claude_common::permissions(None, self.provider.never_ask, false);
-        self.shared.set_catalogue(
-            emit,
-            wire::Catalogue {
-                permissions,
-                ..Default::default()
-            },
-        );
         self.running.clear();
         // Claude starts its session only once its folder is trusted: No
         // exits.

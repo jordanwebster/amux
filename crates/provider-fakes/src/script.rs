@@ -89,6 +89,14 @@ pub struct Script {
     /// need not exist.
     #[serde(default)]
     pub edit_files: bool,
+    /// The version `--version` prints and the handshake reports; the
+    /// fake's own when unset.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// The provider is signed out of its account: headless Claude's
+    /// initialize answer names no account, Codex's `account/read` none.
+    #[serde(default)]
+    pub signed_out: bool,
 }
 
 /// A tool server as headless Claude reports it.

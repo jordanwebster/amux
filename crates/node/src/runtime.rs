@@ -160,6 +160,12 @@ pub struct Launch {
     pub source_backoff_max_ms: i64,
     /// Where the host looks for Git repositories to offer new agents.
     pub repository_roots: Vec<PathBuf>,
+    /// How old the host's copy of what a provider offers may grow before
+    /// it is asked again.
+    pub catalogue_max_age_ms: i64,
+    /// How often a copy's provider version is read to see whether it
+    /// changed, and how soon a copy that says signed out is asked again.
+    pub catalogue_recheck_ms: i64,
 }
 
 impl Default for Launch {
@@ -191,6 +197,8 @@ impl Default for Launch {
             source_backoff_ms: 1_000,
             source_backoff_max_ms: 30_000,
             repository_roots: Vec::new(),
+            catalogue_max_age_ms: 30 * 60_000,
+            catalogue_recheck_ms: 60_000,
         }
     }
 }
@@ -336,6 +344,11 @@ pub struct ProfileRuntime {
     pub(crate) hosts: Mutex<crate::hosts::HostSet>,
     /// The directories this profile's agents were started in.
     recent: Arc<Mutex<crate::repositories::Recent>>,
+    /// What each provider offers on this host.
+    offers: crate::offers::Offers,
+    /// What each trusted host last said its providers offer, from its own
+    /// entry on its inventory.
+    pub(crate) peer_providers: Mutex<HashMap<Vec<u8>, Vec<wire::ProviderOnHost>>>,
 }
 
 pub(crate) struct AgentHandle {
@@ -525,6 +538,8 @@ impl ProfileRuntime {
             replica_blobs: Mutex::new(None),
             hosts: Mutex::new(crate::hosts::HostSet::new()),
             recent: Arc::new(Mutex::new(crate::repositories::Recent::load(&dir))),
+            offers: crate::offers::Offers::load(&dir),
+            peer_providers: Mutex::new(HashMap::new()),
             dir,
         })
     }
@@ -617,6 +632,10 @@ impl ProfileRuntime {
     /// The profile's directory.
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    pub(crate) fn offers(&self) -> &crate::offers::Offers {
+        &self.offers
     }
 
     pub fn agent_dir(&self, id: AgentId) -> PathBuf {
@@ -780,6 +799,7 @@ impl ProfileRuntime {
         private_dir(&dir)?;
         let launch = self.launch();
         let resolved = spec::resolve(&request);
+        let offered = self.offered_to(kind).await;
         let spec = spec::build(
             &launch,
             spec::Incarnation {
@@ -793,6 +813,7 @@ impl ProfileRuntime {
                 created_at_ms: now,
                 incarnation: 1,
                 initial_prompt: request.initial_prompt.clone(),
+                offered,
             },
         );
         spec::write(&dir, &spec)?;
@@ -902,6 +923,7 @@ impl ProfileRuntime {
             permission: previous.config.as_ref().and_then(|c| c.permission.clone()),
             mode: previous.config.as_ref().and_then(|c| c.mode.clone()),
         };
+        let offered = self.offered_to(spec::kind_from_name(&previous.kind)).await;
         let spec = spec::build(
             &launch,
             spec::Incarnation {
@@ -917,6 +939,7 @@ impl ProfileRuntime {
                 created_at_ms: self.clock.now_ms(),
                 incarnation: next,
                 initial_prompt: prompt,
+                offered,
             },
         );
         spec::write(&dir, &spec)?;
@@ -930,6 +953,18 @@ impl ProfileRuntime {
             store.set_marker(&key, None);
         }
         self.start_process(id, &dir, &launch).await
+    }
+
+    /// What the host's provider offers, for a kind that cannot ask its
+    /// provider itself: terminal Claude takes the host's Claude's.
+    async fn offered_to(&self, kind: Kind) -> Option<wire::Catalogue> {
+        if kind != Kind::ClaudePty {
+            return None;
+        }
+        self.host_catalogue(crate::Provider::Claude)
+            .await
+            .ok()
+            .map(|offered| offered.catalogue)
     }
 
     /// Binds the tools socket, spawns `amux agent <dir>`, and waits for its
@@ -1885,7 +1920,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 #[cfg(unix)]
-fn kill_group(pid: u32) -> bool {
+pub(crate) fn kill_group(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
@@ -1894,7 +1929,7 @@ fn kill_group(pid: u32) -> bool {
 }
 
 #[cfg(not(unix))]
-fn kill_group(pid: u32) -> bool {
+pub(crate) fn kill_group(pid: u32) -> bool {
     std::process::Command::new("taskkill")
         .args(["/F", "/T", "/PID", &pid.to_string()])
         .stdout(std::process::Stdio::null())
