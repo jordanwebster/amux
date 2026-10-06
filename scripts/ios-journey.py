@@ -305,6 +305,9 @@ def send_back(journey: PhoneJourney, card: dict, note: str) -> None:
 
 
 def decide_plan(journey: PhoneJourney, agent: str, headless: bool) -> list[str]:
+    # The fleet under the chat holds an agent whose usage line names the
+    # clock time its limit resets; what is covered is left out of each screen.
+    journey.covered_hidden = True
     journey.launch()
     pair_by_code(journey, "desk")
     agent_id = open_agent(journey, agent)
@@ -394,6 +397,7 @@ def plan_mode(journey: PhoneJourney) -> None:
 
 def decide_plan_codex(journey: PhoneJourney) -> list[str]:
     agent = "planner-codex"
+    journey.covered_hidden = True
     journey.launch()
     pair_by_code(journey, "desk")
     agent_id = open_agent(journey, agent)
