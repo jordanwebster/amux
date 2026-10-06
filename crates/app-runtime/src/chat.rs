@@ -523,9 +523,10 @@ fn moved_on() -> ActOutcome {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ui_state::Msg;
     use wire::{Kind, Phase, SessionEvent, session_event};
+
+    use super::*;
 
     fn snapshot(phase: Phase) -> Msg {
         Msg::Event(SessionEvent {

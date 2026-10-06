@@ -10,7 +10,8 @@ use model::{AgentKey, Connection, InputState, Key, PhaseView, Waiting};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui_view::{
-    Away, ChangeTotals, ComposerView, ContextView, QueuedRow, RefusedPrompt, SentPrompt, SignInView, ToolRows,
+    Away, ChangeTotals, ComposerView, ContextView, QueuedRow, RefusedPrompt, SentPrompt,
+    SignInView, ToolRows,
 };
 use wire::{BlobRef, HostVia, Kind, Presence};
 

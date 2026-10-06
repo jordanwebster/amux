@@ -2017,7 +2017,11 @@ fn prompts_on_their_way_follow_the_sending_rules() {
             .collect::<Vec<_>>(),
         vec![
             (&b"p1"[..], Lands::Feed, Underway::Sending { waiting: true }),
-            (&b"p2"[..], Lands::Queue, Underway::Sending { waiting: true }),
+            (
+                &b"p2"[..],
+                Lands::Queue,
+                Underway::Sending { waiting: true }
+            ),
         ],
         "both wait for the host where they were first drawn"
     );
@@ -2040,7 +2044,11 @@ fn prompts_on_their_way_follow_the_sending_rules() {
             .map(|prompt| (prompt.input_id.as_slice(), prompt.lands, prompt.underway))
             .collect::<Vec<_>>(),
         vec![
-            (&b"p2"[..], Lands::Queue, Underway::Sending { waiting: false }),
+            (
+                &b"p2"[..],
+                Lands::Queue,
+                Underway::Sending { waiting: false }
+            ),
             (&b"p1"[..], Lands::Queue, Underway::MayNotHaveArrived),
         ],
         "caught up, the lost one may not have arrived and waits last"

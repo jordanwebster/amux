@@ -16,8 +16,8 @@ use interpret::codex::{Codex, CodexWith, Drained, Parked};
 use interpret::{Interpreter, Replayed, replay};
 use ui_state::{InputOutcome, Msg, SessionState};
 use ui_view::{
-    ChatOptions, ToolRows, ask_card, chat_rows, chat_rows_for, composer, context, prompts_underway, refused_prompts,
-    overview, queue_rows, settings, sign_in,
+    ChatOptions, ToolRows, ask_card, chat_rows, chat_rows_for, composer, context, overview,
+    prompts_underway, queue_rows, refused_prompts, settings, sign_in,
 };
 use wire::{Kind, SessionEvent, session_event};
 
