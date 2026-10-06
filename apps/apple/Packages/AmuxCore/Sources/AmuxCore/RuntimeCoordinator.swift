@@ -258,13 +258,15 @@ public final class RuntimeCoordinator {
     /// Only the profile on screen lists every agent's source, and only in
     /// front of somebody; only it, of the bound profiles, keeps its relay
     /// link, so one link is live. Every other bound profile is paused before
-    /// the one on screen is resumed.
+    /// the one on screen is resumed. Out of the foreground the open
+    /// profile's chat sessions drop their streams, except a chat that opens.
     private func steer() {
         guard let runtime else { return }
         let onScreen = registry.profile
         for view in profiles {
             runtime.setSourcePolicy(view.id, listed: view.id == onScreen && active)
         }
+        profile?.setForeground(active)
         guard steering == nil else {
             steerAgain = true
             return

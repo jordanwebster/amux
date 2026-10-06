@@ -799,33 +799,42 @@ struct PlusCard: View {
 /// The parts are one run of text that wraps rather than a row of labels that
 /// truncate: at a phone's width three facts side by side each cut to a few
 /// letters, and a fact nobody can read is not shown at all.
+///
+/// A tap opens the overview, which lists what the strip counts.
 struct StripLine: View {
     @Environment(\.design) private var design
     let context: ContextView?
     let overview: Overview
+    let open: () -> Void
 
     var body: some View {
         let parts = ChatWords.strip(context: context, overview: overview)
         if !parts.isEmpty {
-            HStack(spacing: 0) {
-                parts.enumerated().reduce(Text(verbatim: "")) { line, item in
-                    let (index, part) = item
-                    let fact = Text(verbatim: part.text)
-                        .foregroundStyle(part.warn ? design.accent.color : design.inkMuted.color)
-                    guard index > 0 else { return line + fact }
-                    return line + Text(verbatim: " · ").foregroundStyle(design.inkFaint.color) + fact
-                }
-                .designFont(.caption, design)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous), as: .glass)
-            .accessibilityElement(children: .combine)
-            .identified("chat.strip", label: parts.map(\.text).joined(separator: ", "))
+            Button(action: open) { line(parts) }
+                .buttonStyle(.amuxControl)
+                .accessibilityHint("Opens the overview")
+                .identified("chat.strip", label: parts.map(\.text).joined(separator: ", "))
         }
+    }
+
+    private func line(_ parts: [(text: String, warn: Bool)]) -> some View {
+        HStack(spacing: 0) {
+            parts.enumerated().reduce(Text(verbatim: "")) { line, item in
+                let (index, part) = item
+                let fact = Text(verbatim: part.text)
+                    .foregroundStyle(part.warn ? design.accent.color : design.inkMuted.color)
+                guard index > 0 else { return line + fact }
+                return line + Text(verbatim: " · ").foregroundStyle(design.inkFaint.color) + fact
+            }
+            .designFont(.caption, design)
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous), as: .glass)
+        .accessibilityElement(children: .combine)
     }
 }
 

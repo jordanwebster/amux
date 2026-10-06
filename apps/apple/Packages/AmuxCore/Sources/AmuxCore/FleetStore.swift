@@ -2,9 +2,6 @@ import AmuxValues
 import Foundation
 import Observation
 
-/// How long a family has to be quiet before it folds into "Older".
-public let fleetFoldAge: TimeInterval = 24 * 60 * 60
-
 /// One agent as the home screen lists it: the runtime's card, where it sits
 /// in its family, and whether this phone has seen its latest activity.
 public struct AgentRow: Sendable, Equatable, Identifiable {
@@ -29,6 +26,10 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     public var hostName: String { card.host }
     public var hostPresence: Presence { card.hostPresence }
     public var workingDirectory: String { card.cwd }
+    /// The branch its folder is on, when it is on one.
+    public var branch: String? { card.branch }
+    /// What its state calls for, under its name.
+    public var secondLine: SecondLine { row.secondLine }
     /// When the agent's state last changed.
     public var lastActivity: Date { Date(milliseconds: card.phaseSinceMs) }
     /// A kind this build knows how to open.
@@ -60,52 +61,50 @@ public enum Elapsed {
     }
 }
 
-public struct FleetSection: Sendable, Equatable, Identifiable {
-    public enum Kind: String, Sendable, Equatable {
-        case agents
-        case older
-    }
-
-    public var kind: Kind
-    public var title: String
+/// One of home's sections as the runtime groups them: a family sits in
+/// the section of its loudest member.
+public struct HomeSection: Sendable, Equatable, Identifiable {
+    public var kind: SectionKind
+    /// How many families the section holds.
+    public var families: Int
     public var rows: [AgentRow]
     public var folded: Bool
     public var id: String { kind.rawValue }
 
-    public init(kind: Kind, title: String, rows: [AgentRow], folded: Bool) {
+    public init(kind: SectionKind, families: Int, rows: [AgentRow], folded: Bool) {
         self.kind = kind
-        self.title = title
+        self.families = families
         self.rows = rows
         self.folded = folded
     }
+
+    /// Exited is history, rarely opened, so it starts folded.
+    public static func foldedByDefault(_ kind: SectionKind) -> Bool {
+        kind == .exited
+    }
 }
 
-/// The fleet as the home screen draws it.
-///
-/// The runtime ranks it — loudest family first, then the most recently
-/// active — and this keeps that ranking still while somebody is looking at
-/// it: a family that gets louder stays where it is until the list is pulled
-/// or shown again, because a row that jumps as a thumb comes down on it opens
-/// the wrong chat. A family that arrives lands where the ranking puts it,
-/// among the families already on screen.
+/// The fleet as the home screen draws it: the runtime's sections, in the
+/// runtime's order, which every client shares.
 @MainActor
 @Observable
 public final class FleetStore {
     /// Every row on screen, families expanded where asked.
     public private(set) var rows: [AgentRow] = []
-    public private(set) var sections: [FleetSection] = []
+    public private(set) var sections: [HomeSection] = []
     /// Trusted hosts by id, this phone included.
     public private(set) var hosts: [HostId: HostView] = [:]
     /// The family heads whose members are listed under them.
     public private(set) var expanded: Set<[UInt8]> = []
-    /// When the order was last taken from the runtime; ages are read
-    /// against it so a list at rest does not tick.
+    /// The sections opened or folded against their default.
+    public private(set) var flipped: Set<SectionKind> = []
+    /// When the list was last pulled or shown again; ages are read against
+    /// it so a list at rest does not tick.
     public private(set) var orderedAt: Date
     /// The relay link, as the account screens report it.
     public private(set) var relay: RelayLink = .off
 
-    @ObservationIgnored private var ranked: [FleetRow] = []
-    @ObservationIgnored private var order: [AgentKey] = []
+    @ObservationIgnored private var view = FleetView(sections: [])
     @ObservationIgnored private var seen: [AgentKey: Date] = [:]
     @ObservationIgnored private let launched: Date
     @ObservationIgnored private var markedFirstFrame = false
@@ -116,12 +115,11 @@ public final class FleetStore {
     }
 
     /// What the runtime lists now.
-    public func show(_ rows: [FleetRow], hosts views: [HostView]) {
-        ranked = rows
+    public func show(_ view: FleetView, hosts views: [HostView]) {
+        self.view = view
         hosts = Dictionary(
             views.filter(\.trusted).compactMap { view in view.id.map { ($0, view) } },
             uniquingKeysWith: { _, last in last })
-        place()
         rebuild()
         if !markedFirstFrame && !self.rows.isEmpty {
             markedFirstFrame = true
@@ -133,11 +131,18 @@ public final class FleetStore {
         relay = link
     }
 
-    /// Takes the runtime's ranking as it is now.
+    /// The list was pulled or shown again: ages are read from now.
     public func refreshOrder(now: Date) {
         orderedAt = now
-        order = []
-        place()
+    }
+
+    /// Opens a folded section, or folds an open one.
+    public func toggle(_ section: SectionKind) {
+        if flipped.contains(section) {
+            flipped.remove(section)
+        } else {
+            flipped.insert(section)
+        }
         rebuild()
     }
 
@@ -227,48 +232,13 @@ public final class FleetStore {
         return activity > (seen[row.card.agent] ?? launched)
     }
 
-    /// Keeps the families on screen where they are and puts new ones where
-    /// the ranking has them.
-    private func place() {
-        let heads = ranked.filter { $0.depth == 0 }.map(\.card.agent)
-        let current = Set(heads)
-        var placed = order.filter { current.contains($0) }
-        let known = Set(placed)
-        for (index, head) in heads.enumerated() where !known.contains(head) {
-            let ahead = heads[..<index].last { placed.contains($0) }
-            if let ahead, let at = placed.firstIndex(of: ahead) {
-                placed.insert(head, at: at + 1)
-            } else {
-                placed.insert(head, at: 0)
-            }
-        }
-        order = placed
-    }
-
     private func rebuild() {
-        // The runtime lists each family's members after their head.
-        var families: [AgentKey: [FleetRow]] = [:]
-        var head: AgentKey?
-        for row in ranked {
-            if row.depth == 0 { head = row.card.agent }
-            if let head { families[head, default: []].append(row) }
+        sections = view.sections.map { section in
+            HomeSection(
+                kind: section.kind, families: Int(section.families),
+                rows: section.rows.map { AgentRow(row: $0, unread: isUnread($0)) },
+                folded: HomeSection.foldedByDefault(section.kind) != flipped.contains(section.kind))
         }
-        let quiet = orderedAt.addingTimeInterval(-fleetFoldAge)
-        var recent: [AgentRow] = []
-        var older: [AgentRow] = []
-        for key in order {
-            guard let family = families[key], let first = family.first else { continue }
-            let rows = family.map { AgentRow(row: $0, unread: isUnread($0)) }
-            let resting = Date(milliseconds: first.card.phaseSinceMs) <= quiet
-                && first.card.familyAttention != .needsYou
-                && !rows.contains(where: \.unread)
-            if resting { older += rows } else { recent += rows }
-        }
-        rows = recent + older
-        var built = [FleetSection(kind: .agents, title: "Agents", rows: recent, folded: false)]
-        if !older.isEmpty {
-            built.append(FleetSection(kind: .older, title: "Older", rows: older, folded: true))
-        }
-        sections = built
+        rows = sections.flatMap(\.rows)
     }
 }

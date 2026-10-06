@@ -453,7 +453,6 @@
       {"literal": "\"home.row.\\(row.id).age.volatile\"", "context": ".reported(\"home.row.\\(row.id).age.volatile\")", "reason": "Stable driving identifier for a surface a compared screenshot masks, not a displayed label.", "count": 1},
       {"literal": "\"home.row.\\(row.id).detail.volatile\"", "context": ".reported(\"home.row.\\(row.id).detail.volatile\")", "reason": "Stable driving identifier for a surface a compared screenshot masks, not a displayed label.", "count": 1},
       {"literal": "\", \"", "context": "return parts.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 2},
-      {"literal": "\", \"", "context": "let names = section.rows.map(\\.name).joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"chevron.right\"", "context": "Image(systemName: \"chevron.right\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 2},
       {"literal": "\"home.fold.\\(section.id)\"", "context": ".identified(\"home.fold.\\(section.id)\", label: \"\\(title), \\(names)\", value: names)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"home.exceptions\"", "context": ".identified(\"home.exceptions\", label: text, value: text)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -476,7 +475,9 @@
       {"literal": "\"home.family.\\(row.id)\"", "context": "\"home.family.\\(row.id)\", label: said, value: row.expanded ? \"expanded\" : \"folded\")", "reason": "Accessibility identifier a driver reads, not interface copy.", "count": 1},
       {"literal": "\"expanded\"", "context": "\"home.family.\\(row.id)\", label: said, value: row.expanded ? \"expanded\" : \"folded\")", "reason": "State name a driver reads, not interface copy.", "count": 1},
       {"literal": "\"home.pair.\\(host.id?.description ?? host.name)\"", "context": ".identified(\"home.pair.\\(host.id?.description ?? host.name)\", label: \"Pair with \\(host.name)\")", "reason": "Accessibility identifier a driver reads, not interface copy.", "count": 1},
-      {"literal": "\"home.offer.\\(host.id?.description ?? host.name)\"", "context": ".identified(\"home.offer.\\(host.id?.description ?? host.name)\", label: spokenOffer(host), value: \"found\")", "reason": "Accessibility identifier a driver reads, not interface copy.", "count": 1}
+      {"literal": "\"home.offer.\\(host.id?.description ?? host.name)\"", "context": ".identified(\"home.offer.\\(host.id?.description ?? host.name)\", label: spokenOffer(host), value: \"found\")", "reason": "Accessibility identifier a driver reads, not interface copy.", "count": 1},
+      {"literal": "\"home.row.\\(row.id).branch\"", "context": ".reported(\"home.row.\\(row.id).branch\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"home.row.\\(row.id).second\"", "context": ".reported(\"home.row.\\(row.id).second\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift": [
       {"literal": "\"\\(fingerprint.prefix(4))…\\(fingerprint.suffix(4))\"", "context": "return \"\\(fingerprint.prefix(4))…\\(fingerprint.suffix(4))\"", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
@@ -754,7 +755,7 @@
       {"literal": "\"image/jpeg\"", "context": "model?.attach(jpeg, name: \"photo.jpg\", mime: \"image/jpeg\", image: true)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"application/octet-stream\"", "context": "mime: type?.preferredMIMEType ?? \"application/octet-stream\",", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"review.back\"", "context": "BackLink(String(localized: \"Chat\"), identifier: \"review.back\") { router.pop() }", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"review.empty\"", "context": ".identified(\"review.empty\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
+      {"literal": "\"review.empty\"", "context": "Explain(missing).identified(\"review.empty\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Door.swift": [
       {"literal": "\"scroll\"", "context": "case \"scroll\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -1042,7 +1043,6 @@
       {"literal": "\"screen.jpg\"", "context": "static let images: [[UInt8]: Data] = [photo.hash: photoData, Array(\"screen.jpg\".utf8): photoData]", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"/Users/ada/src/amux\"", "context": "name: \"refactor-auth\", host: \"Studio\", directory: \"/Users/ada/src/amux\", presence: .online,", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"/Users/ada/src/amux\"", "context": "name: \"refactor-auth\", host: \"Studio\", directory: \"/Users/ada/src/amux\", presence: .away,", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"chat.changes\"", "context": "chat(\"changes\", readiness: (\"chat.changes\", \"shown\"), chat: {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"review.\\(id)\"", "context": "ComponentExample(id: \"review.\\(id)\", family: .review, canvas: CGSize(width: 390, height: height)) {", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"review.files\"", "context": "ComponentExample(id: \"review.files\", family: .review, canvas: CGSize(width: 390, height: 420)) {", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"patch\"", "context": "patch: BlobRef(hash: [5, 5, 5], name: \"patch\", mime: \"text/x-diff\", size: UInt64(reviewPatch.utf8.count))),", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
@@ -1060,7 +1060,31 @@
       {"literal": "\"crates/amux-ui/src/codes.rs\"", "context": "FileRow(path: \"crates/amux-ui/src/old.rs\", change: .moved(to: \"crates/amux-ui/src/codes.rs\"), added: 0, removed: 0, line: nil),", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"crates/amux-ui/src/unused.rs\"", "context": "FileRow(path: \"crates/amux-ui/src/unused.rs\", change: .deleted, added: 0, removed: 12, line: nil),", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"crates/amux-ui/src/pairing.rs\"", "context": "r(\"c05\", 5, .fileChange(files: [FileRow(path: \"crates/amux-ui/src/pairing.rs\", change: .edited, added: 9, removed: 14, line: nil)], state: .succeeded)),", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"crates/amux-ui/tests/spec/pairing_copy.rs\"", "context": "r(\"c08\", 8, .fileChange(files: [FileRow(path: \"crates/amux-ui/tests/spec/pairing_copy.rs\", change: .created(lines: 38), added: 38, removed: 0, line: nil)], state: .succeeded)),", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
+      {"literal": "\"crates/amux-ui/tests/spec/pairing_copy.rs\"", "context": "r(\"c08\", 8, .fileChange(files: [FileRow(path: \"crates/amux-ui/tests/spec/pairing_copy.rs\", change: .created(lines: 38), added: 38, removed: 0, line: nil)], state: .succeeded)),", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"chat.changes\"", "context": "chat(\"changes\", readiness: (\"chat.changes\", \"Uncommitted\"), chat: {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"Uncommitted\"", "context": "chat(\"changes\", readiness: (\"chat.changes\", \"Uncommitted\"), chat: {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"changes-on-branch\"", "context": "chat(\"changes-on-branch\", readiness: (\"chat.changes\", \"OnBranch\"), chat: {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"chat.changes\"", "context": "chat(\"changes-on-branch\", readiness: (\"chat.changes\", \"OnBranch\"), chat: {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"OnBranch\"", "context": "chat(\"changes-on-branch\", readiness: (\"chat.changes\", \"OnBranch\"), chat: {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"uncommitted\"", "context": "overview(\"uncommitted\") { F.surroundings },", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"overview.\\(id)\"", "context": "id: \"overview.\\(id)\", family: .chat, canvas: CGSize(width: 390, height: 844),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"chat.overview.comparison\"", "context": "readinessIdentifier: \"chat.overview.comparison\", readinessValue: comparison.rawValue", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"main\"", "context": "baseBranch: \"main\", branch: \"refactor-auth\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"README.md\"", "context": "ChangedFile(path: \"README.md\", name: \"README.md\", added: 2, removed: 0, status: .modified, binary: false),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
+      {"literal": "\"crates/amux-ui/src/\"", "context": "Folder(path: \"crates/amux-ui/src/\", files: [", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"crates/amux-ui/src/errors.rs\"", "context": "ChangedFile(path: \"crates/amux-ui/src/errors.rs\", name: \"errors.rs\", added: 20, removed: 0, status: .added, binary: false),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"errors.rs\"", "context": "ChangedFile(path: \"crates/amux-ui/src/errors.rs\", name: \"errors.rs\", added: 20, removed: 0, status: .added, binary: false),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"crates/amux-ui/src/pairing.rs\"", "context": "ChangedFile(path: \"crates/amux-ui/src/pairing.rs\", name: \"pairing.rs\", added: 25, removed: 8, status: .modified, binary: false),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"pairing.rs\"", "context": "ChangedFile(path: \"crates/amux-ui/src/pairing.rs\", name: \"pairing.rs\", added: 25, removed: 8, status: .modified, binary: false),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"crates/amux-ui/src/strip.rs\"", "context": "ChangedFile(path: \"crates/amux-ui/src/strip.rs\", name: \"strip.rs\", added: 0, removed: 12, status: .deleted, binary: false),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"strip.rs\"", "context": "ChangedFile(path: \"crates/amux-ui/src/strip.rs\", name: \"strip.rs\", added: 0, removed: 12, status: .deleted, binary: false),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"docs/\"", "context": "Folder(path: \"docs/\", files: [", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"docs/PAIRING.md\"", "context": "ChangedFile(path: \"docs/PAIRING.md\", name: \"PAIRING.md\", added: 9, removed: 0, status: .added, binary: false),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"PAIRING.md\"", "context": "ChangedFile(path: \"docs/PAIRING.md\", name: \"PAIRING.md\", added: 9, removed: 0, status: .added, binary: false),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"Fable\"", "context": "UsageWindowView(label: .weekly(model: \"Fable\"), usedPercent: 84, state: .nearLimit, resetsAtMs: ms + 4 * 86_400_000),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"The token expired.\"", "context": "failedServers: [ServerView(name: \"github\", error: \"The token expired.\", needsAuth: true)],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"npm run dev -- --port 5173\"", "context": "JobRow(command: \"npm run dev -- --port 5173\", startedAtMs: ms - 14 * 60_000, step: nil),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"cargo watch -x 'test -p amux-ui'\"", "context": "JobRow(command: \"cargo watch -x 'test -p amux-ui'\", startedAtMs: ms - 40_000, step: nil),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift": [
       {"literal": "\"arrow.up.circle\"", "context": "Image(systemName: \"arrow.up.circle\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
@@ -1221,9 +1245,6 @@
       {"literal": "\"detached\"", "context": "value: detached ? \"detached\" : (subject.reachable ? \"live\" : \"away\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"live\"", "context": "value: detached ? \"detached\" : (subject.reachable ? \"live\" : \"away\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"+\\(changes.added)\"", "context": "Text(verbatim: \"+\\(changes.added)\").foregroundStyle(design.added.color)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"−\\(changes.removed)\"", "context": "Text(verbatim: \"−\\(changes.removed)\").foregroundStyle(design.removed.color)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"chat.changes\"", "context": ".identified(\"chat.changes\", label: \"+\\(changes.added) −\\(changes.removed)\", value: \"shown\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"shown\"", "context": ".identified(\"chat.changes\", label: \"+\\(changes.added) −\\(changes.removed)\", value: \"shown\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"doc.on.doc\"", "context": "MenuItem(title: String(localized: \"Copy Address\"), systemImage: \"doc.on.doc\") {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"stop.circle\"", "context": "items.append(MenuItem(title: String(localized: \"Stop Agent\"), systemImage: \"stop.circle\") {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"chat.more\"", "context": "name: String(localized: \"More\"), identifier: \"chat.more\", items: items,", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
@@ -1248,7 +1269,10 @@
       {"literal": "\"chat.rename.confirm\"", "context": "String(localized: \"Rename\"), kind: .primary, id: \"chat.rename.confirm\",", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.delete.cancel\"", "context": "choiceButton(String(localized: \"Cancel\"), kind: .outline, id: \"chat.delete.cancel\", action: cancel)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.delete.confirm\"", "context": "choiceButton(String(localized: \"Delete\"), kind: .destructive, id: \"chat.delete.confirm\", action: confirm)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.place\"", "context": ".identified(\"chat.place\", label: subject.address)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
+      {"literal": "\"chat.place\"", "context": ".identified(\"chat.place\", label: subject.address)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"\\u{2212}\\(changes.removed)\"", "context": "Text(verbatim: \"\\u{2212}\\(changes.removed)\").foregroundStyle(design.removed.color)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"chat.changes\"", "context": "\"chat.changes\", label: \"+\\(changes.added) \\u{2212}\\(changes.removed)\",", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"list.bullet.rectangle\"", "context": "MenuItem(title: String(localized: \"Overview\"), systemImage: \"list.bullet.rectangle\") {", "reason": "SF Symbol name, not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift": [
       {"literal": "\"%.1fs\"", "context": "return String(format: \"%.1fs\", Double(ms) / 1_000)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
@@ -1271,7 +1295,9 @@
       {"literal": "\"read-only\"", "context": "case \"read-only\": String(localized: \"Reads files, asks before any change\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"default\"", "context": "case \"default\": String(localized: \"Works in its folder, asks to go further\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"auto\"", "context": "case \"auto\": String(localized: \"Works in its folder, a reviewer decides when to ask\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"full-access\"", "context": "case \"full-access\": String(localized: \"Never asks, with full access\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
+      {"literal": "\"full-access\"", "context": "case \"full-access\": String(localized: \"Never asks, with full access\")", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"+\\(added)\"", "context": "[added > 0 ? \"+\\(added)\" : nil, removed > 0 ? \"\\u{2212}\\(removed)\" : nil]", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"\\u{2212}\\(removed)\"", "context": "[added > 0 ? \"+\\(added)\" : nil, removed > 0 ? \"\\u{2212}\\(removed)\" : nil]", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/ReviewModel.swift": [
       {"literal": "\"\\(parent)/\\(name)\"", "context": "return parent.isEmpty ? name : \"\\(parent)/\\(name)\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
@@ -1397,6 +1423,22 @@
       {"literal": "\"questionmark.circle\"", "context": "kind: \"question\", glyph: \"questionmark.circle\", accented: resolution == .open,", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"#\"", "context": "ChatWords.firstLine(plan).drop { $0 == \"#\" }.trimmingCharacters(in: .whitespaces)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"square.and.pencil\"", "context": "(\"square.and.pencil\", String(localized: \"Writing\"), file.path,", "reason": "SF Symbol name, not interface copy.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatOverview.swift": [
+      {"literal": "\"chat.overview\"", "context": ".identified(\"chat.overview\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"\\(jobs.count)\"", "context": "SectionHead(title: String(localized: \"Background\"), trailing: \"\\(jobs.count)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"chat.overview.job.\\(index).age.volatile\"", "context": ".reported(\"chat.overview.job.\\(index).age.volatile\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.overview.job.\\(index)\"", "context": ".identified(\"chat.overview.job.\\(index)\", label: job.command, value: ran)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.overview.comparison\"", "context": ".identified(\"chat.overview.comparison\", value: model.comparison.rawValue)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.overview.review\"", "context": ".identified(\"chat.overview.review\", label: String(localized: \"Review changes\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.overview.changes.none\"", "context": ".identified(\"chat.overview.changes.none\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"+\\(file.added)\"", "context": "Text(verbatim: \"+\\(file.added)\").foregroundStyle(design.added.color)", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"\\u{2212}\\(file.removed)\"", "context": "Text(verbatim: \"\\u{2212}\\(file.removed)\").foregroundStyle(design.removed.color)", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"chat.overview.file.\\(file.path)\"", "context": "\"chat.overview.file.\\(file.path)\", label: file.path,", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"\\(servers.count)\"", "context": "SectionHead(title: String(localized: \"Tool servers\"), trailing: \"\\(servers.count)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"chat.overview.server.\\(server.name)\"", "context": ".identified(\"chat.overview.server.\\(server.name)\", label: ChatWords.failed(server))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.overview.usage.\\(index).detail.volatile\"", "context": ".reported(\"chat.overview.usage.\\(index).detail.volatile\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.overview.usage.\\(index)\"", "context": "\"chat.overview.usage.\\(index)\", label: label, value: ChatWords.used(window))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ]
   }
 }

@@ -1,3 +1,21 @@
+2026-10-06 — **The phone draws the shared fleet and what runs around a chat.**
+Home now lists the runtime's sections (Needs you, Running, Exited, with
+Exited folded until opened) in the runtime's order, instead of the phone's
+own "Agents" and "Older" grouping and its held-still ranking. Each row adds
+the agent's branch beside its name and a second line in the words the
+terminal uses: what it asks, the step it runs, what it last said, why it is
+stuck, or why it failed. The state word under it no longer repeats an exit
+cause. A chat's header counts its changes from the frame for the chosen
+comparison ("+42 −7", or "vs main +120 −30"), so opening a chat no longer
+fetches a whole diff to count it; the review page fetches one for that
+comparison when it opens. A new overview sheet, from the chat's menu or its
+facts strip, lists background jobs, the changed files by folder (fetched
+only while it shows, and again when the comparison or totals move), failed
+tool servers and the usage windows near a limit with their reset times. The
+app leaving the foreground now closes the open profile's chat streams. A chat
+opened then, as a notification brings one current, streams until it closes:
+the fleet would otherwise leave that session suspended.
+
 2026-10-06 — **The phone's bridge carries the new facts, and the app builds again.**
 The Swift app had not compiled since the fleet row changed shape. The bridge
 now hands the phone what its screens need: home's sections as one

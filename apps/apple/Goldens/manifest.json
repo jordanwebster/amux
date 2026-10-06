@@ -450,7 +450,15 @@
     },
     {
       "id": "chat.changes",
-      "shows": "A chat offering its working-tree changes for review."
+      "shows": "A chat's header counting its uncommitted changes, the way to their review."
+    },
+    {
+      "id": "chat.changes-on-branch",
+      "shows": "The same header counting everything on the agent's branch against main."
+    },
+    {
+      "id": "overview.uncommitted",
+      "shows": "A chat's overview: two background jobs, the uncommitted changes listed by folder, a tool server that needs signing in and three usage windows."
     },
     {
       "id": "chat.rename",

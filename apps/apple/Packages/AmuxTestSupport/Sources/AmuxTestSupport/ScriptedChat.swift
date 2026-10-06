@@ -10,6 +10,8 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     private var current: ChatFrame
     private var card: AskCard?
     private var facts: Overview
+    /// The changed files the overview lists once it asks for them.
+    private var files: Changes?
     private var offered: SettingsView?
     private var images: [[UInt8]: Data]
     private var pending = ChatChanges(keys: [], reloaded: false, session: false)
@@ -38,6 +40,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
         current = strip.applied(to: frame)
         self.card = card
         facts = strip.overview
+        files = strip.changes
         offered = settings
         self.images = images
     }
@@ -70,6 +73,9 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
         public var permission: String?
         public var context: ContextView?
         public var signIn: SignInView?
+        public var git: GitView?
+        /// What the overview lists once it asks for the changed files.
+        public var changes: Changes?
 
         /// The frame reporting these facts.
         func applied(to frame: ChatFrame) -> ChatFrame {
@@ -79,6 +85,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
             frame.permission = permission
             frame.context = context
             frame.signIn = signIn
+            frame.git = git
             return frame
         }
     }
@@ -86,7 +93,8 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     public static func strip(
         tasks: TasksView? = nil, context: ContextView? = nil, model: String? = nil,
         effort: String? = nil, mode: String? = nil, usage: UsageView? = nil,
-        failedServers: [ServerView] = [], signIn: SignInView? = nil, background: UInt32? = nil
+        failedServers: [ServerView] = [], signIn: SignInView? = nil, background: UInt32? = nil,
+        git: GitView? = nil, changes: Changes? = nil
     ) -> Surroundings {
         let jobs = (0..<(background ?? 0)).map {
             JobRow(command: "job \($0 + 1)", startedAtMs: 0, step: nil)
@@ -95,7 +103,8 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
             overview: Overview(
                 jobs: jobs, failedServers: failedServers, changes: nil, tasks: tasks,
                 usageNearLimit: usage),
-            model: model, effort: effort, permission: mode, context: context, signIn: signIn)
+            model: model, effort: effort, permission: mode, context: context, signIn: signIn,
+            git: git, changes: changes)
     }
 
     public static func row(
@@ -160,6 +169,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
             if let card { self.card = card }
             if let strip {
                 facts = strip.overview
+                files = strip.changes
                 current = strip.applied(to: current)
             }
             if let settings { offered = settings }
@@ -278,5 +288,12 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
             return .failure(RuntimeFailure("the machine could not be asked"))
         }
         return .success(working)
+    }
+
+    public func openOverview(_ comparison: Comparison) async -> Result<Overview, RuntimeFailure> {
+        .success(lock.withLock {
+            facts.changes = files
+            return facts
+        })
     }
 }

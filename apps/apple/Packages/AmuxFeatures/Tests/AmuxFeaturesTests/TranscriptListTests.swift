@@ -120,4 +120,5 @@ private final class StubChat: ChatSource, @unchecked Sendable {
     }
     func blob(_ hash: [UInt8]) -> Data? { nil }
     func review(_ comparison: Comparison) async -> Result<FrozenReview, RuntimeFailure> { .failure(RuntimeFailure("stub")) }
+    func openOverview(_ comparison: Comparison) async -> Result<Overview, RuntimeFailure> { .failure(RuntimeFailure("no")) }
 }

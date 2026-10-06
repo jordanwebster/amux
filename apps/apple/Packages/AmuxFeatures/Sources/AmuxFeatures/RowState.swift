@@ -85,12 +85,12 @@ enum RowState: Equatable {
     /// after its turn.
     static let finished = "finished"
 
-    /// What follows the word, where it says more than the place.
+    /// What follows the word, where it says more than the place. Why an
+    /// agent exited is the row's second line, not this.
     var elaboration: String? {
         switch self {
         case .unsupported: "update amux to open it"
         case .hostAway: "not live"
-        case .exited(let cause): cause.flatMap { $0.isEmpty || $0 == Self.finished ? nil : $0 }
         default: nil
         }
     }
@@ -115,7 +115,7 @@ enum RowState: Equatable {
         case .hostAway(let machine): "\(machine) is away, not live"
         case .unsupported: "Unknown agent, update amux to open it"
         case .exited(let cause) where cause == Self.finished: "Finished"
-        case .exited(let cause): ["Exited", cause].compactMap { $0 }.joined(separator: ", ")
+        case .exited: "Exited"
         case .idle: "Idle"
         }
     }

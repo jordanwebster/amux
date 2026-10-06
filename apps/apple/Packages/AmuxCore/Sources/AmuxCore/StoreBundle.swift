@@ -90,7 +90,7 @@ public final class StoreBundle {
     private func read(hostsMoved: Bool) {
         guard let profile else { return }
         let views = profile.hosts()
-        fleet.show(profile.fleetRows(expanding: Array(fleet.expanded)), hosts: views)
+        fleet.show(profile.fleetView(expanding: Array(fleet.expanded)), hosts: views)
         hosts.show(views)
         if !markedReconciled {
             let trusted = views.filter { $0.trusted && !$0.local }

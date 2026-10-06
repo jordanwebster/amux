@@ -48,7 +48,6 @@ public struct AgentsHome: View {
     private let actions: @MainActor (HomeAction) -> Void
     /// The fold is view state, not fleet state: opening it is a thing this
     /// screen is doing, and coming back to the screen starts it closed again.
-    @State private var foldOpen = false
     /// Whether the account switcher is out. View state for the same reason,
     /// and handed in only so a capture can ask for the panel: which accounts
     /// this phone has is a fact, having the list open is not.
@@ -275,7 +274,7 @@ public struct AgentsHome: View {
 
     // MARK: - The list
 
-    private var sections: [FleetSection] { model.sections }
+    private var sections: [HomeSection] { model.sections }
 
     private var fleet: some View {
         ScrollView {
@@ -285,12 +284,10 @@ public struct AgentsHome: View {
                 }
                 ForEach(sections) { section in
                     VStack(alignment: .leading, spacing: 8) {
-                        if section.kind != .older {
-                            SectionHead(title: section.title)
-                        }
-                        if section.folded && !foldOpen {
+                        if section.folded {
                             fold(section)
                         } else {
+                            SectionHead(title: Self.title(section.kind))
                             RowGroup(items: section.rows, prominence: .subject) { row in
                                 agentRow(row)
                             }
@@ -318,7 +315,8 @@ public struct AgentsHome: View {
     private func agentRow(_ row: AgentRow) -> some View {
         let state = RowState(row: row, host: model.host(row.hostId))
         let content = AgentRowView(
-            row: row, state: state, host: PlaceNames.host(row.hostName), now: model.orderedAt)
+            row: row, state: state, host: PlaceNames.host(row.hostName), now: model.orderedAt,
+            second: FleetWords.secondLine(row.secondLine, kind: row.card.kind, now: model.orderedAt))
         return HStack(spacing: 0) {
             if row.depth > 0 {
                 Rectangle()
@@ -381,7 +379,11 @@ public struct AgentsHome: View {
     /// says it: who, what, where, how long, and what it needs.
     private func spoken(_ row: AgentRow, _ state: RowState) -> String {
         var parts = [row.name]
+        if let branch = row.branch { parts.append(String(localized: "on \(branch)")) }
         if let said = state.spoken { parts.append(said) }
+        if let second = FleetWords.secondLine(row.secondLine, kind: row.card.kind, now: model.orderedAt) {
+            parts.append(second.text)
+        }
         if row.familyNeedsYou && !row.needsYou { parts.append("an agent it started needs you") }
         parts.append([PlaceNames.host(row.hostName), row.workingDirectory]
             .joined(separator: ", "))
@@ -390,11 +392,20 @@ public struct AgentsHome: View {
         return parts.joined(separator: ", ")
     }
 
-    private func fold(_ section: FleetSection) -> some View {
-        let names = section.rows.map(\.name).joined(separator: ", ")
-        let title = "\(section.title) · \(section.rows.count)"
+    /// A section's heading, as every client words it.
+    static func title(_ kind: SectionKind) -> String {
+        switch kind {
+        case .needsYou: String(localized: "Needs you")
+        case .running: String(localized: "Running")
+        case .exited: String(localized: "Exited")
+        }
+    }
+
+    private func fold(_ section: HomeSection) -> some View {
+        let names = section.rows.filter { $0.depth == 0 }.map(\.name).joined(separator: ", ")
+        let title = "\(Self.title(section.kind)) · \(section.families)"
         return Button {
-            foldOpen = true
+            model.toggle(section.kind)
         } label: {
             Surface {
                 HStack(spacing: 10) {
@@ -649,6 +660,8 @@ struct AgentRowView: View {
     let state: RowState
     let host: String?
     let now: Date
+    /// What its state calls for, in words, when there is something to say.
+    let second: (text: String, ink: FleetWords.Ink)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -656,6 +669,15 @@ struct AgentRowView: View {
                 Text(row.name)
                     .designFont(row.unread ? .identifierUnread : .identifier, design)
                     .foregroundStyle(design.ink.color)
+                    .layoutPriority(1)
+                if let branch = row.branch {
+                    Text(verbatim: branch)
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkMuted.color)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .reported("home.row.\(row.id).branch")
+                }
                 Spacer(minLength: 4)
                 Text(row.age(at: now))
                     .designFont(.caption, design)
@@ -663,6 +685,13 @@ struct AgentRowView: View {
                     // An age moves with the clock: a compared screenshot masks it.
                     .reported("home.row.\(row.id).age.volatile")
                 if state.needsYou { NeedsYouDot() }
+            }
+            if let second {
+                Text(verbatim: second.text)
+                    .designFont(.detail, design)
+                    .foregroundStyle(ink(second.ink))
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                    .reported("home.row.\(row.id).second")
             }
             words
         }
@@ -713,6 +742,15 @@ struct AgentRowView: View {
         .designFont(.monoSmall, design)
         .foregroundStyle(state.needsYou ? design.accent.color : design.inkFaint.color)
         .padding(.top, 1)
+    }
+
+    private func ink(_ ink: FleetWords.Ink) -> Color {
+        switch ink {
+        case .ask: design.ink.color
+        case .quiet: design.inkMuted.color
+        case .warning: design.accent.color
+        case .error: design.removed.color
+        }
     }
 
     /// The machine goes on the trailing edge beside a state word, and into

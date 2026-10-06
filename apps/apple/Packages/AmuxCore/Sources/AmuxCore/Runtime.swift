@@ -302,11 +302,6 @@ public final class Profile: @unchecked Sendable {
         }
     }
 
-    /// Every row of home's sections, one section after another.
-    public func fleetRows(expanding: [[UInt8]] = []) -> [FleetRow] {
-        fleetView(expanding: expanding).sections.flatMap(\.rows)
-    }
-
     /// The app leaving (false) or returning to (true) the foreground: every
     /// agent's stream closes, or reopens and catches up.
     public func setForeground(_ foreground: Bool) {

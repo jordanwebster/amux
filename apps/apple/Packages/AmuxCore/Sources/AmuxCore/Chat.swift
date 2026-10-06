@@ -254,6 +254,16 @@ public final class Chat: ChatSource, @unchecked Sendable {
         }
     }
 
+    /// Fetches the files changed for `comparison`, without a patch; the
+    /// overview lists them from then on.
+    public func openOverview(_ comparison: Comparison) async -> Result<Overview, RuntimeFailure> {
+        await act(Overview.self) { live, callback, context in
+            Bridge.json(comparison).withCString {
+                amux_session_open_overview(live, $0, callback, context)
+            }
+        }
+    }
+
     /// Stores an attachment's bytes, answering the reference a draft carries.
     public func putBlob(
         _ data: Data, name: String, mime: String

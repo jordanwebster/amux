@@ -284,13 +284,34 @@ async fn home_and_the_chat_share_one_session_per_live_agent_and_never_subscribe_
     streams.until_closed(b"a").await;
     assert!(held.suspended());
     calls.none().await;
-    fleet.set_foreground(true);
+
+    // Out of the foreground a chat that opens (a notification bringing it
+    // current) streams until it closes, and only it.
+    let opening = tokio::spawn({
+        let fleet = fleet.clone();
+        let window = Window {
+            tail: HELD_ROWS,
+            cap: HELD_ROWS,
+        };
+        async move { fleet.open(&key(b"a"), window).await.map(drop) }
+    });
     let (agent, tail) = streams.answer(&mut calls).await;
     assert_eq!((agent.as_slice(), tail), (&b"a"[..], HELD_ROWS));
     serve(streams.feed(b"a"), 31, tail);
+    opening.await.unwrap().expect("the chat opens");
+    assert!(!held.suspended());
+    calls.none().await;
+    fleet.close(&key(b"a"));
+    streams.until_closed(b"a").await;
+    assert!(held.suspended());
+
+    fleet.set_foreground(true);
+    let (agent, tail) = streams.answer(&mut calls).await;
+    assert_eq!((agent.as_slice(), tail), (&b"a"[..], HELD_ROWS));
+    serve(streams.feed(b"a"), 32, tail);
     until(held.changed(), || held.state().caught_up().then_some(())).await;
     assert!(!held.suspended());
-    assert_eq!(held.state().transcript().head(), Some(31));
+    assert_eq!(held.state().transcript().head(), Some(32));
     assert!(Arc::ptr_eq(&fleet.session(&key(b"a")).unwrap(), &held));
     calls.none().await;
 }

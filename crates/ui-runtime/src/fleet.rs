@@ -229,7 +229,9 @@ impl Inner {
                 fleet.changed.send_replace(());
             }
         }));
-        if !self.foreground.load(Ordering::Acquire) {
+        // A chat opened out of the foreground (a notification bringing it
+        // current) streams; the fleet's own sessions wait for the foreground.
+        if !on_screen && !self.foreground.load(Ordering::Acquire) {
             session.set_foreground(false);
         }
         Ok(session)
@@ -424,6 +426,9 @@ impl Fleet {
                 .page_older(u32::try_from(wanted).unwrap_or(u32::MAX))
                 .await;
         }
+        if !self.inner.foreground.load(Ordering::Acquire) {
+            session.set_foreground(true);
+        }
         Ok(session)
     }
 
@@ -452,12 +457,16 @@ impl Fleet {
         };
         if let Some(session) = narrow {
             session.set_window(HELD_ROWS, HELD_ROWS, false);
+            if !self.inner.foreground.load(Ordering::Acquire) {
+                session.set_foreground(false);
+            }
         }
     }
 
     /// The phone leaving (false) or returning to (true) the foreground:
     /// drops every session's stream, or reopens each with a tail and starts
-    /// the sessions of agents that went live meanwhile.
+    /// the sessions of agents that went live meanwhile. Out of the
+    /// foreground a chat that opens streams until it closes.
     pub fn set_foreground(&self, foreground: bool) {
         let was = self.inner.foreground.swap(foreground, Ordering::AcqRel);
         if was == foreground {

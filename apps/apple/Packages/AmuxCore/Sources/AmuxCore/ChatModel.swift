@@ -36,14 +36,9 @@ public protocol ChatSource: AnyObject, Sendable {
     func putBlob(_ data: Data, name: String, mime: String) async -> Result<BlobRef, RuntimeFailure>
     func blob(_ hash: [UInt8]) -> Data?
     func review(_ comparison: Comparison) async -> Result<FrozenReview, RuntimeFailure>
-}
-
-/// An agent's uncommitted changes as the chat header counts them.
-public struct WorkingChanges: Equatable, Sendable {
-    public var review: FrozenReview
-    public var files: Int
-    public var added: UInt32
-    public var removed: UInt32
+    /// Fetches the files changed for `comparison`; `overview()` lists them
+    /// from then on.
+    func openOverview(_ comparison: Comparison) async -> Result<Overview, RuntimeFailure>
 }
 
 /// One row of the list, held by its key. A cell observes only its own row,
@@ -164,9 +159,13 @@ public final class ChatModel {
     public private(set) var sending = false
     /// What went wrong with the last thing the person did, until the next.
     public private(set) var notice: String?
-    /// The agent's uncommitted changes, when it has any: what the header's
-    /// changes chip counts and the review page opens on.
-    public private(set) var changes: WorkingChanges?
+    /// What the header's totals, the overview's changed files and the
+    /// review count against.
+    public private(set) var comparison: Comparison = .uncommitted
+    /// Whether the overview is on screen: its changed files are fetched only
+    /// then, and again when the comparison or its totals move.
+    @ObservationIgnored private var overviewShown = false
+    @ObservationIgnored private var listed: Listed?
     /// The review being written on this agent's changes, kept while the
     /// chat is open so leaving the page loses no comment.
     public private(set) var reviewing: ReviewModel?
@@ -387,25 +386,67 @@ public final class ChatModel {
         if self.overview != overview { self.overview = overview }
         let settings = source.settings()
         if self.settings != settings { self.settings = settings }
-        if Self.changesMayHaveMoved(from: before, to: frame) { refreshChanges() }
+        if frame?.git != before?.git { listChangedFiles() }
     }
 
-    /// The working tree is asked about once the chat is current, and again
-    /// each time a turn ends, which is when an agent's edits settle.
-    static func changesMayHaveMoved(from before: ChatFrame?, to after: ChatFrame?) -> Bool {
-        guard let after, after.caughtUp else { return false }
-        guard let before, before.caughtUp else { return true }
-        return before.phase == .working && after.phase != .working
+    // MARK: - Changes
+
+    /// The changed files the overview last asked for, and the totals they
+    /// were asked at.
+    private struct Listed: Equatable {
+        var comparison: Comparison
+        var totals: ChangeTotals?
     }
 
-    /// Asks the agent's machine for its working-tree diff again.
-    public func refreshChanges() {
+    /// The agent's totals for the chosen comparison as of its last turn end;
+    /// nil with nothing to count.
+    public var changes: ChangeTotals? {
+        totals(comparison).flatMap { $0.files > 0 || $0.added + $0.removed > 0 ? $0 : nil }
+    }
+
+    /// The branch everything on the agent's branch is counted against.
+    public var base: String? { frame?.git?.baseBranch }
+
+    /// The comparisons there are: everything on the branch only once its
+    /// base is known.
+    public var comparisons: [Comparison] {
+        base == nil ? [.uncommitted] : [.uncommitted, .onBranch]
+    }
+
+    private func totals(_ comparison: Comparison) -> ChangeTotals? {
+        switch comparison {
+        case .uncommitted: frame?.git?.uncommitted
+        case .onBranch: frame?.git?.onBranch
+        }
+    }
+
+    public func compare(_ comparison: Comparison) {
+        guard self.comparison != comparison else { return }
+        self.comparison = comparison
+        listChangedFiles()
+    }
+
+    /// The overview came on screen or left it.
+    public func showOverview(_ shown: Bool) {
+        overviewShown = shown
+        if shown {
+            listed = nil
+            listChangedFiles()
+        }
+    }
+
+    /// Asks the agent's host for the changed files while the overview shows
+    /// them, once per comparison and totals.
+    private func listChangedFiles() {
+        guard overviewShown else { return }
+        let asked = Listed(comparison: comparison, totals: totals(comparison))
+        guard asked != listed else { return }
+        listed = asked
         Task { [weak self] in
-            guard let self, case .success(let review) = await self.source.review(.uncommitted) else { return }
-            let doc = ReviewModel.document(review, comments: [])
-            self.changes = doc.files.isEmpty
-                ? nil
-                : WorkingChanges(review: review, files: doc.files.count, added: doc.added, removed: doc.removed)
+            guard let self, case .success(let overview) = await self.source.openOverview(asked.comparison),
+                  self.comparison == asked.comparison, self.overview != overview
+            else { return }
+            self.overview = overview
         }
     }
 
@@ -680,15 +721,21 @@ public final class ChatModel {
         }
     }
 
-    /// The review page's model for the changes the chip counted: the one
-    /// already being written when it is on the same patch, else a new one.
-    public func review(of changes: WorkingChanges) -> ReviewModel {
-        if let reviewing, reviewing.review.diff.patch?.hash == changes.review.diff.patch?.hash {
-            return reviewing
+    /// The review page's model for the chosen comparison, as the agent's
+    /// host freezes it now: the one already being written when it is on the
+    /// same patch, else a new one. Nil when nothing changed.
+    public func openReview() async -> Result<ReviewModel?, RuntimeFailure> {
+        switch await source.review(comparison) {
+        case .failure(let failure): return .failure(failure)
+        case .success(let frozen):
+            if let reviewing, reviewing.review.diff.patch?.hash == frozen.diff.patch?.hash {
+                return .success(reviewing)
+            }
+            guard !ReviewModel.document(frozen, comments: []).files.isEmpty else { return .success(nil) }
+            let review = ReviewModel(review: frozen)
+            reviewing = review
+            return .success(review)
         }
-        let review = ReviewModel(review: changes.review)
-        reviewing = review
-        return review
     }
 
     /// Puts a written review into the draft as one token, replacing the

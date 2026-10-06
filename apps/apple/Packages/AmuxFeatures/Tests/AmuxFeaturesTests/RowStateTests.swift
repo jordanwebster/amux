@@ -45,7 +45,9 @@ final class RowStateTests: XCTestCase {
         XCTAssertEqual(RowState(row: row(.exited, exitCause: "finished")).word, "Finished")
         XCTAssertNil(RowState(row: row(.exited, exitCause: "finished")).elaboration)
         XCTAssertEqual(RowState(row: row(.exited, exitCause: "code 1")).word, "Exited")
-        XCTAssertEqual(RowState(row: row(.exited, exitCause: "code 1")).elaboration, "code 1")
+        XCTAssertNil(
+            RowState(row: row(.exited, exitCause: "code 1")).elaboration,
+            "why it exited is the second line's to say")
     }
 
     func testNeedingYouSaysSoAndIsTheOnlyMark() {

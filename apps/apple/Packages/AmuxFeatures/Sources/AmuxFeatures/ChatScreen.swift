@@ -88,6 +88,7 @@ public struct ChatScreen: View {
     let actions: (ChatAction) -> Void
     @State private var showing: ChatOverlay?
     @State private var placeOpen = false
+    @State private var overviewOpen = false
     /// Bumped to put the keyboard down.
     @State private var putDown = 0
 
@@ -141,11 +142,20 @@ public struct ChatScreen: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatStanding(
                 model: model, subject: subject, children: family?.children ?? [],
-                descendants: descendants, showing: $showing, putDown: putDown, actions: actions)
+                descendants: descendants, showing: $showing, putDown: putDown,
+                openOverview: { overviewOpen = true }, actions: actions)
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityElement(children: .contain)
         .reported("chat", value: subject.name)
+        .sheet(isPresented: $overviewOpen) {
+            ChatOverview(model: model, now: Date()) {
+                overviewOpen = false
+                actions(.review)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(isPresented: $placeOpen) {
             PlaceSheet(subject: subject)
                 .presentationDetents([.height(280)])
@@ -228,13 +238,18 @@ public struct ChatScreen: View {
                 // spacing, so a long place line loses as little as it can.
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if let changes = model.changes {
+                    let against = model.comparison == .onBranch ? model.base : nil
                     Button {
                         putDown += 1
                         actions(.review)
                     } label: {
                         HStack(spacing: 5) {
+                            if let against {
+                                Text(verbatim: ChatWords.comparison(.onBranch, base: against))
+                                    .foregroundStyle(design.inkMuted.color)
+                            }
                             Text(verbatim: "+\(changes.added)").foregroundStyle(design.added.color)
-                            Text(verbatim: "−\(changes.removed)").foregroundStyle(design.removed.color)
+                            Text(verbatim: "\u{2212}\(changes.removed)").foregroundStyle(design.removed.color)
                         }
                         .designFont(.monoSmall, design)
                         .padding(.horizontal, 12)
@@ -243,9 +258,11 @@ public struct ChatScreen: View {
                     }
                     .buttonStyle(.amuxControl)
                     .accessibilityLabel(ChatWords.changes(
-                        files: changes.files, added: changes.added, removed: changes.removed))
+                        files: Int(changes.files), added: changes.added, removed: changes.removed))
                     .accessibilityHint("Opens the review")
-                    .identified("chat.changes", label: "+\(changes.added) −\(changes.removed)", value: "shown")
+                    .identified(
+                        "chat.changes", label: "+\(changes.added) \u{2212}\(changes.removed)",
+                        value: model.comparison.rawValue)
                 }
                 overflow
             }
@@ -271,6 +288,9 @@ public struct ChatScreen: View {
     private var overflow: some View {
         let running = model.frame.map({ if case .exited = $0.phase { false } else { true } }) ?? false
         var items = [
+            MenuItem(title: String(localized: "Overview"), systemImage: "list.bullet.rectangle") {
+                overviewOpen = true
+            },
             MenuItem(title: String(localized: "Rename"), systemImage: "pencil") { showing = .rename },
             MenuItem(title: String(localized: "Copy Address"), systemImage: "doc.on.doc") {
                 actions(.copyAddress)
@@ -383,13 +403,15 @@ public struct ChatStanding: View {
     let descendants: Int
     @Binding var showing: ChatOverlay?
     let putDown: Int
+    /// Opens what runs around the chat, from the facts strip.
+    let openOverview: () -> Void
     let actions: (ChatAction) -> Void
     @FocusState private var focused: Bool
 
     public init(
         model: ChatModel, subject: ChatSubject, children: [FleetCard] = [], dockExpanded: Bool = false,
         descendants: Int = 0, showing: Binding<ChatOverlay?> = .constant(nil), putDown: Int = 0,
-        actions: @escaping (ChatAction) -> Void = { _ in }
+        openOverview: @escaping () -> Void = {}, actions: @escaping (ChatAction) -> Void = { _ in }
     ) {
         self.model = model
         self.subject = subject
@@ -398,6 +420,7 @@ public struct ChatStanding: View {
         self.descendants = descendants
         _showing = showing
         self.putDown = putDown
+        self.openOverview = openOverview
         self.actions = actions
     }
 
@@ -470,7 +493,9 @@ public struct ChatStanding: View {
     private var composerStack: some View {
         if showing != .plus {
             ChatDock(model: model, children: children, expanded: dockExpanded) { actions(.open($0)) }
-            if let overview = model.overview { StripLine(context: model.frame?.context, overview: overview) }
+            if let overview = model.overview {
+                StripLine(context: model.frame?.context, overview: overview, open: openOverview)
+            }
         }
         let matches = model.slashMatches
         if !matches.isEmpty { SlashRows(commands: matches, codex: model.frame?.kind == .codex, pick: model.pick) }

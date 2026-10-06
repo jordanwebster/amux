@@ -280,15 +280,18 @@ private struct ShellTabBar: View {
     }
 }
 
-/// An agent's uncommitted changes, pushed over its chat from the changes
-/// chip. It reviews the diff the chip counted, which the host froze, and
-/// keeps its comments on the chat so leaving and coming back loses none.
+/// An agent's changes for the comparison its chat has chosen, pushed over
+/// the chat from the changes chip or the overview. It reviews the diff the
+/// host froze as the page opened, and keeps its comments on the chat so
+/// leaving and coming back loses none.
 private struct ChangesPage: View {
     let agent: AgentKey
     let router: Router
     let stores: StoreBundle
     @State private var chat: ChatModel?
     @State private var review: ReviewModel?
+    /// Why there is no review: nothing changed, or the host was not asked.
+    @State private var missing: String?
 
     var body: some View {
         Group {
@@ -306,8 +309,9 @@ private struct ChangesPage: View {
                     Ground()
                     VStack(alignment: .leading, spacing: 14) {
                         BackLink(String(localized: "Chat"), identifier: "review.back") { router.pop() }
-                        Explain(String(localized: "This agent has no uncommitted changes."))
-                            .identified("review.empty")
+                        if let missing {
+                            Explain(missing).identified("review.empty")
+                        }
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 10)
@@ -315,10 +319,17 @@ private struct ChangesPage: View {
                 .toolbar(.hidden, for: .navigationBar)
             }
         }
-        .onAppear {
+        .task {
             guard chat == nil, let model = try? stores.chat(agent) else { return }
             chat = model
-            review = model.changes.map(model.review(of:))
+            switch await model.openReview() {
+            case .success(let opened?): review = opened
+            case .success(nil):
+                missing = model.comparison == .onBranch
+                    ? String(localized: "This agent has no changes on its branch.")
+                    : String(localized: "This agent has no uncommitted changes.")
+            case .failure(let failure): missing = failure.description
+            }
         }
     }
 

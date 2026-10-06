@@ -51,7 +51,7 @@ struct ComponentExample: Identifiable {
 /// row kind, every ask card, the composer's states and the chat's own.
 @MainActor
 enum ComponentCatalog {
-    static let examples: [ComponentExample] = rows + asks + composer + chat + review
+    static let examples: [ComponentExample] = rows + asks + composer + chat + overview + review
 
     static func example(id: String) -> ComponentExample? {
         examples.first { $0.id == id }
@@ -506,11 +506,18 @@ enum ComponentCatalog {
             chat("family", chat: {
                 ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame(phase: .working))
             }, family: F.family),
-            chat("changes", readiness: ("chat.changes", "shown"), chat: {
-                let source = ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame(phase: .idle))
+            chat("changes", readiness: ("chat.changes", "Uncommitted"), chat: {
+                let source = ScriptedChat(
+                    rows: F.conversation, frame: ScriptedChat.frame(phase: .idle),
+                    strip: ScriptedChat.strip(git: F.git))
                 source.working = F.review
                 return source
             }),
+            chat("changes-on-branch", readiness: ("chat.changes", "OnBranch"), chat: {
+                ScriptedChat(
+                    rows: F.conversation, frame: ScriptedChat.frame(phase: .idle),
+                    strip: ScriptedChat.strip(git: F.git))
+            }) { model, _ in model.compare(.onBranch) },
             chat("rename", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .rename),
             chat("delete", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .delete),
             chat("delete-family", chat: {
@@ -524,6 +531,37 @@ enum ComponentCatalog {
             }, showing: .settings),
         ]
     }()
+}
+
+extension ComponentCatalog {
+    // MARK: - Overview
+
+    /// What runs around a chat: background jobs, the changed files by
+    /// folder, a tool server that failed and the usage windows near a limit.
+    fileprivate static let overview: [ComponentExample] = {
+        typealias F = CatalogFixtures
+        return [
+            overview("uncommitted") { F.surroundings },
+        ]
+    }()
+
+    private static func overview(
+        _ id: String, comparison: Comparison = .uncommitted,
+        strip: @escaping @MainActor () -> ScriptedChat.Surroundings
+    ) -> ComponentExample {
+        ComponentExample(
+            id: "overview.\(id)", family: .chat, canvas: CGSize(width: 390, height: 844),
+            readinessIdentifier: "chat.overview.comparison", readinessValue: comparison.rawValue
+        ) {
+            CatalogChat(source: ScriptedChat(
+                rows: CatalogFixtures.conversation, frame: ScriptedChat.frame(phase: .working),
+                strip: strip())
+            ) { model in
+                ChatOverview(model: model, now: CatalogFixtures.now) {}
+                    .onAppear { model.compare(comparison) }
+            }
+        }
+    }
 }
 
 extension ComponentCatalog {
@@ -720,6 +758,49 @@ enum CatalogFixtures {
         +A refused pairing now says why.
 
         """
+
+    /// The catalogue's clock, where a view reads ages and resets against it.
+    static let now = Date(timeIntervalSince1970: 1_790_000_000)
+
+    static let git = GitView(
+        baseBranch: "main", branch: "refactor-auth",
+        onBranch: ChangeTotals(files: 6, added: 120, removed: 30),
+        uncommitted: ChangeTotals(files: 5, added: 56, removed: 20))
+
+    static let changes = Changes(
+        totals: ChangeTotals(files: 5, added: 56, removed: 20),
+        folders: [
+            Folder(path: "", files: [
+                ChangedFile(path: "README.md", name: "README.md", added: 2, removed: 0, status: .modified, binary: false),
+            ]),
+            Folder(path: "crates/amux-ui/src/", files: [
+                ChangedFile(path: "crates/amux-ui/src/errors.rs", name: "errors.rs", added: 20, removed: 0, status: .added, binary: false),
+                ChangedFile(path: "crates/amux-ui/src/pairing.rs", name: "pairing.rs", added: 25, removed: 8, status: .modified, binary: false),
+                ChangedFile(path: "crates/amux-ui/src/strip.rs", name: "strip.rs", added: 0, removed: 12, status: .deleted, binary: false),
+            ]),
+            Folder(path: "docs/", files: [
+                ChangedFile(path: "docs/PAIRING.md", name: "PAIRING.md", added: 9, removed: 0, status: .added, binary: false),
+            ]),
+        ])
+
+    /// A busy chat's surroundings: two jobs, five changed files, a tool
+    /// server that needs signing in and three usage windows.
+    static var surroundings: ScriptedChat.Surroundings {
+        let ms = Int64(now.timeIntervalSince1970 * 1_000)
+        var strip = ScriptedChat.strip(
+            usage: UsageView(blocked: false, windows: [
+                UsageWindowView(label: .fiveHour, usedPercent: 91, state: .nearLimit, resetsAtMs: nil),
+                UsageWindowView(label: .weekly(model: nil), usedPercent: 40, state: .ok, resetsAtMs: ms + 4 * 86_400_000),
+                UsageWindowView(label: .weekly(model: "Fable"), usedPercent: 84, state: .nearLimit, resetsAtMs: ms + 4 * 86_400_000),
+            ], credits: nil),
+            failedServers: [ServerView(name: "github", error: "The token expired.", needsAuth: true)],
+            git: git, changes: changes)
+        strip.overview.jobs = [
+            JobRow(command: "npm run dev -- --port 5173", startedAtMs: ms - 14 * 60_000, step: nil),
+            JobRow(command: "cargo watch -x 'test -p amux-ui'", startedAtMs: ms - 40_000, step: nil),
+        ]
+        return strip
+    }
 
     static let review = FrozenReview(
         diff: Diff(

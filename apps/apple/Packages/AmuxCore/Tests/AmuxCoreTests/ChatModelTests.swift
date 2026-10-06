@@ -28,6 +28,10 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     /// asked for.
     var working: FrozenReview?
     var reviews = 0
+    /// The comparisons the overview asked for its changed files, in order,
+    /// and the files it was told.
+    var listings: [Comparison] = []
+    var files: Changes?
     /// The window's cap while the reader follows, as the session keeps it.
     var cap = Int.max
     /// Where the model last said its reader is, in order.
@@ -162,6 +166,14 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
         reviews += 1
         guard let working else { return .failure(RuntimeFailure("no machine")) }
         return .success(working)
+    }
+
+    func openOverview(_ comparison: Comparison) async -> Result<Overview, RuntimeFailure> {
+        listings.append(comparison)
+        var overview = facts ?? Overview(jobs: [], failedServers: [], changes: nil, tasks: nil, usageNearLimit: nil)
+        overview.changes = files
+        facts = overview
+        return .success(overview)
     }
 }
 
@@ -777,52 +789,100 @@ final class ChatModelTests: XCTestCase {
         XCTAssertNil(model.questionDraft(onAsk: "ask:1"), "gone for good once closed")
     }
 
-    func testTheWorkingTreeIsAskedAboutOnceCurrentAndAgainWhenATurnEnds() async {
-        let source = FakeChat(rows: [row("a", 1)], frame: frame(caughtUp: false))
-        source.working = ReviewFixtures.frozen
-        let model = ChatModel(source: source)
-        await settle()
-        XCTAssertEqual(source.reviews, 0, "nothing is asked before the chat is current")
-        XCTAssertNil(model.changes)
-
-        source.current = frame(phase: .working)
-        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
-        model.woke()
-        await settle()
-        XCTAssertEqual(source.reviews, 1, "caught up: the chip is counted once")
-        XCTAssertEqual(model.changes?.files, 3)
-        XCTAssertEqual(model.changes?.added, 4)
-        XCTAssertEqual(model.changes?.removed, 2)
-
-        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
-        model.woke()
-        await settle()
-        XCTAssertEqual(source.reviews, 1, "a turn still running changes nothing")
-
-        source.current = frame(phase: .idle)
-        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
-        model.woke()
-        await settle()
-        XCTAssertEqual(source.reviews, 2, "the turn ended: the edits settled")
+    private func git(uncommitted: ChangeTotals?, onBranch: ChangeTotals?, base: String? = "main") -> GitView {
+        GitView(baseBranch: base, branch: "fix", onBranch: onBranch, uncommitted: uncommitted)
     }
 
-    func testAnAgentWithNoChangesShowsNoChip() async {
+    func testTheHeaderCountsTheChosenComparisonFromTheFrame() async {
+        var current = frame()
+        current.git = git(
+            uncommitted: ChangeTotals(files: 3, added: 42, removed: 7),
+            onBranch: ChangeTotals(files: 6, added: 120, removed: 30))
+        let source = FakeChat(rows: [row("a", 1)], frame: current)
+        let model = ChatModel(source: source)
+        XCTAssertEqual(model.comparison, .uncommitted)
+        XCTAssertEqual(model.changes, ChangeTotals(files: 3, added: 42, removed: 7))
+        XCTAssertEqual(model.comparisons, [.uncommitted, .onBranch])
+        model.compare(.onBranch)
+        XCTAssertEqual(model.changes, ChangeTotals(files: 6, added: 120, removed: 30))
+        XCTAssertEqual(model.base, "main")
+        await settle()
+        XCTAssertEqual(source.reviews, 0, "the totals come with the frame; nothing is asked")
+        XCTAssertEqual(source.listings, [], "nor are files listed while the overview is not shown")
+    }
+
+    func testNothingToCountShowsNoTotalsAndNoBaseOffersOneComparison() {
+        var current = frame()
+        current.git = git(uncommitted: ChangeTotals(files: 0, added: 0, removed: 0), onBranch: nil, base: nil)
+        let model = ChatModel(source: FakeChat(rows: [row("a", 1)], frame: current))
+        XCTAssertNil(model.changes)
+        XCTAssertEqual(model.comparisons, [.uncommitted])
+    }
+
+    func testTheOverviewListsTheChangedFilesWhileShownAndAgainWhenTheyMove() async {
+        var current = frame()
+        current.git = git(
+            uncommitted: ChangeTotals(files: 1, added: 2, removed: 0),
+            onBranch: ChangeTotals(files: 2, added: 9, removed: 1))
+        let source = FakeChat(rows: [row("a", 1)], frame: current)
+        source.files = Changes(
+            totals: ChangeTotals(files: 1, added: 2, removed: 0),
+            folders: [Folder(path: "", files: [ChangedFile(
+                path: "README.md", name: "README.md", added: 2, removed: 0, status: .modified, binary: false)])])
+        let model = ChatModel(source: source)
+        model.showOverview(true)
+        await settle()
+        XCTAssertEqual(source.listings, [.uncommitted])
+        XCTAssertEqual(model.overview?.changes, source.files)
+
+        // A wake that moves nothing asks nothing again.
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertEqual(source.listings, [.uncommitted])
+
+        // The turn ended with more changed: the totals moved.
+        source.current.git = git(
+            uncommitted: ChangeTotals(files: 2, added: 5, removed: 0),
+            onBranch: ChangeTotals(files: 2, added: 9, removed: 1))
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertEqual(source.listings, [.uncommitted, .uncommitted])
+
+        model.compare(.onBranch)
+        await settle()
+        XCTAssertEqual(source.listings, [.uncommitted, .uncommitted, .onBranch])
+
+        // Off screen, nothing is listed.
+        model.showOverview(false)
+        model.compare(.uncommitted)
+        await settle()
+        XCTAssertEqual(source.listings.count, 3)
+    }
+
+    func testAnAgentWithNoChangesHasNoReview() async {
         let source = FakeChat(rows: [row("a", 1)], frame: frame())
         source.working = FrozenReview(diff: ReviewFixtures.frozen.diff, patch: "")
         let model = ChatModel(source: source)
-        await settle()
-        XCTAssertEqual(source.reviews, 1)
-        XCTAssertNil(model.changes)
+        guard case .success(nil) = await model.openReview() else {
+            return XCTFail("an empty diff has no review")
+        }
+        source.working = nil
+        guard case .failure = await model.openReview() else {
+            return XCTFail("a host that was not asked says so")
+        }
     }
 
     func testAnAttachedReviewIsOneDraftTokenThatSendsWithItsPatch() async {
         let source = FakeChat(rows: [row("a", 1)], frame: frame())
         source.working = ReviewFixtures.frozen
         let model = ChatModel(source: source)
-        await settle()
-        let changes = try! XCTUnwrap(model.changes)
-        let review = model.review(of: changes)
-        XCTAssertTrue(review === model.review(of: changes), "the review being written is kept")
+        guard case .success(let opened?) = await model.openReview(),
+              case .success(let again?) = await model.openReview()
+        else { return XCTFail("the changes have a review") }
+        let review = opened
+        XCTAssertTrue(review === again, "the review being written is kept")
         review.begin(at: ReviewLine(file: 0, hunk: 0, line: 1))
         review.comment("Keep the old name.")
         model.attach(review)

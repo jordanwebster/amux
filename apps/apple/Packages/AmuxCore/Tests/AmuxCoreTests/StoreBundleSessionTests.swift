@@ -53,6 +53,7 @@ final class CaughtUpSession: OpenChat, @unchecked Sendable {
     }
     func blob(_ hash: [UInt8]) -> Data? { nil }
     func review(_ comparison: Comparison) async -> Result<FrozenReview, RuntimeFailure> { .failure(RuntimeFailure("no")) }
+    func openOverview(_ comparison: Comparison) async -> Result<Overview, RuntimeFailure> { .failure(RuntimeFailure("no")) }
 }
 
 @MainActor
@@ -79,7 +80,7 @@ final class StoreBundleSessionTests: XCTestCase {
         let stores = bundle()
         let asking = Cards.key(1)
         stores.fleet.show(
-            [Cards.row(1, "asking", attention: .needsYou), Cards.row(2, "idle"), Cards.row(3, "working", attention: .working)],
+            Cards.view([Cards.row(1, "asking", attention: .needsYou), Cards.row(2, "idle"), Cards.row(3, "working", attention: .working)]),
             hosts: [Cards.host()])
         stores.keepSessions()
         XCTAssertTrue(opened.isEmpty, "a row that needs the person opens no session ahead of a tap")
@@ -91,7 +92,7 @@ final class StoreBundleSessionTests: XCTestCase {
     func testAViewedChatStaysForTheRetentionAndThenCloses() throws {
         let stores = bundle()
         let viewed = Cards.key(2)
-        stores.fleet.show([Cards.row(2, "idle")], hosts: [Cards.host()])
+        stores.fleet.show(Cards.view([Cards.row(2, "idle")]), hosts: [Cards.host()])
         _ = try stores.chat(viewed)
         stores.leave(viewed)
 
@@ -112,7 +113,7 @@ final class StoreBundleSessionTests: XCTestCase {
     func testAViewedChatThatStillNeedsThePersonClosesAfterTheRetention() throws {
         let stores = bundle()
         let asking = Cards.key(1)
-        stores.fleet.show([Cards.row(1, "asking", attention: .needsYou)], hosts: [Cards.host()])
+        stores.fleet.show(Cards.view([Cards.row(1, "asking", attention: .needsYou)]), hosts: [Cards.host()])
         _ = try stores.chat(asking)
         stores.leave(asking)
 
@@ -125,7 +126,7 @@ final class StoreBundleSessionTests: XCTestCase {
     func testAShownChatIsNeverClosedUnderIt() throws {
         let stores = bundle()
         let shown = Cards.key(2)
-        stores.fleet.show([Cards.row(2, "idle")], hosts: [Cards.host()])
+        stores.fleet.show(Cards.view([Cards.row(2, "idle")]), hosts: [Cards.host()])
         _ = try stores.chat(shown)
         clock = Cards.now.addingTimeInterval(3600)
         stores.keepSessions()
@@ -136,7 +137,7 @@ final class StoreBundleSessionTests: XCTestCase {
         current = false
         let stores = bundle()
         let pushed = Cards.key(1)
-        stores.fleet.show([Cards.row(1, "asking", attention: .needsYou)], hosts: [Cards.host()])
+        stores.fleet.show(Cards.view([Cards.row(1, "asking", attention: .needsYou)]), hosts: [Cards.host()])
         let warming = Task { await stores.warm(pushed, within: .seconds(10)) }
         while opened.isEmpty { await Task.yield() }
 

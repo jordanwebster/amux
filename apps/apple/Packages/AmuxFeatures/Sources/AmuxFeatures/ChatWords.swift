@@ -437,11 +437,7 @@ public enum ChatWords {
                 true))
         }
         for server in overview.failedServers {
-            parts.append((
-                server.needsAuth
-                    ? String(localized: "\(server.name) needs sign-in")
-                    : String(localized: "\(server.name) failed to start"),
-                true))
+            parts.append((failed(server), true))
         }
         return parts
     }
@@ -493,6 +489,64 @@ public enum ChatWords {
         case .minutes(let minutes): String(localized: "\(minutes)-minute limit")
         case .named(let name): String(localized: "\(name) limit")
         }
+    }
+
+    /// How full a usage window is: "91% used".
+    public static func used(_ window: UsageWindowView) -> String {
+        String(localized: "\(Int(window.usedPercent.rounded()))% used")
+    }
+
+    /// A usage window's state and when it resets: "near · resets 16:07".
+    /// Nil when there is neither.
+    public static func usageDetail(_ window: UsageWindowView, now: Date) -> String? {
+        let state: String? = switch window.state {
+        case .blocked: String(localized: "reached")
+        case .nearLimit: String(localized: "near")
+        case .ok: String(localized: "fine")
+        case .unknown: nil
+        }
+        let resets = window.resetsAtMs
+            .flatMap { Date(milliseconds: $0) > now ? $0 : nil }
+            .map { String(localized: "resets \(Self.resets($0, now: now))") }
+        let words = [state, resets].compactMap { $0 }
+        return words.isEmpty ? nil : words.joined(separator: " · ")
+    }
+
+    /// When a limit resets: the time of day when it is within the day, else
+    /// the weekday.
+    public static func resets(_ atMs: Int64, now: Date) -> String {
+        let at = Date(milliseconds: atMs)
+        return at.timeIntervalSince(now) < 20 * 3_600
+            ? at.formatted(date: .omitted, time: .shortened)
+            : at.formatted(.dateTime.weekday(.abbreviated))
+    }
+
+    // MARK: - The overview
+
+    /// What the changes are counted against: "Uncommitted", "vs main".
+    public static func comparison(_ comparison: Comparison, base: String?) -> String {
+        switch comparison {
+        case .uncommitted: String(localized: "Uncommitted")
+        case .onBranch: base.map { String(localized: "vs \($0)") } ?? String(localized: "On branch")
+        }
+    }
+
+    /// A file's counts with a zero side left out: "+20", "−12", "+25 −8".
+    public static func counts(added: UInt32, removed: UInt32) -> String {
+        [added > 0 ? "+\(added)" : nil, removed > 0 ? "\u{2212}\(removed)" : nil]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+
+    /// How long a background job has run: "40s", "14m".
+    public static func ran(since startedAtMs: Int64, now: Date) -> String {
+        Elapsed.spelled(max(0, now.timeIntervalSince(Date(milliseconds: startedAtMs))))
+    }
+
+    /// A tool server that failed: "github needs sign-in".
+    public static func failed(_ server: ServerView) -> String {
+        server.needsAuth
+            ? String(localized: "\(server.name) needs sign-in")
+            : String(localized: "\(server.name) failed to start")
     }
 
     /// The model chip: the model by the name the settings card gives it,
