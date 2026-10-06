@@ -1,3 +1,29 @@
+2026-10-06 — **The phone's build gate passes on the changed types.**
+The stand-ins check no longer has a way to mark a row pending: the phone's
+outbox row was the last, and it is now an ordinary row its test plants a
+survivor for. Every component baseline the phone's move to the changed types
+re-recorded, light and dark:
+
+- The fleet and a chat's surroundings: changed `chat-changes`; new
+  `chat-changes-on-branch` and `overview-uncommitted`.
+- Pickers, plans, questions and New Agent: changed `ask-permission-edit`,
+  `ask-plan`, `ask-question-multi`, `ask-question-other`,
+  `ask-question-previews`, `ask-question-secret`, `ask-question-single`,
+  `ask-questions-review`, `ask-questions-step`, `chat-asking`,
+  `chat-conversation`, `chat-delete`, `chat-delete-family`, `chat-detached`,
+  `chat-family`, `chat-new-activity`, `chat-rename`, `chat-settings`,
+  `composer-settings-claude-pty`, `composer-settings-claude-sdk`,
+  `composer-settings-codex`, `composer-strip-claude-sdk`,
+  `composer-strip-trouble`, `row-ask-plan-open`, `row-ask-questions`,
+  `row-run` and `row-run-open-below`; new `ask-plan-codex`,
+  `ask-question-note`, `ask-question-reply`, `ask-question-terminal`,
+  `ask-questions-skipped`, `chat-plan`, `new-agent-codex`,
+  `new-agent-signed-out`, `row-ask-plan-accepting-edits`,
+  `row-ask-questions-replied`, `row-command-allowed-always` and
+  `row-command-allowed-prefix`.
+- Sending: changed `composer-not-confirmed`, `composer-rejected` and
+  `composer-sending`; new `chat-landing` and `chat-landing-waiting`.
+
 2026-10-06 — **The deletion ledger holds the phone's old views gone.**
 The names the phone stopped using once it read the shared views are now
 held gone by the deletion-ledger check: its outbox row and state, the

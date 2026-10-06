@@ -20,7 +20,6 @@ SPEC.loader.exec_module(stand_ins)
 
 # Removed names, split so this file is not itself a hit.
 GATE = "attaches_" "elsewhere"
-OUTBOX = "Outbox" "Row"
 
 # The smallest tree the end state holds on.
 CLEAN = {
@@ -29,7 +28,6 @@ CLEAN = {
     "crates/tui/src/app.rs": 'const WHY: &str = "its terminal is on another machine";\n',
     "crates/tui/src/run.rs": "fn wait() { std::future::pending::<()>(); }\n",
     "crates/ui-view/src/fold.rs": "pub struct Run {\n}\n",
-    "crates/ui-view/src/composer.rs": f"pub struct {OUTBOX};\n",
     "crates/agent/tests/replay/io.jsonl": '{"tool":"mcp__plugin_stripe_stripe__x","model_name":1}\n',
 }
 
@@ -59,7 +57,6 @@ class StandInsCheckTest(unittest.TestCase):
     def test_the_end_state_passes(self):
         code, out = self.check()
         self.assertEqual(code, 0, out)
-        self.assertIn("pending  the phone's outbox row", out)
 
     def test_each_planted_stand_in_fails(self):
         for path, text in [
@@ -73,6 +70,9 @@ class StandInsCheckTest(unittest.TestCase):
             ("crates/tui/src/words.rs", "fn model_" "name(id: &str) {}\n"),
             ("crates/ui-view/src/strip.rs", "pub struct " "Strip {}\n"),
             ("crates/ui-view/src/rows.rs", "pub struct Run" "Info {}\n"),
+            ("crates/ui-view/src/composer.rs", "pub struct Outbox" "Row;\n"),
+            ("apps/apple/Chat.swift", "struct Outbox" "Row {}\n"),
+            ("crates/ui-view/src/composer.rs", "pub fn outbox" "_rows() {}\n"),
             ("crates/ui-view/src/plan.rs", "// plans\n"),
         ]:
             with self.subTest(path=path, text=text):
@@ -91,12 +91,6 @@ class StandInsCheckTest(unittest.TestCase):
                 (self.root / path).unlink()
                 self.assertEqual(self.check()[0], 1)
                 self.write(path, CLEAN[path])
-
-    def test_a_pending_row_with_nothing_left_fails(self):
-        (self.root / "crates/ui-view/src/composer.rs").unlink()
-        code, out = self.check()
-        self.assertEqual(code, 1, out)
-        self.assertIn("drop the row's pending mark", out)
 
 
 if __name__ == "__main__":

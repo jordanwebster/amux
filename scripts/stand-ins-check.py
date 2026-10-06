@@ -9,10 +9,6 @@ kept on purpose and checked as present: the terminal's own syntax
 highlighter, and the notice an agent on another host opens its chat with,
 since attaching to a terminal on another host is not built.
 
-A row may be marked pending while a client still reads the old way. It
-passes while its pattern still finds something, and fails once nothing is
-left, so the mark is dropped in the same change that retires it.
-
 The test suites the client must also pass run in `just ci`, not here.
 Patterns are POSIX extended regular expressions, as `git grep -E` reads them.
 """
@@ -38,8 +34,6 @@ class Row:
     paths: list[str]
     # Absent: the pattern finds nothing. Present: it finds something.
     present: bool = False
-    # Why the row still finds something, while a client reads the old way.
-    pending: str = ""
     # A file that must not exist (absent rows) or must (present rows).
     file: str = ""
 
@@ -107,13 +101,6 @@ def check(root: Path) -> int:
         else:
             found = grep(root, row.pattern, row.paths)
             what = f"/{row.pattern}/ in {' '.join(row.paths)}: {len(found)} hits"
-        if row.pending:
-            if found:
-                print(f"pending  {name}: {what}. Kept while {row.pending}.")
-                continue
-            failed += 1
-            print(f"FAIL     {name}: {what}. Nothing is left: drop the row's pending mark.")
-            continue
         if bool(found) == row.present:
             print(f"ok       {name}: {what}")
             continue
