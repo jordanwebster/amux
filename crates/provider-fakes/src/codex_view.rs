@@ -328,7 +328,10 @@ async fn join(url: &str, thread: &str) -> Result<(Server, Value), String> {
         .await?;
     server.send(&json!({ "method": "initialized" })).await?;
     let answer = server
-        .call("thread/resume", json!({ "threadId": thread }))
+        .call(
+            "thread/resume",
+            json!({ "threadId": thread, "excludeTurns": true }),
+        )
         .await?;
     Ok((server, answer))
 }

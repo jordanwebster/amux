@@ -72,6 +72,7 @@ const REGISTRY: &[SpecEntry] = &[
     entry("two_clients_prompt"),
     entry("two_clients_approval"),
     entry("two_clients_steer"),
+    entry("two_clients_join_fresh"),
 ];
 
 const fn entry(name: &'static str) -> SpecEntry {
@@ -608,6 +609,7 @@ async fn thread_list_and_resume(
             model: config.model,
             approval_policy: config.approval_policy,
             sandbox: config.sandbox,
+            exclude_turns: None,
             extra: Extra::new(),
         })
         .await
@@ -915,7 +917,7 @@ mod tests {
 
     #[test]
     fn registry_names_the_provider_side_of_the_c_suite() {
-        assert_eq!(registry().len(), 29);
+        assert_eq!(registry().len(), 33);
         assert_eq!(registry()[0].name, "initialize_and_start");
         assert_eq!(registry()[9].name, "two_assistant_messages");
         assert!(

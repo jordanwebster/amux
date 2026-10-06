@@ -639,7 +639,7 @@ cargo = [{ package = "qualification", targets = ["claude_sdk_live"], features = 
 
 [[suite]]
 name = "codex-live-compatibility"
-contract = "A real Codex session still initializes, responds, takes a native decision, interrupts and resumes through app-server with the structure its recorded interpreter fixtures show."
+contract = "A real Codex session still initializes, responds, takes a native decision, interrupts and resumes through app-server with the structure its recorded interpreter fixtures show, and Codex's own app attached to a fresh agent prompts it while amux answers the approval."
 paths = ["crates/qualification/tests/codex_live.rs", "crates/qualification/tests/live"]
 recipe = "just live codex all"
 boundary = "Provider adapter"
@@ -649,7 +649,7 @@ substituted = ["amux cloud"]
 time = "real"
 capabilities = ["Unix", "Codex credentials", "network", "may spend provider credits"]
 lane = "qualification"
-evidence = "the printed verdict table; AMUX_LIVE_KEEP=1 keeps the installation under /tmp"
+evidence = "the printed verdict table; attach writes a timed capture of both terminals, a frame per step and its verdict to target/live/codex-attach/; AMUX_LIVE_KEEP=1 keeps the installation under /tmp"
 update = "Capture through codex-probe and graduate the recording deliberately."
 cargo = [{ package = "qualification", targets = ["codex_live"], features = ["bundled", "live"] }]
 

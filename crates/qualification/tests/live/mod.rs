@@ -5,7 +5,8 @@
 //!
 //! Each target runs one provider entry point through five scenarios:
 //! initialization and capabilities, one response, one native decision,
-//! interrupt, and resume. A scenario asserts protocol structure and real
+//! interrupt, and resume. Codex has a sixth, attach: its own app co-driving
+//! the agent beside amux's client, captured terminal by terminal (attach.rs). A scenario asserts protocol structure and real
 //! effects, never generated prose: the item classes, asks, decisions, phase
 //! changes and turn ends the interpreter records have the shape it records
 //! for the matching probe recording, replayed from the interpreter fixture
@@ -14,6 +15,8 @@
 //! Every result is pass, fail, unavailable (no login, no binary, or a
 //! provider older than the corpus) or not_run. With no scenario selected a
 //! target reports not_run for each one and starts nothing.
+
+mod attach;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -65,14 +68,18 @@ pub enum Scenario {
     Decide,
     Interrupt,
     Resume,
+    Attach,
 }
 
-pub const SCENARIOS: [Scenario; 5] = [
+/// Every scenario: the first five each provider entry point runs, then
+/// Codex's own app attached beside amux, which only Codex has.
+pub const SCENARIOS: [Scenario; 6] = [
     Scenario::Initialize,
     Scenario::Respond,
     Scenario::Decide,
     Scenario::Interrupt,
     Scenario::Resume,
+    Scenario::Attach,
 ];
 
 impl Scenario {
@@ -83,6 +90,7 @@ impl Scenario {
             Scenario::Decide => "decide",
             Scenario::Interrupt => "interrupt",
             Scenario::Resume => "resume",
+            Scenario::Attach => "attach",
         }
     }
 }
@@ -99,6 +107,13 @@ pub struct Driver {
 }
 
 impl Driver {
+    fn scenarios(&self) -> &'static [Scenario] {
+        match self.kind {
+            Kind::Codex => &SCENARIOS,
+            _ => &SCENARIOS[..5],
+        }
+    }
+
     fn tag(&self) -> &'static str {
         match self.kind {
             Kind::ClaudePty => "claude_pty",
@@ -169,33 +184,47 @@ pub fn main(driver: Driver) -> ExitCode {
         .filter(|arg| !arg.starts_with('-'))
         .collect();
     let selected: Vec<Scenario> = if names.iter().any(|name| name == "all") {
-        SCENARIOS.to_vec()
+        driver.scenarios().to_vec()
     } else {
-        SCENARIOS
-            .into_iter()
+        driver
+            .scenarios()
+            .iter()
+            .copied()
             .filter(|scenario| names.iter().any(|name| name == scenario.name()))
             .collect()
     };
     for name in &names {
-        if name != "all" && !SCENARIOS.iter().any(|scenario| scenario.name() == name) {
+        if name != "all"
+            && !driver
+                .scenarios()
+                .iter()
+                .any(|scenario| scenario.name() == name)
+        {
             eprintln!(
                 "no {} scenario named {name}; known: all, {}",
                 driver.tag(),
-                SCENARIOS.map(Scenario::name).join(", ")
+                driver
+                    .scenarios()
+                    .iter()
+                    .map(|scenario| scenario.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
         }
     }
     let mut report = Report {
         kind: driver.tag(),
         provider: "not probed".into(),
-        corpus: corpus(&driver, &SCENARIOS).to_string(),
+        corpus: corpus(&driver, driver.scenarios()).to_string(),
         model: "none".into(),
         results: Vec::new(),
     };
     if selected.is_empty() {
-        report.results = SCENARIOS
-            .map(|scenario| (scenario, Verdict::NotRun("no scenario selected".into())))
-            .into();
+        report.results = driver
+            .scenarios()
+            .iter()
+            .map(|scenario| (*scenario, Verdict::NotRun("no scenario selected".into())))
+            .collect();
         report.print();
         return ExitCode::SUCCESS;
     }
@@ -204,16 +233,22 @@ pub fn main(driver: Driver) -> ExitCode {
         .build()
         .expect("a runtime");
     runtime.block_on(run(&driver, &selected, &mut report));
-    for scenario in SCENARIOS {
-        if !selected.contains(&scenario) {
+    for scenario in driver.scenarios() {
+        if !selected.contains(scenario) {
             report
                 .results
-                .push((scenario, Verdict::NotRun("not selected".into())));
+                .push((*scenario, Verdict::NotRun("not selected".into())));
         }
     }
     report
         .results
-        .sort_by_key(|(scenario, _)| SCENARIOS.iter().position(|s| s == scenario));
+        .sort_by_key(|(scenario, _)| driver.scenarios().iter().position(|s| s == scenario));
+    // The attach capture carries its verdict beside it.
+    if let Some((_, verdict)) = report.results.iter().find(|(scenario, verdict)| {
+        *scenario == Scenario::Attach && !matches!(verdict, Verdict::NotRun(_))
+    }) {
+        attach::write_verdict(verdict);
+    }
     report.print();
     if report.failed() {
         ExitCode::FAILURE
@@ -453,7 +488,8 @@ impl Install {
                 .await
                 .map_err(|error| error.to_string())?,
         );
-        let fixtures: Vec<(Scenario, PathBuf)> = SCENARIOS
+        let fixtures: Vec<(Scenario, PathBuf)> = driver
+            .scenarios()
             .iter()
             .map(|scenario| (*scenario, driver.fixture(*scenario)))
             .collect();
@@ -754,6 +790,7 @@ impl Install {
             Scenario::Decide => self.decide().await,
             Scenario::Interrupt => self.interrupt_turn().await,
             Scenario::Resume => self.resume().await,
+            Scenario::Attach => self.attach().await,
         }
     }
 

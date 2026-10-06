@@ -31,6 +31,7 @@ pub const TWO_CLIENTS: &[&str] = &[
     "two_clients_prompt",
     "two_clients_approval",
     "two_clients_steer",
+    "two_clients_join_fresh",
 ];
 
 /// The transport ids the two clients' lines are recorded under.
@@ -57,6 +58,7 @@ pub(super) async fn run(
         "two_clients_prompt" => prompt_and_interrupt(amux, other, model, project).await,
         "two_clients_approval" => approval_answered_elsewhere(amux, other, model, project).await,
         "two_clients_steer" => steers_from_both(amux, other, model, project).await,
+        "two_clients_join_fresh" => join_before_a_turn(amux, other, model, project).await,
         other => Err(format!("unknown two-client specification {other}")),
     }
 }
@@ -85,6 +87,7 @@ async fn start_and_join(
             model: config.model,
             approval_policy: config.approval_policy,
             sandbox: Some(sandbox),
+            exclude_turns: None,
             extra: Extra::new(),
         })
         .await
@@ -93,6 +96,48 @@ async fn start_and_join(
         return Err("the other client joined a different thread".to_owned());
     }
     Ok((thread, joined))
+}
+
+/// amux starts and names a thread and runs no turn. The other client
+/// resumes it as Codex's own app does, without the turns, and is refused:
+/// the app pages them from the history on disk, which a thread has only
+/// after its first turn. amux reads the thread with its turns, which writes
+/// it, and the same resume then joins. No turn runs.
+async fn join_before_a_turn(
+    amux: &Codex,
+    other: &Codex,
+    model: &str,
+    project: &Path,
+) -> Result<ScenarioReport, String> {
+    let config = thread_config(model, project);
+    let thread = amux
+        .start_thread(config)
+        .await
+        .map_err(|error| format!("model {model}: thread/start failed: {error}"))?;
+    amux.rename_thread(thread.id(), THREAD_NAME)
+        .await
+        .map_err(stringify)?;
+    let paged = || ThreadResumeParams {
+        thread_id: thread.id().to_owned(),
+        exclude_turns: Some(true),
+        ..ThreadResumeParams::default()
+    };
+    match other.resume_thread(paged()).await {
+        Ok(_) => return Err("the app's resume joined a thread not yet on disk".to_owned()),
+        Err(error) if error.to_string().contains("missing source rollout") => {}
+        Err(error) => return Err(format!("the app's resume failed otherwise: {error}")),
+    }
+    amux.read_thread(thread.id(), true)
+        .await
+        .map_err(stringify)?;
+    let joined = other
+        .resume_thread(paged())
+        .await
+        .map_err(|error| format!("the app could not join once the thread was read: {error}"))?;
+    if joined.id() != thread.id() {
+        return Err("the other client joined a different thread".to_owned());
+    }
+    Ok(report(&thread))
 }
 
 fn turn(text: &str, client_message_id: String) -> TurnStartParams {

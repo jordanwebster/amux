@@ -857,6 +857,13 @@ pub struct ThreadListResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadReadResponse {
+    pub thread: Thread,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountReadResponse {
     #[serde(default)]

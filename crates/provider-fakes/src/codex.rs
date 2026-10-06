@@ -17,9 +17,13 @@
 //! request; any joined client may answer a request, and all are told when
 //! it is resolved. A client that leaves takes nothing with it: the turn
 //! goes on and its pending request stays open for the others, and one that
-//! joins later is sent the requests still pending. A thread can be resumed
-//! by a second client only once it exists on disk, which for Codex is after
-//! its first turn starts or it is named. Asked to finish (SIGTERM), it
+//! joins later is sent the requests still pending. A second client's resume
+//! must find the thread: a plain resume once it has been named or has run a
+//! turn, and Codex's own app, which resumes without the turns
+//! (`excludeTurns`) and pages them from the history on disk, only once that
+//! history is written. Codex writes it at the first turn, or when a client
+//! reads the loaded thread with its turns (`thread/read` with
+//! `includeTurns`) or resumes it with them. Asked to finish (SIGTERM), it
 //! finishes the running turn and exits, as a stdio server does at the end of
 //! its input.
 
@@ -185,8 +189,11 @@ struct Engine {
     skills: Vec<OfferedCommand>,
     cwd: String,
     thread: Option<String>,
-    /// Whether the thread exists on disk, so another client can resume it.
+    /// Whether a plain resume by another client finds the thread.
     materialized: bool,
+    /// Whether the thread's history is on disk, which a resume without its
+    /// turns needs.
+    persisted: bool,
     name: Option<String>,
     /// The running turn's id.
     turn: Option<String>,
@@ -228,6 +235,7 @@ impl Engine {
                 .unwrap_or_default(),
             thread: None,
             materialized: false,
+            persisted: false,
             name: None,
             turn: None,
             starts: VecDeque::new(),
@@ -426,6 +434,7 @@ impl Engine {
                 self.thread = Some(thread);
                 // A resumed thread was read from disk.
                 self.materialized = method == "thread/resume";
+                self.persisted = self.materialized;
                 let result = if method == "thread/start" {
                     self.thread_result(params)
                 } else {
@@ -465,6 +474,14 @@ impl Engine {
             // Drained by a running turn, held for the next by an idle one;
             // either way nothing is reported.
             "thread/inject_items" => self.respond(client, &id, json!({})).await,
+            // Read with its turns, the loaded thread is written to disk.
+            "thread/read" if self.thread.as_deref() == params["threadId"].as_str() => {
+                if params["includeTurns"] == true {
+                    self.persisted = true;
+                }
+                let thread = self.thread_value();
+                self.respond(client, &id, json!({ "thread": thread })).await;
+            }
             "thread/compact/start" => {
                 self.respond(client, &id, json!({})).await;
                 self.compact().await;
@@ -564,12 +581,11 @@ impl Engine {
         })
     }
 
-    /// Codex answers a resume with the thread's history cursors, and the
-    /// thread as its resume recording has it.
+    /// Codex 0.160.0 answers a resume as it answers a start, with the
+    /// thread's history cursors and its collaboration mode besides.
     fn resume_result(&self, params: &Value) -> Value {
         let mut result = self.thread_result(params);
         let fields = result.as_object_mut().expect("an object");
-        fields.remove("disabledPluginIds");
         for cursor in [
             "initialTurnsPage",
             "itemsBackwardsCursor",
@@ -577,16 +593,17 @@ impl Engine {
         ] {
             fields.insert(cursor.into(), Value::Null);
         }
-        let thread = fields["thread"].as_object_mut().expect("an object");
-        for absent in [
-            "daybreakEnabled",
-            "environments",
-            "model",
-            "originator",
-            "reasoningEffort",
-        ] {
-            thread.remove(absent);
-        }
+        fields.insert(
+            "collaborationMode".into(),
+            json!({
+                "mode": "default",
+                "settings": {
+                    "developer_instructions": null,
+                    "model": self.model,
+                    "reasoning_effort": null,
+                },
+            }),
+        );
         result
     }
 
@@ -604,6 +621,13 @@ impl Engine {
             let message = format!("no rollout found for thread id {asked}");
             return self.refuse(client, id, -32600, &message).await;
         }
+        if params["excludeTurns"] == true && !self.persisted {
+            let message =
+                format!("invalid paginated history lineage for {asked}: missing source rollout");
+            return self.refuse(client, id, -32600, &message).await;
+        }
+        // Resumed with its turns, the thread is written out to give them.
+        self.persisted = true;
         let result = self.resume_result(params);
         self.join_thread(client);
         self.respond(client, id, result).await;
@@ -760,6 +784,7 @@ impl Engine {
         let thread = self.thread_id();
         self.turn = Some(turn.clone());
         self.materialized = true;
+        self.persisted = true;
         self.interrupted = false;
         self.last_message = None;
         if let Some(mode) = params

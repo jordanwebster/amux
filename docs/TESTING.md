@@ -103,6 +103,7 @@ just journey system survive-daemon         # the built binaries' system journey
 just ios unit                              # phone package and app-hosted unit suites
 just ios journey                           # the shared stories on the phone; `-- <story>` for one
 just live claude_sdk all                   # live compatibility for one kind (qualification)
+just live codex attach                     # Codex's own app co-driving a fresh agent; capture in target/live/codex-attach
 just perf                                  # performance qualification (see Performance)
 ```
 

@@ -313,9 +313,12 @@ spec's working directory and model. The thread id the server answers with is wri
 `private/provider-session`. Straight after, the interpreter names the thread
 with the agent's name (`thread/name/set`), and names it again when the agent
 is renamed: the daemon tells a running Codex agent with a rename input, and a
-resumed agent's spec carries its current name. A thread that has not run a
-turn has nothing on disk and cannot be joined by another client until it is
-named; named, it can, and Codex's own app shows the name amux does. Every message the server sends the agent is a fact; the
+resumed agent's spec carries its current name, so Codex's own app shows the
+name amux does. A thread that has not run a turn has nothing on disk, and
+Codex's own app, which resumes from what is on disk, cannot attach to it;
+naming does not change that. When the thread has no turns the interpreter
+also reads it with its turns (`thread/read`), which has Codex write it, so
+the app can attach before the first turn. Every message the server sends the agent is a fact; the
 interpreter writes every request after the handshake with ids of its own
 (`amux-<n>`). A turn whose prompt carries attachments has them appended to
 its input: an image as a local image at its blob's path, anything else as the
@@ -537,6 +540,7 @@ the system.
 | Lifecycle | `just test-crate agent -- --test lifecycle` | Grace, drain, abort, kill, a failed journal write and a provider exit, with every deadline driven by the test's clock |
 | Raw attach | `just test-crate agent -- --test attach` | Two clients share terminal Claude's one terminal; each Codex client gets its own view |
 | Codex attach | `just test-crate amux -- --test codex_attach` | Codex's own app joins a fresh agent's server; its prompt shows in amux's chat, and an approval is answered from amux, then from the app |
+| Codex attach, live | `just live codex attach` | The same against the real Codex, from amux's client and Codex's app in two terminals: a timed capture of each (`app.cast`, `amux.cast`, raw bytes), a text frame of both per step and a verdict, in `target/live/codex-attach/` |
 | Codex thread name | `just test-crate agent -- --test codex_thread_name` | The thread is named after the agent at start and on rename |
 | Dump | `just test-crate agent -- --test dump` | The dump part carries no planted secret |
 | Tool server | `just test-crate agent -- --test tools` | Tool calls reach a stand-in daemon on `tools.sock`, retry across an update window, and come back as the items the interpreter draws |

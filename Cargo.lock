@@ -3181,6 +3181,7 @@ version = "0.1.0"
 dependencies = [
  "agent-dir",
  "anyhow",
+ "bytes",
  "chrono",
  "hyper-util",
  "interpret",
@@ -3188,6 +3189,7 @@ dependencies = [
  "node",
  "prost",
  "provider-fakes",
+ "pty-host",
  "serde",
  "serde_json",
  "store",
@@ -3199,6 +3201,7 @@ dependencies = [
  "tower",
  "ui-state",
  "uuid",
+ "vt100",
  "wire",
 ]
 

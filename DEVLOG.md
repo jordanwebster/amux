@@ -1,3 +1,24 @@
+2026-10-06 — **Codex's own app attaches before the first turn, proven live.**
+Run against the real Codex 0.160.0, attaching Codex's app to a fresh agent
+failed: the app resumes a thread without its turns and pages them from the
+history on disk, and Codex writes a thread to disk only at its first turn;
+naming it, which the earlier attach work relied on, does not. Codex writes a
+loaded thread when a client reads it with its turns, so the Codex
+interpreter now sends `thread/read` with `includeTurns` when the handshake
+answers with a thread that has no turns. A new no-turn recording,
+`two_clients_join_fresh`, captures the refusal ("invalid paginated history
+lineage … missing source rollout") and the join after the read; the fake
+Codex refuses the app's resume the same way until the thread is read or a
+turn runs, its app stand-in resumes as the real app does, and a fake test
+covers it. `just live codex attach` is a new live scenario: it starts an
+agent, opens its chat in amux's client in one terminal and Codex's app in
+another, types a prompt needing approval into the app, waits for it in
+amux's chat and answers it there, and writes a timed capture of both
+terminals, a text frame per step and a verdict to target/live/codex-attach/.
+Also fixed tests the two-client recordings had left failing: the fake's
+resume answer now has the shape Codex 0.160.0 gives, the conformance suite
+plays the two-client recordings, and the spec registry count is current.
+
 2026-10-06 — **Codex's own app attaches to a live Codex agent.**
 `amux attach` on a Codex agent now runs `codex resume <thread> --remote
 unix://…/private/codex.sock`, so Codex's own app joins the agent's app

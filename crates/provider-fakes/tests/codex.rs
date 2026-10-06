@@ -579,6 +579,39 @@ mod socket {
         assert_eq!(joined["result"]["thread"]["id"], thread.as_str());
     }
 
+    /// Codex's own app resumes without the turns and pages them from the
+    /// history on disk, which a thread that has run no turn does not have,
+    /// named or not, until a client reads it with its turns. Codex 0.160.0
+    /// refuses the app's resume until then, with this message.
+    #[tokio::test]
+    async fn codexs_app_joins_a_thread_with_no_turn_once_it_is_read_with_its_turns() {
+        let server = Server::start(FAKE, json!({"steps": []}));
+        let mut amux = Peer::connect(&server, "amux").await;
+        let thread = amux.start_thread().await;
+        amux.call(
+            "thread/name/set",
+            json!({"threadId": thread, "name": "worker"}),
+        )
+        .await;
+        let mut app = Peer::connect(&server, "app").await;
+        let paged = json!({"threadId": thread, "excludeTurns": true});
+        let refused = app.call("thread/resume", paged.clone()).await;
+        assert_eq!(refused["error"]["code"], -32600);
+        assert_eq!(
+            refused["error"]["message"],
+            format!("invalid paginated history lineage for {thread}: missing source rollout")
+        );
+        let read = amux
+            .call(
+                "thread/read",
+                json!({"threadId": thread, "includeTurns": true}),
+            )
+            .await;
+        assert_eq!(read["result"]["thread"]["id"], thread.as_str());
+        let joined = app.call("thread/resume", paged).await;
+        assert_eq!(joined["result"]["thread"]["id"], thread.as_str());
+    }
+
     #[tokio::test]
     async fn every_client_sees_the_turn_and_any_may_answer_its_approval() {
         let server = Server::start(FAKE, asks_twice());
@@ -738,19 +771,32 @@ mod socket {
         let mut amux = Peer::connect(&server, "amux").await;
         let thread = amux.start_thread().await;
 
-        // Not joinable before a turn or a name, as with the real app.
-        let mut early = View::open(&server, &thread);
-        let refused = early.drawn("fake codex:").await;
-        assert!(refused.contains("no rollout found"), "{refused}");
-        let status = tokio::time::timeout(crate::support::DEADLINE, early.child.wait())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(status.code(), Some(1));
-
+        // Not joinable before a turn or a name, nor once named until the
+        // thread is read with its turns, as with the real app.
+        let refused = |message: &'static str| {
+            let server = &server;
+            let thread = &thread;
+            async move {
+                let mut early = View::open(server, thread);
+                let drawn = early.drawn("fake codex:").await;
+                assert!(drawn.contains(message), "{drawn}");
+                let status = tokio::time::timeout(crate::support::DEADLINE, early.child.wait())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(status.code(), Some(1));
+            }
+        };
+        refused("no rollout found").await;
         amux.call(
             "thread/name/set",
             json!({"threadId": thread, "name": "worker"}),
+        )
+        .await;
+        refused("missing source rollout").await;
+        amux.call(
+            "thread/read",
+            json!({"threadId": thread, "includeTurns": true}),
         )
         .await;
         let mut view = View::open(&server, &thread);

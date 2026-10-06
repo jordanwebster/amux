@@ -22,6 +22,7 @@ method_enum! {
         "thread/start" => ThreadStart(ThreadStartParams),
         "thread/resume" => ThreadResume(ThreadResumeParams),
         "thread/name/set" => ThreadSetName(ThreadSetNameParams),
+        "thread/read" => ThreadRead(ThreadReadParams),
         "thread/list" => ThreadList(ThreadListParams),
         "thread/compact/start" => ThreadCompactStart(ThreadIdParams),
         "thread/inject_items" => ThreadInjectItems(InjectItemsParams),
@@ -124,6 +125,10 @@ pub struct ThreadResumeParams {
     pub approval_policy: Option<AskForApproval>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<SandboxMode>,
+    /// Answer without the turns, for a client that pages them from the
+    /// history on disk, as Codex's own app does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_turns: Option<bool>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -133,6 +138,18 @@ pub struct ThreadResumeParams {
 pub struct ThreadSetNameParams {
     pub thread_id: String,
     pub name: String,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// Reading a loaded thread with its turns writes it to disk if it is not
+/// there yet: a thread that has run no turn has nothing on disk otherwise.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadReadParams {
+    pub thread_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_turns: Option<bool>,
     #[serde(flatten)]
     pub extra: Extra,
 }

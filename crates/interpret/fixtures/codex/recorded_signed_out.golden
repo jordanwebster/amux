@@ -3,6 +3,7 @@ snapshot STARTING queue=[] working_on=- at=0 asks=[] thread=? turn=- model=? eff
 ## 5 recorded 4: fact Rpc "{\"id\":2,\"result\":{\"account\":null,\"requiresOpenaiAuth\":true,\"workspaceR…
 snapshot STARTING queue=[] working_on=- at=1790388564973 asks=[] thread=? turn=- model=? effort=? approval=? sandbox=? models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_OUT - background=?
 ## 7 recorded 6: fact Rpc "{\"id\":3,\"result\":{\"activePermissionProfile\":null,\"approvalPolicy\":\"nev…
+effect write "{\"id\":\"amux-persist\",\"method\":\"thread/read\",\"params\":{\"includeTurns\":true,\"threadId\":\"01a0db79-73ef-7e43-854f-9f9d3a931f3d\"}}"
 effect write "{\"id\":\"amux-models-1\",\"method\":\"model/list\",\"params\":{}}"
 effect write "{\"id\":\"amux-skills\",\"method\":\"skills/list\",\"params\":{}}"
 item boundary:1 boundary final at=1790388564985 text="" BOUNDARY_KIND_STARTED session=01a0db79-73ef-7e43-854f-9f9d3a931f3d version=0.157.0

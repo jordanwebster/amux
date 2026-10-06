@@ -14,6 +14,7 @@ fn main() -> std::process::ExitCode {
             Scenario::Initialize | Scenario::Respond | Scenario::Resume => "recorded_text_turn",
             Scenario::Decide => "recorded_permission_callback",
             Scenario::Interrupt => "recorded_interrupted",
+            Scenario::Attach => unreachable!("not one of this target's scenarios"),
         },
         replay: interpret::replay::<interpret::claude_sdk::ClaudeSdk>,
     })

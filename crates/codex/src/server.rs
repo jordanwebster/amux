@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use codex_protocol::client::{
     AccountReadParams, Capabilities, ClientInfo, InitializeParams, ThreadListParams,
-    ThreadResumeParams, ThreadSetNameParams, ThreadStartParams,
+    ThreadReadParams, ThreadResumeParams, ThreadSetNameParams, ThreadStartParams,
 };
 use codex_protocol::server::{
-    AccountReadResponse, InitializeResponse, ThreadListResponse, ThreadResponse,
+    AccountReadResponse, InitializeResponse, ThreadListResponse, ThreadReadResponse, ThreadResponse,
 };
 use codex_protocol::{ClientNotification, ClientRequest, Extra};
 use tokio::io::{AsyncBufRead, AsyncWrite};
@@ -169,6 +169,22 @@ impl Codex {
             }))
             .await
             .map(drop)
+    }
+
+    /// Reads a thread; with its turns, a loaded thread that has run none is
+    /// written to disk, so a client paging its history can resume it.
+    pub async fn read_thread(
+        &self,
+        thread_id: &str,
+        include_turns: bool,
+    ) -> Result<ThreadReadResponse, Error> {
+        self.inner
+            .request(ClientRequest::ThreadRead(ThreadReadParams {
+                thread_id: thread_id.to_owned(),
+                include_turns: Some(include_turns),
+                extra: Extra::new(),
+            }))
+            .await
     }
 
     // ── Non-thread operations ────────────────────────────────────

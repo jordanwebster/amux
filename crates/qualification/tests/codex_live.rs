@@ -1,4 +1,5 @@
-//! Codex under the real provider: `just live -- codex all`.
+//! Codex under the real provider: `just live codex all`, or one scenario
+//! such as `just live codex attach`.
 //! See live/mod.rs for what a run judges and reports.
 
 #[cfg(unix)]
@@ -13,7 +14,8 @@ fn main() -> std::process::ExitCode {
         recording: |scenario| match scenario {
             Scenario::Initialize => "recorded_initialize_and_start",
             Scenario::Respond | Scenario::Resume => "recorded_turn_round_trip",
-            Scenario::Decide => "recorded_approval_allow",
+            // The app's prompt leads to the same approval, answered from amux.
+            Scenario::Decide | Scenario::Attach => "recorded_approval_allow",
             Scenario::Interrupt => "recorded_interrupt",
         },
         replay: interpret::replay::<interpret::codex::Codex>,

@@ -178,6 +178,10 @@ mod codex {
         turn_retries => "turn_retries",
         turn_round_trip => "turn_round_trip",
         two_assistant_messages => "two_assistant_messages",
+        two_clients_approval => "two_clients_approval",
+        two_clients_join_fresh => "two_clients_join_fresh",
+        two_clients_prompt => "two_clients_prompt",
+        two_clients_steer => "two_clients_steer",
         web_search => "web_search",
     });
 }

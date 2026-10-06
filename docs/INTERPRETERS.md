@@ -414,9 +414,15 @@ answer.
 - **The thread's name.** When the handshake's thread answer arrives, in
   every incarnation, the interpreter names the thread with the agent's name
   from the spec (`thread/name/set`, ids `amux-name-<n>`), and again on the
-  rename input the daemon sends when the agent is renamed. Naming writes a
-  fresh thread to disk, which is what lets Codex's own app join it before
-  its first turn.
+  rename input the daemon sends when the agent is renamed, so Codex's own
+  app shows the name amux does.
+- **A fresh thread on disk.** Codex writes a thread to disk at its first
+  turn, and its own app resumes from what is on disk (it asks for the
+  thread without its turns and pages them), so until then the app cannot
+  attach; naming does not write it. When the handshake answers with a
+  thread that has no turns, the interpreter reads it with its turns
+  (`thread/read` with `includeTurns`, id `amux-persist`), which has Codex
+  write it, and ignores the answer and the `deprecationNotice` beside it.
 - **Offers.** Once the thread is known, the interpreter asks `model/list`
   (following `nextCursor` to the last page, leaving hidden models out) and
   `skills/list`, once per server; the snapshot carries the models with their

@@ -14,6 +14,7 @@ fn main() -> std::process::ExitCode {
             Scenario::Initialize | Scenario::Respond | Scenario::Resume => "recorded_prompt",
             Scenario::Decide => "recorded_permission_allow_once",
             Scenario::Interrupt => "recorded_interrupt",
+            Scenario::Attach => unreachable!("not one of this target's scenarios"),
         },
         replay: interpret::replay::<interpret::claude_pty::ClaudePty>,
     })

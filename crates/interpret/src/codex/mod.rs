@@ -139,6 +139,8 @@ enum Request {
     },
     /// `thread/name/set`.
     Name,
+    /// `thread/read` with turns, to have the thread written to disk.
+    Persist,
     /// `skills/list`.
     Skills,
 }

@@ -2,7 +2,7 @@
 
 use codex_protocol::client::{
     CommandApprovalResponse, ElicitationAction, ModelListParams, SkillsListParams,
-    ThreadSetNameParams, ToolCallResponse, TurnInterruptParams,
+    ThreadReadParams, ThreadSetNameParams, ToolCallResponse, TurnInterruptParams,
 };
 use codex_protocol::items::{
     CommandAction, DynamicToolCallItem, McpToolCallItem, MessagePhase, PatchChangeKind,
@@ -310,6 +310,9 @@ impl State {
                 self.thread_started(emit, &response.thread, Some(&response));
                 if self.thread_id.as_ref() == Some(&response.thread.id) {
                     self.name_thread(emit);
+                    if response.thread.turns.is_empty() {
+                        self.persist_thread(emit);
+                    }
                 }
                 self.list_offers(emit);
             } else if let Ok(response) = codex_protocol::result::<AccountReadResponse>(&result) {
@@ -383,6 +386,7 @@ impl State {
                     Request::Interrupt
                     | Request::Models { .. }
                     | Request::Name
+                    | Request::Persist
                     | Request::Skills => {}
                 }
                 return;
@@ -421,6 +425,7 @@ impl State {
             | Request::Compact
             | Request::Models { .. }
             | Request::Name
+            | Request::Persist
             | Request::Skills => {}
         }
     }
@@ -502,6 +507,23 @@ impl State {
                 extra: Default::default(),
             }),
             Request::Name,
+        );
+        emit.effect(Effect::ProviderWrite(bytes));
+    }
+
+    /// Has Codex write a thread that has run no turn to disk. Codex's own
+    /// app resumes a thread from its history on disk, which Codex writes at
+    /// the first turn, so until then the app cannot attach; reading the
+    /// loaded thread with its turns makes Codex write it.
+    fn persist_thread(&mut self, emit: &mut Emit) {
+        let bytes = self.request_as(
+            "amux-persist".into(),
+            ClientRequest::ThreadRead(ThreadReadParams {
+                thread_id: self.thread(),
+                include_turns: Some(true),
+                extra: Default::default(),
+            }),
+            Request::Persist,
         );
         emit.effect(Effect::ProviderWrite(bytes));
     }

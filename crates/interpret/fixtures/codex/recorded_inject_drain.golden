@@ -1,6 +1,7 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] thread=? turn=- model=? effort=? approval=? sandbox=? models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
 ## 5 recorded 4: fact Rpc "{\"id\":2,\"result\":{\"activePermissionProfile\":null,\"approvalPolicy\":\"nev…
+effect write "{\"id\":\"amux-persist\",\"method\":\"thread/read\",\"params\":{\"includeTurns\":true,\"threadId\":\"01a0db6e-5eb0-71e0-ae6c-0293baf2bb48\"}}"
 effect write "{\"id\":\"amux-models-1\",\"method\":\"model/list\",\"params\":{}}"
 effect write "{\"id\":\"amux-skills\",\"method\":\"skills/list\",\"params\":{}}"
 item boundary:1 boundary final at=1790387838661 text="" BOUNDARY_KIND_STARTED session=01a0db6e-5eb0-71e0-ae6c-0293baf2bb48 version=0.157.0
