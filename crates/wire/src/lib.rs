@@ -256,6 +256,8 @@ mod tests {
                 ("phase", 6),
                 ("working_on", 7),
                 ("at_ms", 8),
+                ("phase_since_ms", 10),
+                ("git", 11),
             ],
         );
         expect(
