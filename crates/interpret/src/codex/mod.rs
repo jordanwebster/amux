@@ -186,7 +186,30 @@ struct WorkState {
 enum Streamed {
     Message,
     WorkingNote,
+    Plan,
     Reasoning(Vec<String>),
+}
+
+/// The plan Codex proposed last, and how it was decided.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct Proposed {
+    /// Its item's key: Codex's item id.
+    key: String,
+    turn: String,
+    at_ms: i64,
+    /// Whole once the item completed; until then the open item's.
+    text: String,
+    complete: bool,
+    verdict: i32,
+    note: Option<String>,
+}
+
+/// What a plan ask's implement choice sends, as Codex's own app does.
+const IMPLEMENT: &str = "Implement the plan.";
+
+/// The key amux gives the plan ask it opens on a plan item.
+fn plan_ask_key(item: &str) -> String {
+    format!("plan:{item}")
 }
 
 /// Overrides the next `turn/start` carries; Codex keeps them for later
@@ -418,6 +441,9 @@ pub struct State {
     #[serde(default)]
     jobs_asked: u32,
     plan: Option<Vec<(String, i32)>>,
+    /// The plan Codex proposed last.
+    #[serde(default)]
+    proposed: Option<Proposed>,
 }
 
 fn item_body(kind: codex_item::Kind) -> Vec<u8> {
@@ -496,6 +522,7 @@ impl State {
             background: None,
             jobs_asked: 0,
             plan: None,
+            proposed: None,
         }
     }
 
@@ -778,6 +805,10 @@ impl State {
         };
         match arm {
             codex_input::Of::Prompt(prompt) => {
+                if let Some(key) = self.plan_ask() {
+                    self.shared.close_ask(&key);
+                    self.decide_plan(emit, wire::PlanVerdict::Dismissed, None);
+                }
                 if let Some(entry) = self.shared.admit_prompt(emit, &id, prompt, human()) {
                     self.submit(emit, entry, Vec::new());
                 }
@@ -815,6 +846,7 @@ impl State {
                 }
                 self.collaboration = Some(set.value.clone());
                 self.overrides.mode = Some(set.value);
+                self.left_plan(emit);
                 self.shared.accept(emit, &id, false);
             }
             codex_input::Of::Model(model) => {
@@ -1117,6 +1149,12 @@ impl State {
         let parsed = CodexAnswer::decode(answer.body.as_slice())
             .ok()
             .and_then(|answer| answer.of);
+        if let Some(codex_ask::Body::Plan(_)) = ask.body {
+            return match parsed {
+                Some(codex_answer::Of::Plan(plan)) => self.answer_plan(emit, id, &key, plan),
+                _ => self.shared.reject(emit, id, reason::UNSUPPORTED),
+            };
+        }
         let Some((meta, parsed)) = self.asks.get(&key).cloned().zip(parsed) else {
             return self.shared.reject(emit, id, reason::UNSUPPORTED);
         };
@@ -1128,6 +1166,132 @@ impl State {
         self.respond(emit, &meta.id, Ok(response));
         self.emit_ask(emit, &ask, meta.at_ms, Some(closed));
         self.shared.accept(emit, id, false);
+    }
+}
+
+impl State {
+    /// The open plan ask's key, if one is open.
+    fn plan_ask(&self) -> Option<String> {
+        let key = plan_ask_key(&self.proposed.as_ref()?.key);
+        self.shared.asks().get(&key).is_some().then_some(key)
+    }
+
+    /// Records how the last plan was decided and sends its item again.
+    fn decide_plan(&mut self, emit: &mut Emit, verdict: wire::PlanVerdict, note: Option<String>) {
+        let Some(proposed) = &mut self.proposed else {
+            return;
+        };
+        proposed.verdict = verdict as i32;
+        proposed.note = note;
+        self.emit_plan(emit);
+    }
+
+    pub(super) fn emit_plan(&mut self, emit: &mut Emit) {
+        let Some(proposed) = self.proposed.clone() else {
+            return;
+        };
+        self.emit_item(
+            emit,
+            ItemDraft {
+                key: proposed.key,
+                text: proposed.text,
+                body: item_body(codex_item::Kind::Plan(wire::Plan {
+                    verdict: proposed.verdict,
+                    note: proposed.note,
+                    complete: proposed.complete,
+                })),
+                at_ms: Some(proposed.at_ms),
+                complete: proposed.complete,
+                ..Default::default()
+            },
+        );
+    }
+
+    /// A turn in plan mode ended with a plan: Codex asks nothing, so amux
+    /// opens the decision itself.
+    pub(super) fn open_plan_ask(&mut self, turn: &str) {
+        let Some(proposed) = &self.proposed else {
+            return;
+        };
+        if proposed.turn != turn
+            || !proposed.complete
+            || proposed.verdict != wire::PlanVerdict::Undecided as i32
+            || self.collaboration.as_deref() != Some("plan")
+        {
+            return;
+        }
+        self.shared.open_ask(CodexAsk {
+            key: plan_ask_key(&proposed.key),
+            item_key: proposed.key.clone(),
+            body: Some(codex_ask::Body::Plan(wire::PlanAsk {
+                choices: vec![
+                    wire::PlanChoice::Start as i32,
+                    wire::PlanChoice::KeepPlanning as i32,
+                ],
+            })),
+            decisions: Vec::new(),
+        });
+    }
+
+    /// The agent left plan, whoever moved it: the waiting plan was
+    /// approved.
+    pub(super) fn left_plan(&mut self, emit: &mut Emit) {
+        if self.collaboration.as_deref() == Some("plan") {
+            return;
+        }
+        if let Some(key) = self.plan_ask() {
+            self.shared.close_ask(&key);
+            self.decide_plan(emit, wire::PlanVerdict::Approved, None);
+        }
+    }
+
+    /// A turn started with the plan waiting, whoever started it: the mode
+    /// it runs in says how the plan was decided.
+    pub(super) fn plan_overtaken(&mut self, emit: &mut Emit) {
+        if let Some(key) = self.plan_ask() {
+            self.shared.close_ask(&key);
+            let verdict = if self.collaboration.as_deref() == Some("plan") {
+                wire::PlanVerdict::SentBack
+            } else {
+                wire::PlanVerdict::Approved
+            };
+            self.decide_plan(emit, verdict, None);
+        }
+    }
+
+    /// Implement leaves plan for the default mode, keeping the permission,
+    /// and starts a turn with Codex's own words; stay sends the note, if
+    /// any, as the next prompt, still in plan mode.
+    fn answer_plan(&mut self, emit: &mut Emit, id: &[u8], key: &str, plan: wire::PlanAnswer) {
+        let (verdict, prompt) = match plan.choice() {
+            wire::PlanChoice::Start => (wire::PlanVerdict::Approved, Some(IMPLEMENT.to_owned())),
+            wire::PlanChoice::KeepPlanning => (
+                wire::PlanVerdict::SentBack,
+                plan.note.clone().filter(|note| !note.trim().is_empty()),
+            ),
+            _ => return self.shared.reject(emit, id, reason::UNSUPPORTED),
+        };
+        if self.shared.answer(emit, id, key).is_none() {
+            return;
+        }
+        if verdict == wire::PlanVerdict::Approved {
+            self.collaboration = Some("default".to_owned());
+            self.overrides.mode = Some("default".to_owned());
+        }
+        let note = (verdict == wire::PlanVerdict::SentBack)
+            .then_some(plan.note)
+            .flatten();
+        self.decide_plan(emit, verdict, note);
+        let Some(text) = prompt else {
+            return self.shared.accept(emit, id, false);
+        };
+        let prompt = wire::PromptInput {
+            text,
+            ..Default::default()
+        };
+        if let Some(entry) = self.shared.admit_prompt(emit, id, prompt, human()) {
+            self.submit(emit, entry, Vec::new());
+        }
     }
 }
 
@@ -1284,7 +1448,8 @@ fn work_ask(ask: &CodexAsk) -> Option<AskItem> {
         codex_ask::Body::Access(access) => wire::ask_item::Ask::Access(access.clone()),
         codex_ask::Body::Command(_)
         | codex_ask::Body::FileChange(_)
-        | codex_ask::Body::McpTool(_) => return None,
+        | codex_ask::Body::McpTool(_)
+        | codex_ask::Body::Plan(_) => return None,
     };
     Some(ask_item::opened(asked))
 }
@@ -1501,6 +1666,7 @@ fn describe_item(body: &[u8]) -> ItemView {
         None => ("none", true, String::new()),
         Some(Kind::Prompt(_)) => ("prompt", true, String::new()),
         Some(Kind::Message(text)) => ("message", text.complete, String::new()),
+        Some(Kind::Plan(plan)) => ("plan", plan.complete, crate::shared::describe_plan(&plan)),
         Some(Kind::WorkingNote(text)) => ("working_note", text.complete, String::new()),
         Some(Kind::Reasoning(reasoning)) => (
             "reasoning",
@@ -1674,6 +1840,7 @@ fn describe_ask(ask: &CodexAsk) -> String {
                 format!(" hosts={:?}", access.network_hosts)
             }
         ),
+        Some(codex_ask::Body::Plan(plan)) => crate::shared::describe_plan_ask(plan),
         Some(codex_ask::Body::Question(question)) => format!(
             "question [{}]",
             question

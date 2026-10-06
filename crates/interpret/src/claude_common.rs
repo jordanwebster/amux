@@ -808,15 +808,7 @@ pub(crate) fn describe_asks(asks: &[Ask]) -> String {
                         .collect::<Vec<_>>()
                         .join(",")
                 ),
-                Some(wire::ask::Body::Plan(plan)) => format!(
-                    "plan:[{}]",
-                    plan.choices
-                        .iter()
-                        .map(|choice| wire::PlanChoice::try_from(*choice)
-                            .map_or("?", |choice| choice.as_str_name()))
-                        .collect::<Vec<_>>()
-                        .join(",")
-                ),
+                Some(wire::ask::Body::Plan(plan)) => crate::shared::describe_plan_ask(plan),
                 Some(wire::ask::Body::Form(form)) => format!(
                     "form:{} {}",
                     form.server,

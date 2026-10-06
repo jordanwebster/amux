@@ -130,7 +130,7 @@ id = "C16"
 item = "Plan review"
 claude_pty = { mark = "full", carriers = ["item:plan", "ask:plan"], golden = [" plan final ", " PLAN_VERDICT_SENT_BACK"] }
 claude_sdk = { mark = "full", carriers = ["item:plan", "ask:plan"], golden = [" plan final ", " PLAN_VERDICT_APPROVED"] }
-codex = { mark = "partial", carriers = ["item:message"], golden = [" message final "] }
+codex = { mark = "full", carriers = ["item:plan", "ask:plan"], golden = [" plan final ", " PLAN_VERDICT_APPROVED"] }
 
 [[row]]
 id = "C17"

@@ -32,8 +32,8 @@ use wire::{
 };
 
 use super::{
-    AskMeta, InjectConsumption, Request, State, Streamed, WorkState, ask_key, client_message_id,
-    elicitation_response, item_body, work_ask, work_complete,
+    AskMeta, InjectConsumption, Proposed, Request, State, Streamed, WorkState, ask_key,
+    client_message_id, elicitation_response, item_body, work_ask, work_complete,
 };
 use crate::claude_common::compact_json;
 use crate::shared::{Output, json_as_written};
@@ -1103,6 +1103,7 @@ impl State {
                 self.thread_started(emit, &started.thread, None);
             }
             ServerNotification::TurnStarted(started) => {
+                self.plan_overtaken(emit);
                 self.shared.turn_started();
                 self.turn_prompted = false;
                 self.interrupted_here = false;
@@ -1268,6 +1269,7 @@ impl State {
                 }
                 self.collaboration = some(settings.collaboration_mode.mode.as_str());
                 self.effort = settings.effort.map(|effort| effort.as_str().to_owned());
+                self.left_plan(emit);
             }
             ServerNotification::ServerRequestResolved(resolved) => {
                 self.ask_resolved(emit, &ask_key(&resolved.request_id));
@@ -1445,7 +1447,33 @@ impl State {
                     self.user_message(emit, &id, message.client_id.as_deref(), &message.content);
                 }
             }
-            ThreadItem::AgentMessage(message) | ThreadItem::Plan(message) => {
+            ThreadItem::Plan(plan) => {
+                self.streamed.insert(id.clone(), Streamed::Plan);
+                let text = match self.shared.open_item(&id) {
+                    Some(open) if !completed => open.text.clone(),
+                    _ => plan.text.clone(),
+                };
+                let proposed = self.proposed.take().filter(|proposed| proposed.key == id);
+                self.proposed = Some(Proposed {
+                    key: id.clone(),
+                    turn: turn.to_owned(),
+                    at_ms: proposed
+                        .as_ref()
+                        .map(|proposed| proposed.at_ms)
+                        .or(at_ms)
+                        .unwrap_or_else(|| self.shared.now_ms()),
+                    text,
+                    complete: completed,
+                    verdict: wire::PlanVerdict::Undecided as i32,
+                    note: None,
+                });
+                self.emit_plan(emit);
+                if completed {
+                    self.streamed.remove(&id);
+                    self.shared.note_message(&id);
+                }
+            }
+            ThreadItem::AgentMessage(message) => {
                 let kind = self.streamed.get(&id).cloned().unwrap_or(
                     if message.phase == Some(MessagePhase::Commentary) {
                         Streamed::WorkingNote
@@ -1989,6 +2017,10 @@ impl State {
         }
         self.final_error = None;
         for ask in self.shared.close_all_asks() {
+            if let Some(codex_ask::Body::Plan(_)) = ask.body {
+                self.decide_plan(emit, wire::PlanVerdict::Dismissed, None);
+                continue;
+            }
             let meta = self.asks.remove(&ask.key);
             self.dismiss(emit, &ask, meta);
         }
@@ -2043,6 +2075,9 @@ impl State {
         }
         self.active_turn = None;
         self.interrupt_pending = false;
+        if outcome == TurnOutcome::Completed {
+            self.open_plan_ask(&turn_id);
+        }
         if self.consumption == InjectConsumption::ParkedUntilNextTurn {
             self.turn_over_parked(emit);
         }
@@ -2092,6 +2127,14 @@ impl State {
                 continue;
             };
             let (body, (text, attachments)) = match kind {
+                Streamed::Plan => {
+                    if let Some(proposed) = self.proposed.as_mut().filter(|plan| plan.key == key) {
+                        proposed.text = open.text;
+                        proposed.complete = true;
+                    }
+                    self.emit_plan(emit);
+                    continue;
+                }
                 Streamed::Message => (
                     codex_item::Kind::Message(wire::Text { complete: true }),
                     crate::shared::parse_reply(open.text),
@@ -2131,6 +2174,9 @@ impl State {
         self.requests
             .retain(|_, request| *request != Request::Skills);
         for ask in self.shared.close_all_asks() {
+            if let Some(codex_ask::Body::Plan(_)) = ask.body {
+                self.decide_plan(emit, wire::PlanVerdict::Dismissed, None);
+            }
             if let Some(meta) = self.asks.remove(&ask.key) {
                 self.emit_ask(emit, &ask, meta.at_ms, Some(ask_item::dismissed()));
             }

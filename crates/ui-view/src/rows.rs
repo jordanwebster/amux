@@ -595,6 +595,7 @@ pub(crate) fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Dec
             }),
             Codex::Message(m) => plain(prose(held, m.complete, false)),
             Codex::WorkingNote(m) => plain(prose(held, m.complete, true)),
+            Codex::Plan(plan) => plain(plan_row(held, plan)),
             Codex::Reasoning(r) => {
                 let text = if item.text.is_empty() {
                     r.summary.join("\n")

@@ -43,6 +43,8 @@ message CodexItem {
     // A question, access grant, tool-server form or link: an ask that is
     // the work.
     AskItem ask = 16;
+    // The plan Codex proposed in plan mode.
+    Plan plan = 17;
   }
 }
 
@@ -196,6 +198,9 @@ message CodexAsk {
     AccessGrant access = 7;
     QuestionAsk question = 8;
     McpToolApproval mcp_tool = 9;
+    // Codex asks nothing about a plan: amux opens this when a turn in plan
+    // mode ends with one. Its key is amux's own.
+    PlanAsk plan = 11;
   }
   // The decisions this request offers, in the server's order.
   repeated Decision decisions = 10;
@@ -272,5 +277,6 @@ message CodexAnswer {
     FormAnswer form = 2;
     LinkAnswer link = 3;
     GrantAnswer grant = 4;
+    PlanAnswer plan = 5;
   }
 }

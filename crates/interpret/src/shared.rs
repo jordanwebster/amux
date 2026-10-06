@@ -1070,6 +1070,16 @@ pub(crate) fn describe_jobs(jobs: Option<&wire::BackgroundJobs>) -> String {
     }
 }
 
+pub(crate) fn describe_plan_ask(plan: &wire::PlanAsk) -> String {
+    format!(
+        "plan:[{}]",
+        plan.choices()
+            .map(|choice| choice.as_str_name())
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
 pub(crate) fn describe_plan(plan: &wire::Plan) -> String {
     let mut out = plan.verdict().as_str_name().to_owned();
     if let Some(note) = &plan.note {

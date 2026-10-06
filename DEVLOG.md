@@ -1,3 +1,15 @@
+2026-10-06 — **A Codex plan opens its own decision.**
+Codex's plan item was relabelled a message, and Codex asks nothing about a
+plan, so an agent that finished planning looked idle. The plan now streams
+as a plan item, and when a turn in plan mode completes with one the
+interpreter opens a plan ask itself, so the agent needs you. Implement sets
+the mode to default, leaves the permission alone and starts a turn with
+"Implement the plan.", as Codex's own app does; stay sends the note, if any,
+as the next prompt, still in plan mode. Whoever decides, the ask closes when
+the agent leaves plan (approved) or the next turn starts (sent back when it
+runs in plan mode); a prompt typed in amux instead dismisses it. A fixture
+with Codex's own app on the same server decides a plan each way from there.
+
 2026-10-06 — **Claude's plans are items with their verdict.**
 Both Claude interpreters drew ExitPlanMode as a tool call and left the views
 to recognise it: its name, its input, the plan file's writes, and the verdict

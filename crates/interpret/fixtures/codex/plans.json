@@ -1,0 +1,828 @@
+{
+  "about": "Codex plans: the plan streams as a plan; a turn in plan mode that ends with one opens amux's own plan ask and the agent needs you. Implement sets the default mode, leaves the permission alone and starts a turn with 'Implement the plan.'; stay sends the note, if any, as the next prompt in plan mode; a prompt typed instead dismisses the plan.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.160.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null,
+            "collaborationMode": {
+              "mode": "plan",
+              "settings": {
+                "model": "gpt-5.6-luna",
+                "reasoning_effort": null
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Plan the colour change."
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turn": {
+              "id": "turn-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "userMessage",
+              "id": "u-1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Plan the colour change."
+                }
+              ],
+              "clientId": "7031"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "plan",
+              "id": "turn-1-plan",
+              "text": ""
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-1-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "turn-1-plan",
+            "delta": "## Write the colour\n\n- Write `Blue` to `co"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "turn-1-plan",
+            "delta": "lor.txt`.\n- Check it holds exactly `Blue`.\n"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "plan",
+              "id": "turn-1-plan",
+              "text": "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n"
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-1-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "plan:turn-1-plan"
+        ]
+      },
+      "note": "a turn in plan mode ended with a plan: amux opens the decision"
+    },
+    {
+      "input": {
+        "id": "a1",
+        "answer": {
+          "ask": "plan:turn-1-plan",
+          "answer": {
+            "plan": {
+              "choice": "start"
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "items": [
+          "turn-1-plan",
+          "prompt:6131"
+        ]
+      },
+      "note": "implement: the default mode, the permission left alone, and Codex's own words"
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-2",
+          "result": {
+            "turn": {
+              "id": "turn-2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-2",
+            "item": {
+              "type": "userMessage",
+              "id": "u-2",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Implement the plan."
+                }
+              ],
+              "clientId": "6131"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE",
+        "asks": []
+      }
+    },
+    {
+      "input": {
+        "id": "m1",
+        "mode": {
+          "value": "plan"
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "input": {
+        "id": "p2",
+        "prompt": {
+          "text": "Plan the README too."
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-3",
+          "result": {
+            "turn": {
+              "id": "turn-3"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-3",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "item": {
+              "type": "userMessage",
+              "id": "u-3",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Plan the README too."
+                }
+              ],
+              "clientId": "7032"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "item": {
+              "type": "plan",
+              "id": "turn-3-plan",
+              "text": ""
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-3-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "itemId": "turn-3-plan",
+            "delta": "## Write the colour and the README\n\n- Write `B"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "itemId": "turn-3-plan",
+            "delta": "lue` to `color.txt`.\n- Say so in `README.md`.\n"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "item": {
+              "type": "plan",
+              "id": "turn-3-plan",
+              "text": "## Write the colour and the README\n\n- Write `Blue` to `color.txt`.\n- Say so in `README.md`.\n"
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-3-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-3",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "plan:turn-3-plan"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a2",
+        "answer": {
+          "ask": "plan:turn-3-plan",
+          "answer": {
+            "plan": {
+              "choice": "keep_planning",
+              "note": "Leave the README alone."
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "items": [
+          "turn-3-plan",
+          "prompt:6132"
+        ]
+      },
+      "note": "stay: the note goes as the next prompt, still in plan mode"
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-4",
+          "result": {
+            "turn": {
+              "id": "turn-4"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-4",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-4",
+            "item": {
+              "type": "userMessage",
+              "id": "u-4",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Leave the README alone."
+                }
+              ],
+              "clientId": "6132"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-4",
+            "item": {
+              "type": "plan",
+              "id": "turn-4-plan",
+              "text": ""
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-4-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-4",
+            "itemId": "turn-4-plan",
+            "delta": "## Write the colour\n\n- Write `Blue` to `co"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-4",
+            "itemId": "turn-4-plan",
+            "delta": "lor.txt`.\n- Check it holds exactly `Blue`.\n"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-4",
+            "item": {
+              "type": "plan",
+              "id": "turn-4-plan",
+              "text": "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n"
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-4-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-4",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "plan:turn-4-plan"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a3",
+        "answer": {
+          "ask": "plan:turn-4-plan",
+          "answer": {
+            "plan": {
+              "choice": "keep_planning"
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "phase": "IDLE"
+      },
+      "note": "stay with no note: the decision closes and nothing is sent"
+    },
+    {
+      "input": {
+        "id": "p3",
+        "prompt": {
+          "text": "One more pass on the plan."
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-5",
+          "result": {
+            "turn": {
+              "id": "turn-5"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-5",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-5",
+            "item": {
+              "type": "userMessage",
+              "id": "u-5",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "One more pass on the plan."
+                }
+              ],
+              "clientId": "7033"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-5",
+            "item": {
+              "type": "plan",
+              "id": "turn-5-plan",
+              "text": ""
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-5-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-5",
+            "itemId": "turn-5-plan",
+            "delta": "## Write the colour\n\n- Write `Blue` to `co"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-5",
+            "itemId": "turn-5-plan",
+            "delta": "lor.txt`.\n- Check it holds exactly `Blue`.\n"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-5",
+            "item": {
+              "type": "plan",
+              "id": "turn-5-plan",
+              "text": "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n"
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-5-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-5",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "plan:turn-5-plan"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "p4",
+        "prompt": {
+          "text": "Forget the plan; just write Blue."
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "items": [
+          "turn-5-plan",
+          "prompt:7034"
+        ]
+      },
+      "note": "a new prompt typed instead dismisses the plan"
+    },
+    {
+      "input": {
+        "id": "bad",
+        "answer": {
+          "ask": "plan:turn-5-plan",
+          "answer": {
+            "plan": {
+              "choice": "start"
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:closed_ask",
+        "silent": true
+      }
+    }
+  ]
+}

@@ -196,7 +196,7 @@ pub fn ask_card(state: &SessionState) -> Option<AskCard> {
     let head = asks.first()?;
     let (body, choices) = match head {
         OpenAsk::Claude(ask) => claude(state, ask, &state.agent_state().permissions),
-        OpenAsk::Codex(ask) => codex(ask),
+        OpenAsk::Codex(ask) => codex(state, ask),
     };
     let card_state = if state.asks_dismissed() {
         CardState::Dismissed
@@ -231,6 +231,9 @@ fn choice(outcome: ChoiceOutcome, answer: Answer) -> Choice {
             claude_answer::Of::Plan(plan) => plan.choice() == wire::PlanChoice::KeepPlanning,
             _ => false,
         },
+        Answer::Codex(CodexAnswer {
+            of: Some(wire::codex_answer::Of::Plan(plan)),
+        }) => plan.choice() == wire::PlanChoice::KeepPlanning,
         _ => false,
     };
     Choice {
@@ -303,35 +306,9 @@ fn claude(
             AskBody::Question(q.questions.iter().map(question).collect()),
             vec![],
         ),
-        Some(ask::Body::Plan(plan)) => {
-            let choices = plan
-                .choices()
-                .filter_map(|offered| {
-                    let outcome = match offered {
-                        wire::PlanChoice::Start => ChoiceOutcome::ApprovePlan {
-                            auto_accept_edits: false,
-                        },
-                        wire::PlanChoice::StartAcceptingEdits => ChoiceOutcome::ApprovePlan {
-                            auto_accept_edits: true,
-                        },
-                        wire::PlanChoice::KeepPlanning => ChoiceOutcome::SendBack,
-                        wire::PlanChoice::Unspecified => return None,
-                    };
-                    let answer = claude_answer(claude_answer::Of::Plan(wire::PlanAnswer {
-                        choice: offered as i32,
-                        note: None,
-                    }));
-                    Some(choice(outcome, answer))
-                })
-                .collect();
-            // The plan is the text of the item the ask points at.
-            let plan = state
-                .transcript()
-                .get(&ask.item_key)
-                .map(|held| held.item.text.clone())
-                .unwrap_or_default();
-            (AskBody::Plan { plan }, choices)
-        }
+        Some(ask::Body::Plan(plan)) => plan_card(state, &ask.item_key, plan, |plan| {
+            claude_answer(claude_answer::Of::Plan(plan))
+        }),
         Some(ask::Body::Form(form)) => {
             let action = |action: wire::FormAction| {
                 claude_answer(claude_answer::Of::Form(wire::FormAnswer {
@@ -649,7 +626,43 @@ pub(crate) fn question_view(input: &Value) -> Vec<QuestionView> {
         .collect()
 }
 
-fn codex(ask: &wire::CodexAsk) -> (AskBody, Vec<Choice>) {
+/// A plan's decision: the plan is the text of the item the ask points at,
+/// and the choices are the ones the ask lists.
+fn plan_card(
+    state: &SessionState,
+    item_key: &str,
+    plan: &wire::PlanAsk,
+    answer: impl Fn(wire::PlanAnswer) -> Answer,
+) -> (AskBody, Vec<Choice>) {
+    let choices = plan
+        .choices()
+        .filter_map(|offered| {
+            let outcome = match offered {
+                wire::PlanChoice::Start => ChoiceOutcome::ApprovePlan {
+                    auto_accept_edits: false,
+                },
+                wire::PlanChoice::StartAcceptingEdits => ChoiceOutcome::ApprovePlan {
+                    auto_accept_edits: true,
+                },
+                wire::PlanChoice::KeepPlanning => ChoiceOutcome::SendBack,
+                wire::PlanChoice::Unspecified => return None,
+            };
+            let answer = answer(wire::PlanAnswer {
+                choice: offered as i32,
+                note: None,
+            });
+            Some(choice(outcome, answer))
+        })
+        .collect();
+    let plan = state
+        .transcript()
+        .get(item_key)
+        .map(|held| held.item.text.clone())
+        .unwrap_or_default();
+    (AskBody::Plan { plan }, choices)
+}
+
+fn codex(state: &SessionState, ask: &wire::CodexAsk) -> (AskBody, Vec<Choice>) {
     let decisions: Vec<CodexDecision> = ask
         .decisions
         .iter()
@@ -678,6 +691,9 @@ fn codex(ask: &wire::CodexAsk) -> (AskBody, Vec<Choice>) {
     };
     let codex_answer = |of: wire::codex_answer::Of| Answer::Codex(CodexAnswer { of: Some(of) });
     let (body, mut choices) = match &ask.body {
+        Some(codex_ask::Body::Plan(plan)) => plan_card(state, &ask.item_key, plan, |plan| {
+            codex_answer(wire::codex_answer::Of::Plan(plan))
+        }),
         Some(codex_ask::Body::Command(c)) => (
             AskBody::Command {
                 command: c.command.clone(),
@@ -917,6 +933,9 @@ fn with_note(answer: &Answer, note: &str) -> Answer {
         Answer::Codex(CodexAnswer {
             of: Some(wire::codex_answer::Of::Question(question)),
         }) => question.note = note.to_owned(),
+        Answer::Codex(CodexAnswer {
+            of: Some(wire::codex_answer::Of::Plan(plan)),
+        }) if plan.choice() == wire::PlanChoice::KeepPlanning => plan.note = Some(note.to_owned()),
         _ => {}
     }
     answer

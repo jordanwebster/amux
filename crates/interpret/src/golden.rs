@@ -99,8 +99,10 @@ pub enum FixtureInput {
     /// `{"form": {"action": "accept", "content": {…}}}`,
     /// `{"link": {"action": "decline"}}`; for Codex
     /// `{"decision": "approve"}` answers an approval, and a question, form,
-    /// link or `{"grant": {"read": […], "write": […], "network": true,
-    /// "for_session": true}}` is a CodexAnswer.
+    /// link, `{"plan": {"choice": "start"}}` or `{"plan": {"choice":
+    /// "keep_planning", "note": "…"}}`, or `{"grant": {"read": […],
+    /// "write": […], "network": true, "for_session": true}}` is a
+    /// CodexAnswer.
     Answer {
         ask: String,
         #[serde(default)]
@@ -993,6 +995,18 @@ fn codex_answer(answer: &Value) -> Option<CodexAnswer> {
                 .get("content")
                 .map(|content| content.to_string().into_bytes())
                 .unwrap_or_default(),
+        })
+    } else if let Some(plan) = answer.get("plan") {
+        let choice = plan
+            .get("choice")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        Of::Plan(wire::PlanAnswer {
+            choice: wire::PlanChoice::from_str_name(&format!(
+                "PLAN_CHOICE_{}",
+                choice.to_uppercase()
+            ))? as i32,
+            note: plan.get("note").and_then(Value::as_str).map(str::to_owned),
         })
     } else {
         let grant = answer.get("grant")?;

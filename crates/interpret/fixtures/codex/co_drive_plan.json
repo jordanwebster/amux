@@ -1,0 +1,484 @@
+{
+  "about": "A Codex plan decided from Codex's own app on the same server: leaving plan before the next turn reads as approved; a next turn started still in plan mode reads as sent back.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.160.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null,
+            "collaborationMode": {
+              "mode": "plan",
+              "settings": {
+                "model": "gpt-5.6-luna",
+                "reasoning_effort": null
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      },
+      "note": "Codex's own app prompts in plan mode"
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "userMessage",
+              "id": "u-1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Plan the colour change."
+                }
+              ],
+              "clientId": "tui-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "plan",
+              "id": "turn-1-plan",
+              "text": ""
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-1-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "turn-1-plan",
+            "delta": "## Write the colour\n\n- Write `Blue` to `co"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "turn-1-plan",
+            "delta": "lor.txt`.\n- Check it holds exactly `Blue`.\n"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "plan",
+              "id": "turn-1-plan",
+              "text": "## Write the colour\n\n- Write `Blue` to `color.txt`.\n- Check it holds exactly `Blue`.\n"
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-1-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "plan:turn-1-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "thread/settings/updated",
+          "params": {
+            "threadId": "t1",
+            "threadSettings": {
+              "approvalPolicy": "on-request",
+              "collaborationMode": {
+                "mode": "default",
+                "settings": {
+                  "model": "gpt-5.6-luna",
+                  "reasoning_effort": null
+                }
+              },
+              "cwd": "/work",
+              "effort": null,
+              "model": "gpt-5.6-luna",
+              "sandboxPolicy": {
+                "type": "workspaceWrite"
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "asks": [],
+        "items": [
+          "turn-1-plan"
+        ]
+      },
+      "note": "Codex's app chose implement: it leaves plan before its turn starts, so the plan was approved"
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-2",
+            "item": {
+              "type": "userMessage",
+              "id": "u-2",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Implement the plan."
+                }
+              ],
+              "clientId": "tui-2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE",
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "thread/settings/updated",
+          "params": {
+            "threadId": "t1",
+            "threadSettings": {
+              "approvalPolicy": "on-request",
+              "collaborationMode": {
+                "mode": "plan",
+                "settings": {
+                  "model": "gpt-5.6-luna",
+                  "reasoning_effort": null
+                }
+              },
+              "cwd": "/work",
+              "effort": null,
+              "model": "gpt-5.6-luna",
+              "sandboxPolicy": {
+                "type": "workspaceWrite"
+              }
+            }
+          }
+        }
+      },
+      "note": "back to plan in Codex's app"
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-3",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "item": {
+              "type": "userMessage",
+              "id": "u-3",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Plan the README too."
+                }
+              ],
+              "clientId": "tui-3"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "item": {
+              "type": "plan",
+              "id": "turn-3-plan",
+              "text": ""
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-3-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "itemId": "turn-3-plan",
+            "delta": "## Write the colour and the README\n\n- Write `B"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/plan/delta",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "itemId": "turn-3-plan",
+            "delta": "lue` to `color.txt`.\n- Say so in `README.md`.\n"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-3",
+            "item": {
+              "type": "plan",
+              "id": "turn-3-plan",
+              "text": "## Write the colour and the README\n\n- Write `Blue` to `color.txt`.\n- Say so in `README.md`.\n"
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "turn-3-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-3",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "plan:turn-3-plan"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-4",
+              "status": "inProgress"
+            }
+          }
+        }
+      },
+      "expect": {
+        "asks": [],
+        "items": [
+          "turn-3-plan"
+        ]
+      },
+      "note": "Codex's app stayed in plan and sent a prompt: the turn runs in plan mode, so the plan was sent back"
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-4",
+            "item": {
+              "type": "userMessage",
+              "id": "u-4",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Leave the README alone."
+                }
+              ],
+              "clientId": "tui-4"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-4",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    }
+  ]
+}

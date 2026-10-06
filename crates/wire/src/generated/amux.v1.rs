@@ -3351,7 +3351,7 @@ impl ::prost::Name for CodexCreateConfig {
 pub struct CodexItem {
     #[prost(
         oneof = "codex_item::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17"
     )]
     pub kind: ::core::option::Option<codex_item::Kind>,
 }
@@ -3396,6 +3396,9 @@ pub mod codex_item {
         /// the work.
         #[prost(message, tag = "16")]
         Ask(super::AskItem),
+        /// The plan Codex proposed in plan mode.
+        #[prost(message, tag = "17")]
+        Plan(super::Plan),
     }
 }
 impl ::prost::Name for CodexItem {
@@ -3739,7 +3742,7 @@ pub struct CodexAsk {
     /// The decisions this request offers, in the server's order.
     #[prost(enumeration = "Decision", repeated, tag = "10")]
     pub decisions: ::prost::alloc::vec::Vec<i32>,
-    #[prost(oneof = "codex_ask::Body", tags = "3, 4, 5, 6, 7, 8, 9")]
+    #[prost(oneof = "codex_ask::Body", tags = "3, 4, 5, 6, 7, 8, 9, 11")]
     pub body: ::core::option::Option<codex_ask::Body>,
 }
 /// Nested message and enum types in `CodexAsk`.
@@ -3760,6 +3763,10 @@ pub mod codex_ask {
         Question(super::QuestionAsk),
         #[prost(message, tag = "9")]
         McpTool(super::McpToolApproval),
+        /// Codex asks nothing about a plan: amux opens this when a turn in plan
+        /// mode ends with one. Its key is amux's own.
+        #[prost(message, tag = "11")]
+        Plan(super::PlanAsk),
     }
 }
 impl ::prost::Name for CodexAsk {
@@ -3917,7 +3924,7 @@ impl ::prost::Name for Approve {
 /// access grants.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CodexAnswer {
-    #[prost(oneof = "codex_answer::Of", tags = "1, 2, 3, 4")]
+    #[prost(oneof = "codex_answer::Of", tags = "1, 2, 3, 4, 5")]
     pub of: ::core::option::Option<codex_answer::Of>,
 }
 /// Nested message and enum types in `CodexAnswer`.
@@ -3932,6 +3939,8 @@ pub mod codex_answer {
         Link(super::LinkAnswer),
         #[prost(message, tag = "4")]
         Grant(super::GrantAnswer),
+        #[prost(message, tag = "5")]
+        Plan(super::PlanAnswer),
     }
 }
 impl ::prost::Name for CodexAnswer {

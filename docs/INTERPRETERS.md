@@ -225,6 +225,16 @@ draw both from these facts alone.
   prompt starts the next turn. Headless Claude leaves plan with the plan
   waiting only through amux's own permission change, which answers the
   call as approved with that permission.
+- **Codex** streams its plan item as a plan. Codex asks nothing about a
+  plan, so when a turn in plan mode completes with one the interpreter opens
+  a plan ask of its own (key `plan:<item id>`) and the agent needs you. The
+  choices are implement, which sets the mode to default, leaves the
+  permission alone and starts a turn with "Implement the plan." (what
+  Codex's own app sends), and stay, which sends the note, if any, as the
+  next prompt in plan mode. Whoever decides, the ask closes when the agent
+  leaves plan (approved; Codex reports the new mode before the turn it
+  starts) or when the next turn starts (sent back if it runs in plan mode,
+  approved otherwise). A prompt typed in amux instead dismisses the plan.
 
 ## Redaction
 

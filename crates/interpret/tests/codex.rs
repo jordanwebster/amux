@@ -33,6 +33,8 @@ macro_rules! goldens {
 goldens! {
     amuxs_own_tools_draw_a_message_or_nothing => "amux_tools",
     another_client_drives_the_same_thread => "co_drive",
+    plans_open_a_decision_amux_answers => "plans",
+    a_plan_is_decided_from_codexs_own_app => "co_drive_plan",
     the_thread_carries_the_agents_name => "thread_name",
     amuxs_own_tools_are_approved_without_asking => "amux_tool_approval",
     a_failed_turn_start_drops_its_pending_interrupt => "interrupt_turn_start_failed",

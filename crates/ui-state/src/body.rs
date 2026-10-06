@@ -111,7 +111,7 @@ impl ItemBody {
                 | Codex::Unrecognized(_)
                 | Codex::TurnDiff(_)
                 | Codex::Verdict(_) => ItemClass::Other,
-                Codex::Ask(_) => ItemClass::Ask,
+                Codex::Ask(_) | Codex::Plan(_) => ItemClass::Ask,
             },
             ItemBody::Undecodable => ItemClass::Other,
         }
