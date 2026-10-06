@@ -110,7 +110,9 @@ ROWS = [
             r"crates/test-agent|-p test-agent|debug/test-agent|test_agent_bin|new test-agent",
             r"ArtifactRef([^A-Za-z_]|$)",
             r"ArtifactKind([^A-Za-z_]|$)",
-            r"DiffResponse|DiffFile|BaseIdentity|PathBlob([^A-Za-z_]|$)",
+            # DiffFile is back on purpose: Diff answers with one per changed
+            # file, so the name alone no longer marks the old response.
+            r"DiffResponse|BaseIdentity|PathBlob([^A-Za-z_]|$)",
             r"DebugProfile|DebugInstallation|DebugFormat|DebugRequest|DebugResponse|rpc Debug[(]",
             r"ClaudePtyTranscriptV1Input|ClaudeSdkV1Input|CodexSdkV1Input|ClaudeCyclePermissionMode|CodexSdkV1Command",
         ],
