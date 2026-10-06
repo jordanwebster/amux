@@ -7,15 +7,18 @@
   ▾ Running 10 ─────────────────────────────────────────────────────────────────────────────────────────────
 
   › ○ release-notes╭─ New Agent ──────────────────────────────────────────────────────────╮            [x]
-                   │                                                                      │
-    ○ backups  Clau│  Name      desk-notes                                                │            now
-                   │  Agent      Claude   Codex                                           │
-    ○ expired  Clau│  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work                │            now
-                   │  Host       cabin   desk   laptop                                    │
-    ○ limited  Clau│                                                                      │            now
+      Ready to writ│                                                                      │
+                   │  Name      desk-notes                                                │
+    ○ backups  Clau│  Agent      Claude   Codex                                           │            now
+                   │  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work                │
+    ○ expired  Clau│  Host       cabin   desk   laptop                                    │            now
+      Tidied.      │                                                                      │
                    │  [Start]  [Cancel]                                                   │
-    ○ worker  Claud│  enter start   ←→ choose   ↑↓ move   esc cancel                      │            now
-                   ╰──────────────────────────────────────────────────────────────────────╯
+    ○ limited  Clau│  enter start   ←→ choose   ↑↓ move   esc cancel                      │            now
+      usage limit r╰──────────────────────────────────────────────────────────────────────╯
+
+    ○ worker  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                 now
+
     ○ linker  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
 
     ○ filer  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
@@ -25,9 +28,6 @@
     ○ planner-pty  Claude (terminal) · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                 now
 
     ○ planner  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                now
-
-
-
 
 
 

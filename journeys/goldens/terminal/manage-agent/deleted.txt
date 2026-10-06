@@ -11,11 +11,11 @@
     ○ reviewer  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                      now
 
     ○ keeper  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                        now
+      The recovery state is safely stored.
 
     ○ decision-codex  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                 now
 
     ○ decision-sdk  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                  now
-
 
 
 

@@ -7,18 +7,18 @@
   ▾ Running 6 ──────────────────────────────────────────────────────────────────────────────────────────────
 
   › ○ helper  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                        [x]
-                                  ╭─ Stop ────────────────────────────────╮
-    ○ decision-pty  Claude (termin│                                       │/work                       now
-                                  │ Stop helper? It can be resumed later. │
-    ○ reviewer  Claude · /tmp/aj-x│                                       │                            now
-                                  │ [Stop]  [Cancel]                      │
-    ○ keeper  Claude · /tmp/aj-xxx│ enter stop   esc cancel               │                            now
-                                  ╰───────────────────────────────────────╯
+      Ready when you are.         ╭─ Stop ────────────────────────────────╮
+                                  │                                       │
+    ○ decision-pty  Claude (termin│ Stop helper? It can be resumed later. │/work                       now
+                                  │                                       │
+    ○ reviewer  Claude · /tmp/aj-x│ [Stop]  [Cancel]                      │                            now
+                                  │ enter stop   esc cancel               │
+    ○ keeper  Claude · /tmp/aj-xxx╰───────────────────────────────────────╯                            now
+      The recovery state is safely stored.
+
     ○ decision-codex  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                 now
 
     ○ decision-sdk  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                  now
-
-
 
 
 

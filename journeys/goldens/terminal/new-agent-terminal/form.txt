@@ -9,13 +9,15 @@
   › ○ backups  Clau╭─ New Agent ──────────────────────────────────────────────────────────╮            [x]
                    │                                                                      │
     ○ expired  Clau│  Name      release-notes                                             │            now
-                   │  Agent      Claude   Codex                                           │
-    ○ limited  Clau│  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work                │            now
-                   │  Host       cabin   desk   laptop                                    │
-    ○ worker  Claud│                                                                      │            now
+      Tidied.      │  Agent      Claude   Codex                                           │
+                   │  Folder    /tmp/aj-xxxxxxxx/testnetxxxxxx/laptop/work                │
+    ○ limited  Clau│  Host       cabin   desk   laptop                                    │            now
+      usage limit r│                                                                      │
                    │  [Start]  [Cancel]                                                   │
-    ○ linker  Codex│  enter next   esc done                                               │            now
+    ○ worker  Claud│  enter next   esc done                                               │            now
                    ╰──────────────────────────────────────────────────────────────────────╯
+    ○ linker  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
+
     ○ filer  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
 
     ○ asker  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
@@ -23,8 +25,6 @@
     ○ planner-pty  Claude (terminal) · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                 now
 
     ○ planner  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                now
-
-
 
 
 
