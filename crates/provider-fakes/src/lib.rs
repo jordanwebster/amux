@@ -3,15 +3,17 @@
 //! Three binaries speak the real protocols: `fake-claude-pty` (a terminal
 //! session that writes Claude's transcript JSONL, runs its hooks and serves
 //! its messaging socket, without drawing a TUI), `fake-claude-sdk`
-//! (stream-JSON over stdio) and `fake-codex` (the app server over stdio,
-//! and `resume <thread>`, the terminal view a raw attach opens).
+//! (stream-JSON over stdio) and `fake-codex` (the app server over stdio or,
+//! for several clients at once, a Unix socket; and `resume <thread>`, the
+//! terminal view an attach opens, a client of that socket with `--remote`).
 //! Each plays an authored [`Script`] named by [`SCRIPT_ENV`], so tests run
 //! whole agents offline and deterministically, or plays a recorded session
 //! back verbatim ([`PLAYBACK_ENV`]).
 //!
 //! Two properties hold each fake to its provider. Every recording in the
 //! claude-specs and codex-specs corpora plays back through the fake binary
-//! over the real transport byte for byte ([`conformance`]), so the fake's
+//! over the transport hosts use (Codex's socket on Unix, stdio elsewhere)
+//! byte for byte ([`conformance`]), so the fake's
 //! transports and a recording's expressiveness as a script are the
 //! provider's. And every frame the fake composes for an authored script
 //! has a shape some recorded frame of the same kind has ([`shape`]), so a
@@ -19,6 +21,7 @@
 
 pub mod cargo;
 pub mod claude;
+pub mod clients;
 pub mod codex;
 pub mod codex_view;
 pub mod conformance;

@@ -1,4 +1,4 @@
-//! `fake-codex`: `codex app-server` speaking JSON-RPC over stdio.
+//! `fake-codex`: `codex app-server` speaking JSON-RPC over stdio or a Unix socket.
 //!
 //! Modelled on codex-cli 0.157.0: the host initializes, starts or resumes a
 //! thread and starts turns; a turn reports its items as started, streamed
@@ -10,14 +10,24 @@
 //! written to an idle thread, it waits for the next `turn/start`.
 //! `turn/steer` adds the host's input to the running turn as a user
 //! message; `turn/interrupt` ends the turn as interrupted.
+//!
+//! On a Unix socket (`--listen unix://PATH`) it serves any number of
+//! clients, as Codex does. A client joins the thread by starting or
+//! resuming it, and from then on gets every notification and server
+//! request; any joined client may answer a request, and all are told when
+//! it is resolved. A client that leaves takes nothing with it: the turn
+//! goes on and its pending request stays open for the others, and one that
+//! joins later is sent the requests still pending. A thread can be resumed
+//! by a second client only once it exists on disk, which for Codex is after
+//! its first turn starts or it is named.
 
 use std::collections::{BTreeMap, VecDeque};
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, BufReader, Stdout};
 use tokio::sync::mpsc;
 
-use crate::lines::Out;
+use crate::clients::{ClientId, Event, Listen, Writer};
+use crate::playback::{Channel, Process};
 use crate::script::{Ask, OfferedCommand, OfferedModel, Question, Script, Step, Tool};
 use crate::{DRIFT_EXIT, Mode};
 
@@ -32,10 +42,17 @@ pub const VERSION: &str = "0.157.0";
 pub fn main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(thread) = crate::codex_view::resumed_thread(&args) {
-        return crate::codex_view::run(thread);
+        return crate::codex_view::run(thread, crate::codex_view::remote(&args));
     }
     let mode = match crate::mode_from_env() {
         Ok(mode) => mode,
+        Err(error) => {
+            eprintln!("fake-codex: {error}");
+            return DRIFT_EXIT;
+        }
+    };
+    let listen = match Listen::from_args(&args) {
+        Ok(listen) => listen,
         Err(error) => {
             eprintln!("fake-codex: {error}");
             return DRIFT_EXIT;
@@ -48,13 +65,11 @@ pub fn main() -> i32 {
     let code = runtime.block_on(async move {
         match mode {
             Mode::Playback(process) => {
-                match crate::lines::play(
-                    &process,
-                    BufReader::new(tokio::io::stdin()),
-                    tokio::io::stdout(),
-                )
-                .await
-                {
+                let played = match crate::clients::serve(&listen).await {
+                    Ok(events) => play(&process, events).await,
+                    Err(error) => Err(error.to_string()),
+                };
+                match played {
                     Ok(code) => code.unwrap_or(0),
                     Err(error) => {
                         eprintln!("fake-codex: {error}");
@@ -72,7 +87,13 @@ pub fn main() -> i32 {
                     eprintln!("fake-codex: Codex can be scripted near a usage limit, not past it");
                     return DRIFT_EXIT;
                 }
-                Engine::new(script).run().await
+                match crate::clients::serve(&listen).await {
+                    Ok(events) => Engine::new(script, listen, events).run().await,
+                    Err(error) => {
+                        eprintln!("fake-codex: {error}");
+                        DRIFT_EXIT
+                    }
+                }
             }
         }
     });
@@ -82,9 +103,77 @@ pub fn main() -> i32 {
     code
 }
 
+/// Play one recorded process to the first client to connect: write each
+/// recorded output, and require each recorded input from that client, byte
+/// for byte. After the last event the client must leave without writing
+/// more; a recorded exit instead ends the process there with its code.
+async fn play(
+    process: &Process,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) -> Result<Option<i32>, String> {
+    let (client, mut writer) = loop {
+        match events.recv().await {
+            Some(Event::Opened(id, writer)) => break (id, writer),
+            Some(_) => {}
+            None => return Err("no client connected".into()),
+        }
+    };
+    for (index, event) in process.events.iter().enumerate() {
+        match event.channel {
+            Channel::Output => writer
+                .write(&String::from_utf8_lossy(&event.bytes))
+                .await
+                .map_err(|error| format!("writing event {index}: {error}"))?,
+            Channel::Input => {
+                let line = next_frame(&mut events, client)
+                    .await
+                    .ok_or_else(|| format!("input closed before event {index}"))?;
+                if line.as_bytes() != event.bytes {
+                    return Err(format!(
+                        "event {index}: host wrote\n  {line}\nrecording has\n  {}",
+                        String::from_utf8_lossy(&event.bytes)
+                    ));
+                }
+            }
+            Channel::Exit => return Ok(Some(crate::playback::exit_code(event))),
+            Channel::Transcript | Channel::Hook => {
+                return Err(format!(
+                    "event {index}: Codex has no {:?} channel",
+                    event.channel
+                ));
+            }
+        }
+    }
+    match next_frame(&mut events, client).await {
+        None => Ok(None),
+        Some(line) => Err(format!("host wrote past the recording's end: {line}")),
+    }
+}
+
+/// The next message `client` writes; None once it has left.
+async fn next_frame(
+    events: &mut mpsc::UnboundedReceiver<Event>,
+    client: ClientId,
+) -> Option<String> {
+    loop {
+        match events.recv().await? {
+            Event::Frame(id, text) if id == client => return Some(text),
+            Event::Closed(id) if id == client => return None,
+            _ => {}
+        }
+    }
+}
+
+/// One connected client, and whether it has joined the thread.
+struct Client {
+    writer: Writer,
+    joined: bool,
+}
+
 struct Engine {
-    out: Out<Stdout>,
-    input: mpsc::UnboundedReceiver<Value>,
+    listen: Listen,
+    events: mpsc::UnboundedReceiver<Event>,
+    clients: BTreeMap<ClientId, Client>,
     eof: bool,
     steps: VecDeque<Step>,
     model: String,
@@ -93,11 +182,16 @@ struct Engine {
     skills: Vec<OfferedCommand>,
     cwd: String,
     thread: Option<String>,
+    /// Whether the thread exists on disk, so another client can resume it.
+    materialized: bool,
+    name: Option<String>,
     /// The running turn's id.
     turn: Option<String>,
-    /// `turn/start` requests waiting to run, with their input.
-    starts: VecDeque<(Value, Value)>,
+    /// `turn/start` requests waiting to run: who asked, the id and input.
+    starts: VecDeque<(ClientId, Value, Value)>,
     interrupted: bool,
+    /// Our server requests still waiting for an answer, as sent, by id.
+    pending: BTreeMap<String, String>,
     /// Responses to our server requests, by id.
     answers: BTreeMap<String, Value>,
     next_request: u64,
@@ -113,25 +207,11 @@ struct Engine {
 }
 
 impl Engine {
-    fn new(script: Script) -> Self {
-        let (tx, input) = mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(tokio::io::stdin()).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                crate::script::log_input(&line);
-                match serde_json::from_str::<Value>(&line) {
-                    Ok(value) => {
-                        if tx.send(value).is_err() {
-                            break;
-                        }
-                    }
-                    Err(error) => eprintln!("fake-codex: unreadable input {line}: {error}"),
-                }
-            }
-        });
+    fn new(script: Script, listen: Listen, events: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
-            out: Out::new(tokio::io::stdout()),
-            input,
+            listen,
+            events,
+            clients: BTreeMap::new(),
             eof: false,
             steps: script.steps.into(),
             models: OfferedModel::offered(
@@ -144,9 +224,12 @@ impl Engine {
                 .map(|dir| dir.display().to_string())
                 .unwrap_or_default(),
             thread: None,
+            materialized: false,
+            name: None,
             turn: None,
             starts: VecDeque::new(),
             interrupted: false,
+            pending: BTreeMap::new(),
             answers: BTreeMap::new(),
             next_request: 0,
             next_item: 0,
@@ -163,8 +246,8 @@ impl Engine {
 
     async fn run(mut self) -> i32 {
         loop {
-            if let Some((id, params)) = self.starts.pop_front() {
-                if let Some(code) = self.run_turn(id, params).await {
+            if let Some((client, id, params)) = self.starts.pop_front() {
+                if let Some(code) = self.run_turn(client, id, params).await {
                     return code;
                 }
                 continue;
@@ -172,28 +255,84 @@ impl Engine {
             if self.eof {
                 return 0;
             }
-            match self.input.recv().await {
-                Some(frame) => self.handle(frame).await,
-                None => self.eof = true,
+            let event = self.events.recv().await;
+            self.receive(event).await;
+        }
+    }
+
+    async fn receive(&mut self, event: Option<Event>) {
+        match event {
+            None => self.eof = true,
+            Some(Event::Opened(id, writer)) => {
+                // A stdio host is the only client there will be.
+                let joined = self.listen == Listen::Stdio;
+                self.clients.insert(id, Client { writer, joined });
+            }
+            Some(Event::Frame(id, line)) => {
+                crate::script::log_input(&line);
+                match serde_json::from_str::<Value>(&line) {
+                    Ok(frame) => self.handle(id, frame).await,
+                    Err(error) => eprintln!("fake-codex: unreadable input {line}: {error}"),
+                }
+            }
+            // A stdio host that closes its input still reads the output:
+            // the process goes on to the script's end, then exits.
+            Some(Event::Closed(_)) if self.listen == Listen::Stdio => self.eof = true,
+            Some(Event::Closed(id)) => {
+                self.clients.remove(&id);
             }
         }
     }
 
-    async fn send(&mut self, frame: Value) {
-        // A form schema waits for the frame that carries it.
+    /// A frame's text. A form schema waits for the frame that carries it.
+    fn compose(&mut self, frame: &Value) -> String {
         let carries = self
             .schema
             .as_ref()
             .is_some_and(|_| frame.to_string().contains(crate::script::SCHEMA_SLOT));
-        let sent = match self.schema.take() {
-            Some(schema) if carries => self.out.send_with_schema(&frame, &schema).await,
+        match self.schema.take() {
+            Some(schema) if carries => crate::lines::with_schema(frame, &schema),
             kept => {
                 self.schema = kept;
-                self.out.send(&frame).await
+                serde_json::to_string(frame).expect("JSON values serialise")
             }
+        }
+    }
+
+    /// Sends a notification or server request to every joined client.
+    async fn send(&mut self, frame: Value) {
+        let text = self.compose(&frame);
+        self.broadcast(&text).await;
+    }
+
+    async fn broadcast(&mut self, text: &str) {
+        let mut gone = Vec::new();
+        for (id, client) in &mut self.clients {
+            if client.joined && client.writer.write(text).await.is_err() {
+                gone.push(*id);
+            }
+        }
+        self.lost(gone);
+    }
+
+    /// Sends a response to the one client that asked.
+    async fn reply(&mut self, client: ClientId, frame: Value) {
+        let text = self.compose(&frame);
+        let Some(to) = self.clients.get_mut(&client) else {
+            return;
         };
-        if sent.is_err() {
+        if to.writer.write(&text).await.is_err() {
+            self.lost(vec![client]);
+        }
+    }
+
+    fn lost(&mut self, gone: Vec<ClientId>) {
+        // A stdio host that stopped reading has gone for good.
+        if !gone.is_empty() && self.listen == Listen::Stdio {
             std::process::exit(0);
+        }
+        for id in gone {
+            self.clients.remove(&id);
         }
     }
 
@@ -202,19 +341,23 @@ impl Engine {
             .await;
     }
 
-    async fn respond(&mut self, id: &Value, result: Value) {
-        self.send(json!({ "id": id, "result": result })).await;
+    async fn respond(&mut self, client: ClientId, id: &Value, result: Value) {
+        self.reply(client, json!({ "id": id, "result": result }))
+            .await;
     }
 
-    async fn refuse(&mut self, id: &Value, code: i64, message: &str) {
-        self.send(json!({ "id": id, "error": { "code": code, "message": message } }))
-            .await;
+    async fn refuse(&mut self, client: ClientId, id: &Value, code: i64, message: &str) {
+        self.reply(
+            client,
+            json!({ "id": id, "error": { "code": code, "message": message } }),
+        )
+        .await;
     }
 
     async fn drain(&mut self) {
         loop {
-            match self.input.try_recv() {
-                Ok(frame) => self.handle(frame).await,
+            match self.events.try_recv() {
+                Ok(event) => self.receive(Some(event)).await,
                 Err(mpsc::error::TryRecvError::Empty) => return,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     self.eof = true;
@@ -230,10 +373,7 @@ impl Engine {
             return;
         }
         tokio::select! {
-            frame = self.input.recv() => match frame {
-                Some(frame) => self.handle(frame).await,
-                None => self.eof = true,
-            },
+            event = self.events.recv() => self.receive(event).await,
             () = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
         }
     }
@@ -242,11 +382,13 @@ impl Engine {
         self.thread.clone().unwrap_or_default()
     }
 
-    async fn handle(&mut self, frame: Value) {
+    async fn handle(&mut self, client: ClientId, frame: Value) {
         let Some(method) = frame["method"].as_str().map(str::to_owned) else {
-            // A response to one of our requests.
-            if let Some(id) = frame.get("id") {
-                self.answers.insert(key(id), frame.clone());
+            // A response to one of our requests: the first answer wins.
+            if let Some(id) = frame.get("id").map(key)
+                && self.pending.contains_key(&id)
+            {
+                self.answers.entry(id).or_insert(frame);
             }
             return;
         };
@@ -263,8 +405,9 @@ impl Engine {
                     "platformOs": std::env::consts::OS,
                     "userAgent": format!("fake-codex/{VERSION}"),
                 });
-                self.respond(&id, result).await;
+                self.respond(client, &id, result).await;
             }
+            "thread/resume" if self.thread.is_some() => self.join(client, &id, params).await,
             "thread/start" | "thread/resume" => {
                 if let Some(model) = params["model"].as_str() {
                     self.model = model.to_owned();
@@ -276,30 +419,16 @@ impl Engine {
                     .as_str()
                     .map(str::to_owned)
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                self.thread = Some(thread.clone());
-                let result = json!({
-                    "activePermissionProfile": null,
-                    "approvalPolicy": params["approvalPolicy"].as_str().unwrap_or("on-request"),
-                    "approvalsReviewer": "user",
-                    "cwd": self.cwd,
-                    "disabledPluginIds": [],
-                    "instructionSources": [],
-                    "model": self.model,
-                    "modelProvider": "openai",
-                    "multiAgentMode": "explicitRequestOnly",
-                    "reasoningEffort": null,
-                    "runtimeWorkspaceRoots": [self.cwd],
-                    "sandbox": {
-                        "excludeSlashTmp": false,
-                        "excludeTmpdirEnvVar": false,
-                        "networkAccess": false,
-                        "type": "workspaceWrite",
-                        "writableRoots": [],
-                    },
-                    "serviceTier": null,
-                    "thread": self.thread_value(),
-                });
-                self.respond(&id, result).await;
+                self.thread = Some(thread);
+                // A resumed thread was read from disk.
+                self.materialized = method == "thread/resume";
+                let result = if method == "thread/start" {
+                    self.thread_result(params)
+                } else {
+                    self.resume_result(params)
+                };
+                self.join_thread(client);
+                self.respond(client, &id, result).await;
                 if method == "thread/start" {
                     let thread = self.thread_value();
                     self.notify("thread/started", json!({ "thread": thread }))
@@ -308,35 +437,45 @@ impl Engine {
             }
             "turn/start" => {
                 if self.turn.is_some() {
-                    self.refuse(&id, -32600, "a turn is already running").await;
+                    self.refuse(client, &id, -32600, "a turn is already running").await;
                 } else {
-                    self.starts.push_back((id, params.clone()));
+                    self.starts.push_back((client, id, params.clone()));
                 }
             }
             "turn/steer" => {
                 let expected = params["expectedTurnId"].as_str();
                 match self.turn.clone() {
                     Some(turn) if expected.is_none_or(|expected| expected == turn) => {
-                        self.respond(&id, json!({ "turnId": turn })).await;
+                        self.respond(client, &id, json!({ "turnId": turn })).await;
                         self.user_message(&turn, &params["input"]).await;
                     }
-                    _ => self.refuse(&id, -32600, "no active turn to steer").await,
+                    _ => self.refuse(client, &id, -32600, "no active turn to steer").await,
                 }
             }
             "turn/interrupt" => {
                 if self.turn.is_some() {
                     self.interrupted = true;
                 }
-                self.respond(&id, json!({})).await;
+                self.respond(client, &id, json!({})).await;
             }
             // Drained by a running turn, held for the next by an idle one;
             // either way nothing is reported.
-            "thread/inject_items" => self.respond(&id, json!({})).await,
+            "thread/inject_items" => self.respond(client, &id, json!({})).await,
             "thread/compact/start" => {
-                self.respond(&id, json!({})).await;
+                self.respond(client, &id, json!({})).await;
                 self.compact().await;
             }
-            "thread/name/set" => self.respond(&id, json!({})).await,
+            "thread/name/set" => {
+                self.respond(client, &id, json!({})).await;
+                self.materialized = true;
+                self.name = params["name"].as_str().map(str::to_owned);
+                let thread = self.thread_id();
+                self.notify(
+                    "thread/name/updated",
+                    json!({ "threadId": thread, "threadName": params["name"] }),
+                )
+                .await;
+            }
             // One page: the shapes codex-cli 0.157.0 answers with, the
             // fields no host reads left out.
             "model/list" => {
@@ -360,7 +499,7 @@ impl Engine {
                         })
                     })
                     .collect::<Vec<_>>();
-                self.respond(&id, json!({ "data": data, "nextCursor": null }))
+                self.respond(client, &id, json!({ "data": data, "nextCursor": null }))
                     .await
             }
             "skills/list" => {
@@ -379,18 +518,97 @@ impl Engine {
                     })
                     .collect::<Vec<_>>();
                 let folder = json!({ "cwd": self.cwd, "skills": skills, "errors": [] });
-                self.respond(&id, json!({ "data": [folder] })).await
+                self.respond(client, &id, json!({ "data": [folder] })).await
             }
             "account/read" => {
                 self.respond(
+                    client,
                     &id,
                     json!({ "account": { "type": "chatgpt", "planType": "pro" }, "requiresOpenaiAuth": true }),
                 )
                 .await
             }
             other => {
-                self.refuse(&id, -32601, &format!("method not found: {other}"))
+                self.refuse(client, &id, -32601, &format!("method not found: {other}"))
                     .await
+            }
+        }
+    }
+
+    fn thread_result(&self, params: &Value) -> Value {
+        json!({
+            "activePermissionProfile": null,
+            "approvalPolicy": params["approvalPolicy"].as_str().unwrap_or("on-request"),
+            "approvalsReviewer": "user",
+            "cwd": self.cwd,
+            "disabledPluginIds": [],
+            "instructionSources": [],
+            "model": self.model,
+            "modelProvider": "openai",
+            "multiAgentMode": "explicitRequestOnly",
+            "reasoningEffort": null,
+            "runtimeWorkspaceRoots": [self.cwd],
+            "sandbox": {
+                "excludeSlashTmp": false,
+                "excludeTmpdirEnvVar": false,
+                "networkAccess": false,
+                "type": "workspaceWrite",
+                "writableRoots": [],
+            },
+            "serviceTier": null,
+            "thread": self.thread_value(),
+        })
+    }
+
+    /// Codex answers a resume with the thread's history cursors, and the
+    /// thread as its resume recording has it.
+    fn resume_result(&self, params: &Value) -> Value {
+        let mut result = self.thread_result(params);
+        let fields = result.as_object_mut().expect("an object");
+        fields.remove("disabledPluginIds");
+        for cursor in [
+            "initialTurnsPage",
+            "itemsBackwardsCursor",
+            "turnsBackwardsCursor",
+        ] {
+            fields.insert(cursor.into(), Value::Null);
+        }
+        let thread = fields["thread"].as_object_mut().expect("an object");
+        for absent in [
+            "daybreakEnabled",
+            "environments",
+            "model",
+            "originator",
+            "reasoningEffort",
+        ] {
+            thread.remove(absent);
+        }
+        result
+    }
+
+    fn join_thread(&mut self, client: ClientId) {
+        if let Some(joining) = self.clients.get_mut(&client) {
+            joining.joined = true;
+        }
+    }
+
+    /// Another client resumes the loaded thread: it joins the thread as it
+    /// runs and is sent the requests still waiting for an answer.
+    async fn join(&mut self, client: ClientId, id: &Value, params: &Value) {
+        let asked = params["threadId"].as_str().unwrap_or_default();
+        if self.thread.as_deref() != Some(asked) || !self.materialized {
+            let message = format!("no rollout found for thread id {asked}");
+            return self.refuse(client, id, -32600, &message).await;
+        }
+        let result = self.resume_result(params);
+        self.join_thread(client);
+        self.respond(client, id, result).await;
+        let pending: Vec<String> = self.pending.values().cloned().collect();
+        for request in pending {
+            if let Some(to) = self.clients.get_mut(&client)
+                && to.writer.write(&request).await.is_err()
+            {
+                self.lost(vec![client]);
             }
         }
     }
@@ -419,7 +637,7 @@ impl Engine {
             "id": thread,
             "model": self.model,
             "modelProvider": "openai",
-            "name": null,
+            "name": self.name,
             "originator": "fake-codex",
             "parentThreadId": null,
             "path": format!("{}/.codex/sessions/{thread}.jsonl", self.cwd),
@@ -531,10 +749,11 @@ impl Engine {
     }
 
     /// Run a turn. `Some(code)` ends the process.
-    async fn run_turn(&mut self, id: Value, params: Value) -> Option<i32> {
+    async fn run_turn(&mut self, client: ClientId, id: Value, params: Value) -> Option<i32> {
         let turn = uuid::Uuid::new_v4().to_string();
         let thread = self.thread_id();
         self.turn = Some(turn.clone());
+        self.materialized = true;
         self.interrupted = false;
         self.last_message = None;
         if let Some(mode) = params
@@ -546,7 +765,7 @@ impl Engine {
         let started = self.turn_value(&turn, "inProgress", vec![]);
         let mut response = started.clone();
         response["startedAt"] = Value::Null;
-        self.respond(&id, json!({ "turn": response })).await;
+        self.respond(client, &id, json!({ "turn": response })).await;
         self.status(Some(&[])).await;
         self.notify(
             "turn/started",
@@ -801,8 +1020,9 @@ impl Engine {
     async fn request(&mut self, method: &str, params: Value) -> Option<Value> {
         let id = self.next_request;
         self.next_request += 1;
-        self.send(json!({ "id": id, "method": method, "params": params }))
-            .await;
+        let request = self.compose(&json!({ "id": id, "method": method, "params": params }));
+        self.pending.insert(id.to_string(), request.clone());
+        self.broadcast(&request).await;
         let answer = loop {
             if let Some(answer) = self.answers.remove(&id.to_string()) {
                 break Some(answer);
@@ -812,6 +1032,7 @@ impl Engine {
             }
             self.pump().await;
         };
+        self.pending.remove(&id.to_string());
         let thread = self.thread_id();
         self.notify(
             "serverRequest/resolved",

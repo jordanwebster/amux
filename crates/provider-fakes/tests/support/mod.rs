@@ -154,3 +154,125 @@ impl Host {
             .unwrap_or(-1)
     }
 }
+
+/// A fake serving `app-server --listen unix://…`, for its clients to share.
+#[cfg(unix)]
+pub struct Server {
+    child: Child,
+    pub socket: std::path::PathBuf,
+    /// Holds the script and the socket until the fake exits.
+    _dir: tempfile::TempDir,
+}
+
+#[cfg(unix)]
+impl Server {
+    pub fn start(binary: &str, script: Value) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let path = script_file(dir.path(), script);
+        let socket = dir.path().join("codex.sock");
+        let child = tokio::process::Command::new(binary)
+            .args(["app-server", "--listen"])
+            .arg(format!("unix://{}", socket.display()))
+            .env(provider_fakes::SCRIPT_ENV, &path)
+            .current_dir(dir.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        Self {
+            child,
+            socket,
+            _dir: dir,
+        }
+    }
+
+    /// A new client, checking every frame it reads against the corpus.
+    pub async fn connect(&self, kind: Kind, exempt: &'static [&'static str]) -> Client {
+        let socket = provider_fakes::clients::connect(&self.socket, DEADLINE)
+            .await
+            .unwrap();
+        Client {
+            kind,
+            exempt,
+            socket,
+            classifier: Classifier::default(),
+            frames: Vec::new(),
+        }
+    }
+
+    /// Whether the fake is still serving.
+    pub fn running(&mut self) -> bool {
+        self.child.try_wait().unwrap().is_none()
+    }
+}
+
+/// One client of a [`Server`], speaking WebSocket text frames.
+#[cfg(unix)]
+pub struct Client {
+    kind: Kind,
+    exempt: &'static [&'static str],
+    socket: provider_fakes::clients::Connection,
+    classifier: Classifier,
+    pub frames: Vec<Value>,
+}
+
+#[cfg(unix)]
+impl Client {
+    pub async fn send(&mut self, frame: Value) {
+        use futures_util::SinkExt;
+        self.classifier.host(self.kind, &frame);
+        self.socket
+            .send(tokio_tungstenite::tungstenite::Message::text(
+                frame.to_string(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    pub async fn next(&mut self) -> Value {
+        self.next_within(DEADLINE)
+            .await
+            .expect("the fake wrote nothing in time")
+    }
+
+    /// The next frame, or None when nothing arrives within `wait`.
+    pub async fn next_within(&mut self, wait: Duration) -> Option<Value> {
+        use futures_util::StreamExt;
+        use tokio_tungstenite::tungstenite::Message;
+        let deadline = tokio::time::Instant::now() + wait;
+        let text = loop {
+            let message = tokio::time::timeout_at(deadline, self.socket.next())
+                .await
+                .ok()?
+                .expect("the fake hung up")
+                .unwrap();
+            if let Message::Text(text) = message {
+                break text;
+            }
+        };
+        let frame: Value = serde_json::from_str(text.as_str()).unwrap();
+        let group = self.classifier.provider(self.kind, &frame);
+        if let Err(drift) = corpus(self.kind).check(self.kind, &group, &frame)
+            && !self.exempt.contains(&group.as_str())
+        {
+            panic!("{drift}");
+        }
+        self.frames.push(frame.clone());
+        Some(frame)
+    }
+
+    pub async fn until(&mut self, matches: impl Fn(&Value) -> bool) -> Value {
+        loop {
+            let frame = self.next().await;
+            if matches(&frame) {
+                return frame;
+            }
+        }
+    }
+
+    /// Leaves as a client does, closing the connection.
+    pub async fn leave(mut self) {
+        let _ = self.socket.close(None).await;
+    }
+}

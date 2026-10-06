@@ -1,3 +1,21 @@
+2026-10-06 — **The fake Codex serves several clients on a Unix socket.**
+`fake-codex app-server --listen unix://PATH` now serves the socket the way
+Codex 0.160.0 does: a WebSocket upgrade, then one JSON-RPC message per text
+frame; a client that writes JSON lines without the upgrade is hung up on. A
+client joins the thread by starting or resuming it and then gets every
+notification and server request; any client may answer a request, the
+first answer wins and every client is told it was resolved. A client that
+leaves takes nothing with it: the turn goes on, its pending request stays
+open, and a client that joins later is sent what is still waiting. Resuming
+a thread from a second client is refused with Codex's own "no rollout found"
+error until the thread has run a turn or been named, and naming now reports
+`thread/name/updated` as Codex does. `fake-codex resume THREAD --remote
+unix://PATH` is a client too, standing in for Codex's own app: a typed line
+starts or steers a turn and `y`/`n` answers the oldest approval it drew.
+Recording playback serves whichever transport `--listen` names, and the
+conformance run plays every Codex recording over the socket on Unix and
+over stdio on Windows.
+
 2026-10-06 — **A queued terminal-Claude prompt with a pasted image is a steer again.**
 Claude writes a queued-command row's `prompt` as content blocks (text, then
 the image) when the prompt carries a pasted image, and as a string

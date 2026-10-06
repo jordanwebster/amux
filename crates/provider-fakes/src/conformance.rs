@@ -47,7 +47,12 @@ pub async fn conformance(kind: Kind, binary: &Path, recording: &Path) -> Result<
         };
         let played = async {
             match kind {
-                Kind::ClaudeSdk | Kind::Codex => stdio(binary, recording, process).await,
+                Kind::ClaudeSdk => stdio(binary, recording, process).await,
+                // Codex's hosts reach it on a socket where they can.
+                #[cfg(unix)]
+                Kind::Codex => socket(binary, recording, process).await,
+                #[cfg(not(unix))]
+                Kind::Codex => stdio(binary, recording, process).await,
                 Kind::ClaudePty => terminal(binary, recording, process).await,
             }
         };
@@ -117,6 +122,100 @@ async fn stdio(binary: &Path, recording: &Path, process: &Process) -> Result<(),
         .map_err(|error| format!("waiting: {error}"))?;
     if !status.success() {
         return Err(format!("the fake exited {status}"));
+    }
+    Ok(())
+}
+
+/// Plays a Codex process served on a Unix socket, the recording's host as
+/// its one client.
+#[cfg(unix)]
+async fn socket(binary: &Path, recording: &Path, process: &Process) -> Result<(), String> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let scratch = tempfile::Builder::new()
+        .prefix("fake-codex-")
+        .tempdir()
+        .map_err(|error| format!("scratch directory: {error}"))?;
+    let path = scratch.path().join("codex.sock");
+    let mut args = process.argv.clone();
+    let url = format!("unix://{}", path.display());
+    match args.iter().position(|arg| arg == "--listen") {
+        Some(at) if at + 1 < args.len() => args[at + 1] = url,
+        _ => args.extend(["--listen".to_owned(), url]),
+    }
+    let mut child = tokio::process::Command::new(binary)
+        .args(&args)
+        .env(
+            PLAYBACK_ENV,
+            playback::selector(recording, &process.transport),
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| format!("spawning {}: {error}", binary.display()))?;
+    let mut socket = match crate::clients::connect(&path, Duration::from_secs(10)).await {
+        Ok(socket) => socket,
+        Err(error) => {
+            let _ = child.start_kill();
+            let stderr = stderr_of(child).await;
+            return Err(format!(
+                "connecting to {}: {error}: {stderr}",
+                path.display()
+            ));
+        }
+    };
+    for (index, event) in process.events.iter().enumerate() {
+        match event.channel {
+            Channel::Input => {
+                let text = String::from_utf8_lossy(&event.bytes).into_owned();
+                socket
+                    .send(Message::text(text))
+                    .await
+                    .map_err(|error| format!("event {index}: writing: {error}"))?;
+            }
+            Channel::Output => {
+                let text = loop {
+                    match socket.next().await {
+                        Some(Ok(Message::Text(text))) => break text,
+                        Some(Ok(Message::Close(_))) | None => {
+                            let stderr = stderr_of(child).await;
+                            return Err(format!("event {index}: the fake hung up: {stderr}"));
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(error)) => {
+                            return Err(format!("event {index}: reading: {error}"));
+                        }
+                    }
+                };
+                if text.as_bytes() != event.bytes {
+                    return Err(format!(
+                        "event {index}: fake wrote\n  {text}\nrecording has\n  {}",
+                        String::from_utf8_lossy(&event.bytes)
+                    ));
+                }
+            }
+            other => return Err(format!("event {index}: Codex has no {other:?} channel")),
+        }
+    }
+    socket
+        .close(None)
+        .await
+        .map_err(|error| format!("closing: {error}"))?;
+    while let Some(message) = socket.next().await {
+        if let Ok(Message::Text(extra)) = message {
+            return Err(format!("the fake wrote past the recording: {extra}"));
+        }
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|error| format!("waiting: {error}"))?;
+    if !status.success() {
+        let stderr = stderr_of(child).await;
+        return Err(format!("the fake exited {status}: {stderr}"));
     }
     Ok(())
 }

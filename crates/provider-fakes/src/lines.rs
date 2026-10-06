@@ -39,11 +39,18 @@ impl<W: AsyncWrite + Unpin> Out<W> {
         value: &Value,
         schema: &crate::script::Schema,
     ) -> std::io::Result<()> {
-        let line = serde_json::to_string(value).expect("JSON values serialise");
-        let slot = format!("\"{}\"", crate::script::SCHEMA_SLOT);
-        self.raw(line.replacen(&slot, &schema.compact(), 1).as_bytes())
-            .await
+        self.raw(with_schema(value, schema).as_bytes()).await
     }
+}
+
+/// A frame's text with a form schema in its [`SCHEMA_SLOT`], written out
+/// as the script has it, its keys in their order.
+///
+/// [`SCHEMA_SLOT`]: crate::script::SCHEMA_SLOT
+pub fn with_schema(value: &Value, schema: &crate::script::Schema) -> String {
+    let line = serde_json::to_string(value).expect("JSON values serialise");
+    let slot = format!("\"{}\"", crate::script::SCHEMA_SLOT);
+    line.replacen(&slot, &schema.compact(), 1)
 }
 
 /// Play one recorded stdio process: write each recorded output line, and
