@@ -595,9 +595,20 @@ fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAs
         account: "me@example.com".into(),
         message: "Log in again".into(),
     };
-    let background = wire::BackgroundProcesses {
+    let background = wire::BackgroundJobs {
         known: true,
-        running: 2,
+        jobs: vec![
+            wire::BackgroundJob {
+                step: "t1".into(),
+                command: "npm run dev".into(),
+                started_at_ms: 1_000,
+            },
+            wire::BackgroundJob {
+                step: "t2".into(),
+                command: "cargo watch".into(),
+                started_at_ms: 2_000,
+            },
+        ],
     };
     let tasks = wire::TaskList {
         known: true,
@@ -638,7 +649,7 @@ fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAs
             usage: Some(usage),
             servers: Some(servers),
             sign_in: Some(sign_in),
-            background_processes: Some(background),
+            background_jobs: Some(background.clone()),
             ..Default::default()
         }
         .encode_to_vec(),
@@ -652,7 +663,7 @@ fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAs
             usage: Some(usage),
             servers: Some(servers),
             sign_in: Some(sign_in),
-            background_processes: Some(background),
+            background_jobs: Some(background.clone()),
             ..Default::default()
         }
         .encode_to_vec(),
@@ -667,7 +678,7 @@ fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAs
             usage: Some(usage),
             servers: Some(servers),
             sign_in: Some(sign_in),
-            background_processes: Some(background),
+            background_jobs: Some(background.clone()),
             ..Default::default()
         }
         .encode_to_vec(),

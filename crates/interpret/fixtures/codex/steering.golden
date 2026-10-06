@@ -50,33 +50,33 @@ snapshot WORKING queue=[p2] working_on=- at=1800000000000 asks=[] thread=t1 turn
 effect write "{\"id\":\"amux-4\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"7032\",\"input\":[{\"text\":\"Then summarise.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
 item turn:1 turn final at=1800000000000 text="" #1 TURN_OUTCOME_COMPLETED started=1800000000000
 item prompt:7032 prompt final input=p2 at=1800000000000 text="Then summarise."
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 turn_end 1 last=-
 ## 19 input {"id":"n5","send_now":{"target":"p2"}}
 effect reply n5 rejected:not_queued
 ## 20 fact {"channel":"rpc","json":{"id":"amux-4","result":{"turn":{"id":"turn-2"}}}}
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 21 fact {"channel":"rpc","json":{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-2","status":"inProgress"}}}}
 ## 22 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"content":[{"text":"Then summarise.","type":"text"}],"id":"u-3","type":"userMessage"},"threadId":"t1","turnId":"turn-2"}}}
 ## 23 input {"id":"p3","prompt":{"text":"Also check the logs."}}
 effect reply p3 queued
-snapshot WORKING queue=[p3] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[p3] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 24 input {"id":"n6","send_now":{"target":"p3"}}
 effect reply n6 accepted
 effect write "{\"id\":\"amux-5\",\"method\":\"turn/steer\",\"params\":{\"clientUserMessageId\":\"7033\",\"expectedTurnId\":\"turn-2\",\"input\":[{\"text\":\"Also check the logs.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
-snapshot WORKING queue=[p3(steered)] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[p3(steered)] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 25 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-2","status":"completed"}}}}
 effect write "{\"id\":\"amux-6\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"7033\",\"input\":[{\"text\":\"Also check the logs.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"t1\"}}"
 item turn:2 turn final at=1800000000000 text="" #2 TURN_OUTCOME_COMPLETED started=1800000000000
 item prompt:7033 prompt final input=p3 at=1800000000000 text="Also check the logs."
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 turn_end 2 last=-
 ## 26 fact {"channel":"rpc","json":{"error":{"code":-32600,"message":"no active turn to steer"},"id":"amux-5"}}
 ## 27 fact {"channel":"rpc","json":{"id":"amux-6","result":{"turn":{"id":"turn-3"}}}}
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-3 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-3 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 28 fact {"channel":"rpc","json":{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-3","status":"inProgress"}}}}
 ## 29 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"content":[{"text":"Also check the logs.","type":"text"}],"id":"u-4","type":"userMessage"},"threadId":"t1","turnId":"turn-3"}}}
 ## 30 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-3","status":"completed"}}}}
 item turn:3 turn final at=1800000000000 text="" #3 TURN_OUTCOME_COMPLETED started=1800000000000
-snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 turn_end 3 last=-

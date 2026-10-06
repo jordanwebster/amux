@@ -23,9 +23,10 @@ use wire::{
 
 use super::{AskMeta, AskShape, Request, State, TaskState, Tool, ToolDecisionState, item_body};
 use crate::claude_common::{
-    BackgroundInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, blocks_text,
-    compact_json, message_text, offered_commands, offered_models, permission_scopes, question_ask,
-    split_tool_name, tool_class, tool_result_images, tool_result_text, without_image_bytes,
+    BackgroundInput, JobInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool,
+    blocks_text, compact_json, message_text, offered_commands, offered_models, permission_scopes,
+    question_ask, split_tool_name, tool_class, tool_result_images, tool_result_text,
+    without_image_bytes,
 };
 use crate::shared::json_as_written;
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
@@ -263,8 +264,15 @@ impl State {
                 },
             ),
             Message::BackgroundTasksChanged(changed) => {
-                if let Some(tasks) = &changed.tasks {
-                    self.background = Some(tasks.len() as u32);
+                if let Some(tasks) = changed.tasks {
+                    let now = self.shared.now_ms();
+                    let jobs = self.jobs.listed(
+                        tasks
+                            .into_iter()
+                            .map(|task| (task.task_id, task.description)),
+                        now,
+                    );
+                    self.shared.set_jobs(jobs);
                 }
             }
             Message::PermissionDenied(denied) => {
@@ -305,6 +313,7 @@ impl State {
         self.dismiss_asks(emit);
         self.boundary(emit, BoundaryKind::Exited, cause);
         self.shared.provider_exited();
+        self.jobs.clear();
         self.exited = true;
         self.early_boundary = None;
         self.stream = None;
@@ -461,6 +470,11 @@ impl State {
             });
             if report.backgrounded {
                 tool.background = true;
+                let (command, at_ms) = (JobInput::command(&tool.input), tool.at_ms);
+                self.jobs.launched(&id, &key, command, at_ms);
+                if let Some(jobs) = self.jobs.current() {
+                    self.shared.set_jobs(jobs);
+                }
             }
             if !finished {
                 tool.state = ToolState::Running as i32;

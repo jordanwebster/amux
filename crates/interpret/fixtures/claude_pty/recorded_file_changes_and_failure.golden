@@ -72,4 +72,4 @@ item toolu_018cH8azshatUkXvdDF85BWn tool final at=1790386597925 text="" Bash TOO
 item toolu_018cH8azshatUkXvdDF85BWn tool final at=1790386597925 text="" Bash TOOL_STATE_FAILED ended=1790386597978 input="{\"command\":\"ls missing-file.txt\",\"description\":\"List missing…" out="Exit code 1\nls: missing-file.txt: No such file or directory"
 snapshot WORKING queue=[] working_on=- at=1790386597545 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=37271 tasks=? background=?
 ## 105 recorded 103: fact Hook hook_event_name=Stop
-snapshot WORKING queue=[] working_on=- at=1790386598761 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=37271 tasks=? background=0
+snapshot WORKING queue=[] working_on=- at=1790386598761 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=37271 tasks=? background=[]

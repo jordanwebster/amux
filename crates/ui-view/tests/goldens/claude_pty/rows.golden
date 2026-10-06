@@ -22,7 +22,9 @@
 ## 13 fact {"channel":"transcript","json":{"message":{"content":[{"content":[{"text":"Created issue #42","type":"text"}],"is_error":false,"tool_use_id":"t4","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":"2027-01-15T08:00:16.300Z","toolUseResult":[{"text":"Created issue #42","type":"text"}],"type":"user","uuid":"r4"}}
   row    8 t4 ToolCall { server: "github", tool: "create_issue", fact: "fails on CI", state: Succeeded, result: "Created issue #42" }
   composer Send activity=Some(Working) queue=[] outbox=[]
-## 15 fact {"channel":"transcript","json":{"durationMs":17000,"sessionId":"s1","subtype":"turn_duration","timestamp":"2027-01-15T08:00:17.000Z","type":"system","uuid":"d1"}}
+## 14 fact {"channel":"transcript","json":{"message":{"content":[{"content":"Command running in background with ID: b1.","is_error":false,"tool_use_id":"t3","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":"2027-01-15T08:00:16.250Z","toolUseResult":{"backgroundTaskId":"b1","interrupted":false,"isImage":false,"stderr":"","stdout":""},"type":"user","uuid":"r3"}}
+  row    7 t3 Background { command: "npm run dev", running: false, duration_ms: Some(150) }
+## 16 fact {"channel":"transcript","json":{"durationMs":17000,"sessionId":"s1","subtype":"turn_duration","timestamp":"2027-01-15T08:00:17.000Z","type":"system","uuid":"d1"}}
   row    9 turn:1 TurnEnd { duration_ms: Some(17000), cost_usd: None, failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
@@ -32,7 +34,7 @@
      4 a2 Prose { text: [Text("Starting.")], streaming: false, working_note: false }
      5 e2 Error { error_kind: "invalid_request", message: "API Error: 400 prompt is too long", attempts: 0, gave_up: true } attention
      6 a4 Unrecognized { what: "assistant/server_tool_use", summary: "" }
-     7 t3 Background { command: "npm run dev", running: true, duration_ms: None }
+     7 t3 Background { command: "npm run dev", running: false, duration_ms: Some(150) }
      8 t4 ToolCall { server: "github", tool: "create_issue", fact: "fails on CI", state: Succeeded, result: "Created issue #42" }
      9 turn:1 TurnEnd { duration_ms: Some(17000), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: Some(2), working_on: Some("Rewriting the parser") }

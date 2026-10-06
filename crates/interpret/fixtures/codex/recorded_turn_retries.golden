@@ -27,5 +27,5 @@ item error:01a0db9b-30b6-7653-91ca-94bfbbd5b898 error final at=1790390778055 tex
 item error:01a0db9b-30b6-7653-91ca-94bfbbd5b898 error final at=1790390779009 text="" httpConnectionFailed "Connection failed: error sending request" retry=false 0/0
 ## 33 recorded 32: fact Rpc method=turn/completed
 item turn:1 turn final at=1790390779011 text="" #1 TURN_OUTCOME_FAILED started=1790390775994
-snapshot IDLE queue=[] working_on=- at=1790390779011 asks=[] thread=01a0db9b-309a-7312-9cdd-9a19ac57a8e2 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
+snapshot IDLE queue=[] working_on=- at=1790390779011 asks=[] thread=01a0db9b-309a-7312-9cdd-9a19ac57a8e2 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=[]
 turn_end 1 last=-

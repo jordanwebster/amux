@@ -31,15 +31,14 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    AgentSpec, Ask, AskClosed, Attachment, BackgroundProcesses, ClaudeAnswer, ClaudeSdkItem,
-    ClaudeSdkSnapshot, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input,
-    OfferedCommand, OfferedModel, SignIn, Step, ToolCall, ToolDecision, ToolServerHealth,
-    UsageLimits, claude_answer, claude_sdk_input, claude_sdk_item, input, permission_answer,
-    plan_answer,
+    AgentSpec, Ask, AskClosed, Attachment, ClaudeAnswer, ClaudeSdkItem, ClaudeSdkSnapshot,
+    ContextMeter, ContextShare, DecisionOutcome, FormAction, Input, OfferedCommand, OfferedModel,
+    SignIn, Step, ToolCall, ToolDecision, ToolServerHealth, UsageLimits, claude_answer,
+    claude_sdk_input, claude_sdk_item, input, permission_answer, plan_answer,
 };
 
 use crate::claude_common::{
-    Task, describe_asks, describe_tasks, describe_tool, or_dash, task_list,
+    Jobs, Task, describe_asks, describe_tasks, describe_tool, or_dash, task_list,
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
@@ -230,7 +229,9 @@ pub struct State {
     servers: Option<ToolServerHealth>,
     #[serde(with = "serde_pb::opt_msg")]
     sign_in: Option<SignIn>,
-    background: Option<u32>,
+    /// Claude's background jobs; the shared part publishes them.
+    #[serde(default)]
+    jobs: Jobs,
     /// The newest slash command sent, which a local command's output
     /// belongs to.
     slash: Option<String>,
@@ -329,7 +330,7 @@ impl State {
             usage: None,
             servers: None,
             sign_in: None,
-            background: None,
+            jobs: Jobs::default(),
             slash: None,
             interrupted: false,
         }
@@ -372,13 +373,7 @@ impl State {
                     .unwrap_or_else(unknown::tool_server_health),
             ),
             sign_in: Some(self.sign_in.clone().unwrap_or_else(unknown::sign_in)),
-            background_processes: Some(match self.background {
-                None => unknown::background_processes(),
-                Some(running) => BackgroundProcesses {
-                    known: true,
-                    running,
-                },
-            }),
+            background_jobs: Some(self.shared.jobs()),
             provider_session: self.session.clone(),
             models: self.models.clone(),
             commands: self.commands.clone(),
@@ -1017,6 +1012,7 @@ impl Interpreter for ClaudeSdk {
 
     fn reincarnate(mut state: State, spec: &AgentSpec, producer_version: &str) -> (State, Step) {
         state.shared.reincarnate(spec, producer_version);
+        state.jobs.clear();
         // A new process: its first init is the incarnation's boundary.
         state.incarnation = spec.incarnation;
         state.inits = 0;
@@ -1210,7 +1206,6 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
     let usage = snapshot.usage.unwrap_or_default();
     let servers = snapshot.servers.unwrap_or_default();
     let sign_in = snapshot.sign_in.unwrap_or_default();
-    let background = snapshot.background_processes.unwrap_or_default();
     SnapshotView {
         asks: snapshot
             .asks
@@ -1283,11 +1278,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
                 wire::SignInState::Unknown => "?".to_owned(),
                 state => format!("{} {}", state.as_str_name(), or_dash(&sign_in.account)),
             },
-            if background.known {
-                background.running.to_string()
-            } else {
-                "?".into()
-            }
+            crate::shared::describe_jobs(snapshot.background_jobs.as_ref())
         ),
     }
 }

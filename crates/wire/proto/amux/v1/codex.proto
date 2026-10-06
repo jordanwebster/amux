@@ -150,7 +150,8 @@ message CodexSnapshot {
   ToolServerHealth servers = 8;
   UsageLimits usage = 9;
   SignIn sign_in = 10;
-  BackgroundProcesses background_processes = 11;
+  reserved 11;
+  BackgroundJobs background_jobs = 17;
   // Plan steps with status.
   TaskList plan = 12;
   optional string effort = 13;

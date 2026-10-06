@@ -30,4 +30,4 @@ effect write "{\"id\":\"amux-2\",\"method\":\"turn/interrupt\",\"params\":{\"thr
 ## 10 exiting "stopped"
 item cmd-1 work final at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_CANCELLED
 item boundary:3 boundary final at=1800000000000 text="" BOUNDARY_KIND_EXITED session=t1 version=0.157.0 cause="stopped"
-snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]

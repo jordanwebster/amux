@@ -460,3 +460,38 @@ fn an_interrupt_before_claude_starts_leaves_the_queued_prompt_to_run() {
     assert_eq!(snapshot.phase(), wire::Phase::Working);
     assert!(snapshot.queue.is_empty());
 }
+
+/// A job headless Claude stated and then it exits: the list empties on the exit, and
+/// a new incarnation from a checkpoint that still listed it starts empty.
+#[test]
+fn the_job_list_empties_when_headless_claude_exits() {
+    use prost::Message as _;
+    let jobs = |step: &wire::Step| {
+        step.snapshot.as_ref().map(|snapshot| {
+            let body = wire::ClaudeSdkSnapshot::decode(&snapshot.body[..]).unwrap();
+            let background = body.background_jobs.unwrap_or_default();
+            (background.known, background.jobs.len())
+        })
+    };
+    let (mut state, spec) =
+        interpret::run_until::<ClaudeSdk>(&fixtures().join("strip.json"), |step| {
+            jobs(step).is_some_and(|(_, running)| running > 0)
+        })
+        .unwrap()
+        .expect("the fixture lists a job");
+    let checkpoint = interpret::encode_checkpoint(&state);
+
+    let exited = ClaudeSdk::step(&mut state, Event::ProviderExit { code: Some(0) });
+    let listed: <ClaudeSdk as Interpreter>::State =
+        interpret::decode_checkpoint(&checkpoint).unwrap();
+    let next = wire::AgentSpec {
+        incarnation: spec.incarnation + 1,
+        ..spec
+    };
+    let (_, step) = ClaudeSdk::reincarnate(listed, &next, "test");
+    assert_eq!(
+        (jobs(&exited.step), jobs(&step)),
+        (Some((true, 0)), Some((true, 0))),
+        "emptied on exit, and empty in a new incarnation"
+    );
+}

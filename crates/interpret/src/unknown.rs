@@ -8,8 +8,8 @@
 //! is present with its own unknown state.
 
 use wire::{
-    BackgroundProcesses, ClaudePtySnapshot, ClaudeSdkSnapshot, CodexSnapshot, ContextMeter,
-    HealthState, SignIn, SignInState, TaskList, ToolServerHealth, UsageLimits, UsageState,
+    BackgroundJobs, ClaudePtySnapshot, ClaudeSdkSnapshot, CodexSnapshot, ContextMeter, HealthState,
+    SignIn, SignInState, TaskList, ToolServerHealth, UsageLimits, UsageState,
 };
 
 pub fn task_list() -> TaskList {
@@ -51,10 +51,10 @@ pub fn sign_in() -> SignIn {
     }
 }
 
-pub fn background_processes() -> BackgroundProcesses {
-    BackgroundProcesses {
+pub fn background_jobs() -> BackgroundJobs {
+    BackgroundJobs {
         known: false,
-        running: 0,
+        jobs: Vec::new(),
     }
 }
 
@@ -71,7 +71,7 @@ pub fn claude_pty() -> ClaudePtySnapshot {
         usage: Some(usage_limits()),
         servers: Some(tool_server_health()),
         sign_in: Some(sign_in()),
-        background_processes: Some(background_processes()),
+        background_jobs: Some(background_jobs()),
         running_calls: Vec::new(),
     }
 }
@@ -88,7 +88,7 @@ pub fn claude_sdk() -> ClaudeSdkSnapshot {
         usage: Some(usage_limits()),
         servers: Some(tool_server_health()),
         sign_in: Some(sign_in()),
-        background_processes: Some(background_processes()),
+        background_jobs: Some(background_jobs()),
         provider_session: None,
         models: Vec::new(),
         commands: Vec::new(),
@@ -106,7 +106,7 @@ pub fn codex() -> CodexSnapshot {
         servers: Some(tool_server_health()),
         usage: Some(usage_limits()),
         sign_in: Some(sign_in()),
-        background_processes: Some(background_processes()),
+        background_jobs: Some(background_jobs()),
         plan: Some(task_list()),
         effort: None,
         thread_id: None,

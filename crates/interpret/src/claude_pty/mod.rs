@@ -67,14 +67,14 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    AgentSpec, Ask, AskClosed, Attachment, BackgroundProcesses, Boundary, BoundaryKind,
-    ClaudeAnswer, ClaudePtyItem, ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName,
-    RunningCall, Step, SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input,
-    claude_pty_item, input, permission_answer, plan_answer,
+    AgentSpec, Ask, AskClosed, Attachment, Boundary, BoundaryKind, ClaudeAnswer, ClaudePtyItem,
+    ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName, RunningCall, Step,
+    SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input, claude_pty_item,
+    input, permission_answer, plan_answer,
 };
 
 use crate::claude_common::{
-    Task, describe_asks, describe_tasks, describe_tool, or_dash, same_json, split_tool_name,
+    Jobs, Task, describe_asks, describe_tasks, describe_tool, or_dash, same_json, split_tool_name,
     task_list,
 };
 use crate::{
@@ -471,7 +471,9 @@ pub struct State {
     next_boundary: u64,
     tasks: Option<Vec<Task>>,
     context_tokens: Option<u64>,
-    background: Option<u32>,
+    /// Claude's background jobs; the shared part publishes them.
+    #[serde(default)]
+    jobs: Jobs,
     messages: Vec<PendingMessage>,
     /// Each subagent's agent id and the tool-use id of its Agent call.
     agents: BTreeMap<String, String>,
@@ -507,7 +509,7 @@ impl State {
             next_boundary: 0,
             tasks: None,
             context_tokens: None,
-            background: None,
+            jobs: Jobs::default(),
             messages: Vec::new(),
             agents: BTreeMap::new(),
             slash: None,
@@ -533,13 +535,6 @@ impl State {
                 breakdown: Vec::new(),
             },
         };
-        let background_processes = match self.background {
-            None => unknown::background_processes(),
-            Some(running) => BackgroundProcesses {
-                known: true,
-                running,
-            },
-        };
         ClaudePtySnapshot {
             asks: self.shared.asks().open_asks().to_vec(),
             tasks: Some(tasks),
@@ -547,7 +542,7 @@ impl State {
             model: self.provider.model.clone(),
             permission_mode: self.provider.permission_mode.clone(),
             provider_session: self.provider.session.clone(),
-            background_processes: Some(background_processes),
+            background_jobs: Some(self.shared.jobs()),
             running_calls: self
                 .running
                 .iter()
@@ -1231,6 +1226,7 @@ impl Interpreter for ClaudePty {
 
     fn reincarnate(mut state: State, spec: &AgentSpec, producer_version: &str) -> (State, Step) {
         state.shared.reincarnate(spec, producer_version);
+        state.jobs.clear();
         // The launch fact of the new process is its first, not a relaunch:
         // the session it resumes is a resume, not a restart.
         state.provider.launches = 0;
@@ -1402,7 +1398,6 @@ fn describe_item(body: &[u8]) -> ItemView {
 fn describe_snapshot(body: &[u8]) -> SnapshotView {
     let snapshot = ClaudePtySnapshot::decode(body).unwrap_or_default();
     let context = snapshot.context.unwrap_or_default();
-    let background = snapshot.background_processes.unwrap_or_default();
     SnapshotView {
         asks: snapshot
             .asks
@@ -1421,11 +1416,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
                 "?".into()
             },
             describe_tasks(&snapshot.tasks.unwrap_or_default()),
-            if background.known {
-                background.running.to_string()
-            } else {
-                "?".into()
-            }
+            crate::shared::describe_jobs(snapshot.background_jobs.as_ref())
         ) + &snapshot
             .running_calls
             .iter()

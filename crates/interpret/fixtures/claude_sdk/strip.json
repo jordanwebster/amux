@@ -68,13 +68,19 @@
           "uuid": "bg",
           "tasks": [
             {
-              "id": "b1"
+              "task_id": "b1",
+              "task_type": "local_bash",
+              "description": "Start the dev server"
             },
             {
-              "id": "b2"
+              "task_id": "b2",
+              "task_type": "local_bash",
+              "description": "Watch the tests"
             },
             {
-              "id": "b3"
+              "task_id": "b3",
+              "task_type": "local_agent",
+              "description": "Survey the parsers"
             }
           ]
         }

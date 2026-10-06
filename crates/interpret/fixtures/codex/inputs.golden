@@ -53,45 +53,45 @@ effect reply i1 accepted
 effect write "{\"id\":\"amux-4\",\"method\":\"turn/start\",\"params\":{\"approvalPolicy\":\"never\",\"clientUserMessageId\":\"7033\",\"effort\":\"high\",\"input\":[{\"text\":\"Next.\",\"text_elements\":[],\"type\":\"text\"}],\"model\":\"gpt-5.6\",\"sandboxPolicy\":{\"type\":\"readOnly\"},\"threadId\":\"t1\"}}"
 item turn:1 turn final at=1800000000000 text="" #1 TURN_OUTCOME_INTERRUPTED started=1800000000000
 item prompt:7033 prompt final input=p3 at=1800000000000 text="Next."
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6 effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6 effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 turn_end 1 last=-
 ## 19 fact {"channel":"rpc","json":{"error":{"code":-32600,"message":"model gpt-5.6 is not available"},"id":"amux-4"}}
 item error:rpc:amux-4 error final at=1800000000000 text="" request "model gpt-5.6 is not available" retry=false 0/0
-snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6 effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6 effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 20 input {"id":"c4","model":{}}
 effect reply c4 accepted
-snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 21 input {"id":"p4","prompt":{"text":"Try again."}}
 effect reply p4 accepted
 effect write "{\"id\":\"amux-5\",\"method\":\"turn/start\",\"params\":{\"clientUserMessageId\":\"7034\",\"input\":[{\"text\":\"Try again.\",\"text_elements\":[],\"type\":\"text\"}],\"model\":\"gpt-5.6-luna\",\"threadId\":\"t1\"}}"
 item prompt:7034 prompt final input=p4 at=1800000000000 text="Try again."
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 22 input {"id":"i2","interrupt":{}}
 effect reply i2 accepted
 ## 23 fact {"channel":"rpc","json":{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-2","status":"inProgress"}}}}
 effect write "{\"id\":\"amux-6\",\"method\":\"turn/interrupt\",\"params\":{\"threadId\":\"t1\",\"turnId\":\"turn-2\"}}"
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-2 model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 24 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-2","status":"interrupted"}}}}
 item turn:3 turn final at=1800000000000 text="" #3 TURN_OUTCOME_INTERRUPTED started=1800000000000
-snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 turn_end 3 last=-
 ## 25 input {"id":"p5","prompt":{"text":"/compact"}}
 effect reply p5 accepted
 effect write "{\"id\":\"amux-7\",\"method\":\"thread/compact/start\",\"params\":{\"threadId\":\"t1\"}}"
 item prompt:7035 prompt final input=p5 at=1800000000000 text="/compact"
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 26 fact {"channel":"rpc","json":{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-3","status":"inProgress"}}}}
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-3 model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-3 model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 27 fact {"channel":"rpc","json":{"method":"item/started","params":{"item":{"id":"cc-1","type":"contextCompaction"},"threadId":"t1","turnId":"turn-3"}}}
 ## 28 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"id":"cc-1","type":"contextCompaction"},"threadId":"t1","turnId":"turn-3"}}}
 item boundary:2 boundary final at=1800000000000 text="" BOUNDARY_KIND_COMPACTED session=t1 version=0.157.0
 ## 29 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-3","status":"completed"}}}}
 item turn:4 turn final at=1800000000000 text="" #4 TURN_OUTCOME_COMPLETED started=1800000000000
-snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 turn_end 4 last=-
 ## 30 provider_exit {"code":1}
 item boundary:3 boundary final at=1800000000000 text="" BOUNDARY_KIND_EXITED session=t1 version=0.157.0 cause="exit code 1"
-snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=never sandbox=read-only models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 31 input {"agent_message":{"envelope":"e9","from":"lead","text":"Status?"},"id":"m1"}
 effect reply m1 queued
 item agent-message:6539 agent_message final input=e9 at=1800000000000 text="Status?" envelope=6539
@@ -103,7 +103,7 @@ effect write "{\"id\":\"amux-persist\",\"method\":\"thread/read\",\"params\":{\"
 effect write "{\"id\":\"amux-models-1\",\"method\":\"model/list\",\"params\":{}}"
 effect write "{\"id\":\"amux-skills\",\"method\":\"skills/list\",\"params\":{}}"
 item boundary:4 boundary final at=1800000000000 text="" BOUNDARY_KIND_RESUMED session=t1 version=0.157.0
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 ## 33 fact {"channel":"rpc","json":{"id":"amux-9","result":{"turn":{"id":"turn-5"}}}}
-snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-5 model=gpt-5.6-luna effort=high approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-5 model=gpt-5.6-luna effort=high approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 pending []

@@ -41,4 +41,4 @@ snapshot WORKING queue=[] working_on=- at=1790386582682 asks=[] session=bf8b2931
 ## 100 recorded 98: fact Transcript type=user uuid=e23a365f-c6d4-4a44-b597-64a29a3e45cd
 snapshot WORKING queue=[] working_on=- at=1790386582682 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38856 tasks=[1:TASK_LIST_STATUS_COMPLETED:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=?
 ## 104 recorded 102: fact Hook hook_event_name=Stop
-snapshot WORKING queue=[] working_on=- at=1790386584316 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38856 tasks=[1:TASK_LIST_STATUS_COMPLETED:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=0
+snapshot WORKING queue=[] working_on=- at=1790386584316 asks=[] session=bf8b2931-3680-4250-9331-a7190453fe89 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=38856 tasks=[1:TASK_LIST_STATUS_COMPLETED:"Draft",2:TASK_LIST_STATUS_PENDING:"Review",3:TASK_LIST_STATUS_PENDING:"Publish"] background=[]

@@ -2,6 +2,8 @@
 //! vocabulary, the question and scope shapes, the task list the task tools
 //! keep, and the one-line renderings goldens use.
 
+use std::collections::BTreeMap;
+
 use claude_protocol::stream::init::{ModelInfo, SlashCommand};
 use claude_protocol::stream::{
     ContentBlock, ImageSourceType, MessageContent, PermissionUpdate, ToolResultBody,
@@ -10,9 +12,9 @@ use claude_protocol::stream::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    Ask, Attachment, BlobRef, DecisionOutcome, OfferedCommand, OfferedModel, Question, QuestionAsk,
-    QuestionOption, ScopeChoice, TaskList, TaskListEntry, TaskListStatus, ToolCall, ToolClass,
-    ToolState, attachment,
+    Ask, Attachment, BackgroundJob, BlobRef, DecisionOutcome, OfferedCommand, OfferedModel,
+    Question, QuestionAsk, QuestionOption, ScopeChoice, TaskList, TaskListEntry, TaskListStatus,
+    ToolCall, ToolClass, ToolState, attachment,
 };
 
 use crate::Effect;
@@ -255,6 +257,110 @@ pub(crate) fn clip(text: &str, chars: usize) -> String {
 pub(crate) struct BackgroundInput {
     #[serde(default)]
     pub run_in_background: bool,
+}
+
+/// What a call that started a background job ran: Bash's command, or the
+/// description of an Agent call's task.
+#[derive(Deserialize)]
+pub(crate) struct JobInput {
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+impl JobInput {
+    /// The job's command from the call's input as the interpreter keeps it.
+    pub(crate) fn command(input: &str) -> String {
+        serde_json::from_str::<Self>(input)
+            .ok()
+            .and_then(|input| input.command.or(input.description))
+            .unwrap_or_default()
+    }
+}
+
+/// Claude's background jobs by its task id: the call that started each, as
+/// far as Claude has said, and which of them Claude lists as running.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Jobs {
+    jobs: BTreeMap<String, Job>,
+    /// The task ids of Claude's newest list, in its order.
+    listed: Vec<String>,
+    /// How many lists Claude has stated; none means the jobs are unknown.
+    lists: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+struct Job {
+    step: String,
+    command: String,
+    started_at_ms: i64,
+    /// The number of lists stated before the job's call said it started:
+    /// a job launched after the newest list is kept until the next one.
+    launched_after: u64,
+}
+
+impl Jobs {
+    /// The call keyed `step` started task `task_id` at `at_ms`.
+    pub(crate) fn launched(&mut self, task_id: &str, step: &str, command: String, at_ms: i64) {
+        let job = self.jobs.entry(task_id.to_owned()).or_default();
+        job.step = step.to_owned();
+        if !command.is_empty() {
+            job.command = command;
+        }
+        job.started_at_ms = at_ms;
+        job.launched_after = self.lists;
+    }
+
+    /// Claude's list of the tasks running now, as (task id, description):
+    /// a task no call is known to have started is shown by its
+    /// description, from now. Returns the jobs to publish.
+    pub(crate) fn listed(
+        &mut self,
+        tasks: impl IntoIterator<Item = (String, String)>,
+        now_ms: i64,
+    ) -> Vec<BackgroundJob> {
+        self.listed.clear();
+        for (task_id, description) in tasks {
+            let job = self.jobs.entry(task_id.clone()).or_insert_with(|| Job {
+                started_at_ms: now_ms,
+                launched_after: self.lists,
+                ..Job::default()
+            });
+            if job.command.is_empty() {
+                job.command = description;
+            }
+            self.listed.push(task_id);
+        }
+        let (listed, lists) = (&self.listed, self.lists);
+        self.jobs
+            .retain(|id, job| listed.contains(id) || job.launched_after == lists);
+        self.lists += 1;
+        self.published()
+    }
+
+    /// The jobs to publish when what is known about them changed; None
+    /// before Claude has stated any list.
+    pub(crate) fn current(&self) -> Option<Vec<BackgroundJob>> {
+        (self.lists > 0).then(|| self.published())
+    }
+
+    fn published(&self) -> Vec<BackgroundJob> {
+        self.listed
+            .iter()
+            .filter_map(|id| self.jobs.get(id))
+            .map(|job| BackgroundJob {
+                step: job.step.clone(),
+                command: job.command.clone(),
+                started_at_ms: job.started_at_ms,
+            })
+            .collect()
+    }
+
+    /// The provider exited: its jobs are gone.
+    pub(crate) fn clear(&mut self) {
+        *self = Self::default();
+    }
 }
 
 /// ExitPlanMode's input: the plan put to the person.

@@ -1,3 +1,19 @@
+2026-10-06 — **Background jobs are a list, and they go when the provider does.**
+Snapshots carried only a count of background processes, and nothing reset it
+when the provider exited, so an agent that was stopped or restarted kept
+showing jobs that no longer ran. The count is now `BackgroundJobs`: each job
+with the key of the call that started it, its command and its start time. The
+shared part holds the list, empties it at the provider's exit and starts every
+new incarnation with none. Headless Claude sets it from
+`background_tasks_changed`, filling in each job's call from `task_started`;
+terminal Claude from the `Stop` hook's list, tying ids to calls through a
+Bash result's `backgroundTaskId` or a subagent's launch; Codex is asked
+`thread/backgroundTerminals/list` at a turn's end while a command still runs,
+and a listed command leaves when its item completes. A test per interpreter
+failed before (the jobs outlived the exit and the next incarnation) and passes
+now. The replay-support dump bundle is re-dumped from a served daemon, since
+its journal held the old snapshot field.
+
 2026-10-06 — **Diff answers with the changed files, and builds a patch only when asked.**
 `Diff` now lists each changed file (path, lines added and removed, created,
 deleted or changed, binary) and carries a patch only for a request with

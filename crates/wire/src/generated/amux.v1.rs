@@ -1470,23 +1470,47 @@ impl ::prost::Name for SignIn {
         "/amux.v1.SignIn".into()
     }
 }
-/// Session strip: running background processes. `known` false is the
-/// explicit unknown.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct BackgroundProcesses {
+/// What the provider runs in the background: commands and tasks that
+/// outlive the call that started them. `known` false is the explicit
+/// unknown; the list empties when the provider exits, and a new incarnation
+/// starts with none.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BackgroundJobs {
     #[prost(bool, tag = "1")]
     pub known: bool,
-    #[prost(uint32, tag = "2")]
-    pub running: u32,
+    #[prost(message, repeated, tag = "2")]
+    pub jobs: ::prost::alloc::vec::Vec<BackgroundJob>,
 }
-impl ::prost::Name for BackgroundProcesses {
-    const NAME: &'static str = "BackgroundProcesses";
+impl ::prost::Name for BackgroundJobs {
+    const NAME: &'static str = "BackgroundJobs";
     const PACKAGE: &'static str = "amux.v1";
     fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.BackgroundProcesses".into()
+        "amux.v1.BackgroundJobs".into()
     }
     fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.BackgroundProcesses".into()
+        "/amux.v1.BackgroundJobs".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BackgroundJob {
+    /// The key of the item whose call started the job; empty when the
+    /// provider has not said which call it was.
+    #[prost(string, tag = "1")]
+    pub step: ::prost::alloc::string::String,
+    /// The command, or what the provider calls the task.
+    #[prost(string, tag = "2")]
+    pub command: ::prost::alloc::string::String,
+    #[prost(int64, tag = "3")]
+    pub started_at_ms: i64,
+}
+impl ::prost::Name for BackgroundJob {
+    const NAME: &'static str = "BackgroundJob";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.BackgroundJob".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.BackgroundJob".into()
     }
 }
 /// U+FFFC per attachment.
@@ -2488,8 +2512,8 @@ pub struct ClaudePtySnapshot {
     pub servers: ::core::option::Option<ToolServerHealth>,
     #[prost(message, optional, tag = "10")]
     pub sign_in: ::core::option::Option<SignIn>,
-    #[prost(message, optional, tag = "11")]
-    pub background_processes: ::core::option::Option<BackgroundProcesses>,
+    #[prost(message, optional, tag = "13")]
+    pub background_jobs: ::core::option::Option<BackgroundJobs>,
     /// The calls PreToolUse hooks announced that no result has ended yet,
     /// oldest first. A call's transcript row can lag its hook by seconds while
     /// a background task runs, so the activity line reads the call from here
@@ -2703,8 +2727,8 @@ pub struct ClaudeSdkSnapshot {
     pub servers: ::core::option::Option<ToolServerHealth>,
     #[prost(message, optional, tag = "11")]
     pub sign_in: ::core::option::Option<SignIn>,
-    #[prost(message, optional, tag = "12")]
-    pub background_processes: ::core::option::Option<BackgroundProcesses>,
+    #[prost(message, optional, tag = "16")]
+    pub background_jobs: ::core::option::Option<BackgroundJobs>,
     /// Absent until the init event names it.
     #[prost(string, optional, tag = "13")]
     pub provider_session: ::core::option::Option<::prost::alloc::string::String>,
@@ -3362,8 +3386,8 @@ pub struct CodexSnapshot {
     pub usage: ::core::option::Option<UsageLimits>,
     #[prost(message, optional, tag = "10")]
     pub sign_in: ::core::option::Option<SignIn>,
-    #[prost(message, optional, tag = "11")]
-    pub background_processes: ::core::option::Option<BackgroundProcesses>,
+    #[prost(message, optional, tag = "17")]
+    pub background_jobs: ::core::option::Option<BackgroundJobs>,
     /// Plan steps with status.
     #[prost(message, optional, tag = "12")]
     pub plan: ::core::option::Option<TaskList>,

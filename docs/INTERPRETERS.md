@@ -139,6 +139,34 @@ requires the same items and final snapshot as the uninterrupted run, with a
 resume that re-emits only keys readers already have, at their current
 content.
 
+## Background jobs
+
+Every snapshot body carries `BackgroundJobs`: each command or task the
+provider runs past the call that started it, with the key of that call's
+item, the command (or the task's description) and when it started. The
+shared part holds the list and publishes it; each interpreter sets it from
+what its provider says:
+
+- **Headless Claude** states its jobs: `background_tasks_changed` replaces
+  the list, and a `task_started` that names a backgrounded task's call fills
+  in that call's key, command and start.
+- **Terminal Claude** lists its jobs in the `Stop` hook at each turn's end.
+  A Bash result's `backgroundTaskId` and a background subagent's launch tie
+  a listed id to the call that started it.
+- **Codex** is asked: at a turn's end with a command still running, the
+  interpreter sends `thread/backgroundTerminals/list` (ids
+  `amux-jobs-<n>-<page>`, following `nextCursor`) and publishes the commands
+  it names. A listed command whose item completes later, outside any turn,
+  leaves the list; a turn's end with nothing still running empties it.
+
+A listed job no call is known to have started shows by its description, from
+when it was first listed. The list is emptied when the provider exits, and a
+new incarnation starts with none. A clean exit of Codex or headless Claude
+ends their jobs; a provider killed alone can leave them running, orphaned,
+and terminal Claude's `/exit` can move the session and its jobs into
+Claude's own background. Nothing reports on such jobs any more, so amux
+lists none.
+
 ## Redaction
 
 Dumps leave the machine, so every body in them is redacted, and only an
@@ -232,7 +260,7 @@ Hooks carry only what the transcript never does:
 |---|---|
 | `SessionStart` | Names the session and the transcript path, and the interpreter asks the agent to follow that file. It marks the session boundary (started, resumed, cleared or compacted), and it means input is live. |
 | `PermissionRequest` | Opens the permission card: an ask carrying the hook's tool, input and scope suggestions (or a question or plan ask for `AskUserQuestion` and `ExitPlanMode`). The hook names no tool-use id, and Claude writes a gated call's row only once the call is decided, so the card points at no row until a row with the same tool and input lands, and then at that row. |
-| `Stop` | Records how many background tasks are still running, clears the running marks, and closes every ask still open with its outcome unknown, drawn dismissed until the call's result says how it went. It does **not** end the turn. |
+| `Stop` | Lists the background jobs still running (see [background jobs](#background-jobs)), clears the running marks, and closes every ask still open with its outcome unknown, drawn dismissed until the call's result says how it went. It does **not** end the turn. |
 | `Notification` | For a tool server's form or link that Claude shows in its own terminal (notification types `elicitation_dialog` and `elicitation_url_dialog`), opens an unanswerable ask with an item of its own, pointing at the call that was running. No hook can answer it: it closes cancelled on an interrupt through amux, and dismissed on that call's result, a row from a later assistant message, or any fact that closes every ask. Other notification types draw nothing. |
 | `PreToolUse`, `PostToolUse`, `PostToolUseFailure` | Mark a call running, and then not running, for the snapshot's running calls (the activity line while the call's row is on the way). They never make a row. |
 | `UserPromptSubmit` | Input is live. |

@@ -91,9 +91,9 @@ codex = { mark = "partial", carriers = ["item:work.collab"], golden = [" work ",
 [[row]]
 id = "C11"
 item = "Background process"
-claude_pty = { mark = "partial", carriers = ["item:tool", "snapshot:background_processes"], golden = ["snapshot ", " background=", "!background=?", "!background=0"] }
-claude_sdk = { mark = "partial", carriers = ["item:tool", "snapshot:background_processes"], golden = ["snapshot ", " background=", "!background=?", "!background=0"] }
-codex = { mark = "partial", carriers = ["item:work.command", "snapshot:background_processes"], golden = ["snapshot ", " background=", "!background=?", "!background=0"] }
+claude_pty = { mark = "partial", carriers = ["item:tool", "snapshot:background_jobs"], golden = ["snapshot ", " background=", "!background=?", "!background=[]"] }
+claude_sdk = { mark = "partial", carriers = ["item:tool", "snapshot:background_jobs"], golden = ["snapshot ", " background=", "!background=?", "!background=[]"] }
+codex = { mark = "partial", carriers = ["item:work.command", "snapshot:background_jobs"], golden = ["snapshot ", " background=", "!background=?", "!background=[]"] }
 
 [[row]]
 id = "C12"

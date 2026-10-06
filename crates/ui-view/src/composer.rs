@@ -201,8 +201,8 @@ pub fn session_strip(state: &SessionState) -> Strip {
         usage,
         failed_servers,
         sign_in,
-        background: (agent.background.known && agent.background.running > 0)
-            .then_some(agent.background.running),
+        background: (agent.background.known && !agent.background.jobs.is_empty())
+            .then_some(agent.background.jobs.len() as u32),
         working_on: agent.working_on.clone(),
     }
 }

@@ -337,22 +337,63 @@
     },
     {
       "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "r3",
+          "timestamp": "2027-01-15T08:00:16.250Z",
+          "sessionId": "s1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "t3",
+                "content": "Command running in background with ID: b1.",
+                "is_error": false
+              }
+            ]
+          },
+          "toolUseResult": {
+            "stdout": "",
+            "stderr": "",
+            "interrupted": false,
+            "isImage": false,
+            "backgroundTaskId": "b1"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "t3"
+        ]
+      }
+    },
+    {
+      "fact": {
         "channel": "hook",
         "json": {
           "hook_event_name": "Stop",
           "background_tasks": [
             {
-              "id": "b1"
+              "id": "b1",
+              "type": "shell",
+              "status": "running",
+              "description": "npm run dev"
             },
             {
-              "id": "b2"
+              "id": "b2",
+              "type": "subagent",
+              "status": "running",
+              "description": "Survey the parsers"
             }
           ]
         }
       },
       "expect": {
         "silent": false
-      }
+      },
+      "note": "Claude lists two jobs at the turn's end: the shell t3 started, and a task no call here is known to have started, shown by its description."
     },
     {
       "fact": {

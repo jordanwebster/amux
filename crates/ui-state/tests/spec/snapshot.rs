@@ -10,7 +10,7 @@ fn strip_facts() -> (
     wire::UsageLimits,
     wire::ToolServerHealth,
     wire::SignIn,
-    wire::BackgroundProcesses,
+    wire::BackgroundJobs,
 ) {
     (
         wire::UsageLimits {
@@ -35,9 +35,20 @@ fn strip_facts() -> (
             account: "me".into(),
             message: "log in".into(),
         },
-        wire::BackgroundProcesses {
+        wire::BackgroundJobs {
             known: true,
-            running: 2,
+            jobs: vec![
+                wire::BackgroundJob {
+                    step: "t1".into(),
+                    command: "npm run dev".into(),
+                    started_at_ms: 1_000,
+                },
+                wire::BackgroundJob {
+                    step: "t2".into(),
+                    command: "cargo watch".into(),
+                    started_at_ms: 2_000,
+                },
+            ],
         },
     )
 }
@@ -71,7 +82,7 @@ fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
                 usage: Some(usage.clone()),
                 servers: Some(servers.clone()),
                 sign_in: Some(sign_in.clone()),
-                background_processes: Some(background),
+                background_jobs: Some(background.clone()),
                 ..Default::default()
             }
             .encode_to_vec(),
@@ -87,7 +98,7 @@ fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
                 usage: Some(usage.clone()),
                 servers: Some(servers.clone()),
                 sign_in: Some(sign_in.clone()),
-                background_processes: Some(background),
+                background_jobs: Some(background.clone()),
                 ..Default::default()
             }
             .encode_to_vec(),
@@ -104,7 +115,7 @@ fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
                 usage: Some(usage.clone()),
                 servers: Some(servers.clone()),
                 sign_in: Some(sign_in.clone()),
-                background_processes: Some(background),
+                background_jobs: Some(background.clone()),
                 ..Default::default()
             }
             .encode_to_vec(),

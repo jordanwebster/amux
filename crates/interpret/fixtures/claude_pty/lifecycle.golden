@@ -27,4 +27,4 @@ item boundary:2 boundary final at=1800000000000 text="" BOUNDARY_KIND_DAEMON_LOS
 effect terminal interrupt
 ## 11 exiting "stopped"
 item boundary:3 boundary final at=1800000000000 text="" BOUNDARY_KIND_EXITED session=s1 version=2.1.282 keymap=claude-2.1 cause="stopped"
-snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
+snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=[]

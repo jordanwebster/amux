@@ -287,3 +287,38 @@ fn a_queued_prompt_with_an_image_is_still_the_steer() {
     assert!(!steered(&state), "p1 left the queue");
     assert!(state.shared().queue().is_empty());
 }
+
+/// A job terminal Claude listed at a turn end and then it exits: the list empties on the exit, and
+/// a new incarnation from a checkpoint that still listed it starts empty.
+#[test]
+fn the_job_list_empties_when_terminal_claude_exits() {
+    use prost::Message as _;
+    let jobs = |step: &wire::Step| {
+        step.snapshot.as_ref().map(|snapshot| {
+            let body = wire::ClaudePtySnapshot::decode(&snapshot.body[..]).unwrap();
+            let background = body.background_jobs.unwrap_or_default();
+            (background.known, background.jobs.len())
+        })
+    };
+    let (mut state, spec) =
+        interpret::run_until::<ClaudePty>(&fixtures().join("rows.json"), |step| {
+            jobs(step).is_some_and(|(_, running)| running > 0)
+        })
+        .unwrap()
+        .expect("the fixture lists a job");
+    let checkpoint = interpret::encode_checkpoint(&state);
+
+    let exited = ClaudePty::step(&mut state, Event::ProviderExit { code: Some(0) });
+    let listed: <ClaudePty as Interpreter>::State =
+        interpret::decode_checkpoint(&checkpoint).unwrap();
+    let next = wire::AgentSpec {
+        incarnation: spec.incarnation + 1,
+        ..spec
+    };
+    let (_, step) = ClaudePty::reincarnate(listed, &next, "test");
+    assert_eq!(
+        (jobs(&exited.step), jobs(&step)),
+        (Some((true, 0)), Some((true, 0))),
+        "emptied on exit, and empty in a new incarnation"
+    );
+}

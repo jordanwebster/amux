@@ -71,7 +71,8 @@ message ClaudePtySnapshot {
   UsageLimits usage = 8;
   ToolServerHealth servers = 9;
   SignIn sign_in = 10;
-  BackgroundProcesses background_processes = 11;
+  reserved 11;
+  BackgroundJobs background_jobs = 13;
   // The calls PreToolUse hooks announced that no result has ended yet,
   // oldest first. A call's transcript row can lag its hook by seconds while
   // a background task runs, so the activity line reads the call from here
@@ -179,7 +180,8 @@ message ClaudeSdkSnapshot {
   UsageLimits usage = 9;
   ToolServerHealth servers = 10;
   SignIn sign_in = 11;
-  BackgroundProcesses background_processes = 12;
+  reserved 12;
+  BackgroundJobs background_jobs = 16;
   // Absent until the init event names it.
   optional string provider_session = 13;
   // What the initialize response offers; empty until it arrives.

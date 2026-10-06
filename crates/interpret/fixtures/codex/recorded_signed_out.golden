@@ -46,5 +46,5 @@ snapshot WORKING queue=[] working_on=- at=1790388578216 asks=[] thread=01a0db79-
 item error:01a0db79-73fb-78b2-b3a1-6f3f7e36bff7 error final at=1790388581735 text="" other "unexpected status 401 Unauthorized: Missing bearer or basic authentication in he…" retry=false 0/0
 ## 45 recorded 44: fact Rpc method=turn/completed
 item turn:1 turn final at=1790388581738 text="" #1 TURN_OUTCOME_FAILED started=1790388564991
-snapshot IDLE queue=[] working_on=- at=1790388581738 asks=[] thread=01a0db79-73ef-7e43-854f-9f9d3a931f3d turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_FAILED - "unexpected status 401 Unauthorized: Missing bearer or basic …" background=?
+snapshot IDLE queue=[] working_on=- at=1790388581738 asks=[] thread=01a0db79-73ef-7e43-854f-9f9d3a931f3d turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=SIGN_IN_STATE_FAILED - "unexpected status 401 Unauthorized: Missing bearer or basic …" background=[]
 turn_end 1 last=-

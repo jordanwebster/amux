@@ -510,3 +510,36 @@ fn an_approval_offering_one_lifetime_as_a_string_is_read() {
         "no remember-for-session choice when Codex offers only always"
     );
 }
+
+/// A job Codex reported and then it exits: the list empties on the exit, and
+/// a new incarnation from a checkpoint that still listed it starts empty.
+#[test]
+fn the_job_list_empties_when_codex_exits() {
+    use prost::Message as _;
+    let jobs = |step: &wire::Step| {
+        step.snapshot.as_ref().map(|snapshot| {
+            let body = wire::CodexSnapshot::decode(&snapshot.body[..]).unwrap();
+            let background = body.background_jobs.unwrap_or_default();
+            (background.known, background.jobs.len())
+        })
+    };
+    let (mut state, spec) = interpret::run_until::<Codex>(&fixtures().join("rows.json"), |step| {
+        jobs(step).is_some_and(|(_, running)| running > 0)
+    })
+    .unwrap()
+    .expect("the fixture lists a job");
+    let checkpoint = interpret::encode_checkpoint(&state);
+
+    let exited = Codex::step(&mut state, Event::ProviderExit { code: Some(0) });
+    let listed: <Codex as Interpreter>::State = interpret::decode_checkpoint(&checkpoint).unwrap();
+    let next = wire::AgentSpec {
+        incarnation: spec.incarnation + 1,
+        ..spec
+    };
+    let (_, step) = Codex::reincarnate(listed, &next, "test");
+    assert_eq!(
+        (jobs(&exited.step), jobs(&step)),
+        (Some((true, 0)), Some((true, 0))),
+        "emptied on exit, and empty in a new incarnation"
+    );
+}

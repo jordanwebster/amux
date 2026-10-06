@@ -337,6 +337,10 @@ pub struct Shared<A: OpenAsk> {
     /// The repository facts the agent process last read.
     #[serde(default, with = "serde_pb::opt_msg")]
     git: Option<wire::Git>,
+    /// What the provider runs in the background, as its interpreter last
+    /// tracked it; None until the provider says.
+    #[serde(default, with = "serde_pb::opt_msg")]
+    jobs: Option<wire::BackgroundJobs>,
 }
 
 impl<A: OpenAsk> Shared<A> {
@@ -360,6 +364,7 @@ impl<A: OpenAsk> Shared<A> {
             open_items: BTreeMap::new(),
             last_snapshot: None,
             git: None,
+            jobs: None,
         };
         if let Some(initial) = &spec.initial_prompt
             && let Some(entry) = queued_from_input(initial)
@@ -375,6 +380,8 @@ impl<A: OpenAsk> Shared<A> {
     /// resume with a prompt, or a parent's message) joins the queue.
     pub fn reincarnate(&mut self, spec: &AgentSpec, producer_version: &str) {
         self.producer_version = producer_version.to_owned();
+        // A new provider process runs nothing in the background yet.
+        self.set_jobs(Vec::new());
         self.now_ms = self.now_ms.max(spec.created_at_ms);
         if let Some(initial) = &spec.initial_prompt
             && let Some(entry) = queued_from_input(initial)
@@ -464,6 +471,19 @@ impl<A: OpenAsk> Shared<A> {
     /// emits one only when they changed.
     pub fn set_git(&mut self, git: Option<wire::Git>) {
         self.git = git;
+    }
+
+    // --- background jobs -------------------------------------------------
+
+    /// Replaces the list of jobs the provider runs in the background.
+    pub fn set_jobs(&mut self, jobs: Vec<wire::BackgroundJob>) {
+        self.jobs = Some(wire::BackgroundJobs { known: true, jobs });
+    }
+
+    /// The jobs for the snapshot body: the explicit unknown until the
+    /// interpreter has set them.
+    pub fn jobs(&self) -> wire::BackgroundJobs {
+        self.jobs.clone().unwrap_or_default()
     }
 
     // --- clock -----------------------------------------------------------
@@ -817,6 +837,9 @@ impl<A: OpenAsk> Shared<A> {
     /// cut short has no TurnEnd; the daemon reports the incarnation failed.
     pub fn provider_exited(&mut self) -> Option<OpenTurn> {
         self.started = false;
+        // A clean exit stops its jobs; a provider killed alone may orphan
+        // them, but nothing reports on them any more either way.
+        self.set_jobs(Vec::new());
         self.busy = false;
         self.submitted.clear();
         self.queue.drop_steered();
@@ -934,6 +957,27 @@ pub fn sent_message(arguments_json: &[u8], outcome: SendOutcome<'_>) -> (String,
 
 /// An agent-message body as the goldens print it; a sent one adds its
 /// recipient and how the send went.
+/// A background job list as goldens print it: `?` while unknown, else each
+/// job as its step, command and start time.
+pub(crate) fn describe_jobs(jobs: Option<&wire::BackgroundJobs>) -> String {
+    match jobs {
+        Some(jobs) if jobs.known => format!(
+            "[{}]",
+            jobs.jobs
+                .iter()
+                .map(|job| format!(
+                    "{}:{}@{}",
+                    if job.step.is_empty() { "-" } else { &job.step },
+                    serde_json::Value::String(job.command.clone()),
+                    job.started_at_ms
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        _ => "?".into(),
+    }
+}
+
 pub(crate) fn describe_agent_message(message: &AgentMessage) -> String {
     let mut out = format!("envelope={}", serde_pb::to_hex(&message.envelope_id));
     if message.send_state != wire::SendState::Unspecified as i32 {

@@ -108,5 +108,5 @@ item cmd-3 work final at=1800000000000 text="" command "/bin/zsh -lc 'curl -s ht
 item cmd-1 work final at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_CANCELLED decision=DECISION_OUTCOME_ALLOWED scope=network
 item cmd-2 work final at=1800000000000 text="" command "/bin/zsh -lc 'curl -s https://api.example.com/status'" cwd=/work action=- TOOL_STATE_CANCELLED decision=DECISION_OUTCOME_UNKNOWN elsewhere
 item turn:1 turn final at=1800000000000 text="" #1 TURN_OUTCOME_INTERRUPTED started=1800000000000
-snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=?
+snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=? sign_in=? background=[]
 turn_end 1 last=-

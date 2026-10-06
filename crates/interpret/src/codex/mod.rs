@@ -41,9 +41,9 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    AgentSpec, AskClosed, AskItem, BackgroundProcesses, CodexAnswer, CodexAsk, CodexItem,
-    CodexSnapshot, ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction,
-    Input, OfferedCommand, OfferedModel, QueuedInput, Step, TaskList, TaskListEntry, ToolDecision,
+    AgentSpec, AskClosed, AskItem, BackgroundJob, CodexAnswer, CodexAsk, CodexItem, CodexSnapshot,
+    ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction, Input,
+    OfferedCommand, OfferedModel, QueuedInput, Step, TaskList, TaskListEntry, ToolDecision,
     ToolServerHealth, UsageLimits, Work, codex_answer, codex_ask, codex_input, codex_item, input,
     sender, work,
 };
@@ -143,6 +143,13 @@ enum Request {
     Persist,
     /// `skills/list`.
     Skills,
+    /// A page of `thread/backgroundTerminals/list`, with the jobs earlier
+    /// pages listed.
+    Jobs {
+        page: u32,
+        #[serde(with = "serde_pb::msgs")]
+        listed: Vec<BackgroundJob>,
+    },
 }
 
 /// What answering an open ask needs beyond the wire ask.
@@ -265,6 +272,10 @@ pub struct State {
     final_error: Option<String>,
     /// Commands still running after the turn that started them ended.
     background: Option<BTreeSet<String>>,
+    /// How many times Codex was asked for its background jobs, which
+    /// names each ask.
+    #[serde(default)]
+    jobs_asked: u32,
     plan: Option<Vec<(String, i32)>>,
 }
 
@@ -331,6 +342,7 @@ impl State {
             final_error: None,
             last_diff: None,
             background: None,
+            jobs_asked: 0,
             plan: None,
         }
     }
@@ -358,13 +370,7 @@ impl State {
             ),
             usage: Some(self.usage.clone().unwrap_or_else(unknown::usage_limits)),
             sign_in: Some(self.sign_in.clone().unwrap_or_else(unknown::sign_in)),
-            background_processes: Some(match &self.background {
-                None => unknown::background_processes(),
-                Some(running) => BackgroundProcesses {
-                    known: true,
-                    running: running.len() as u32,
-                },
-            }),
+            background_jobs: Some(self.shared.jobs()),
             plan: Some(match &self.plan {
                 None => unknown::task_list(),
                 Some(steps) => TaskList {
@@ -1518,7 +1524,6 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
     let usage = snapshot.usage.unwrap_or_default();
     let servers = snapshot.servers.unwrap_or_default();
     let sign_in = snapshot.sign_in.unwrap_or_default();
-    let background = snapshot.background_processes.unwrap_or_default();
     SnapshotView {
         asks: snapshot
             .asks
@@ -1600,11 +1605,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
                     }
                 ),
             },
-            if background.known {
-                background.running.to_string()
-            } else {
-                "?".into()
-            }
+            crate::shared::describe_jobs(snapshot.background_jobs.as_ref())
         ),
     }
 }

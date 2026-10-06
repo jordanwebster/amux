@@ -6,7 +6,7 @@
 
 use prost::Message;
 use wire::{
-    Ask, BackgroundProcesses, ClaudePtyItem, ClaudePtySnapshot, ClaudeSdkItem, ClaudeSdkSnapshot,
+    Ask, BackgroundJobs, ClaudePtyItem, ClaudePtySnapshot, ClaudeSdkItem, ClaudeSdkSnapshot,
     CodexAsk, CodexItem, CodexSnapshot, ContextMeter, Kind, OfferedCommand, OfferedModel, SignIn,
     Task, TaskList, ToolServerHealth, UsageLimits,
 };
@@ -287,7 +287,7 @@ pub struct AgentState {
     pub usage: UsageLimits,
     pub servers: ToolServerHealth,
     pub sign_in: SignIn,
-    pub background: BackgroundProcesses,
+    pub background: BackgroundJobs,
     pub provider_session: Option<String>,
     pub active_turn: Option<String>,
     /// Terminal Claude's calls its hooks announced before their rows
@@ -319,7 +319,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.usage = snapshot.usage.unwrap_or_default();
             state.servers = snapshot.servers.unwrap_or_default();
             state.sign_in = snapshot.sign_in.unwrap_or_default();
-            state.background = snapshot.background_processes.unwrap_or_default();
+            state.background = snapshot.background_jobs.unwrap_or_default();
             state.running_calls = snapshot.running_calls;
         }
         Kind::ClaudeSdk => {
@@ -339,7 +339,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.usage = snapshot.usage.unwrap_or_default();
             state.servers = snapshot.servers.unwrap_or_default();
             state.sign_in = snapshot.sign_in.unwrap_or_default();
-            state.background = snapshot.background_processes.unwrap_or_default();
+            state.background = snapshot.background_jobs.unwrap_or_default();
         }
         Kind::Codex => {
             let Ok(snapshot) = CodexSnapshot::decode(body) else {
@@ -359,7 +359,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.usage = snapshot.usage.unwrap_or_default();
             state.servers = snapshot.servers.unwrap_or_default();
             state.sign_in = snapshot.sign_in.unwrap_or_default();
-            state.background = snapshot.background_processes.unwrap_or_default();
+            state.background = snapshot.background_jobs.unwrap_or_default();
         }
         Kind::Unspecified => {}
     }

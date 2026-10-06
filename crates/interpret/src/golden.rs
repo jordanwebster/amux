@@ -374,6 +374,27 @@ pub fn fixture_script<I: Interpreter>(fixture: &Path) -> Result<FixtureScript, S
     })
 }
 
+/// Runs a fixture's events through interpreter `I` until one emits a step
+/// `until` accepts, and returns the state at that point with the fixture's
+/// spec; None when no step does. For tests that take a fixture to a moment
+/// and drive the interpreter on from there.
+pub fn run_until<I: Interpreter>(
+    fixture: &Path,
+    until: impl Fn(&Step) -> bool,
+) -> Result<Option<(I::State, AgentSpec)>, String> {
+    let script = fixture_script::<I>(fixture)?;
+    let (mut state, _) = I::initial(&script.spec, &script.producer);
+    for (_, event) in script.events {
+        let Some(event) = event else {
+            continue;
+        };
+        if until(&I::step(&mut state, event).step) {
+            return Ok(Some((state, script.spec)));
+        }
+    }
+    Ok(None)
+}
+
 /// Runs one fixture through interpreter `I` and checks its golden, its
 /// expectations, the invariants and the checkpoint property.
 pub fn run_golden<I: Interpreter>(fixture: &Path) -> GoldenReport {

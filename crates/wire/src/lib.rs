@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn every_snapshot_body_carries_the_four_strip_facts() {
+    fn every_snapshot_body_carries_usage_servers_sign_in_and_background_jobs() {
         let set = descriptor();
         let messages = messages(&set);
         for snapshot in ["ClaudePtySnapshot", "ClaudeSdkSnapshot", "CodexSnapshot"] {
@@ -317,7 +317,7 @@ mod tests {
                 ".amux.v1.UsageLimits",
                 ".amux.v1.ToolServerHealth",
                 ".amux.v1.SignIn",
-                ".amux.v1.BackgroundProcesses",
+                ".amux.v1.BackgroundJobs",
             ] {
                 assert!(types.contains(fact), "{snapshot} lacks {fact}");
             }

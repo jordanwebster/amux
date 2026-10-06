@@ -1,17 +1,18 @@
 //! What the app server writes: responses, requests and notifications.
 
 use codex_protocol::client::{
-    CommandApprovalResponse, ElicitationAction, ModelListParams, SkillsListParams,
-    ThreadReadParams, ThreadSetNameParams, ToolCallResponse, TurnInterruptParams,
+    BackgroundTerminalsListParams, CommandApprovalResponse, ElicitationAction, ModelListParams,
+    SkillsListParams, ThreadReadParams, ThreadSetNameParams, ToolCallResponse, TurnInterruptParams,
 };
 use codex_protocol::items::{
     CommandAction, DynamicToolCallItem, McpToolCallItem, MessagePhase, PatchChangeKind,
     TextContent, ThreadItem, ToolOutputContent, UserInput, WebSearchAction,
 };
 use codex_protocol::server::{
-    AccountReadResponse, AutoApprovalReview, CommandApprovalParams, CommandDecision,
-    Decision as Offered, ElicitationParams, ErrorNotification, McpServerStatusUpdated,
-    ModelListResponse, SkillsListResponse, ThreadResponse, TurnStartResponse,
+    AccountReadResponse, AutoApprovalReview, BackgroundTerminalsResponse, CommandApprovalParams,
+    CommandDecision, Decision as Offered, ElicitationParams, ErrorNotification,
+    McpServerStatusUpdated, ModelListResponse, SkillsListResponse, ThreadResponse,
+    TurnStartResponse,
 };
 use codex_protocol::thread::{
     AskForApproval, CodexErrorInfo, RateLimitSnapshot, ReasoningEffort, SandboxPolicy, TurnError,
@@ -22,7 +23,7 @@ use codex_protocol::{
 };
 use serde_json::Value;
 use wire::{
-    AccessGrant, ApiError, CodexAsk, CommandApproval, Decision, DecisionOutcome,
+    AccessGrant, ApiError, BackgroundJob, CodexAsk, CommandApproval, Decision, DecisionOutcome,
     FileChangeApproval, FormAsk, LinkAsk, McpToolApproval, ModelSwitch, OfferedCommand,
     OfferedModel, Question, QuestionAsk, QuestionOption, ReviewerVerdict, SignIn, SignInState,
     TaskListStatus, ToolClass, ToolDecision, ToolServer, ToolServerHealth, ToolServerStatus,
@@ -345,6 +346,9 @@ impl State {
             }
             return;
         }
+        if let Request::Jobs { page, listed } = request {
+            return self.jobs_listed(emit, page, listed, result.ok().as_ref());
+        }
         let result = match result {
             Ok(result) => result,
             Err(error) => {
@@ -387,7 +391,8 @@ impl State {
                     | Request::Models { .. }
                     | Request::Name
                     | Request::Persist
-                    | Request::Skills => {}
+                    | Request::Skills
+                    | Request::Jobs { .. } => {}
                 }
                 return;
             }
@@ -426,7 +431,8 @@ impl State {
             | Request::Models { .. }
             | Request::Name
             | Request::Persist
-            | Request::Skills => {}
+            | Request::Skills
+            | Request::Jobs { .. } => {}
         }
     }
 
@@ -471,6 +477,74 @@ impl State {
                 self.list_models(emit, number + 1, Some(cursor), listed)
             }
             _ => self.models = listed,
+        }
+    }
+
+    /// Asks Codex which commands it runs in the background, the first page
+    /// without a cursor.
+    fn list_jobs(
+        &mut self,
+        emit: &mut Emit,
+        page: u32,
+        cursor: Option<String>,
+        listed: Vec<BackgroundJob>,
+    ) {
+        if page == 1 {
+            self.jobs_asked += 1;
+        }
+        let bytes = self.request_as(
+            format!("amux-jobs-{}-{page}", self.jobs_asked),
+            ClientRequest::BackgroundTerminalsList(BackgroundTerminalsListParams {
+                thread_id: self.thread(),
+                cursor,
+                limit: None,
+                extra: Default::default(),
+            }),
+            Request::Jobs { page, listed },
+        );
+        emit.effect(Effect::ProviderWrite(bytes));
+    }
+
+    /// A page of Codex's background commands: each is a job of the
+    /// command item it names. The last page publishes the list.
+    fn jobs_listed(
+        &mut self,
+        emit: &mut Emit,
+        number: u32,
+        mut listed: Vec<BackgroundJob>,
+        page: Option<&Value>,
+    ) {
+        let Some(page) =
+            page.and_then(|page| codex_protocol::result::<BackgroundTerminalsResponse>(page).ok())
+        else {
+            return;
+        };
+        let now = self.shared.now_ms();
+        listed.extend(page.data.iter().map(|terminal| {
+            BackgroundJob {
+                step: terminal.item_id.clone(),
+                command: terminal.command.clone(),
+                started_at_ms: self
+                    .works
+                    .get(&terminal.item_id)
+                    .map_or(now, |work| work.at_ms),
+            }
+        }));
+        match some_of(page.next_cursor.as_deref()) {
+            Some(cursor) if !page.data.is_empty() => {
+                self.list_jobs(emit, number + 1, Some(cursor), listed)
+            }
+            _ => self.shared.set_jobs(listed),
+        }
+    }
+
+    /// A command Codex ran in the background finished: it leaves the list.
+    fn job_ended(&mut self, key: &str) {
+        let jobs = self.shared.jobs();
+        if jobs.known && jobs.jobs.iter().any(|job| job.step == key) {
+            let mut jobs = jobs.jobs;
+            jobs.retain(|job| job.step != key);
+            self.shared.set_jobs(jobs);
         }
     }
 
@@ -1719,8 +1793,11 @@ impl State {
                 turn: prior.map_or_else(|| turn.to_owned(), |prior| prior.turn),
             },
         );
-        if completed && let Some(background) = &mut self.background {
-            background.remove(id);
+        if completed {
+            if let Some(background) = &mut self.background {
+                background.remove(id);
+            }
+            self.job_ended(id);
         }
         self.emit_work(emit, id);
     }
@@ -1800,6 +1877,13 @@ impl State {
             self.dismiss(emit, &ask, meta);
         }
         self.settle_open(emit, outcome == TurnOutcome::Completed);
+        // Codex lists what carries on in the background; with nothing
+        // still running there is nothing to ask.
+        if self.background.as_ref().is_some_and(|set| !set.is_empty()) {
+            self.list_jobs(emit, 1, None, Vec::new());
+        } else {
+            self.shared.set_jobs(Vec::new());
+        }
         // A steer lives in the turn it was sent into. One Codex has not
         // answered yet reached it after the turn ended and will be refused
         // (Codex answers a steer it took before announcing the turn's end),
@@ -1936,6 +2020,7 @@ impl State {
             }
         }
         self.settle_open(emit, false);
+        self.background = None;
         self.shared.provider_exited();
         self.active_turn = None;
         self.interrupt_pending = false;

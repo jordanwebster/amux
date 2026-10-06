@@ -22,9 +22,10 @@ use super::{
     Subagent, Tool, item_body,
 };
 use crate::claude_common::{
-    BackgroundInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, blocks_text,
-    compact_json, message_text, permission_scopes, question_ask, same_json, split_tool_name,
-    timestamp_ms, tool_class, tool_result_images, tool_result_text, without_image_bytes,
+    BackgroundInput, JobInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool,
+    blocks_text, compact_json, message_text, permission_scopes, question_ask, same_json,
+    split_tool_name, timestamp_ms, tool_class, tool_result_images, tool_result_text,
+    without_image_bytes,
 };
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
@@ -63,6 +64,22 @@ fn launched_in_background(result: &Value) -> Option<String> {
         .ok()
         .filter(|launch| launch.is_async)?
         .agent_id
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ShellLaunch {
+    #[serde(default)]
+    background_task_id: Option<String>,
+}
+
+/// The task id of a shell Bash started in the background, from the call's
+/// immediate result.
+fn shell_in_background(result: &Value) -> Option<String> {
+    ShellLaunch::deserialize(result)
+        .ok()?
+        .background_task_id
+        .filter(|id| !id.is_empty())
 }
 
 /// The text between `<tag>` and `</tag>`, trimmed.
@@ -188,6 +205,7 @@ impl State {
         self.close_all_unknown(emit);
         self.boundary(emit, BoundaryKind::Exited, cause);
         self.shared.provider_exited();
+        self.jobs.clear();
         self.local_turn = false;
     }
 
@@ -224,7 +242,17 @@ impl State {
             Payload::Notification(notification) => self.notification(emit, notification),
             Payload::Stop(stop) => {
                 if let Some(tasks) = &stop.background_tasks {
-                    self.background = Some(tasks.len() as u32);
+                    let now = self.shared.now_ms();
+                    let jobs = self.jobs.listed(
+                        tasks.iter().map(|task| {
+                            (
+                                task.id.clone(),
+                                task.description.clone().unwrap_or_default(),
+                            )
+                        }),
+                        now,
+                    );
+                    self.shared.set_jobs(jobs);
                 }
                 self.running.clear();
                 self.close_all_unknown(emit);
@@ -355,6 +383,8 @@ impl State {
         }
         tool.awaiting_notification = true;
         tool.background = true;
+        let (command, at_ms) = (JobInput::command(&tool.input), tool.at_ms);
+        self.jobs.launched(&agent, id, command, at_ms);
         self.agents.insert(agent, id.to_owned());
         true
     }
@@ -640,6 +670,14 @@ impl State {
         if self.agent_launched(&id, result) {
             self.close_for_tool(emit, &id, DecisionOutcome::Allowed);
             return self.emit_tool(emit, &id);
+        }
+        // A shell started in the background: Claude lists it by this id at
+        // the turn's end.
+        if let Some(task) = result.and_then(shell_in_background)
+            && let Some(tool) = self.tools.get(&id)
+        {
+            let (command, at_ms) = (JobInput::command(&tool.input), tool.at_ms);
+            self.jobs.launched(&task, &id, command, at_ms);
         }
         let Some(tool) = self.tools.get_mut(&id) else {
             return;

@@ -26,5 +26,5 @@ snapshot WORKING queue=[] working_on=- at=1790388562635 asks=[] thread=01a0db79-
 item error:01a0db79-665d-7dd0-a475-3e9f066bfadb error final at=1790388564710 text="" other "{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"…" retry=false 0/0
 ## 33 recorded 32: fact Rpc method=turn/completed
 item turn:1 turn final at=1790388564713 text="" #1 TURN_OUTCOME_FAILED started=1790388561504
-snapshot IDLE queue=[] working_on=- at=1790388564713 asks=[] thread=01a0db79-664d-7e22-9034-c020a8bac578 turn=- model=codex-spec-no-such-model effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
+snapshot IDLE queue=[] working_on=- at=1790388564713 asks=[] thread=01a0db79-664d-7e22-9034-c020a8bac578 turn=- model=codex-spec-no-such-model effort=? approval=never sandbox=workspace-write models=[] commands=0 context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=[]
 turn_end 1 last=-
