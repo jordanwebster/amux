@@ -229,40 +229,64 @@ pub struct PermissionMenus {
     pub folded: Vec<u32>,
 }
 
-/// The launch fact the agent process sends on the agent channel before the
-/// provider's first fact, and again after it relaunches the provider.
-/// `send_now_refused` is why the keymap cannot type send now for this
-/// Claude, when it cannot.
+/// What the agent process tells the interpreter about Claude's terminal on
+/// the agent channel. These are amux's own facts, not Claude's.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum AgentFact {
+    /// Sent before the provider's first fact, and again after the agent
+    /// process relaunches it. `send_now_refused` is why the keymap cannot
+    /// type send now for this Claude, when it cannot.
+    Launch {
+        #[serde(default)]
+        version: String,
+        #[serde(default)]
+        keymap: String,
+        #[serde(default)]
+        permission_menus: PermissionMenus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        send_now_refused: Option<String>,
+    },
+    /// Claude's terminal first drew with bracketed paste on: its input is
+    /// live, so a prompt can be typed. Some versions report their session
+    /// start only after the first prompt, so nothing else says a new
+    /// terminal takes input.
+    Ready,
+    /// Claude's first screen is its folder-trust dialog; sent before
+    /// [`AgentFact::Ready`].
+    TrustDialog,
+}
+
+impl AgentFact {
+    fn encode(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("an agent fact serializes")
+    }
+}
+
+/// The launch fact, as the agent process sends it.
 pub fn launch_fact(
     version: &str,
     keymap: &str,
     permission_menus: &PermissionMenus,
     send_now_refused: Option<&str>,
 ) -> Vec<u8> {
-    let mut fact = serde_json::json!({
-        "type": "launch",
-        "version": version,
-        "keymap": keymap,
-        "permission_menus": permission_menus,
-    });
-    if let Some(reason) = send_now_refused {
-        fact["send_now_refused"] = reason.into();
+    AgentFact::Launch {
+        version: version.to_owned(),
+        keymap: keymap.to_owned(),
+        permission_menus: permission_menus.clone(),
+        send_now_refused: send_now_refused.map(str::to_owned),
     }
-    serde_json::to_vec(&fact).expect("json")
+    .encode()
 }
 
-/// The fact the agent process sends when Claude's terminal first draws with
-/// bracketed paste on: its input is live, so a prompt can be typed. Some
-/// versions report their session start only after the first prompt, so
-/// nothing else says a new terminal takes input.
+/// The fact that Claude's terminal takes input.
 pub fn ready_fact() -> Vec<u8> {
-    br#"{"type":"ready"}"#.to_vec()
+    AgentFact::Ready.encode()
 }
 
-/// The fact the agent process sends, before [`ready_fact`], when Claude's
-/// first screen is its folder-trust dialog.
+/// The fact that Claude's first screen is its folder-trust dialog.
 pub fn trust_dialog_fact() -> Vec<u8> {
-    br#"{"type":"trust_dialog"}"#.to_vec()
+    AgentFact::TrustDialog.encode()
 }
 
 /// What the interpreter knows about the Claude process and its session.

@@ -368,6 +368,7 @@ pub struct ModelUsage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiMessage {
+    #[serde(default = "crate::absent::id")]
     pub id: String,
     #[serde(default = "crate::absent::message_type")]
     pub r#type: String,

@@ -39,12 +39,8 @@ pub(crate) const TASK_TOOLS: &[&str] = &["TaskCreate", "TaskUpdate", "TaskGet", 
 pub(crate) const QUESTION_TOOL: &str = "AskUserQuestion";
 pub(crate) const PLAN_TOOL: &str = "ExitPlanMode";
 
-pub(crate) fn text<'a>(value: &'a Value, key: &str) -> &'a str {
-    value.get(key).and_then(Value::as_str).unwrap_or_default()
-}
-
-pub(crate) fn timestamp_ms(row: &Value) -> Option<i64> {
-    let stamp = row.get("timestamp")?.as_str()?;
+/// An RFC 3339 timestamp, as Claude writes them, in milliseconds.
+pub(crate) fn timestamp_ms(stamp: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(stamp)
         .ok()
         .map(|at| at.timestamp_millis())
@@ -55,22 +51,6 @@ pub(crate) fn compact_json(value: &Value) -> String {
         String::new()
     } else {
         value.to_string()
-    }
-}
-
-/// A content value as text: a string, or its text blocks joined.
-pub(crate) fn content_text(content: &Value) -> String {
-    match content {
-        Value::String(text) => text.clone(),
-        Value::Array(blocks) => blocks
-            .iter()
-            .filter_map(|block| match block.get("type").and_then(Value::as_str) {
-                Some("text") => block.get("text").and_then(Value::as_str),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
     }
 }
 
@@ -123,25 +103,6 @@ pub(crate) fn tool_result_images(content: Option<&ToolResultBody>) -> Vec<(Attac
                 image_blob(&source.media_type, &source.data)
             }
             _ => None,
-        })
-        .collect()
-}
-
-/// The images in a tool result's content blocks, each as the attachment a
-/// tool row carries and the blob write that stores its bytes.
-pub(crate) fn result_images(content: &Value) -> Vec<(Attachment, Effect)> {
-    let Value::Array(blocks) = content else {
-        return Vec::new();
-    };
-    blocks
-        .iter()
-        .filter(|block| text(block, "type") == "image")
-        .filter_map(|block| {
-            let source = block.get("source")?;
-            if text(source, "type") != "base64" {
-                return None;
-            }
-            image_blob(text(source, "media_type"), text(source, "data"))
         })
         .collect()
 }
@@ -289,59 +250,83 @@ pub(crate) fn clip(text: &str, chars: usize) -> String {
     Value::String(clipped).to_string()
 }
 
+/// What Bash's input says about where it runs.
+#[derive(Deserialize)]
+pub(crate) struct BackgroundInput {
+    #[serde(default)]
+    pub run_in_background: bool,
+}
+
+/// ExitPlanMode's input: the plan put to the person.
+#[derive(Deserialize)]
+pub(crate) struct PlanInput {
+    #[serde(default)]
+    pub plan: String,
+}
+
+/// AskUserQuestion's input: the questions put to the person.
+#[derive(Deserialize)]
+pub(crate) struct QuestionInput {
+    #[serde(default)]
+    pub questions: Vec<QuestionItem>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QuestionItem {
+    #[serde(default)]
+    pub header: String,
+    #[serde(default)]
+    pub question: String,
+    #[serde(default)]
+    pub multi_select: bool,
+    #[serde(default)]
+    pub options: Vec<QuestionOptionItem>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct QuestionOptionItem {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub preview: String,
+}
+
 /// The question form AskUserQuestion's input describes, and each
 /// question's shape.
 pub(crate) fn question_ask(input: &Value) -> (QuestionAsk, Vec<QuestionShape>) {
-    let questions = input
-        .get("questions")
-        .and_then(Value::as_array)
-        .cloned()
+    let questions = QuestionInput::deserialize(input)
+        .map(|input| input.questions)
         .unwrap_or_default();
     let shapes = questions
         .iter()
         .map(|question| QuestionShape {
-            options: question
-                .get("options")
-                .and_then(Value::as_array)
-                .map_or(0, |options| options.len() as u32),
-            multi_select: question
-                .get("multiSelect")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+            options: question.options.len() as u32,
+            multi_select: question.multi_select,
             previews: question
-                .get("options")
-                .and_then(Value::as_array)
-                .is_some_and(|options| {
-                    options
-                        .iter()
-                        .any(|option| !text(option, "preview").is_empty())
-                }),
+                .options
+                .iter()
+                .any(|option| !option.preview.is_empty()),
         })
         .collect();
     let questions = questions
-        .iter()
+        .into_iter()
         .map(|question| Question {
-            header: text(question, "header").to_owned(),
-            question: text(question, "question").to_owned(),
-            multi_select: question
-                .get("multiSelect")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+            header: question.header,
+            question: question.question,
+            multi_select: question.multi_select,
             options: question
-                .get("options")
-                .and_then(Value::as_array)
-                .map(|options| {
-                    options
-                        .iter()
-                        .map(|option| QuestionOption {
-                            label: text(option, "label").to_owned(),
-                            description: text(option, "description").to_owned(),
-                            preview: text(option, "preview").to_owned(),
-                            recommended: false,
-                        })
-                        .collect()
+                .options
+                .into_iter()
+                .map(|option| QuestionOption {
+                    label: option.label,
+                    description: option.description,
+                    preview: option.preview,
+                    recommended: false,
                 })
-                .unwrap_or_default(),
+                .collect(),
             // Every question takes a typed answer; terminal Claude's side-by-side
             // preview layout withdraws it.
             allow_other: true,
@@ -349,49 +334,6 @@ pub(crate) fn question_ask(input: &Value) -> (QuestionAsk, Vec<QuestionShape>) {
         })
         .collect();
     (QuestionAsk { questions }, shapes)
-}
-
-/// Every scope choice the provider offered, in order.
-pub(crate) fn scope_choices(suggestions: &[Value]) -> Vec<ScopeChoice> {
-    let strings = |value: &Value, key: &str| -> Vec<String> {
-        value
-            .get(key)
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    suggestions
-        .iter()
-        .enumerate()
-        .map(|(index, suggestion)| ScopeChoice {
-            index: index as u32,
-            destination: text(suggestion, "destination").to_owned(),
-            rules: suggestion
-                .get("rules")
-                .and_then(Value::as_array)
-                .map(|rules| {
-                    rules
-                        .iter()
-                        .map(
-                            |rule| match rule.get("ruleContent").and_then(Value::as_str) {
-                                Some(content) => format!("{}({content})", text(rule, "toolName")),
-                                None => text(rule, "toolName").to_owned(),
-                            },
-                        )
-                        .collect()
-                })
-                .unwrap_or_default(),
-            directories: strings(suggestion, "directories"),
-            mode: text(suggestion, "mode").to_owned(),
-            label: String::new(),
-        })
-        .collect()
 }
 
 /// Every scope choice Claude offered with a permission request, in order.
@@ -435,6 +377,49 @@ pub(crate) fn permission_scopes(suggestions: &[PermissionUpdate]) -> Vec<ScopeCh
         .collect()
 }
 
+/// TaskCreate's input.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskCreateInput {
+    #[serde(default)]
+    subject: String,
+    #[serde(default)]
+    active_form: String,
+}
+
+/// TaskCreate's result: the task it made.
+#[derive(Deserialize)]
+struct TaskCreated {
+    task: CreatedTask,
+}
+
+#[derive(Deserialize)]
+struct CreatedTask {
+    id: String,
+}
+
+/// TaskUpdate's input: the task and what changes; a status of `deleted`
+/// removes it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskUpdateInput {
+    #[serde(default)]
+    task_id: String,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    subject: Option<String>,
+    #[serde(default)]
+    active_form: Option<String>,
+}
+
+/// TaskUpdate's result.
+#[derive(Deserialize)]
+struct TaskUpdated {
+    #[serde(default)]
+    success: Option<bool>,
+}
+
 /// A task tool's call and result applied to the task list. Upserts by
 /// task id, so two reports of the same result change nothing twice.
 pub(crate) fn apply_task_tool(
@@ -449,43 +434,45 @@ pub(crate) fn apply_task_tool(
     let tasks = tasks.get_or_insert_with(Vec::new);
     match name {
         "TaskCreate" => {
-            let Some(task_id) = result
-                .pointer("/task/id")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-            else {
+            let Ok(created) = TaskCreated::deserialize(result) else {
                 return;
             };
+            let task_id = created.task.id;
             if tasks.iter().any(|task| task.id == task_id) {
                 return;
             }
+            let (subject, active_form) = TaskCreateInput::deserialize(input)
+                .map(|input| (input.subject, input.active_form))
+                .unwrap_or_default();
             tasks.push(Task {
                 id: task_id,
-                subject: text(input, "subject").to_owned(),
+                subject,
                 status: TaskListStatus::Pending as i32,
-                active_form: text(input, "activeForm").to_owned(),
+                active_form,
             });
         }
         "TaskUpdate" => {
-            if result.get("success").and_then(Value::as_bool) == Some(false) {
+            if TaskUpdated::deserialize(result).is_ok_and(|result| result.success == Some(false)) {
                 return;
             }
-            let task_id = text(input, "taskId");
-            if text(input, "status") == "deleted" {
-                tasks.retain(|task| task.id != task_id);
-                return;
-            }
-            let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) else {
+            let Ok(input) = TaskUpdateInput::deserialize(input) else {
                 return;
             };
-            if let Some(status) = task_status(text(input, "status")) {
+            if input.status.as_deref() == Some("deleted") {
+                tasks.retain(|task| task.id != input.task_id);
+                return;
+            }
+            let Some(task) = tasks.iter_mut().find(|task| task.id == input.task_id) else {
+                return;
+            };
+            if let Some(status) = input.status.as_deref().and_then(task_status) {
                 task.status = status;
             }
-            if let Some(subject) = input.get("subject").and_then(Value::as_str) {
-                task.subject = subject.to_owned();
+            if let Some(subject) = input.subject {
+                task.subject = subject;
             }
-            if let Some(active) = input.get("activeForm").and_then(Value::as_str) {
-                task.active_form = active.to_owned();
+            if let Some(active) = input.active_form {
+                task.active_form = active;
             }
         }
         _ => {}

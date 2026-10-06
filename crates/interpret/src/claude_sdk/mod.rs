@@ -247,41 +247,6 @@ fn write(input: &claude_stream::Input) -> Effect {
     Effect::ProviderWrite(claude_stream::encode(input))
 }
 
-/// What Bash's input says about where it runs.
-#[derive(Deserialize)]
-struct BackgroundInput {
-    #[serde(default)]
-    run_in_background: bool,
-}
-
-/// ExitPlanMode's input: the plan put to the person.
-#[derive(Deserialize)]
-struct PlanInput {
-    #[serde(default)]
-    plan: String,
-}
-
-/// AskUserQuestion's input, as far as reading an answer back needs it.
-#[derive(Deserialize)]
-pub(super) struct QuestionInput {
-    #[serde(default)]
-    questions: Vec<QuestionItem>,
-}
-
-#[derive(Deserialize)]
-struct QuestionItem {
-    #[serde(default)]
-    question: String,
-    #[serde(default)]
-    options: Vec<QuestionOptionItem>,
-}
-
-#[derive(Deserialize)]
-struct QuestionOptionItem {
-    #[serde(default)]
-    label: String,
-}
-
 /// AskUserQuestion's input once answered: each answer by its question's
 /// text.
 #[derive(Deserialize)]

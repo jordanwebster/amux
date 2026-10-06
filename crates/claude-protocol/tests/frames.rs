@@ -214,3 +214,31 @@ fn a_field_claude_always_writes_is_filled_in_and_refused_strictly() {
     );
     assert!(reasons.contains("missing field `session_id`"), "{reasons}");
 }
+
+#[test]
+fn a_transcript_row_or_hook_missing_what_claude_always_writes_is_filled_in_and_refused_strictly() {
+    use claude_protocol::{hooks, transcript};
+
+    // A user row and a hook payload as amux's own test inputs write them:
+    // no promptId, version, cwd and the rest of the envelope.
+    let row = br#"{"type":"user","uuid":"u1","timestamp":"2027-01-15T08:00:00.000Z","message":{"role":"user","content":"go"}}"#;
+    let transcript::Row::User(user) = transcript::decode(row).expect("decodes") else {
+        panic!("not a user row");
+    };
+    assert_eq!(user.envelope.uuid, "u1");
+    assert_eq!(user.envelope.version, "");
+    let reasons = transcript::strict(row).expect_err("refused").to_string();
+    assert!(reasons.contains("missing field `promptId`"), "{reasons}");
+    assert!(reasons.contains("missing field `version`"), "{reasons}");
+
+    let hook = br#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{},"tool_use_id":"t1"}"#;
+    let hooks::Payload::PreToolUse(call) = hooks::decode(hook).expect("decodes") else {
+        panic!("not a PreToolUse payload");
+    };
+    assert_eq!(call.tool_use_id, "t1");
+    let reasons = hooks::strict(hook).expect_err("refused").to_string();
+    assert!(
+        reasons.contains("missing field `transcript_path`"),
+        "{reasons}"
+    );
+}

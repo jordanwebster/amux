@@ -12,38 +12,75 @@
 //!
 //! Every fact is preceded by a tick when the clock moved.
 
+use claude_protocol::hooks::Payload;
+use claude_protocol::transcript::Row;
+use serde::Deserialize;
 use serde_json::Value;
 
+use crate::claude_common::timestamp_ms;
 use crate::{Channel, Event, Fact};
 
 /// Written into transcripts by an earlier tailer; not Claude's.
 const TAILER_MARKER: &str = "amux.transcript_ready";
+
+/// One line of a claude-specs recording: when, on which transport, and
+/// what.
+#[derive(Deserialize)]
+struct Record {
+    #[serde(default)]
+    us: i64,
+    #[serde(default)]
+    transport_id: String,
+    #[serde(default)]
+    line: Option<String>,
+}
+
+/// What the recording host read from the transcript: the file and the row.
+#[derive(Deserialize)]
+struct TranscriptLine {
+    row: Value,
+}
 
 pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
     let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
     let lines = text
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .enumerate()
-        .map(|(index, line)| {
-            serde_json::from_str::<Value>(line)
-                .map_err(|error| format!("line {}: {error}", index + 1))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .enumerate();
     match format {
-        "claude_pty_io" => Ok(io(&lines)),
-        "transcript_rows" => Ok(rows(&lines)),
+        "claude_pty_io" => {
+            let records = lines
+                .map(|(index, line)| {
+                    serde_json::from_str::<Record>(line)
+                        .map_err(|error| format!("line {}: {error}", index + 1))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(io(&records))
+        }
+        "transcript_rows" => {
+            let rows = lines
+                .map(|(index, line)| {
+                    serde_json::from_str::<Value>(line)
+                        .map_err(|error| format!("line {}: {error}", index + 1))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows_and_hooks(&rows))
+        }
         other => Err(format!(
             "claude_pty reads claude_pty_io and transcript_rows, not {other:?}"
         )),
     }
 }
 
-fn timestamp_ms(row: &Value) -> Option<i64> {
-    let stamp = row.get("timestamp")?.as_str()?;
-    chrono::DateTime::parse_from_rfc3339(stamp)
+/// A transcript row as written, decoded, unless it is the tailer's marker.
+fn claude_row(row: &Value) -> Option<Row> {
+    Row::deserialize(row)
         .ok()
-        .map(|at| at.timestamp_millis())
+        .filter(|row| row.kind() != TAILER_MARKER)
+}
+
+fn row_ms(row: &Row) -> Option<i64> {
+    row.timestamp().and_then(timestamp_ms)
 }
 
 struct Clock {
@@ -63,49 +100,41 @@ impl Clock {
     }
 }
 
-fn io(lines: &[Value]) -> Vec<Event> {
-    let us = |line: &Value| line.get("us").and_then(Value::as_i64).unwrap_or(0);
-    let parsed = |line: &Value| {
-        line.get("line")
-            .and_then(Value::as_str)
-            .and_then(|text| serde_json::from_str::<Value>(text).ok())
-    };
-    let transport = |line: &Value| {
-        line.get("transport_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
+fn io(records: &[Record]) -> Vec<Event> {
+    let row = |record: &Record| {
+        if record.transport_id != "transcript" {
+            return None;
+        }
+        serde_json::from_str::<TranscriptLine>(record.line.as_deref()?)
+            .ok()
+            .map(|line| line.row)
     };
     // Where the recording's zero sits on the wall clock: the first row
     // with a timestamp, less its offset.
-    let origin = lines
+    let origin = records
         .iter()
-        .filter(|line| transport(line) == "transcript")
-        .find_map(|line| {
-            let row = parsed(line)?.get("row").cloned()?;
-            Some(timestamp_ms(&row)? - us(line) / 1000)
+        .find_map(|record| {
+            let row = Row::deserialize(row(record)?).ok()?;
+            Some(row_ms(&row)? - record.us / 1000)
         })
         .unwrap_or(0);
     let mut clock = Clock {
         events: Vec::new(),
         now: None,
     };
-    for line in lines {
-        let at_ms = Some(origin + us(line) / 1000);
-        match transport(line).as_str() {
+    for record in records {
+        let at_ms = Some(origin + record.us / 1000);
+        match record.transport_id.as_str() {
             "hook" => {
-                let Some(payload) = line.get("line").and_then(Value::as_str) else {
+                let Some(payload) = &record.line else {
                     continue;
                 };
                 clock.push(at_ms, Channel::Hook, payload.as_bytes().to_vec());
             }
             "transcript" => {
-                let Some(row) = parsed(line).and_then(|wrapped| wrapped.get("row").cloned()) else {
+                let Some(row) = row(record).filter(|row| claude_row(row).is_some()) else {
                     continue;
                 };
-                if row.get("type").and_then(Value::as_str) == Some(TAILER_MARKER) {
-                    continue;
-                }
                 clock.push(at_ms, Channel::Transcript, row.to_string().into_bytes());
             }
             _ => {}
@@ -114,21 +143,20 @@ fn io(lines: &[Value]) -> Vec<Event> {
     clock.events
 }
 
-fn rows(lines: &[Value]) -> Vec<Event> {
+/// Rows with hook payloads mixed in, told apart by the hook's event name.
+fn rows_and_hooks(lines: &[Value]) -> Vec<Event> {
     let mut clock = Clock {
         events: Vec::new(),
         now: None,
     };
-    for row in lines {
-        if row.get("type").and_then(Value::as_str) == Some(TAILER_MARKER) {
-            continue;
+    for line in lines {
+        let payload = line.to_string().into_bytes();
+        let hook = Payload::deserialize(line).is_ok_and(|hook| !hook.name().is_empty());
+        if hook {
+            clock.push(None, Channel::Hook, payload);
+        } else if let Some(row) = claude_row(line) {
+            clock.push(row_ms(&row), Channel::Transcript, payload);
         }
-        let channel = if row.get("hook_event_name").is_some() {
-            Channel::Hook
-        } else {
-            Channel::Transcript
-        };
-        clock.push(timestamp_ms(row), channel, row.to_string().into_bytes());
     }
     clock.events
 }

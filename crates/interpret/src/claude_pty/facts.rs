@@ -1,6 +1,15 @@
 //! Transcript rows, hook payloads and the launch fact, read into state and
 //! items. The module docs in `mod.rs` state the inference rules.
 
+use claude_protocol::hooks::{
+    self, Notification, Payload, PermissionRequest, PostToolUse, PostToolUseFailure, PreToolUse,
+    SessionStart,
+};
+use claude_protocol::stream::{
+    CompactTrigger, ContentBlock, MessageContent, PermissionUpdate, ToolResultBody,
+};
+use claude_protocol::transcript::{self, AssistantRow, Attachment, Row, SystemRow, UserRow};
+use serde::Deserialize;
 use serde_json::Value;
 use wire::claude_pty_item::Kind;
 use wire::{
@@ -9,13 +18,13 @@ use wire::{
 };
 
 use super::{
-    AskMeta, AskShape, Decision, PendingMessage, PermissionMenus, Running, Slash, State, Subagent,
-    Tool, item_body,
+    AgentFact, AskMeta, AskShape, Decision, PendingMessage, PermissionMenus, Running, Slash, State,
+    Subagent, Tool, item_body,
 };
 use crate::claude_common::{
-    PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
-    question_ask, result_images, same_json, scope_choices, split_tool_name, text, timestamp_ms,
-    tool_class, without_image_bytes,
+    BackgroundInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, blocks_text,
+    compact_json, message_text, permission_scopes, question_ask, same_json, split_tool_name,
+    timestamp_ms, tool_class, tool_result_images, tool_result_text, without_image_bytes,
 };
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
@@ -36,13 +45,24 @@ pub(super) const TRUST_YES: &str = "Trust this folder";
 const TRUST_NO: &str = "Exit";
 const UNANSWERABLE_LINK: &str = "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.";
 
+/// The Agent call's immediate result, as far as telling a subagent
+/// launched in the background goes.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentLaunch {
+    #[serde(default)]
+    is_async: bool,
+    #[serde(default)]
+    agent_id: Option<String>,
+}
+
 /// The agent id of a subagent Claude launched in the background, from the
 /// Agent call's immediate result.
-fn launched_in_background(result: &Value) -> Option<&str> {
-    if result.get("isAsync").and_then(Value::as_bool) != Some(true) {
-        return None;
-    }
-    result.get("agentId").and_then(Value::as_str)
+fn launched_in_background(result: &Value) -> Option<String> {
+    AgentLaunch::deserialize(result)
+        .ok()
+        .filter(|launch| launch.is_async)?
+        .agent_id
 }
 
 /// The text between `<tag>` and `</tag>`, trimmed.
@@ -120,40 +140,45 @@ fn peer_message_bodies(text: &str) -> Vec<String> {
 
 impl State {
     pub(super) fn fact(&mut self, emit: &mut Emit, fact: Fact) {
-        let Ok(value) = serde_json::from_slice::<Value>(&fact.payload) else {
-            return;
-        };
         match fact.channel {
-            Channel::Transcript => self.row(emit, &value),
-            Channel::Hook => self.hook(emit, &value),
-            Channel::Agent => self.agent_fact(emit, &value),
+            Channel::Transcript => {
+                if let Ok(row) = transcript::decode(&fact.payload) {
+                    self.row(emit, &row);
+                }
+            }
+            Channel::Hook => {
+                if let Ok(payload) = hooks::decode(&fact.payload) {
+                    self.hook(emit, &payload);
+                }
+            }
+            Channel::Agent => {
+                if let Ok(fact) = serde_json::from_slice::<AgentFact>(&fact.payload) {
+                    self.agent_fact(emit, fact);
+                }
+            }
             Channel::Stream | Channel::Rpc | Channel::Tools => {}
         }
     }
 
-    fn agent_fact(&mut self, emit: &mut Emit, value: &Value) {
-        match text(value, "type") {
-            "launch" => {}
+    fn agent_fact(&mut self, emit: &mut Emit, fact: AgentFact) {
+        let (version, keymap, permission_menus, send_now_refused) = match fact {
+            AgentFact::Launch {
+                version,
+                keymap,
+                permission_menus,
+                send_now_refused,
+            } => (version, keymap, permission_menus, send_now_refused),
             // Waiting on its trust dialog, Claude takes no prompt; it
             // starts its session once trusted, and that start says so.
-            "ready" if self.trust_ask().is_some() => return,
-            "ready" => return self.shared.provider_started(),
-            "trust_dialog" => return self.trust_dialog(emit),
-            _ => return,
-        }
+            AgentFact::Ready if self.trust_ask().is_some() => return,
+            AgentFact::Ready => return self.shared.provider_started(),
+            AgentFact::TrustDialog => return self.trust_dialog(emit),
+        };
         let provider = &mut self.provider;
-        let version = text(value, "version");
-        provider.version = (!version.is_empty()).then(|| version.to_owned());
-        provider.keymap = text(value, "keymap").to_owned();
-        provider.permission_menus = value
-            .get("permission_menus")
-            .cloned()
-            .and_then(|menus| serde_json::from_value(menus).ok())
-            .unwrap_or_default();
-        provider.send_now_refused = value
-            .get("send_now_refused")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        provider.version = (!version.is_empty()).then_some(version);
+        provider.keymap = keymap;
+        provider.permission_menus = permission_menus;
+        provider.send_now_refused = send_now_refused;
         provider.relaunched = provider.launches > 0;
         provider.launches += 1;
     }
@@ -168,66 +193,71 @@ impl State {
 
     // --- hooks -----------------------------------------------------------
 
-    fn hook(&mut self, emit: &mut Emit, hook: &Value) {
-        if let Some(mode) = hook.get("permission_mode").and_then(Value::as_str) {
-            self.provider.permission_mode = Some(mode.to_owned());
+    fn hook(&mut self, emit: &mut Emit, payload: &Payload) {
+        let Some(common) = payload.common() else {
+            return;
+        };
+        if let Some(mode) = &common.permission_mode {
+            self.provider.permission_mode = Some(mode.as_str().to_owned());
         }
-        let event = text(hook, "hook_event_name");
-        let agent = text(hook, "agent_id");
-        if !agent.is_empty()
+        if let Some(agent) = common.agent_id.as_deref().filter(|agent| !agent.is_empty())
             && matches!(
-                event,
-                "PreToolUse" | "PermissionRequest" | "PostToolUse" | "PostToolUseFailure"
+                payload,
+                Payload::PreToolUse(_)
+                    | Payload::PermissionRequest(_)
+                    | Payload::PostToolUse(_)
+                    | Payload::PostToolUseFailure(_)
             )
         {
-            return self.subagent_hook(emit, agent, event, hook);
+            return self.subagent_hook(emit, agent, payload);
         }
-        match event {
-            "SessionStart" => self.session_start(emit, hook),
-            "SessionEnd" => self.close_all_unknown(emit),
-            "UserPromptSubmit" => self.shared.provider_started(),
-            "PreToolUse" => self.pre_tool_use(hook),
-            "PermissionRequest" => self.permission_request(hook),
-            "PostToolUse" | "PostToolUseFailure" => self.call_ended(text(hook, "tool_use_id")),
-            "Notification" => self.notification(emit, hook),
-            "Stop" => {
-                if let Some(tasks) = hook.get("background_tasks").and_then(Value::as_array) {
+        match payload {
+            Payload::SessionStart(start) => self.session_start(emit, start),
+            Payload::SessionEnd(_) => self.close_all_unknown(emit),
+            Payload::UserPromptSubmit(_) => self.shared.provider_started(),
+            Payload::PreToolUse(call) => self.pre_tool_use(call),
+            Payload::PermissionRequest(request) => self.permission_request(request),
+            Payload::PostToolUse(PostToolUse { tool_use_id, .. })
+            | Payload::PostToolUseFailure(PostToolUseFailure { tool_use_id, .. }) => {
+                self.call_ended(tool_use_id)
+            }
+            Payload::Notification(notification) => self.notification(emit, notification),
+            Payload::Stop(stop) => {
+                if let Some(tasks) = &stop.background_tasks {
                     self.background = Some(tasks.len() as u32);
                 }
                 self.running.clear();
                 self.close_all_unknown(emit);
             }
-            _ => {}
+            Payload::Unknown(_) => {}
         }
     }
 
-    fn session_start(&mut self, emit: &mut Emit, hook: &Value) {
+    fn session_start(&mut self, emit: &mut Emit, start: &SessionStart) {
         self.shared.provider_started();
         self.running.clear();
         // Claude starts its session only once its folder is trusted: No
         // exits.
         self.close_trust_answered_elsewhere(emit);
         self.close_all_unknown(emit);
-        let session = text(hook, "session_id");
-        if !session.is_empty() {
-            self.provider.session = Some(session.to_owned());
+        let common = &start.common;
+        if !common.session_id.is_empty() {
+            self.provider.session = Some(common.session_id.clone());
         }
-        let model = text(hook, "model");
-        if !model.is_empty() {
+        if let Some(model) = start.model.as_deref().filter(|model| !model.is_empty()) {
             self.provider.model = Some(model.to_owned());
         }
-        let path = text(hook, "transcript_path");
-        if !path.is_empty() && self.provider.transcript.as_deref() != Some(path) {
-            self.provider.transcript = Some(path.to_owned());
+        let path = common.transcript_path.to_string_lossy();
+        if !path.is_empty() && self.provider.transcript.as_deref() != Some(&*path) {
+            self.provider.transcript = Some(path.clone().into_owned());
             emit.effect(crate::Effect::FollowTranscript {
-                path: path.to_owned(),
+                path: path.into_owned(),
             });
         }
-        let source = text(hook, "source");
         let kind = if std::mem::take(&mut self.provider.relaunched) {
             BoundaryKind::Restarted
         } else {
-            match source {
+            match start.source.as_str() {
                 "resume" => BoundaryKind::Resumed,
                 "clear" => BoundaryKind::Cleared,
                 "compact" => BoundaryKind::Compacted,
@@ -249,29 +279,36 @@ impl State {
 
     /// A call inside a subagent: a step on its Agent row, and an ask it
     /// raises or answers.
-    fn subagent_hook(&mut self, emit: &mut Emit, agent: &str, event: &str, hook: &Value) {
+    fn subagent_hook(&mut self, emit: &mut Emit, agent: &str, payload: &Payload) {
         let row = self.agent_row(agent);
-        let name = text(hook, "tool_name");
-        match event {
-            "PermissionRequest" => self.permission_request(hook),
-            "PreToolUse" => {
+        match payload {
+            Payload::PermissionRequest(request) => self.permission_request(request),
+            Payload::PreToolUse(call) => {
                 if let Some(subagent) = row
                     .as_ref()
                     .and_then(|id| self.tools.get_mut(id))
                     .and_then(|tool| tool.subagent.as_mut())
                 {
                     subagent.tool_count += 1;
-                    subagent.last_tool = split_tool_name(name).1;
+                    subagent.last_tool = split_tool_name(&call.tool_name).1;
                 }
             }
-            _ => {
-                let input = hook.get("tool_input").cloned().unwrap_or(Value::Null);
+            Payload::PostToolUse(PostToolUse {
+                tool_name,
+                tool_input,
+                ..
+            })
+            | Payload::PostToolUseFailure(PostToolUseFailure {
+                tool_name,
+                tool_input,
+                ..
+            }) => {
                 let answered = self
                     .asks
                     .iter()
                     .filter(|(_, meta)| meta.agent.as_deref() == Some(agent))
-                    .filter(|(_, meta)| meta.tool_name == name)
-                    .min_by_key(|(_, meta)| (!same_json(&meta.input, &input), meta.seq))
+                    .filter(|(_, meta)| meta.tool_name == *tool_name)
+                    .min_by_key(|(_, meta)| (!same_json(&meta.input, tool_input), meta.seq))
                     .map(|(key, _)| key.clone());
                 if let Some(key) = answered
                     && self.shared.asks().get(&key).is_some()
@@ -279,6 +316,7 @@ impl State {
                     self.close(emit, &key, Decision::elsewhere(DecisionOutcome::Allowed));
                 }
             }
+            _ => {}
         }
         if let Some(id) = row {
             self.emit_tool(emit, &id);
@@ -305,8 +343,8 @@ impl State {
 
     /// The Agent call returned before its subagent finished: the row stays
     /// running until the task notification.
-    fn agent_launched(&mut self, id: &str, result: &Value) -> bool {
-        let Some(agent) = launched_in_background(result) else {
+    fn agent_launched(&mut self, id: &str, result: Option<&Value>) -> bool {
+        let Some(agent) = result.and_then(launched_in_background) else {
             return false;
         };
         let Some(tool) = self.tools.get_mut(id) else {
@@ -317,17 +355,17 @@ impl State {
         }
         tool.awaiting_notification = true;
         tool.background = true;
-        self.agents.insert(agent.to_owned(), id.to_owned());
+        self.agents.insert(agent, id.to_owned());
         true
     }
 
-    fn permission_request(&mut self, hook: &Value) {
-        let name = text(hook, "tool_name");
-        let input = hook.get("tool_input").cloned().unwrap_or(Value::Null);
+    fn permission_request(&mut self, request: &PermissionRequest) {
+        let name = request.tool_name.as_str();
+        let input = &request.tool_input;
         let (server, tool) = split_tool_name(name);
         let (body, shape) = match tool.as_str() {
             QUESTION_TOOL if server.is_empty() => {
-                let (mut question, questions) = question_ask(&input);
+                let (mut question, questions) = question_ask(input);
                 // Claude draws a question with previews side by side, with
                 // no row for a typed answer, so none is offered there.
                 for (question, shape) in question.questions.iter_mut().zip(&questions) {
@@ -340,7 +378,9 @@ impl State {
             }
             PLAN_TOOL if server.is_empty() => (
                 wire::ask::Body::Plan(PlanAsk {
-                    plan: text(&input, "plan").to_owned(),
+                    plan: PlanInput::deserialize(input)
+                        .map(|input| input.plan)
+                        .unwrap_or_default(),
                     offers_auto_accept: true,
                 }),
                 AskShape::Plan,
@@ -348,20 +388,27 @@ impl State {
             _ => permission_ask(
                 &server,
                 &tool,
-                &input,
-                hook,
+                input,
+                request
+                    .permission_suggestions
+                    .as_deref()
+                    .unwrap_or_default(),
                 &self.provider.permission_menus,
             ),
         };
         let seq = self.next_seq();
         self.next_ask += 1;
         let key = format!("ask:{}", self.next_ask);
-        let agent = Some(text(hook, "agent_id").to_owned()).filter(|agent| !agent.is_empty());
+        let agent = request
+            .common
+            .agent_id
+            .clone()
+            .filter(|agent| !agent.is_empty());
         let (bound, item_key) = match &agent {
             // Shown on the subagent's Agent row, which takes no decision.
             Some(agent) => (None, self.agent_row(agent)),
             None => {
-                let bound = self.tool_for_ask(name, &input);
+                let bound = self.tool_for_ask(name, input);
                 (bound.clone(), bound)
             }
         };
@@ -439,10 +486,10 @@ impl State {
 
     /// A tool server's form or link on Claude's screen. No hook answers it,
     /// so the ask can only be answered in the terminal or ended by stopping.
-    fn notification(&mut self, emit: &mut Emit, hook: &Value) {
-        let reason = match text(hook, "notification_type") {
-            ELICITATION_FORM => UNANSWERABLE_FORM,
-            ELICITATION_LINK => UNANSWERABLE_LINK,
+    fn notification(&mut self, emit: &mut Emit, notification: &Notification) {
+        let reason = match notification.notification_type.as_deref() {
+            Some(ELICITATION_FORM) => UNANSWERABLE_FORM,
+            Some(ELICITATION_LINK) => UNANSWERABLE_LINK,
             _ => return,
         };
         // A tool server asks while one of its calls runs; that call's
@@ -495,9 +542,9 @@ impl State {
     /// seconds while a background task runs; until then the activity line
     /// names it from here. The model is working, whether or not the row
     /// of the prompt that began the turn landed yet.
-    fn pre_tool_use(&mut self, hook: &Value) {
+    fn pre_tool_use(&mut self, call: &PreToolUse) {
         self.shared.turn_started();
-        let (server, name) = split_tool_name(text(hook, "tool_name"));
+        let (server, name) = split_tool_name(&call.tool_name);
         // Drawn elsewhere, or as its subagent's work.
         if is_status_tool(&server, &name)
             || (server.is_empty() && (TASK_TOOLS.contains(&name.as_str()) || name == AGENT_TOOL))
@@ -505,7 +552,7 @@ impl State {
             return;
         }
         self.running.push(Running {
-            id: text(hook, "tool_use_id").to_owned(),
+            id: call.tool_use_id.clone(),
             name,
             since_ms: self.shared.now_ms(),
         });
@@ -555,10 +602,8 @@ impl State {
                     outcome_text: String::new(),
                     outcome_json: String::new(),
                     class: class as i32,
-                    background: input
-                        .get("run_in_background")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
+                    background: BackgroundInput::deserialize(input)
+                        .is_ok_and(|input| input.run_in_background),
                     decision: None,
                     ended_at_ms: None,
                     message_id: message_id.to_owned(),
@@ -575,19 +620,24 @@ impl State {
         self.emit_unanswerable_items_for(emit, id);
     }
 
-    fn tool_result(&mut self, emit: &mut Emit, block: &Value, row: &Value, at_ms: Option<i64>) {
-        let id = text(block, "tool_use_id").to_owned();
-        let output = content_text(block.get("content").unwrap_or(&Value::Null));
-        let is_error = block
-            .get("is_error")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+    /// One tool_result block of a user row; `result` is the row's
+    /// structured result of the call.
+    fn tool_result(
+        &mut self,
+        emit: &mut Emit,
+        id: &str,
+        content: Option<&ToolResultBody>,
+        is_error: bool,
+        result: Option<&Value>,
+        at_ms: Option<i64>,
+    ) {
+        let id = id.to_owned();
+        let output = tool_result_text(content);
         let rejected = is_error && output.starts_with(REJECTED);
-        let result = row.get("toolUseResult").cloned().unwrap_or(Value::Null);
         self.call_ended(&id);
         self.close_unanswerable_for_tool(emit, &id);
         // The launch metadata of a background subagent is for the model.
-        if self.agent_launched(&id, &result) {
+        if self.agent_launched(&id, result) {
             self.close_for_tool(emit, &id, DecisionOutcome::Allowed);
             return self.emit_tool(emit, &id);
         }
@@ -631,7 +681,7 @@ impl State {
             ToolState::Succeeded as i32
         };
         tool.outcome_text = output.clone();
-        let images = result_images(block.get("content").unwrap_or(&Value::Null));
+        let images = tool_result_images(content);
         if !images.is_empty() {
             tool.images = Vec::new();
             for (image, write) in images {
@@ -639,8 +689,8 @@ impl State {
                 emit.effect(write);
             }
         }
-        if !result.is_null() {
-            tool.outcome_json = compact_json(&without_image_bytes(&result));
+        if let Some(result) = result.filter(|result| !result.is_null()) {
+            tool.outcome_json = compact_json(&without_image_bytes(result));
         }
         if tool.ended_at_ms.is_none() {
             tool.ended_at_ms = at_ms.or(Some(self.shared.now_ms()));
@@ -652,7 +702,7 @@ impl State {
                 self.close(emit, &key, decision);
             }
         }
-        self.task_tool(&id, &result);
+        self.task_tool(&id, result.unwrap_or(&Value::Null));
         self.emit_tool(emit, &id);
     }
 
@@ -670,40 +720,40 @@ impl State {
 
     // --- rows ------------------------------------------------------------
 
-    fn row(&mut self, emit: &mut Emit, row: &Value) {
+    fn row(&mut self, emit: &mut Emit, row: &Row) {
         if self.provider.version.is_none()
-            && let Some(version) = row.get("version").and_then(Value::as_str)
+            && let Some(version) = row.version().filter(|version| !version.is_empty())
         {
             self.provider.version = Some(version.to_owned());
         }
         if self.provider.session.is_none()
-            && let Some(session) = row.get("sessionId").and_then(Value::as_str)
+            && let Some(session) = row.session_id().filter(|session| !session.is_empty())
         {
             self.provider.session = Some(session.to_owned());
         }
-        let at_ms = timestamp_ms(row);
-        match text(row, "type") {
-            "user" => {
+        let at_ms = row.timestamp().and_then(timestamp_ms);
+        match row {
+            Row::User(user) => {
                 self.shared.provider_started();
-                self.user_row(emit, row, at_ms);
+                self.user_row(emit, user, at_ms);
             }
-            "assistant" => {
+            Row::Assistant(assistant) => {
                 self.shared.provider_started();
-                self.assistant_row(emit, row, at_ms);
+                self.assistant_row(emit, assistant, at_ms);
             }
-            "system" => self.system_row(emit, row, at_ms),
-            "permission-mode" => {
-                if let Some(mode) = row.get("permissionMode").and_then(Value::as_str) {
+            Row::System(system) => self.system_row(emit, system, at_ms),
+            Row::PermissionMode(mode) => {
+                let mode = mode.permission_mode.as_str();
+                if !mode.is_empty() {
                     self.provider.permission_mode = Some(mode.to_owned());
                 }
             }
-            "attachment" => {
-                let attachment = row.get("attachment").unwrap_or(&Value::Null);
-                if text(attachment, "type") == "queued_command"
-                    && matches!(text(attachment, "commandMode"), "" | "prompt")
+            Row::Attachment(row) => {
+                if let Attachment::QueuedCommand(queued) = &row.attachment
+                    && matches!(queued.command_mode.as_deref(), None | Some("" | "prompt"))
                 {
-                    let prompt = unwrap_pasted(text(attachment, "prompt"));
-                    self.joined_prompt(emit, text(row, "uuid").to_owned(), prompt, at_ms);
+                    let prompt = unwrap_pasted(&queued.prompt);
+                    self.joined_prompt(emit, row.envelope.uuid.clone(), prompt, at_ms);
                 }
             }
             // Everything else is bookkeeping for Claude's own interface:
@@ -712,14 +762,13 @@ impl State {
         }
     }
 
-    fn user_row(&mut self, emit: &mut Emit, row: &Value, at_ms: Option<i64>) {
-        let uuid = text(row, "uuid").to_owned();
-        let content = row.pointer("/message/content").unwrap_or(&Value::Null);
-        let whole = unwrap_pasted(&content_text(content));
+    fn user_row(&mut self, emit: &mut Emit, row: &UserRow, at_ms: Option<i64>) {
+        let uuid = row.envelope.uuid.clone();
+        let whole = unwrap_pasted(&message_text(&row.message.content));
         if !peer_message_bodies(&whole).is_empty() {
             return self.reflected_messages(&whole);
         }
-        if row.get("isCompactSummary").and_then(Value::as_bool) == Some(true) {
+        if row.is_compact_summary == Some(true) {
             self.shared.item(
                 emit,
                 ItemDraft {
@@ -733,27 +782,57 @@ impl State {
             );
             return;
         }
-        if row.get("isMeta").and_then(Value::as_bool) == Some(true) {
+        if row.is_meta == Some(true) {
             return;
         }
         // Claude's own message to the model, never a person's prompt.
-        if row.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification")
-            || text(row, "promptSource") == "system"
+        if row
+            .origin
+            .as_ref()
+            .is_some_and(|origin| origin.kind == "task-notification")
+            || row.prompt_source.as_deref() == Some("system")
         {
             return self.task_notification(emit, &whole, at_ms);
         }
-        if let Value::Array(blocks) = content {
+        if let MessageContent::Blocks(blocks) = &row.message.content {
             let mut results = false;
             for block in blocks {
-                if text(block, "type") == "tool_result" {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                    ..
+                } = block
+                {
                     results = true;
-                    self.tool_result(emit, block, row, at_ms);
+                    self.tool_result(
+                        emit,
+                        tool_use_id,
+                        content.as_ref(),
+                        is_error.unwrap_or(false),
+                        row.tool_use_result.as_ref(),
+                        at_ms,
+                    );
                 }
             }
             if results {
                 return;
             }
         }
+        self.user_text(emit, uuid, whole, row.origin.is_some(), at_ms);
+    }
+
+    /// The text of a user row that is neither a tool result nor Claude's
+    /// own: an interruption, a slash command or its output, or a prompt.
+    /// `origin` is whether the row names who sent it.
+    fn user_text(
+        &mut self,
+        emit: &mut Emit,
+        uuid: String,
+        whole: String,
+        origin: bool,
+        at_ms: Option<i64>,
+    ) {
         let trimmed = whole.trim_start();
         if trimmed.starts_with(INTERRUPTED) {
             return self.interrupted(emit, uuid, at_ms);
@@ -789,7 +868,7 @@ impl State {
         }
         // A slash command as typed: Claude records it without a prompt
         // origin before it runs.
-        if trimmed.starts_with('/') && row.get("origin").is_none() {
+        if trimmed.starts_with('/') && !origin {
             let (command, args) = trimmed
                 .split_once(char::is_whitespace)
                 .unwrap_or((trimmed, ""));
@@ -1042,30 +1121,22 @@ impl State {
         self.asks.retain(|key, _| open.contains(key));
     }
 
-    fn assistant_row(&mut self, emit: &mut Emit, row: &Value, at_ms: Option<i64>) {
+    fn assistant_row(&mut self, emit: &mut Emit, row: &AssistantRow, at_ms: Option<i64>) {
         self.local_turn = false;
         // The model is answering, whether or not a prompt row said so.
         self.shared.turn_started();
-        let uuid = text(row, "uuid").to_owned();
-        let message = row.get("message").unwrap_or(&Value::Null);
-        let message_id = text(message, "id").to_owned();
-        if let Some(model) = message.get("model").and_then(Value::as_str)
-            && model != "<synthetic>"
-        {
-            self.provider.model = Some(model.to_owned());
+        let uuid = row.envelope.uuid.clone();
+        let message = &row.message;
+        let message_id = message.id.clone();
+        if !message.model.is_empty() && message.model != "<synthetic>" {
+            self.provider.model = Some(message.model.clone());
         }
-        if let Some(usage) = message.get("usage") {
-            let tokens = [
-                "input_tokens",
-                "cache_creation_input_tokens",
-                "cache_read_input_tokens",
-            ]
-            .iter()
-            .filter_map(|field| usage.get(*field).and_then(Value::as_u64))
-            .sum::<u64>();
-            if tokens > 0 {
-                self.context_tokens = Some(tokens);
-            }
+        let usage = &message.usage;
+        let tokens = usage.input_tokens
+            + usage.cache_creation_input_tokens.unwrap_or(0)
+            + usage.cache_read_input_tokens.unwrap_or(0);
+        if tokens > 0 {
+            self.context_tokens = Some(tokens);
         }
         // A row from a later message proves an asked call is over.
         for key in self.open_ask_keys() {
@@ -1091,15 +1162,14 @@ impl State {
                 self.close_ask_item(emit, &key, ask_item::dismissed());
             }
         }
-        if row.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true) {
-            let message_text = content_text(message.get("content").unwrap_or(&Value::Null));
+        if row.is_api_error_message == Some(true) {
             self.shared.item(
                 emit,
                 ItemDraft {
                     key: uuid,
                     body: item_body(Kind::ApiError(wire::ApiError {
-                        error_kind: text(row, "error").to_owned(),
-                        message: message_text,
+                        error_kind: row.error.clone().unwrap_or_default(),
+                        message: blocks_text(&message.content),
                         ..Default::default()
                     })),
                     at_ms,
@@ -1109,13 +1179,7 @@ impl State {
             );
             return;
         }
-        let blocks = match message.get("content") {
-            Some(Value::Array(blocks)) => blocks.clone(),
-            Some(Value::String(text)) => {
-                vec![serde_json::json!({ "type": "text", "text": text })]
-            }
-            _ => Vec::new(),
-        };
+        let blocks = &message.content;
         let several = blocks.len() > 1;
         for (index, block) in blocks.iter().enumerate() {
             let key = if several && index > 0 {
@@ -1123,10 +1187,9 @@ impl State {
             } else {
                 uuid.clone()
             };
-            match text(block, "type") {
-                "text" => {
-                    let (text, attachments) =
-                        crate::shared::parse_reply(text(block, "text").to_owned());
+            match block {
+                ContentBlock::Text { text, .. } => {
+                    let (text, attachments) = crate::shared::parse_reply(text.clone());
                     self.shared.item(
                         emit,
                         ItemDraft {
@@ -1141,25 +1204,29 @@ impl State {
                     );
                     self.shared.note_message(&key);
                 }
-                "thinking" | "redacted_thinking" => self.shared.item(
-                    emit,
-                    ItemDraft {
-                        key,
-                        text: text(block, "thinking").to_owned(),
-                        body: item_body(Kind::Thinking(wire::Thinking { complete: true })),
-                        at_ms,
-                        complete: true,
-                        ..Default::default()
-                    },
-                ),
-                "tool_use" => {
-                    let id = text(block, "id").to_owned();
-                    let name = text(block, "name").to_owned();
-                    let input = block.get("input").cloned().unwrap_or(Value::Null);
-                    self.tool_seen(emit, &id, &name, &input, at_ms, &message_id);
-                    let drawn = self.tools.get(&id).is_some_and(|tool| !tool.hidden);
-                    if drawn && let Some(ask) = self.ask_for_tool(&name, &input) {
-                        self.bind(emit, &ask, &id);
+                ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {
+                    self.shared.item(
+                        emit,
+                        ItemDraft {
+                            key,
+                            text: match block {
+                                ContentBlock::Thinking { thinking, .. } => thinking.clone(),
+                                _ => String::new(),
+                            },
+                            body: item_body(Kind::Thinking(wire::Thinking { complete: true })),
+                            at_ms,
+                            complete: true,
+                            ..Default::default()
+                        },
+                    )
+                }
+                ContentBlock::ToolUse {
+                    id, name, input, ..
+                } => {
+                    self.tool_seen(emit, id, name, input, at_ms, &message_id);
+                    let drawn = self.tools.get(id).is_some_and(|tool| !tool.hidden);
+                    if drawn && let Some(ask) = self.ask_for_tool(name, input) {
+                        self.bind(emit, &ask, id);
                     }
                 }
                 other => self.shared.item(
@@ -1167,7 +1234,7 @@ impl State {
                     ItemDraft {
                         key,
                         body: item_body(Kind::Unrecognized(wire::Unrecognized {
-                            fact_type: format!("assistant/{other}"),
+                            fact_type: format!("assistant/{}", other.kind()),
                             summary: String::new(),
                         })),
                         at_ms,
@@ -1179,28 +1246,27 @@ impl State {
         }
     }
 
-    fn system_row(&mut self, emit: &mut Emit, row: &Value, at_ms: Option<i64>) {
-        let uuid = text(row, "uuid").to_owned();
-        match text(row, "subtype") {
-            "turn_duration" => {
+    fn system_row(&mut self, emit: &mut Emit, row: &SystemRow, at_ms: Option<i64>) {
+        match row {
+            SystemRow::TurnDuration(turn) => {
                 self.close_all_unknown(emit);
-                let duration = row.get("durationMs").and_then(Value::as_i64);
+                let duration = turn.duration_ms.map(|duration| duration as i64);
                 self.end_turn(emit, TurnOutcome::Completed, at_ms, duration);
             }
-            "compact_boundary" => {
-                let metadata = row.get("compactMetadata").unwrap_or(&Value::Null);
-                let after = metadata.get("postTokens").and_then(Value::as_u64);
+            SystemRow::CompactBoundary(boundary) => {
+                let metadata = &boundary.compact_metadata;
+                let after = metadata.post_tokens;
                 if after.is_some() {
                     self.context_tokens = after;
                 }
                 self.shared.item(
                     emit,
                     ItemDraft {
-                        key: uuid,
+                        key: boundary.envelope.uuid.clone(),
                         body: item_body(Kind::Compaction(wire::Compaction {
-                            tokens_before: metadata.get("preTokens").and_then(Value::as_u64),
+                            tokens_before: metadata.pre_tokens,
                             tokens_after: after,
-                            automatic: text(metadata, "trigger") == "auto",
+                            automatic: metadata.trigger == CompactTrigger::Auto,
                         })),
                         at_ms,
                         complete: true,
@@ -1208,17 +1274,11 @@ impl State {
                     },
                 );
             }
-            "local_command" => {
-                let content = text(row, "content").to_owned();
-                let synthetic = serde_json::json!({
-                    "type": "user",
-                    "uuid": uuid,
-                    "timestamp": row.get("timestamp"),
-                    "message": { "content": content },
-                });
-                self.user_row(emit, &synthetic, at_ms);
+            SystemRow::LocalCommand(command) => {
+                let whole = unwrap_pasted(&command.content);
+                self.user_text(emit, command.envelope.uuid.clone(), whole, false, at_ms);
             }
-            _ => {}
+            SystemRow::StopHookSummary(_) | SystemRow::Unknown(_) => {}
         }
     }
 }
@@ -1230,21 +1290,16 @@ fn permission_ask(
     server: &str,
     tool: &str,
     input: &Value,
-    hook: &Value,
+    suggestions: &[PermissionUpdate],
     menus: &PermissionMenus,
 ) -> (wire::ask::Body, AskShape) {
-    let suggestions = hook
-        .get("permission_suggestions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
     let count = suggestions.len() as u32;
     // A menu the keymap does not know offers no scope: its Yes and its
     // deny are still typed.
     let scopes = if menus.per_suggestion.contains(&count) {
-        scope_choices(&suggestions)
+        permission_scopes(suggestions)
     } else if menus.folded.contains(&count) {
-        vec![folded(scope_choices(&suggestions))]
+        vec![folded(permission_scopes(suggestions))]
     } else {
         Vec::new()
     };

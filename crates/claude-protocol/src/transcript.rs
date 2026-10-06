@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::stream::{ApiMessage, Extensions, MessageParam, PermissionMode};
+use crate::stream::{ApiMessage, CompactTrigger, Extensions, MessageParam, PermissionMode};
 use crate::strictness::tagged_enum;
 use crate::{DecodeError, Drift, decoding};
 
@@ -51,6 +51,18 @@ impl Row {
         }
     }
 
+    /// When Claude wrote the row, for the rows that say.
+    pub fn timestamp(&self) -> Option<&str> {
+        match self {
+            Self::QueueOperation(row) => Some(&row.timestamp),
+            Self::FileHistoryDelta(row) => Some(&row.timestamp),
+            Self::System(SystemRow::Unknown(raw)) | Self::Unknown(raw) => {
+                raw.field("timestamp")?.as_str()
+            }
+            _ => self.envelope().map(|envelope| envelope.timestamp.as_str()),
+        }
+    }
+
     /// The Claude session the row belongs to, when it names one.
     pub fn session_id(&self) -> Option<&str> {
         match self {
@@ -62,7 +74,20 @@ impl Row {
             Self::LastPrompt(row) => Some(&row.session_id),
             Self::QueueOperation(row) => Some(&row.session_id),
             Self::BridgeSession(row) => Some(&row.session_id),
+            Self::System(SystemRow::Unknown(raw)) | Self::Unknown(raw) => {
+                raw.field("sessionId")?.as_str()
+            }
             _ => self.envelope().map(|envelope| envelope.session_id.as_str()),
+        }
+    }
+
+    /// The version of Claude that wrote the row, for the rows that say.
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            Self::System(SystemRow::Unknown(raw)) | Self::Unknown(raw) => {
+                raw.field("version")?.as_str()
+            }
+            _ => self.envelope().map(|envelope| envelope.version.as_str()),
         }
     }
 }
@@ -90,17 +115,27 @@ pub fn encode(row: &Row) -> Vec<u8> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Envelope {
+    #[serde(default = "crate::absent::uuid")]
     pub uuid: String,
     /// The row this one follows; null at the start of a conversation.
+    #[serde(default = "crate::absent::parent_uuid")]
     pub parent_uuid: Option<String>,
+    #[serde(default = "crate::absent::row_session_id")]
     pub session_id: String,
+    #[serde(default = "crate::absent::timestamp")]
     pub timestamp: String,
     /// Claude's version.
+    #[serde(default = "crate::absent::version")]
     pub version: String,
+    #[serde(default = "crate::absent::cwd")]
     pub cwd: PathBuf,
+    #[serde(default = "crate::absent::git_branch")]
     pub git_branch: String,
+    #[serde(default = "crate::absent::is_sidechain")]
     pub is_sidechain: bool,
+    #[serde(default = "crate::absent::user_type")]
     pub user_type: String,
+    #[serde(default = "crate::absent::entrypoint")]
     pub entrypoint: String,
     /// The session's plan-file name, once it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,6 +150,7 @@ pub struct UserRow {
     #[serde(flatten)]
     pub envelope: Envelope,
     pub message: MessageParam,
+    #[serde(default = "crate::absent::prompt_id")]
     pub prompt_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<PermissionMode>,
@@ -194,6 +230,7 @@ tagged_enum! {
         "turn_duration" => TurnDuration(TurnDuration),
         "stop_hook_summary" => StopHookSummary(StopHookSummary),
         "compact_boundary" => CompactBoundary(CompactBoundary),
+        "local_command" => LocalCommand(LocalCommand),
     }
 }
 
@@ -203,6 +240,7 @@ impl SystemRow {
             Self::TurnDuration(row) => Some(&row.envelope),
             Self::StopHookSummary(row) => Some(&row.envelope),
             Self::CompactBoundary(row) => Some(&row.envelope),
+            Self::LocalCommand(row) => Some(&row.envelope),
             Self::Unknown(_) => None,
         }
     }
@@ -214,8 +252,11 @@ impl SystemRow {
 pub struct TurnDuration {
     #[serde(flatten)]
     pub envelope: Envelope,
-    pub duration_ms: u64,
+    #[serde(default = "crate::absent::duration_ms")]
+    pub duration_ms: Option<u64>,
+    #[serde(default = "crate::absent::message_count")]
     pub message_count: u64,
+    #[serde(default = "crate::absent::is_meta")]
     pub is_meta: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_background_agent_count: Option<u64>,
@@ -249,8 +290,11 @@ pub struct StopHookSummary {
 pub struct CompactBoundary {
     #[serde(flatten)]
     pub envelope: Envelope,
+    #[serde(default = "crate::absent::content")]
     pub content: String,
+    #[serde(default = "crate::absent::level")]
     pub level: String,
+    #[serde(default = "crate::absent::compact_metadata")]
     pub compact_metadata: CompactMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logical_parent_uuid: Option<String>,
@@ -258,15 +302,36 @@ pub struct CompactBoundary {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompactMetadata {
+    /// Whether Claude compacted on its own or was asked to.
+    #[serde(default = "crate::absent::trigger")]
+    pub trigger: CompactTrigger,
     /// Tokens in the context before and after.
-    pub pre_tokens: u64,
+    #[serde(default = "crate::absent::pre_tokens")]
+    pub pre_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    #[serde(flatten)]
+    pub extensions: Extensions,
+}
+
+/// A slash command Claude ran itself, or its output, in the same
+/// `<command-name>` and `<local-command-stdout>` wording a user row uses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalCommand {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    #[serde(default = "crate::absent::content")]
+    pub content: String,
+    #[serde(default = "crate::absent::level")]
+    pub level: String,
+    #[serde(default = "crate::absent::is_meta")]
+    pub is_meta: bool,
     #[serde(flatten)]
     pub extensions: Extensions,
 }
@@ -318,6 +383,7 @@ tagged_enum! {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueuedCommand {
+    #[serde(default = "crate::absent::prompt")]
     pub prompt: String,
     /// `prompt` for a prompt; anything else is a command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -340,7 +406,9 @@ pub struct ModeRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionModeRow {
+    #[serde(default = "crate::absent::permission_mode")]
     pub permission_mode: PermissionMode,
+    #[serde(default = "crate::absent::row_session_id")]
     pub session_id: String,
     #[serde(flatten)]
     pub extensions: Extensions,

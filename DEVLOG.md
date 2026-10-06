@@ -1,3 +1,22 @@
+2026-10-06 — **The terminal Claude interpreter reads through the protocol types.**
+Transcript rows and hook payloads now reach the terminal Claude interpreter
+as decoded `claude_protocol::transcript::Row` and `hooks::Payload` values,
+and it matches on them instead of looking fields up by name; the recording
+reader decodes rows the same way. The agent process's own facts on the agent
+channel (launch, ready, trust dialog) are a serde enum both sides share.
+What headless and terminal Claude share in `claude_common` lost its
+`serde_json::Value` readers: tool inputs and results (AskUserQuestion,
+ExitPlanMode, Bash's background flag, the task tools, a subagent's launch)
+are read through small `Deserialize` structs, and permission suggestions
+through the typed `PermissionUpdate`. The protocol gained what the
+interpreter reads: Claude's `local_command` system row, a Notification's
+`notification_type`, a compaction's trigger, a failed call's tool input, and
+`Row::timestamp`/`version` for rows outside the conversation. Hand-written
+test rows and hooks omit most of the envelope (`promptId`, `version`, `cwd`,
+`gitBranch`, a hook's `transcript_path` and more); those fields are filled
+with their default and reported missing, so production reads them as before
+and a strict decode still refuses them. Goldens and fixtures are unchanged.
+
 2026-10-06 — **The headless Claude interpreter reads and writes through the protocol types.**
 Every line headless Claude prints now reaches the interpreter as a decoded
 `claude_protocol::stream::Output`, and every line it writes (control

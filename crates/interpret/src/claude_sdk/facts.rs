@@ -21,14 +21,11 @@ use wire::{
     ToolState, Turn, TurnOutcome, UsageLimits, UsageState, UsageWindow,
 };
 
-use super::{
-    AskMeta, AskShape, BackgroundInput, PlanInput, Request, State, TaskState, Tool,
-    ToolDecisionState, item_body,
-};
+use super::{AskMeta, AskShape, Request, State, TaskState, Tool, ToolDecisionState, item_body};
 use crate::claude_common::{
-    PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, blocks_text, compact_json, message_text,
-    offered_commands, offered_models, permission_scopes, question_ask, split_tool_name, tool_class,
-    tool_result_images, tool_result_text, without_image_bytes,
+    BackgroundInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, blocks_text,
+    compact_json, message_text, offered_commands, offered_models, permission_scopes, question_ask,
+    split_tool_name, tool_class, tool_result_images, tool_result_text, without_image_bytes,
 };
 use crate::shared::json_as_written;
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};

@@ -27,8 +27,8 @@ use wire::{
     claude_answer, claude_sdk_input, input, permission_answer, plan_answer,
 };
 
-use super::{AnsweredInput, QuestionInput};
-use crate::claude_common::{PLAN_TOOL, QUESTION_TOOL, message_text};
+use super::AnsweredInput;
+use crate::claude_common::{PLAN_TOOL, QUESTION_TOOL, QuestionInput, message_text};
 use crate::{Channel, Event, Fact};
 
 /// One line of a recording: when, which way, and what.

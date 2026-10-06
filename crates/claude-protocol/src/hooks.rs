@@ -75,10 +75,13 @@ pub fn encode(payload: &Payload) -> Vec<u8> {
 /// The fields every hook payload carries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Common {
+    #[serde(default = "crate::absent::session_id")]
     pub session_id: String,
     /// The transcript the session is writing; it moves when Claude clears
     /// or starts a new conversation.
+    #[serde(default = "crate::absent::transcript_path")]
     pub transcript_path: PathBuf,
+    #[serde(default = "crate::absent::cwd")]
     pub cwd: PathBuf,
     /// Absent at the start and end of a session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,6 +188,8 @@ pub struct PostToolUseFailure {
     #[serde(flatten)]
     pub common: Common,
     pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub tool_input: Value,
     pub tool_use_id: String,
     #[serde(flatten)]
     pub extensions: Extensions,
@@ -194,7 +199,13 @@ pub struct PostToolUseFailure {
 pub struct Notification {
     #[serde(flatten)]
     pub common: Common,
+    #[serde(default = "crate::absent::message")]
     pub message: String,
+    /// What Claude is showing: `idle_prompt`, a permission prompt, or a
+    /// tool server's form (`elicitation_dialog`) or link
+    /// (`elicitation_url_dialog`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_type: Option<String>,
     #[serde(flatten)]
     pub extensions: Extensions,
 }
@@ -204,6 +215,7 @@ pub struct Notification {
 pub struct Stop {
     #[serde(flatten)]
     pub common: Common,
+    #[serde(default = "crate::absent::stop_hook_active")]
     pub stop_hook_active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_assistant_message: Option<String>,
@@ -218,9 +230,12 @@ pub struct Stop {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundTask {
+    #[serde(default = "crate::absent::id")]
     pub id: String,
     /// `shell` or `subagent`.
+    #[serde(default = "crate::absent::message_type")]
     pub r#type: String,
+    #[serde(default = "crate::absent::status")]
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
