@@ -33,19 +33,95 @@
         "channel": "stream",
         "json": {
           "type": "rate_limit_event",
-          "uuid": "rl",
+          "uuid": "rl-1",
+          "session_id": "s1",
           "rate_limit_info": {
-            "status": "rejected",
+            "status": "allowed",
+            "rateLimitType": "five_hour",
             "resetsAt": 1800003600,
             "unifiedWindows": {
               "five_hour": {
-                "utilization": 1.0,
+                "utilization": 0.4,
                 "resetsAt": 1800003600
+              },
+              "seven_day": {
+                "utilization": 0.5,
+                "resetsAt": 1800400000
+              },
+              "seven_day_overage_included": {
+                "utilization": 0.21,
+                "resetsAt": 1800400000
               }
             }
           }
         }
-      }
+      },
+      "note": "Claude states the five-hour window's status, with every window's use: the others keep no status yet, and Fable's weekly window is named for its model."
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "rate_limit_event",
+          "uuid": "rl-2",
+          "session_id": "s1",
+          "rate_limit_info": {
+            "status": "allowed_warning",
+            "rateLimitType": "seven_day_overage_included",
+            "utilization": 0.9,
+            "resetsAt": 1800400000,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.42,
+                "resetsAt": 1800003600
+              },
+              "seven_day": {
+                "utilization": 0.55,
+                "resetsAt": 1800400000
+              },
+              "seven_day_overage_included": {
+                "utilization": 0.9,
+                "resetsAt": 1800400000
+              }
+            }
+          }
+        }
+      },
+      "note": "Fable's weekly window nears its limit; the five-hour window keeps the status stated for it."
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "rate_limit_event",
+          "uuid": "rl-3",
+          "session_id": "s1",
+          "rate_limit_info": {
+            "status": "rejected",
+            "rateLimitType": "seven_day",
+            "utilization": 1.0,
+            "resetsAt": 1800400000,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.45,
+                "resetsAt": 1800003600
+              },
+              "seven_day": {
+                "utilization": 1.0,
+                "resetsAt": 1800400000
+              },
+              "seven_day_overage_included": {
+                "utilization": 0.92,
+                "resetsAt": 1800400000
+              },
+              "monthly_spend": {
+                "utilization": 0.3
+              }
+            }
+          }
+        }
+      },
+      "note": "The weekly limit is reached before the five-hour one; a window amux does not know keeps Claude's own name."
     },
     {
       "fact": {

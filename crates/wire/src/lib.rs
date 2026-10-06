@@ -307,14 +307,18 @@ mod tests {
     fn every_snapshot_body_carries_usage_servers_sign_in_and_background_jobs() {
         let set = descriptor();
         let messages = messages(&set);
-        for snapshot in ["ClaudePtySnapshot", "ClaudeSdkSnapshot", "CodexSnapshot"] {
+        for (snapshot, usage) in [
+            ("ClaudePtySnapshot", ".amux.v1.ClaudeUsage"),
+            ("ClaudeSdkSnapshot", ".amux.v1.ClaudeUsage"),
+            ("CodexSnapshot", ".amux.v1.CodexUsage"),
+        ] {
             let types = messages[snapshot]
                 .field
                 .iter()
                 .map(|field| field.type_name())
                 .collect::<BTreeSet<_>>();
             for fact in [
-                ".amux.v1.UsageLimits",
+                usage,
                 ".amux.v1.ToolServerHealth",
                 ".amux.v1.SignIn",
                 ".amux.v1.BackgroundJobs",

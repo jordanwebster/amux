@@ -4351,8 +4351,8 @@ public struct Strip: Codable, Hashable, Sendable {
 public enum StuckReason: Codable, Hashable, Sendable {
     /// The provider is signed out, its sign-in expired, or signing in failed.
     case signedOut(state: SignInState, account: String)
-    /// A usage window is spent; it resets at the latest spent window's reset,
-    /// when the provider says.
+    /// A usage window is spent; it resets at the latest reset of the
+    /// windows that are, when the provider says.
     case usageLimit(resetsAtMs: Int64?)
 
     private enum Tag: String, CodingKey {
@@ -4521,6 +4521,84 @@ public enum ToolStateView: String, Codable, Hashable, Sendable, CaseIterable {
     case cancelled = "Cancelled"
 }
 
+/// Which limit a usage window is, for a client to word.
+public enum UsageLabel: Codable, Hashable, Sendable {
+    case fiveHour
+    /// The weekly limit, or one model's weekly limit.
+    case weekly(model: String?)
+    /// A window known only by its length, as Codex gives it.
+    case minutes(UInt32)
+    /// A window known only by the provider's own name for it.
+    case named(String)
+
+    private enum Tag: String, CodingKey {
+        case weekly = "Weekly"
+        case minutes = "Minutes"
+        case named = "Named"
+    }
+
+    private enum WeeklyKeys: String, CodingKey {
+        case model
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "FiveHour": self = .fiveHour
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no UsageLabel is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a UsageLabel names exactly one variant"))
+        }
+        switch _tag {
+        case .weekly:
+            let _fields = try _container.nestedContainer(
+                keyedBy: WeeklyKeys.self, forKey: .weekly)
+            self = .weekly(
+                model: try _fields.decodeIfPresent(String.self, forKey: .model))
+        case .minutes:
+            self = .minutes(try _container.decode(UInt32.self, forKey: .minutes))
+        case .named:
+            self = .named(try _container.decode(String.self, forKey: .named))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .fiveHour:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("FiveHour")
+        case .weekly(let model):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: WeeklyKeys.self, forKey: .weekly)
+            try _fields.encodeIfPresent(model, forKey: .model)
+        case .minutes(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .minutes)
+        case .named(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .named)
+        }
+    }
+}
+
+public enum UsageState: String, Codable, Hashable, Sendable, CaseIterable {
+    case unknown = "Unknown"
+    case ok = "Ok"
+    case nearLimit = "NearLimit"
+    case blocked = "Blocked"
+}
+
 public struct UsageView: Codable, Hashable, Sendable {
     public var blocked: Bool
     public var windows: [UsageWindowView]
@@ -4539,22 +4617,25 @@ public struct UsageView: Codable, Hashable, Sendable {
     }
 }
 
-/// One rate-limit window: its name, how much of it is used, and when it
-/// resets.
+/// One rate-limit window: which limit it is, how much of it is used, when
+/// it resets, and its own state.
 public struct UsageWindowView: Codable, Hashable, Sendable {
-    public var name: String
+    public var label: UsageLabel
     public var usedPercent: Double
+    public var state: UsageState
     public var resetsAtMs: Int64?
 
-    public init(name: String, usedPercent: Double, resetsAtMs: Int64?) {
-        self.name = name
+    public init(label: UsageLabel, usedPercent: Double, state: UsageState, resetsAtMs: Int64?) {
+        self.label = label
         self.usedPercent = usedPercent
+        self.state = state
         self.resetsAtMs = resetsAtMs
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name
+        case label
         case usedPercent = "used_percent"
+        case state
         case resetsAtMs = "resets_at_ms"
     }
 }

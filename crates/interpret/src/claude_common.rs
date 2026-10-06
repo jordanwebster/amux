@@ -12,9 +12,9 @@ use claude_protocol::stream::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    Ask, Attachment, BackgroundJob, BlobRef, DecisionOutcome, OfferedCommand, OfferedModel,
-    Question, QuestionAsk, QuestionOption, ScopeChoice, TaskList, TaskListEntry, TaskListStatus,
-    ToolCall, ToolClass, ToolState, attachment,
+    Ask, Attachment, BackgroundJob, BlobRef, ClaudeLimit, ClaudeUsage, DecisionOutcome,
+    OfferedCommand, OfferedModel, Question, QuestionAsk, QuestionOption, ScopeChoice, TaskList,
+    TaskListEntry, TaskListStatus, ToolCall, ToolClass, ToolState, UsageState, attachment,
 };
 
 use crate::Effect;
@@ -257,6 +257,44 @@ pub(crate) fn clip(text: &str, chars: usize) -> String {
 pub(crate) struct BackgroundInput {
     #[serde(default)]
     pub run_in_background: bool,
+}
+
+/// Which limit a usage window Claude names is: five-hour, weekly, or weekly
+/// for one model, named as Claude's own labels name it. None for a window
+/// amux does not recognise.
+pub(crate) fn claude_limit(name: &str) -> Option<(ClaudeLimit, Option<&'static str>)> {
+    Some(match name {
+        "five_hour" => (ClaudeLimit::FiveHour, None),
+        "seven_day" => (ClaudeLimit::Weekly, None),
+        "seven_day_opus" => (ClaudeLimit::Weekly, Some("Opus")),
+        "seven_day_sonnet" => (ClaudeLimit::Weekly, Some("Sonnet")),
+        "seven_day_overage_included" => (ClaudeLimit::Weekly, Some("Fable")),
+        _ => return None,
+    })
+}
+
+/// Claude's usage as goldens print it: the overall state, then each window
+/// as its limit (Claude's own name when unrecognised), use and state.
+pub(crate) fn describe_claude_usage(usage: &ClaudeUsage) -> String {
+    if usage.state() == UsageState::Unknown && usage.windows.is_empty() {
+        return "?".into();
+    }
+    let mut text = crate::shared::describe_usage_state(usage.state).to_owned();
+    for window in &usage.windows {
+        let label = match (window.limit(), &window.model) {
+            (ClaudeLimit::FiveHour, _) => "5h".to_owned(),
+            (ClaudeLimit::Weekly, None) => "7d".to_owned(),
+            (ClaudeLimit::Weekly, Some(model)) => format!("7d/{model}"),
+            (ClaudeLimit::Unspecified, _) => format!("{}?", window.provider_name),
+        };
+        let meter = window.meter.unwrap_or_default();
+        text.push_str(&format!(
+            " {label}:{:.0}%({})",
+            meter.used_percent,
+            crate::shared::describe_usage_state(meter.state)
+        ));
+    }
+    text
 }
 
 /// What a call that started a background job ran: Bash's command, or the

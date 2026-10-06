@@ -139,7 +139,7 @@ fn usage_words(
     now_ms: i64,
     theme: Theme,
 ) -> Vec<(String, ratatui::style::Style)> {
-    let name = limit_name(&window.name);
+    let name = limit_name(&window.label);
     let mut spans = vec![
         (name, theme.muted()),
         (format!(" {:.0}% used", window.used_percent), theme.text()),
@@ -150,29 +150,38 @@ fn usage_words(
     spans
 }
 
-/// A usage window by its name: "5h" is the 5-hour limit, "7d" the weekly
-/// one; the provider's own name otherwise.
-fn limit_name(name: &str) -> String {
-    match name {
-        "5h" => "5-hour limit".to_owned(),
-        "7d" => "Weekly limit".to_owned(),
-        other => format!("{other} limit"),
+/// A usage window in words: the 5-hour limit, the weekly one or a model's
+/// weekly one; a window known only by its length or the provider's own
+/// name says that.
+fn limit_name(label: &ui_view::UsageLabel) -> String {
+    match label {
+        ui_view::UsageLabel::FiveHour => "5-hour limit".to_owned(),
+        ui_view::UsageLabel::Weekly { model: None } => "Weekly limit".to_owned(),
+        ui_view::UsageLabel::Weekly { model: Some(model) } => format!("{model} weekly limit"),
+        ui_view::UsageLabel::Minutes(minutes) => format!("{minutes}-minute limit"),
+        ui_view::UsageLabel::Named(name) => format!("{name} limit"),
     }
 }
 
-/// "5-hour limit reached · resets 23:24": the fullest window of a usage
-/// limit that has been reached, for the composer's edge. None when no limit
-/// is reached.
+/// "5-hour limit reached · resets 23:24": the window of a usage limit that
+/// has been reached, for the composer's edge; the fullest one when the
+/// provider does not say which. None when no limit is reached.
 pub fn limit_reached(strip: &Strip, now_ms: i64) -> Option<String> {
     let usage = strip.usage.as_ref().filter(|usage| usage.blocked)?;
     let Some(window) = usage
         .windows
         .iter()
-        .max_by(|a, b| a.used_percent.total_cmp(&b.used_percent))
+        .find(|window| window.state == wire::UsageState::Blocked)
+        .or_else(|| {
+            usage
+                .windows
+                .iter()
+                .max_by(|a, b| a.used_percent.total_cmp(&b.used_percent))
+        })
     else {
         return Some("Usage limit reached".to_owned());
     };
-    let mut words = format!("{} reached", limit_name(&window.name));
+    let mut words = format!("{} reached", limit_name(&window.label));
     if let Some(at) = window.resets_at_ms.filter(|at| *at > now_ms) {
         words.push_str(&format!(" · resets {}", resets(at, now_ms)));
     }

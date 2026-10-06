@@ -30,7 +30,7 @@ item exec-3c575a4d-c180-4758-8b39-f2031d36f615 work final at=1790389947934 text=
 ## 33 recorded 32: fact Rpc method=thread/tokenUsage/updated
 snapshot WORKING queue=[] working_on=- at=1790389951381 asks=[] thread=01a0db8e-6cba-7b90-9408-883cdda2d182 turn=01a0db8e-6cce-7601-b8a0-7e58b799c302 model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=12477/258400 plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 34 recorded 33: fact Rpc method=account/rateLimits/updated
-snapshot WORKING queue=[] working_on=- at=1790389951381 asks=[] thread=01a0db8e-6cba-7b90-9408-883cdda2d182 turn=01a0db8e-6cce-7601-b8a0-7e58b799c302 model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=12477/258400 plan=? usage=USAGE_STATE_OK 7d:1% credits=0 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
+snapshot WORKING queue=[] working_on=- at=1790389951381 asks=[] thread=01a0db8e-6cba-7b90-9408-883cdda2d182 turn=01a0db8e-6cce-7601-b8a0-7e58b799c302 model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=12477/258400 plan=? usage=ok 7d:1%(ok) credits=0 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 36 recorded 35: fact Rpc method=item/started
 item msg_07b442cd94dce1af016ab72ec00f3487d29c6b7163e5df4754 message open at=1790389952129 text=""
 ## 37 recorded 36: fact Rpc method=item/agentMessage/delta
@@ -40,8 +40,8 @@ append msg_07b442cd94dce1af016ab72ec00f3487d29c6b7163e5df4754 "berra"
 ## 41 recorded 40: fact Rpc method=item/completed
 item msg_07b442cd94dce1af016ab72ec00f3487d29c6b7163e5df4754 message final at=1790389952129 text="Canberra"
 ## 43 recorded 42: fact Rpc method=thread/tokenUsage/updated
-snapshot WORKING queue=[] working_on=- at=1790389952291 asks=[] thread=01a0db8e-6cba-7b90-9408-883cdda2d182 turn=01a0db8e-6cce-7601-b8a0-7e58b799c302 model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=16447/258400 plan=? usage=USAGE_STATE_OK 7d:1% credits=0 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
+snapshot WORKING queue=[] working_on=- at=1790389952291 asks=[] thread=01a0db8e-6cba-7b90-9408-883cdda2d182 turn=01a0db8e-6cce-7601-b8a0-7e58b799c302 model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=16447/258400 plan=? usage=ok 7d:1%(ok) credits=0 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 47 recorded 46: fact Rpc method=turn/completed
 item turn:1 turn final at=1790389952292 text="" #1 TURN_OUTCOME_COMPLETED started=1790389939407
-snapshot IDLE queue=[] working_on=- at=1790389952292 asks=[] thread=01a0db8e-6cba-7b90-9408-883cdda2d182 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=16447/258400 plan=? usage=USAGE_STATE_OK 7d:1% credits=0 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=[]
+snapshot IDLE queue=[] working_on=- at=1790389952292 asks=[] thread=01a0db8e-6cba-7b90-9408-883cdda2d182 turn=- model=gpt-5.6-luna effort=? approval=never sandbox=workspace-write models=[] commands=0 context=16447/258400 plan=? usage=ok 7d:1%(ok) credits=0 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=[]
 turn_end 1 last=msg_07b442cd94dce1af016ab72ec00f3487d29c6b7163e5df4754

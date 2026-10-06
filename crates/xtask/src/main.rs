@@ -66,6 +66,7 @@ const VIEW_VALUES: &[&str] = &[
     "amux.v1.ReviewComment",
     "amux.v1.SendState",
     "amux.v1.SignInState",
+    "amux.v1.UsageState",
 ];
 
 /// Regenerates the committed protobuf code under

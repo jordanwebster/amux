@@ -424,6 +424,17 @@ nothing is inferred.
   the end of the turn that launched it, until the task's notification ends
   it with the task's answer. A task whose call this interpreter never showed
   is an item of its own.
+- **Usage.** A `rate_limit_event` states one window's status (its
+  `rateLimitType`) and every window's use (`unifiedWindows`). The named
+  window takes the status; every other keeps the last status stated for it,
+  so a person can see the weekly limit reached while the five-hour one is
+  fine. Windows are five-hour or weekly, and a weekly window that belongs to
+  one model carries the model as Claude's own labels name it
+  (`seven_day_opus` Opus, `seven_day_sonnet` Sonnet,
+  `seven_day_overage_included` Fable); a window amux does not recognise
+  carries Claude's name for it. The overall state is the report's own: with
+  overage a window can be spent while the agent still works. Terminal Claude
+  reports no usage.
 - **Agent messages** go as a user message on stdin, an immediate hand-off to
   Claude's own queue. The agent-message item is written at acceptance, and
   the message is consumed when Claude reports taking that UUID.
@@ -452,6 +463,12 @@ answer.
   thread that has no turns, the interpreter reads it with its turns
   (`thread/read` with `includeTurns`, id `amux-persist`), which has Codex
   write it, and ignores the answer and the `deprecationNotice` beside it.
+- **Usage.** `account/rateLimits/updated` gives up to two windows, each
+  described only by its length: 300 minutes is the five-hour limit, 10080
+  the weekly one, and any other length is carried as it is. A window is
+  blocked when fully used and near its limit from 80%; Codex saying a limit
+  was reached, without saying which, blocks the whole. Codex's credits text
+  is kept beside the windows.
 - **Offers.** Once the thread is known, the interpreter asks `model/list`
   (following `nextCursor` to the last page, leaving hidden models out) and
   `skills/list`, once per server; the snapshot carries the models with their

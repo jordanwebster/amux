@@ -4,7 +4,7 @@
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 41000, window_tokens: Some(200000), percent: Some(20), in_strip: false }), model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: Some(UsageView { blocked: true, windows: [UsageWindowView { name: "5h", used_percent: 100.0, resets_at_ms: Some(1800003600000) }], credits: None }), failed_servers: [], sign_in: Some(SignInView { state: Failed, account: "", message: "OAuth token expired" }), background: Some(3), working_on: None }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 41000, window_tokens: Some(200000), percent: Some(20), in_strip: false }), model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: Some(UsageView { blocked: true, windows: [UsageWindowView { label: FiveHour, used_percent: 45.0, resets_at_ms: Some(1800003600000), state: Ok }, UsageWindowView { label: Weekly { model: None }, used_percent: 100.0, resets_at_ms: Some(1800400000000), state: Blocked }, UsageWindowView { label: Weekly { model: Some("Fable") }, used_percent: 92.0, resets_at_ms: Some(1800400000000), state: NearLimit }, UsageWindowView { label: Named("monthly_spend"), used_percent: 30.0, resets_at_ms: None, state: Unknown }], credits: None }), failed_servers: [], sign_in: Some(SignInView { state: Failed, account: "", message: "OAuth token expired" }), background: Some(3), working_on: None }
 == settings
   model* reported claude-opus-5-5 "" efforts=[]
   mode* Claude("default")

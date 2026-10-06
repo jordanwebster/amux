@@ -8,7 +8,7 @@ use prost::Message;
 use wire::{
     Ask, BackgroundJobs, ClaudePtyItem, ClaudePtySnapshot, ClaudeSdkItem, ClaudeSdkSnapshot,
     CodexAsk, CodexItem, CodexSnapshot, ContextMeter, Kind, OfferedCommand, OfferedModel, SignIn,
-    Task, TaskList, ToolServerHealth, UsageLimits,
+    Task, TaskList, ToolServerHealth, UsageState,
 };
 
 /// A decoded item body. `Undecodable` covers an empty or unreadable body and
@@ -284,7 +284,8 @@ pub struct AgentState {
     pub tasks: TaskList,
     pub context: ContextMeter,
     pub active_tasks: Vec<Task>,
-    pub usage: UsageLimits,
+    /// Each provider's usage limits in its own terms.
+    pub usage: Usage,
     pub servers: ToolServerHealth,
     pub sign_in: SignIn,
     pub background: BackgroundJobs,
@@ -293,6 +294,26 @@ pub struct AgentState {
     /// Terminal Claude's calls its hooks announced before their rows
     /// landed, oldest first.
     pub running_calls: Vec<wire::RunningCall>,
+}
+
+/// An agent's usage limits as its provider names them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Usage {
+    #[default]
+    Unknown,
+    Claude(wire::ClaudeUsage),
+    Codex(wire::CodexUsage),
+}
+
+impl Usage {
+    /// Whether the agent can work at all.
+    pub fn state(&self) -> UsageState {
+        match self {
+            Usage::Unknown => UsageState::Unknown,
+            Usage::Claude(usage) => usage.state(),
+            Usage::Codex(usage) => usage.state(),
+        }
+    }
 }
 
 /// Decodes a snapshot body. A body that does not decode is drawn as nothing
@@ -316,7 +337,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.model = snapshot.model;
             state.mode = snapshot.permission_mode;
             state.provider_session = snapshot.provider_session;
-            state.usage = snapshot.usage.unwrap_or_default();
+            state.usage = snapshot.usage.map_or(Usage::Unknown, Usage::Claude);
             state.servers = snapshot.servers.unwrap_or_default();
             state.sign_in = snapshot.sign_in.unwrap_or_default();
             state.background = snapshot.background_jobs.unwrap_or_default();
@@ -336,7 +357,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.commands = snapshot.commands;
             state.active_tasks = snapshot.active_tasks;
             state.provider_session = snapshot.provider_session;
-            state.usage = snapshot.usage.unwrap_or_default();
+            state.usage = snapshot.usage.map_or(Usage::Unknown, Usage::Claude);
             state.servers = snapshot.servers.unwrap_or_default();
             state.sign_in = snapshot.sign_in.unwrap_or_default();
             state.background = snapshot.background_jobs.unwrap_or_default();
@@ -356,7 +377,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.commands = snapshot.commands;
             state.active_turn = snapshot.active_turn;
             state.provider_session = snapshot.thread_id;
-            state.usage = snapshot.usage.unwrap_or_default();
+            state.usage = snapshot.usage.map_or(Usage::Unknown, Usage::Codex);
             state.servers = snapshot.servers.unwrap_or_default();
             state.sign_in = snapshot.sign_in.unwrap_or_default();
             state.background = snapshot.background_jobs.unwrap_or_default();

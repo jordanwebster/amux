@@ -42,10 +42,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
     AgentSpec, AskClosed, AskItem, BackgroundJob, CodexAnswer, CodexAsk, CodexItem, CodexSnapshot,
-    ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction, Input,
+    CodexUsage, ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction, Input,
     OfferedCommand, OfferedModel, QueuedInput, Step, TaskList, TaskListEntry, ToolDecision,
-    ToolServerHealth, UsageLimits, Work, codex_answer, codex_ask, codex_input, codex_item, input,
-    sender, work,
+    ToolServerHealth, Work, codex_answer, codex_ask, codex_input, codex_item, input, sender, work,
 };
 
 use crate::claude_common::{clip, describe_tasks, or_dash};
@@ -258,7 +257,7 @@ pub struct State {
     context_tokens: Option<u64>,
     context_window: Option<u64>,
     #[serde(with = "serde_pb::opt_msg")]
-    usage: Option<UsageLimits>,
+    usage: Option<CodexUsage>,
     #[serde(with = "serde_pb::opt_msg")]
     servers: Option<ToolServerHealth>,
     #[serde(with = "serde_pb::opt_msg")]
@@ -368,7 +367,7 @@ impl State {
                     .clone()
                     .unwrap_or_else(unknown::tool_server_health),
             ),
-            usage: Some(self.usage.clone().unwrap_or_else(unknown::usage_limits)),
+            usage: Some(self.usage.clone().unwrap_or_else(unknown::codex_usage)),
             sign_in: Some(self.sign_in.clone().unwrap_or_else(unknown::sign_in)),
             background_jobs: Some(self.shared.jobs()),
             plan: Some(match &self.plan {
@@ -1518,6 +1517,32 @@ fn describe_ask(ask: &CodexAsk) -> String {
     )
 }
 
+/// Codex's usage as goldens print it: the overall state, each window by
+/// its limit (its length when unrecognised), use and state, and credits.
+fn describe_codex_usage(usage: &wire::CodexUsage) -> String {
+    if usage.state() == wire::UsageState::Unknown && usage.windows.is_empty() {
+        return "?".into();
+    }
+    let mut text = crate::shared::describe_usage_state(usage.state).to_owned();
+    for window in &usage.windows {
+        let label = match window.limit() {
+            wire::CodexLimit::FiveHour => "5h".to_owned(),
+            wire::CodexLimit::Weekly => "7d".to_owned(),
+            wire::CodexLimit::Unspecified => format!("{}m?", window.window_minutes),
+        };
+        let meter = window.meter.unwrap_or_default();
+        text.push_str(&format!(
+            " {label}:{:.0}%({})",
+            meter.used_percent,
+            crate::shared::describe_usage_state(meter.state)
+        ));
+    }
+    if let Some(credits) = &usage.credits {
+        text.push_str(&format!(" credits={credits}"));
+    }
+    text
+}
+
 fn describe_snapshot(body: &[u8]) -> SnapshotView {
     let snapshot = CodexSnapshot::decode(body).unwrap_or_default();
     let context = snapshot.context.unwrap_or_default();
@@ -1558,22 +1583,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
                 "?".into()
             },
             describe_tasks(&snapshot.plan.unwrap_or_default()),
-            match wire::UsageState::try_from(usage.state).unwrap_or_default() {
-                wire::UsageState::Unknown => "?".to_owned(),
-                state => format!(
-                    "{}{}{}",
-                    state.as_str_name(),
-                    usage
-                        .windows
-                        .iter()
-                        .map(|window| format!(" {}:{:.0}%", window.name, window.used_percent))
-                        .collect::<String>(),
-                    usage
-                        .credits
-                        .as_ref()
-                        .map_or(String::new(), |credits| format!(" credits={credits}"))
-                ),
-            },
+            describe_codex_usage(&usage),
             match wire::HealthState::try_from(servers.state).unwrap_or_default() {
                 wire::HealthState::Unknown => "?".to_owned(),
                 state => format!(

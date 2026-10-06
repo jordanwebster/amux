@@ -566,12 +566,26 @@ fn the_review_document_parses_files_hunks_and_places_comments() {
 }
 
 fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAsk>) -> Vec<u8> {
-    let usage = wire::UsageLimits {
+    let meter = Some(wire::UsageMeter {
+        used_percent: 91.0,
+        resets_at_ms: Some(5),
         state: wire::UsageState::NearLimit as i32,
-        windows: vec![wire::UsageWindow {
-            name: "5h".into(),
-            used_percent: 91.0,
-            resets_at_ms: Some(5),
+    });
+    let claude_usage = wire::ClaudeUsage {
+        state: wire::UsageState::NearLimit as i32,
+        windows: vec![wire::ClaudeUsageWindow {
+            limit: wire::ClaudeLimit::FiveHour as i32,
+            model: None,
+            provider_name: "five_hour".into(),
+            meter,
+        }],
+    };
+    let codex_usage = wire::CodexUsage {
+        state: wire::UsageState::NearLimit as i32,
+        windows: vec![wire::CodexUsageWindow {
+            limit: wire::CodexLimit::FiveHour as i32,
+            window_minutes: 300,
+            meter,
         }],
         credits: None,
     };
@@ -646,7 +660,7 @@ fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAs
             context: Some(context),
             model: Some("opus".into()),
             permission_mode: Some("default".into()),
-            usage: Some(usage),
+            usage: Some(claude_usage.clone()),
             servers: Some(servers),
             sign_in: Some(sign_in),
             background_jobs: Some(background.clone()),
@@ -660,7 +674,7 @@ fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAs
             model: Some("opus".into()),
             effort: Some("high".into()),
             permission_mode: Some("default".into()),
-            usage: Some(usage),
+            usage: Some(claude_usage),
             servers: Some(servers),
             sign_in: Some(sign_in),
             background_jobs: Some(background.clone()),
@@ -675,7 +689,7 @@ fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAs
             effort: Some("high".into()),
             approval_policy: Some("on-request".into()),
             sandbox: Some("workspace-write".into()),
-            usage: Some(usage),
+            usage: Some(codex_usage),
             servers: Some(servers),
             sign_in: Some(sign_in),
             background_jobs: Some(background.clone()),
@@ -1551,21 +1565,29 @@ fn each_row_says_what_its_state_calls_for() {
         account: "me@example.com".into(),
         message: String::new(),
     };
-    let spent = wire::UsageLimits {
+    let window = |limit: wire::ClaudeLimit, used_percent, resets_at_ms, state: wire::UsageState| {
+        wire::ClaudeUsageWindow {
+            limit: limit as i32,
+            model: None,
+            provider_name: String::new(),
+            meter: Some(wire::UsageMeter {
+                used_percent,
+                resets_at_ms: Some(resets_at_ms),
+                state: state as i32,
+            }),
+        }
+    };
+    let spent = wire::ClaudeUsage {
         state: wire::UsageState::Blocked as i32,
         windows: vec![
-            wire::UsageWindow {
-                name: "5h".into(),
-                used_percent: 100.0,
-                resets_at_ms: Some(9_000),
-            },
-            wire::UsageWindow {
-                name: "7d".into(),
-                used_percent: 40.0,
-                resets_at_ms: Some(3_000),
-            },
+            window(
+                wire::ClaudeLimit::FiveHour,
+                100.0,
+                9_000,
+                wire::UsageState::Blocked,
+            ),
+            window(wire::ClaudeLimit::Weekly, 40.0, 3_000, wire::UsageState::Ok),
         ],
-        credits: None,
     };
     let rows = [
         (

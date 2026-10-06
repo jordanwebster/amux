@@ -148,7 +148,8 @@ message CodexSnapshot {
   // Absent while no turn is known to be running.
   optional string active_turn = 7;
   ToolServerHealth servers = 8;
-  UsageLimits usage = 9;
+  reserved 9;
+  CodexUsage usage = 18;
   SignIn sign_in = 10;
   reserved 11;
   BackgroundJobs background_jobs = 17;

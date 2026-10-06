@@ -7,20 +7,38 @@ use wire::{Kind, Phase};
 use crate::harness::*;
 
 fn strip_facts() -> (
-    wire::UsageLimits,
+    wire::ClaudeUsage,
+    wire::CodexUsage,
     wire::ToolServerHealth,
     wire::SignIn,
     wire::BackgroundJobs,
 ) {
     (
-        wire::UsageLimits {
+        wire::ClaudeUsage {
             state: wire::UsageState::NearLimit as i32,
-            windows: vec![wire::UsageWindow {
-                name: "5h".into(),
-                used_percent: 91.0,
-                resets_at_ms: Some(9),
+            windows: vec![wire::ClaudeUsageWindow {
+                limit: wire::ClaudeLimit::Weekly as i32,
+                model: Some("Fable".into()),
+                provider_name: "seven_day_overage_included".into(),
+                meter: Some(wire::UsageMeter {
+                    used_percent: 91.0,
+                    resets_at_ms: Some(9),
+                    state: wire::UsageState::NearLimit as i32,
+                }),
             }],
-            credits: None,
+        },
+        wire::CodexUsage {
+            state: wire::UsageState::Blocked as i32,
+            windows: vec![wire::CodexUsageWindow {
+                limit: wire::CodexLimit::FiveHour as i32,
+                window_minutes: 300,
+                meter: Some(wire::UsageMeter {
+                    used_percent: 100.0,
+                    resets_at_ms: Some(9),
+                    state: wire::UsageState::Blocked as i32,
+                }),
+            }],
+            credits: Some("12".into()),
         },
         wire::ToolServerHealth {
             state: wire::HealthState::Degraded as i32,
@@ -55,7 +73,7 @@ fn strip_facts() -> (
 
 #[test]
 fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
-    let (usage, servers, sign_in, background) = strip_facts();
+    let (claude_usage, codex_usage, servers, sign_in, background) = strip_facts();
     let tasks = wire::TaskList {
         known: true,
         entries: vec![wire::TaskListEntry {
@@ -79,7 +97,7 @@ fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
                 context: Some(context.clone()),
                 model: Some("opus".into()),
                 permission_mode: Some("plan".into()),
-                usage: Some(usage.clone()),
+                usage: Some(claude_usage.clone()),
                 servers: Some(servers.clone()),
                 sign_in: Some(sign_in.clone()),
                 background_jobs: Some(background.clone()),
@@ -95,7 +113,7 @@ fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
                 model: Some("opus".into()),
                 effort: Some("high".into()),
                 permission_mode: Some("plan".into()),
-                usage: Some(usage.clone()),
+                usage: Some(claude_usage.clone()),
                 servers: Some(servers.clone()),
                 sign_in: Some(sign_in.clone()),
                 background_jobs: Some(background.clone()),
@@ -112,7 +130,7 @@ fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
                 effort: Some("high".into()),
                 approval_policy: Some("plan".into()),
                 sandbox: Some("workspace-write".into()),
-                usage: Some(usage.clone()),
+                usage: Some(codex_usage.clone()),
                 servers: Some(servers.clone()),
                 sign_in: Some(sign_in.clone()),
                 background_jobs: Some(background.clone()),
@@ -127,6 +145,10 @@ fn every_kind_decodes_its_snapshot_including_the_four_strip_facts() {
         assert_eq!(state.context, context);
         assert_eq!(state.model.as_deref(), Some("opus"));
         assert_eq!(state.mode.as_deref(), Some("plan"));
+        let usage = match kind {
+            Kind::Codex => ui_state::Usage::Codex(codex_usage.clone()),
+            _ => ui_state::Usage::Claude(claude_usage.clone()),
+        };
         assert_eq!(state.usage, usage);
         assert_eq!(state.servers, servers);
         assert_eq!(state.sign_in, sign_in);

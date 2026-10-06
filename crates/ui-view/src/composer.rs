@@ -3,8 +3,10 @@
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use ui_state::{Activity, Composer, InputState, InputWhat, SessionState, Waiting};
-use wire::{Attachment, SignInState, TaskListStatus, UsageState};
+use ui_state::{Activity, Composer, InputState, InputWhat, SessionState, Usage, Waiting};
+use wire::{
+    Attachment, ClaudeLimit, CodexLimit, SignInState, TaskListStatus, UsageMeter, UsageState,
+};
 
 use crate::segments::{Segment, segments};
 
@@ -71,13 +73,70 @@ pub struct UsageView {
     pub credits: Option<String>,
 }
 
-/// One rate-limit window: its name, how much of it is used, and when it
-/// resets.
+/// One rate-limit window: which limit it is, how much of it is used, when
+/// it resets, and its own state.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct UsageWindowView {
-    pub name: String,
+    pub label: UsageLabel,
     pub used_percent: f64,
     pub resets_at_ms: Option<i64>,
+    pub state: UsageState,
+}
+
+/// Which limit a usage window is, for a client to word.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum UsageLabel {
+    FiveHour,
+    /// The weekly limit, or one model's weekly limit.
+    Weekly {
+        model: Option<String>,
+    },
+    /// A window known only by its length, as Codex gives it.
+    Minutes(u32),
+    /// A window known only by the provider's own name for it.
+    Named(String),
+}
+
+/// Every usage window the provider reported, in its order.
+pub fn usage_windows(usage: &Usage) -> Vec<UsageWindowView> {
+    let view = |label, meter: Option<UsageMeter>| {
+        let meter = meter.unwrap_or_default();
+        UsageWindowView {
+            label,
+            used_percent: meter.used_percent,
+            resets_at_ms: meter.resets_at_ms,
+            state: meter.state(),
+        }
+    };
+    match usage {
+        Usage::Unknown => Vec::new(),
+        Usage::Claude(usage) => usage
+            .windows
+            .iter()
+            .map(|window| {
+                let label = match window.limit() {
+                    ClaudeLimit::FiveHour => UsageLabel::FiveHour,
+                    ClaudeLimit::Weekly => UsageLabel::Weekly {
+                        model: window.model.clone(),
+                    },
+                    ClaudeLimit::Unspecified => UsageLabel::Named(window.provider_name.clone()),
+                };
+                view(label, window.meter)
+            })
+            .collect(),
+        Usage::Codex(usage) => usage
+            .windows
+            .iter()
+            .map(|window| {
+                let label = match window.limit() {
+                    CodexLimit::FiveHour => UsageLabel::FiveHour,
+                    CodexLimit::Weekly => UsageLabel::Weekly { model: None },
+                    CodexLimit::Unspecified => UsageLabel::Minutes(window.window_minutes),
+                };
+                view(label, window.meter)
+            })
+            .collect(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
@@ -154,17 +213,11 @@ pub fn session_strip(state: &SessionState) -> Strip {
     let usage = match agent.usage.state() {
         UsageState::NearLimit | UsageState::Blocked => Some(UsageView {
             blocked: agent.usage.state() == UsageState::Blocked,
-            windows: agent
-                .usage
-                .windows
-                .iter()
-                .map(|window| UsageWindowView {
-                    name: window.name.clone(),
-                    used_percent: window.used_percent,
-                    resets_at_ms: window.resets_at_ms,
-                })
-                .collect(),
-            credits: agent.usage.credits.clone(),
+            windows: usage_windows(&agent.usage),
+            credits: match &agent.usage {
+                Usage::Codex(usage) => usage.credits.clone(),
+                Usage::Claude(_) | Usage::Unknown => None,
+            },
         }),
         UsageState::Unknown | UsageState::Ok => None,
     };

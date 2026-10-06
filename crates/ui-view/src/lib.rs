@@ -24,8 +24,9 @@ pub use ask::{
 };
 pub use composer::{
     CONTEXT_STRIP_PERCENT, ComposerView, ContextView, OutboxRow, OutboxState, QueuedRow,
-    ServerView, SignInView, Strip, TaskLine, TaskMark, TasksView, UsageView, UsageWindowView,
-    composer, composer_tokens, outbox_rows, queue_rows, session_strip, waiting,
+    ServerView, SignInView, Strip, TaskLine, TaskMark, TasksView, UsageLabel, UsageView,
+    UsageWindowView, composer, composer_tokens, outbox_rows, queue_rows, session_strip,
+    usage_windows, waiting,
 };
 pub use fleet::{
     ActivityLine, AskSubject, AskSummary, Away, ExitCause, FamilyHeader, FleetCard, FleetRow,

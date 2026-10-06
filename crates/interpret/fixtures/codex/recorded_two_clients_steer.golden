@@ -63,12 +63,12 @@ item exec-c7b1b818-a699-4bc1-8b5f-fac431636b7c work final at=1791252771155 text=
 ## 69 recorded 68: fact Rpc method=thread/tokenUsage/updated
 snapshot WORKING queue=[s1(steered)] working_on=- at=1791252779039 asks=[] thread=01a10efc-20b1-7713-b98f-c24babfff353 turn=01a10efc-24c3-76e3-b456-f27f071b3dca model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=13261/258400 plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 71 recorded 70: fact Rpc method=account/rateLimits/updated
-snapshot WORKING queue=[s1(steered)] working_on=- at=1791252779040 asks=[] thread=01a10efc-20b1-7713-b98f-c24babfff353 turn=01a10efc-24c3-76e3-b456-f27f071b3dca model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=13261/258400 plan=? usage=USAGE_STATE_OK 7d:1% credits=62500 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
+snapshot WORKING queue=[s1(steered)] working_on=- at=1791252779040 asks=[] thread=01a10efc-20b1-7713-b98f-c24babfff353 turn=01a10efc-24c3-76e3-b456-f27f071b3dca model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=13261/258400 plan=? usage=ok 7d:1%(ok) credits=62500 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 74 recorded 73: fact Rpc method=item/completed
 item 01a10efc-5020-7040-adf7-7ea9a7ebc9de steer final at=1791252779041 text="Also say CODEX_SPEC_OTHER_STEER."
 ## 78 recorded 77: fact Rpc method=item/completed
 item steer:7331 steer final input=s1 at=1791252779043 text="Also say CODEX_SPEC_AMUX_STEER."
-snapshot WORKING queue=[] working_on=- at=1791252779043 asks=[] thread=01a10efc-20b1-7713-b98f-c24babfff353 turn=01a10efc-24c3-76e3-b456-f27f071b3dca model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=13261/258400 plan=? usage=USAGE_STATE_OK 7d:1% credits=62500 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
+snapshot WORKING queue=[] working_on=- at=1791252779043 asks=[] thread=01a10efc-20b1-7713-b98f-c24babfff353 turn=01a10efc-24c3-76e3-b456-f27f071b3dca model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=13261/258400 plan=? usage=ok 7d:1%(ok) credits=62500 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 80 recorded 79: fact Rpc method=item/started
 item rs_07d8d3c4de38268d016ac4592cb0a887d28b89f0b5f2d92572 reasoning open at=1791252780748 text="" summary=[]
 ## 82 recorded 81: fact Rpc method=item/completed
@@ -116,8 +116,8 @@ append msg_07d8d3c4de38268d016ac4592d78b887d2b92cd8e9f413f0b9 "ER"
 ## 123 recorded 122: fact Rpc method=item/completed
 item msg_07d8d3c4de38268d016ac4592d78b887d2b92cd8e9f413f0b9 message final at=1791252781486 text="CODEX_SPEC_DONE CODEX_SPEC_OTHER_STEER CODEX_SPEC_AMUX_STEER"
 ## 125 recorded 124: fact Rpc method=thread/tokenUsage/updated
-snapshot WORKING queue=[] working_on=- at=1791252781904 asks=[] thread=01a10efc-20b1-7713-b98f-c24babfff353 turn=01a10efc-24c3-76e3-b456-f27f071b3dca model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=13592/258400 plan=? usage=USAGE_STATE_OK 7d:1% credits=62500 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
+snapshot WORKING queue=[] working_on=- at=1791252781904 asks=[] thread=01a10efc-20b1-7713-b98f-c24babfff353 turn=01a10efc-24c3-76e3-b456-f27f071b3dca model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=13592/258400 plan=? usage=ok 7d:1%(ok) credits=62500 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=?
 ## 129 recorded 128: fact Rpc method=turn/completed
 item turn:1 turn final at=1791252781906 text="" #1 TURN_OUTCOME_COMPLETED started=1791252767942
-snapshot IDLE queue=[] working_on=- at=1791252781906 asks=[] thread=01a10efc-20b1-7713-b98f-c24babfff353 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=13592/258400 plan=? usage=USAGE_STATE_OK 7d:1% credits=62500 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=[]
+snapshot IDLE queue=[] working_on=- at=1791252781906 asks=[] thread=01a10efc-20b1-7713-b98f-c24babfff353 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write models=[] commands=0 context=13592/258400 plan=? usage=ok 7d:1%(ok) credits=62500 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN chatgpt pro background=[]
 turn_end 1 last=msg_07d8d3c4de38268d016ac4592d78b887d2b92cd8e9f413f0b9

@@ -676,14 +676,6 @@ message ContextShare {
   uint64 tokens = 2;
 }
 
-// Session strip: usage limits. Nothing while fine, a warning near a limit,
-// a foot card when blocked.
-message UsageLimits {
-  UsageState state = 1;
-  repeated UsageWindow windows = 2;
-  optional string credits = 3;
-}
-
 enum UsageState {
   USAGE_STATE_UNKNOWN = 0;
   USAGE_STATE_OK = 1;
@@ -691,11 +683,57 @@ enum UsageState {
   USAGE_STATE_BLOCKED = 3;
 }
 
-message UsageWindow {
-  string name = 1;
+// How full one usage window is; the same for every provider.
+message UsageMeter {
   // 0..100.
-  double used_percent = 2;
-  optional int64 resets_at_ms = 3;
+  double used_percent = 1;
+  optional int64 resets_at_ms = 2;
+  // This window's own state: a person can reach the weekly limit before
+  // the five-hour one.
+  UsageState state = 3;
+}
+
+// Claude's usage limits. `state` says whether the agent can work at all,
+// which is not the same as any one window when Claude allows overage.
+message ClaudeUsage {
+  UsageState state = 1;
+  repeated ClaudeUsageWindow windows = 2;
+}
+
+message ClaudeUsageWindow {
+  ClaudeLimit limit = 1;
+  // Set for a limit that belongs to one model.
+  optional string model = 2;
+  // Claude's own name for the window, shown when `limit` is unspecified.
+  string provider_name = 3;
+  UsageMeter meter = 4;
+}
+
+enum ClaudeLimit {
+  CLAUDE_LIMIT_UNSPECIFIED = 0;
+  CLAUDE_LIMIT_FIVE_HOUR = 1;
+  CLAUDE_LIMIT_WEEKLY = 2;
+}
+
+// Codex's usage limits.
+message CodexUsage {
+  UsageState state = 1;
+  repeated CodexUsageWindow windows = 2;
+  optional string credits = 3;
+}
+
+message CodexUsageWindow {
+  // Named from the window's length.
+  CodexLimit limit = 1;
+  // The only description Codex gives of a window.
+  uint32 window_minutes = 2;
+  UsageMeter meter = 3;
+}
+
+enum CodexLimit {
+  CODEX_LIMIT_UNSPECIFIED = 0;
+  CODEX_LIMIT_FIVE_HOUR = 1;
+  CODEX_LIMIT_WEEKLY = 2;
 }
 
 // Session strip: tool-server health, shown only when one fails.

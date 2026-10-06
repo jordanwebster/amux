@@ -68,7 +68,8 @@ message ClaudePtySnapshot {
   optional string permission_mode = 6;
   // Absent until SessionStart or the first system event names it.
   optional string provider_session = 7;
-  UsageLimits usage = 8;
+  reserved 8;
+  ClaudeUsage usage = 14;
   ToolServerHealth servers = 9;
   SignIn sign_in = 10;
   reserved 11;
@@ -177,7 +178,8 @@ message ClaudeSdkSnapshot {
   optional string effort = 6;
   optional string permission_mode = 7;
   repeated Task active_tasks = 8;
-  UsageLimits usage = 9;
+  reserved 9;
+  ClaudeUsage usage = 17;
   ToolServerHealth servers = 10;
   SignIn sign_in = 11;
   reserved 12;

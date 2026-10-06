@@ -49,7 +49,7 @@
     12 boundary:2 Boundary { kind: Compacted, cause: "" }
     13 c6713576-a5e6-44b7-8df8-6b97e041c567 SlashOutput { command: "/compact", args: "", output: "Compacted" }
     14 turn:3 TurnEnd { duration_ms: Some(21170), cost_usd: Some(0.0451237), failed: false }
-== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 2963, window_tokens: Some(200000), percent: Some(1), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: Some(UsageView { blocked: false, windows: [UsageWindowView { name: "5h", used_percent: 19.0, resets_at_ms: Some(1787970000000) }, UsageWindowView { name: "7d", used_percent: 83.0, resets_at_ms: Some(1787976000000) }], credits: None }), failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 2963, window_tokens: Some(200000), percent: Some(1), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: Some(UsageView { blocked: false, windows: [UsageWindowView { label: FiveHour, used_percent: 19.0, resets_at_ms: Some(1787970000000), state: Unknown }, UsageWindowView { label: Weekly { model: None }, used_percent: 83.0, resets_at_ms: Some(1787976000000), state: NearLimit }], credits: None }), failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }
 == settings
   model  default "Default (recommended)" efforts=[low,medium,high,xhigh,max]
   model  opus[1m] "Opus (1M context)" efforts=[low,medium,high,xhigh,max]

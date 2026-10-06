@@ -32,13 +32,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
     AgentSpec, Ask, AskClosed, Attachment, ClaudeAnswer, ClaudeSdkItem, ClaudeSdkSnapshot,
-    ContextMeter, ContextShare, DecisionOutcome, FormAction, Input, OfferedCommand, OfferedModel,
-    SignIn, Step, ToolCall, ToolDecision, ToolServerHealth, UsageLimits, claude_answer,
+    ClaudeUsage, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input, OfferedCommand,
+    OfferedModel, SignIn, Step, ToolCall, ToolDecision, ToolServerHealth, claude_answer,
     claude_sdk_input, claude_sdk_item, input, permission_answer, plan_answer,
 };
 
 use crate::claude_common::{
-    Jobs, Task, describe_asks, describe_tasks, describe_tool, or_dash, task_list,
+    Jobs, Task, describe_asks, describe_claude_usage, describe_tasks, describe_tool, or_dash,
+    task_list,
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
@@ -224,7 +225,7 @@ pub struct State {
     context_window: Option<u64>,
     context_breakdown: Vec<(String, u64)>,
     #[serde(with = "serde_pb::opt_msg")]
-    usage: Option<UsageLimits>,
+    usage: Option<ClaudeUsage>,
     #[serde(with = "serde_pb::opt_msg")]
     servers: Option<ToolServerHealth>,
     #[serde(with = "serde_pb::opt_msg")]
@@ -366,7 +367,7 @@ impl State {
                 .filter(|(_, task)| task.state == wire::TaskState::Running as i32)
                 .map(|(id, task)| task.to_wire(id))
                 .collect(),
-            usage: Some(self.usage.clone().unwrap_or_else(unknown::usage_limits)),
+            usage: Some(self.usage.clone().unwrap_or_else(unknown::claude_usage)),
             servers: Some(
                 self.servers
                     .clone()
@@ -1244,18 +1245,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
                 .map(|task| task.task_id.clone())
                 .collect::<Vec<_>>()
                 .join(","),
-            match wire::UsageState::try_from(usage.state).unwrap_or_default() {
-                wire::UsageState::Unknown => "?".to_owned(),
-                state => format!(
-                    "{}{}",
-                    state.as_str_name(),
-                    usage
-                        .windows
-                        .iter()
-                        .map(|window| format!(" {}:{:.0}%", window.name, window.used_percent))
-                        .collect::<String>()
-                ),
-            },
+            describe_claude_usage(&usage),
             match wire::HealthState::try_from(servers.state).unwrap_or_default() {
                 wire::HealthState::Unknown => "?".to_owned(),
                 state => format!(

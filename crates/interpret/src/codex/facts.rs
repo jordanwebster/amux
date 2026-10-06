@@ -23,12 +23,12 @@ use codex_protocol::{
 };
 use serde_json::Value;
 use wire::{
-    AccessGrant, ApiError, BackgroundJob, CodexAsk, CommandApproval, Decision, DecisionOutcome,
-    FileChangeApproval, FormAsk, LinkAsk, McpToolApproval, ModelSwitch, OfferedCommand,
-    OfferedModel, Question, QuestionAsk, QuestionOption, ReviewerVerdict, SignIn, SignInState,
-    TaskListStatus, ToolClass, ToolDecision, ToolServer, ToolServerHealth, ToolServerStatus,
-    ToolState, Turn, TurnOutcome, UsageLimits, UsageState, UsageWindow, Work, codex_ask,
-    codex_item, work,
+    AccessGrant, ApiError, BackgroundJob, CodexAsk, CodexLimit, CodexUsage, CodexUsageWindow,
+    CommandApproval, Decision, DecisionOutcome, FileChangeApproval, FormAsk, LinkAsk,
+    McpToolApproval, ModelSwitch, OfferedCommand, OfferedModel, Question, QuestionAsk,
+    QuestionOption, ReviewerVerdict, SignIn, SignInState, TaskListStatus, ToolClass, ToolDecision,
+    ToolServer, ToolServerHealth, ToolServerStatus, ToolState, Turn, TurnOutcome, UsageMeter,
+    UsageState, Work, codex_ask, codex_item, work,
 };
 
 use super::{
@@ -1136,7 +1136,7 @@ impl State {
                 }
             }
             ServerNotification::AccountRateLimitsUpdated(updated) => {
-                self.usage = Some(usage_limits(&updated.rate_limits));
+                self.usage = Some(codex_usage(&updated.rate_limits));
             }
             ServerNotification::AccountUpdated(updated) => {
                 self.sign_in = Some(
@@ -2028,37 +2028,45 @@ impl State {
     }
 }
 
-fn usage_limits(limits: &RateLimitSnapshot) -> UsageLimits {
-    let mut windows = Vec::new();
-    for (slot, window) in [
-        ("primary", &limits.primary),
-        ("secondary", &limits.secondary),
-    ] {
-        let Some(window) = window else {
-            continue;
-        };
-        let minutes = window.window_duration_mins.unwrap_or(0);
-        windows.push(UsageWindow {
-            name: match minutes {
-                0 => slot.to_owned(),
-                m if m % 1440 == 0 => format!("{}d", m / 1440),
-                m if m % 60 == 0 => format!("{}h", m / 60),
-                m => format!("{m}m"),
-            },
-            used_percent: window.used_percent as f64,
-            resets_at_ms: window.resets_at.map(|at| at * 1000),
-        });
-    }
-    let blocked = limits.rate_limit_reached_type.is_some();
-    let near = windows.iter().any(|window| window.used_percent >= 80.0);
-    UsageLimits {
-        state: if blocked {
-            UsageState::Blocked
-        } else if near {
-            UsageState::NearLimit
-        } else {
-            UsageState::Ok
-        } as i32,
+/// Codex's limits as it reports them: each window named from its length,
+/// the only description Codex gives, and blocked when fully used. Codex
+/// says a limit was reached without saying which, so that alone blocks
+/// the whole.
+fn codex_usage(limits: &RateLimitSnapshot) -> CodexUsage {
+    let windows: Vec<CodexUsageWindow> = [&limits.primary, &limits.secondary]
+        .into_iter()
+        .flatten()
+        .map(|window| {
+            let minutes = window.window_duration_mins.unwrap_or(0).max(0) as u32;
+            let used = window.used_percent as f64;
+            CodexUsageWindow {
+                limit: match minutes {
+                    300 => CodexLimit::FiveHour,
+                    10_080 => CodexLimit::Weekly,
+                    _ => CodexLimit::Unspecified,
+                } as i32,
+                window_minutes: minutes,
+                meter: Some(UsageMeter {
+                    used_percent: used,
+                    resets_at_ms: window.resets_at.map(|at| at * 1000),
+                    state: window_state(used) as i32,
+                }),
+            }
+        })
+        .collect();
+    let worst = windows
+        .iter()
+        .filter_map(|window| window.meter.as_ref())
+        .map(|meter| meter.state())
+        .max_by_key(|state| *state as i32)
+        .unwrap_or(UsageState::Ok);
+    let state = if limits.rate_limit_reached_type.is_some() {
+        UsageState::Blocked
+    } else {
+        worst
+    };
+    CodexUsage {
+        state: state as i32,
         windows,
         credits: limits.credits.as_ref().and_then(|credits| {
             if credits.unlimited {
@@ -2067,6 +2075,17 @@ fn usage_limits(limits: &RateLimitSnapshot) -> UsageLimits {
                 some_of(credits.balance.as_deref())
             }
         }),
+    }
+}
+
+/// A window's state from its use alone: blocked when full, near from 80%.
+fn window_state(used_percent: f64) -> UsageState {
+    if used_percent >= 100.0 {
+        UsageState::Blocked
+    } else if used_percent >= 80.0 {
+        UsageState::NearLimit
+    } else {
+        UsageState::Ok
     }
 }
 

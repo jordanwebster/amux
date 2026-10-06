@@ -1,3 +1,19 @@
+2026-10-06 — **Each provider reports usage windows in its own terms, each with its own state.**
+The shared `UsageLimits` carried windows as short strings ("5h", "7d opus")
+with one state for the whole set, so the terminal matched strings back into
+words and guessed that the fullest window was the one reached. Snapshots now
+carry `ClaudeUsage` or `CodexUsage`, each window a `UsageMeter` with its own
+state. Headless Claude's interpreter gives the status a `rate_limit_event`
+states to the window it names and keeps the last status of every other, so
+the weekly limit can read reached while the five-hour one is fine; a weekly
+window that belongs to one model carries the model as Claude's labels name it
+(Fable, Opus, Sonnet), and a window amux does not know keeps Claude's name.
+Codex windows are named from their length (five-hour, weekly, else the
+minutes) and read blocked when fully used. ui-state keeps the provider's own
+value; ui-view words each window as a label with its state, and the terminal
+names the window that was reached instead of the fullest. The replay-support
+dump bundle is re-dumped for the moved snapshot field.
+
 2026-10-06 — **Background jobs are a list, and they go when the provider does.**
 Snapshots carried only a count of background processes, and nothing reset it
 when the provider exited, so an agent that was stopped or restarted kept

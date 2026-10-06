@@ -154,8 +154,8 @@ pub struct ActivityLine {
 pub enum StuckReason {
     /// The provider is signed out, its sign-in expired, or signing in failed.
     SignedOut { state: SignInState, account: String },
-    /// A usage window is spent; it resets at the latest spent window's reset,
-    /// when the provider says.
+    /// A usage window is spent; it resets at the latest reset of the
+    /// windows that are, when the provider says.
     UsageLimit { resets_at_ms: Option<i64> },
 }
 
@@ -195,11 +195,9 @@ pub fn session_line(state: &SessionState, now_ms: i64) -> SessionLine {
     }
     .or_else(|| {
         (agent.usage.state() == UsageState::Blocked).then(|| StuckReason::UsageLimit {
-            resets_at_ms: agent
-                .usage
-                .windows
+            resets_at_ms: crate::usage_windows(&agent.usage)
                 .iter()
-                .filter(|window| window.used_percent >= 100.0)
+                .filter(|window| window.state == UsageState::Blocked)
                 .filter_map(|window| window.resets_at_ms)
                 .max(),
         })

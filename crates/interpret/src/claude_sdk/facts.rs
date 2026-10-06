@@ -16,17 +16,18 @@ use serde::Deserialize;
 use serde_json::Value;
 use wire::claude_sdk_item::Kind;
 use wire::{
-    BoundaryKind, DecisionOutcome, FormAsk, HealthState, LinkAsk, PermissionAsk, PlanAsk, SignIn,
-    SignInState, TaskState as WireTaskState, ToolServer, ToolServerHealth, ToolServerStatus,
-    ToolState, Turn, TurnOutcome, UsageLimits, UsageState, UsageWindow,
+    BoundaryKind, ClaudeLimit, ClaudeUsage, ClaudeUsageWindow, DecisionOutcome, FormAsk,
+    HealthState, LinkAsk, PermissionAsk, PlanAsk, SignIn, SignInState, TaskState as WireTaskState,
+    ToolServer, ToolServerHealth, ToolServerStatus, ToolState, Turn, TurnOutcome, UsageMeter,
+    UsageState,
 };
 
 use super::{AskMeta, AskShape, Request, State, TaskState, Tool, ToolDecisionState, item_body};
 use crate::claude_common::{
     BackgroundInput, JobInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool,
-    blocks_text, compact_json, message_text, offered_commands, offered_models, permission_scopes,
-    question_ask, split_tool_name, tool_class, tool_result_images, tool_result_text,
-    without_image_bytes,
+    blocks_text, claude_limit, compact_json, message_text, offered_commands, offered_models,
+    permission_scopes, question_ask, split_tool_name, tool_class, tool_result_images,
+    tool_result_text, without_image_bytes,
 };
 use crate::shared::json_as_written;
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
@@ -387,6 +388,9 @@ impl State {
         }
     }
 
+    /// Claude reports one window's status at a time, with every window's
+    /// use: the named window takes the status, and every other keeps the
+    /// last status stated for it. The overall state is the report's own.
     fn rate_limit(&mut self, info: &RateLimitInfo) {
         let state = match info.status.as_str() {
             "allowed" => UsageState::Ok,
@@ -394,21 +398,29 @@ impl State {
             "rejected" => UsageState::Blocked,
             _ => UsageState::Unknown,
         };
-        let windows = info
-            .unified_windows
-            .iter()
-            .flatten()
-            .map(|(name, window)| UsageWindow {
-                name: window_name(name),
-                used_percent: window.utilization.unwrap_or(0.0) * 100.0,
-                resets_at_ms: window.resets_at.map(|at| at * 1000),
-            })
-            .collect();
-        self.usage = Some(UsageLimits {
-            state: state as i32,
-            windows,
-            credits: None,
-        });
+        let usage = self.usage.get_or_insert_with(crate::unknown::claude_usage);
+        usage.state = state as i32;
+        for (name, window) in info.unified_windows.iter().flatten() {
+            let meter = claude_window(usage, name);
+            meter.used_percent = window.utilization.unwrap_or(0.0) * 100.0;
+            meter.resets_at_ms = window.resets_at.map(|at| at * 1000);
+        }
+        if let Some(name) = info
+            .rate_limit_type
+            .as_deref()
+            .filter(|name| !name.is_empty())
+        {
+            let listed = info
+                .unified_windows
+                .as_ref()
+                .is_some_and(|windows| windows.contains_key(name));
+            let meter = claude_window(usage, name);
+            meter.state = state as i32;
+            if !listed {
+                meter.used_percent = info.utilization.unwrap_or(0.0) * 100.0;
+                meter.resets_at_ms = info.resets_at.map(|at| at as i64 * 1000);
+            }
+        }
     }
 
     fn task_event(&mut self, emit: &mut Emit, report: TaskReport) {
@@ -1313,29 +1325,25 @@ fn server_health<'a>(
 /// A usage window by the short name Codex windows carry too ("5h", "7d"), so both
 /// providers' limits read alike; a window this build does not know keeps its own
 /// words.
-fn window_name(name: &str) -> String {
-    let (span, rest) = match name.split_once('_') {
-        Some(("five", rest)) if rest.starts_with("hour") => ("5h", &rest[4..]),
-        Some(("seven", rest)) if rest.starts_with("day") => ("7d", &rest[3..]),
-        _ => return name.replace('_', " "),
+/// The meter of the window Claude calls `name`, added the first time it
+/// is named.
+fn claude_window<'a>(usage: &'a mut ClaudeUsage, name: &str) -> &'a mut UsageMeter {
+    let at = match usage
+        .windows
+        .iter()
+        .position(|window| window.provider_name == name)
+    {
+        Some(at) => at,
+        None => {
+            let (limit, model) = claude_limit(name).unwrap_or((ClaudeLimit::Unspecified, None));
+            usage.windows.push(ClaudeUsageWindow {
+                limit: limit as i32,
+                model: model.map(str::to_owned),
+                provider_name: name.to_owned(),
+                meter: Some(UsageMeter::default()),
+            });
+            usage.windows.len() - 1
+        }
     };
-    let model = rest.trim_start_matches('_').replace('_', " ");
-    if model.is_empty() {
-        span.to_owned()
-    } else {
-        format!("{span} {model}")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::window_name;
-
-    #[test]
-    fn usage_windows_read_by_their_short_names() {
-        assert_eq!(window_name("five_hour"), "5h");
-        assert_eq!(window_name("seven_day"), "7d");
-        assert_eq!(window_name("seven_day_opus"), "7d opus");
-        assert_eq!(window_name("overage_budget"), "overage budget");
-    }
+    usage.windows[at].meter.get_or_insert_default()
 }

@@ -1371,45 +1371,110 @@ impl ::prost::Name for ContextShare {
         "/amux.v1.ContextShare".into()
     }
 }
-/// Session strip: usage limits. Nothing while fine, a warning near a limit,
-/// a foot card when blocked.
+/// How full one usage window is; the same for every provider.
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct UsageMeter {
+    /// 0..100.
+    #[prost(double, tag = "1")]
+    pub used_percent: f64,
+    #[prost(int64, optional, tag = "2")]
+    pub resets_at_ms: ::core::option::Option<i64>,
+    /// This window's own state: a person can reach the weekly limit before
+    /// the five-hour one.
+    #[prost(enumeration = "UsageState", tag = "3")]
+    pub state: i32,
+}
+impl ::prost::Name for UsageMeter {
+    const NAME: &'static str = "UsageMeter";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.UsageMeter".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.UsageMeter".into()
+    }
+}
+/// Claude's usage limits. `state` says whether the agent can work at all,
+/// which is not the same as any one window when Claude allows overage.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UsageLimits {
+pub struct ClaudeUsage {
     #[prost(enumeration = "UsageState", tag = "1")]
     pub state: i32,
     #[prost(message, repeated, tag = "2")]
-    pub windows: ::prost::alloc::vec::Vec<UsageWindow>,
-    #[prost(string, optional, tag = "3")]
-    pub credits: ::core::option::Option<::prost::alloc::string::String>,
+    pub windows: ::prost::alloc::vec::Vec<ClaudeUsageWindow>,
 }
-impl ::prost::Name for UsageLimits {
-    const NAME: &'static str = "UsageLimits";
+impl ::prost::Name for ClaudeUsage {
+    const NAME: &'static str = "ClaudeUsage";
     const PACKAGE: &'static str = "amux.v1";
     fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.UsageLimits".into()
+        "amux.v1.ClaudeUsage".into()
     }
     fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.UsageLimits".into()
+        "/amux.v1.ClaudeUsage".into()
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UsageWindow {
-    #[prost(string, tag = "1")]
-    pub name: ::prost::alloc::string::String,
-    /// 0..100.
-    #[prost(double, tag = "2")]
-    pub used_percent: f64,
-    #[prost(int64, optional, tag = "3")]
-    pub resets_at_ms: ::core::option::Option<i64>,
+pub struct ClaudeUsageWindow {
+    #[prost(enumeration = "ClaudeLimit", tag = "1")]
+    pub limit: i32,
+    /// Set for a limit that belongs to one model.
+    #[prost(string, optional, tag = "2")]
+    pub model: ::core::option::Option<::prost::alloc::string::String>,
+    /// Claude's own name for the window, shown when `limit` is unspecified.
+    #[prost(string, tag = "3")]
+    pub provider_name: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "4")]
+    pub meter: ::core::option::Option<UsageMeter>,
 }
-impl ::prost::Name for UsageWindow {
-    const NAME: &'static str = "UsageWindow";
+impl ::prost::Name for ClaudeUsageWindow {
+    const NAME: &'static str = "ClaudeUsageWindow";
     const PACKAGE: &'static str = "amux.v1";
     fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.UsageWindow".into()
+        "amux.v1.ClaudeUsageWindow".into()
     }
     fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.UsageWindow".into()
+        "/amux.v1.ClaudeUsageWindow".into()
+    }
+}
+/// Codex's usage limits.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CodexUsage {
+    #[prost(enumeration = "UsageState", tag = "1")]
+    pub state: i32,
+    #[prost(message, repeated, tag = "2")]
+    pub windows: ::prost::alloc::vec::Vec<CodexUsageWindow>,
+    #[prost(string, optional, tag = "3")]
+    pub credits: ::core::option::Option<::prost::alloc::string::String>,
+}
+impl ::prost::Name for CodexUsage {
+    const NAME: &'static str = "CodexUsage";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.CodexUsage".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.CodexUsage".into()
+    }
+}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct CodexUsageWindow {
+    /// Named from the window's length.
+    #[prost(enumeration = "CodexLimit", tag = "1")]
+    pub limit: i32,
+    /// The only description Codex gives of a window.
+    #[prost(uint32, tag = "2")]
+    pub window_minutes: u32,
+    #[prost(message, optional, tag = "3")]
+    pub meter: ::core::option::Option<UsageMeter>,
+}
+impl ::prost::Name for CodexUsageWindow {
+    const NAME: &'static str = "CodexUsageWindow";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.CodexUsageWindow".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.CodexUsageWindow".into()
     }
 }
 /// Session strip: tool-server health, shown only when one fails.
@@ -2198,6 +2263,7 @@ impl TaskListStatus {
         }
     }
 }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum UsageState {
@@ -2226,6 +2292,64 @@ impl UsageState {
             "USAGE_STATE_OK" => Some(Self::Ok),
             "USAGE_STATE_NEAR_LIMIT" => Some(Self::NearLimit),
             "USAGE_STATE_BLOCKED" => Some(Self::Blocked),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ClaudeLimit {
+    Unspecified = 0,
+    FiveHour = 1,
+    Weekly = 2,
+}
+impl ClaudeLimit {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CLAUDE_LIMIT_UNSPECIFIED",
+            Self::FiveHour => "CLAUDE_LIMIT_FIVE_HOUR",
+            Self::Weekly => "CLAUDE_LIMIT_WEEKLY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CLAUDE_LIMIT_UNSPECIFIED" => Some(Self::Unspecified),
+            "CLAUDE_LIMIT_FIVE_HOUR" => Some(Self::FiveHour),
+            "CLAUDE_LIMIT_WEEKLY" => Some(Self::Weekly),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum CodexLimit {
+    Unspecified = 0,
+    FiveHour = 1,
+    Weekly = 2,
+}
+impl CodexLimit {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CODEX_LIMIT_UNSPECIFIED",
+            Self::FiveHour => "CODEX_LIMIT_FIVE_HOUR",
+            Self::Weekly => "CODEX_LIMIT_WEEKLY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CODEX_LIMIT_UNSPECIFIED" => Some(Self::Unspecified),
+            "CODEX_LIMIT_FIVE_HOUR" => Some(Self::FiveHour),
+            "CODEX_LIMIT_WEEKLY" => Some(Self::Weekly),
             _ => None,
         }
     }
@@ -2506,8 +2630,8 @@ pub struct ClaudePtySnapshot {
     /// Absent until SessionStart or the first system event names it.
     #[prost(string, optional, tag = "7")]
     pub provider_session: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "8")]
-    pub usage: ::core::option::Option<UsageLimits>,
+    #[prost(message, optional, tag = "14")]
+    pub usage: ::core::option::Option<ClaudeUsage>,
     #[prost(message, optional, tag = "9")]
     pub servers: ::core::option::Option<ToolServerHealth>,
     #[prost(message, optional, tag = "10")]
@@ -2721,8 +2845,8 @@ pub struct ClaudeSdkSnapshot {
     pub permission_mode: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, repeated, tag = "8")]
     pub active_tasks: ::prost::alloc::vec::Vec<Task>,
-    #[prost(message, optional, tag = "9")]
-    pub usage: ::core::option::Option<UsageLimits>,
+    #[prost(message, optional, tag = "17")]
+    pub usage: ::core::option::Option<ClaudeUsage>,
     #[prost(message, optional, tag = "10")]
     pub servers: ::core::option::Option<ToolServerHealth>,
     #[prost(message, optional, tag = "11")]
@@ -3382,8 +3506,8 @@ pub struct CodexSnapshot {
     pub active_turn: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "8")]
     pub servers: ::core::option::Option<ToolServerHealth>,
-    #[prost(message, optional, tag = "9")]
-    pub usage: ::core::option::Option<UsageLimits>,
+    #[prost(message, optional, tag = "18")]
+    pub usage: ::core::option::Option<CodexUsage>,
     #[prost(message, optional, tag = "10")]
     pub sign_in: ::core::option::Option<SignIn>,
     #[prost(message, optional, tag = "17")]

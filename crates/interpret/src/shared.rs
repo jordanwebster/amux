@@ -957,6 +957,16 @@ pub fn sent_message(arguments_json: &[u8], outcome: SendOutcome<'_>) -> (String,
 
 /// An agent-message body as the goldens print it; a sent one adds its
 /// recipient and how the send went.
+/// A usage state as goldens print it.
+pub(crate) fn describe_usage_state(state: i32) -> &'static str {
+    match wire::UsageState::try_from(state).unwrap_or_default() {
+        wire::UsageState::Unknown => "?",
+        wire::UsageState::Ok => "ok",
+        wire::UsageState::NearLimit => "near",
+        wire::UsageState::Blocked => "blocked",
+    }
+}
+
 /// A background job list as goldens print it: `?` while unknown, else each
 /// job as its step, command and start time.
 pub(crate) fn describe_jobs(jobs: Option<&wire::BackgroundJobs>) -> String {
