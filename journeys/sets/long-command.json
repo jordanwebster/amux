@@ -1,5 +1,5 @@
 {
-  "description": "A Codex agent part way through a long test run whose log runs to about 300 KB, printed a piece at a time. Open the command's row: it holds only the newest output (its first line is a late crate, and the count of lines below stays bounded) however much more the run prints. Release the run with `just tui-set long-command --door '{\"OpenGate\": {\"name\": \"tests-done\"}}'`.",
+  "description": "A Codex agent part way through a long test run whose log runs to about 300 KB, printed a piece at a time. Focus the command's row and open it (ctrl+a k, ctrl+a o): it ends with the newest crate, and the count of earlier lines it holds stays bounded however much more the run prints. Release the run with `just tui-set long-command --door '{\"OpenGate\": {\"name\": \"tests-done\"}}'`.",
   "client": "laptop",
   "open": "test sweep",
   "topology": {
