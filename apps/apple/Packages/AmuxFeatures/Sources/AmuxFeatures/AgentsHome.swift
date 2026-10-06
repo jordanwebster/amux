@@ -381,7 +381,6 @@ public struct AgentsHome: View {
     /// says it: who, what, where, how long, and what it needs.
     private func spoken(_ row: AgentRow, _ state: RowState) -> String {
         var parts = [row.name]
-        if let headline = row.headline { parts.append(headline) }
         if let said = state.spoken { parts.append(said) }
         if row.familyNeedsYou && !row.needsYou { parts.append("an agent it started needs you") }
         parts.append([PlaceNames.host(row.hostName), row.workingDirectory]
@@ -664,13 +663,6 @@ struct AgentRowView: View {
                     // An age moves with the clock: a compared screenshot masks it.
                     .reported("home.row.\(row.id).age.volatile")
                 if state.needsYou { NeedsYouDot() }
-            }
-            if let headline = row.headline {
-                Text(headline)
-                    .designFont(.detail, design)
-                    .foregroundStyle(design.ink.color)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             words
         }

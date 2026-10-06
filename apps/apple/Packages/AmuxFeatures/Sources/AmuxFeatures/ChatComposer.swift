@@ -85,7 +85,7 @@ struct ComposerBox: View {
                 .buttonStyle(.amuxControl)
                 .accessibilityLabel("Attach")
                 .identified("chat.attach", label: String(localized: "Attach"), value: plusOpen ? "open" : "closed")
-                if let strip = model.strip, let chip = ChatWords.chip(strip, model.settings) {
+                if let frame = model.frame, let chip = ChatWords.chip(frame, model.settings) {
                     modelChip(chip)
                 }
                 Spacer(minLength: 4)
@@ -139,8 +139,8 @@ struct ComposerBox: View {
     /// The model and its effort, or its mode, as one mono pill. A mode that
     /// stops asking reads in red. A tap opens the settings card.
     private func modelChip(_ chip: (model: String, detail: String)) -> some View {
-        let stopping = model.settings?.modes.first { $0.current && $0.stopsAsking }
-            .map { ChatWords.mode($0.value) }
+        let stopping = model.settings?.permissions.first { $0.current && $0.neverAsks }
+            .map(ChatWords.permission)
         let words = [chip.model, chip.detail].filter { !$0.isEmpty }.joined(separator: " · ")
         // The effort took the detail's place: the stopping mode follows it.
         let warn = stopping.flatMap { $0 == chip.detail ? nil : $0 }
@@ -458,7 +458,7 @@ struct ChatDock: View {
     }
 
     var body: some View {
-        let tasks = model.strip?.tasks
+        let tasks = model.overview?.tasks
         let queue = model.frame?.queue ?? []
         let outbox = model.frame?.outbox ?? []
         let head = tasks != nil || !children.isEmpty
@@ -726,7 +726,7 @@ struct PlusCard: View {
                 tile(String(localized: "Photo"), glyph: "photo", id: "chat.attach.photo") { attach(.photo) }
                 tile(String(localized: "File"), glyph: "doc", id: "chat.attach.file") { attach(.file) }
             }
-            if let settings, !settings.modes.isEmpty || settings.cycleMode {
+            if let settings, !settings.permissions.isEmpty || settings.cyclePermission {
                 permissions(settings)
             }
         }
@@ -736,7 +736,7 @@ struct PlusCard: View {
     }
 
     private func permissions(_ settings: SettingsView) -> some View {
-        let current = settings.modes.first { $0.current }.map { ChatWords.mode($0.value) }
+        let current = settings.permissions.first { $0.current }.map(ChatWords.permission)
         return Button(action: openSettings) {
             HStack(spacing: 12) {
                 Image(systemName: "lock")
@@ -801,10 +801,11 @@ struct PlusCard: View {
 /// letters, and a fact nobody can read is not shown at all.
 struct StripLine: View {
     @Environment(\.design) private var design
-    let strip: Strip
+    let context: ContextView?
+    let overview: Overview
 
     var body: some View {
-        let parts = ChatWords.strip(strip)
+        let parts = ChatWords.strip(context: context, overview: overview)
         if !parts.isEmpty {
             HStack(spacing: 0) {
                 parts.enumerated().reduce(Text(verbatim: "")) { line, item in

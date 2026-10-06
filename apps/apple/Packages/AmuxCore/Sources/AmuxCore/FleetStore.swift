@@ -29,9 +29,8 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     public var hostName: String { card.host }
     public var hostPresence: Presence { card.hostPresence }
     public var workingDirectory: String { card.cwd }
-    /// What the agent says it is working on.
-    public var headline: String? { card.workingOn.flatMap { $0.isEmpty ? nil : $0 } }
-    public var lastActivity: Date { Date(milliseconds: card.lastActivityMs) }
+    /// When the agent's state last changed.
+    public var lastActivity: Date { Date(milliseconds: card.phaseSinceMs) }
     /// A kind this build knows how to open.
     public var readable: Bool { card.kind != .unspecified }
     public var needsYou: Bool { attention == .needsYou }
@@ -224,7 +223,7 @@ public final class FleetStore {
     }
 
     private func isUnread(_ row: FleetRow) -> Bool {
-        let activity = Date(milliseconds: row.card.lastActivityMs)
+        let activity = Date(milliseconds: row.card.phaseSinceMs)
         return activity > (seen[row.card.agent] ?? launched)
     }
 
@@ -260,7 +259,7 @@ public final class FleetStore {
         for key in order {
             guard let family = families[key], let first = family.first else { continue }
             let rows = family.map { AgentRow(row: $0, unread: isUnread($0)) }
-            let resting = Date(milliseconds: first.card.lastActivityMs) <= quiet
+            let resting = Date(milliseconds: first.card.phaseSinceMs) <= quiet
                 && first.card.familyAttention != .needsYou
                 && !rows.contains(where: \.unread)
             if resting { older += rows } else { recent += rows }

@@ -470,13 +470,13 @@ public struct ChatStanding: View {
     private var composerStack: some View {
         if showing != .plus {
             ChatDock(model: model, children: children, expanded: dockExpanded) { actions(.open($0)) }
-            if let strip = model.strip { StripLine(strip: strip) }
+            if let overview = model.overview { StripLine(context: model.frame?.context, overview: overview) }
         }
         let matches = model.slashMatches
         if !matches.isEmpty { SlashRows(commands: matches, codex: model.frame?.kind == .codex, pick: model.pick) }
-        if let signIn = model.strip?.signIn {
+        if let signIn = model.frame?.signIn {
             FootCard(kind: "sign-in", title: ChatWords.signIn(signIn), detail: signIn.message)
-        } else if let usage = model.strip?.usage, usage.blocked {
+        } else if let usage = model.overview?.usageNearLimit, usage.blocked {
             FootCard(
                 kind: "usage", title: String(localized: "Usage limit reached"),
                 detail: usage.credits ?? "")

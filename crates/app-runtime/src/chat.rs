@@ -15,7 +15,8 @@ use wire::{BlobRef, send_input_response};
 
 use crate::coalesce::{Coalescer, WakeFn};
 use crate::values::{
-    ActOutcome, ChatChanges, ChatFrame, Draft, FrozenReview, PageOutcome, RowOptions, SendOutcome,
+    ActOutcome, ChatChanges, ChatFrame, Draft, FrozenReview, GitView, PageOutcome, RowOptions,
+    SendOutcome,
 };
 
 /// An open chat. Row ids are item keys and never move, so the host's id
@@ -145,6 +146,23 @@ impl Chat {
             tools: options.tool_rows(&open),
         };
         ui_view::chat_rows_for(&self.session.state(), keys, &opts)
+    }
+
+    /// Opens or closes the run `member` belongs to in a folding view's open
+    /// set, and answers the set to ask for rows with.
+    pub fn toggle_run(&self, member: &str, open: &[Key]) -> Vec<Key> {
+        let mut open = open.iter().cloned().collect();
+        ui_view::toggle_run(&self.session.state(), &member.to_owned(), &mut open);
+        open.into_iter().collect()
+    }
+
+    /// The open set re-held on each open run's newest step, so a run stays
+    /// open as it grows, older steps page in, or the window trims it. Asked
+    /// before rows are read.
+    pub fn keep_open_runs(&self, open: &[Key]) -> Vec<Key> {
+        let mut open = open.iter().cloned().collect();
+        ui_view::keep_open_runs(&self.session.state(), &mut open);
+        open.into_iter().collect()
     }
 
     pub fn ask_card(&self) -> Option<AskCard> {
@@ -374,9 +392,14 @@ impl Chat {
         }
     }
 
-    /// The agent's working-tree diff and its patch, frozen for a review.
-    pub async fn review(&self) -> Result<FrozenReview, client::RpcError> {
-        let (diff, patch) = self.session.working_tree_review().await?;
+    /// The agent's diff for `comparison` and its patch, frozen for a
+    /// review. A branch with no known base is reviewed as its uncommitted
+    /// work.
+    pub async fn review(&self, comparison: Comparison) -> Result<FrozenReview, client::RpcError> {
+        let base = ui_view::diff_base(&self.session.state(), comparison)
+            .or_else(|| ui_view::diff_base(&self.session.state(), Comparison::Uncommitted))
+            .expect("the working tree is always a base");
+        let (diff, patch) = self.session.review(base).await?;
         Ok(FrozenReview { diff, patch })
     }
 
@@ -421,6 +444,7 @@ pub(crate) fn frame(state: &SessionState, now_ms: i64, ended: Option<String>) ->
         effort: ui_view::effort_in_force(state.agent_state()),
         permission: state.agent_state().permission.clone(),
         mode: state.agent_state().mode.clone(),
+        git: agent.git.as_ref().map(GitView::of),
         context: ui_view::context(state),
         sign_in: ui_view::sign_in(state),
         connection: state.connection(),

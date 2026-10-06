@@ -1,15 +1,15 @@
 import AmuxCore
 import Foundation
 
-/// A chat with no runtime behind it: rows, a frame, a card and a strip set
-/// by whoever builds it. The component catalogue draws the real chat views
+/// A chat with no runtime behind it: rows, a frame, a card and what
+/// surrounds them set by whoever builds it. The component catalogue draws the real chat views
 /// from one, and a test drives a model through it.
 public final class ScriptedChat: ChatSource, @unchecked Sendable {
     private let lock = NSLock()
     private var ordered: [Row]
     private var current: ChatFrame
     private var card: AskCard?
-    private var facts: Strip
+    private var facts: Overview
     private var offered: SettingsView?
     private var images: [[UInt8]: Data]
     private var pending = ChatChanges(keys: [], reloaded: false, session: false)
@@ -30,13 +30,14 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     public var working: FrozenReview?
 
     public init(
-        rows: [Row], frame: ChatFrame, card: AskCard? = nil, strip: Strip = ScriptedChat.strip(),
-        settings: SettingsView? = nil, images: [[UInt8]: Data] = [:]
+        rows: [Row], frame: ChatFrame, card: AskCard? = nil,
+        strip: Surroundings = ScriptedChat.strip(), settings: SettingsView? = nil,
+        images: [[UInt8]: Data] = [:]
     ) {
         ordered = rows
-        current = frame
+        current = strip.applied(to: frame)
         self.card = card
-        facts = strip
+        facts = strip.overview
         offered = settings
         self.images = images
     }
@@ -56,23 +57,50 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
             agent: agent, name: name, kind: kind, phase: phase,
             composer: ComposerView(mode: mode, activity: activity), connection: .live,
             caughtUp: caughtUp, hasOlder: hasOlder, arrivalsHeld: false, queue: queue,
-            outbox: outbox, askInput: nil, ended: nil, waiting: waiting)
+            outbox: outbox, askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
+            mode: nil, model: nil, permission: nil, signIn: nil, waiting: waiting)
+    }
+
+    /// The facts around a chat's rows: what the frame reports of the agent,
+    /// and the overview.
+    public struct Surroundings: Sendable {
+        public var overview: Overview
+        public var model: String?
+        public var effort: String?
+        public var permission: String?
+        public var context: ContextView?
+        public var signIn: SignInView?
+
+        /// The frame reporting these facts.
+        func applied(to frame: ChatFrame) -> ChatFrame {
+            var frame = frame
+            frame.model = model
+            frame.effort = effort
+            frame.permission = permission
+            frame.context = context
+            frame.signIn = signIn
+            return frame
+        }
     }
 
     public static func strip(
         tasks: TasksView? = nil, context: ContextView? = nil, model: String? = nil,
         effort: String? = nil, mode: String? = nil, usage: UsageView? = nil,
         failedServers: [ServerView] = [], signIn: SignInView? = nil, background: UInt32? = nil
-    ) -> Strip {
-        Strip(
-            failedServers: failedServers, background: background, context: context,
-            effort: effort, mode: mode, model: model, signIn: signIn, tasks: tasks, usage: usage,
-            workingOn: nil)
+    ) -> Surroundings {
+        let jobs = (0..<(background ?? 0)).map {
+            JobRow(command: "job \($0 + 1)", startedAtMs: 0, step: nil)
+        }
+        return Surroundings(
+            overview: Overview(
+                jobs: jobs, failedServers: failedServers, changes: nil, tasks: tasks,
+                usageNearLimit: usage),
+            model: model, effort: effort, permission: mode, context: context, signIn: signIn)
     }
 
     public static func row(
         _ id: String, _ order: UInt64, _ kind: RowKind, attention: Bool = false,
-        decision: Decision? = nil, run: RunInfo? = nil, parent: String? = nil,
+        decision: Decision? = nil, run: Run? = nil, parent: String? = nil,
         collapsed: Bool = false
     ) -> Row {
         Row(
@@ -124,13 +152,16 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     }
 
     public func show(
-        frame: ChatFrame? = nil, card: AskCard?? = nil, strip: Strip? = nil,
+        frame: ChatFrame? = nil, card: AskCard?? = nil, strip: Surroundings? = nil,
         settings: SettingsView? = nil
     ) {
         lock.withLock {
             if let frame { current = frame }
             if let card { self.card = card }
-            if let strip { facts = strip }
+            if let strip {
+                facts = strip.overview
+                current = strip.applied(to: current)
+            }
             if let settings { offered = settings }
             pending.session = true
         }
@@ -182,7 +213,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     }
 
     public func askCard() -> AskCard? { lock.withLock { card } }
-    public func strip() -> Strip? { lock.withLock { facts } }
+    public func overview() -> Overview? { lock.withLock { facts } }
     public func settings() -> SettingsView? { lock.withLock { offered } }
     public func frame() -> ChatFrame? { lock.withLock { current } }
 
@@ -199,7 +230,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     }
 
     public func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome? { .done }
-    public func answer(_ ask: String, picks: [Pick], note: String?) async -> ActOutcome? { .done }
+    public func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome? { .done }
     public func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? { .done }
     public func withdraw(_ input: [UInt8]) async -> ActOutcome? { .done }
     public func sendNow(_ input: [UInt8]) async -> ActOutcome? { .done }
@@ -242,7 +273,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
 
     public func blob(_ hash: [UInt8]) -> Data? { lock.withLock { images[hash] } }
 
-    public func review() async -> Result<FrozenReview, RuntimeFailure> {
+    public func review(_ comparison: Comparison) async -> Result<FrozenReview, RuntimeFailure> {
         guard let working = lock.withLock({ working }) else {
             return .failure(RuntimeFailure("the machine could not be asked"))
         }

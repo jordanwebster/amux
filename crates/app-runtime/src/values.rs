@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use model::{AgentKey, Connection, InputState, Key, PhaseView, Waiting};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui_view::{Away, ComposerView, ContextView, OutboxRow, QueuedRow, SignInView, ToolRows};
+use ui_view::{
+    Away, ChangeTotals, ComposerView, ContextView, OutboxRow, QueuedRow, SignInView, ToolRows,
+};
 use wire::{BlobRef, HostVia, Kind, Presence};
 
 /// What an embedded runtime starts from.
@@ -84,6 +86,9 @@ pub struct ChatFrame {
     pub effort: Option<String>,
     pub permission: Option<String>,
     pub mode: Option<String>,
+    /// The agent's branch and change totals as of its last turn end; None
+    /// outside a repository.
+    pub git: Option<GitView>,
     pub context: Option<ContextView>,
     /// Only a problem; it replaces the composer with a foot card.
     pub sign_in: Option<SignInView>,
@@ -102,6 +107,34 @@ pub struct ChatFrame {
     pub ask_input: Option<Vec<u8>>,
     /// The runtime no longer serves this chat: the agent is gone.
     pub ended: Option<String>,
+}
+
+/// Where an agent works in its repository, and what it has changed there:
+/// the header's totals for either comparison.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct GitView {
+    /// None on a detached head.
+    pub branch: Option<String>,
+    /// What the branch is compared against on it; None when not known.
+    pub base_branch: Option<String>,
+    pub uncommitted: Option<ChangeTotals>,
+    pub on_branch: Option<ChangeTotals>,
+}
+
+impl GitView {
+    pub fn of(git: &wire::Git) -> GitView {
+        let totals = |totals: &wire::ChangeTotals| ChangeTotals {
+            files: totals.files,
+            added: totals.added,
+            removed: totals.removed,
+        };
+        GitView {
+            branch: git.branch.clone(),
+            base_branch: git.base_branch.clone(),
+            uncommitted: git.uncommitted.as_ref().map(totals),
+            on_branch: git.on_branch.as_ref().map(totals),
+        }
+    }
 }
 
 /// How rows are asked for.
@@ -296,6 +329,16 @@ pub struct HostView {
     /// on a live stream: what the fleet shows for it is what it lists now.
     /// Always true for this device.
     pub current: bool,
+    /// The providers the host has said it can run, and whether each is
+    /// signed in there.
+    pub providers: Vec<ProviderSignIn>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ProviderSignIn {
+    /// "claude" or "codex".
+    pub provider: String,
+    pub signed_in: bool,
 }
 
 /// What changed in the fleet since the host last took its changes.
@@ -329,9 +372,20 @@ pub struct NewAgent {
     pub kind: Kind,
     pub cwd: String,
     pub name: String,
-    /// The provider's model; the host's default when absent.
+    /// The provider's model, effort, permission and mode, by their values
+    /// in the host's catalogue; the host's default for each one absent. Only
+    /// Codex takes a mode.
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub permission: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Start it in a worktree of its own, made from the folder's repository.
+    #[serde(default)]
+    pub new_worktree: bool,
 }
 
 /// A directory a host offers to start an agent in.

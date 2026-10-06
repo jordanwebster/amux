@@ -83,7 +83,7 @@ enum ComponentCatalog {
         typealias F = CatalogFixtures
         func r(
             _ id: String, _ order: UInt64, _ kind: RowKind, attention: Bool = false,
-            decision: Decision? = nil, run: RunInfo? = nil, parent: String? = nil
+            decision: Decision? = nil, run: Run? = nil, parent: String? = nil
         ) -> Row {
             ScriptedChat.row(id, order, kind, attention: attention, decision: decision, run: run, parent: parent)
         }
@@ -109,10 +109,10 @@ enum ComponentCatalog {
                 server: "github", tool: "merge_pull_request", fact: "", state: .running, result: ""),
                 attention: true)),
             row("file-change", height: 170, r("f1", 10, .fileChange(files: [
-                FileRow(path: "crates/amux-ui/src/pairing.rs", change: .edited, added: 9, removed: 14),
-                FileRow(path: "crates/amux-ui/spec/pairing_copy.rs", change: .created(lines: 38), added: 38, removed: 0),
-                FileRow(path: "crates/amux-ui/src/old.rs", change: .moved(to: "crates/amux-ui/src/codes.rs"), added: 0, removed: 0),
-                FileRow(path: "crates/amux-ui/src/unused.rs", change: .deleted, added: 0, removed: 12),
+                FileRow(path: "crates/amux-ui/src/pairing.rs", change: .edited, added: 9, removed: 14, line: nil),
+                FileRow(path: "crates/amux-ui/spec/pairing_copy.rs", change: .created(lines: 38), added: 38, removed: 0, line: nil),
+                FileRow(path: "crates/amux-ui/src/old.rs", change: .moved(to: "crates/amux-ui/src/codes.rs"), added: 0, removed: 0, line: nil),
+                FileRow(path: "crates/amux-ui/src/unused.rs", change: .deleted, added: 0, removed: 12, line: nil),
             ], state: .succeeded))),
             row("command", height: 150, r("x1", 11, .command(
                 command: "cargo test -p amux-ui", state: .succeeded,
@@ -125,24 +125,22 @@ enum ComponentCatalog {
             row("command-denied", r("x3", 13, .command(
                 command: "rm -rf target", state: .denied, outputHead: [], moreLines: 0, outputTail: [], durationMs: nil,
                 exitCode: nil),
-                decision: Decision(outcome: .denied, elsewhere: false, note: "Use cargo clean instead", scope: nil))),
+                decision: Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean instead"))),
             row("command-allowed", r("x4", 14, .command(
                 command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTail: [],
                 durationMs: 12_000, exitCode: 0),
-                decision: Decision(outcome: .allowed, elsewhere: false, note: nil, scope: "this session"))),
+                decision: Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil))),
             row("command-elsewhere", r("x5", 15, .toolCall(
                 server: "github", tool: "create_issue", fact: "", state: .succeeded, result: ""),
-                decision: Decision(outcome: .allowed, elsewhere: true, note: nil, scope: nil))),
+                decision: Decision(outcome: .allowed, elsewhere: true, granted: nil, note: nil))),
             row("command-asking", r("x6", 16, .command(
                 command: "cargo test -p amux-ui", state: .pending, outputHead: [], moreLines: 0, outputTail: [],
                 durationMs: nil, exitCode: nil), attention: true)),
             row("explore", r("e1", 17, .explore(verb: .read, subject: "crates/wire/src/codes.rs", state: .succeeded))),
             row("run", r("e2", 18, .explore(verb: .search, subject: "INVALID_PIN", state: .succeeded),
-                run: RunInfo(newest: "e2", oldest: "e0", reads: 4, searches: 2, len: 6,
-                             anchor: "crates/amux-ui/src/pairing.rs", isSummary: true, openBelow: false))),
+                run: Run(first: "e0", last: "e2", steps: 6, live: false, openBelow: false, unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 4, searches: 2, subagents: 0, other: 0), recent: nil))),
             row("run-open-below", r("e3", 19, .explore(verb: .read, subject: "src/lib.rs", state: .succeeded),
-                run: RunInfo(newest: "e3", oldest: "e0", reads: 40, searches: 0, len: 40,
-                             anchor: "crates/node/src/lib.rs", isSummary: true, openBelow: true))),
+                run: Run(first: "e0", last: "e3", steps: 40, live: false, openBelow: true, unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 40, searches: 0, subagents: 0, other: 0), recent: nil))),
             row("subagent-running", r("a1", 20, .subagent(
                 description: "Find every INVALID_PIN reader", running: true, toolCount: 12,
                 lastTool: "Read wire/src/codes.rs", answer: "", durationMs: 48_000))),
@@ -178,22 +176,24 @@ enum ComponentCatalog {
                     lastTool: "Grep INVALID_PIN", answer: "", durationMs: 9_000)),
                 r("a4", 36, .explore(verb: .search, subject: "INVALID_PIN", state: .succeeded), parent: "a3"),
                 r("a5", 37, .explore(verb: .read, subject: "wire/src/codes.rs", state: .succeeded), parent: "a3")),
-            row("ask-question", height: 130, r("q1", 38, .ask(.question(
-                questions: [F.redactionQuestion], answers: [AnswerView(picked: ["amux-core"], hidden: false, other: nil)],
-                resolution: .answered, note: nil)))),
+            row("ask-question", height: 130, r("q1", 38, .ask(.questions(
+                questions: [F.redactionQuestion], answers: [AnswerView(picked: ["amux-core"], hidden: false, note: nil, other: nil)],
+                skipped: 0, resolution: .answered, reply: nil)))),
             row("ask-questions", height: 280, r("q2", 39, .ask(.questions(
                 questions: F.threeQuestions,
-                answers: [AnswerView(picked: ["macOS", "Linux"], hidden: false, other: nil),
-                          AnswerView(picked: ["All at once"], hidden: false, other: nil),
-                          AnswerView(picked: [], hidden: false, other: "Only failures, with the host id")],
-                resolution: .answered, note: "keep the old strings for one release")))),
+                answers: [AnswerView(picked: ["macOS", "Linux"], hidden: false, note: nil, other: nil),
+                          AnswerView(picked: ["All at once"], hidden: false, note: nil, other: nil),
+                          AnswerView(
+                            picked: [], hidden: false, note: "keep the old strings for one release",
+                            other: "Only failures, with the host id")],
+                skipped: 0, resolution: .answered, reply: nil)))),
             row("ask-secret", height: 130, r("q3", 40, .ask(.questions(
-                questions: [F.secretQuestion], answers: [AnswerView(picked: [], hidden: true, other: nil)],
-                resolution: .answered, note: nil)))),
-            row("ask-plan-approved", r("l1", 41, .ask(.plan(plan: F.plan, verdict: .approved, editsAccepted: false, writing: false, note: nil)))),
-            row("ask-plan-sent-back", r("l2", 42, .ask(.plan(plan: F.plan, verdict: .sentBack, editsAccepted: false, writing: false, note: "Don’t touch the wire codes yet")))),
+                questions: [F.secretQuestion], answers: [AnswerView(picked: [], hidden: true, note: nil, other: nil)],
+                skipped: 0, resolution: .answered, reply: nil)))),
+            row("ask-plan-approved", r("l1", 41, .ask(.plan(plan: F.plan, verdict: .approved, writing: false, note: nil)))),
+            row("ask-plan-sent-back", r("l2", 42, .ask(.plan(plan: F.plan, verdict: .sentBack, writing: false, note: "Don’t touch the wire codes yet")))),
             row("ask-plan-open", height: 330, expanded: true, readiness: true,
-                r("l3", 43, .ask(.plan(plan: F.plan, verdict: .open, editsAccepted: false, writing: false, note: nil)))),
+                r("l3", 43, .ask(.plan(plan: F.plan, verdict: .open, writing: false, note: nil)))),
             row("ask-form", r("g1", 44, .ask(.form(server: "github", message: "Create the issue", fields: ["repository", "labels", "assignee"], resolution: .answered)))),
             row("ask-link", r("g2", 45, .ask(.link(server: "linear", message: "Sign in to Linear", url: "https://linear.app/login", resolution: .answered)))),
             row("ask-grant", r("g3", 46, .ask(.grant(
@@ -230,7 +230,7 @@ enum ComponentCatalog {
                 path: "crates/amux-ui/src/pairing.rs", files: 1, added: 1, removed: 2, diff: F.diff,
                 reason: "", created: false), [
                     Choice(outcome: .allowOnce, primary: true, takesNote: false),
-                    Choice(outcome: .allowAlways(subjects: [], directories: [], mode: "acceptEdits", scope: .session, label: ""), primary: false, takesNote: false),
+                    Choice(outcome: .allowAlways(subjects: [], directories: [], mode: "acceptEdits", modeName: "Accept edits", scope: .session, label: ""), primary: false, takesNote: false),
                     Choice(outcome: .deny(stops: false), primary: false, takesNote: true),
                 ])),
             ask("permission-tool", height: 360, F.card(.claudeSdk, .tool(
@@ -242,7 +242,7 @@ enum ComponentCatalog {
             ask("permission-terminal", height: 380, F.card(.claudePty, .command(
                 command: "cargo test -p amux-ui", cwd: "", reason: "", description: ""), [
                     Choice(outcome: .allowOnce, primary: true, takesNote: false),
-                    Choice(outcome: .allowAlways(subjects: ["cargo test"], directories: [], mode: "", scope: .project, label: ""), primary: false, takesNote: false),
+                    Choice(outcome: .allowAlways(subjects: ["cargo test"], directories: [], mode: "", modeName: "", scope: .project, label: ""), primary: false, takesNote: false),
                     Choice(outcome: .deny(stops: true), primary: false, takesNote: false),
                 ])),
             ask("codex-command", height: 560, F.card(.codex, .command(
@@ -305,7 +305,7 @@ enum ComponentCatalog {
 
     private static func composer(
         _ id: String, height: CGFloat = 260, rows: [Row] = [], frame: ChatFrame,
-        strip: Strip = ScriptedChat.strip(model: "opus 4.6", effort: "high"), draft: String = "",
+        strip: ScriptedChat.Surroundings = ScriptedChat.strip(model: "opus 4.6", effort: "high"), draft: String = "",
         settings: SettingsView? = nil, showing: ChatOverlay? = nil, children: [FleetCard] = [],
         dockExpanded: Bool = false,
         subject: ChatSubject = CatalogFixtures.subject, setUp: @escaping @MainActor (ChatModel) -> Void = { _ in }
@@ -369,7 +369,7 @@ enum ComponentCatalog {
             composer("strip", height: 280, frame: ScriptedChat.frame(phase: .working, activity: Activity(kind: .working, sinceMs: 0, elapsedMs: 94_000)),
                      strip: ScriptedChat.strip(
                         tasks: F.pairingTasks,
-                        context: ContextView(usedTokens: 168_000, inStrip: true, percent: 84, windowTokens: 200_000),
+                        context: ContextView(usedTokens: 168_000, nearFull: true, percent: 84, windowTokens: 200_000),
                         model: "opus 4.6", effort: "high", mode: "plan", background: 2)),
             // The strip once per provider kind, carrying the facts that
             // kind's interpreter reports: the renderer never sees the kind,
@@ -380,12 +380,12 @@ enum ComponentCatalog {
                     TaskLine(subject: "Resume from the live checklist", mark: .current),
                     TaskLine(subject: "Report what changed", mark: .todo),
                 ]),
-                context: ContextView(usedTokens: 171_000, inStrip: true, percent: 86, windowTokens: 200_000),
+                context: ContextView(usedTokens: 171_000, nearFull: true, percent: 86, windowTokens: 200_000),
                 model: "claude-sonnet-5", mode: "acceptEdits", background: 2)),
             composer("strip-claude-sdk", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
-                context: ContextView(usedTokens: 30_513, inStrip: false, percent: 16, windowTokens: 200_000),
+                context: ContextView(usedTokens: 30_513, nearFull: false, percent: 16, windowTokens: 200_000),
                 model: "claude-opus-5-5", effort: "low", mode: "plan",
-                usage: UsageView(blocked: false, windows: [UsageWindowView(name: "5h", usedPercent: 83, resetsAtMs: nil)], credits: nil),
+                usage: UsageView(blocked: false, windows: [UsageWindowView(label: .fiveHour, usedPercent: 83, state: .nearLimit, resetsAtMs: nil)], credits: nil),
                 failedServers: [ServerView(name: "claude.ai Google Drive", error: "", needsAuth: true)],
                 background: 3)),
             composer("strip-codex", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
@@ -394,7 +394,7 @@ enum ComponentCatalog {
                     TaskLine(subject: "Split the lexer", mark: .current),
                     TaskLine(subject: "Run the parser tests", mark: .todo),
                 ]),
-                context: ContextView(usedTokens: 16_447, inStrip: false, percent: 6, windowTokens: 258_400),
+                context: ContextView(usedTokens: 16_447, nearFull: false, percent: 6, windowTokens: 258_400),
                 model: "gpt-5.6-luna", effort: "high", mode: "on-request",
                 failedServers: [ServerView(name: "docs", error: "connection refused", needsAuth: false)])),
             // The dock opened: the task list, the agents this one started,
@@ -424,7 +424,7 @@ enum ComponentCatalog {
                 $0.attach(F.writtenReview())
             },
             composer("strip-trouble", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
-                model: "gpt-5", usage: UsageView(blocked: false, windows: [UsageWindowView(name: "5h", usedPercent: 91, resetsAtMs: nil)], credits: nil),
+                model: "gpt-5", usage: UsageView(blocked: false, windows: [UsageWindowView(label: .fiveHour, usedPercent: 91, state: .nearLimit, resetsAtMs: nil)], credits: nil),
                 failedServers: [ServerView(name: "github", error: "exited", needsAuth: false)])),
             composer("sign-in", height: 200, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
                 signIn: SignInView(state: .expired, account: "ada@example.com", message: "Run claude login on Studio."))),
@@ -449,7 +449,7 @@ enum ComponentCatalog {
                 model.type("Why does this fail? " + (1...14).map { "error[E0308]: mismatched types at line \($0)" }.joined(separator: "\n"))
             },
             composer("usage-blocked", height: 200, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
-                usage: UsageView(blocked: true, windows: [UsageWindowView(name: "weekly", usedPercent: 100, resetsAtMs: nil)], credits: "Resets Monday"))),
+                usage: UsageView(blocked: true, windows: [UsageWindowView(label: .weekly(model: nil), usedPercent: 100, state: .blocked, resetsAtMs: nil)], credits: "Resets Monday"))),
         ]
     }()
 
@@ -598,6 +598,10 @@ enum CatalogFixtures {
     // MARK: - Settings
 
     private static let claudeModes = ["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
+    private static let claudeModeNames = [
+        "default": "Default", "acceptEdits": "Accept edits", "plan": "Plan", "auto": "Auto",
+        "bypassPermissions": "Bypass permissions",
+    ]
 
     static func claudeSdkSettings(mode: String = "plan") -> SettingsView {
         let efforts = ["low", "medium", "high", "xhigh", "max"]
@@ -608,12 +612,15 @@ enum CatalogFixtures {
                 ModelChoice(value: "haiku", displayName: "Haiku", description: "Haiku 4.5 · Fastest for quick answers", efforts: [], current: false, reported: false, defaultEffort: nil),
             ],
             efforts: [EffortChoice(value: "low", current: true, default: false, reported: false)],
-            modes: claudeModes.map {
-                ModeChoice(value: .claude($0), current: $0 == mode, reported: false, stopsAsking: $0 == "bypassPermissions")
+            permissions: claudeModes.map {
+                PermissionChoice(
+                    value: $0, displayName: claudeModeNames[$0] ?? $0, current: $0 == mode,
+                    reported: false, normal: $0 == "default", neverAsks: $0 == "bypassPermissions",
+                    settable: true)
             },
-            cycleMode: false, commands: [], changeByTyping: nil,
+            modes: [], cyclePermission: false, commands: [], changeByTyping: nil,
             effortRefusal: "Claude takes its effort when the agent starts and keeps it until it restarts.",
-            modeRefusal: nil, modelRefusal: nil)
+            modelRefusal: nil, permissionRefusal: nil)
     }
 
     static let withCommands: SettingsView = {
@@ -631,10 +638,8 @@ enum CatalogFixtures {
 
     static let settingsCodex: SettingsView = {
         let efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
-        let presets: [(String, String, String)] = [
-            ("read-only", "on-request", "read-only"),
-            ("default", "on-request", "workspace-write"),
-            ("full-access", "never", "danger-full-access"),
+        let presets: [(String, String)] = [
+            ("read-only", "Read only"), ("default", "Default"), ("full-access", "Full access"),
         ]
         return SettingsView(
             models: [
@@ -642,23 +647,25 @@ enum CatalogFixtures {
                 ModelChoice(value: "gpt-6-sol", displayName: "GPT-6-Sol", description: "Smaller, faster and cheaper.", efforts: efforts, current: false, reported: false, defaultEffort: "medium"),
             ],
             efforts: efforts.map { EffortChoice(value: $0, current: $0 == "medium", default: $0 == "medium", reported: false) },
-            modes: presets.map { preset, approval, sandbox in
-                ModeChoice(
-                    value: .codex(approvalPolicy: approval, sandbox: sandbox, preset: preset),
-                    current: preset == "default", reported: false, stopsAsking: approval == "never")
+            permissions: presets.map { value, name in
+                PermissionChoice(
+                    value: value, displayName: name, current: value == "default", reported: false,
+                    normal: value == "default", neverAsks: value == "full-access", settable: true)
             },
-            cycleMode: false, commands: [], changeByTyping: nil, effortRefusal: nil, modeRefusal: nil,
-            modelRefusal: nil)
+            modes: [], cyclePermission: false, commands: [], changeByTyping: nil, effortRefusal: nil,
+            modelRefusal: nil, permissionRefusal: nil)
     }()
 
     static let settingsClaudePty = SettingsView(
         models: [ModelChoice(value: "claude-sonnet-5", displayName: "", description: "", efforts: [], current: true, reported: true, defaultEffort: nil)],
         efforts: [EffortChoice(value: "high", current: true, default: false, reported: true)],
-        modes: [ModeChoice(value: .claude("acceptEdits"), current: true, reported: false, stopsAsking: false)],
-        cycleMode: true, commands: [],
+        permissions: [PermissionChoice(
+            value: "acceptEdits", displayName: "Accept edits", current: true, reported: false,
+            normal: false, neverAsks: false, settable: false)],
+        modes: [], cyclePermission: true, commands: [],
         changeByTyping: "To change the model or effort, type /model <name> or /effort <level> in the composer.",
-        effortRefusal: nil, modeRefusal: "Terminal Claude changes mode only by cycling through its modes.",
-        modelRefusal: nil)
+        effortRefusal: nil, modelRefusal: nil,
+        permissionRefusal: "Terminal Claude changes mode only by cycling through its modes.")
 
     static let photoData: Data = {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 120, height: 80))
@@ -716,7 +723,7 @@ enum CatalogFixtures {
 
     static let review = FrozenReview(
         diff: Diff(
-            head: "4f2a9c1", base: DiffBase(base: .workingTree(Empty())), mergeBase: nil,
+            head: "4f2a9c1", files: [], base: DiffBase(base: .workingTree(Empty())), mergeBase: nil,
             patch: BlobRef(hash: [5, 5, 5], name: "patch", mime: "text/x-diff", size: UInt64(reviewPatch.utf8.count))),
         patch: reviewPatch)
 
@@ -836,7 +843,7 @@ enum CatalogFixtures {
 
     static let sdkPermissionChoices = [
         Choice(outcome: .allowOnce, primary: true, takesNote: false),
-        Choice(outcome: .allowAlways(subjects: ["cargo test"], directories: [], mode: "", scope: .project, label: ""), primary: false, takesNote: false),
+        Choice(outcome: .allowAlways(subjects: ["cargo test"], directories: [], mode: "", modeName: "", scope: .project, label: ""), primary: false, takesNote: false),
         Choice(outcome: .allowForSession, primary: false, takesNote: false),
         Choice(outcome: .deny(stops: false), primary: false, takesNote: true),
         Choice(outcome: .denyAndStop, primary: false, takesNote: true),
@@ -847,7 +854,8 @@ enum CatalogFixtures {
     ) -> AskCard {
         AskCard(
             kind: kind, key: "ask-1", itemKey: "x6", position: 1, count: count, body: body,
-            choices: choices, questionNote: kind != .claudePty, state: state)
+            choices: choices, questionNote: kind != .claudePty, questionSkip: kind != .claudePty,
+            questionReply: true, stopsTurn: true, state: state)
     }
 
     static let runningCommand = ScriptedChat.row("rc", 50, .command(
@@ -861,7 +869,7 @@ enum CatalogFixtures {
     static let conversation: [Row] = {
         func r(
             _ id: String, _ order: UInt64, _ kind: RowKind, attention: Bool = false,
-            decision: Decision? = nil, run: RunInfo? = nil, parent: String? = nil
+            decision: Decision? = nil, run: Run? = nil, parent: String? = nil
         ) -> Row {
             ScriptedChat.row(id, order, kind, attention: attention, decision: decision, run: run, parent: parent)
         }
@@ -870,14 +878,14 @@ enum CatalogFixtures {
             r("c02", 2, .prompt(text: [.text("Collapse the pairing errors onto one string.")], steered: false)),
             r("c03", 3, .thinking(text: "", open: false, durationMs: 8_000)),
             r("c04", 4, .explore(verb: .search, subject: "INVALID_PIN", state: .succeeded),
-              run: RunInfo(newest: "c04", oldest: "c04", reads: 4, searches: 2, len: 6, anchor: "crates/amux-ui/src/pairing.rs", isSummary: true, openBelow: false)),
-            r("c05", 5, .fileChange(files: [FileRow(path: "crates/amux-ui/src/pairing.rs", change: .edited, added: 9, removed: 14)], state: .succeeded)),
+              run: Run(first: "c04", last: "c04", steps: 6, live: false, openBelow: false, unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 4, searches: 2, subagents: 0, other: 0), recent: nil)),
+            r("c05", 5, .fileChange(files: [FileRow(path: "crates/amux-ui/src/pairing.rs", change: .edited, added: 9, removed: 14, line: nil)], state: .succeeded)),
             r("c06", 6, .command(command: "cargo check -p amux-ui", state: .failed, outputHead: ["error[E0308]: mismatched types"], moreLines: 214, outputTail: [], durationMs: 4_200, exitCode: 101)),
             r("c07", 7, .command(command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTail: [], durationMs: 12_000, exitCode: 0),
-              decision: Decision(outcome: .allowed, elsewhere: false, note: nil, scope: "this session")),
-            r("c08", 8, .fileChange(files: [FileRow(path: "crates/amux-ui/tests/spec/pairing_copy.rs", change: .created(lines: 38), added: 38, removed: 0)], state: .succeeded)),
+              decision: Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil)),
+            r("c08", 8, .fileChange(files: [FileRow(path: "crates/amux-ui/tests/spec/pairing_copy.rs", change: .created(lines: 38), added: 38, removed: 0, line: nil)], state: .succeeded)),
             r("c09", 9, .command(command: "rm -rf target", state: .denied, outputHead: [], moreLines: 0, outputTail: [], durationMs: nil, exitCode: nil),
-              decision: Decision(outcome: .denied, elsewhere: false, note: "Use cargo clean instead", scope: nil)),
+              decision: Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean instead")),
             r("c10", 10, .prose(text: [.text("Done. The three arms are one now, and the new test asserts on the single string.")], streaming: false, workingNote: false)),
             r("c11", 11, .turnEnd(failed: false, costUsd: nil, durationMs: 102_000)),
         ]
@@ -897,20 +905,20 @@ enum CatalogFixtures {
 
     static let docsSweep = FleetCard(
         agent: AgentKey(host: Array(repeating: 1, count: 16), agent: Array(repeating: 5, count: 16)),
-        name: "docs-sweep", kind: .claudeSdk, attention: .exited, cwd: "", lastActivityMs: 0,
+        name: "docs-sweep", kind: .claudeSdk, attention: .exited, cwd: "", phaseSinceMs: 0,
         host: "Studio", hostPresence: .online, children: 0, familyAttention: .exited,
-        members: 1, membersNeedYou: 0, exitCause: "finished", workingOn: nil)
+        members: 1, membersNeedYou: 0, branch: nil, exitCause: "finished")
 
     static let family = FamilyHeader(
         children: [
             FleetCard(agent: AgentKey(host: Array(repeating: 1, count: 16), agent: Array(repeating: 3, count: 16)),
-                      name: "worker-2", kind: .claudeSdk, attention: .needsYou, cwd: "", lastActivityMs: 0,
+                      name: "worker-2", kind: .claudeSdk, attention: .needsYou, cwd: "", phaseSinceMs: 0,
                       host: "Laptop", hostPresence: .online, children: 0, familyAttention: .needsYou,
-                      members: 1, membersNeedYou: 1, exitCause: nil, workingOn: nil),
+                      members: 1, membersNeedYou: 1, branch: nil, exitCause: nil),
             FleetCard(agent: AgentKey(host: Array(repeating: 1, count: 16), agent: Array(repeating: 4, count: 16)),
-                      name: "worker-3", kind: .codex, attention: .working, cwd: "", lastActivityMs: 0,
+                      name: "worker-3", kind: .codex, attention: .working, cwd: "", phaseSinceMs: 0,
                       host: "Studio", hostPresence: .online, children: 0, familyAttention: .working,
-                      members: 1, membersNeedYou: 0, exitCause: nil, workingOn: nil),
+                      members: 1, membersNeedYou: 0, branch: nil, exitCause: nil),
         ],
         attention: .needsYou, parent: nil)
 }

@@ -116,7 +116,7 @@ public final class NewAgentStore {
             else { continue }
             let name = path.split(separator: "/").last.map(String.init) ?? path
             places[host, default: []].append(Directory(
-                path: path, name: name, lastUsedMs: row.card.lastActivityMs))
+                path: path, name: name, lastUsedMs: row.card.phaseSinceMs))
         }
         taken = names
         worked = places
@@ -211,7 +211,7 @@ public final class NewAgentStore {
         guard ready, let machine else { return nil }
         return NewAgent(
             hostId: machine.bytes, kind: provider.kind, cwd: directory, name: chosenName,
-            model: nil)
+            effort: nil, mode: nil, model: nil, newWorktree: nil, permission: nil)
     }
 
     public func starts() {

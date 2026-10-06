@@ -25,8 +25,8 @@ use model::AgentKey;
 use tokio::task::JoinHandle;
 pub use ui_runtime::OpenError;
 use ui_runtime::{Fleet, Window};
-use ui_view::{FamilyHeader, FleetCard, FleetRow};
-use values::{AgentAct, Directories, Directory, NewAgent};
+use ui_view::{FamilyHeader, FleetCard, FleetView};
+use values::{AgentAct, Directories, Directory, NewAgent, ProviderSignIn};
 pub use values::{FleetChanges, HostView};
 use wire::{
     CreateAgentRequest, DeleteAgentRequest, DumpRequest, Kind, ListRepositoriesRequest,
@@ -128,10 +128,9 @@ impl AppRuntime {
         Ok(chat)
     }
 
-    /// The fleet as a list, home's sections one after another: families
-    /// under their roots, expanded where `expand` names the root's agent
-    /// id, each row with its second line.
-    pub fn fleet_rows(&self, expand: &[Vec<u8>]) -> Vec<FleetRow> {
+    /// Home's sections: families under their roots, expanded where
+    /// `expand` names the root's agent id, each row with its second line.
+    pub fn fleet_view(&self, expand: &[Vec<u8>]) -> FleetView {
         let expand = expand.iter().cloned().collect();
         let now_ms = self.clock.now_ms();
         // Each session is read on its own, before the fleet is.
@@ -148,10 +147,6 @@ impl AppRuntime {
             })
             .collect();
         ui_view::fleet_view(&self.fleet.state(), &lines, &expand, &|_| true)
-            .sections
-            .into_iter()
-            .flat_map(|section| section.rows)
-            .collect()
     }
 
     pub fn fleet_card(&self, agent: &AgentKey) -> Option<FleetCard> {
@@ -181,6 +176,14 @@ impl AppRuntime {
                 via: host.via(),
                 signed_in: host.signed_in,
                 current: host.current.unwrap_or(false),
+                providers: host
+                    .providers
+                    .iter()
+                    .map(|offer| ProviderSignIn {
+                        provider: offer.provider.clone(),
+                        signed_in: offer.signed_in,
+                    })
+                    .collect(),
             })
             .collect();
         hosts.sort_by(|a, b| (!a.local, &a.name).cmp(&(!b.local, &b.name)));
@@ -201,12 +204,17 @@ impl AppRuntime {
             Kind::Codex => Some(create_agent_request::Config::Codex(
                 wire::CodexCreateConfig {
                     model: agent.model.clone(),
+                    effort: agent.effort.clone(),
+                    permission: agent.permission.clone(),
+                    mode: agent.mode.clone(),
                     ..Default::default()
                 },
             )),
             Kind::ClaudeSdk | Kind::ClaudePty => Some(create_agent_request::Config::Claude(
                 wire::ClaudeCreateConfig {
                     model: agent.model.clone(),
+                    effort: agent.effort.clone(),
+                    permission: agent.permission.clone(),
                     ..Default::default()
                 },
             )),
@@ -221,10 +229,30 @@ impl AppRuntime {
                 cwd: agent.cwd.clone(),
                 kind: agent.kind as i32,
                 config,
+                new_worktree: agent.new_worktree,
                 ..Default::default()
             })
             .await?;
         Ok(ui_state::agent_key(&created))
+    }
+
+    /// What a provider, "claude" or "codex", offers on a host with no agent
+    /// running: the models, efforts, permissions and modes a new agent there
+    /// picks from. Whether the provider is signed in there is on the host's
+    /// [`HostView`].
+    pub async fn host_catalogue(
+        &self,
+        host_id: &[u8],
+        provider: &str,
+    ) -> Result<wire::Catalogue, RpcError> {
+        self.client
+            .get_catalogue(wire::GetCatalogueRequest {
+                of: Some(wire::get_catalogue_request::Of::Host(wire::HostProvider {
+                    host_id: host_id.to_vec(),
+                    provider: provider.to_owned(),
+                })),
+            })
+            .await
     }
 
     /// Where a host offers to start an agent, filtered by `query` and at

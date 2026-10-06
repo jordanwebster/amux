@@ -96,9 +96,9 @@ public final class Chat: ChatSource, @unchecked Sendable {
         }
     }
 
-    public func strip() -> Strip? {
+    public func overview() -> Overview? {
         call(nil) { live in
-            Bridge.read(Strip.self, amux_session_strip(live))
+            Bridge.read(Overview.self, amux_session_overview(live))
         }
     }
 
@@ -147,17 +147,27 @@ public final class Chat: ChatSource, @unchecked Sendable {
         }
     }
 
-    /// Answers a question card with one pick per question.
-    public func answer(_ ask: String, picks: [Pick], note: String? = nil) async -> ActOutcome? {
+    /// Answers a question card with one response per question, in order.
+    public func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome? {
         await value(ActOutcome.self) { live, callback, context in
             ask.withCString { ask in
-                Bridge.json(picks).withCString { picks in
-                    if let note {
-                        note.withCString {
-                            amux_session_answer_questions(live, ask, picks, $0, callback, context)
-                        }
-                    } else {
-                        amux_session_answer_questions(live, ask, picks, nil, callback, context)
+                Bridge.json(responses).withCString { responses in
+                    amux_session_answer_questions(live, ask, responses, callback, context)
+                }
+            }
+        }
+    }
+
+    /// Replies to a question card in the person's own words instead of
+    /// answering, with what they had answered so far.
+    public func replyInstead(
+        _ ask: String, text: String, soFar: [QuestionResponse]
+    ) async -> ActOutcome? {
+        await value(ActOutcome.self) { live, callback, context in
+            ask.withCString { ask in
+                text.withCString { text in
+                    Bridge.json(soFar).withCString { soFar in
+                        amux_session_reply_instead(live, ask, text, soFar, callback, context)
                     }
                 }
             }
@@ -232,10 +242,15 @@ public final class Chat: ChatSource, @unchecked Sendable {
         }
     }
 
-    /// The agent's working-tree diff as its host froze it, with its patch.
-    public func review() async -> Result<FrozenReview, RuntimeFailure> {
+    /// The agent's diff for `comparison` as its host froze it, with its
+    /// patch.
+    public func review(
+        _ comparison: Comparison
+    ) async -> Result<FrozenReview, RuntimeFailure> {
         await act(FrozenReview.self) { live, callback, context in
-            amux_session_review(live, callback, context)
+            Bridge.json(comparison).withCString {
+                amux_session_review(live, $0, callback, context)
+            }
         }
     }
 

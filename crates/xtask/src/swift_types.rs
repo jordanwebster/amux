@@ -73,6 +73,7 @@ pub fn definitions() -> Map<String, Value> {
         app_runtime::values::ProfileView,
         app_runtime::values::Bearer,
         app_runtime::values::NewAgent,
+        wire::Catalogue,
         app_runtime::values::Directories,
         app_runtime::values::AgentAct,
     );

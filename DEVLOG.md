@@ -1,3 +1,21 @@
+2026-10-06 — **The phone's bridge carries the new facts, and the app builds again.**
+The Swift app had not compiled since the fleet row changed shape. The bridge
+now hands the phone what its screens need: home's sections as one
+`FleetView` (`amux_fleet_view` replaces the flat row list), whether each
+provider is signed in on a host (`HostView.providers`), what a provider
+offers on a host with no agent running (`amux_profile_host_catalogue`, the
+catalogue's wire types now carrying schemas for the Swift mirrors), a new
+agent's effort, permission, mode and own worktree (`NewAgent`), the frame's
+branch and change totals for either comparison (`ChatFrame.git`), a review
+for a chosen comparison, the open-run upkeep a folding list needs
+(`amux_session_toggle_run`, `amux_session_keep_open_runs`) and closing every
+stream as the app leaves the foreground (`amux_profile_set_foreground`). The
+Swift app moved onto the regenerated values with the smallest changes that
+keep each screen as it was: the overview replaces the old strip, the settings
+card lists permissions from the catalogue, decisions say what was granted,
+question answers go one response per question, and the catalogue's samples
+use the new shapes. Drawing the new facts is the phone's next work.
+
 2026-10-06 — **An opened run stays open while the window's edges move.**
 A run was named by its oldest held step, and clients kept open runs by that
 name. Both edges of the window move a run's oldest step: a page of older

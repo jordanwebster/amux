@@ -1312,6 +1312,36 @@ public enum CardState: Codable, Hashable, Sendable {
     }
 }
 
+/// What an agent offers to pick from, not what is picked: that stays in the
+/// snapshot. Fetched by hash; identical catalogues share one.
+public struct Catalogue: Codable, Hashable, Sendable {
+    /// The SHA-256 of this message encoded with `hash` empty, which is how the
+    /// agent stores it.
+    public var hash: [UInt8]
+    public var models: [OfferedModel]
+    public var commands: [OfferedCommand]
+    /// How much the agent may do without asking.
+    public var permissions: [OfferedPermission]
+    /// How it works; empty for Claude.
+    public var modes: [OfferedMode]
+
+    public init(hash: [UInt8], models: [OfferedModel], commands: [OfferedCommand], permissions: [OfferedPermission], modes: [OfferedMode]) {
+        self.hash = hash
+        self.models = models
+        self.commands = commands
+        self.permissions = permissions
+        self.modes = modes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case hash
+        case models
+        case commands
+        case permissions
+        case modes
+    }
+}
+
 public struct ChangeTotals: Codable, Hashable, Sendable {
     public var files: UInt32
     public var added: UInt32
@@ -1424,6 +1454,9 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     public var effort: String?
     /// The runtime no longer serves this chat: the agent is gone.
     public var ended: String?
+    /// The agent's branch and change totals as of its last turn end; None
+    /// outside a repository.
+    public var git: GitView?
     public var mode: String?
     /// The agent's model, effort in force, permission and mode, as it
     /// reports them (values from its catalogue; see the settings view).
@@ -1433,7 +1466,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     public var signIn: SignInView?
     public var waiting: Waiting?
 
-    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], outbox: [OutboxRow], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, mode: String?, model: String?, permission: String?, signIn: SignInView?, waiting: Waiting?) {
+    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], outbox: [OutboxRow], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, git: GitView?, mode: String?, model: String?, permission: String?, signIn: SignInView?, waiting: Waiting?) {
         self.agent = agent
         self.name = name
         self.kind = kind
@@ -1449,6 +1482,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         self.context = context
         self.effort = effort
         self.ended = ended
+        self.git = git
         self.mode = mode
         self.model = model
         self.permission = permission
@@ -1472,6 +1506,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         case context
         case effort
         case ended
+        case git
         case mode
         case model
         case permission
@@ -2493,6 +2528,31 @@ public struct FrozenReview: Codable, Hashable, Sendable {
     }
 }
 
+/// Where an agent works in its repository, and what it has changed there:
+/// the header's totals for either comparison.
+public struct GitView: Codable, Hashable, Sendable {
+    /// What the branch is compared against on it; None when not known.
+    public var baseBranch: String?
+    /// None on a detached head.
+    public var branch: String?
+    public var onBranch: ChangeTotals?
+    public var uncommitted: ChangeTotals?
+
+    public init(baseBranch: String?, branch: String?, onBranch: ChangeTotals?, uncommitted: ChangeTotals?) {
+        self.baseBranch = baseBranch
+        self.branch = branch
+        self.onBranch = onBranch
+        self.uncommitted = uncommitted
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case baseBranch = "base_branch"
+        case branch
+        case onBranch = "on_branch"
+        case uncommitted
+    }
+}
+
 /// What an access grant granted, and for how long.
 public struct Granted: Codable, Hashable, Sendable {
     public var read: [String]
@@ -2541,6 +2601,9 @@ public struct HostView: Codable, Hashable, Sendable {
     /// on a live stream: what the fleet shows for it is what it lists now.
     /// Always true for this device.
     public var current: Bool
+    /// The providers the host has said it can run, and whether each is
+    /// signed in there.
+    public var providers: [ProviderSignIn]
     public var lastDialError: String?
     public var platform: String?
     /// For this device: whether it is signed in to the account its profile
@@ -2548,7 +2611,7 @@ public struct HostView: Codable, Hashable, Sendable {
     public var signedIn: Bool?
     public var version: String?
 
-    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, presence: Presence, away: Away, addrs: [String], via: HostVia, current: Bool, lastDialError: String?, platform: String?, signedIn: Bool?, version: String?) {
+    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, presence: Presence, away: Away, addrs: [String], via: HostVia, current: Bool, providers: [ProviderSignIn], lastDialError: String?, platform: String?, signedIn: Bool?, version: String?) {
         self.hostId = hostId
         self.name = name
         self.local = local
@@ -2559,6 +2622,7 @@ public struct HostView: Codable, Hashable, Sendable {
         self.addrs = addrs
         self.via = via
         self.current = current
+        self.providers = providers
         self.lastDialError = lastDialError
         self.platform = platform
         self.signedIn = signedIn
@@ -2576,6 +2640,7 @@ public struct HostView: Codable, Hashable, Sendable {
         case addrs
         case via
         case current
+        case providers
         case lastDialError = "last_dial_error"
         case platform
         case signedIn = "signed_in"
@@ -2807,15 +2872,26 @@ public struct NewAgent: Codable, Hashable, Sendable {
     public var kind: Kind
     public var cwd: String
     public var name: String
-    /// The provider's model; the host's default when absent.
+    public var effort: String?
+    public var mode: String?
+    /// The provider's model, effort, permission and mode, by their values
+    /// in the host's catalogue; the host's default for each one absent. Only
+    /// Codex takes a mode.
     public var model: String?
+    /// Start it in a worktree of its own, made from the folder's repository.
+    public var newWorktree: Bool?
+    public var permission: String?
 
-    public init(hostId: [UInt8], kind: Kind, cwd: String, name: String, model: String?) {
+    public init(hostId: [UInt8], kind: Kind, cwd: String, name: String, effort: String?, mode: String?, model: String?, newWorktree: Bool?, permission: String?) {
         self.hostId = hostId
         self.kind = kind
         self.cwd = cwd
         self.name = name
+        self.effort = effort
+        self.mode = mode
         self.model = model
+        self.newWorktree = newWorktree
+        self.permission = permission
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2823,7 +2899,126 @@ public struct NewAgent: Codable, Hashable, Sendable {
         case kind
         case cwd
         case name
+        case effort
+        case mode
         case model
+        case newWorktree = "new_worktree"
+        case permission
+    }
+}
+
+/// A command or skill the provider offers this session, typed as a prompt
+/// that starts with a slash.
+public struct OfferedCommand: Codable, Hashable, Sendable {
+    public var name: String
+    public var description: String
+    /// What the command takes after its name, in the provider's words.
+    public var argumentHint: String
+    /// Where it comes from: a plugin's namespace, or the provider's scope word
+    /// (user, repo, system). Empty when the provider does not say.
+    public var source: String
+
+    public init(name: String, description: String, argumentHint: String, source: String) {
+        self.name = name
+        self.description = description
+        self.argumentHint = argumentHint
+        self.source = source
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case description
+        case argumentHint = "argument_hint"
+        case source
+    }
+}
+
+public struct OfferedMode: Codable, Hashable, Sendable {
+    public var value: String
+    public var displayName: String
+    public var normal: Bool
+    public var settable: Bool
+
+    public init(value: String, displayName: String, normal: Bool, settable: Bool) {
+        self.value = value
+        self.displayName = displayName
+        self.normal = normal
+        self.settable = settable
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value
+        case displayName = "display_name"
+        case normal
+        case settable
+    }
+}
+
+/// A model the provider offers this session, as the provider lists it.
+public struct OfferedModel: Codable, Hashable, Sendable {
+    /// What a model input names.
+    public var value: String
+    public var displayName: String
+    public var description: String
+    /// The effort levels the model takes, in the provider's order; empty when
+    /// it takes none.
+    public var efforts: [String]
+    /// The model id an alias stands for, as the agent reports its model;
+    /// empty when the provider does not say.
+    public var resolvedModel: String
+    /// The effort the model runs at when none is chosen, when the provider
+    /// says.
+    public var defaultEffort: String?
+
+    public init(value: String, displayName: String, description: String, efforts: [String], resolvedModel: String, defaultEffort: String?) {
+        self.value = value
+        self.displayName = displayName
+        self.description = description
+        self.efforts = efforts
+        self.resolvedModel = resolvedModel
+        self.defaultEffort = defaultEffort
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value
+        case displayName = "display_name"
+        case description
+        case efforts
+        case resolvedModel = "resolved_model"
+        case defaultEffort = "default_effort"
+    }
+}
+
+public struct OfferedPermission: Codable, Hashable, Sendable {
+    /// What SetPermission names and the snapshot reports.
+    public var value: String
+    /// Written by the interpreter; no provider supplies one.
+    public var displayName: String
+    /// The provider's ordinary one; a client may leave it unsaid.
+    public var normal: Bool
+    /// Acts without asking; clients warn.
+    public var neverAsks: Bool
+    /// False: only reachable in the provider's own interface.
+    public var settable: Bool
+    /// Empty: every model. Otherwise only these.
+    public var models: [String]
+
+    public init(value: String, displayName: String, normal: Bool, neverAsks: Bool, settable: Bool, models: [String]) {
+        self.value = value
+        self.displayName = displayName
+        self.normal = normal
+        self.neverAsks = neverAsks
+        self.settable = settable
+        self.models = models
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value
+        case displayName = "display_name"
+        case normal
+        case neverAsks = "never_asks"
+        case settable
+        case models
     }
 }
 
@@ -3398,6 +3593,22 @@ public struct ProfileView: Codable, Hashable, Sendable {
         case label
         case subject
         case account
+    }
+}
+
+public struct ProviderSignIn: Codable, Hashable, Sendable {
+    /// "claude" or "codex".
+    public var provider: String
+    public var signedIn: Bool
+
+    public init(provider: String, signedIn: Bool) {
+        self.provider = provider
+        self.signedIn = signedIn
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case provider
+        case signedIn = "signed_in"
     }
 }
 

@@ -795,9 +795,9 @@ impl Session {
         crate::review::changed_files(self.inner.client.as_ref(), &self.inner.agent_id, base).await
     }
 
-    /// The agent's working-tree diff and its patch, for a review page.
-    pub async fn working_tree_review(&self) -> Result<(wire::Diff, String), RpcError> {
-        crate::review::working_tree_review(self.inner.client.as_ref(), &self.inner.agent_id).await
+    /// The agent's diff against `base` and its patch, for a review page.
+    pub async fn review(&self, base: wire::DiffBase) -> Result<(wire::Diff, String), RpcError> {
+        crate::review::review(self.inner.client.as_ref(), &self.inner.agent_id, base).await
     }
 
     /// Stores bytes to attach to a prompt.

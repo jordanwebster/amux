@@ -76,8 +76,10 @@ the chats that open for every other profile and in the background.
 
 Reads return at once: `amux_session_keys`, `amux_session_rows_for`,
 `amux_session_ask_card`, `amux_session_overview`, `amux_session_settings`,
-`amux_session_frame`,
-`amux_fleet_rows`, `amux_fleet_card`, `amux_fleet_family`, `amux_fleet_hosts`,
+`amux_session_frame`, `amux_session_toggle_run` and
+`amux_session_keep_open_runs` (a folding view's open set, opened or closed on
+one run, and re-held on each open run's newest step before rows are read),
+`amux_fleet_view` (home's sections), `amux_fleet_card`, `amux_fleet_family`, `amux_fleet_hosts`,
 `amux_runtime_profiles`, `amux_runtime_source_policy_listed`.
 
 Rows are handed out by item key, which never moves. The host's id sequence
@@ -114,6 +116,9 @@ the settings view), `amux_session_withdraw`,
 `amux_session_resume` (the exited composer's draft), `amux_session_page_older`,
 `amux_session_put_blob`, `amux_session_open_overview` (the changed files for
 a `Comparison`, fetched without a patch as the overview opens),
+`amux_session_review` (the diff for a `Comparison` and its patch, frozen for
+the review page), `amux_profile_host_catalogue` (what a provider offers on a
+host with no agent running, for the new-agent screen),
 `amux_profile_begin_pair` (a PIN or a pairing
 link: reaches and authenticates the machine, answering its name and
 fingerprint), `amux_profile_confirm_pair` and `amux_profile_abandon_pair`
@@ -122,7 +127,9 @@ device's identity in the profile and the machines it trusts),
 `amux_profile_account` (the binding and the relay link),
 `amux_profile_create_agent`, `amux_profile_directories`,
 `amux_profile_agent_act` (rename, stop, delete) and `amux_profile_dump`.
-`amux_session_discard` forgets a not-confirmed input at once.
+`amux_session_discard` forgets a not-confirmed input at once, and
+`amux_profile_set_foreground(profile, foreground)` closes every agent's
+stream as the app leaves the foreground and reopens them on its return.
 
 ## Ownership
 

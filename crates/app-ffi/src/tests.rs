@@ -366,8 +366,10 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     let agent_c = c(&agent.to_string());
     phone.until(0, std::ptr::null(), "the desk's agent", || {
         // SAFETY: the runtime is live.
-        let rows = take(unsafe { amux_fleet_rows(phone.profile, std::ptr::null()) });
-        rows.as_array().is_some_and(|rows| rows.len() == 1)
+        let view = take(unsafe { amux_fleet_view(phone.profile, std::ptr::null()) });
+        view["sections"][0]["rows"]
+            .as_array()
+            .is_some_and(|rows| rows.len() == 1)
     });
     // SAFETY: the runtime is live; the string lives for the call.
     let card_json = take(unsafe { amux_fleet_card(phone.profile, agent_c.as_ptr()) });
@@ -601,8 +603,10 @@ fn no_wake_reaches_a_closed_profile_or_chat_while_its_acts_are_in_flight() {
     .to_string());
     phone.until(0, std::ptr::null(), "the desk's agent", || {
         // SAFETY: the runtime is live.
-        let rows = take(unsafe { amux_fleet_rows(phone.profile, std::ptr::null()) });
-        rows.as_array().is_some_and(|rows| rows.len() == 1)
+        let view = take(unsafe { amux_fleet_view(phone.profile, std::ptr::null()) });
+        view["sections"][0]["rows"]
+            .as_array()
+            .is_some_and(|rows| rows.len() == 1)
     });
 
     // A second handle on the same profile, the one to close, with a wake
@@ -848,7 +852,22 @@ fn malformed_calls_are_refused_rather_than_crashing() {
     // SAFETY: null chats and runtimes read as nothing.
     assert!(unsafe { amux_session_keys(std::ptr::null()) }.is_null());
     // SAFETY: as above.
-    assert!(unsafe { amux_fleet_rows(std::ptr::null(), std::ptr::null()) }.is_null());
+    assert!(unsafe { amux_fleet_view(std::ptr::null(), std::ptr::null()) }.is_null());
+    // SAFETY: as above.
+    assert!(unsafe { amux_session_keep_open_runs(std::ptr::null(), std::ptr::null()) }.is_null());
+    // SAFETY: a null profile is ignored.
+    unsafe { amux_profile_set_foreground(std::ptr::null(), false) };
+    // SAFETY: the runtime is live; the strings live for the call.
+    unsafe {
+        amux_profile_host_catalogue(
+            phone.profile,
+            not_json.as_ptr(),
+            c"claude".as_ptr(),
+            on_result,
+            phone.context(),
+        )
+    };
+    assert!(phone.result()["Err"].is_string());
     // SAFETY: the runtime is live; the string lives for the call.
     unsafe {
         amux_profile_begin_pair(phone.profile, not_json.as_ptr(), on_result, phone.context())

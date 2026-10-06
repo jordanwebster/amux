@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use app_runtime::values::{
-    ActOutcome, AgentAct, ChatChanges, Draft, PageOutcome, RowOptions, ToolRowsOption,
+    ActOutcome, AgentAct, ChatChanges, Draft, NewAgent, PageOutcome, RowOptions, ToolRowsOption,
 };
 use app_runtime::{AppRuntime, Chat, Wake};
 use client::{Client, InProcess, SystemClock};
@@ -190,9 +190,11 @@ fn says(chat: &Chat, wanted: &str) -> bool {
 async fn changes_wait_for_the_hosts_turn_and_rows_are_read_by_key() {
     let net = Net::start(topology()).await.unwrap();
     let (runtime, mut host) = open(&net).await;
-    let fleet = runtime.fleet_rows(&[]);
-    assert_eq!(fleet.len(), 1, "{fleet:?}");
-    assert_eq!(fleet[0].card.name, "worker");
+    let fleet = runtime.fleet_view(&[]);
+    assert_eq!(fleet.sections.len(), 1, "{fleet:?}");
+    let rows = &fleet.sections[0].rows;
+    assert_eq!(rows.len(), 1, "{fleet:?}");
+    assert_eq!(rows[0].card.name, "worker");
     let hosts = runtime.hosts();
     assert!(
         hosts.iter().any(|host| host.local && host.name == "desk"),
@@ -551,6 +553,116 @@ async fn opening_the_overview_lists_the_changed_files_by_folder() {
         chat.overview().changes.map(|changes| changes.totals),
         Some(changes.totals),
         "the overview keeps what it fetched"
+    );
+    until(&mut host, &chat, "the agent's branch", |chat| {
+        chat.frame()
+            .git
+            .is_some_and(|git| git.branch.as_deref() == Some("main"))
+    })
+    .await;
+    let review = chat.review(Comparison::Uncommitted).await.unwrap();
+    assert!(review.patch.contains("README.md"), "{}", review.patch);
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_catches_up_after_the_app_returns_to_the_foreground() {
+    let net = Net::start(topology()).await.unwrap();
+    let (runtime, mut host) = open(&net).await;
+    let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
+    until(&mut host, &chat, "the first turn", |chat| {
+        chat.frame().caught_up && says(chat, "turn one")
+    })
+    .await;
+    runtime.set_foreground(false);
+    runtime.set_foreground(true);
+    chat.send(&Draft {
+        text: "please run it".into(),
+        attachments: Vec::new(),
+    })
+    .await;
+    until(&mut host, &chat, "the ask after the return", |chat| {
+        chat.ask_card().is_some()
+    })
+    .await;
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_agent_starts_from_the_hosts_catalogue_in_a_worktree_of_its_own() {
+    let topology = Topology::new().host("desk").agent(
+        AgentDecl::new("worker", "desk")
+            .kind(FakeKind::ClaudeSdk)
+            .cwd("project")
+            .branch("main")
+            .steps(vec![text("turn one"), Step::TurnEnd])
+            .prompt("go"),
+    );
+    let net = Net::start(topology).await.unwrap();
+    let (runtime, mut host) = open(&net).await;
+    let desk = net.host("desk").unwrap().host_id.as_bytes().to_vec();
+    let catalogue = runtime.host_catalogue(&desk, "claude").await.unwrap();
+    assert!(!catalogue.models.is_empty(), "{catalogue:?}");
+    let plan = catalogue
+        .permissions
+        .iter()
+        .find(|permission| permission.value == "plan")
+        .expect("plan is offered");
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            let signed_in = runtime.hosts().into_iter().any(|host| {
+                host.host_id == desk
+                    && host
+                        .providers
+                        .iter()
+                        .any(|offer| offer.provider == "claude" && offer.signed_in)
+            });
+            if signed_in {
+                return;
+            }
+            host.next(Wake::Fleet).await;
+        }
+    })
+    .await
+    .expect("the desk says Claude is signed in there");
+    // A worktree branches from a commit.
+    let folder = net.host("desk").unwrap().work.join("project");
+    let committed = std::process::Command::new("git")
+        .args(["-c", "user.name=amux", "-c", "user.email=amux@example.com"])
+        .args(["commit", "--allow-empty", "--quiet", "-m", "start"])
+        .current_dir(&folder)
+        .status()
+        .unwrap();
+    assert!(committed.success());
+    let created = runtime
+        .create_agent(&NewAgent {
+            host_id: desk,
+            kind: wire::Kind::ClaudeSdk,
+            cwd: folder.display().to_string(),
+            name: "fresh".into(),
+            model: None,
+            effort: None,
+            permission: Some(plan.value.clone()),
+            mode: None,
+            new_worktree: true,
+        })
+        .await
+        .unwrap();
+    let card = tokio::time::timeout(PATIENCE, async {
+        loop {
+            if let Some(card) = runtime.fleet_card(&created) {
+                return card;
+            }
+            host.next(Wake::Fleet).await;
+        }
+    })
+    .await
+    .expect("the new agent reaches the fleet");
+    assert_eq!(card.name, "fresh");
+    assert_ne!(
+        std::path::Path::new(&card.cwd),
+        folder,
+        "it works in a worktree of its own"
     );
     net.shutdown().await.unwrap();
 }

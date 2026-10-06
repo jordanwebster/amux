@@ -15,13 +15,13 @@ public protocol ChatSource: AnyObject, Sendable {
     func follow(_ following: Bool)
     func rows(for keys: [String], options: RowOptions?) -> [Row]
     func askCard() -> AskCard?
-    func strip() -> Strip?
+    func overview() -> Overview?
     func settings() -> SettingsView?
     func frame() -> ChatFrame?
     func takeChanges() -> ChatChanges
     func send(_ draft: Draft) async -> Result<SendOutcome, RuntimeFailure>
     func answer(_ ask: String, choice: Int, note: String?) async -> ActOutcome?
-    func answer(_ ask: String, picks: [Pick], note: String?) async -> ActOutcome?
+    func answer(_ ask: String, responses: [QuestionResponse]) async -> ActOutcome?
     func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome?
     func withdraw(_ input: [UInt8]) async -> ActOutcome?
     /// A queued or sent prompt as the draft it came from, attachments whole.
@@ -35,7 +35,7 @@ public protocol ChatSource: AnyObject, Sendable {
     func pageOlder(_ rows: UInt32) async -> PageOutcome?
     func putBlob(_ data: Data, name: String, mime: String) async -> Result<BlobRef, RuntimeFailure>
     func blob(_ hash: [UInt8]) -> Data?
-    func review() async -> Result<FrozenReview, RuntimeFailure>
+    func review(_ comparison: Comparison) async -> Result<FrozenReview, RuntimeFailure>
 }
 
 /// An agent's uncommitted changes as the chat header counts them.
@@ -137,7 +137,9 @@ public final class ChatModel {
     /// not sent, kept like the draft so leaving the chat loses none of it,
     /// until that ask closes.
     @ObservationIgnored private var questionKept: (ask: String, draft: QuestionDraft)?
-    public private(set) var strip: Strip?
+    /// The tasks, background jobs, failed tool servers and usage near a
+    /// limit around the chat.
+    public private(set) var overview: Overview?
     /// What the agent offers to change, the current values marked.
     public private(set) var settings: SettingsView?
     /// Rows the reader opened: a run's members, a subagent's steps, or a
@@ -246,7 +248,7 @@ public final class ChatModel {
     }
 
     public var options: RowOptions {
-        RowOptions(tools: .collapseRuns(expanded: expanded.sorted()))
+        RowOptions(tools: .collapse(open: expanded.sorted()))
     }
 
     /// Opens or closes a row: its run, its steps, or its detail. A run is
@@ -269,9 +271,9 @@ public final class ChatModel {
 
     /// The opened key that belongs to this run. A member's run attribute is
     /// read again whenever the run moves, so its newest key names the run.
-    private func openedBy(_ run: RunInfo?) -> String? {
+    private func openedBy(_ run: Run?) -> String? {
         guard let run else { return nil }
-        return expanded.first { cells[$0]?.row?.run?.newest == run.newest }
+        return expanded.first { cells[$0]?.row?.run?.last == run.last }
     }
 
     /// An attachment's bytes where this phone holds them; asking starts the
@@ -381,8 +383,8 @@ public final class ChatModel {
         let ask = source.askCard()
         if self.ask != ask { self.ask = ask }
         if let kept = questionKept?.ask, kept != ask?.key { questionKept = nil }
-        let strip = source.strip()
-        if self.strip != strip { self.strip = strip }
+        let overview = source.overview()
+        if self.overview != overview { self.overview = overview }
         let settings = source.settings()
         if self.settings != settings { self.settings = settings }
         if Self.changesMayHaveMoved(from: before, to: frame) { refreshChanges() }
@@ -399,7 +401,7 @@ public final class ChatModel {
     /// Asks the agent's machine for its working-tree diff again.
     public func refreshChanges() {
         Task { [weak self] in
-            guard let self, case .success(let review) = await self.source.review() else { return }
+            guard let self, case .success(let review) = await self.source.review(.uncommitted) else { return }
             let doc = ReviewModel.document(review, comments: [])
             self.changes = doc.files.isEmpty
                 ? nil
@@ -458,9 +460,10 @@ public final class ChatModel {
     /// run's own length up to a cap, so a long run arrives in a few pages.
     public var pageSize: UInt32 {
         let top = ids.lazy.compactMap { self.cell(for: $0).row }.first { self.shows($0) }
-        guard let run = top?.run, run.openBelow, run.isSummary, !isExpanded(run.newest)
+        guard let top, let run = top.run, run.openBelow, top.id == run.last,
+            !isExpanded(run.last)
         else { return Self.pageRows }
-        return min(max(run.len, Self.pageRows), Self.largestPage)
+        return min(max(run.steps, Self.pageRows), Self.largestPage)
     }
 
     // MARK: - Writing
@@ -761,7 +764,11 @@ public final class ChatModel {
 
     public func answer(picks: [Pick], note: String? = nil) {
         guard let ask else { return }
-        act({ await $0.answer(ask.key, picks: picks, note: note) })
+        // One note for the whole card goes with its last question.
+        let responses = picks.enumerated().map { index, pick in
+            QuestionResponse(pick: pick, note: index == picks.count - 1 ? note : nil)
+        }
+        act({ await $0.answer(ask.key, responses: responses) })
     }
 
     public func submit(choice: Int, content: String) {

@@ -38,10 +38,10 @@ public struct ChatRowView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let run = row.run, run.isSummary, !expanded {
+        if let run = row.run, run.folds(row), !expanded {
             GridRow(
                 kind: "run", glyph: "magnifyingglass", rail: rail, verb: ChatWords.run(run),
-                subject: run.anchor, truncation: .head, opens: true, open: false, toggle: toggle)
+                subject: Self.anchor(row), truncation: .head, opens: true, open: false, toggle: toggle)
         } else {
             kindView
         }
@@ -93,10 +93,10 @@ public struct ChatRowView: View {
                 kind: "explore", glyph: glyph(state, "magnifyingglass"), accented: accented(state),
                 rail: rail, verb: ChatWords.explore(verb), subject: subject,
                 meta: RowMeta([ChatWords.meta([ChatWords.state(state) ?? ""], row, note: false),
-                       row.run.map { expanded && $0.isSummary ? ChatWords.run($0) : "" } ?? ""]
+                       row.run.map { expanded && $0.folds(row) ? ChatWords.run($0) : "" } ?? ""]
                     .filter { !$0.isEmpty }.joined(separator: " · ")),
                 truncation: .head, quote: denialNote,
-                opens: row.run?.isSummary == true, open: expanded, toggle: toggle)
+                opens: row.run?.folds(row) == true, open: expanded, toggle: toggle)
         case .subagent(let description, let running, let toolCount, let lastTool, let answer, let durationMs):
             GridRow(
                 kind: "subagent", glyph: "arrow.triangle.branch", rail: rail,
@@ -212,6 +212,17 @@ public struct ChatRowView: View {
         }
     }
 
+    /// What a folded run's line names: its newest step's subject.
+    private static func anchor(_ row: Row) -> String {
+        switch row.kind {
+        case .explore(_, let subject, _): subject
+        case .command(let command, _, _, _, _, _, _): ChatWords.firstLine(command)
+        case .toolCall(let server, let tool, _, _, _): server.isEmpty ? tool : "\(server) · \(tool)"
+        case .fileChange(let files, _): files.first?.path ?? ""
+        default: ""
+        }
+    }
+
     /// An edit is its path and its counts, as the diff names it; the other
     /// changes say what happened first.
     private static func words(_ file: FileRow) -> (glyph: String, verb: String, subject: String, meta: RowMeta) {
@@ -225,6 +236,9 @@ public struct ChatRowView: View {
             ("trash", String(localized: "Deleted"), file.path, RowMeta())
         case .moved(let to):
             ("arrow.right", String(localized: "Moved"), "\(file.path) → \(to)", RowMeta())
+        case .writing(let lines):
+            ("square.and.pencil", String(localized: "Writing"), file.path,
+             RowMeta(String(localized: "\(lines) lines")))
         }
     }
 
@@ -1050,10 +1064,9 @@ private struct AskRowView: View {
 
     var body: some View {
         switch ask {
-        case .question(let questions, let answers, let resolution, let note),
-             .questions(let questions, let answers, let resolution, let note):
-            questionsRow(questions, answers, resolution, note)
-        case .plan(let plan, let verdict, _, _, let note):
+        case .questions(let questions, let answers, _, let resolution, let reply):
+            questionsRow(questions, answers, resolution, reply)
+        case .plan(let plan, let verdict, _, let note):
             let sentBack = verdict == .sentBack && !(note ?? "").isEmpty
             GridRow(
                 kind: "plan", glyph: "list.bullet.rectangle", accented: verdict == .open,
@@ -1112,7 +1125,7 @@ private struct AskRowView: View {
     /// the picks as pills and a typed answer in quotes, then the note.
     private func questionsRow(
         _ questions: [QuestionView], _ answers: [AnswerView], _ resolution: Resolution,
-        _ note: String?
+        _ reply: String?
     ) -> some View {
         let single = questions.count == 1
         let pairs = Array(zip(questions, answers))
@@ -1121,10 +1134,10 @@ private struct AskRowView: View {
             rail: rail, verb: ChatWords.resolution(resolution, answered: String(localized: "Answered")),
             subject: single ? "" : String(localized: "\(questions.count) questions"),
             subjectFace: .text,
-            below: pairs.isEmpty && note == nil ? nil : AnyView(answerCard(pairs, note: note)))
+            below: pairs.isEmpty && reply == nil ? nil : AnyView(answerCard(pairs, reply: reply)))
     }
 
-    private func answerCard(_ pairs: [(QuestionView, AnswerView)], note: String?) -> some View {
+    private func answerCard(_ pairs: [(QuestionView, AnswerView)], reply: String?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(pairs.enumerated()), id: \.offset) { index, pair in
                 if index > 0 {
@@ -1136,10 +1149,15 @@ private struct AskRowView: View {
                         .foregroundStyle(design.inkMuted.color)
                         .fixedSize(horizontal: false, vertical: true)
                     answer(pair.1)
+                    if let note = pair.1.note, !note.isEmpty {
+                        Text(String(localized: "Note: \(ChatWords.firstLine(note))"))
+                            .designFont(.detail, design)
+                            .foregroundStyle(design.inkMuted.color)
+                    }
                 }
             }
-            if let note {
-                Text(String(localized: "Note: \(ChatWords.firstLine(note))"))
+            if let reply {
+                Text(String(localized: "Replied: \(ChatWords.firstLine(reply))"))
                     .designFont(.detail, design)
                     .foregroundStyle(design.inkMuted.color)
             }
@@ -1225,7 +1243,7 @@ private struct AskRowView: View {
     private func planVerb(_ verdict: PlanVerdict) -> String {
         switch verdict {
         case .open: String(localized: "Plan proposed")
-        case .approved: String(localized: "Plan approved")
+        case .approved, .approvedAcceptingEdits: String(localized: "Plan approved")
         case .sentBack: String(localized: "Plan sent back")
         case .dismissed: String(localized: "Plan dismissed")
         }
@@ -1234,4 +1252,10 @@ private struct AskRowView: View {
     private func planTitle(_ plan: String) -> String {
         ChatWords.firstLine(plan).drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
     }
+}
+
+extension Run {
+    /// Whether this row is where the run folds to one line: its newest
+    /// step, when it has more than one.
+    func folds(_ row: Row) -> Bool { row.id == last && steps > 1 }
 }

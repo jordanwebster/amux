@@ -291,14 +291,26 @@ public final class Profile: @unchecked Sendable {
 
     // MARK: - The fleet
 
-    /// Every family head, loudest first, with the members of the families
-    /// whose root agent ids `expanding` names under them.
-    public func fleetRows(expanding: [[UInt8]] = []) -> [FleetRow] {
-        call([]) { live in
+    /// Home's sections, each family placed by its loudest member, with the
+    /// members of the families whose root agent ids `expanding` names
+    /// under their heads.
+    public func fleetView(expanding: [[UInt8]] = []) -> FleetView {
+        call(FleetView(sections: [])) { live in
             Bridge.json(expanding).withCString {
-                Bridge.read([FleetRow].self, amux_fleet_rows(live, $0))
-            } ?? []
+                Bridge.read(FleetView.self, amux_fleet_view(live, $0))
+            } ?? FleetView(sections: [])
         }
+    }
+
+    /// Every row of home's sections, one section after another.
+    public func fleetRows(expanding: [[UInt8]] = []) -> [FleetRow] {
+        fleetView(expanding: expanding).sections.flatMap(\.rows)
+    }
+
+    /// The app leaving (false) or returning to (true) the foreground: every
+    /// agent's stream closes, or reopens and catches up.
+    public func setForeground(_ foreground: Bool) {
+        call(()) { live in amux_profile_set_foreground(live, foreground) }
     }
 
     public func fleetCard(_ agent: AgentKey) -> FleetCard? {
@@ -418,6 +430,21 @@ public final class Profile: @unchecked Sendable {
         await act(AgentKey.self) { live, callback, context in
             Bridge.json(agent).withCString {
                 amux_profile_create_agent(live, $0, callback, context)
+            }
+        }
+    }
+
+    /// What a provider, "claude" or "codex", offers on a host with no agent
+    /// running there: what a new agent picks its model, effort, permission
+    /// and mode from.
+    public func hostCatalogue(
+        on host: HostId, provider: String
+    ) async -> Result<Catalogue, RuntimeFailure> {
+        await act(Catalogue.self) { live, callback, context in
+            Bridge.json(host.bytes).withCString { host in
+                provider.withCString { provider in
+                    amux_profile_host_catalogue(live, host, provider, callback, context)
+                }
             }
         }
     }

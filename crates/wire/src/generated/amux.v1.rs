@@ -1023,6 +1023,7 @@ impl ::prost::Name for Unrecognized {
 }
 /// What an agent offers to pick from, not what is picked: that stays in the
 /// snapshot. Fetched by hash; identical catalogues share one.
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Catalogue {
     /// The SHA-256 of this message encoded with `hash` empty, which is how the
@@ -1050,6 +1051,7 @@ impl ::prost::Name for Catalogue {
         "/amux.v1.Catalogue".into()
     }
 }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferedPermission {
     /// What SetPermission names and the snapshot reports.
@@ -1081,6 +1083,7 @@ impl ::prost::Name for OfferedPermission {
         "/amux.v1.OfferedPermission".into()
     }
 }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferedMode {
     #[prost(string, tag = "1")]
@@ -1103,6 +1106,7 @@ impl ::prost::Name for OfferedMode {
     }
 }
 /// A model the provider offers this session, as the provider lists it.
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferedModel {
     /// What a model input names.
@@ -1137,6 +1141,7 @@ impl ::prost::Name for OfferedModel {
 }
 /// A command or skill the provider offers this session, typed as a prompt
 /// that starts with a slash.
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferedCommand {
     #[prost(string, tag = "1")]

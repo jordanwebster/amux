@@ -49,16 +49,18 @@ public enum ChatWords {
 
     /// "4 reads · 2 searches", with "+" when the run continues below what
     /// this phone holds.
-    public static func run(_ run: RunInfo) -> String {
+    public static func run(_ run: Run) -> String {
         let plus = run.openBelow ? "+" : ""
+        let reads = run.counts?.reads ?? 0
+        let searches = run.counts?.searches ?? 0
         var parts: [String] = []
-        if run.reads > 0 {
-            parts.append("\(run.reads)\(plus) " + plural(run.reads, "read", "reads"))
+        if reads > 0 {
+            parts.append("\(reads)\(plus) " + plural(reads, "read", "reads"))
         }
-        if run.searches > 0 {
-            parts.append("\(run.searches)\(plus) " + plural(run.searches, "search", "searches"))
+        if searches > 0 {
+            parts.append("\(searches)\(plus) " + plural(searches, "search", "searches"))
         }
-        let other = run.len > run.reads + run.searches ? run.len - run.reads - run.searches : 0
+        let other = run.steps > reads + searches ? run.steps - reads - searches : 0
         if other > 0 || parts.isEmpty { parts.append("\(other)\(plus) more") }
         return parts.joined(separator: " · ")
     }
@@ -122,7 +124,7 @@ public enum ChatWords {
             }
             parts.append(outcome)
         }
-        if let scope = decision.scope { parts.append(scope) }
+        if let granted = decision.granted { parts.append(grant(granted)) }
         if note, let words = decision.note { parts.append("“\(firstLine(words))”") }
         if decision.elsewhere { parts.append(String(localized: "in the terminal")) }
         return parts.joined(separator: " · ")
@@ -173,7 +175,31 @@ public enum ChatWords {
         case .answered: answered
         case .declined: String(localized: "Declined")
         case .cancelled: String(localized: "Cancelled")
+        case .replied: String(localized: "Replied instead")
         case .dismissed: String(localized: "Dismissed")
+        }
+    }
+
+    /// What an allowance granted beyond the one call.
+    public static func grant(_ grant: PermissionGrant) -> String {
+        switch grant {
+        case .claude(let subjects, let directories, _, let modeName, let savedTo):
+            if !subjects.isEmpty {
+                String(localized: "always \(subjects.joined(separator: ", ")) \(scope(savedTo))")
+            } else if !directories.isEmpty {
+                String(localized: "access to \(directories.joined(separator: ", ")) \(scope(savedTo))")
+            } else if !modeName.isEmpty {
+                String(localized: "switched to \(modeName)")
+            } else {
+                String(localized: "always \(scope(savedTo))")
+            }
+        case .session: String(localized: "for this session")
+        case .commandPrefix(let words):
+            String(localized: "commands starting with \(words.joined(separator: " "))")
+        case .networkHosts(let hosts):
+            hosts.isEmpty
+                ? String(localized: "network access")
+                : String(localized: "network access to \(hosts.joined(separator: ", "))")
         }
     }
 
@@ -390,17 +416,19 @@ public enum ChatWords {
 
     /// The facts strip's parts, in order; each only while it is true. The
     /// task list is not one of them: it docks as its own card.
-    public static func strip(_ strip: Strip) -> [(text: String, warn: Bool)] {
+    public static func strip(
+        context: ContextView?, overview: Overview
+    ) -> [(text: String, warn: Bool)] {
         var parts: [(String, Bool)] = []
-        if let context = strip.context, context.inStrip, let percent = context.percent {
+        if let context, context.nearFull, let percent = context.percent {
             parts.append((String(localized: "\(percent)% context"), true))
         }
-        if let background = strip.background {
-            parts.append((String(localized: "\(background) in background"), false))
+        if !overview.jobs.isEmpty {
+            parts.append((String(localized: "\(overview.jobs.count) in background"), false))
         }
-        if let usage = strip.usage, !usage.blocked {
+        if let usage = overview.usageNearLimit, !usage.blocked {
             let near = usage.windows
-                .map { "\($0.name) \(Int($0.usedPercent.rounded()))%" }
+                .map { "\(usageLabel($0.label)) \(Int($0.usedPercent.rounded()))%" }
                 .joined(separator: " · ")
             parts.append((
                 near.isEmpty
@@ -408,7 +436,7 @@ public enum ChatWords {
                     : String(localized: "Near the usage limit · \(near)"),
                 true))
         }
-        for server in strip.failedServers {
+        for server in overview.failedServers {
             parts.append((
                 server.needsAuth
                     ? String(localized: "\(server.name) needs sign-in")
@@ -456,14 +484,25 @@ public enum ChatWords {
 
     // MARK: - Settings
 
+    /// A usage window by which limit it is.
+    public static func usageLabel(_ label: UsageLabel) -> String {
+        switch label {
+        case .fiveHour: String(localized: "5-hour limit")
+        case .weekly(nil): String(localized: "Weekly limit")
+        case .weekly(let model?): String(localized: "\(model) weekly limit")
+        case .minutes(let minutes): String(localized: "\(minutes)-minute limit")
+        case .named(let name): String(localized: "\(name) limit")
+        }
+    }
+
     /// The model chip: the model by the name the settings card gives it,
-    /// then the effort, or the mode when the agent reports no effort. Nil
-    /// when nothing is reported.
-    public static func chip(_ strip: Strip, _ settings: SettingsView?) -> (model: String, detail: String)? {
-        let current = settings?.modes.first { $0.current }
-        let mode = current.map { self.mode($0.value) } ?? strip.mode
-        let detail = [strip.effort, mode].compactMap { $0 }.first { !$0.isEmpty } ?? ""
-        let model = settings?.models.first { $0.current }.map(self.model) ?? strip.model ?? ""
+    /// then the effort, or the permission when the agent reports no effort.
+    /// Nil when nothing is reported.
+    public static func chip(_ frame: ChatFrame, _ settings: SettingsView?) -> (model: String, detail: String)? {
+        let current = settings?.permissions.first { $0.current }
+        let permission = current.map(self.permission) ?? frame.permission
+        let detail = [frame.effort, permission].compactMap { $0 }.first { !$0.isEmpty } ?? ""
+        let model = settings?.models.first { $0.current }.map(self.model) ?? frame.model ?? ""
         if model.isEmpty && detail.isEmpty { return nil }
         return (model, detail)
     }
@@ -474,33 +513,17 @@ public enum ChatWords {
         choice.displayName.isEmpty ? choice.value : choice.displayName
     }
 
-    /// A permission mode by the name a person reads.
-    public static func mode(_ value: ModeValue) -> String {
-        switch value {
-        case .claude(let mode):
-            switch mode {
-            case "default": String(localized: "Default")
-            case "acceptEdits": String(localized: "Accept edits")
-            case "plan": String(localized: "Plan")
-            case "auto": String(localized: "Auto")
-            case "bypassPermissions": String(localized: "Bypass permissions")
-            default: mode
-            }
-        case .codex(_, _, let preset):
-            switch preset {
-            case "read-only"?: String(localized: "Read only")
-            case "default"?: String(localized: "Default")
-            case "full-access"?: String(localized: "Full access")
-            default: String(localized: "Custom")
-            }
-        }
+    /// A permission by the name its agent offers it under, else the value
+    /// the agent reports; a Codex permission no name fits is custom.
+    public static func permission(_ choice: PermissionChoice) -> String {
+        if !choice.displayName.isEmpty { return choice.displayName }
+        return choice.value.isEmpty ? String(localized: "Custom") : choice.value
     }
 
-    /// What the agent does under a mode without asking first.
-    public static func modeDetail(_ value: ModeValue) -> String {
-        switch value {
-        case .claude(let mode):
-            switch mode {
+    /// What the agent does under a permission without asking first.
+    public static func permissionDetail(_ value: String, kind: Kind?) -> String {
+        if kind != .codex {
+            return switch value {
             case "default": String(localized: "Asks before edits and commands")
             case "acceptEdits": String(localized: "Edits files without asking, asks before commands")
             case "plan": String(localized: "Plans without changing anything")
@@ -508,13 +531,13 @@ public enum ChatWords {
             case "bypassPermissions": String(localized: "Never asks")
             default: String(localized: "Reported by the agent")
             }
-        case .codex(_, _, let preset):
-            switch preset {
-            case "read-only"?: String(localized: "Reads files, asks before any change")
-            case "default"?: String(localized: "Works in its folder, asks to go further")
-            case "full-access"?: String(localized: "Never asks, with full access")
-            default: String(localized: "Reported by the agent")
-            }
+        }
+        return switch value {
+        case "read-only": String(localized: "Reads files, asks before any change")
+        case "default": String(localized: "Works in its folder, asks to go further")
+        case "auto": String(localized: "Works in its folder, a reviewer decides when to ask")
+        case "full-access": String(localized: "Never asks, with full access")
+        default: String(localized: "Reported by the agent")
         }
     }
 
@@ -530,12 +553,13 @@ public enum ChatWords {
             : String(localized: "\(command.name), from \(command.source)")
     }
 
-    /// The plus menu's permissions row: the current mode after the name.
+    /// The plus menu's permissions row: the current permission after the
+    /// name.
     public static func permissionsItem(_ settings: SettingsView) -> String {
-        guard let current = settings.modes.first(where: { $0.current }) else {
+        guard let current = settings.permissions.first(where: { $0.current }) else {
             return String(localized: "Permissions")
         }
-        return String(localized: "Permissions · \(mode(current.value))")
+        return String(localized: "Permissions · \(permission(current))")
     }
 
     public static func signIn(_ view: SignInView) -> String {
@@ -585,7 +609,7 @@ public enum ChatWords {
     public static func choice(_ choice: Choice) -> String {
         let label: String = switch choice.outcome {
         case .allowOnce: String(localized: "Allow once")
-        case .allowAlways(let subjects, let directories, let mode, let scope, let label):
+        case .allowAlways(let subjects, let directories, let mode, _, let scope, let label):
             if !subjects.isEmpty {
                 String(localized: "Always allow \(subjects.joined(separator: ", ")) \(Self.scope(scope))")
             } else if !directories.isEmpty {
@@ -631,7 +655,7 @@ public enum ChatWords {
     /// reaches.
     public static func scopeRow(_ choice: Choice) -> (title: String, detail: String?) {
         switch choice.outcome {
-        case .allowAlways(let subjects, let directories, let mode, let scope, let label):
+        case .allowAlways(let subjects, let directories, let mode, _, let scope, let label):
             if !subjects.isEmpty {
                 return (String(localized: "Always allow \(subjects.joined(separator: ", "))"), reach(scope))
             } else if !directories.isEmpty {

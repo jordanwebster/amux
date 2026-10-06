@@ -1296,6 +1296,60 @@ pub unsafe extern "C" fn amux_profile_agent_act(
     });
 }
 
+/// What a provider, "claude" or "codex", offers on a host, by its id as a
+/// JSON byte array, with no agent running there; the callback gets
+/// `{"Ok": Catalogue}` or `{"Err": ..}`.
+///
+/// # Safety
+/// `profile` is from `amux_profile_open`; the strings are NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_profile_host_catalogue(
+    profile: *const AmuxProfile,
+    host_id: *const c_char,
+    provider: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(profile) = (unsafe { live_profile(profile) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let host_id: Option<Vec<u8>> = unsafe { parse(host_id) };
+        // SAFETY: the caller's contract.
+        let provider = unsafe { text(provider) }.unwrap_or_default().to_owned();
+        let app = profile.app.clone();
+        profile.spawn(callback, context, async move {
+            let Some(host_id) = host_id else {
+                return Answered::Err("the host id is not a byte array".into());
+            };
+            Answered::from(app.host_catalogue(&host_id, &provider).await)
+        });
+    });
+}
+
+/// The app leaving (false) or returning to (true) the foreground: every
+/// agent's stream closes, or reopens. Open chats keep their rows and catch
+/// up when the streams reopen.
+///
+/// # Safety
+/// `profile` is from `amux_profile_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_profile_set_foreground(
+    profile: *const AmuxProfile,
+    foreground: bool,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(profile) = (unsafe { live_profile(profile) }) else {
+            return;
+        };
+        let _entered = profile.handle.enter();
+        profile.app.set_foreground(foreground);
+    });
+}
+
 // --- the fleet -------------------------------------------------------------
 
 /// # Safety
@@ -1313,21 +1367,21 @@ unsafe fn fleet_read<T: Serialize>(
     })
 }
 
-/// The fleet as `[FleetRow]`, expanded under the roots whose agent ids
-/// `expand` lists (a JSON array of byte arrays, or null).
+/// Home's `FleetView`: its sections, expanded under the roots whose agent
+/// ids `expand` lists (a JSON array of byte arrays, or null).
 ///
 /// # Safety
 /// `profile` is from `amux_profile_open`; `expand` is null or a
 /// NUL-terminated string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_fleet_rows(
+pub unsafe extern "C" fn amux_fleet_view(
     profile: *const AmuxProfile,
     expand: *const c_char,
 ) -> *mut c_char {
     // SAFETY: the caller's contract.
     let expand: Vec<Vec<u8>> = unsafe { parse(expand) }.unwrap_or_default();
     // SAFETY: the caller's contract.
-    unsafe { fleet_read(profile, |app| app.fleet_rows(&expand)) }
+    unsafe { fleet_read(profile, |app| app.fleet_view(&expand)) }
 }
 
 /// One agent's `FleetCard`, or null JSON when it is not listed.
@@ -1539,6 +1593,44 @@ pub unsafe extern "C" fn amux_session_rows_for(
     let options: RowOptions = unsafe { parse(options) }.unwrap_or_default();
     // SAFETY: the caller's contract.
     unsafe { read(chat, |chat| chat.rows_for(&keys, &options)) }
+}
+
+/// Opens or closes the run the row `member` belongs to: `open` is the
+/// folding view's open set as a JSON array of keys, or null; answers the
+/// new set.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; the strings are NUL-terminated or
+/// null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_toggle_run(
+    chat: *const AmuxChat,
+    member: *const c_char,
+    open: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let member = unsafe { text(member) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    let open: Vec<Key> = unsafe { parse(open) }.unwrap_or_default();
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, |chat| chat.toggle_run(&member, &open)) }
+}
+
+/// The open set, a JSON array of keys or null, re-held on each open run's
+/// newest step: what to ask rows with, so an open run stays open as it
+/// grows or its oldest steps leave the window.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `open` is NUL-terminated or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_keep_open_runs(
+    chat: *const AmuxChat,
+    open: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let open: Vec<Key> = unsafe { parse(open) }.unwrap_or_default();
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, |chat| chat.keep_open_runs(&open)) }
 }
 
 /// The head `AskCard`, or null JSON.
@@ -1979,21 +2071,25 @@ pub unsafe extern "C" fn amux_session_open_overview(
     }
 }
 
-/// Asks the agent's host for its working-tree diff and the patch it names;
+/// Asks the agent's host for its diff for `comparison` (a JSON
+/// `Comparison`, or null for the uncommitted work) and the patch it names;
 /// the callback gets `{"Ok": FrozenReview}` or `{"Err": ..}`.
 ///
 /// # Safety
-/// `chat` is from `amux_session_open`.
+/// `chat` is from `amux_session_open`; `comparison` is a C string or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amux_session_review(
     chat: *const AmuxChat,
+    comparison: *const c_char,
     callback: AmuxCallback,
     context: *mut c_void,
 ) {
     // SAFETY: the caller's contract.
+    let comparison: Comparison = unsafe { parse(comparison) }.unwrap_or_default();
+    // SAFETY: the caller's contract.
     unsafe {
-        act(chat, callback, context, |chat| async move {
-            Answered::from(chat.review().await)
+        act(chat, callback, context, move |chat| async move {
+            Answered::from(chat.review(comparison).await)
         })
     }
 }

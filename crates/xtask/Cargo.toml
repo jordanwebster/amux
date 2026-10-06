@@ -13,6 +13,7 @@ release = { workspace = true }
 semver = { workspace = true }
 schemars = { workspace = true }
 ui-view = { workspace = true }
+wire = { workspace = true }
 tonic-prost-build = { workspace = true }
 protoc-bin-vendored = { workspace = true }
 prost = { workspace = true }

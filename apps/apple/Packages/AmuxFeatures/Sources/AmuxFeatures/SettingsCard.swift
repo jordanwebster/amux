@@ -58,7 +58,7 @@ struct SettingsCard: View {
             if !view.models.isEmpty || view.modelRefusal != nil { models }
             if !view.efforts.isEmpty || view.effortRefusal != nil { efforts }
             if let typing = view.changeByTyping { sentence(typing, id: "chat.settings.typing") }
-            if !view.modes.isEmpty || view.cycleMode || view.modeRefusal != nil { modes }
+            if !view.permissions.isEmpty || view.cyclePermission || view.permissionRefusal != nil { modes }
         }
     }
 
@@ -122,52 +122,45 @@ struct SettingsCard: View {
     private var modes: some View {
         VStack(alignment: .leading, spacing: 4) {
             heading(ChatWords.permissionsHeading(kind))
-            if view.cycleMode {
+            if view.cyclePermission {
                 HStack(alignment: .center, spacing: 10) {
-                    if let current = view.modes.first(where: { $0.current }) {
+                    if let current = view.permissions.first(where: { $0.current }) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(ChatWords.mode(current.value))
+                            Text(ChatWords.permission(current))
                                 .designFont(.bodyEmphasis, design)
-                                .foregroundStyle(current.stopsAsking ? design.removed.color : design.ink.color)
-                            Text(ChatWords.modeDetail(current.value))
+                                .foregroundStyle(current.neverAsks ? design.removed.color : design.ink.color)
+                            Text(ChatWords.permissionDetail(current.value, kind: kind))
                                 .designFont(.detail, design)
                                 .foregroundStyle(design.inkMuted.color)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        .identified("chat.settings.mode", label: ChatWords.mode(current.value))
+                        .identified("chat.settings.mode", label: ChatWords.permission(current))
                     }
                     Spacer(minLength: 6)
-                    Button { change(.cycleMode) } label: {
+                    Button { change(.cyclePermission) } label: {
                         ActionLabel(String(localized: "Cycle"), kind: .outline)
                     }
                     .buttonStyle(.amuxControl)
                     .identified("chat.settings.cycle", label: "Cycle")
                 }
-                if let refusal = view.modeRefusal { sentence(refusal, id: "chat.settings.mode.refusal") }
-            } else if let refusal = view.modeRefusal {
+                if let refusal = view.permissionRefusal { sentence(refusal, id: "chat.settings.mode.refusal") }
+            } else if let refusal = view.permissionRefusal {
                 sentence(refusal, id: "chat.settings.mode.refusal")
             } else {
-                ForEach(Array(view.modes.enumerated()), id: \.offset) { index, choice in
+                ForEach(Array(view.permissions.enumerated()), id: \.offset) { index, choice in
                     if index > 0 { rule }
                     radio(
-                        id: "chat.settings.mode.\(Self.key(choice.value))",
-                        title: ChatWords.mode(choice.value), detail: ChatWords.modeDetail(choice.value),
-                        current: choice.current, warn: choice.stopsAsking
-                    ) { change(.mode(choice.value)) }
+                        id: "chat.settings.mode.\(choice.value)",
+                        title: ChatWords.permission(choice),
+                        detail: ChatWords.permissionDetail(choice.value, kind: kind),
+                        current: choice.current, warn: choice.neverAsks
+                    ) { change(.permission(choice.value)) }
                 }
             }
         }
     }
 
     // MARK: - Pieces
-
-    /// A mode by what it sets, for the element identifier.
-    private static func key(_ value: ModeValue) -> String {
-        switch value {
-        case .claude(let mode): mode
-        case .codex(let approval, let sandbox, let preset): preset ?? "\(approval).\(sandbox)"
-        }
-    }
 
     /// The hairline between two choices, from the text column to the edge.
     private var rule: some View {
