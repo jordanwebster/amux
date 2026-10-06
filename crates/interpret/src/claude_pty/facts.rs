@@ -13,8 +13,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use wire::claude_pty_item::Kind;
 use wire::{
-    Ask, BoundaryKind, DecisionOutcome, PermissionAsk, PlanAsk, ScopeChoice, ToolState, Turn,
-    TurnOutcome,
+    Ask, BoundaryKind, DecisionOutcome, PermissionAsk, ScopeChoice, ToolState, Turn, TurnOutcome,
 };
 
 use super::{
@@ -22,10 +21,10 @@ use super::{
     Subagent, Tool, item_body,
 };
 use crate::claude_common::{
-    BackgroundInput, JobInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool,
-    blocks_text, compact_json, message_text, permission_scopes, question_ask, same_json,
-    split_tool_name, timestamp_ms, tool_class, tool_result_images, tool_result_text,
-    without_image_bytes,
+    BackgroundInput, JobInput, PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, Verdict, apply_task_tool,
+    blocks_text, compact_json, message_text, permission_scopes, plan_ask, plan_mode_write,
+    question_ask, same_json, split_tool_name, timestamp_ms, tool_class, tool_result_images,
+    tool_result_text, without_image_bytes,
 };
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
@@ -248,7 +247,7 @@ impl State {
             return;
         };
         if let Some(mode) = &common.permission_mode {
-            self.provider.permission_mode = Some(mode.as_str().to_owned());
+            self.permission_seen(emit, mode.as_str());
         }
         if let Some(agent) = common.agent_id.as_deref().filter(|agent| !agent.is_empty())
             && matches!(
@@ -438,15 +437,7 @@ impl State {
                     AskShape::Question { questions },
                 )
             }
-            PLAN_TOOL if server.is_empty() => (
-                wire::ask::Body::Plan(PlanAsk {
-                    plan: PlanInput::deserialize(input)
-                        .map(|input| input.plan)
-                        .unwrap_or_default(),
-                    offers_auto_accept: true,
-                }),
-                AskShape::Plan,
-            ),
+            PLAN_TOOL if server.is_empty() => (wire::ask::Body::Plan(plan_ask()), AskShape::Plan),
             _ => permission_ask(
                 &server,
                 &tool,
@@ -607,9 +598,10 @@ impl State {
     fn pre_tool_use(&mut self, call: &PreToolUse) {
         self.shared.turn_started();
         let (server, name) = split_tool_name(&call.tool_name);
-        // Drawn elsewhere, or as its subagent's work.
+        // Drawn elsewhere, as its subagent's work, or not at all.
         if is_status_tool(&server, &name)
             || (server.is_empty() && (TASK_TOOLS.contains(&name.as_str()) || name == AGENT_TOOL))
+            || plan_mode_write(self.provider.permission_mode.as_deref(), &server, &name)
         {
             return;
         }
@@ -643,7 +635,13 @@ impl State {
         let (server, tool_name) = split_tool_name(name);
         if !self.tools.contains_key(id) {
             let hidden = is_status_tool(&server, &tool_name)
-                || (server.is_empty() && TASK_TOOLS.contains(&tool_name.as_str()));
+                || (server.is_empty() && TASK_TOOLS.contains(&tool_name.as_str()))
+                || plan_mode_write(
+                    self.provider.permission_mode.as_deref(),
+                    &server,
+                    &tool_name,
+                );
+            let plan = (server.is_empty() && tool_name == PLAN_TOOL).then(Verdict::default);
             if is_status_tool(&server, &tool_name)
                 && let Some(working_on) = status_working_on(input.to_string().as_bytes())
             {
@@ -674,6 +672,7 @@ impl State {
                     subagent,
                     awaiting_notification: false,
                     images: Vec::new(),
+                    plan,
                     emitted: Vec::new(),
                 },
             );
@@ -815,7 +814,7 @@ impl State {
             Row::PermissionMode(mode) => {
                 let mode = mode.permission_mode.as_str();
                 if !mode.is_empty() {
-                    self.provider.permission_mode = Some(mode.to_owned());
+                    self.permission_seen(emit, mode);
                 }
             }
             Row::Attachment(row) => {

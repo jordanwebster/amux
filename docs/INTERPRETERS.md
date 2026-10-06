@@ -203,6 +203,29 @@ model; else the entry whose value is the model's id; else the id tidied by
 the kind's interpreter ("claude-opus-4-1-20250805" reads "Opus 4.1",
 "gpt-5-codex" reads "GPT-5 Codex").
 
+## Plans
+
+A plan the agent puts to the person is an item of its own, kind `plan`: the
+item's text is the plan and its body says how it was decided (undecided,
+approved, approved accepting edits, sent back with the person's note, or
+dismissed). Its ask, `PlanAsk`, lists the choices the provider takes; the
+answer names one, with a note when it keeps the agent planning. Clients
+draw both from these facts alone.
+
+- **Claude, both kinds.** `ExitPlanMode` is drawn as its plan, keyed by the
+  call, once its input carries the plan. The choices are start building,
+  start and accept edits, and keep planning. While Claude is in plan mode,
+  its `Write`, `Edit`, `MultiEdit` and `NotebookEdit` calls draw nothing:
+  plan mode lets Claude write only its plan file, and the declaration
+  carries the whole plan. The ask closes on the person's answer, when the
+  agent leaves plan (an approval, read by the permission it left for), when
+  the next turn starts, or when a prompt is typed instead, which dismisses
+  the plan: headless Claude has the call refused and its turn ended, and
+  terminal Claude has its menu cancelled with the interrupt key, so the
+  prompt starts the next turn. Headless Claude leaves plan with the plan
+  waiting only through amux's own permission change, which answers the
+  call as approved with that permission.
+
 ## Redaction
 
 Dumps leave the machine, so every body in them is redacted, and only an

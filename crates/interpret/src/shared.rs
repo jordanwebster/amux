@@ -1070,6 +1070,14 @@ pub(crate) fn describe_jobs(jobs: Option<&wire::BackgroundJobs>) -> String {
     }
 }
 
+pub(crate) fn describe_plan(plan: &wire::Plan) -> String {
+    let mut out = plan.verdict().as_str_name().to_owned();
+    if let Some(note) = &plan.note {
+        out.push_str(&format!(" note={note:?}"));
+    }
+    out
+}
+
 pub(crate) fn describe_agent_message(message: &AgentMessage) -> String {
     let mut out = format!("envelope={}", serde_pb::to_hex(&message.envelope_id));
     if message.send_state != wire::SendState::Unspecified as i32 {

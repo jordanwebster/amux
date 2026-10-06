@@ -128,8 +128,8 @@ codex = { mark = "partial", carriers = ["ask:question", "item:ask.question", "it
 [[row]]
 id = "C16"
 item = "Plan review"
-claude_pty = { mark = "full", carriers = ["ask:plan"], golden = ["asks=[", " plan:"] }
-claude_sdk = { mark = "full", carriers = ["ask:plan"], golden = ["asks=[", " plan:"] }
+claude_pty = { mark = "full", carriers = ["item:plan", "ask:plan"], golden = [" plan final ", " PLAN_VERDICT_SENT_BACK"] }
+claude_sdk = { mark = "full", carriers = ["item:plan", "ask:plan"], golden = [" plan final ", " PLAN_VERDICT_APPROVED"] }
 codex = { mark = "partial", carriers = ["item:message"], golden = [" message final "] }
 
 [[row]]

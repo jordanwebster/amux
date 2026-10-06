@@ -42,6 +42,81 @@ pub(crate) const TASK_TOOLS: &[&str] = &["TaskCreate", "TaskUpdate", "TaskGet", 
 pub(crate) const QUESTION_TOOL: &str = "AskUserQuestion";
 pub(crate) const PLAN_TOOL: &str = "ExitPlanMode";
 
+/// Claude's built-in tools that write or edit files. In plan mode Claude
+/// writes only its plan file with them, and the plan's declaration carries
+/// the whole plan, so their calls are not drawn.
+const FILE_WRITE_TOOLS: &[&str] = &["Write", "Edit", "MultiEdit", "NotebookEdit"];
+
+/// A call that writes a file while Claude plans: drawn as nothing.
+pub(crate) fn plan_mode_write(permission: Option<&str>, server: &str, tool: &str) -> bool {
+    permission == Some("plan") && server.is_empty() && FILE_WRITE_TOOLS.contains(&tool)
+}
+
+/// How the person decided a plan Claude declared, kept on the declaring
+/// call.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Verdict {
+    verdict: i32,
+    note: Option<String>,
+}
+
+impl Verdict {
+    pub(crate) fn of(verdict: wire::PlanVerdict) -> Self {
+        Self {
+            verdict: verdict as i32,
+            note: None,
+        }
+    }
+
+    pub(crate) fn sent_back(note: &str) -> Self {
+        Self {
+            verdict: wire::PlanVerdict::SentBack as i32,
+            note: (!note.is_empty()).then(|| note.to_owned()),
+        }
+    }
+
+    /// Approved, by the permission Claude left plan for.
+    pub(crate) fn approved_for(permission: Option<&str>) -> Self {
+        Self::of(if permission == Some("acceptEdits") {
+            wire::PlanVerdict::ApprovedAcceptingEdits
+        } else {
+            wire::PlanVerdict::Approved
+        })
+    }
+
+    pub(crate) fn undecided(&self) -> bool {
+        self.verdict == wire::PlanVerdict::Undecided as i32
+    }
+}
+
+/// The plan item of an ExitPlanMode call: its text and body. None until
+/// the call's input carries the plan, so the plan lands whole.
+pub(crate) fn plan_item(input: &str, verdict: &Verdict) -> Option<(String, wire::Plan)> {
+    let plan = serde_json::from_str::<PlanInput>(input).ok()?.plan;
+    (!plan.is_empty()).then(|| {
+        (
+            plan,
+            wire::Plan {
+                verdict: verdict.verdict,
+                note: verdict.note.clone(),
+                complete: true,
+            },
+        )
+    })
+}
+
+/// The decision Claude's plan asks offer, in the order Claude's own
+/// terminal lists them.
+pub(crate) fn plan_ask() -> wire::PlanAsk {
+    wire::PlanAsk {
+        choices: vec![
+            wire::PlanChoice::Start as i32,
+            wire::PlanChoice::StartAcceptingEdits as i32,
+            wire::PlanChoice::KeepPlanning as i32,
+        ],
+    }
+}
+
 /// An RFC 3339 timestamp, as Claude writes them, in milliseconds.
 pub(crate) fn timestamp_ms(stamp: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(stamp)
@@ -404,7 +479,7 @@ impl Jobs {
 
 /// ExitPlanMode's input: the plan put to the person.
 #[derive(Deserialize)]
-pub(crate) struct PlanInput {
+struct PlanInput {
     #[serde(default)]
     pub plan: String,
 }
@@ -734,13 +809,13 @@ pub(crate) fn describe_asks(asks: &[Ask]) -> String {
                         .join(",")
                 ),
                 Some(wire::ask::Body::Plan(plan)) => format!(
-                    "plan:{}chars{}",
-                    plan.plan.chars().count(),
-                    if plan.offers_auto_accept {
-                        " auto-accept"
-                    } else {
-                        ""
-                    }
+                    "plan:[{}]",
+                    plan.choices
+                        .iter()
+                        .map(|choice| wire::PlanChoice::try_from(*choice)
+                            .map_or("?", |choice| choice.as_str_name()))
+                        .collect::<Vec<_>>()
+                        .join(",")
                 ),
                 Some(wire::ask::Body::Form(form)) => format!(
                     "form:{} {}",

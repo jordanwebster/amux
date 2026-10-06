@@ -99,6 +99,12 @@ EXEMPTIONS = [
     ),
     Exemption(
         "crates/interpret/src/claude_sdk/mod.rs",
+        "leave_plan",
+        r"from_str::<Value>\(&meta\.input\)",
+        "ExitPlanMode's input is handed back to the tool unchanged when the plan is approved",
+    ),
+    Exemption(
+        "crates/interpret/src/claude_sdk/mod.rs",
         "sdk_answer",
         r"Value::Object\(serde_json::Map::new\(\)\)",
         "a tool server's form content is whatever its schema asks for",

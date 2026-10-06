@@ -30,6 +30,7 @@ macro_rules! goldens {
 goldens! {
     amuxs_own_tools_draw_a_message_or_nothing => "amux_tools",
     lifecycle_events_write_boundaries_and_interrupt => "lifecycle",
+    plans_are_items_with_their_verdict => "plans",
     recorded_prompt => "recorded_prompt",
     recorded_prompt_multiline => "recorded_prompt_multiline",
     recorded_tools => "recorded_tools",

@@ -1,3 +1,22 @@
+2026-10-06 — **Claude's plans are items with their verdict.**
+Both Claude interpreters drew ExitPlanMode as a tool call and left the views
+to recognise it: its name, its input, the plan file's writes, and the verdict
+from a scope string. Each Claude item now has a plan kind whose text is the
+plan and whose body says undecided, approved, approved accepting edits, sent
+back with the note, or dismissed. The plan ask lists its choices (start,
+start accepting edits, keep planning) and an answer names one, with a note
+for keep planning; the old approve and send-back answer shapes are gone.
+While Claude is in plan mode its file writes and edits draw nothing, so the
+plan file never shows as a step. A plan's ask closes when the
+agent leaves plan (in Claude's own terminal that reads as approved, by the
+permission it left for), when the next turn starts, or when a prompt is
+typed instead, which dismisses it: headless Claude refuses the call and ends
+the turn, terminal Claude cancels its menu, and the prompt starts the next
+turn. Headless Claude moved out of plan through amux while a plan waits
+approves the plan with that permission. The shared views read plan rows from
+the new items; the old recognition is still there, unused, until it is
+deleted.
+
 2026-10-06 — **A new agent is configured from what its host offers.**
 The new-agent screen held its own lists: three Claude efforts, four Codex
 efforts, three permissions each, Claude's model aliases and, for Codex, only

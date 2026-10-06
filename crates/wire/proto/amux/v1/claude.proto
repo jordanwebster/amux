@@ -44,6 +44,8 @@ message ClaudePtyItem {
     // A dialog Claude shows in its own terminal that no hook can answer: an
     // unanswerable ask that is its own row.
     AskItem ask = 16;
+    // The plan Claude declared, keyed by the call that declared it.
+    Plan plan = 17;
   }
 }
 
@@ -146,6 +148,8 @@ message ClaudeSdkItem {
     Steer steer = 15;
     // A tool-server form or link: an ask that is the work.
     AskItem ask = 16;
+    // The plan Claude declared, keyed by the call that declared it.
+    Plan plan = 17;
   }
 }
 
@@ -243,19 +247,4 @@ message PermissionAllow {
 message PermissionDeny {
   string note = 1;
   bool stop = 2;
-}
-
-message PlanAnswer {
-  oneof of {
-    PlanApprove approve = 1;
-    PlanSendBack send_back = 2;
-  }
-}
-
-message PlanApprove {
-  bool auto_accept_edits = 1;
-}
-
-message PlanSendBack {
-  string note = 1;
 }

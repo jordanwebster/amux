@@ -588,6 +588,28 @@ impl ::prost::Name for Steer {
         "/amux.v1.Steer".into()
     }
 }
+/// A plan the agent put to the person. The plan is the envelope text.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Plan {
+    #[prost(enumeration = "PlanVerdict", tag = "1")]
+    pub verdict: i32,
+    /// What the person said when sending it back.
+    #[prost(string, optional, tag = "2")]
+    pub note: ::core::option::Option<::prost::alloc::string::String>,
+    /// The whole plan is in: Claude declares it whole; Codex streams it.
+    #[prost(bool, tag = "3")]
+    pub complete: bool,
+}
+impl ::prost::Name for Plan {
+    const NAME: &'static str = "Plan";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.Plan".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.Plan".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Text {
     #[prost(bool, tag = "1")]
@@ -1197,12 +1219,12 @@ impl ::prost::Name for QuestionOption {
         "/amux.v1.QuestionOption".into()
     }
 }
+/// A decision on a plan; the plan is the text of the item the ask points at.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PlanAsk {
-    #[prost(string, tag = "1")]
-    pub plan: ::prost::alloc::string::String,
-    #[prost(bool, tag = "2")]
-    pub offers_auto_accept: bool,
+    /// What the provider takes, in its order.
+    #[prost(enumeration = "PlanChoice", repeated, tag = "3")]
+    pub choices: ::prost::alloc::vec::Vec<i32>,
 }
 impl ::prost::Name for PlanAsk {
     const NAME: &'static str = "PlanAsk";
@@ -1212,6 +1234,24 @@ impl ::prost::Name for PlanAsk {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.PlanAsk".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PlanAnswer {
+    #[prost(enumeration = "PlanChoice", tag = "3")]
+    pub choice: i32,
+    /// With keep planning: what to change.
+    #[prost(string, optional, tag = "4")]
+    pub note: ::core::option::Option<::prost::alloc::string::String>,
+}
+impl ::prost::Name for PlanAnswer {
+    const NAME: &'static str = "PlanAnswer";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.PlanAnswer".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.PlanAnswer".into()
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2073,6 +2113,43 @@ impl DiffFileChange {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
+pub enum PlanVerdict {
+    Undecided = 0,
+    Approved = 1,
+    ApprovedAcceptingEdits = 2,
+    SentBack = 3,
+    /// Closed without a decision: a new prompt, an interruption, the turn or
+    /// the provider ending.
+    Dismissed = 4,
+}
+impl PlanVerdict {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Undecided => "PLAN_VERDICT_UNDECIDED",
+            Self::Approved => "PLAN_VERDICT_APPROVED",
+            Self::ApprovedAcceptingEdits => "PLAN_VERDICT_APPROVED_ACCEPTING_EDITS",
+            Self::SentBack => "PLAN_VERDICT_SENT_BACK",
+            Self::Dismissed => "PLAN_VERDICT_DISMISSED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PLAN_VERDICT_UNDECIDED" => Some(Self::Undecided),
+            "PLAN_VERDICT_APPROVED" => Some(Self::Approved),
+            "PLAN_VERDICT_APPROVED_ACCEPTING_EDITS" => Some(Self::ApprovedAcceptingEdits),
+            "PLAN_VERDICT_SENT_BACK" => Some(Self::SentBack),
+            "PLAN_VERDICT_DISMISSED" => Some(Self::Dismissed),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
 pub enum ToolState {
     Unspecified = 0,
     Pending = 1,
@@ -2308,6 +2385,41 @@ impl TurnOutcome {
             "TURN_OUTCOME_COMPLETED" => Some(Self::Completed),
             "TURN_OUTCOME_INTERRUPTED" => Some(Self::Interrupted),
             "TURN_OUTCOME_FAILED" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PlanChoice {
+    Unspecified = 0,
+    /// Start building (Claude) or implement the plan (Codex).
+    Start = 1,
+    /// Start, accepting edits without asking (Claude).
+    StartAcceptingEdits = 2,
+    /// Keep planning; the note, if any, goes to the agent.
+    KeepPlanning = 3,
+}
+impl PlanChoice {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PLAN_CHOICE_UNSPECIFIED",
+            Self::Start => "PLAN_CHOICE_START",
+            Self::StartAcceptingEdits => "PLAN_CHOICE_START_ACCEPTING_EDITS",
+            Self::KeepPlanning => "PLAN_CHOICE_KEEP_PLANNING",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PLAN_CHOICE_UNSPECIFIED" => Some(Self::Unspecified),
+            "PLAN_CHOICE_START" => Some(Self::Start),
+            "PLAN_CHOICE_START_ACCEPTING_EDITS" => Some(Self::StartAcceptingEdits),
+            "PLAN_CHOICE_KEEP_PLANNING" => Some(Self::KeepPlanning),
             _ => None,
         }
     }
@@ -2633,7 +2745,7 @@ impl ::prost::Name for ClaudeCreateConfig {
 pub struct ClaudePtyItem {
     #[prost(
         oneof = "claude_pty_item::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17"
     )]
     pub kind: ::core::option::Option<claude_pty_item::Kind>,
 }
@@ -2676,6 +2788,9 @@ pub mod claude_pty_item {
         /// unanswerable ask that is its own row.
         #[prost(message, tag = "16")]
         Ask(super::AskItem),
+        /// The plan Claude declared, keyed by the call that declared it.
+        #[prost(message, tag = "17")]
+        Plan(super::Plan),
     }
 }
 impl ::prost::Name for ClaudePtyItem {
@@ -2855,7 +2970,7 @@ impl ::prost::Name for Key {
 pub struct ClaudeSdkItem {
     #[prost(
         oneof = "claude_sdk_item::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17"
     )]
     pub kind: ::core::option::Option<claude_sdk_item::Kind>,
 }
@@ -2897,6 +3012,9 @@ pub mod claude_sdk_item {
         /// A tool-server form or link: an ask that is the work.
         #[prost(message, tag = "16")]
         Ask(super::AskItem),
+        /// The plan Claude declared, keyed by the call that declared it.
+        #[prost(message, tag = "17")]
+        Plan(super::Plan),
     }
 }
 impl ::prost::Name for ClaudeSdkItem {
@@ -3122,61 +3240,6 @@ impl ::prost::Name for PermissionDeny {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.PermissionDeny".into()
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PlanAnswer {
-    #[prost(oneof = "plan_answer::Of", tags = "1, 2")]
-    pub of: ::core::option::Option<plan_answer::Of>,
-}
-/// Nested message and enum types in `PlanAnswer`.
-pub mod plan_answer {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Of {
-        #[prost(message, tag = "1")]
-        Approve(super::PlanApprove),
-        #[prost(message, tag = "2")]
-        SendBack(super::PlanSendBack),
-    }
-}
-impl ::prost::Name for PlanAnswer {
-    const NAME: &'static str = "PlanAnswer";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.PlanAnswer".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.PlanAnswer".into()
-    }
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PlanApprove {
-    #[prost(bool, tag = "1")]
-    pub auto_accept_edits: bool,
-}
-impl ::prost::Name for PlanApprove {
-    const NAME: &'static str = "PlanApprove";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.PlanApprove".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.PlanApprove".into()
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PlanSendBack {
-    #[prost(string, tag = "1")]
-    pub note: ::prost::alloc::string::String,
-}
-impl ::prost::Name for PlanSendBack {
-    const NAME: &'static str = "PlanSendBack";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.PlanSendBack".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.PlanSendBack".into()
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]

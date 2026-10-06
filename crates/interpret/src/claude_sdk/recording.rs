@@ -22,9 +22,9 @@ use prost::Message as _;
 use serde::Deserialize;
 use wire::{
     AnswerInput, ClaudeAnswer, ClaudeSdkInput, FormAction, FormAnswer, Input, Interrupt,
-    PermissionAllow, PermissionAnswer, PermissionDeny, PlanAnswer, PlanApprove, PlanSendBack,
-    PromptInput, QuestionAnswer, QuestionResponse, SendQueuedNow, SetModel, SetPermission,
-    claude_answer, claude_sdk_input, input, permission_answer, plan_answer,
+    PermissionAllow, PermissionAnswer, PermissionDeny, PlanAnswer, PlanChoice, PromptInput,
+    QuestionAnswer, QuestionResponse, SendQueuedNow, SetModel, SetPermission, claude_answer,
+    claude_sdk_input, input, permission_answer,
 };
 
 use super::AnsweredInput;
@@ -231,20 +231,26 @@ fn answer(request: &ControlRequestBody, response: &ControlResponse) -> Option<cl
                 None => (false, None, None, String::new(), false),
             };
             match asked.tool_name.as_str() {
-                PLAN_TOOL => Some(claude_answer::Of::Plan(PlanAnswer {
-                    of: Some(if allow {
-                        plan_answer::Of::Approve(PlanApprove {
-                            auto_accept_edits: matches!(
-                                chosen,
-                                Some(PermissionUpdate::SetMode {
-                                    mode: stream::PermissionMode::AcceptEdits,
-                                    ..
-                                })
-                            ),
-                        })
-                    } else {
-                        plan_answer::Of::SendBack(PlanSendBack { note: message })
-                    }),
+                PLAN_TOOL => Some(claude_answer::Of::Plan(if allow {
+                    PlanAnswer {
+                        choice: if matches!(
+                            chosen,
+                            Some(PermissionUpdate::SetMode {
+                                mode: stream::PermissionMode::AcceptEdits,
+                                ..
+                            })
+                        ) {
+                            PlanChoice::StartAcceptingEdits
+                        } else {
+                            PlanChoice::Start
+                        } as i32,
+                        note: None,
+                    }
+                } else {
+                    PlanAnswer {
+                        choice: PlanChoice::KeepPlanning as i32,
+                        note: Some(message).filter(|note| !note.is_empty()),
+                    }
                 })),
                 QUESTION_TOOL if allow => {
                     let answered = AnsweredInput::deserialize(updated_input.as_ref()?).ok()?;

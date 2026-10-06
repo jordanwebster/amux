@@ -195,7 +195,7 @@ pub fn ask_card(state: &SessionState) -> Option<AskCard> {
     let asks = state.open_asks();
     let head = asks.first()?;
     let (body, choices) = match head {
-        OpenAsk::Claude(ask) => claude(ask, &state.agent_state().permissions),
+        OpenAsk::Claude(ask) => claude(state, ask, &state.agent_state().permissions),
         OpenAsk::Codex(ask) => codex(ask),
     };
     let card_state = if state.asks_dismissed() {
@@ -223,18 +223,16 @@ pub fn ask_card(state: &SessionState) -> Option<AskCard> {
 
 fn choice(outcome: ChoiceOutcome, answer: Answer) -> Choice {
     // Only Claude's deny and plan send-back carry a note back to the agent.
-    let takes_note = matches!(
-        &answer,
-        Answer::Claude(ClaudeAnswer {
-            of: Some(
-                claude_answer::Of::Permission(wire::PermissionAnswer {
-                    of: Some(wire::permission_answer::Of::Deny(_))
-                }) | claude_answer::Of::Plan(wire::PlanAnswer {
-                    of: Some(wire::plan_answer::Of::SendBack(_))
-                })
-            )
-        })
-    );
+    let takes_note = match &answer {
+        Answer::Claude(ClaudeAnswer { of: Some(of) }) => match of {
+            claude_answer::Of::Permission(permission) => {
+                matches!(permission.of, Some(wire::permission_answer::Of::Deny(_)))
+            }
+            claude_answer::Of::Plan(plan) => plan.choice() == wire::PlanChoice::KeepPlanning,
+            _ => false,
+        },
+        _ => false,
+    };
     Choice {
         outcome,
         primary: false,
@@ -253,7 +251,11 @@ fn permission(of: wire::permission_answer::Of) -> Answer {
     }))
 }
 
-fn claude(ask: &wire::Ask, offered: &[wire::OfferedPermission]) -> (AskBody, Vec<Choice>) {
+fn claude(
+    state: &SessionState,
+    ask: &wire::Ask,
+    offered: &[wire::OfferedPermission],
+) -> (AskBody, Vec<Choice>) {
     use wire::permission_answer::Of as P;
     let (body, mut choices) = match &ask.body {
         Some(ask::Body::Permission(p)) => {
@@ -302,41 +304,33 @@ fn claude(ask: &wire::Ask, offered: &[wire::OfferedPermission]) -> (AskBody, Vec
             vec![],
         ),
         Some(ask::Body::Plan(plan)) => {
-            let approve = |auto| {
-                claude_answer(claude_answer::Of::Plan(wire::PlanAnswer {
-                    of: Some(wire::plan_answer::Of::Approve(wire::PlanApprove {
-                        auto_accept_edits: auto,
-                    })),
-                }))
-            };
-            let mut choices = vec![choice(
-                ChoiceOutcome::ApprovePlan {
-                    auto_accept_edits: false,
-                },
-                approve(false),
-            )];
-            if plan.offers_auto_accept {
-                choices.push(choice(
-                    ChoiceOutcome::ApprovePlan {
-                        auto_accept_edits: true,
-                    },
-                    approve(true),
-                ));
-            }
-            choices.push(choice(
-                ChoiceOutcome::SendBack,
-                claude_answer(claude_answer::Of::Plan(wire::PlanAnswer {
-                    of: Some(wire::plan_answer::Of::SendBack(wire::PlanSendBack {
-                        note: String::new(),
-                    })),
-                })),
-            ));
-            (
-                AskBody::Plan {
-                    plan: plan.plan.clone(),
-                },
-                choices,
-            )
+            let choices = plan
+                .choices()
+                .filter_map(|offered| {
+                    let outcome = match offered {
+                        wire::PlanChoice::Start => ChoiceOutcome::ApprovePlan {
+                            auto_accept_edits: false,
+                        },
+                        wire::PlanChoice::StartAcceptingEdits => ChoiceOutcome::ApprovePlan {
+                            auto_accept_edits: true,
+                        },
+                        wire::PlanChoice::KeepPlanning => ChoiceOutcome::SendBack,
+                        wire::PlanChoice::Unspecified => return None,
+                    };
+                    let answer = claude_answer(claude_answer::Of::Plan(wire::PlanAnswer {
+                        choice: offered as i32,
+                        note: None,
+                    }));
+                    Some(choice(outcome, answer))
+                })
+                .collect();
+            // The plan is the text of the item the ask points at.
+            let plan = state
+                .transcript()
+                .get(&ask.item_key)
+                .map(|held| held.item.text.clone())
+                .unwrap_or_default();
+            (AskBody::Plan { plan }, choices)
         }
         Some(ask::Body::Form(form)) => {
             let action = |action: wire::FormAction| {
@@ -914,9 +908,9 @@ fn with_note(answer: &Answer, note: &str) -> Answer {
             claude_answer::Of::Permission(wire::PermissionAnswer {
                 of: Some(wire::permission_answer::Of::Deny(deny)),
             }) => deny.note = note.to_owned(),
-            claude_answer::Of::Plan(wire::PlanAnswer {
-                of: Some(wire::plan_answer::Of::SendBack(send_back)),
-            }) => send_back.note = note.to_owned(),
+            claude_answer::Of::Plan(plan) if plan.choice() == wire::PlanChoice::KeepPlanning => {
+                plan.note = Some(note.to_owned())
+            }
             claude_answer::Of::Question(question) => question.note = note.to_owned(),
             _ => {}
         },

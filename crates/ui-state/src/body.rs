@@ -67,7 +67,7 @@ impl ItemBody {
                 | Pty::Interruption(_)
                 | Pty::Slash(_)
                 | Pty::Unrecognized(_) => ItemClass::Other,
-                Pty::Ask(_) => ItemClass::Ask,
+                Pty::Ask(_) | Pty::Plan(_) => ItemClass::Ask,
             },
             ItemBody::ClaudeSdk(kind) => match kind {
                 Sdk::Prompt(_) => ItemClass::Prompt,
@@ -90,7 +90,7 @@ impl ItemBody {
                 | Sdk::Unrecognized(_)
                 | Sdk::ModelSwitch(_)
                 | Sdk::Compaction(_) => ItemClass::Other,
-                Sdk::Ask(_) => ItemClass::Ask,
+                Sdk::Ask(_) | Sdk::Plan(_) => ItemClass::Ask,
             },
             ItemBody::Codex(kind) => match kind {
                 Codex::Prompt(_) => ItemClass::Prompt,
@@ -141,8 +141,9 @@ pub enum ItemClass {
     Compacting,
     Boundary,
     AgentMessage,
-    /// An ask that is the work. It is a decision, not activity: the
-    /// activity line reads past it to the work it interrupted.
+    /// An ask that is the work, or a plan put to the person. It is a
+    /// decision, not activity: the activity line reads past it to the work
+    /// it interrupted.
     Ask,
     Other,
 }

@@ -17,17 +17,19 @@ use serde_json::Value;
 use wire::claude_sdk_item::Kind;
 use wire::{
     BoundaryKind, ClaudeLimit, ClaudeUsage, ClaudeUsageWindow, DecisionOutcome, FormAsk,
-    HealthState, LinkAsk, PermissionAsk, PlanAsk, SignIn, SignInState, TaskState as WireTaskState,
+    HealthState, LinkAsk, PermissionAsk, SignIn, SignInState, TaskState as WireTaskState,
     ToolServer, ToolServerHealth, ToolServerStatus, ToolState, Turn, TurnOutcome, UsageMeter,
     UsageState,
 };
 
-use super::{AskMeta, AskShape, Request, State, TaskState, Tool, ToolDecisionState, item_body};
+use super::{
+    AskMeta, AskShape, Decided, Request, State, TaskState, Tool, ToolDecisionState, item_body,
+};
 use crate::claude_common::{
-    BackgroundInput, JobInput, PLAN_TOOL, PlanInput, QUESTION_TOOL, TASK_TOOLS, apply_task_tool,
+    BackgroundInput, JobInput, PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, Verdict, apply_task_tool,
     auto_models, blocks_text, claude_limit, compact_json, message_text, offered_commands,
-    offered_models, permission_scopes, question_ask, split_tool_name, tool_class,
-    tool_result_images, tool_result_text, without_image_bytes,
+    offered_models, permission_scopes, plan_ask, plan_mode_write, question_ask, split_tool_name,
+    tool_class, tool_result_images, tool_result_text, without_image_bytes,
 };
 use crate::shared::json_as_written;
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
@@ -283,11 +285,11 @@ impl State {
                 self.decide(
                     emit,
                     &denied.tool_use_id,
-                    ToolDecisionState {
+                    Decided::Tool(ToolDecisionState {
                         outcome: DecisionOutcome::Denied as i32,
                         scope: String::new(),
                         note,
-                    },
+                    }),
                 );
             }
             Message::ElicitationComplete(complete) => {
@@ -760,10 +762,14 @@ impl State {
             self.shared.set_working_on(working_on);
         }
         let now = self.shared.now_ms();
+        let planning = self.permission_mode.as_deref();
         let tool = self.tools.entry(id.to_owned()).or_insert_with(|| Tool {
             at_ms: now,
             class: tool_class(&server, &tool_name) as i32,
-            hidden: status || (server.is_empty() && TASK_TOOLS.contains(&tool_name.as_str())),
+            hidden: status
+                || (server.is_empty() && TASK_TOOLS.contains(&tool_name.as_str()))
+                || plan_mode_write(planning, &server, &tool_name),
+            plan: (server.is_empty() && tool_name == PLAN_TOOL).then(Verdict::default),
             name: tool_name,
             server,
             input: String::new(),
@@ -1109,15 +1115,7 @@ impl State {
                     AskShape::Question(questions),
                 )
             }
-            PLAN_TOOL if server.is_empty() => (
-                wire::ask::Body::Plan(PlanAsk {
-                    plan: PlanInput::deserialize(input)
-                        .map(|input| input.plan)
-                        .unwrap_or_default(),
-                    offers_auto_accept: true,
-                }),
-                AskShape::Plan,
-            ),
+            PLAN_TOOL if server.is_empty() => (wire::ask::Body::Plan(plan_ask()), AskShape::Plan),
             _ => {
                 let reason = match &asked.decision_reason {
                     Some(reason) => reason.clone(),

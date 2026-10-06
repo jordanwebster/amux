@@ -779,13 +779,17 @@ fn claude_answer(kind: &str, ask: &str, answer: &Value) -> Option<AnswerInput> {
             })),
         })
     } else if let Some(approve) = answer.get("approve_plan") {
+        let accepting_edits = approve
+            .get("auto_accept_edits")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         claude_answer::Of::Plan(wire::PlanAnswer {
-            of: Some(wire::plan_answer::Of::Approve(wire::PlanApprove {
-                auto_accept_edits: approve
-                    .get("auto_accept_edits")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            })),
+            choice: if accepting_edits {
+                wire::PlanChoice::StartAcceptingEdits
+            } else {
+                wire::PlanChoice::Start
+            } as i32,
+            note: None,
         })
     } else if let Some(selected) = answer.get("selected").and_then(Value::as_array) {
         claude_answer::Of::Question(question_answer(selected, text(answer, "note")))
@@ -810,9 +814,8 @@ fn claude_answer(kind: &str, ask: &str, answer: &Value) -> Option<AnswerInput> {
     } else {
         let send_back = answer.get("send_back")?;
         claude_answer::Of::Plan(wire::PlanAnswer {
-            of: Some(wire::plan_answer::Of::SendBack(wire::PlanSendBack {
-                note: text(send_back, "note"),
-            })),
+            choice: wire::PlanChoice::KeepPlanning as i32,
+            note: Some(text(send_back, "note")).filter(|note| !note.is_empty()),
         })
     };
     Some(AnswerInput {

@@ -550,6 +550,7 @@ pub(crate) fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Dec
             Pty::Slash(s) => plain(slash(held, s)),
             Pty::Unrecognized(u) => plain(unrecognized(u)),
             Pty::Ask(ask) => plain(ask_row(ask)),
+            Pty::Plan(plan) => plain(plan_row(held, plan)),
         },
         ItemBody::ClaudeSdk(kind) => match kind {
             Sdk::Prompt(_) => plain(RowKind::Prompt {
@@ -578,6 +579,7 @@ pub(crate) fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Dec
             Sdk::ApiError(e) => error(e),
             Sdk::Slash(s) => plain(slash(held, s)),
             Sdk::Unrecognized(u) => plain(unrecognized(u)),
+            Sdk::Plan(plan) => plain(plan_row(held, plan)),
             Sdk::ModelSwitch(m) => plain(model_switch(m)),
             Sdk::Compaction(c) => plain(compaction(c)),
             Sdk::Ask(ask) => plain(ask_row(ask)),
@@ -694,6 +696,24 @@ fn ask_row(item: &wire::AskItem) -> RowKind {
                 summary: String::new(),
             };
         }
+    })
+}
+
+/// A plan item: the plan is the item's text.
+fn plan_row(held: &Held, plan: &wire::Plan) -> RowKind {
+    let (verdict, edits_accepted) = match plan.verdict() {
+        wire::PlanVerdict::Undecided => (PlanVerdict::Open, false),
+        wire::PlanVerdict::Approved => (PlanVerdict::Approved, false),
+        wire::PlanVerdict::ApprovedAcceptingEdits => (PlanVerdict::Approved, true),
+        wire::PlanVerdict::SentBack => (PlanVerdict::SentBack, false),
+        wire::PlanVerdict::Dismissed => (PlanVerdict::Dismissed, false),
+    };
+    RowKind::Ask(AskRow::Plan {
+        plan: held.item.text.clone(),
+        verdict,
+        edits_accepted,
+        note: plan.note.clone(),
+        writing: !plan.complete,
     })
 }
 

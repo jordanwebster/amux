@@ -70,12 +70,12 @@ use wire::{
     AgentSpec, Ask, AskClosed, Attachment, Boundary, BoundaryKind, ClaudeAnswer, ClaudePtyItem,
     ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName, RunningCall, Step,
     SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input, claude_pty_item,
-    input, permission_answer, plan_answer,
+    input, permission_answer,
 };
 
 use crate::claude_common::{
-    Jobs, Task, describe_asks, describe_tasks, describe_tool, or_dash, same_json, split_tool_name,
-    task_list,
+    Jobs, Task, Verdict, describe_asks, describe_tasks, describe_tool, or_dash, plan_item,
+    same_json, split_tool_name, task_list,
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
@@ -348,6 +348,9 @@ struct Tool {
     /// Images the tool read, by the blobs that hold them.
     #[serde(with = "serde_pb::msgs")]
     images: Vec<Attachment>,
+    /// An ExitPlanMode call is drawn as its plan, with this verdict.
+    #[serde(default)]
+    plan: Option<Verdict>,
     #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
 }
@@ -364,6 +367,9 @@ struct Decision {
     scope: String,
     note: String,
     elsewhere: bool,
+    /// How a plan ask closed, which its plan carries instead.
+    #[serde(default)]
+    verdict: Option<Verdict>,
 }
 
 impl Decision {
@@ -373,6 +379,7 @@ impl Decision {
             scope: String::new(),
             note: String::new(),
             elsewhere: true,
+            verdict: None,
         }
     }
 
@@ -382,6 +389,27 @@ impl Decision {
             scope: String::new(),
             note: String::new(),
             elsewhere: false,
+            verdict: None,
+        }
+    }
+
+    fn plan(verdict: Verdict) -> Self {
+        Self {
+            verdict: Some(verdict),
+            ..Self::unknown()
+        }
+    }
+
+    /// The plan's verdict this decision stands for, when it closed a plan
+    /// ask: an approval reads the permission Claude left plan for.
+    fn plan_verdict(&self, permission: Option<&str>) -> Verdict {
+        if let Some(verdict) = &self.verdict {
+            return verdict.clone();
+        }
+        match DecisionOutcome::try_from(self.outcome) {
+            Ok(DecisionOutcome::Allowed) => Verdict::approved_for(permission),
+            Ok(DecisionOutcome::Denied) => Verdict::sent_back(&self.note),
+            _ => Verdict::of(wire::PlanVerdict::Dismissed),
         }
     }
 
@@ -586,6 +614,28 @@ impl State {
         if tool.hidden {
             return;
         }
+        if let Some(verdict) = &tool.plan {
+            let Some((text, plan)) = plan_item(&tool.input, verdict) else {
+                return;
+            };
+            let body = item_body(claude_pty_item::Kind::Plan(plan));
+            if body == tool.emitted {
+                return;
+            }
+            tool.emitted = body.clone();
+            let at_ms = tool.at_ms;
+            return self.shared.item(
+                emit,
+                ItemDraft {
+                    key: id.to_owned(),
+                    text,
+                    body,
+                    at_ms: Some(at_ms),
+                    complete: true,
+                    ..Default::default()
+                },
+            );
+        }
         if is_send_tool(&tool.server, &tool.name) {
             let (text, message) = sent_message(
                 tool.input.as_bytes(),
@@ -677,17 +727,26 @@ impl State {
 
     fn decide(&mut self, emit: &mut Emit, tool_id: &str, decision: Decision) {
         if let Some(tool) = self.tools.get_mut(tool_id) {
-            tool.decision = Some(decision);
+            match &mut tool.plan {
+                Some(plan) => *plan = decision.plan_verdict(None),
+                None => tool.decision = Some(decision),
+            }
             self.emit_tool(emit, tool_id);
         }
     }
 
     /// Closes an ask with the outcome the closing fact carries.
-    fn close(&mut self, emit: &mut Emit, ask_key: &str, decision: Decision) {
-        if let Some(AskShape::Unanswerable { .. } | AskShape::Trust) =
-            self.asks.get(ask_key).map(|meta| &meta.shape)
-        {
-            return self.close_ask_item(emit, ask_key, ask_item::dismissed());
+    fn close(&mut self, emit: &mut Emit, ask_key: &str, mut decision: Decision) {
+        match self.asks.get(ask_key).map(|meta| &meta.shape) {
+            Some(AskShape::Unanswerable { .. } | AskShape::Trust) => {
+                return self.close_ask_item(emit, ask_key, ask_item::dismissed());
+            }
+            // Read now: the permission Claude is in when the plan closes.
+            Some(AskShape::Plan) => {
+                let permission = self.provider.permission_mode.as_deref();
+                decision.verdict = Some(decision.plan_verdict(permission));
+            }
+            _ => {}
         }
         self.shared.close_ask(ask_key);
         let Some(meta) = self.asks.get_mut(ask_key) else {
@@ -712,6 +771,41 @@ impl State {
             .iter()
             .map(|ask| ask.key.clone())
             .collect()
+    }
+
+    /// The open plan ask, if any.
+    fn plan_ask(&self) -> Option<String> {
+        self.open_ask_keys().into_iter().find(|key| {
+            self.asks
+                .get(key)
+                .is_some_and(|meta| meta.shape == AskShape::Plan)
+        })
+    }
+
+    /// Claude's permission is now `permission`: leaving plan while its
+    /// plan waited approves the plan, answered in Claude's own terminal.
+    pub(super) fn permission_seen(&mut self, emit: &mut Emit, permission: &str) {
+        let left_plan =
+            self.provider.permission_mode.as_deref() == Some("plan") && permission != "plan";
+        self.provider.permission_mode = Some(permission.to_owned());
+        if left_plan && let Some(key) = self.plan_ask() {
+            self.close(emit, &key, Decision::elsewhere(DecisionOutcome::Allowed));
+        }
+    }
+
+    /// A prompt typed instead of deciding the open plan: the plan is
+    /// dismissed and the interrupt key cancels Claude's plan menu, so the
+    /// prompt is typed once the turn ends.
+    fn dismiss_plan(&mut self, emit: &mut Emit) {
+        let Some(key) = self.plan_ask() else {
+            return;
+        };
+        self.close(
+            emit,
+            &key,
+            Decision::plan(Verdict::of(wire::PlanVerdict::Dismissed)),
+        );
+        emit.effect(Effect::Terminal(TerminalInput::Interrupt));
     }
 
     /// A fact that proves every open ask is over without saying how.
@@ -856,6 +950,7 @@ impl State {
                     && !tool.hidden
                     && !tool.finished
                     && tool.decision.is_none()
+                    && tool.plan.as_ref().is_none_or(Verdict::undecided)
                     && !bound.contains(&id.as_str())
                     && same_json(&tool.input, input)
             })
@@ -986,6 +1081,7 @@ impl State {
         };
         match arm {
             claude_pty_input::Of::Prompt(prompt) => {
+                self.dismiss_plan(emit);
                 if let Some(entry) = self.shared.admit_prompt(emit, &id, prompt, human()) {
                     self.typed(emit, entry);
                 }
@@ -1123,6 +1219,7 @@ fn terminal_answer(
         scope,
         note,
         elsewhere: false,
+        verdict: None,
     };
     match (shape, answer) {
         (
@@ -1166,31 +1263,23 @@ fn terminal_answer(
             }
         }
         (AskShape::Plan, claude_answer::Of::Plan(plan)) => {
-            match plan.of.ok_or(reason::UNSUPPORTED)? {
-                plan_answer::Of::Approve(approve) => Ok((
-                    TerminalInput::Plan(if approve.auto_accept_edits {
-                        PlanChoice::ApproveAutoAcceptEdits
-                    } else {
-                        PlanChoice::Approve
-                    }),
-                    // The mode it switched to, as the decision's scope.
-                    decision(
-                        DecisionOutcome::Allowed,
-                        if approve.auto_accept_edits {
-                            "acceptEdits".to_owned()
-                        } else {
-                            String::new()
-                        },
-                        String::new(),
-                    ),
-                )),
-                plan_answer::Of::SendBack(send_back) => Ok((
-                    TerminalInput::Plan(PlanChoice::SendBack {
-                        note: send_back.note.clone(),
-                    }),
-                    decision(DecisionOutcome::Denied, String::new(), send_back.note),
-                )),
-            }
+            let (choice, verdict) = match wire::PlanChoice::try_from(plan.choice) {
+                Ok(wire::PlanChoice::Start) => (
+                    PlanChoice::Approve,
+                    Verdict::of(wire::PlanVerdict::Approved),
+                ),
+                Ok(wire::PlanChoice::StartAcceptingEdits) => (
+                    PlanChoice::ApproveAutoAcceptEdits,
+                    Verdict::of(wire::PlanVerdict::ApprovedAcceptingEdits),
+                ),
+                Ok(wire::PlanChoice::KeepPlanning) => {
+                    let note = plan.note.unwrap_or_default();
+                    let verdict = Verdict::sent_back(&note);
+                    (PlanChoice::SendBack { note }, verdict)
+                }
+                _ => return Err(reason::UNSUPPORTED),
+            };
+            Ok((TerminalInput::Plan(choice), Decision::plan(verdict)))
         }
         (AskShape::Question { questions }, claude_answer::Of::Question(answer)) => {
             // Claude's form has nowhere to type a note for the answers.
@@ -1397,6 +1486,7 @@ fn describe_item(body: &[u8]) -> ItemView {
             format!("{} args={}", slash.command, Value::String(slash.args)),
         ),
         Some(Kind::Ask(item)) => ("ask", true, ask_item::describe(&item)),
+        Some(Kind::Plan(plan)) => ("plan", plan.complete, crate::shared::describe_plan(&plan)),
         Some(Kind::Unrecognized(unrecognized)) => (
             "unrecognized",
             true,

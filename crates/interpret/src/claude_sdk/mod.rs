@@ -34,12 +34,12 @@ use wire::{
     AgentSpec, Ask, AskClosed, Attachment, ClaudeAnswer, ClaudeSdkItem, ClaudeSdkSnapshot,
     ClaudeUsage, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input, OfferedCommand,
     OfferedModel, SignIn, Step, ToolCall, ToolDecision, ToolServerHealth, claude_answer,
-    claude_sdk_input, claude_sdk_item, input, permission_answer, plan_answer,
+    claude_sdk_input, claude_sdk_item, input, permission_answer,
 };
 
 use crate::claude_common::{
-    Jobs, Task, describe_asks, describe_claude_usage, describe_tasks, describe_tool, or_dash,
-    task_list,
+    Jobs, Task, Verdict, describe_asks, describe_claude_usage, describe_tasks, describe_tool,
+    or_dash, plan_item, task_list,
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
@@ -119,8 +119,17 @@ struct Tool {
     /// Images the tool read, by the blobs that hold them.
     #[serde(with = "serde_pb::msgs")]
     images: Vec<Attachment>,
+    /// An ExitPlanMode call is drawn as its plan, with this verdict.
+    #[serde(default)]
+    plan: Option<Verdict>,
     #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
+}
+
+/// What answering an ask decided, for the call it held.
+enum Decided {
+    Tool(ToolDecisionState),
+    Plan(Verdict),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -478,6 +487,7 @@ impl State {
         };
         match arm {
             claude_sdk_input::Of::Prompt(prompt) => {
+                self.dismiss_plan(emit);
                 if let Some(entry) = self.shared.admit_prompt(emit, &id, prompt, human()) {
                     self.submit(emit, entry);
                 }
@@ -535,6 +545,9 @@ impl State {
                 if !offered {
                     return self.shared.reject(emit, &id, reason::UNSUPPORTED);
                 }
+                if permission.value != "plan" && self.leave_plan(emit, &permission.value) {
+                    return self.shared.accept(emit, &id, false);
+                }
                 self.control_request(
                     emit,
                     Request::Mode(permission.value.clone()),
@@ -569,6 +582,70 @@ impl State {
             }
             claude_sdk_input::Of::Answer(answer) => self.answer(emit, &id, answer),
         }
+    }
+
+    /// The open plan ask, if any: its key and its call.
+    fn plan_ask(&self) -> Option<(String, String)> {
+        self.asks
+            .iter()
+            .find(|(_, meta)| meta.shape == AskShape::Plan)
+            .map(|(key, meta)| (key.clone(), meta.tool_use_id.clone()))
+    }
+
+    /// Answers the open plan ask without the person deciding it.
+    fn close_plan(
+        &mut self,
+        emit: &mut Emit,
+        key: &str,
+        tool_use_id: &str,
+        result: PermissionResult,
+        verdict: Verdict,
+    ) {
+        self.asks.remove(key);
+        self.shared.close_ask(key);
+        emit.effect(write(&claude_stream::Input::ControlResponse(
+            ControlResponse::success(key, &result),
+        )));
+        self.decide(emit, tool_use_id, Decided::Plan(verdict));
+    }
+
+    /// A prompt typed instead of deciding the open plan: the plan is
+    /// dismissed and its turn ends, so the prompt starts the next one.
+    fn dismiss_plan(&mut self, emit: &mut Emit) {
+        let Some((key, tool_use_id)) = self.plan_ask() else {
+            return;
+        };
+        self.interrupted = true;
+        let result = PermissionResult::Deny {
+            message: REJECTED.to_owned(),
+            interrupt: Some(true),
+            tool_use_id: None,
+        };
+        let verdict = Verdict::of(wire::PlanVerdict::Dismissed);
+        self.close_plan(emit, &key, &tool_use_id, result, verdict);
+    }
+
+    /// The person moved the agent out of plan while its plan waited: the
+    /// plan is approved with that permission. False when no plan waited.
+    fn leave_plan(&mut self, emit: &mut Emit, permission: &str) -> bool {
+        let Some((key, tool_use_id)) = self.plan_ask() else {
+            return false;
+        };
+        let input = self
+            .asks
+            .get(&key)
+            .and_then(|meta| serde_json::from_str::<Value>(&meta.input).ok());
+        let result = PermissionResult::Allow {
+            updated_input: input,
+            updated_permissions: Some(vec![PermissionUpdate::SetMode {
+                mode: PermissionMode::parse(permission),
+                destination: PermissionUpdateDestination::Session,
+            }]),
+            tool_use_id: None,
+        };
+        let verdict = Verdict::approved_for(Some(permission));
+        self.close_plan(emit, &key, &tool_use_id, result, verdict);
+        true
     }
 
     /// Cancels the running turn, which also drops an open ask's tool call.
@@ -652,8 +729,8 @@ impl State {
                 SdkAnswer::Elicitation(result) => ControlResponse::success(&key, &result),
             },
         )));
-        if let (Some(meta), Some(decision)) = (meta, decision) {
-            self.decide(emit, &meta.tool_use_id, decision);
+        if let (Some(meta), Some(decided)) = (meta, decision) {
+            self.decide(emit, &meta.tool_use_id, decided);
         }
         if let (Some(ask), Some(closed)) = (ask, closed) {
             self.emit_ask(emit, &ask, Some(closed));
@@ -711,21 +788,28 @@ impl State {
         let Some(id) = meta.map(|meta| meta.tool_use_id) else {
             return;
         };
-        if let Some(tool) = self.tools.get_mut(&id)
-            && matches!(
-                wire::ToolState::try_from(tool.state),
-                Ok(wire::ToolState::Pending | wire::ToolState::Running)
-            )
-        {
+        let Some(tool) = self.tools.get_mut(&id) else {
+            return;
+        };
+        if let Some(plan) = tool.plan.as_mut().filter(|plan| plan.undecided()) {
+            *plan = Verdict::of(wire::PlanVerdict::Dismissed);
+        }
+        if matches!(
+            wire::ToolState::try_from(tool.state),
+            Ok(wire::ToolState::Pending | wire::ToolState::Running)
+        ) {
             tool.state = wire::ToolState::Cancelled as i32;
             tool.ended_at_ms.get_or_insert(self.shared.now_ms());
-            self.emit_tool(emit, &id);
         }
+        self.emit_tool(emit, &id);
     }
 
-    fn decide(&mut self, emit: &mut Emit, tool_use_id: &str, decision: ToolDecisionState) {
+    fn decide(&mut self, emit: &mut Emit, tool_use_id: &str, decided: Decided) {
         if let Some(tool) = self.tools.get_mut(tool_use_id) {
-            tool.decision = Some(decision);
+            match decided {
+                Decided::Tool(decision) => tool.decision = Some(decision),
+                Decided::Plan(verdict) => tool.plan = Some(verdict),
+            }
             self.emit_tool(emit, tool_use_id);
         }
     }
@@ -736,6 +820,28 @@ impl State {
         };
         if tool.hidden {
             return;
+        }
+        if let Some(verdict) = &tool.plan {
+            let Some((text, plan)) = plan_item(&tool.input, verdict) else {
+                return;
+            };
+            let body = item_body(claude_sdk_item::Kind::Plan(plan));
+            if body == tool.emitted {
+                return;
+            }
+            tool.emitted = body.clone();
+            let at_ms = tool.at_ms;
+            return self.shared.item(
+                emit,
+                ItemDraft {
+                    key: id.to_owned(),
+                    text,
+                    body,
+                    at_ms: Some(at_ms),
+                    complete: true,
+                    ..Default::default()
+                },
+            );
         }
         if is_send_tool(&tool.server, &tool.name) {
             let (text, message) = sent_message(
@@ -874,17 +980,14 @@ const REJECTED: &str = "The user doesn't want to proceed with this tool use. The
 
 /// The control response an answer sends and the decision it puts on the
 /// call's row, or None when the answer does not fit the ask.
-fn sdk_answer(
-    meta: &AskMeta,
-    answer: claude_answer::Of,
-) -> Option<(SdkAnswer, Option<ToolDecisionState>)> {
+fn sdk_answer(meta: &AskMeta, answer: claude_answer::Of) -> Option<(SdkAnswer, Option<Decided>)> {
     let input = serde_json::from_str::<Value>(&meta.input).unwrap_or(Value::Null);
     let decided = |outcome: DecisionOutcome, scope: &str, note: &str| {
-        Some(ToolDecisionState {
+        Some(Decided::Tool(ToolDecisionState {
             outcome: outcome as i32,
             scope: scope.to_owned(),
             note: note.to_owned(),
-        })
+        }))
     };
     let allow = |input: Value, permissions: Option<Vec<PermissionUpdate>>| {
         SdkAnswer::Permission(PermissionResult::Allow {
@@ -931,36 +1034,35 @@ fn sdk_answer(
                 decided(DecisionOutcome::Denied, "", &no.note),
             )),
         },
-        (AskShape::Plan, claude_answer::Of::Plan(plan)) => match plan.of? {
-            plan_answer::Of::Approve(approve) => Some((
-                allow(
-                    input,
-                    Some(vec![PermissionUpdate::SetMode {
-                        mode: if approve.auto_accept_edits {
-                            PermissionMode::AcceptEdits
-                        } else {
-                            PermissionMode::Default
-                        },
-                        destination: PermissionUpdateDestination::Session,
-                    }]),
+        (AskShape::Plan, claude_answer::Of::Plan(plan)) => {
+            let start = |mode: PermissionMode, verdict: wire::PlanVerdict| {
+                let update = PermissionUpdate::SetMode {
+                    mode,
+                    destination: PermissionUpdateDestination::Session,
+                };
+                Some((
+                    allow(input.clone(), Some(vec![update])),
+                    Some(Decided::Plan(Verdict::of(verdict))),
+                ))
+            };
+            match wire::PlanChoice::try_from(plan.choice).ok()? {
+                wire::PlanChoice::Start => {
+                    start(PermissionMode::Default, wire::PlanVerdict::Approved)
+                }
+                wire::PlanChoice::StartAcceptingEdits => start(
+                    PermissionMode::AcceptEdits,
+                    wire::PlanVerdict::ApprovedAcceptingEdits,
                 ),
-                // The mode it switched to, as the decision's scope, so the
-                // transcript says edits were accepted without asking.
-                decided(
-                    DecisionOutcome::Allowed,
-                    if approve.auto_accept_edits {
-                        "acceptEdits"
-                    } else {
-                        ""
-                    },
-                    "",
-                ),
-            )),
-            plan_answer::Of::SendBack(send_back) => Some((
-                deny(&send_back.note, false),
-                decided(DecisionOutcome::Denied, "", &send_back.note),
-            )),
-        },
+                wire::PlanChoice::KeepPlanning => {
+                    let note = plan.note.unwrap_or_default();
+                    Some((
+                        deny(&note, false),
+                        Some(Decided::Plan(Verdict::sent_back(&note))),
+                    ))
+                }
+                wire::PlanChoice::Unspecified => None,
+            }
+        }
         (AskShape::Question(questions), claude_answer::Of::Question(answer)) => {
             if answer.answers.len() != questions.len() {
                 return None;
@@ -1141,6 +1243,7 @@ fn describe_item(body: &[u8]) -> ItemView {
         Some(Kind::Thinking(thinking)) => ("thinking", thinking.complete, String::new()),
         Some(Kind::Tool(tool)) => ("tool", true, describe_tool(&tool)),
         Some(Kind::Ask(item)) => ("ask", true, ask_item::describe(&item)),
+        Some(Kind::Plan(plan)) => ("plan", plan.complete, crate::shared::describe_plan(&plan)),
         Some(Kind::Task(task)) => (
             "task",
             true,
