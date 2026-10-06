@@ -22,8 +22,16 @@ metric's tolerance, so it was not kept.
 
 The shell now sits in a view of its own that holds only the composition,
 so the root redrawing leaves it alone, and the shell records only the tabs
-somebody leaves. The cold fleet render measured 88.1 ms median (worst 96.0)
-with the first frame at 633 ms; reconciliation reads the same marks.
+somebody leaves. That brought the render to 88 ms, but a whole run still
+read 98.7: the runtime's first fleet wake is queued while the fleet opens,
+ahead of the frame's own completion, so its relayout always landed inside
+the frame and pushed it one refresh later whenever it crossed one. A fleet
+wake that arrives while the launch's first frame with rows is going up now
+waits for that frame (250 ms at most) and is read on the next turn after
+it, so the second lines appear one refresh after the remembered rows
+rather than delaying them. Twice over on a quiet machine the cold fleet
+render then measured 74.9 / 73.7 ms median (worst 80.0 / 79.7), the first
+frame 619.6 / 625.2 ms, and reconciliation at 0 ms 80.1 / 73.7 ms.
 
 2026-10-07 — **The phone's chat streams within its CPU budget again.**
 `just ios perf` measured the phone's chat taking fifty rows a second at

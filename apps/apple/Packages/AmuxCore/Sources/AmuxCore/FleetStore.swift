@@ -108,6 +108,10 @@ public final class FleetStore {
     @ObservationIgnored private var seen: [AgentKey: Date] = [:]
     @ObservationIgnored private let launched: Date
     @ObservationIgnored private var markedFirstFrame = false
+    /// The launch's first frame with rows is built and not yet on screen.
+    @ObservationIgnored public private(set) var presenting = false
+    /// Told once that frame is on screen.
+    @ObservationIgnored public var presented: (@MainActor () -> Void)?
 
     public init(now: Date = Date()) {
         orderedAt = now
@@ -123,8 +127,19 @@ public final class FleetStore {
         rebuild()
         if !markedFirstFrame && !self.rows.isEmpty {
             markedFirstFrame = true
-            Signposts.emitWhenPresented(.firstCachedFrame)
+            presenting = true
+            Presentation.after { [weak self] in
+                Signposts.emit(.firstCachedFrame)
+                MainActor.assumeIsolated { self?.finishPresenting() }
+            }
         }
+    }
+
+    /// The first frame is on screen, or waiting for it was given up.
+    public func finishPresenting() {
+        guard presenting else { return }
+        presenting = false
+        presented?()
     }
 
     public func relay(_ link: RelayLink) {

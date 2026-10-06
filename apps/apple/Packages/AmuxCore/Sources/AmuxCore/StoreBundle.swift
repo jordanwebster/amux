@@ -53,6 +53,10 @@ public final class StoreBundle {
     @ObservationIgnored public var saw: (@MainActor (_ hosts: Int, _ attention: Int) -> Void)?
     /// Whether a re-read of a relay link still coming up is scheduled.
     @ObservationIgnored private var settling = false
+    /// A fleet wake that arrived while the launch's first frame was going up.
+    @ObservationIgnored private var held = false
+    /// How long a fleet wake waits for the launch's first frame at most.
+    public static let firstFrameHold: Duration = .milliseconds(250)
 
     public init(
         account: AccountId, clock: @escaping @MainActor () -> Date = { Date() },
@@ -67,6 +71,12 @@ public final class StoreBundle {
         self.hosts = HostsStore(clock: clock)
         self.pairing = PairingStore(clock: clock)
         self.newAgent = NewAgentStore()
+        // Read after the refresh that put the frame up, not inside it.
+        fleet.presented = { [weak self] in
+            guard let self, self.held else { return }
+            self.held = false
+            Task { [weak self] in self?.woke(0) }
+        }
     }
 
     /// Starts drawing from a profile, or stops when it is gone.
@@ -80,6 +90,21 @@ public final class StoreBundle {
     public func woke(_ chat: UInt64) {
         if chat == 0 {
             guard let profile else { return }
+            // The runtime wakes the fleet as soon as it opens, for its
+            // agents' sessions starting; the second lines they bring arrive
+            // a moment after the remembered rows. Applied before the launch's
+            // first frame is on screen, they lay the rows out again inside
+            // it, so they wait for that frame, and not for long.
+            if fleet.presenting {
+                if !held {
+                    held = true
+                    Task { [weak self] in
+                        try? await Task.sleep(for: Self.firstFrameHold)
+                        self?.fleet.finishPresenting()
+                    }
+                }
+                return
+            }
             let changes = profile.takeFleetChanges()
             read(hostsMoved: changes.hosts)
         } else {
