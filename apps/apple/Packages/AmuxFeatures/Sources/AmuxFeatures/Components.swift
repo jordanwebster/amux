@@ -409,3 +409,12 @@ struct Radio: View {
         .frame(width: 18, height: 18)
     }
 }
+
+extension View {
+    /// A Toggle as one named switch to VoiceOver. On iOS 26 the UIKit switch a
+    /// Toggle draws is an accessibility element of its own, with no name,
+    /// beside the Toggle's named one; this stands a single switch in for both.
+    func oneSwitch(_ label: String, isOn: Binding<Bool>) -> some View {
+        accessibilityRepresentation { Toggle(label, isOn: isOn) }
+    }
+}

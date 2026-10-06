@@ -1,3 +1,25 @@
+2026-10-06 — **The phone's whole verification holds the flow stories.**
+`just ios verify` now requires the eight phone stories told this week to
+report a full pass alongside the older ones: a plan decided on headless
+Claude, Claude in its own terminal and Codex; questions; a tool server's
+asks; queue and steer; send while away; and composer limits.
+
+Running it found one thing the accessibility audit refuses: on iOS 26 the
+switch a SwiftUI Toggle draws is an accessibility element of its own, with
+no name, inside the Toggle's named one, so the new agent form's New
+worktree row offered VoiceOver a nameless 63×28 pt switch. Each toggle (that
+row, a plan's Accept edits without asking, a tool server form's yes/no
+fields) now stands one named switch in for both.
+
+Re-recorded deliberately, each looked at before it was kept:
+
+- `fleet` (light, dark) and `hosts` (light): the fleet is drawn in its
+  Needs you and Running sections, and each row's second line is what the
+  shared fleet view chooses — the asker's question, an idle agent's last
+  words — instead of what the agent was working on.
+- `claude-sdk-ask-question` (light, dark): the question card offers Add a
+  note, Skip and Reply instead under its options.
+
 2026-10-06 — **The phone tells the queue, away and usage-limit stories.**
 `queue-and-steer`, `send-while-away` and `composer-limits` now run on the
 phone. Two prompts sent while an agent works queue under the feed; the

@@ -553,6 +553,9 @@ private struct AskBodyView: View {
                     }
                 }
                 .tint(design.ink.color)
+                .oneSwitch(
+                    String(localized: "Accept edits without asking, Until the plan is done"),
+                    isOn: $autoAccept)
                 .identified("ask.plan.auto", value: autoAccept ? "on" : "off")
             }
             ButtonPair {
@@ -933,13 +936,18 @@ private struct FormFieldView: View {
     let field: FormField
     let set: (String) -> Void
 
+    private var on: Binding<Bool> {
+        Binding(get: { field.value == "true" }, set: { set($0 ? "true" : "false") })
+    }
+
     var body: some View {
         switch field.kind {
         case .toggle:
-            Toggle(isOn: Binding(get: { field.value == "true" }, set: { set($0 ? "true" : "false") })) {
+            Toggle(isOn: on) {
                 Text(field.title).designFont(.body, design)
             }
             .tint(design.ink.color)
+            .oneSwitch(field.title, isOn: on)
             .identified("ask.field.\(field.name)", value: field.value)
         case .choice(let options):
             HStack {

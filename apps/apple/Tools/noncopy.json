@@ -1194,8 +1194,6 @@
       {"literal": "\"title\"", "context": "name: name, title: property[\"title\"] as? String ?? name,", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"true\"", "context": "case .toggle: return value == \"true\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"{}\"", "context": "?? Data(\"{}\".utf8)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"true\"", "context": "Toggle(isOn: Binding(get: { field.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })) {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 2},
-      {"literal": "\"false\"", "context": "Toggle(isOn: Binding(get: { field.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })) {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"ask.field.\\(field.name)\"", "context": ".identified(\"ask.field.\\(field.name)\", value: field.value)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 3},
       {"literal": "\"ask.step.review\"", "context": ".identified(\"ask.step.review\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.question\"", "context": ".identified(\"ask.question\", label: question.question)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
@@ -1231,7 +1229,9 @@
       {"literal": "\"\\\"\"", "context": "if character == \"\\\"\" {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
       {"literal": "\"\\\"\"", "context": "while let next = characters.next(), next != \"\\\"\" {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
       {"literal": "\"\\\\\"", "context": "if next == \"\\\\\", let escaped = characters.next() {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
-      {"literal": "\"{}[]:,\"", "context": "} else if \"{}[]:,\".contains(character) {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1}
+      {"literal": "\"{}[]:,\"", "context": "} else if \"{}[]:,\".contains(character) {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
+      {"literal": "\"true\"", "context": "Binding(get: { field.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 2},
+      {"literal": "\"false\"", "context": "Binding(get: { field.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatComposer.swift": [
       {"literal": "\"chat.field\"", "context": ".identified(\"chat.field\", label: placeholder, value: model.draft)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},

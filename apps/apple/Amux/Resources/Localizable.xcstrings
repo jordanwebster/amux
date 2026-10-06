@@ -1177,6 +1177,18 @@
         }
       }
     },
+    "Accept edits without asking, Until the plan is done": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accept edits without asking, Until the plan is done"
+          }
+        }
+      }
+    },
     "Accounts": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift.",
       "extractionState": "manual",
@@ -3753,6 +3765,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "New worktree"
+          }
+        }
+      }
+    },
+    "New worktree, A worktree of its own, made from the directory’s repository": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New worktree, A worktree of its own, made from the directory’s repository"
           }
         }
       }

@@ -468,6 +468,9 @@ public struct NewAgent: View {
             }
         }
         .tint(design.ink.color)
+        .oneSwitch(
+            String(localized: "New worktree, A worktree of its own, made from the directory’s repository"),
+            isOn: Binding(get: { model.newWorktree }, set: { model.newWorktree = $0 }))
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(minHeight: 44)

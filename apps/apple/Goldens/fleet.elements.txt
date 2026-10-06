@@ -3,16 +3,19 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | 1 need you · 4 agents | 60,105,151,16
 home.newAgent | New Agent |  | 345,74,44,44
-home.row.<asker> | asker, Tidy the release notes., Needs you, desk, /tmp/amux-phone-journey/net/desk/work, <age> | needs-you | 18,159,366,91
+home.row.<asker> | asker, Needs you, Which changes should the release notes keep?, desk, /tmp/amux-phone-journey/net/desk/work, <age> | needs-you | 18,159,366,91
 home.row.<asker>.age.volatile | <volatile>
+home.row.<asker>.second |  |  | 31,197,321,18
 home.row.<asker>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, Keeping the recovery state safe, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | idle | 18,251,366,91
+home.row.<keeper> | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | idle | 18,291,366,91
 home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.second |  |  | 31,329,236,18
 home.row.<keeper>.detail.volatile | <volatile>
-home.row.<planner> | planner, Tracing why the pairing errors disagree, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | idle | 18,343,366,91
+home.row.<planner> | planner, Idle, The pairing errors all come from one table in the wire crate, so they can share one string., desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | idle | 18,383,366,91
 home.row.<planner>.age.volatile | <volatile>
+home.row.<planner>.second |  |  | 31,421,337,18
 home.row.<planner>.detail.volatile | <volatile>
-home.row.<dialog> | dialog, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,434,366,70
+home.row.<dialog> | dialog, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,475,366,70
 home.row.<dialog>.age.volatile | <volatile>
 home.row.<dialog>.detail.volatile | <volatile>
 hosts |  | 1 reachable | 0,62,402,778
@@ -31,8 +34,9 @@ tab.you | You | not selected | 253,777,99,57
  | Agents, switch account |  | 60,65,104,46
  | 1 need you · 4 agents |  | 60,105,151,16
  | New Agent |  | 345,74,44,44
- | AGENTS |  | 20,137,42,14
- | asker, Tidy the release notes., Needs you, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,159,366,91
- | keeper, Keeping the recovery state safe, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread |  | 18,251,366,91
- | planner, Tracing why the pairing errors disagree, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread |  | 18,343,366,91
- | dialog, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,435,366,70
+ | NEEDS YOU |  | 20,137,63,14
+ | asker, Needs you, Which changes should the release notes keep?, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,159,366,91
+ | RUNNING |  | 20,269,49,14
+ | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread |  | 18,291,366,91
+ | planner, Idle, The pairing errors all come from one table in the wire crate, so they can share one string., desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread |  | 18,383,366,91
+ | dialog, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,475,366,70
