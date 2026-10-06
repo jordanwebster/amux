@@ -1,3 +1,13 @@
+2026-10-06 — **The deletion ledger holds the phone's old views gone.**
+The names the phone stopped using once it read the shared views are now
+held gone by the deletion-ledger check: its outbox row and state, the
+session strip, the bridge's fleet rows, the old run folding (RunInfo,
+CollapseRuns, run_expanded), `last_activity_ms` and the strip's copy of
+`workingOn`. The agent's own `working_on` stays, since the wire and the
+agent tools still carry it. docs/CLIENT.md describes the shared sending
+rule instead of the outbox rows, and docs/WIRE.md no longer names the
+removed field. The stand-ins check has no row left waiting on the phone.
+
 2026-10-06 — **The phone follows the terminal's sending rules.**
 Where a prompt on its way is drawn is now one rule in the shared views, used
 by both clients: a prompt sent while the agent is idle with nothing queued

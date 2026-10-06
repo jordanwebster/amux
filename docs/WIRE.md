@@ -526,10 +526,9 @@ same comparison runs as the test
 runs.
 
 A deliberate break is recorded with `just proto-check --update`, which rewrites
-the baseline, committed in the same change. The latest: `Agent` lost
-`last_activity_ms` (field 12 is now `phase_since_ms`, when the phase began
-rather than when anything last happened) and `Agent.name` stopped being
-optional.
+the baseline, committed in the same change. The latest: `Agent` field 12
+is now `phase_since_ms`, when the phase began rather than when anything last
+happened, and `Agent.name` stopped being optional.
 
 After any edit to a `.proto`, run `just protobuf` to regenerate the committed
 Rust; `just codegen-check`, which CI runs, fails on stale output.

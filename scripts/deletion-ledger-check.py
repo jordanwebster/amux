@@ -295,6 +295,20 @@ ROWS = [
         ],
     ),
     Row(
+        "the phone's own views",
+        "the phone's outbox, session strip, fleet rows and run folding, and the row fields the shared views replaced",
+        [
+            # working_on lives on as the agent's own status line on the wire
+            # and in its tools; only the phone's copy of it on the strip went.
+            r"OutboxRow|OutboxState|outbox_rows|outboxRows",
+            r"(amux_)?session_strip|sessionStrip",
+            r"(^|[^A-Za-z_])(amux_)?fleet_rows",
+            r"RunInfo|CollapseRuns|run_expanded",
+            r"last_activity_ms|lastActivityMs",
+            r"workingOn",
+        ],
+    ),
+    Row(
         "docs",
         "the chapter on agent messaging and remote sessions",
         [

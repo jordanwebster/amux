@@ -314,7 +314,7 @@ each renderer. A client may also read the state directly.
 | `answer_input(card, answer, note)`, `question_answer(card, picks, note)`, `with_form_content(answer, json)` | The input that answers the card in its kind's arm. |
 | `composer(state, now_ms)`, `waiting(state)` | The composer mode and the activity line inside it; the waiting reason. |
 | `composer_tokens(draft, attachments)`, `segments(text, attachments)` | Text runs and attachment chips at their placeholder positions. |
-| `queue_rows(state)`, `outbox_rows(state)` | Queued prompts (withdraw, send now) and this client's prompts still sending, not confirmed or rejected. |
+| `queue_rows(state)`, `sends_to_feed(state)`, `prompts_underway(state, in_feed)`, `refused_prompts(state)` | Queued prompts (withdraw, send now); whether a new prompt lands at the feed's end or in the queue; this client's prompts on their way, each where it was first drawn, sending or may not have arrived; the prompts the agent refused, with why. |
 | `overview(state, diff)`, `changes(diff)`, `diff_base(state, comparison)` | The `Overview`: tasks, background jobs, failed tool servers, usage near a limit, and the changed files by folder (root files first) from a `Diff` fetched without a patch; the base a comparison asks `Diff` for. |
 | `context(state)`, `sign_in(state)`, `effort_in_force(agent)` | Context use (near full from 80%), a sign-in problem, and the effort the agent runs at. |
 | `settings(state)`, `setting_input(kind, change)` | What the agent offers to change (models, efforts, modes, commands), why a setting cannot change from here, and the input a pick sends. |
@@ -392,8 +392,14 @@ input id, applies `Msg::Send` so the optimistic row exists at once, and calls `S
 interpreter's verdict: accepted (possibly `queued`), or rejected with a reason. A prompt sent while a turn runs
 waits in the agent's queue, which every snapshot lists, so other clients see it too; `queue_rows` offers
 withdraw and send-now on it, and send-now steers it into the running turn, where it reads "steered" until its
-reflection lands. `outbox_rows` draws this client's own prompts that are sending, not confirmed (resend or
-discard) or rejected.
+reflection lands.
+
+This client's own prompts on their way are one rule for every client. `sends_to_feed` says where a new prompt
+lands: at the feed's end while the agent is idle with nothing queued, otherwise in the queue. The client
+remembers that place, and `prompts_underway` draws each prompt there until the agent's queue or transcript
+holds it, so it does not jump as the agent starts work. A prompt the connection dropped, which catching up
+found neither queued nor in the transcript, reads "may not have arrived" with resend and discard.
+`refused_prompts` lists the ones the agent refused; the words go back to the composer with the reason.
 
 When the entry says exited, the composer is `Resume`: the draft goes through `resume_with` as the next
 incarnation's first prompt, one tap.
