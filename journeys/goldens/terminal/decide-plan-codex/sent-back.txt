@@ -1,0 +1,34 @@
+
+  planner-codex │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                 2 / 258K │ [Diff] │ [Home]
+
+    Worked <t>
+
+
+    Rotate the logs.                                                                                 hh:mm
+
+
+  ▸ Plan · Rotate the logs · sent back ─────────────────────────────────────────────────────────────────────
+    “Keep a month of logs, compressed.”
+
+    Worked <t>
+
+
+    Keep a month of logs, compressed.                                                                hh:mm
+
+
+  ▾ Plan · Rotate the logs ─────────────────────────────────────────────────────────────────────────────────
+
+    1. Rotate the daemon's log every night.
+    2. Compress rotated logs.
+    3. Delete logs older than a month.
+
+    Worked <t>
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ● Plan ready                                                                                           │
+  │                                                                                                        │
+  │ › 1. Yes, implement this plan                                                                          │
+  │   2. No, keep planning  esc · tab to add a note                                                        │
+  ╰──────────────────────────────────────────────────────────────────── gpt-fake (medium) · custom · plan ─╯
+
+  enter choose   ctrl+x stop   ctrl+a more

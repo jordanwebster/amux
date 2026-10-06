@@ -566,11 +566,22 @@ def sent_back_then_approved(decisions: list[dict], note: str) -> None:
         raise RuntimeError(f"Claude was answered {decisions!r}")
 
 
-def two_plans(chat: dict) -> None:
-    """The host holds two plan calls before the reply."""
-    plans = [item for item in chat["items"] if item["key"].startswith("toolu_")]
-    if len(plans) != 2:
-        raise RuntimeError(f"the host holds {len(plans)} plan calls")
+PLAN_FILE = ".claude/plans/"
+
+
+def plans_only(chat: dict) -> None:
+    """The desk holds the two plans as its only tool items: the plan file
+    Claude wrote before each is no step of the chat."""
+    calls = [item for item in chat["items"] if item["key"].startswith("toolu_")]
+    if len(calls) != 2 or not all(item["text"].startswith("# Move the journal") for item in calls):
+        raise RuntimeError(f"the desk holds {[item['text'][:40] for item in calls]!r} as tool items")
+
+
+def no_plan_file(frame: str) -> None:
+    """The screen shows no step writing the plan file, open or folded
+    into the steps before the plan."""
+    if PLAN_FILE in frame or "move-the-journal.md" in frame or re.search(r"\b\d+ edits?\b", frame):
+        raise RuntimeError(f"the plan file shows as a step:\n{frame}")
 
 
 def decide_plan(journey: TerminalJourney, agent: str, headless: bool) -> list[str]:
@@ -578,14 +589,14 @@ def decide_plan(journey: TerminalJourney, agent: str, headless: bool) -> list[st
     journey.open_chat(pane, agent)
     journey.type(pane, PLAN_PROMPT)
     journey.keys(pane, "Enter")
-    journey.wait_terms(pane, "Plan ready", "3. Delete the old journal.", "No, keep planning")
+    no_plan_file(journey.wait_terms(pane, "Plan ready", "3. Delete the old journal.", "No, keep planning"))
     journey.frame(pane, "plan")
     # Esc reaches the way out; Tab opens the note it carries.
     journey.keys(pane, "Escape", "Tab")
     journey.type(pane, PLAN_NOTE)
     journey.wait_terms(pane, f"No, keep planning: {PLAN_NOTE}")
     journey.keys(pane, "Enter")
-    journey.wait_terms(pane, "sent back", PLAN_NOTE, "4. Keep the old journal for a week.", "Plan ready")
+    no_plan_file(journey.wait_terms(pane, "sent back", PLAN_NOTE, "4. Keep the old journal for a week.", "Plan ready"))
     journey.frame(pane, "revised")
     journey.keys(pane, "1")
     journey.wait(pane, lambda frame: at_rest(frame, "approved", PLAN_DONE), "the approved plan's work")
@@ -596,24 +607,106 @@ def decide_plan(journey: TerminalJourney, agent: str, headless: bool) -> list[st
         "plan-settled",
     )
     reflected_once(settled, PLAN_PROMPT)
+    plans_only(settled)
     assertions = [
         f"{PLAN_PROMPT!r} reflected once in the desk's chat",
         "the plan showed in the feed with its decision in the composer's box",
         "sent back with a note, the revised plan arrived; approved, the work ran",
+        "the plan file Claude wrote before each plan showed as no step, on screen or on the desk",
+        negative_control(plans_only, {"items": [*settled["items"], {"key": "toolu_write", "text": ""}]}),
     ]
     if headless:
         decisions = control_responses(journey, agent, "plan-decisions")
         sent_back_then_approved(decisions, PLAN_NOTE)
         assertions.append("Claude received the plan sent back with the note, then one approval")
         assertions.append(negative_control(sent_back_then_approved, decisions, "a note never written"))
-    else:
-        two_plans(settled)
-        assertions.append("the desk holds both plans and the reply")
-        assertions.append(negative_control(two_plans, {"items": settled["items"][:3]}))
     journey.frame(pane, "approved")
     journey.quit_client(pane)
     assertions.append("the client exited 0")
     return assertions
+
+
+ROTATE_PROMPT = "Rotate the logs."
+ROTATE_NOTE = "Keep a month of logs, compressed."
+IMPLEMENT = "Implement the plan."
+
+
+def codex_turns(journey: TerminalJourney, agent: str, label: str) -> list[tuple[str, str]]:
+    """Each turn amux started on Codex: the collaboration mode it ran in
+    and its words. A turn naming no mode keeps the one before, as Codex
+    does."""
+    lines = [json.loads(line) for line in journey.provider_input(agent, label)]
+    turns = []
+    mode = "default"
+    for line in lines:
+        if line.get("method") != "turn/start":
+            continue
+        params = line["params"]
+        mode = (params.get("collaborationMode") or {}).get("mode", mode)
+        text = "".join(part.get("text", "") for part in params.get("input", []))
+        turns.append((mode, text))
+    return turns
+
+
+def codex_plan_turns(turns: list[tuple[str, str]], expected: list[tuple[str, str]]) -> None:
+    if turns != expected:
+        raise RuntimeError(f"Codex was started on {turns!r}")
+
+
+def decide_plan_codex(journey: TerminalJourney) -> list[str]:
+    agent = "planner-codex"
+    pane = journey.launch("terminal", "laptop")
+    journey.open_chat(pane, agent)
+    # Shift+Tab puts Codex in plan mode before the prompt.
+    journey.keys(pane, "BTab")
+    journey.wait_terms(pane, "· plan ─╯")
+    journey.type(pane, PLAN_PROMPT)
+    journey.keys(pane, "Enter")
+    # The plan is in the feed while the turn still runs.
+    journey.wait(
+        pane,
+        lambda frame: "3. Delete the old journal." in frame and "ctrl+x stop" in frame and "Plan ready" not in frame,
+        "the plan streaming",
+    )
+    journey.frame(pane, "plan-streaming")
+    journey.request({"OpenGate": {"name": "plan-streamed"}})
+    journey.wait_terms(pane, "Plan ready", "1. Yes, implement this plan", "No, keep planning")
+    journey.wait_chat("desk", agent, lambda chat: chat["phase"] == "NEEDS_YOU", "plan-needs-you")
+    journey.frame(pane, "plan-ready")
+    journey.keys(pane, "1")
+    journey.wait(pane, lambda frame: at_rest(frame, "approved", PLAN_DONE), "the implemented plan's work")
+    # A second plan, sent back with a note: Codex plans again on it.
+    journey.keys(pane, "BTab")
+    journey.wait_terms(pane, "· plan ─╯")
+    journey.type(pane, ROTATE_PROMPT)
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Plan ready", "2. Delete logs older than a week.")
+    journey.keys(pane, "Escape", "Tab")
+    journey.type(pane, ROTATE_NOTE)
+    journey.wait_terms(pane, f"No, keep planning: {ROTATE_NOTE}")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "sent back", ROTATE_NOTE, "3. Delete logs older than a month.", "Plan ready")
+    journey.wait_chat("desk", agent, lambda chat: chat["phase"] == "NEEDS_YOU" and len(prompts(chat, ROTATE_NOTE)) == 1, "revised")
+    journey.frame(pane, "sent-back")
+    expected = [
+        ("plan", PLAN_PROMPT),
+        ("default", IMPLEMENT),
+        ("plan", ROTATE_PROMPT),
+        ("plan", ROTATE_NOTE),
+    ]
+    turns = codex_turns(journey, agent, "plan-turns")
+    codex_plan_turns(turns, expected)
+    control = negative_control(codex_plan_turns, turns, [*expected[:3], ("default", ROTATE_NOTE)])
+    journey.quit_client(pane)
+    return [
+        "the plan showed in the feed while Codex's turn still ran",
+        "when the turn ended the plan's decision took the composer's box and the desk said the agent needs you",
+        f"implement started a turn out of plan mode with {IMPLEMENT!r}, and its work ran",
+        "a second plan, sent back with a note, came back revised; the note went as the next prompt, still in plan mode",
+        "Codex was started on the prompt and the note in plan mode and on the implement turn in default mode",
+        control,
+        "the client exited 0",
+    ]
 
 
 OTHER = "From the help panel"
@@ -623,8 +716,21 @@ ANSWERS = {
 }
 
 
+SKIPPED = "Which section should come first?"
+PALETTE = "Pick the palette too."
+REPLY = "Let me see both palettes on the desk first."
+
+
 def answered(decisions: list[dict], answers: dict) -> None:
-    if len(decisions) != 1 or decisions[0].get("updatedInput", {}).get("answers") != answers:
+    """The first ask was answered once with exactly `answers`: the skipped
+    question left out."""
+    if not decisions or decisions[0].get("updatedInput", {}).get("answers") != answers:
+        raise RuntimeError(f"Claude was answered {decisions!r}")
+
+
+def replied(decisions: list[dict], words: str) -> None:
+    """The second ask was refused with the person's own words."""
+    if len(decisions) != 2 or decisions[1].get("behavior") != "deny" or decisions[1].get("message") != words:
         raise RuntimeError(f"Claude was answered {decisions!r}")
 
 
@@ -645,20 +751,43 @@ def answer_questions(journey: TerminalJourney) -> list[str]:
     journey.type(pane, OTHER)
     journey.wait_terms(pane, f"Something else: {OTHER}")
     journey.keys(pane, "Enter")
-    journey.wait_terms(pane, "Send answers", "→ Stacked", f"→ {OTHER}")
+    # The third is skipped from the row under the options.
+    journey.wait_terms(pane, SKIPPED, "Skip", "Reply instead")
+    journey.keys(pane, "Down", "Down", "Down")
+    journey.wait_terms(pane, "› Skip")
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Send answers", "→ Stacked", f"→ {OTHER}", "→ skipped")
     journey.frame(pane, "review")
     journey.keys(pane, "Enter")
-    journey.wait(pane, lambda frame: at_rest(frame, "Answered 2 questions", "Thanks, I'll build it that way."), "the reply")
+    journey.wait(pane, lambda frame: at_rest(frame, "Answered 2 of 3 questions", "Thanks, I'll build it that way."), "the reply")
     journey.frame(pane, "answered")
+    # A second ask, replied to instead: Esc points at Reply instead.
+    journey.type(pane, PALETTE)
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "Which palette should it open in?", "Reply instead")
+    journey.keys(pane, "Escape")
+    journey.wait_terms(pane, "› Reply instead")
+    journey.keys(pane, "Enter")
+    journey.type(pane, REPLY)
+    journey.wait_terms(pane, f"Reply instead: {REPLY}")
+    journey.frame(pane, "reply-instead")
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: at_rest(frame, REPLY, "I'll leave the palette for later."), "the reply to the reply")
+    journey.frame(pane, "replied")
     decisions = control_responses(journey, "asker", "answers")
     answered(decisions, ANSWERS)
-    control = negative_control(answered, decisions, {**ANSWERS, "Where should the screen open from?": "Home"})
+    replied(decisions, REPLY)
+    controls = [
+        negative_control(answered, decisions, {**ANSWERS, SKIPPED: "Relay"}),
+        negative_control(replied, decisions, "Pick Terminal."),
+    ]
     journey.quit_client(pane)
     return [
         "each option's preview showed beside the options as the selection moved",
-        "a picked option and a typed answer under Something else showed together for review",
-        "Claude received one answer naming Stacked and the typed text",
-        control,
+        "a picked option, a typed answer under Something else and a skipped question showed together for review",
+        "Claude received one answer naming Stacked and the typed text, with the skipped question left out",
+        "a second ask, replied to instead, reached Claude as the question refused with the person's words",
+        *controls,
         "the client exited 0",
     ]
 
@@ -975,6 +1104,7 @@ STORIES = {
     "keep-authority": keep_authority,
     "decide-plan-claude-sdk": lambda j: decide_plan(j, "planner", True),
     "decide-plan-claude-pty": lambda j: decide_plan(j, "planner-pty", False),
+    "decide-plan-codex": decide_plan_codex,
     "answer-questions": answer_questions,
     "tool-server-asks": tool_server_asks,
     "queue-and-steer": queue_and_steer,

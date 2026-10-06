@@ -1,5 +1,8 @@
 
-  planner │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                              1 │ [Diff] │ [Home]
+  planner-codex │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                 2 / 258K │ [Diff] │ [Home]
+
+
+
 
 
 
@@ -13,22 +16,19 @@
     Move the journal.                                                                                hh:mm
 
 
-  ▸ Plan · Move the journal · sent back ────────────────────────────────────────────────────────────────────
-    “Check the copy before switching.”
-
   ▾ Plan · Move the journal ────────────────────────────────────────────────────────────────────────────────
 
     1. Copy the journal to the new store.
-    2. Check the copy against the original.
-    3. Point the daemon at it.
-    4. Keep the old journal for a week.
+    2. Point the daemon at it.
+    3. Delete the old journal.
+
+    Worked <t>
 
   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
   │ ● Plan ready                                                                                           │
   │                                                                                                        │
-  │ › 1. Yes, start building                                                                               │
-  │   2. Yes, and accept edits without asking                                                              │
-  │   3. No, keep planning  esc · tab to add a note                                                        │
-  ╰──────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) · plan ─╯
+  │ › 1. Yes, implement this plan                                                                          │
+  │   2. No, keep planning  esc · tab to add a note                                                        │
+  ╰──────────────────────────────────────────────────────────────────── gpt-fake (medium) · custom · plan ─╯
 
   enter choose   ctrl+x stop   ctrl+a more

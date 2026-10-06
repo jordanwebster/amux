@@ -4,7 +4,7 @@
   + New Agent
 
 
-  ▾ Running 10 ─────────────────────────────────────────────────────────────────────────────────────────────
+  ▾ Running 11 ─────────────────────────────────────────────────────────────────────────────────────────────
 
   › ○ release-notes╭─ New Agent ──────────────────────────────────────────────────────────╮            [x]
       Ready to writ│                                                                      │
@@ -25,10 +25,10 @@
 
     ○ asker  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
 
+    ○ planner-codex  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                           now
+
     ○ planner-pty  Claude (terminal) · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                 now
 
     ○ planner  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                now
-
-
 
 

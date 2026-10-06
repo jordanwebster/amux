@@ -144,6 +144,11 @@ pub struct AgentDecl {
     /// sharing a folder share its branch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// The permission it is created with, as its catalogue names it
+    /// ("plan" for Claude to start planning); none leaves the provider's
+    /// own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
 }
 
 /// Which fake provider an agent runs, and so which interpreter reads it.

@@ -559,12 +559,7 @@ impl Net {
                 .map(|text| prompt(decl.kind, b"testnet-first", text)),
             cwd,
             kind: decl.kind.wire() as i32,
-            config: Some(match decl.kind {
-                FakeKind::Codex => {
-                    create_agent_request::Config::Codex(CodexCreateConfig::default())
-                }
-                _ => create_agent_request::Config::Claude(ClaudeCreateConfig::default()),
-            }),
+            config: Some(create_config(&decl)),
             host_name: None,
         };
         let runtime = self.runtime(&decl.host)?;
@@ -786,12 +781,7 @@ impl Net {
                 .clone()
                 .unwrap_or_else(|| host.work.to_string_lossy().into_owned()),
             kind: decl.kind.wire() as i32,
-            config: Some(match decl.kind {
-                FakeKind::Codex => {
-                    create_agent_request::Config::Codex(CodexCreateConfig::default())
-                }
-                _ => create_agent_request::Config::Claude(ClaudeCreateConfig::default()),
-            }),
+            config: Some(create_config(&decl)),
             ..CreateAgentRequest::default()
         };
         let tools = self.tools(parent)?;
@@ -2006,6 +1996,22 @@ fn on_branch(host: &str, dir: &Path, branch: &str) -> Result<(), NetError> {
 /// The directory an agent starts in: its host's work directory, a folder
 /// below it named relatively (made when missing), or an absolute path as
 /// it is.
+/// The provider settings an agent is created with: its declared
+/// permission, nothing else.
+fn create_config(decl: &AgentDecl) -> create_agent_request::Config {
+    let permission = decl.permission.clone();
+    match decl.kind {
+        FakeKind::Codex => create_agent_request::Config::Codex(CodexCreateConfig {
+            permission,
+            ..CodexCreateConfig::default()
+        }),
+        _ => create_agent_request::Config::Claude(ClaudeCreateConfig {
+            permission,
+            ..ClaudeCreateConfig::default()
+        }),
+    }
+}
+
 fn work_dir(work: &Path, cwd: Option<&str>) -> Result<String, NetError> {
     let Some(cwd) = cwd else {
         return Ok(work.to_string_lossy().into_owned());

@@ -1201,6 +1201,33 @@ impl Engine {
 
     /// Send a control request and wait for its response, or for the turn to
     /// be cut short.
+    /// An allow that sets the permission mode (an approved plan's way out
+    /// of plan mode) switches it, and Claude says so in a status message.
+    async fn apply_mode(&mut self, answer: &Value) {
+        let response = &answer["response"];
+        if response["behavior"] != "allow" {
+            return;
+        }
+        let set = response["updatedPermissions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .rev()
+            .filter(|update| update["type"] == "setMode")
+            .find_map(|update| update["mode"].as_str());
+        let Some(mode) = set else { return };
+        self.mode = mode.to_owned();
+        let status = json!({
+            "type": "system",
+            "subtype": "status",
+            "status": null,
+            "permissionMode": self.mode,
+            "uuid": uuid(),
+            "session_id": self.session,
+        });
+        self.send(status).await;
+    }
+
     async fn request(&mut self, body: Value) -> Option<Value> {
         let id = uuid();
         let call = body["tool_use_id"].as_str().map(str::to_owned);
@@ -1208,6 +1235,7 @@ impl Engine {
             .await;
         loop {
             if let Some(answer) = self.answers.remove(&id) {
+                self.apply_mode(&answer).await;
                 return Some(answer);
             }
             // An interrupt cancels an open permission request, as Claude

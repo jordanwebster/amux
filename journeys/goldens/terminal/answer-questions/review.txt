@@ -12,8 +12,6 @@
 
 
 
-
-
   started ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -21,12 +19,14 @@
 
 
   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-  │ ● ‹  ✓ Layout   ✓ Entry   Review  ›                                                                    │
+  │ ● ‹  ✓ Layout   ✓ Entry   Order   Review  ›                                                            │
   │                                                                                                        │
   │   How should the settings screen be laid out?                                                          │
   │     → Stacked                                                                                          │
   │   Where should the screen open from?                                                                   │
   │     → From the help panel                                                                              │
+  │   Which section should come first?                                                                     │
+  │     → skipped                                                                                          │
   │                                                                                                        │
   │ › Send answers                                                                                         │
   ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯

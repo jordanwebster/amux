@@ -1,17 +1,6 @@
 
   asker │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                1 │ [Diff] │ [Home]
 
-
-
-
-
-
-
-
-
-  started ──────────────────────────────────────────────────────────────────────────────────────────────────
-
-
     Add a settings screen.                                                                           hh:mm
 
 
@@ -24,6 +13,17 @@
   │   → skipped
 
     Thanks, I'll build it that way.
+
+    Worked <t>
+
+
+    Pick the palette too.                                                                            hh:mm
+
+
+  │ Replied instead of a question
+  │ “Let me see both palettes on the desk first.”
+
+    I'll leave the palette for later.
 
     Worked <t>
 

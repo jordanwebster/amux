@@ -365,6 +365,32 @@ async fn every_ask_blocks_until_answered_and_resolves_the_call() {
     assert_eq!(host.close().await, 0);
 }
 
+/// An approved plan that sets the permission mode takes Claude out of plan
+/// mode, and Claude says so in a status message.
+#[tokio::test]
+async fn an_approved_plan_setting_the_mode_leaves_plan_mode() {
+    let mut host = Host::start(json!({"steps": [
+        {"ask": {"plan": {"markdown": "1. Do it"}}},
+        {"text": {"chunks": ["doing it"]}},
+        "turn_end",
+    ]}))
+    .await;
+    host.prompt(A, "Plan it", None).await;
+    let request = host.until(|frame| frame["type"] == "control_request").await;
+    host.send(json!({"type":"control_response","response":{
+        "subtype":"success","request_id":request["request_id"],"response":{
+            "behavior": "allow", "updatedInput": {"plan": "1. Do it"},
+            "updatedPermissions": [{"type": "setMode", "mode": "default", "destination": "session"}]}}}))
+        .await;
+    let status = host
+        .until(|frame| frame["type"] == "system" && frame["subtype"] == "status")
+        .await;
+    assert_eq!(status["permissionMode"], "default");
+    assert_eq!(status["status"], Value::Null);
+    host.until(|frame| frame["type"] == "result").await;
+    assert_eq!(host.close().await, 0);
+}
+
 /// An interrupt with a question open, as Claude 2.1.283 answers it:
 /// the open request cancelled, the call refused, the tool-use marker, an
 /// aborted result.

@@ -19,7 +19,7 @@
 
 
   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-  │ ● ‹  Layout   Entry   Review  ›                                                                        │
+  │ ● ‹  Layout   Entry   Order   Review  ›                                                                │
   │                                                                                                        │
   │ How should the settings screen be laid out?                                                            │
   │                                                                                                        │

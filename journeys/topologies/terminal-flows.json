@@ -10,9 +10,12 @@
     {
       "name": "planner",
       "host": "desk",
+      "permission": "plan",
       "kind": "claude_sdk",
       "script": {"steps": [
+        {"tool": {"name": "Write", "class": "consequential", "input": {"file_path": "/home/person/.claude/plans/move-the-journal.md", "content": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Point the daemon at it.\n3. Delete the old journal."}}},
         {"ask": {"plan": {"markdown": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Point the daemon at it.\n3. Delete the old journal."}}},
+        {"tool": {"name": "Write", "class": "consequential", "input": {"file_path": "/home/person/.claude/plans/move-the-journal.md", "content": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Check the copy against the original.\n3. Point the daemon at it.\n4. Keep the old journal for a week."}}},
         {"ask": {"plan": {"markdown": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Check the copy against the original.\n3. Point the daemon at it.\n4. Keep the old journal for a week."}}},
         {"text": {"chunks": ["Moving the journal as planned."]}},
         "turn_end"
@@ -21,11 +24,30 @@
     {
       "name": "planner-pty",
       "host": "desk",
+      "permission": "plan",
       "kind": "claude_pty",
       "script": {"steps": [
+        {"tool": {"name": "Write", "class": "consequential", "input": {"file_path": "/home/person/.claude/plans/move-the-journal.md", "content": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Point the daemon at it.\n3. Delete the old journal."}}},
         {"ask": {"plan": {"markdown": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Point the daemon at it.\n3. Delete the old journal."}}},
+        {"tool": {"name": "Write", "class": "consequential", "input": {"file_path": "/home/person/.claude/plans/move-the-journal.md", "content": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Check the copy against the original.\n3. Point the daemon at it.\n4. Keep the old journal for a week."}}},
         {"ask": {"plan": {"markdown": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Check the copy against the original.\n3. Point the daemon at it.\n4. Keep the old journal for a week."}}},
         {"text": {"chunks": ["Moving the journal as planned."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "planner-codex",
+      "host": "desk",
+      "kind": "codex",
+      "script": {"steps": [
+        {"ask": {"plan": {"markdown": "# Move the journal\n\n1. Copy the journal to the new store.\n2. Point the daemon at it.\n3. Delete the old journal."}}},
+        {"wait_for": {"path": "plan-streamed"}},
+        "turn_end",
+        {"text": {"chunks": ["Moving the journal as planned."]}},
+        "turn_end",
+        {"ask": {"plan": {"markdown": "# Rotate the logs\n\n1. Rotate the daemon's log every night.\n2. Delete logs older than a week."}}},
+        "turn_end",
+        {"ask": {"plan": {"markdown": "# Rotate the logs\n\n1. Rotate the daemon's log every night.\n2. Compress rotated logs.\n3. Delete logs older than a month."}}},
         "turn_end"
       ]}
     },
@@ -42,9 +64,21 @@
           {"question": "Where should the screen open from?", "header": "Entry", "options": [
             {"label": "Home", "description": "A key on home."},
             {"label": "The leader", "description": "A chord from anywhere."}
+          ]},
+          {"question": "Which section should come first?", "header": "Order", "options": [
+            {"label": "Relay", "description": "Where the relay is and how often it is pinged."},
+            {"label": "Theme", "description": "The palette."}
           ]}
         ]}}},
         {"text": {"chunks": ["Thanks, I'll build it that way."]}},
+        "turn_end",
+        {"ask": {"question": {"questions": [
+          {"question": "Which palette should it open in?", "header": "Palette", "options": [
+            {"label": "Terminal", "description": "The terminal's own colours."},
+            {"label": "Amux", "description": "amux's colours."}
+          ]}
+        ]}}},
+        {"text": {"chunks": ["I'll leave the palette for later."]}},
         "turn_end"
       ]}
     },

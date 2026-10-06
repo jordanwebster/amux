@@ -1,3 +1,22 @@
+2026-10-06 — **Terminal stories decide a Codex plan, skip and reply to questions, and hide the plan file.**
+A new terminal story puts Codex in plan mode with Shift+Tab and asks for
+work: the plan shows in the feed while the turn still runs, the agent needs
+the person when it ends, and implementing starts a turn out of plan mode
+with "Implement the plan."; a second plan sent back with a note comes back
+revised, the note sent as the next prompt still in plan mode. The story
+checks the mode and words of every turn Codex was started on. The question
+story now skips a third question (Claude receives the answers with that
+question left out, and the record reads "Answered 2 of 3 questions") and,
+asked again, replies instead (Claude receives the question refused with the
+person's words). The two Claude plan stories now start their agents
+planning and have Claude write its plan file before each plan, as real
+Claude does; the stories fail if that write shows on screen, even folded
+into an edit count, or if the desk holds any tool item besides the two
+plans. To start them planning, testnet agent declarations take a
+`permission`. Fake headless Claude now applies a mode set by an allow (an
+approved plan's way out of plan mode) and reports it in a status message,
+as Claude does, so an approved plan no longer leaves the chat saying plan.
+
 2026-10-06 — **The terminal asks and records plans and questions the new way.**
 A question in the composer's box can now be skipped (a Skip row under the
 options), given a note with Tab (it shows under the options and goes with

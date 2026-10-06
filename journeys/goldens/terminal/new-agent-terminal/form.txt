@@ -4,7 +4,7 @@
   + New Agent
 
 
-  ▾ Running 9 ──────────────────────────────────────────────────────────────────────────────────────────────
+  ▾ Running 10 ─────────────────────────────────────────────────────────────────────────────────────────────
 
   › ○ backups  Clau╭─ New Agent ──────────────────────────────────────────────────────────╮            [x]
                    │                                                                      │
@@ -22,11 +22,11 @@
 
     ○ asker  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                  now
 
+    ○ planner-codex  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                           now
+
     ○ planner-pty  Claude (terminal) · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                 now
 
     ○ planner  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                now
-
-
 
 
 
