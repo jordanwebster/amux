@@ -2865,9 +2865,6 @@ fn sign_in_lines(
     lines
 }
 
-/// Whether a prompt sent now draws in the feed, as the turn it starts: the
-/// agent is idle with nothing queued. Otherwise it waits in the queue
-/// block.
 /// Why the composer cannot send while the link to the agent's host is
 /// down, for the box's edge; None when it can.
 fn waiting_words(composer: &Composer, host: &str, away: Away) -> Option<String> {
