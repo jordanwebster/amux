@@ -26,3 +26,20 @@ Capture seeds the project with `config.txt`, `old.txt` and `square.png` (a
 a model the account cannot use; `signed_out` runs with a Codex home that has
 no credentials. The plan tool could not be recorded: asked by name, the
 capture model answers without calling it.
+
+## Two clients
+
+`two_clients_prompt`, `two_clients_approval` and `two_clients_steer` were
+captured with codex-cli 0.160.0 and `gpt-5.6-luna` by
+`codex-probe record <name>`, through the same sanitizer. Capture starts
+`codex app-server --listen unix://…` and connects two clients, amux and
+another standing in for Codex's own app, over the socket's WebSocket
+framing; each line carries the client it went to or came from as
+`transport_id` (`amux` or `other`), and replay feeds each client its own
+lines. amux starts the thread and names it, which lets the other client
+join a thread with no turn. They pin that the server sends every
+notification and approval request to both clients, echoes each prompt and
+steer with the sender's client message id (`clientId`), tells both clients
+an approval was resolved when either answers, and answers the joining
+client's `thread/resume` with a `deprecationNotice` and both clients with
+`thread/goal/cleared`.

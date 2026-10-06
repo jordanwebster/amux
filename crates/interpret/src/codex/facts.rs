@@ -1117,6 +1117,8 @@ impl State {
             | ServerNotification::ThreadCompacted(_)
             | ServerNotification::ThreadArchived(_)
             | ServerNotification::ThreadUnarchived(_)
+            | ServerNotification::ThreadGoalCleared(_)
+            | ServerNotification::DeprecationNotice(_)
             | ServerNotification::RemoteControlStatusChanged(_)
             | ServerNotification::GuardianWarning(_)
             | ServerNotification::Warning(_)

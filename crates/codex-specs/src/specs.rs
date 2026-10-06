@@ -26,8 +26,11 @@ const LIVE_IO_FILE: &str = "spec.io.jsonl";
 mod decisions;
 #[path = "rows.rs"]
 mod rows;
+#[path = "two_clients.rs"]
+mod two_clients;
 
 pub use decisions::{SPEC_TOOL, SPEC_TOOL_SERVER};
+pub use two_clients::TWO_CLIENTS;
 
 /// Specifications that run with no signed-in account; capture gives them a
 /// Codex home without credentials.
@@ -66,6 +69,9 @@ const REGISTRY: &[SpecEntry] = &[
     entry("automatic_review"),
     entry("approval_scopes"),
     entry("turn_retries"),
+    entry("two_clients_prompt"),
+    entry("two_clients_approval"),
+    entry("two_clients_steer"),
 ];
 
 const fn entry(name: &'static str) -> SpecEntry {
@@ -115,6 +121,10 @@ struct ScenarioReport {
 
 struct Runtime {
     codex: Codex,
+    /// The second client, for the two-client specifications.
+    other: Option<Codex>,
+    #[cfg(unix)]
+    server: Option<two_clients::live::Server>,
     model: String,
     project: PathBuf,
     live_io: Option<PathBuf>,
@@ -134,7 +144,19 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
 
     let mut runtime = open_runtime(spec, source).await?;
     let initialization = runtime.codex.initialization_result().cloned();
-    let scenario = run_scenario(spec.name, &runtime.codex, &runtime.model, &runtime.project).await;
+    let scenario = match &runtime.other {
+        Some(other) => {
+            two_clients::run(
+                spec.name,
+                &runtime.codex,
+                other,
+                &runtime.model,
+                &runtime.project,
+            )
+            .await
+        }
+        None => run_scenario(spec.name, &runtime.codex, &runtime.model, &runtime.project).await,
+    };
     let replay_exhausted = if let Some(mut driver) = runtime.replay_driver.take() {
         let exhausted = tokio::time::timeout(Duration::from_secs(5), &mut driver)
             .await
@@ -147,6 +169,13 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
         true
     };
     runtime.codex.close().await;
+    if let Some(other) = runtime.other.take() {
+        other.close().await;
+    }
+    #[cfg(unix)]
+    if let Some(server) = runtime.server.take() {
+        server.stop().await;
+    }
     if !replay_exhausted {
         return Err(failure(
             spec,
@@ -189,6 +218,9 @@ async fn open_runtime(spec: &SpecEntry, source: SpecSource) -> Result<Runtime, S
             if io_path.exists() {
                 std::fs::remove_file(&io_path).map_err(|error| failure(spec, error))?;
             }
+            if TWO_CLIENTS.contains(&spec.name) {
+                return open_two_clients(spec, &codex_home, model, project, io_path).await;
+            }
             let mut env = HashMap::new();
             env.insert(
                 "CODEX_HOME".to_string(),
@@ -206,6 +238,9 @@ async fn open_runtime(spec: &SpecEntry, source: SpecSource) -> Result<Runtime, S
             .map_err(|error| failure(spec, format!("model {model}: {error}")))?;
             Ok(Runtime {
                 codex,
+                other: None,
+                #[cfg(unix)]
+                server: None,
                 model,
                 project,
                 live_io: Some(io_path),
@@ -213,7 +248,19 @@ async fn open_runtime(spec: &SpecEntry, source: SpecSource) -> Result<Runtime, S
             })
         }
         SpecSource::Recorded(mut replay) => {
-            let transport = if replay.transports.len() == 1 {
+            let other = if TWO_CLIENTS.contains(&spec.name) {
+                Some(
+                    replay
+                        .transports
+                        .remove(two_clients::OTHER)
+                        .ok_or_else(|| failure(spec, "recording has no other client"))?,
+                )
+            } else {
+                None
+            };
+            let transport = if let Some(amux) = replay.transports.remove(two_clients::AMUX) {
+                Some(amux)
+            } else if replay.transports.len() == 1 {
                 replay
                     .transports
                     .pop_first()
@@ -241,8 +288,27 @@ async fn open_runtime(spec: &SpecEntry, source: SpecSource) -> Result<Runtime, S
             )
             .await
             .map_err(|error| failure(spec, error))?;
+            let other = match other {
+                Some(transport) => Some(
+                    Codex::from_io(
+                        transport.reader,
+                        transport.writer,
+                        CodexConfig {
+                            model: Some(CAPTURE_MODEL.to_string()),
+                            client_name: "codex-spec-other".to_string(),
+                            ..CodexConfig::default()
+                        },
+                    )
+                    .await
+                    .map_err(|error| failure(spec, error))?,
+                ),
+                None => None,
+            };
             Ok(Runtime {
                 codex,
+                other,
+                #[cfg(unix)]
+                server: None,
                 model: CAPTURE_MODEL.to_string(),
                 project: PathBuf::from("<MACHINE_PATH>"),
                 live_io: None,
@@ -250,6 +316,43 @@ async fn open_runtime(spec: &SpecEntry, source: SpecSource) -> Result<Runtime, S
             })
         }
     }
+}
+
+/// Codex's server on a socket with amux and another client, both recorded.
+#[cfg(unix)]
+async fn open_two_clients(
+    spec: &SpecEntry,
+    codex_home: &Path,
+    model: String,
+    project: PathBuf,
+    io_path: PathBuf,
+) -> Result<Runtime, SpecFailure> {
+    let (codex, other, server) = two_clients::live::open(codex_home, &model, &project, &io_path)
+        .await
+        .map_err(|error| failure(spec, format!("model {model}: {error}")))?;
+    Ok(Runtime {
+        codex,
+        other: Some(other),
+        server: Some(server),
+        model,
+        project,
+        live_io: Some(io_path),
+        replay_driver: None,
+    })
+}
+
+#[cfg(not(unix))]
+async fn open_two_clients(
+    spec: &SpecEntry,
+    _: &Path,
+    _: String,
+    _: PathBuf,
+    _: PathBuf,
+) -> Result<Runtime, SpecFailure> {
+    Err(failure(
+        spec,
+        "two clients share a Codex server only on a Unix socket",
+    ))
 }
 
 async fn run_scenario(

@@ -1,3 +1,20 @@
+2026-10-06 — **Real two-client Codex recordings in the corpus.**
+The Codex spec recorder can now capture two clients sharing one server: it
+starts `codex app-server` on a Unix socket, connects amux and a second
+client standing in for Codex's own app, and records every message under the
+client it belongs to; strict replay feeds each client its own lines. Three
+new recordings on codex-cli 0.160.0 show another client prompting a fresh
+named thread and interrupting a turn, answering an approval amux was also
+asked, and steering beside amux's own steer. The interpreter reads only
+amux's lines of such a recording and takes its input ids back from the hex
+client message ids amux sent, so its goldens show what amux draws live:
+the other client's prompts and steer as another client's, the approval
+closed as allowed elsewhere, and amux's steer matched to its echo. The
+protocol crate learns the two notifications the second client's join
+brought (`deprecationNotice`, `thread/goal/cleared`), and the codex
+client's steer takes full parameters so a client message id can ride
+along.
+
 2026-10-06 — **A Codex agent's thread carries the agent's name.**
 A Codex thread that has not run a turn has nothing on disk, so Codex's own
 app could not join a fresh agent until its first prompt; naming the thread

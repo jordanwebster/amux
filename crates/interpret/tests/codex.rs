@@ -73,6 +73,9 @@ goldens! {
     recorded_turn_retries => "recorded_turn_retries",
     recorded_turn_round_trip => "recorded_turn_round_trip",
     recorded_two_assistant_messages => "recorded_two_assistant_messages",
+    recorded_two_clients_prompt => "recorded_two_clients_prompt",
+    recorded_two_clients_approval => "recorded_two_clients_approval",
+    recorded_two_clients_steer => "recorded_two_clients_steer",
     recorded_web_search => "recorded_web_search",
 }
 

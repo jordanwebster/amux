@@ -186,7 +186,7 @@ async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::er
     }
     std::fs::create_dir_all(&destination)?;
     write_events(&destination.join("io.jsonl"), &events)?;
-    write_spawn(&destination.join("spawn.jsonl"))?;
+    write_spawn(&destination.join("spawn.jsonl"), entry.name)?;
 
     let provider_version = report.provider_version.unwrap_or(installed_version()?);
     if report.server_model.is_empty() {
@@ -298,10 +298,16 @@ fn write_events(path: &Path, events: &[replay_support::IoEvent]) -> io::Result<(
     std::fs::write(path, output)
 }
 
-fn write_spawn(path: &Path) -> io::Result<()> {
+fn write_spawn(path: &Path, spec: &str) -> io::Result<()> {
+    // Two clients share a server on a socket in a scratch folder.
+    let listen = if codex_specs::specs::TWO_CLIENTS.contains(&spec) {
+        "unix://<socket>"
+    } else {
+        "stdio://"
+    };
     let row = serde_json::json!({
         "command": "codex",
-        "args": ["--model", CAPTURE_MODEL, "app-server", "--listen", "stdio://"],
+        "args": ["--model", CAPTURE_MODEL, "app-server", "--listen", listen],
         "model": CAPTURE_MODEL,
     });
     std::fs::write(path, format!("{}\n", row))

@@ -26,6 +26,7 @@ method_enum! {
         "thread/archived" => ThreadArchived(ThreadOnly),
         "thread/unarchived" => ThreadUnarchived(ThreadOnly),
         "thread/closed" => ThreadClosed(ThreadOnly),
+        "thread/goal/cleared" => ThreadGoalCleared(ThreadOnly),
         "thread/compacted" => ThreadCompacted(TurnScoped),
         "turn/started" => TurnStarted(TurnNotification),
         "turn/completed" => TurnCompleted(TurnNotification),
@@ -51,6 +52,7 @@ method_enum! {
         "mcpServer/startupStatus/updated" => McpServerStatusUpdated(McpServerStatusUpdated),
         "remoteControl/status/changed" => RemoteControlStatusChanged(RemoteControlStatusChanged),
         "skills/changed" => SkillsChanged(Extra),
+        "deprecationNotice" => DeprecationNotice(DeprecationNotice),
     }
 }
 
@@ -66,9 +68,10 @@ impl ServerNotification {
             Self::ThreadNameUpdated(n) => Some(&n.thread_id),
             Self::ThreadSettingsUpdated(n) => Some(&n.thread_id),
             Self::ThreadTokenUsageUpdated(n) => Some(&n.thread_id),
-            Self::ThreadArchived(n) | Self::ThreadUnarchived(n) | Self::ThreadClosed(n) => {
-                Some(&n.thread_id)
-            }
+            Self::ThreadArchived(n)
+            | Self::ThreadUnarchived(n)
+            | Self::ThreadClosed(n)
+            | Self::ThreadGoalCleared(n) => Some(&n.thread_id),
             Self::ThreadCompacted(n) => Some(&n.thread_id),
             Self::TurnStarted(n) | Self::TurnCompleted(n) => Some(&n.thread_id),
             Self::TurnDiffUpdated(n) => Some(&n.thread_id),
@@ -92,7 +95,8 @@ impl ServerNotification {
             | Self::AccountRateLimitsUpdated(_)
             | Self::AccountLoginCompleted(_)
             | Self::RemoteControlStatusChanged(_)
-            | Self::SkillsChanged(_) => None,
+            | Self::SkillsChanged(_)
+            | Self::DeprecationNotice(_) => None,
         }
     }
 }
@@ -168,6 +172,16 @@ pub struct ThreadTokenUsageUpdated {
     pub thread_id: String,
     pub turn_id: String,
     pub token_usage: ThreadTokenUsage,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// Something the server says is going away, with what to do instead.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeprecationNotice {
+    pub summary: String,
+    pub details: Option<String>,
     #[serde(flatten)]
     pub extra: Extra,
 }

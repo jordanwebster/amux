@@ -121,17 +121,14 @@ impl Thread {
             .map(drop)
     }
 
-    /// Steer an active turn with additional input.
-    pub async fn steer(&self, turn_id: &str, input: Vec<UserInput>) -> Result<String, Error> {
+    /// Steer an active turn with additional input; `params.thread_id` is
+    /// filled in.
+    pub async fn steer(&self, mut params: TurnSteerParams) -> Result<String, Error> {
+        params.thread_id = self.inner.thread_id.clone();
         let response: TurnSteerResponse = self
             .inner
             .server
-            .request(ClientRequest::TurnSteer(TurnSteerParams {
-                thread_id: self.inner.thread_id.clone(),
-                expected_turn_id: turn_id.to_owned(),
-                input,
-                ..TurnSteerParams::default()
-            }))
+            .request(ClientRequest::TurnSteer(params))
             .await?;
         Ok(response.turn_id)
     }
