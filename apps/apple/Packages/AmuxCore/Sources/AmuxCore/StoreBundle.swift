@@ -78,7 +78,6 @@ public final class StoreBundle {
 
     /// The profile moved: the fleet when `chat` is 0, else that chat.
     public func woke(_ chat: UInt64) {
-        Signposts.emit(.probeWoke)
         if chat == 0 {
             guard let profile else { return }
             let changes = profile.takeFleetChanges()
@@ -91,11 +90,7 @@ public final class StoreBundle {
     private func read(hostsMoved: Bool) {
         guard let profile else { return }
         let views = profile.hosts()
-        Signposts.emit(.probeHosts)
-        let probeView = profile.fleetView(expanding: Array(fleet.expanded))
-        Signposts.emit(.probeFleetRead)
-        fleet.show(probeView, hosts: views)
-        Signposts.emit(.probeShown)
+        fleet.show(profile.fleetView(expanding: Array(fleet.expanded)), hosts: views)
         hosts.show(views)
         if !markedReconciled {
             let trusted = views.filter { $0.trusted && !$0.local }
@@ -112,7 +107,6 @@ public final class StoreBundle {
             Task { await refreshAccount() }
             if hosts.readingDevices || hosts.roster == nil { Task { await refreshRoster() } }
         }
-        Signposts.emit(.probeReadDone)
     }
 
     /// Reads the account and its relay link again.

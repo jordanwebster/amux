@@ -116,20 +116,6 @@ public final class FleetStore {
 
     /// What the runtime lists now.
     public func show(_ view: FleetView, hosts views: [HostView]) {
-        do {
-            let a = self.view.sections.flatMap(\.rows), b = view.sections.flatMap(\.rows)
-            var diffs = 0; var sample = ""
-            for (x, y) in zip(a, b) where x != y {
-                diffs += 1
-                if sample.isEmpty {
-                    let dx = String(describing: x), dy = String(describing: y)
-                    let n = dx.commonPrefix(with: dy).count
-                    sample = String(dx.dropFirst(max(0, n - 60)).prefix(200)) + " ||| " + String(dy.dropFirst(max(0, n - 60)).prefix(200))
-                }
-            }
-            let oldHosts = hosts
-            NSLog("PROBESHOW rows %d->%d differ=%d hostsSame=%d %@", a.count, b.count, diffs, oldHosts.values.sorted { $0.name < $1.name } == views.filter(\.trusted).sorted { $0.name < $1.name } ? 1 : 0, sample)
-        }
         self.view = view
         hosts = Dictionary(
             views.filter(\.trusted).compactMap { view in view.id.map { ($0, view) } },
@@ -138,7 +124,6 @@ public final class FleetStore {
         if !markedFirstFrame && !self.rows.isEmpty {
             markedFirstFrame = true
             Signposts.emitWhenPresented(.firstCachedFrame)
-            Signposts.emitWhenDrawn(.probeCommitted)
         }
     }
 
@@ -148,7 +133,6 @@ public final class FleetStore {
 
     /// The list was pulled or shown again: ages are read from now.
     public func refreshOrder(now: Date) {
-        Signposts.emit(.probeRefresh)
         orderedAt = now
     }
 

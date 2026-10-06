@@ -112,10 +112,12 @@ public struct Shell: View {
     /// the capture; the shell only knows where the row that asks for it is.
     private let report: @MainActor () -> Void
     private let actions: @MainActor (ShellAction) -> Void
-    /// The tabs somebody has been to. A tab is built when it is first
+    /// The tabs somebody has left. A tab is built when it is first
     /// reached for and kept from then on, so coming back finds it as it
     /// was; building all three for a launch that shows one was a third of
-    /// the first frame's work.
+    /// the first frame's work. The tab on screen is reached without being
+    /// listed here: recording it as the shell appeared changed the shell's
+    /// state while it was first being built, and built the home twice.
     @State private var visited: Set<Tab> = []
 
     public init(
@@ -195,7 +197,7 @@ public struct Shell: View {
         .tint(design.accentColor)
         .reported("shell", value: router.tab.rawValue)
         .simultaneousGesture(backGesture)
-        .onChange(of: router.tab, initial: true) { _, now in visited.insert(now) }
+        .onChange(of: router.tab) { left, _ in visited.insert(left) }
     }
 
     /// Whether a tab has been reached for: the one on screen, or any that

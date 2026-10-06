@@ -1,3 +1,30 @@
+2026-10-07 — **The phone's home is built once for the launch's first frame.**
+`just ios perf` measured the cold fleet render — from the store read ending
+to the first frame with rows on screen — at 103.9 ms (budget 100; baseline
+81.8, so 94 at most). Marks around each step of the launch, read back
+through the door, showed the home's body and its visible rows evaluated
+twice before that frame: once from the store read (about 35 ms, the first
+build of every row type), and again about 35 ms later for another 6 ms or
+so. SwiftUI's change log named the second: the root view reads the scene
+phase, which turns active as the launch's frame goes up, and built the
+shell inline with fresh closures, so the shell, the Agents tab and the
+whole home were rebuilt. The shell also recorded the tab on screen as
+visited when it first appeared, which rebuilt it once more while it was
+being built.
+
+What grew on the branch is the row: a branch beside the name and a second
+line under it make more text to build and commit, and the second lines
+arrive from the agents' sessions a moment after the store read, so the
+runtime's first wake re-lays the visible rows before the first frame is
+marked presented. Waiting for the sessions while opening the fleet put
+the second lines in the first read but cost 8 ms of store read, past that
+metric's tolerance, so it was not kept.
+
+The shell now sits in a view of its own that holds only the composition,
+so the root redrawing leaves it alone, and the shell records only the tabs
+somebody leaves. The cold fleet render measured 88.1 ms median (worst 96.0)
+with the first frame at 633 ms; reconciliation reads the same marks.
+
 2026-10-07 — **The phone's chat streams within its CPU budget again.**
 `just ios perf` measured the phone's chat taking fifty rows a second at
 6.7 ms/s of missed frames (budget 5) and 61.7% of the main thread (budget 60;

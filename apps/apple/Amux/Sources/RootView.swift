@@ -44,32 +44,45 @@ struct RootView: View {
     }
 
     private var app: some View {
-        Group {
-            if let failure = composition.storeFailure {
-                StoreFailureScreen(message: failure) {
-                    composition.runtime.relaunch()
-                }
-            } else {
-                Shell(
-                    router: composition.router,
-                    accounts: composition.accounts,
-                    stores: composition.stores,
-                    signIn: composition.signIn,
-                    paywall: composition.paywall,
-                    deletion: composition.deletion,
-                    removal: composition.removal,
-                    appearance: composition.appearance,
-                    report: { composition.beginReport() },
-                    actions: { composition.handle($0) }
-                )
+        ComposedShell(composition: composition)
+            // What the app is wearing. Set here rather than inside a screen: it
+            // is the whole app's, and a screen that carried it could not be
+            // photographed in the other one.
+            .modifier(ReportTools(composition: composition))
+            .preferredColorScheme(composition.appearance?.colorScheme)
+            .onOpenURL { composition.router.open($0) }
+            .onAppear { Signposts.emitWhenPresented(.shellPresented) }
+    }
+}
+
+/// The shell over the composition, or the store failure that replaces it.
+///
+/// A view of its own, handed only the composition, so that the root drawing
+/// again leaves it alone. The root reads the scene's phase, which turns
+/// active as the launch's first frame goes up; built inline, the shell was
+/// handed new closures each time and rebuilt every screen under it, the
+/// whole fleet included, inside that first frame.
+private struct ComposedShell: View {
+    let composition: Composition
+
+    var body: some View {
+        if let failure = composition.storeFailure {
+            StoreFailureScreen(message: failure) {
+                composition.runtime.relaunch()
             }
+        } else {
+            Shell(
+                router: composition.router,
+                accounts: composition.accounts,
+                stores: composition.stores,
+                signIn: composition.signIn,
+                paywall: composition.paywall,
+                deletion: composition.deletion,
+                removal: composition.removal,
+                appearance: composition.appearance,
+                report: { composition.beginReport() },
+                actions: { composition.handle($0) }
+            )
         }
-        // What the app is wearing. Set here rather than inside a screen: it
-        // is the whole app's, and a screen that carried it could not be
-        // photographed in the other one.
-        .modifier(ReportTools(composition: composition))
-        .preferredColorScheme(composition.appearance?.colorScheme)
-        .onOpenURL { composition.router.open($0) }
-        .onAppear { Signposts.emitWhenPresented(.shellPresented) }
     }
 }
