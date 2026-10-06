@@ -87,6 +87,9 @@ public final class NewAgentStore {
     /// chooser offers when the host lists nothing of its own.
     @ObservationIgnored private var worked: [HostId: [Directory]] = [:]
     @ObservationIgnored private var asked = 0
+    /// Catalogue asks are numbered apart from directory listings, so asking
+    /// both providers after a listing leaves the listing's answer current.
+    @ObservationIgnored private var offerAsks = 0
     @ObservationIgnored private var offerAsked: [Provider: Int] = [:]
 
     public init() {}
@@ -206,10 +209,10 @@ public final class NewAgentStore {
     /// Marks a provider's catalogue as asked for on the chosen host and
     /// answers the ask's number.
     public func askingOffer(for provider: Provider) -> Int {
-        asked += 1
-        offerAsked[provider] = asked
+        offerAsks += 1
+        offerAsked[provider] = offerAsks
         offers[provider] = .asking
-        return asked
+        return offerAsks
     }
 
     public func offered(

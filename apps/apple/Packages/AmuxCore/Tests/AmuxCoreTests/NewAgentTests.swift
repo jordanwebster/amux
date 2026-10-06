@@ -168,4 +168,15 @@ final class NewAgentTests: XCTestCase {
         store.offered(.failure(RuntimeFailure("no route")), for: .codex, asked: failed)
         XCTAssertEqual(store.offers[.codex], .unavailable)
     }
+
+    func testAskingBothCataloguesLeavesTheListingCurrent() {
+        let store = NewAgentStore()
+        store.open(on: Cards.desk)
+        let listing = store.asking()
+        _ = store.askingOffer(for: .claude)
+        _ = store.askingOffer(for: .codex)
+        store.listed(.success(listed), asked: listing)
+        XCTAssertEqual(store.listing, .ready)
+        XCTAssertEqual(store.directory, "/src/amux")
+    }
 }
