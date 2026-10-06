@@ -1,3 +1,29 @@
+2026-10-07 — **The phone's chat streams within its CPU budget again.**
+`just ios perf` measured the phone's chat taking fifty rows a second at
+6.7 ms/s of missed frames (budget 5) and 61.7% of the main thread (budget 60;
+baseline 47.7, so 54.8 at most). The baseline's own commit, built and run on
+the same simulator the same night, still read 0.5 ms/s and 49.0%, so the
+growth was in the branch. Samples of the main thread over the stream put it
+in the chat list laying itself out again on every wake: about 3,500 samples a
+minute in a forced relayout the baseline never ran, another 2,400 in the
+cells laid out after it, and 1,100 checking each row's rail join.
+
+The cause is upstream of the list. Each streamed message now reaches the
+phone in two wakes: once as it arrives, and once more when the item lands
+whole, which draws the same row. The baseline saw one wake per row. Every
+wake that re-read a row stamped it as changed, so the list forgot the row's
+height and laid every row out again. And every wake re-read the frame, whose
+running activity carries an elapsed time read off the clock, so the whole
+chat screen was redrawn on each one.
+
+A wake now stamps only the rows that read differently: of 4,200 re-reads in
+one run, every one was identical. The frame is assigned only when something
+other than the clock moved, since the activity line counts its time from
+when the activity began. Twice over on a quiet machine the stream then
+measured 0.0 ms/s and 30.3% / 30.9% main-thread CPU, with idle at zero
+commits and zero ticks. The plan and decision stories that hold the
+rail-join fix still pass unchanged.
+
 2026-10-06 — **The replication spec's stream-lost test names a stalled stage.**
 The test of a stream lost while the link stays up hung once in a full
 workspace run, past the run's own bound, and never again in a hundred

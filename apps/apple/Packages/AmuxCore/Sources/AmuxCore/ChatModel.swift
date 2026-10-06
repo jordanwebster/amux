@@ -214,7 +214,7 @@ public final class ChatModel {
             // New keys, or a change to the oldest row, which is how the
             // window dropping rows from its top shows.
             if changes.keys.contains(where: { places[$0] == nil || $0 == ids.first }) { extend() }
-            refresh(changes.keys.filter { cells[$0] != nil })
+            refresh(changes.keys.filter { cells[$0] != nil }, onlyChanged: true)
         }
         if changes.session || changes.reloaded || !changes.keys.isEmpty { readSession() }
     }
@@ -374,16 +374,24 @@ public final class ChatModel {
         if empty != ids.isEmpty { empty = ids.isEmpty }
     }
 
-    private func refresh(_ keys: [String]) {
+    /// Reads these cells again and stamps them, so the list measures them
+    /// again. A wake passes over a row that reads as it did: an item
+    /// arrives as it streams and again whole, usually drawing the same
+    /// row, and measuring it again would lay the whole list out again for
+    /// nothing. Opening a row or swapping the transcript stamps every cell,
+    /// since what draws moves without the rows themselves changing.
+    private func refresh(_ keys: [String], onlyChanged: Bool = false) {
         guard !keys.isEmpty else { return }
         let rows = source.rows(for: keys, options: options)
         let next = revision + 1
+        var moved = false
         for row in rows {
-            guard let cell = cells[row.id] else { continue }
+            guard let cell = cells[row.id], !onlyChanged || cell.row != row else { continue }
             cell.row = row
             cell.revision = next
+            moved = true
         }
-        revision = next
+        if moved { revision = next }
     }
 
     /// Each view is assigned only when it differs: an assignment redraws
@@ -396,7 +404,7 @@ public final class ChatModel {
             refused.forEach(takeBack)
             frame = source.frame()
         }
-        if self.frame != frame { self.frame = frame }
+        if self.frame.map(Self.drawn) != frame.map(Self.drawn) { self.frame = frame }
         let ask = source.askCard()
         if self.ask != ask { self.ask = ask }
         if let kept = questionKept?.ask, kept != ask?.key { questionKept = nil }
@@ -405,6 +413,18 @@ public final class ChatModel {
         let settings = source.settings()
         if self.settings != settings { self.settings = settings }
         if frame?.git != before?.git { listChangedFiles() }
+    }
+
+    /// The frame as the screen draws it. A running activity's elapsed time
+    /// is read off the clock with every frame, so every frame differs; the
+    /// activity line counts it from when the activity began, so a frame that
+    /// moved only with the clock redraws nothing and is not assigned.
+    private static func drawn(_ frame: ChatFrame) -> ChatFrame {
+        var frame = frame
+        if let activity = frame.composer.activity, activity.sinceMs > 0 {
+            frame.composer.activity?.elapsedMs = 0
+        }
+        return frame
     }
 
     // MARK: - Changes

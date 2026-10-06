@@ -294,6 +294,54 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(model.revision(of: "zz"), 0, "a row never drawn has nothing to measure")
     }
 
+    /// An item arrives as it streams and again whole, which usually draws
+    /// the same row: the list has nothing to measure again.
+    func testARowReadAgainUnchangedKeepsItsRevision() {
+        let source = FakeChat(rows: [row("a", 1), row("b", 2)], frame: frame())
+        let model = ChatModel(source: source)
+        for id in ["a", "b"] { _ = model.cell(for: id) }
+        let laidOut = model.revision
+
+        source.pending = ChatChanges(keys: ["b"], reloaded: false, session: false)
+        model.woke()
+        XCTAssertEqual(model.revision, laidOut)
+        XCTAssertEqual(model.revision(of: "b"), laidOut)
+
+        source.ordered = [row("a", 1), row("b", 2, "b, longer")]
+        source.pending = ChatChanges(keys: ["b"], reloaded: false, session: false)
+        model.woke()
+        XCTAssertGreaterThan(model.revision(of: "b"), laidOut, "a row that changed is measured again")
+    }
+
+    /// A running activity's elapsed time moves with every frame read; the
+    /// activity line counts it from when the activity began, so the frame is
+    /// assigned again only for what else moved.
+    func testAFrameMovedOnlyByTheClockIsNotAssigned() {
+        var running = frame(phase: .working)
+        running.composer.activity = Activity(kind: .working, sinceMs: 1_000, elapsedMs: 500)
+        let source = FakeChat(rows: [row("a", 1)], frame: running)
+        let model = ChatModel(source: source)
+
+        source.current.composer.activity?.elapsedMs = 900
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        XCTAssertEqual(model.frame?.composer.activity?.elapsedMs, 500)
+
+        source.current.composer.activity = Activity(kind: .thinking, sinceMs: 1_000, elapsedMs: 950)
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        XCTAssertEqual(model.frame?.composer.activity?.kind, .thinking)
+
+        // Without a start to count from, the elapsed time is all there is.
+        source.current.composer.activity = Activity(kind: .thinking, sinceMs: 0, elapsedMs: 1_200)
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        source.current.composer.activity?.elapsedMs = 1_400
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        XCTAssertEqual(model.frame?.composer.activity?.elapsedMs, 1_400)
+    }
+
     func testAResetSwapsTheWholeSequenceInAtOnceAndFollowsTheNewestRow() {
         let source = FakeChat(rows: [row("a", 1), row("b", 2)], frame: frame())
         let model = ChatModel(source: source)
