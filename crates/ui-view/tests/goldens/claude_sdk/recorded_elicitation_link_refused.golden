@@ -17,11 +17,11 @@
     body Tool { server: "external", tool: "ask_the_operator", arguments: "{\n  \"word\": \"LINK\"\n}" }
   composer Send activity=None queue=[] outbox=[]
 ## 22 recorded 21: input stdin-3
-  row    4 toolu_015Z2eFD6HNF5MaAwp8Vsuxp ToolCall { server: "external", tool: "ask_the_operator", fact: "LINK", state: Running, result: "" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    4 toolu_015Z2eFD6HNF5MaAwp8Vsuxp ToolCall { server: "external", tool: "ask_the_operator", fact: "LINK", state: Running, result: "" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "toolu_015Z2eFD6HNF5MaAwp8Vsuxp" }) queue=[] outbox=[]
 ## 24 recorded 23: fact Stream type=user uuid=03c59d7c-cff6-4296-ae84-637752fc59a2
-  row    4 toolu_015Z2eFD6HNF5MaAwp8Vsuxp ToolCall { server: "external", tool: "ask_the_operator", fact: "LINK", state: Succeeded, result: "elicitation failed: {\"code\":-32602,\"message\":\"Client does not support URL-mode elicitation requests\"}" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    4 toolu_015Z2eFD6HNF5MaAwp8Vsuxp ToolCall { server: "external", tool: "ask_the_operator", fact: "LINK", state: Succeeded, result: "elicitation failed: {\"code\":-32602,\"message\":\"Client does not support URL-mode elicitation requests\"}" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 32 recorded 31: fact Stream type=assistant uuid=04b8023d-8aa4-4d92-9097-937c126b1e58
   row    5 msg_011CfREjzoXASzH2PTT581ix:0 Thinking { text: "", open: false, duration_ms: Some(1017) }
@@ -34,7 +34,7 @@
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to LINK, then reply with exactly what it returned.")], steered: false }
      3 msg_011CfREjt7BsR1zX1G9WnNxD:0 Thinking { text: "", open: false, duration_ms: Some(1350) }
-     4 toolu_015Z2eFD6HNF5MaAwp8Vsuxp ToolCall { server: "external", tool: "ask_the_operator", fact: "LINK", state: Succeeded, result: "elicitation failed: {\"code\":-32602,\"message\":\"Client does not support URL-mode elicitation requests\"}" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+     4 toolu_015Z2eFD6HNF5MaAwp8Vsuxp ToolCall { server: "external", tool: "ask_the_operator", fact: "LINK", state: Succeeded, result: "elicitation failed: {\"code\":-32602,\"message\":\"Client does not support URL-mode elicitation requests\"}" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
      5 msg_011CfREjzoXASzH2PTT581ix:0 Thinking { text: "", open: false, duration_ms: Some(1017) }
      6 msg_011CfREjzoXASzH2PTT581ix:1 Prose { text: [Text("elicitation failed: {\"code\":-32602,\"message\":\"Client does not support URL-mode elicitation requests\"}")], streaming: false, working_note: false }
      7 turn:1 TurnEnd { duration_ms: Some(2804), cost_usd: Some(0.0277359), failed: false }

@@ -84,7 +84,7 @@
     body Tool { server: "spec", tool: "ask_the_operator", arguments: "{\n  \"word\": \"BLUE\"\n}" }
   composer Send activity=None queue=[] outbox=[]
 ## 100 recorded 99: input stdin-5
-  row    6 exec-5adffbb8-ae90-4058-9833-1a29154d8128 ToolCall { server: "spec", tool: "ask_the_operator", fact: "BLUE", state: Running, result: "" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    6 exec-5adffbb8-ae90-4058-9833-1a29154d8128 ToolCall { server: "spec", tool: "ask_the_operator", fact: "BLUE", state: Running, result: "" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "exec-5adffbb8-ae90-4058-9833-1a29154d8128" }) queue=[] outbox=[]
 ## 106 recorded 105: fact Rpc method=mcpServer/elicitation/request
@@ -98,7 +98,7 @@
   ask none
   composer Send activity=Some(Running { key: "exec-5adffbb8-ae90-4058-9833-1a29154d8128" }) queue=[] outbox=[]
 ## 111 recorded 110: fact Rpc method=item/completed
-  row    6 exec-5adffbb8-ae90-4058-9833-1a29154d8128 ToolCall { server: "spec", tool: "ask_the_operator", fact: "BLUE", state: Succeeded, result: "{\"_meta\":null,\"content\":[{\"text\":\"BLUE\",\"type\":\"text\"}],\"structuredContent\":null}" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    6 exec-5adffbb8-ae90-4058-9833-1a29154d8128 ToolCall { server: "spec", tool: "ask_the_operator", fact: "BLUE", state: Succeeded, result: "{\"_meta\":null,\"content\":[{\"text\":\"BLUE\",\"type\":\"text\"}],\"structuredContent\":null}" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 116 recorded 115: fact Rpc method=item/started
   row    8 exec-2656a517-59e9-4a69-b383-8c58ae2f102c ToolCall { server: "spec", tool: "ask_the_operator", fact: "LINK", state: Running, result: "" }
@@ -109,7 +109,7 @@
     body Tool { server: "spec", tool: "ask_the_operator", arguments: "{\n  \"word\": \"LINK\"\n}" }
   composer Send activity=None queue=[] outbox=[]
 ## 121 recorded 120: input stdin-7
-  row    8 exec-2656a517-59e9-4a69-b383-8c58ae2f102c ToolCall { server: "spec", tool: "ask_the_operator", fact: "LINK", state: Running, result: "" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 exec-2656a517-59e9-4a69-b383-8c58ae2f102c ToolCall { server: "spec", tool: "ask_the_operator", fact: "LINK", state: Running, result: "" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "exec-2656a517-59e9-4a69-b383-8c58ae2f102c" }) queue=[] outbox=[]
 ## 126 recorded 125: fact Rpc method=mcpServer/elicitation/request
@@ -123,7 +123,7 @@
   ask none
   composer Send activity=Some(Running { key: "exec-2656a517-59e9-4a69-b383-8c58ae2f102c" }) queue=[] outbox=[]
 ## 132 recorded 131: fact Rpc method=item/completed
-  row    8 exec-2656a517-59e9-4a69-b383-8c58ae2f102c ToolCall { server: "spec", tool: "ask_the_operator", fact: "LINK", state: Succeeded, result: "{\"_meta\":null,\"content\":[{\"text\":\"elicitation cancel\",\"type\":\"text\"}],\"structuredContent\":null}" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 exec-2656a517-59e9-4a69-b383-8c58ae2f102c ToolCall { server: "spec", tool: "ask_the_operator", fact: "LINK", state: Succeeded, result: "{\"_meta\":null,\"content\":[{\"text\":\"elicitation cancel\",\"type\":\"text\"}],\"structuredContent\":null}" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 138 recorded 137: fact Rpc method=item/started
   row   10 msg_0a42dc39e07eb227016ab72ebf677487d2a5f9c4fea5e3d548 Prose { text: [], streaming: true, working_note: false }
@@ -182,9 +182,9 @@
      3 rs_0a42dc39e07eb227016ab72eb9efc887d2801b1e2c86c0946f Thinking { text: "", open: false, duration_ms: Some(6757) }
      4 msg_0a42dc39e07eb227016ab72eba6e9487d2b1e318f9468757c3 Prose { text: [Text("I’ll call the spec server tool twice in sequence, first with `BLUE`, then with `LINK`, and report both returned values.")], streaming: false, working_note: true }
      5 rs_0a42dc39e07eb227016ab72ebc7e0887d2915da4b4feee5dea Thinking { text: "", open: false, duration_ms: Some(2147) }
-     6 exec-5adffbb8-ae90-4058-9833-1a29154d8128 ToolCall { server: "spec", tool: "ask_the_operator", fact: "BLUE", state: Succeeded, result: "{\"_meta\":null,\"content\":[{\"text\":\"BLUE\",\"type\":\"text\"}],\"structuredContent\":null}" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+     6 exec-5adffbb8-ae90-4058-9833-1a29154d8128 ToolCall { server: "spec", tool: "ask_the_operator", fact: "BLUE", state: Succeeded, result: "{\"_meta\":null,\"content\":[{\"text\":\"BLUE\",\"type\":\"text\"}],\"structuredContent\":null}" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
      7 ask:1 Ask(Form { server: "<REDACTED_IDENTIFIER>", message: "Confirm the word BLUE.", fields: ["confirmed"], resolution: Answered })
-     8 exec-2656a517-59e9-4a69-b383-8c58ae2f102c ToolCall { server: "spec", tool: "ask_the_operator", fact: "LINK", state: Succeeded, result: "{\"_meta\":null,\"content\":[{\"text\":\"elicitation cancel\",\"type\":\"text\"}],\"structuredContent\":null}" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+     8 exec-2656a517-59e9-4a69-b383-8c58ae2f102c ToolCall { server: "spec", tool: "ask_the_operator", fact: "LINK", state: Succeeded, result: "{\"_meta\":null,\"content\":[{\"text\":\"elicitation cancel\",\"type\":\"text\"}],\"structuredContent\":null}" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
      9 ask:3 Ask(Link { server: "<REDACTED_IDENTIFIER>", message: "Open the page to confirm.", url: "https://example.com/confirm", resolution: Cancelled })
     10 msg_0a42dc39e07eb227016ab72ebf677487d2a5f9c4fea5e3d548 Prose { text: [Text("- `BLUE` call returned: `BLUE`\n- `LINK` call returned: `elicitation cancel`")], streaming: false, working_note: false }
     11 turn:1 TurnEnd { duration_ms: Some(12559), cost_usd: None, failed: false }

@@ -8,7 +8,7 @@ use serde_json::Value;
 use ui_state::{InputState, OpenAsk, SessionState};
 use wire::{ClaudeAnswer, CodexAnswer, Decision as CodexDecision, ask, claude_answer, codex_ask};
 
-use crate::rows::{AnswerView, patch_counts};
+use crate::rows::patch_counts;
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct AskCard {
@@ -463,7 +463,7 @@ fn link_body(link: &wire::LinkAsk) -> AskBody {
 }
 
 /// "Bash(cargo test:*)" reads "cargo test"; a bare tool name stays.
-fn lift_rule(rule: &str) -> String {
+pub(crate) fn lift_rule(rule: &str) -> String {
     let Some((_, inner)) = rule.split_once('(') else {
         return rule.to_owned();
     };
@@ -476,7 +476,7 @@ fn lift_rule(rule: &str) -> String {
     inner.to_owned()
 }
 
-fn scope_of(destination: &str) -> Scope {
+pub(crate) fn scope_of(destination: &str) -> Scope {
     match destination {
         "session" => Scope::Session,
         "localSettings" => Scope::Project,
@@ -525,107 +525,6 @@ pub(crate) fn lifted(
         preview: preview.to_owned(),
         recommended: recommended || tagged,
     }
-}
-
-/// What a Claude AskUserQuestion call's recorded result says was answered,
-/// one per question in the ask's order. Both Claude kinds record `answers`
-/// as each question's text to one string: the picked labels joined by ", "
-/// (a label may carry the "(Recommended)" tag), then anything typed.
-pub(crate) fn recorded_answers(questions: &[QuestionView], result: &[u8]) -> Vec<AnswerView> {
-    let Ok(result) = serde_json::from_slice::<Value>(result) else {
-        return Vec::new();
-    };
-    let Some(answers) = result.get("answers").and_then(Value::as_object) else {
-        return Vec::new();
-    };
-    questions
-        .iter()
-        .map(|q| {
-            let text = answers
-                .get(&q.question)
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            recorded_answer(q, text)
-        })
-        .collect()
-}
-
-fn recorded_answer(q: &QuestionView, text: &str) -> AnswerView {
-    // Longest first, so a label that begins with another label wins.
-    let mut labels: Vec<&str> = q
-        .options
-        .iter()
-        .map(|option| option.label.as_str())
-        .filter(|label| !label.is_empty())
-        .collect();
-    labels.sort_by_key(|label| std::cmp::Reverse(label.len()));
-    let mut picked = Vec::new();
-    let mut rest = text.trim();
-    while !rest.is_empty() && (q.multi_select || picked.is_empty()) {
-        let found = labels.iter().find_map(|label| {
-            let after = rest.strip_prefix(*label)?;
-            let after = after
-                .strip_prefix(" (Recommended)")
-                .or_else(|| after.strip_prefix("(Recommended)"))
-                .unwrap_or(after);
-            match after.strip_prefix(",") {
-                Some(more) if q.multi_select => Some((*label, more.trim_start())),
-                _ if after.is_empty() => Some((*label, after)),
-                _ => None,
-            }
-        });
-        let Some((label, after)) = found else {
-            break;
-        };
-        picked.push(label.to_owned());
-        rest = after;
-    }
-    AnswerView {
-        picked,
-        other: (!rest.is_empty()).then(|| rest.to_owned()),
-        hidden: false,
-    }
-}
-
-/// The questions of a Claude AskUserQuestion call's input, for its row.
-pub(crate) fn question_view(input: &Value) -> Vec<QuestionView> {
-    let text = |value: &Value, name: &str| {
-        value
-            .get(name)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    input
-        .get("questions")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|q| QuestionView {
-            header: text(q, "header"),
-            question: text(q, "question"),
-            multi_select: q
-                .get("multiSelect")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            options: q
-                .get("options")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .map(|o| {
-                    lifted(
-                        &text(o, "label"),
-                        &text(o, "description"),
-                        &text(o, "preview"),
-                        false,
-                    )
-                })
-                .collect(),
-            allow_other: true,
-            secret: false,
-        })
-        .collect()
 }
 
 /// A plan's decision: the plan is the text of the item the ask points at,
@@ -969,73 +868,5 @@ mod tests {
             pretty(&serde_json::json!({"path": "a.txt"})),
             "{\n  \"path\": \"a.txt\"\n}"
         );
-    }
-
-    fn asked(multi_select: bool, labels: &[&str]) -> QuestionView {
-        QuestionView {
-            header: String::new(),
-            question: "Which?".into(),
-            multi_select,
-            options: labels
-                .iter()
-                .map(|label| lifted(label, "", "", false))
-                .collect(),
-            allow_other: true,
-            secret: false,
-        }
-    }
-
-    fn answer(picked: &[&str], other: Option<&str>) -> AnswerView {
-        AnswerView {
-            picked: picked.iter().map(|label| (*label).to_owned()).collect(),
-            other: other.map(str::to_owned),
-            hidden: false,
-        }
-    }
-
-    #[test]
-    fn recorded_answers_split_into_picks_and_what_was_typed() {
-        let single = asked(false, &["Red", "Blue (Recommended)"]);
-        assert_eq!(recorded_answer(&single, "Red"), answer(&["Red"], None));
-        assert_eq!(
-            recorded_answer(&single, "Blue (Recommended)"),
-            answer(&["Blue"], None)
-        );
-        assert_eq!(
-            recorded_answer(&single, "a warm ochre"),
-            answer(&[], Some("a warm ochre"))
-        );
-        assert_eq!(
-            recorded_answer(&single, "Redder"),
-            answer(&[], Some("Redder"))
-        );
-        let multi = asked(true, &["Hammer", "Saw", "Drill", "Saw blade"]);
-        assert_eq!(
-            recorded_answer(&multi, "Hammer, Drill"),
-            answer(&["Hammer", "Drill"], None)
-        );
-        assert_eq!(
-            recorded_answer(&multi, "Hammer, Saw, Torque wrench "),
-            answer(&["Hammer", "Saw"], Some("Torque wrench"))
-        );
-        assert_eq!(
-            recorded_answer(&multi, "Saw blade"),
-            answer(&["Saw blade"], None)
-        );
-    }
-
-    #[test]
-    fn answers_follow_the_questions_and_a_result_without_them_has_none() {
-        let questions = vec![asked(false, &["Red"]), {
-            let mut second = asked(false, &["Large"]);
-            second.question = "Which size?".into();
-            second
-        }];
-        let result = br#"{"answers":{"Which size?":"Large","Which?":"Red"},"annotations":{}}"#;
-        assert_eq!(
-            recorded_answers(&questions, result),
-            vec![answer(&["Red"], None), answer(&["Large"], None)]
-        );
-        assert!(recorded_answers(&questions, b"\"User rejected tool use\"").is_empty());
     }
 }

@@ -17,7 +17,7 @@
     body Tool { server: "external", tool: "ask_the_operator", arguments: "{\n  \"word\": \"PELICAN\"\n}" }
   composer Send activity=None queue=[] outbox=[]
 ## 22 recorded 21: input stdin-3
-  row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Running, result: "" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Running, result: "" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] outbox=[]
 ## 24 recorded 23: fact Stream type=control_request
@@ -31,7 +31,7 @@
   ask none
   composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] outbox=[]
 ## 28 recorded 27: fact Stream type=user uuid=46a508ed-77b9-4fa8-957b-b1a9632d830a
-  row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Succeeded, result: "PELICAN" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Succeeded, result: "PELICAN" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 30 recorded 29: fact Stream type=assistant uuid=5f1da508-b38f-4af8-a02d-f57de2c86ab4
   row    6 msg_011CeiyN1wiM3Dzg9UpjPo5J:0 Thinking { text: "", open: false, duration_ms: Some(1058) }
@@ -44,7 +44,7 @@
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to PELICAN, then reply with exactly what it returned.")], steered: false }
      3 msg_011CeiyMonyQkCsamPhvvdb6:0 Thinking { text: "", open: false, duration_ms: Some(3207) }
-     4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Succeeded, result: "PELICAN" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+     4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Succeeded, result: "PELICAN" } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
      5 ask:864d404c-3373-4c07-a136-f5e9eb9cf488 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: ["confirmed"], resolution: Answered })
      6 msg_011CeiyN1wiM3Dzg9UpjPo5J:0 Thinking { text: "", open: false, duration_ms: Some(1058) }
      7 msg_011CeiyN1wiM3Dzg9UpjPo5J:1 Prose { text: [Text("PELICAN")], streaming: false, working_note: false }

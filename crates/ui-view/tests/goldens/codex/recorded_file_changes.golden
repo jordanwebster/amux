@@ -42,26 +42,26 @@
 ## 58 recorded 57: fact Rpc method=item/completed
   row    4 msg_0fdbb478bf498617016ab7291c43e887d2acdd24a661bb1de1 Prose { text: [Text("I’ll make the three requested changes as separate patches in order.")], streaming: false, working_note: true }
 ## 60 recorded 59: fact Rpc method=item/started
-  row    5 exec-8e77da47-ed05-4328-8c00-28d7e42ef310 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 0 }, added: 0, removed: 0 }], state: Running }
+  row    5 exec-8e77da47-ed05-4328-8c00-28d7e42ef310 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 0 }, added: 0, removed: 0, line: None }], state: Running }
   composer Send activity=Some(Running { key: "exec-8e77da47-ed05-4328-8c00-28d7e42ef310" }) queue=[] outbox=[]
 ## 62 recorded 61: fact Rpc method=item/completed
-  row    5 exec-8e77da47-ed05-4328-8c00-28d7e42ef310 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 0 }, added: 0, removed: 0 }], state: Succeeded }
+  row    5 exec-8e77da47-ed05-4328-8c00-28d7e42ef310 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 0 }, added: 0, removed: 0, line: None }], state: Succeeded }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 63 recorded 62: fact Rpc method=turn/diff/updated
   row    6 diff:01a0db78-83d5-7ff0-820e-122e9a43ee0f Hidden collapsed
 ## 69 recorded 68: fact Rpc method=item/started
-  row    7 exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1 }], state: Running }
+  row    7 exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1, line: None }], state: Running }
   composer Send activity=Some(Running { key: "exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8" }) queue=[] outbox=[]
 ## 71 recorded 70: fact Rpc method=item/completed
-  row    7 exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1 }], state: Succeeded }
+  row    7 exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1, line: Some(1) }], state: Succeeded }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 73 recorded 72: fact Rpc method=turn/diff/updated
   row    6 diff:01a0db78-83d5-7ff0-820e-122e9a43ee0f Hidden collapsed
 ## 79 recorded 78: fact Rpc method=item/started
-  row    8 exec-b3a8e2c5-6374-4b0a-abc3-9ae32663a754 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Deleted, added: 0, removed: 0 }], state: Running }
+  row    8 exec-b3a8e2c5-6374-4b0a-abc3-9ae32663a754 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Deleted, added: 0, removed: 0, line: None }], state: Running }
   composer Send activity=Some(Running { key: "exec-b3a8e2c5-6374-4b0a-abc3-9ae32663a754" }) queue=[] outbox=[]
 ## 81 recorded 80: fact Rpc method=item/completed
-  row    8 exec-b3a8e2c5-6374-4b0a-abc3-9ae32663a754 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Deleted, added: 0, removed: 0 }], state: Succeeded }
+  row    8 exec-b3a8e2c5-6374-4b0a-abc3-9ae32663a754 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Deleted, added: 0, removed: 0, line: None }], state: Succeeded }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 82 recorded 81: fact Rpc method=turn/diff/updated
   row    6 diff:01a0db78-83d5-7ff0-820e-122e9a43ee0f Hidden collapsed
@@ -79,10 +79,10 @@
      2 prompt:737464696e2d34 Prompt { text: [Text("Use apply_patch for every change, one patch per step: first create notes.txt containing the line one; then change that line to two; then delete old.txt. Then reply DONE.")], steered: false }
      3 rs_0fdbb478bf498617016ab7291b4b0887d2ac0f0e8cde625b47 Thinking { text: "", open: false, duration_ms: Some(3812) }
      4 msg_0fdbb478bf498617016ab7291c43e887d2acdd24a661bb1de1 Prose { text: [Text("I’ll make the three requested changes as separate patches in order.")], streaming: false, working_note: true }
-     5 exec-8e77da47-ed05-4328-8c00-28d7e42ef310 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 0 }, added: 0, removed: 0 }], state: Succeeded }
+     5 exec-8e77da47-ed05-4328-8c00-28d7e42ef310 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 0 }, added: 0, removed: 0, line: None }], state: Succeeded }
      6 diff:01a0db78-83d5-7ff0-820e-122e9a43ee0f Hidden collapsed
-     7 exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1 }], state: Succeeded }
-     8 exec-b3a8e2c5-6374-4b0a-abc3-9ae32663a754 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Deleted, added: 0, removed: 0 }], state: Succeeded }
+     7 exec-d949ae90-3ccd-40eb-8921-6c7ce431fdf8 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1, line: Some(1) }], state: Succeeded }
+     8 exec-b3a8e2c5-6374-4b0a-abc3-9ae32663a754 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Deleted, added: 0, removed: 0, line: None }], state: Succeeded }
      9 msg_0fdbb478bf498617016ab72921bbac87d2838294812ce8b3c3 Prose { text: [Text("DONE")], streaming: false, working_note: false }
     10 turn:1 TurnEnd { duration_ms: Some(10348), cost_usd: None, failed: false }
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }

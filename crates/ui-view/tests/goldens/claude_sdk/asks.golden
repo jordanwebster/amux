@@ -14,11 +14,11 @@
     body Command { command: "rm -rf target", cwd: "", reason: "Bash commands that delete files need approval", description: "Remove the build output" }
   composer Send activity=None queue=[] outbox=[]
 ## 5 input {"answer":{"answer":{"allow":{"scope":1}},"ask":"req-1"},"id":"a1"}
-  row    3 t1 Command { command: "rm -rf target", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Allowed, scope: Some("session"), note: None, elsewhere: false }
+  row    3 t1 Command { command: "rm -rf target", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Allowed, granted: Some(Claude { subjects: [], directories: ["/work/other"], mode: "", mode_name: "", saved_to: Session }), note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "t1" }) queue=[] outbox=[]
 ## 7 fact {"channel":"stream","json":{"message":{"content":[{"content":"","tool_use_id":"t1","type":"tool_result"}],"role":"user"},"type":"user","uuid":"u1"}}
-  row    3 t1 Command { command: "rm -rf target", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Allowed, scope: Some("session"), note: None, elsewhere: false }
+  row    3 t1 Command { command: "rm -rf target", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Allowed, granted: Some(Claude { subjects: [], directories: ["/work/other"], mode: "", mode_name: "", saved_to: Session }), note: None, elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 8 fact {"channel":"stream","json":{"message":{"content":[{"id":"t2","input":{"command":"git push --force"},"name":"Bash","type":"tool_use"}],"id":"m2","model":"claude-opus-5-5","role":"assistant"},"type":"assistant","uuid":"m2"}}
   row    4 t2 Command { command: "git push --force", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
@@ -29,11 +29,11 @@
     body Command { command: "git push --force", cwd: "", reason: "", description: "" }
   composer Send activity=None queue=[] outbox=[]
 ## 10 input {"answer":{"answer":{"deny":{"note":"not on main"}},"ask":"req-2"},"id":"a2"}
-  row    4 t2 Command { command: "git push --force", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, scope: None, note: Some("not on main"), elsewhere: false }
+  row    4 t2 Command { command: "git push --force", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, granted: None, note: Some("not on main"), elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "t2" }) queue=[] outbox=[]
 ## 11 fact {"channel":"stream","json":{"message":{"content":[{"content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nnot on main","is_error":true,"tool_use_id":"t2","type":"tool_result"}],"role":"user"},"type":"user","uuid":"u2"}}
-  row    4 t2 Command { command: "git push --force", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Denied, scope: None, note: Some("not on main"), elsewhere: false }
+  row    4 t2 Command { command: "git push --force", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Denied, granted: None, note: Some("not on main"), elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 12 fact {"channel":"stream","json":{"message":{"content":[{"id":"t2b","input":{"command":"git reset --hard"},"name":"Bash","type":"tool_use"}],"id":"m2b","model":"claude-opus-5-5","role":"assistant"},"type":"assistant","uuid":"m2b"}}
   row    5 t2b Command { command: "git reset --hard", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
@@ -44,11 +44,11 @@
     body Command { command: "git reset --hard", cwd: "", reason: "", description: "" }
   composer Send activity=None queue=[] outbox=[]
 ## 14 input {"answer":{"answer":{"deny":{}},"ask":"req-2b"},"id":"a2b"}
-  row    5 t2b Command { command: "git reset --hard", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, scope: None, note: None, elsewhere: false }
+  row    5 t2b Command { command: "git reset --hard", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, granted: None, note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "t2b" }) queue=[] outbox=[]
 ## 15 fact {"channel":"stream","json":{"message":{"content":[{"content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).","is_error":true,"tool_use_id":"t2b","type":"tool_result"}],"role":"user"},"type":"user","uuid":"u2b"}}
-  row    5 t2b Command { command: "git reset --hard", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Denied, scope: None, note: None, elsewhere: false }
+  row    5 t2b Command { command: "git reset --hard", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Denied, granted: None, note: None, elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 16 fact {"channel":"stream","json":{"message":{"content":[{"id":"t3","input":{"command":"curl evil"},"name":"Bash","type":"tool_use"}],"id":"m3","model":"claude-opus-5-5","role":"assistant"},"type":"assistant","uuid":"m3"}}
   row    6 t3 Command { command: "curl evil", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
@@ -59,7 +59,7 @@
     body Command { command: "curl evil", cwd: "", reason: "", description: "" }
   composer Send activity=None queue=[] outbox=[]
 ## 18 input {"answer":{"answer":{"deny":{"note":"stop there","stop":true}},"ask":"req-3"},"id":"a3"}
-  row    6 t3 Command { command: "curl evil", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, scope: None, note: Some("stop there"), elsewhere: false }
+  row    6 t3 Command { command: "curl evil", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, granted: None, note: Some("stop there"), elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "t3" }) queue=[] outbox=[]
 ## 19 fact {"channel":"stream","json":{"request":{"elicitation_id":"el-1","mcp_server_name":"github","message":"Sign in to GitHub","mode":"url","subtype":"elicitation","url":"https://github.com/login/device"},"request_id":"req-4","type":"control_request"}}
@@ -105,10 +105,10 @@
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 70310000-0000-4000-8000-000000000000 Prompt { text: [Text("clean")], steered: false }
-     3 t1 Command { command: "rm -rf target", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Allowed, scope: Some("session"), note: None, elsewhere: false }
-     4 t2 Command { command: "git push --force", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Denied, scope: None, note: Some("not on main"), elsewhere: false }
-     5 t2b Command { command: "git reset --hard", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Denied, scope: None, note: None, elsewhere: false }
-     6 t3 Command { command: "curl evil", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, scope: None, note: Some("stop there"), elsewhere: false }
+     3 t1 Command { command: "rm -rf target", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Allowed, granted: Some(Claude { subjects: [], directories: ["/work/other"], mode: "", mode_name: "", saved_to: Session }), note: None, elsewhere: false }
+     4 t2 Command { command: "git push --force", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Denied, granted: None, note: Some("not on main"), elsewhere: false }
+     5 t2b Command { command: "git reset --hard", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(0) } decision=Decision { outcome: Denied, granted: None, note: None, elsewhere: false }
+     6 t3 Command { command: "curl evil", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, granted: None, note: Some("stop there"), elsewhere: false }
      7 ask:req-4 Ask(Link { server: "github", message: "Sign in to GitHub", url: "https://github.com/login/device", resolution: Answered })
      8 ask:req-5 Ask(Form { server: "github", message: "Issue details", fields: [], resolution: Declined })
      9 ask:req-6 Ask(Link { server: "linear", message: "Authorize", url: "https://linear.app/oauth?elicitation=el-6", resolution: Answered })

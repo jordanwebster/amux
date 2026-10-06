@@ -9,7 +9,7 @@
 ## 28 recorded 27: fact Stream type=assistant uuid=d48cd46e-5b3f-4651-a8cd-087aec4db558
   row    3 msg_011CeW3RSw8XsGhPL4YsQaaL:0 Thinking { text: "The user is asking me to:\n1. Use the Write tool to create a file called \"tool.txt\"\n2. The file should contain exactly \"TOOL_OK\"\n3. Then reply with exactly \"DONE\"\n\nThis is a straightforward task. Let me use the Write tool to create the file at the appropriate path. The working directory is <MACHINE_PATH>\n\nI should create the file at…
 ## 30 recorded 29: fact Stream type=assistant uuid=b67852b5-bb7a-4124-b746-dc82a12170c7
-  row    4 toolu_01JoMRZzFkMCxi3KJbtCe4MC FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Running }
+  row    4 toolu_01JoMRZzFkMCxi3KJbtCe4MC FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Writing { lines: 1 }, added: 1, removed: 0, line: None }], state: Running }
   composer Send activity=Some(Running { key: "toolu_01JoMRZzFkMCxi3KJbtCe4MC" }) queue=[] outbox=[]
 ## 32 recorded 31: fact Stream type=control_request
   ask 614b94b3-080e-4cb8-9802-938c0100fdfc -> "toolu_01JoMRZzFkMCxi3KJbtCe4MC" 1/1 Open
@@ -17,11 +17,11 @@
     body Edit { path: "<MACHINE_PATH>", files: 1, added: 1, removed: 0, diff: "+TOOL_OK\n", reason: "", created: None }
   composer Send activity=None queue=[] outbox=[]
 ## 34 recorded 33: input stdin-3
-  row    4 toolu_01JoMRZzFkMCxi3KJbtCe4MC FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Running } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    4 toolu_01JoMRZzFkMCxi3KJbtCe4MC FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Writing { lines: 1 }, added: 1, removed: 0, line: None }], state: Running } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "toolu_01JoMRZzFkMCxi3KJbtCe4MC" }) queue=[] outbox=[]
 ## 36 recorded 35: fact Stream type=user uuid=3aacf8c5-7dab-4735-9a94-89f75986cdc9
-  row    4 toolu_01JoMRZzFkMCxi3KJbtCe4MC FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Succeeded } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    4 toolu_01JoMRZzFkMCxi3KJbtCe4MC FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0, line: None }], state: Succeeded } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 44 recorded 43: fact Stream type=assistant uuid=ed825acf-ce20-4ce8-ae6b-32a3306aad48
   row    5 msg_011CeW3RkCT4RhGdseDBvZGV:0 Thinking { text: "The file has been created successfully. Now I need to reply with exactly \"DONE\" as requested.", open: false, duration_ms: Some(1071) }
@@ -34,7 +34,7 @@
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use the Write tool once to create tool.txt containing exactly TOOL_OK, then reply exactly DONE.")], steered: false }
      3 msg_011CeW3RSw8XsGhPL4YsQaaL:0 Thinking { text: "The user is asking me to:\n1. Use the Write tool to create a file called \"tool.txt\"\n2. The file should contain exactly \"TOOL_OK\"\n3. Then reply with exactly \"DONE\"\n\nThis is a straightforward task. Let me use the Write tool to create the file at the appropriate path. The working directory is <MACHINE_PATH>\n\nI should create the file at…
-     4 toolu_01JoMRZzFkMCxi3KJbtCe4MC FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Succeeded } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+     4 toolu_01JoMRZzFkMCxi3KJbtCe4MC FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0, line: None }], state: Succeeded } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
      5 msg_011CeW3RkCT4RhGdseDBvZGV:0 Thinking { text: "The file has been created successfully. Now I need to reply with exactly \"DONE\" as requested.", open: false, duration_ms: Some(1071) }
      6 msg_011CeW3RkCT4RhGdseDBvZGV:1 Prose { text: [Text("DONE")], streaming: false, working_note: false }
      7 turn:1 TurnEnd { duration_ms: Some(5021), cost_usd: Some(0.0281004), failed: false }

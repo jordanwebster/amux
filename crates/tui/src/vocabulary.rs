@@ -16,8 +16,8 @@ use ui_state::{Composer, Waiting};
 use ui_view::{
     AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CardState, Choice, ChoiceOutcome,
     Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, LineKind, OptionView,
-    PatchHead, PatchLine, PlanVerdict, QuestionView, QueuedRow, Resolution, Row, RowKind, RunInfo,
-    Scope, Segment, ToolStateView,
+    PatchHead, PatchLine, PermissionGrant, PlanVerdict, QuestionView, QueuedRow, Resolution, Row,
+    RowKind, RunInfo, Scope, Segment, ToolStateView,
 };
 use wire::{BlobRef, BoundaryKind, EnvelopeKind, SendState};
 
@@ -673,10 +673,15 @@ fn facts(row: &Row) -> RowFacts {
     facts
 }
 
-fn decided(mut row: Row, outcome: DecisionView, scope: Option<&str>, note: Option<&str>) -> Row {
+fn decided(
+    mut row: Row,
+    outcome: DecisionView,
+    granted: Option<PermissionGrant>,
+    note: Option<&str>,
+) -> Row {
     row.decision = Some(Decision {
         outcome,
-        scope: scope.map(Into::into),
+        granted,
         note: note.map(Into::into),
         elsewhere: false,
     });
@@ -734,6 +739,7 @@ fn row_sets() -> Vec<RowSet> {
         picked: picked.iter().map(|s| (*s).into()).collect(),
         other: other.map(Into::into),
         hidden: false,
+        note: None,
     };
     let mut run_summary = row(RowKind::Explore {
         verb: ExploreVerb::Read,
@@ -872,7 +878,7 @@ fn row_sets() -> Vec<RowSet> {
                             result: String::new(),
                         }),
                         DecisionView::Allowed,
-                        Some("for this session"),
+                        Some(PermissionGrant::Session),
                         None,
                     ),
                     CLOSED,
@@ -916,12 +922,14 @@ fn row_sets() -> Vec<RowSet> {
                                 change: FileChangeView::Edited,
                                 added: 12,
                                 removed: 3,
+                                line: None,
                             },
                             FileRow {
                                 path: "crates/tui/src/app.rs".into(),
                                 change: FileChangeView::Edited,
                                 added: 1,
                                 removed: 1,
+                                line: None,
                             },
                         ],
                         state: ToolStateView::Succeeded,
@@ -936,6 +944,7 @@ fn row_sets() -> Vec<RowSet> {
                                 change: FileChangeView::Created { lines: 14 },
                                 added: 14,
                                 removed: 0,
+                                line: None,
                             }],
                             state: ToolStateView::Succeeded,
                         }),
@@ -953,12 +962,14 @@ fn row_sets() -> Vec<RowSet> {
                                 change: FileChangeView::Deleted,
                                 added: 0,
                                 removed: 9,
+                                line: None,
                             },
                             FileRow {
                                 path: "a.rs".into(),
                                 change: FileChangeView::Moved { to: "b.rs".into() },
                                 added: 0,
                                 removed: 0,
+                                line: None,
                             },
                         ],
                         state: ToolStateView::Pending,
@@ -1158,10 +1169,14 @@ fn row_sets() -> Vec<RowSet> {
             "Asks that became rows: a question answered, several questions answered, a plan approved and one sent back with its note, a form sent with the fields it carried, a link declined, access granted for the turn, an open question, and two dismissed.",
             vec![
                 (
-                    row(RowKind::Ask(AskRow::Question {
+                    row(RowKind::Ask(AskRow::Questions {
                         questions: vec![question(false)],
-                        answers: vec![answer(&["Behind a flag"], None)],
-                        note: Some("flip it on for the desk first".into()),
+                        answers: vec![AnswerView {
+                            note: Some("flip it on for the desk first".into()),
+                            ..answer(&["Behind a flag"], None)
+                        }],
+                        skipped: 0,
+                        reply: None,
                         resolution: Resolution::Answered,
                     })),
                     CLOSED,
@@ -1171,9 +1186,13 @@ fn row_sets() -> Vec<RowSet> {
                         questions: vec![question(false), question(true)],
                         answers: vec![
                             answer(&["All at once"], None),
-                            answer(&[], Some("Only failures, with the host id")),
+                            AnswerView {
+                                note: Some("keep the old strings for one release".into()),
+                                ..answer(&[], Some("Only failures, with the host id"))
+                            },
                         ],
-                        note: Some("keep the old strings for one release".into()),
+                        skipped: 0,
+                        reply: None,
                         resolution: Resolution::Answered,
                     })),
                     CLOSED,
@@ -1182,7 +1201,6 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Ask(AskRow::Plan {
                         plan: "Collapse the pairing failures into one error.".into(),
                         verdict: PlanVerdict::Approved,
-                        edits_accepted: false,
                         writing: false,
                         note: None,
                     })),
@@ -1192,7 +1210,6 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Ask(AskRow::Plan {
                         plan: "Rename every wire code.".into(),
                         verdict: PlanVerdict::SentBack,
-                        edits_accepted: false,
                         writing: false,
                         note: Some("Don't touch the wire codes yet".into()),
                     })),
@@ -1234,10 +1251,11 @@ fn row_sets() -> Vec<RowSet> {
                     CLOSED,
                 ),
                 (
-                    row(RowKind::Ask(AskRow::Question {
+                    row(RowKind::Ask(AskRow::Questions {
                         questions: vec![question(false)],
                         answers: vec![],
-                        note: None,
+                        skipped: 0,
+                        reply: None,
                         resolution: Resolution::Open,
                     })),
                     CLOSED,

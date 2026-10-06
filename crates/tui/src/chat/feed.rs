@@ -169,7 +169,6 @@ pub fn row_lines(
             RowKind::Ask(AskRow::Plan {
                 plan,
                 verdict,
-                edits_accepted,
                 note,
                 writing,
             }) => plan_lines(
@@ -178,7 +177,6 @@ pub fn row_lines(
                 &Plan {
                     text: plan,
                     verdict: *verdict,
-                    edits_accepted: *edits_accepted,
                     note: note.as_deref(),
                     writing: *writing,
                 },
@@ -186,20 +184,12 @@ pub fn row_lines(
                 width,
                 theme,
             ),
-            RowKind::Ask(
-                AskRow::Question {
-                    questions,
-                    answers,
-                    resolution,
-                    ..
-                }
-                | AskRow::Questions {
-                    questions,
-                    answers,
-                    resolution,
-                    ..
-                },
-            ) => questions_step(&mut drawn, questions, answers, *resolution, width, theme),
+            RowKind::Ask(AskRow::Questions {
+                questions,
+                answers,
+                resolution,
+                ..
+            }) => questions_step(&mut drawn, questions, answers, *resolution, width, theme),
             RowKind::Ask(AskRow::Form {
                 server,
                 fields,
@@ -210,7 +200,7 @@ pub fn row_lines(
                     Resolution::Open => format!("{server} needs details"),
                     Resolution::Answered => format!("Sent the form to {server}"),
                     Resolution::Declined => format!("Declined {server}'s form"),
-                    Resolution::Cancelled | Resolution::Dismissed => {
+                    Resolution::Cancelled | Resolution::Dismissed | Resolution::Replied => {
                         format!("Dismissed {server}'s form")
                     }
                 };
@@ -233,7 +223,7 @@ pub fn row_lines(
                     Resolution::Open => format!("{server} sent a link"),
                     Resolution::Answered => format!("Opened {server}'s link"),
                     Resolution::Declined => format!("Declined {server}'s link"),
-                    Resolution::Cancelled | Resolution::Dismissed => {
+                    Resolution::Cancelled | Resolution::Dismissed | Resolution::Replied => {
                         format!("Dismissed {server}'s link")
                     }
                 };
@@ -271,7 +261,7 @@ pub fn row_lines(
                     ),
                     (Resolution::Answered, None) => format!("Granted {asked}"),
                     (Resolution::Declined, _) => format!("Refused {asked}"),
-                    (Resolution::Cancelled | Resolution::Dismissed, _) => {
+                    (Resolution::Cancelled | Resolution::Dismissed | Resolution::Replied, _) => {
                         format!("Dismissed the ask for {asked}")
                     }
                 };
@@ -585,7 +575,6 @@ pub fn waiting_plan(id: &Key, plan: &str, width: usize, theme: Theme) -> Vec<Lin
         &Plan {
             text: plan,
             verdict: PlanVerdict::Open,
-            edits_accepted: false,
             note: None,
             writing: false,
         },
@@ -691,7 +680,6 @@ fn prose(drawn: &mut Drawn, words: &[Segment], streaming: bool, width: usize, th
 struct Plan<'a> {
     text: &'a str,
     verdict: PlanVerdict,
-    edits_accepted: bool,
     note: Option<&'a str>,
     writing: bool,
 }
@@ -734,7 +722,7 @@ fn plan_lines(
     };
     let outcome = match plan.verdict {
         PlanVerdict::Open => None,
-        PlanVerdict::Approved if plan.edits_accepted => Some("approved · accepting edits"),
+        PlanVerdict::ApprovedAcceptingEdits => Some("approved · accepting edits"),
         PlanVerdict::Approved => Some("approved"),
         PlanVerdict::SentBack => Some("sent back"),
         PlanVerdict::Dismissed => Some("dismissed"),
@@ -827,6 +815,7 @@ fn questions_step(
         }
         Resolution::Answered => format!("Answered {count}"),
         Resolution::Declined => format!("Declined {count}"),
+        Resolution::Replied => format!("Replied instead of {count}"),
         Resolution::Cancelled | Resolution::Dismissed => format!("Dismissed {count}"),
     };
     let railed = |words: String, style: Style| {
@@ -1039,6 +1028,9 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
             let file = files.first();
             let verb = match (state, file.map(|f| &f.change)) {
                 (ToolStateView::Pending, Some(FileChangeView::Created { .. })) => "Wants to create",
+                (ToolStateView::Pending, Some(FileChangeView::Writing { .. })) => "Wants to write",
+                (ToolStateView::Running, Some(FileChangeView::Writing { .. })) => "Writing",
+                (_, Some(FileChangeView::Writing { .. })) => "Write",
                 (ToolStateView::Pending, Some(FileChangeView::Deleted)) => "Wants to delete",
                 (ToolStateView::Pending, Some(FileChangeView::Moved { .. })) => "Wants to move",
                 (ToolStateView::Pending, _) => "Wants to edit",
@@ -1052,7 +1044,9 @@ fn step_words(row: &Row, open: bool) -> (String, String, String) {
             let meta = file
                 .map(|f| match &f.change {
                     FileChangeView::Edited => format!("+{} −{}", f.added, f.removed),
-                    FileChangeView::Created { lines } => format!("{lines} lines"),
+                    FileChangeView::Created { lines } | FileChangeView::Writing { lines } => {
+                        format!("{lines} lines")
+                    }
                     FileChangeView::Moved { to } => format!("→ {to}"),
                     FileChangeView::Deleted => String::new(),
                 })
@@ -1135,7 +1129,7 @@ fn decided(meta: String, row: &Row, verb: &str) -> String {
         .map(str::to_owned)
         .collect();
     match decision.outcome {
-        DecisionView::Allowed if decision.scope.is_some() => parts.push("always allowed".into()),
+        DecisionView::Allowed if decision.granted.is_some() => parts.push("always allowed".into()),
         DecisionView::Allowed => parts.push("allowed".into()),
         DecisionView::AutoApproved => parts.push("auto-approved".into()),
         DecisionView::Denied if verb == "Denied" => {}
@@ -1304,6 +1298,7 @@ fn step(
             let detail = match &file.change {
                 FileChangeView::Edited => format!(" · +{} −{}", file.added, file.removed),
                 FileChangeView::Created { lines } => format!(" · created · {lines} lines"),
+                FileChangeView::Writing { lines } => format!(" · {lines} lines"),
                 FileChangeView::Moved { to } => format!(" → {to}"),
                 FileChangeView::Deleted => " · deleted".to_owned(),
             };

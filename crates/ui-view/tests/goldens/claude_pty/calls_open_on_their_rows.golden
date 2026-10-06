@@ -28,12 +28,12 @@
     body Edit { path: "notes.md", files: 1, added: 1, removed: 0, diff: "+x\n", reason: "", created: None }
   composer Send activity=None queue=[] outbox=[]
 ## 21 fact {"channel":"transcript","json":{"message":{"content":[{"id":"t3","input":{"content":"x","file_path":"notes.md"},"name":"Write","type":"tool_use"}],"id":"m3","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:07.000Z","type":"assistant","uuid":"a4"}}
-  row    6 t3 FileChange { files: [FileRow { path: "notes.md", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Running } attention
+  row    6 t3 FileChange { files: [FileRow { path: "notes.md", change: Writing { lines: 1 }, added: 1, removed: 0, line: None }], state: Running } attention
   ask ask:1 -> "t3" 1/1 Open
     choices AllowOnce*, Deny { stops: true }+note
     body Edit { path: "notes.md", files: 1, added: 1, removed: 0, diff: "+x\n", reason: "", created: None }
 ## 22 fact {"channel":"transcript","json":{"message":{"content":[{"content":"File created successfully at: notes.md","is_error":false,"tool_use_id":"t3","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":"2027-01-15T08:00:07.050Z","toolUseResult":{"content":"x","filePath":"notes.md","type":"create"},"type":"user","uuid":"r3"}}
-  row    6 t3 FileChange { files: [FileRow { path: "notes.md", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Succeeded } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
+  row    6 t3 FileChange { files: [FileRow { path: "notes.md", change: Created { lines: 1 }, added: 1, removed: 0, line: None }], state: Succeeded } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: true }
   ask none
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 25 fact {"channel":"transcript","json":{"message":{"content":[{"text":"Done.","type":"text"}],"id":"m4","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:07.200Z","type":"assistant","uuid":"a5"}}
@@ -47,7 +47,7 @@
      3 a1 Prose { text: [Text("Running the tests.")], streaming: false, working_note: false }
      4 t1 Command { command: "cargo test", state: Succeeded, exit_code: None, output_head: ["ok"], more_lines: 0, output_tail: ["ok"], duration_ms: Some(2101) }
      5 t2 Explore { verb: Read, subject: "src/lib.rs", state: Succeeded }
-     6 t3 FileChange { files: [FileRow { path: "notes.md", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Succeeded } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
+     6 t3 FileChange { files: [FileRow { path: "notes.md", change: Created { lines: 1 }, added: 1, removed: 0, line: None }], state: Succeeded } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: true }
      7 a5 Prose { text: [Text("Done.")], streaming: false, working_note: false }
      8 turn:1 TurnEnd { duration_ms: Some(7290), cost_usd: None, failed: false }
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }

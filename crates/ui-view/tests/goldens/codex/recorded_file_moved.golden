@@ -30,10 +30,10 @@
   row    6 rs_029a3b95d86dbaa8016ab72f110fd887d2b17785a166dbb5bc Thinking { text: "", open: false, duration_ms: Some(3911) }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 54 recorded 53: fact Rpc method=item/started
-  row    7 exec-a6e3d06e-be70-441f-ba72-8fb01c9007b0 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Moved { to: "<MACHINE_PATH>" }, added: 0, removed: 0 }], state: Running }
+  row    7 exec-a6e3d06e-be70-441f-ba72-8fb01c9007b0 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Moved { to: "<MACHINE_PATH>" }, added: 0, removed: 0, line: None }], state: Running }
   composer Send activity=Some(Running { key: "exec-a6e3d06e-be70-441f-ba72-8fb01c9007b0" }) queue=[] outbox=[]
 ## 56 recorded 55: fact Rpc method=item/completed
-  row    7 exec-a6e3d06e-be70-441f-ba72-8fb01c9007b0 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Moved { to: "<MACHINE_PATH>" }, added: 0, removed: 0 }], state: Succeeded }
+  row    7 exec-a6e3d06e-be70-441f-ba72-8fb01c9007b0 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Moved { to: "<MACHINE_PATH>" }, added: 0, removed: 0, line: None }], state: Succeeded }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 61 recorded 60: fact Rpc method=item/started
   row    8 msg_029a3b95d86dbaa8016ab72f1a9b7887d28e6885f79ce0b102 Prose { text: [], streaming: true, working_note: false }
@@ -51,7 +51,7 @@
      4 rs_029a3b95d86dbaa8016ab72f083d7487d28ec1f44252607201 Thinking { text: "", open: false, duration_ms: Some(2259) }
      5 rs_029a3b95d86dbaa8016ab72f0d1fdc87d29fc05f2c5af79ce1 Thinking { text: "", open: false, duration_ms: Some(4867) }
      6 rs_029a3b95d86dbaa8016ab72f110fd887d2b17785a166dbb5bc Thinking { text: "", open: false, duration_ms: Some(3911) }
-     7 exec-a6e3d06e-be70-441f-ba72-8fb01c9007b0 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Moved { to: "<MACHINE_PATH>" }, added: 0, removed: 0 }], state: Succeeded }
+     7 exec-a6e3d06e-be70-441f-ba72-8fb01c9007b0 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Moved { to: "<MACHINE_PATH>" }, added: 0, removed: 0, line: None }], state: Succeeded }
      8 msg_029a3b95d86dbaa8016ab72f1a9b7887d28e6885f79ce0b102 Prose { text: [Text("DONE")], streaming: false, working_note: false }
      9 turn:1 TurnEnd { duration_ms: Some(24083), cost_usd: None, failed: false }
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }

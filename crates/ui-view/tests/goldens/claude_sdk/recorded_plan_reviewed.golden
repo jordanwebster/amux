@@ -27,11 +27,11 @@
     body Command { command: "find /private<MACHINE_PATH> -name \"README.md\" -type f", cwd: "", reason: "outside the allowed directories: <MACHINE_PATH>", description: "find <MACHINE_PATH>" }
   composer Send activity=None queue=[] outbox=[]
 ## 34 recorded 33: input stdin-3
-  row    7 toolu_01Vc9B91WwArPGgg7nCq56LW Command { command: "find /private<MACHINE_PATH> -name \"README.md\" -type f", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, scope: None, note: Some("the specification did not authorize this request"), elsewhere: false }
+  row    7 toolu_01Vc9B91WwArPGgg7nCq56LW Command { command: "find /private<MACHINE_PATH> -name \"README.md\" -type f", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Denied, granted: None, note: Some("the specification did not authorize this request"), elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "toolu_01Vc9B91WwArPGgg7nCq56LW" }) queue=[] outbox=[]
 ## 36 recorded 35: fact Stream type=user uuid=eb049a62-7ae3-4b78-98fe-217ea0925985
-  row    7 toolu_01Vc9B91WwArPGgg7nCq56LW Command { command: "find /private<MACHINE_PATH> -name \"README.md\" -type f", state: Denied, exit_code: None, output_head: ["the specification did not authorize this request"], more_lines: 0, output_tail: ["the specification did not authorize this request"], duration_ms: Some(8) } decision=Decision { outcome: Denied, scope: None, note: Some("the specification di…
+  row    7 toolu_01Vc9B91WwArPGgg7nCq56LW Command { command: "find /private<MACHINE_PATH> -name \"README.md\" -type f", state: Denied, exit_code: None, output_head: ["the specification did not authorize this request"], more_lines: 0, output_tail: ["the specification did not authorize this request"], duration_ms: Some(8) } decision=Decision { outcome: Denied, granted: None, note: Some("the specification …
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 40 recorded 39: fact Stream type=assistant uuid=93e00d3c-2156-413a-9d55-5873ffd9e455
   row    8 msg_011CemAir61JBGVs7jDbnHP2:0 Thinking { text: "", open: false, duration_ms: Some(1571) }
@@ -125,7 +125,7 @@
      4 msg_011CemAiHgcK7TPycn4nNpqv:1 Prose { text: [Text("I'll start by reading README.md to understand the current content, then create the plan.")], streaming: false, working_note: false }
      5 toolu_01YZdkAEMaZC2TZ8SXM2whGG Explore { verb: Read, subject: "<MACHINE_PATH>", state: Failed } attention
      6 msg_011CemAid2wTUoFAGApMeiuP:0 Thinking { text: "", open: false, duration_ms: Some(2596) }
-     7 toolu_01Vc9B91WwArPGgg7nCq56LW Command { command: "find /private<MACHINE_PATH> -name \"README.md\" -type f", state: Denied, exit_code: None, output_head: ["the specification did not authorize this request"], more_lines: 0, output_tail: ["the specification did not authorize this request"], duration_ms: Some(8) } decision=Decision { outcome: Denied, scope: None, note: Some("the specification di…
+     7 toolu_01Vc9B91WwArPGgg7nCq56LW Command { command: "find /private<MACHINE_PATH> -name \"README.md\" -type f", state: Denied, exit_code: None, output_head: ["the specification did not authorize this request"], more_lines: 0, output_tail: ["the specification did not authorize this request"], duration_ms: Some(8) } decision=Decision { outcome: Denied, granted: None, note: Some("the specification …
      8 msg_011CemAir61JBGVs7jDbnHP2:0 Thinking { text: "", open: false, duration_ms: Some(1571) }
      9 msg_011CemAir61JBGVs7jDbnHP2:1 Prose { text: [Text("Let me try checking the current directory:")], streaming: false, working_note: false }
     10 toolu_018pebhcRLtZwWorTmMSCYGB Command { command: "ls -la", state: Succeeded, exit_code: None, output_head: ["total 0", "drwxr-xr-x@ 2 jlw  staff   64  6 Sep 01:34 .", "drwxr-xr-x@ 5 jlw  staff  160  6 Sep 01:34 .."], more_lines: 0, output_tail: ["total 0", "drwxr-xr-x@ 2 jlw  staff   64  6 Sep 01:34 .", "drwxr-xr-x@ 5 jlw  staff  160  6 Sep 01:34 .."], duration_ms: Some(134) }

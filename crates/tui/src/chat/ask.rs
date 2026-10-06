@@ -104,7 +104,7 @@ pub struct AskUi {
     drafts: Vec<String>,
 }
 
-fn scope_words(scope: &Scope) -> String {
+pub(crate) fn scope_words(scope: &Scope) -> String {
     match scope {
         Scope::Session => "for this session".into(),
         Scope::Project => "in this project".into(),

@@ -63,7 +63,7 @@
 ## 34 input {"id":"p5","prompt":{"text":"Stop after this."}}
   composer Send activity=None queue=[QueuedRow { input_id: [112, 53], text: [Text("Stop after this.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
 ## 36 fact {"channel":"transcript","json":{"message":{"content":[{"content":"tests ran","tool_use_id":"toolu_2","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":"2027-01-15T08:00:00.185Z","type":"user","uuid":"u7"}}
-  row   15 toolu_2 Command { command: "make test", state: Succeeded, exit_code: None, output_head: ["tests ran"], more_lines: 0, output_tail: ["tests ran"], duration_ms: Some(5) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
+  row   15 toolu_2 Command { command: "make test", state: Succeeded, exit_code: None, output_head: ["tests ran"], more_lines: 0, output_tail: ["tests ran"], duration_ms: Some(5) } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: true }
   ask none
   composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 53], text: [Text("Stop after this.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
 ## 37 input {"id":"n7","send_now":{"target":"p5"}}
@@ -87,7 +87,7 @@
     12 a4 Prose { text: [Text("Logs are clean.")], streaming: false, working_note: false }
     13 turn:3 TurnEnd { duration_ms: Some(5), cost_usd: None, failed: false }
     14 u5 Prompt { text: [Text("And the tests.")], steered: false }
-    15 toolu_2 Command { command: "make test", state: Succeeded, exit_code: None, output_head: ["tests ran"], more_lines: 0, output_tail: ["tests ran"], duration_ms: Some(5) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
+    15 toolu_2 Command { command: "make test", state: Succeeded, exit_code: None, output_head: ["tests ran"], more_lines: 0, output_tail: ["tests ran"], duration_ms: Some(5) } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: true }
     16 u6 Hidden collapsed
     17 turn:4 Stopped
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }

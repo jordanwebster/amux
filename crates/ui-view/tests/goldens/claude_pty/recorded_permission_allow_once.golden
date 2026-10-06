@@ -18,14 +18,14 @@
     choices AllowOnce*, AllowAlways { subjects: [], directories: ["<MACHINE_PATH>"], mode: "", mode_name: "", scope: Session, label: "" }, Deny { stops: true }+note
     body Command { command: "printf allow-once > allow-once.txt; printf allow-once", cwd: "", reason: "", description: "Run printf commands to create file and print output" }
 ## 25 recorded 23: fact Transcript type=user uuid=561cd9a5-2b8b-4463-84da-0b8e76ca096b
-  row    4 toolu_01LTvHPzjAbRyQSpztfVvsEv Command { command: "printf allow-once > allow-once.txt; printf allow-once", state: Succeeded, exit_code: None, output_head: ["allow-once"], more_lines: 0, output_tail: ["allow-once"], duration_ms: Some(509) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
+  row    4 toolu_01LTvHPzjAbRyQSpztfVvsEv Command { command: "printf allow-once > allow-once.txt; printf allow-once", state: Succeeded, exit_code: None, output_head: ["allow-once"], more_lines: 0, output_tail: ["allow-once"], duration_ms: Some(509) } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: true }
   ask none
   composer Send activity=Some(Working) queue=[] outbox=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 dd8442a5-7943-4c35-bbf3-a9b49f9b023a Prompt { text: [Text("Use the Bash tool to run exactly: printf allow-once > allow-once.txt; printf allow-once. Then stop.")], steered: false }
      3 166b096e-0c54-4904-aa35-43f46dd80973 Thinking { text: "", open: false, duration_ms: Some(1702) }
-     4 toolu_01LTvHPzjAbRyQSpztfVvsEv Command { command: "printf allow-once > allow-once.txt; printf allow-once", state: Succeeded, exit_code: None, output_head: ["allow-once"], more_lines: 0, output_tail: ["allow-once"], duration_ms: Some(509) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
+     4 toolu_01LTvHPzjAbRyQSpztfVvsEv Command { command: "printf allow-once > allow-once.txt; printf allow-once", state: Succeeded, exit_code: None, output_head: ["allow-once"], more_lines: 0, output_tail: ["allow-once"], duration_ms: Some(509) } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: true }
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
 == context Some(ContextView { used_tokens: 34323, window_tokens: None, percent: None, near_full: false }) sign-in None
 == settings

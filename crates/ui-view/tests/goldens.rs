@@ -64,10 +64,11 @@ fn clip(line: String) -> String {
 
 /// A question row's answers, ahead of the clipped row so they stay legible.
 fn answered(kind: &ui_view::RowKind) -> String {
-    let ui_view::RowKind::Ask(ui_view::AskRow::Question {
+    let ui_view::RowKind::Ask(ui_view::AskRow::Questions {
         questions,
         answers,
-        note,
+        skipped,
+        reply,
         resolution,
     }) = kind
     else {
@@ -84,14 +85,26 @@ fn answered(kind: &ui_view::RowKind) -> String {
                 }
                 let _ = write!(said, "{other:?}");
             }
+            if answer.hidden {
+                said.push_str("(hidden)");
+            }
+            if answer.skipped() {
+                said.push_str("(skipped)");
+            }
+            if let Some(note) = &answer.note {
+                let _ = write!(said, " note={note:?}");
+            }
             format!("{} = {said}", question.header)
         })
         .collect();
-    let note = note
+    let reply = reply
         .as_ref()
-        .map(|note| format!(" note={note:?}"))
+        .map(|reply| format!(" reply={reply:?}"))
         .unwrap_or_default();
-    format!("[{resolution:?}: {}{note}] ", answers.join("; "))
+    format!(
+        "[{resolution:?}: {} skipped={skipped}{reply}] ",
+        answers.join("; ")
+    )
 }
 
 fn describe_row(row: &ui_view::Row) -> String {

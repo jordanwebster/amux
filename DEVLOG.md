@@ -1,3 +1,21 @@
+2026-10-06 — **The shared views read plans and asks only from their facts.**
+The chat rows still recognised a Claude plan on their own: the plan tool's
+name, its input, a Write under Claude's plans folder standing in for the
+plan until the call arrived, edits to that file hidden, and "accepting
+edits" read off the decision's scope string. The interpreters now emit plan
+items with typed verdicts, so all of that is deleted; a plan row is the plan
+item's text and verdict, with approved-accepting-edits a verdict of its own.
+The dead question-from-tool-call row went with it: every kind records a
+question as an ask item. A question row now carries each question's note,
+how many were skipped, and the words of a reply instead. A permission
+decision carries the typed grant (Claude's rules, folders, permission and
+where it was saved; Codex's session, command prefix or hosts) in place of
+the scope string. A file row's created or updated and the line an edit
+landed on come from the step's own facts; a Claude write not yet done reads
+as writing, since only the finished step says which. The terminal and the
+phone's generated values follow; the terminal's wording for the new facts
+comes next.
+
 2026-10-06 — **A permission's record says what it granted.**
 A decided permission kept one loose string: Claude's word for where a rule
 was saved, or which Codex button was pressed. So a step could say "always

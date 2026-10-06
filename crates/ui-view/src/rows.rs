@@ -13,7 +13,7 @@ use wire::{
     ToolCall, ToolState, TurnOutcome,
 };
 
-use crate::ask::{QuestionView, lifted, question, question_view, recorded_answers};
+use crate::ask::{QuestionView, Scope, lift_rule, lifted, question, scope_of};
 use crate::segments::{Segment, segments};
 
 /// How many lines of a command's output a row carries.
@@ -202,33 +202,26 @@ pub enum RowKind {
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub enum AskRow {
-    /// A Claude AskUserQuestion call: its questions, then what was picked
-    /// and typed for each, read from the tool's recorded result.
-    Question {
-        questions: Vec<QuestionView>,
-        /// One per question once answered, in the ask's order.
-        answers: Vec<AnswerView>,
-        /// The note that went out with the answers.
-        note: Option<String>,
-        resolution: Resolution,
-    },
+    /// A plan the agent proposed, and what the person decided.
     Plan {
         plan: String,
         verdict: PlanVerdict,
-        /// Approved with edits accepted without asking from then on: the
-        /// decision's scope names Claude's `acceptEdits` mode.
-        edits_accepted: bool,
         /// Why it was sent back, when the person said.
         note: Option<String>,
         /// Still being written: it grows as it streams.
         writing: bool,
     },
-    /// Questions asked as the work, then the answers sent.
+    /// Questions asked as the work, then the answers sent: "answered 2 of
+    /// 3", or the person's own words when they replied instead.
     Questions {
         questions: Vec<QuestionView>,
-        /// One per question once answered, in the ask's order.
+        /// One per question once answered, in the ask's order; with a
+        /// reply, the answers given before it.
         answers: Vec<AnswerView>,
-        note: Option<String>,
+        /// How many of the answers are skips.
+        skipped: u32,
+        /// What the person wrote instead of answering.
+        reply: Option<String>,
         resolution: Resolution,
     },
     /// A tool server's form: "Sent 3 fields to github".
@@ -273,19 +266,30 @@ pub enum Resolution {
     Answered,
     /// Declined, or a grant that granted nothing.
     Declined,
+    /// The person replied in their own words instead of answering.
+    Replied,
     Cancelled,
     /// Closed by a fact that did not say how.
     Dismissed,
 }
 
 /// One question's answer: the picked options, a typed answer, or a secret
-/// answer that reads "answered (hidden)".
+/// answer that reads "answered (hidden)". None of them is a skip.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct AnswerView {
     /// "(Recommended)" lifted off, as on the card.
     pub picked: Vec<String>,
     pub other: Option<String>,
     pub hidden: bool,
+    /// The person's note on this question.
+    pub note: Option<String>,
+}
+
+impl AnswerView {
+    /// Nothing picked, typed or hidden: the question was skipped.
+    pub fn skipped(&self) -> bool {
+        self.picked.is_empty() && self.other.is_none() && !self.hidden
+    }
 }
 
 /// What an access grant granted, and for how long.
@@ -301,6 +305,8 @@ pub struct Granted {
 pub enum PlanVerdict {
     Open,
     Approved,
+    /// Approved, with edits accepted without asking from then on.
+    ApprovedAcceptingEdits,
     SentBack,
     Dismissed,
 }
@@ -330,25 +336,61 @@ pub struct FileRow {
     pub change: FileChangeView,
     pub added: u32,
     pub removed: u32,
+    /// The line the edit's first change landed on, once it landed.
+    pub line: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum FileChangeView {
     Edited,
-    Created { lines: u32 },
+    Created {
+        lines: u32,
+    },
     Deleted,
-    Moved { to: String },
+    Moved {
+        to: String,
+    },
+    /// A whole-file write not yet done: whether it makes the file or
+    /// replaces one is known only once it is.
+    Writing {
+        lines: u32,
+    },
 }
 
-/// A permission decision: allowed or denied, with scope and note when the
-/// provider says them, and where it was answered.
+/// A permission decision: allowed or denied, with what it granted and a
+/// note when the provider says them, and where it was answered.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Decision {
     pub outcome: DecisionView,
-    pub scope: Option<String>,
+    /// What an allowance granted beyond this one call.
+    pub granted: Option<PermissionGrant>,
     pub note: Option<String>,
     /// Answered in the provider's own interface.
     pub elsewhere: bool,
+}
+
+/// What a permission allowed from then on.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum PermissionGrant {
+    /// Claude's standing permission: what it allows ("cargo test", as on
+    /// the card), folders added, the permission it switched to, and where
+    /// it was saved.
+    Claude {
+        subjects: Vec<String>,
+        directories: Vec<String>,
+        /// The permission switched to, by its value; empty when none.
+        mode: String,
+        /// That permission by the catalogue's name; empty when the
+        /// catalogue does not name it.
+        mode_name: String,
+        saved_to: Scope,
+    },
+    /// Codex: approvals like this one, for the rest of the session.
+    Session,
+    /// Codex: commands starting with these words.
+    CommandPrefix { words: Vec<String> },
+    /// Codex: network access to these hosts.
+    NetworkHosts { hosts: Vec<String> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
@@ -498,7 +540,10 @@ fn state_view(state: i32) -> ToolStateView {
     }
 }
 
-fn decision_view(decision: Option<&wire::ToolDecision>) -> Option<Decision> {
+fn decision_view(
+    decision: Option<&wire::ToolDecision>,
+    offered: &[wire::OfferedPermission],
+) -> Option<Decision> {
     let decision = decision?;
     let outcome = match DecisionOutcome::try_from(decision.outcome).ok()? {
         DecisionOutcome::None => return None,
@@ -508,21 +553,40 @@ fn decision_view(decision: Option<&wire::ToolDecision>) -> Option<Decision> {
         DecisionOutcome::Unknown => DecisionView::Dismissed,
     };
     let text = |s: &str| (!s.is_empty()).then(|| s.to_owned());
-    // Worded as the scope string the record used to carry until the views
-    // read the typed grant.
-    let scope = match &decision.granted {
-        Some(wire::tool_decision::Granted::Claude(grant)) => text(&grant.saved_to),
+    let granted = match &decision.granted {
+        Some(wire::tool_decision::Granted::Claude(grant)) => {
+            let mode = grant.mode.clone().unwrap_or_default();
+            Some(PermissionGrant::Claude {
+                subjects: grant.rules.iter().map(|rule| lift_rule(rule)).collect(),
+                directories: grant.directories.clone(),
+                mode_name: offered
+                    .iter()
+                    .find(|permission| !mode.is_empty() && permission.value == mode)
+                    .map(|permission| permission.display_name.clone())
+                    .unwrap_or_default(),
+                mode,
+                saved_to: scope_of(&grant.saved_to),
+            })
+        }
         Some(wire::tool_decision::Granted::Codex(grant)) => match &grant.of {
-            Some(wire::codex_grant::Of::Session(_)) => Some("session".into()),
-            Some(wire::codex_grant::Of::CommandPrefix(_)) => Some("similar".into()),
-            Some(wire::codex_grant::Of::NetworkHosts(_)) => Some("network".into()),
+            Some(wire::codex_grant::Of::Session(_)) => Some(PermissionGrant::Session),
+            Some(wire::codex_grant::Of::CommandPrefix(prefix)) => {
+                Some(PermissionGrant::CommandPrefix {
+                    words: prefix.words.clone(),
+                })
+            }
+            Some(wire::codex_grant::Of::NetworkHosts(hosts)) => {
+                Some(PermissionGrant::NetworkHosts {
+                    hosts: hosts.hosts.clone(),
+                })
+            }
             None => None,
         },
         None => None,
     };
     Some(Decision {
         outcome,
-        scope,
+        granted,
         note: text(&decision.note),
         elsewhere: decision.elsewhere,
     })
@@ -620,7 +684,7 @@ pub(crate) fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Dec
                     duration_ms: thinking_duration(state, held, r.complete),
                 })
             }
-            Codex::Work(work) => codex_work(held, work),
+            Codex::Work(work) => codex_work(state, held, work),
             Codex::McpStartup(_) | Codex::TurnDiff(_) => plain(RowKind::Hidden),
             Codex::Turn(turn) => plain(turn_row(held, turn)),
             Codex::Boundary(b) => plain(boundary(b)),
@@ -650,14 +714,14 @@ fn ask_row(item: &wire::AskItem) -> RowKind {
     let resolution = match item.closed.as_ref().map(|closed| closed.outcome()) {
         None => Resolution::Open,
         Some(wire::AskOutcome::Answered) => Resolution::Answered,
-        Some(wire::AskOutcome::Declined | wire::AskOutcome::Replied) => Resolution::Declined,
+        Some(wire::AskOutcome::Declined) => Resolution::Declined,
+        Some(wire::AskOutcome::Replied) => Resolution::Replied,
         Some(wire::AskOutcome::Cancelled) => Resolution::Cancelled,
         Some(wire::AskOutcome::Dismissed | wire::AskOutcome::Unspecified) => Resolution::Dismissed,
     };
     RowKind::Ask(match &item.ask {
-        Some(Ask::Question(asked)) => AskRow::Questions {
-            questions: asked.questions.iter().map(question).collect(),
-            answers: closed
+        Some(Ask::Question(asked)) => {
+            let answers: Vec<AnswerView> = closed
                 .answers
                 .iter()
                 .map(|answer| AnswerView {
@@ -668,15 +732,17 @@ fn ask_row(item: &wire::AskItem) -> RowKind {
                         .collect(),
                     other: answer.other.clone(),
                     hidden: answer.hidden,
+                    note: answer.note.clone(),
                 })
-                .collect(),
-            note: closed
-                .answers
-                .iter()
-                .rev()
-                .find_map(|answer| answer.note.clone()),
-            resolution,
-        },
+                .collect();
+            AskRow::Questions {
+                questions: asked.questions.iter().map(question).collect(),
+                skipped: answers.iter().filter(|answer| answer.skipped()).count() as u32,
+                answers,
+                reply: (!closed.reply.is_empty()).then_some(closed.reply),
+                resolution,
+            }
+        }
         Some(Ask::Form(form)) => AskRow::Form {
             server: form.server.clone(),
             message: form.message.clone(),
@@ -718,17 +784,16 @@ fn ask_row(item: &wire::AskItem) -> RowKind {
 
 /// A plan item: the plan is the item's text.
 fn plan_row(held: &Held, plan: &wire::Plan) -> RowKind {
-    let (verdict, edits_accepted) = match plan.verdict() {
-        wire::PlanVerdict::Undecided => (PlanVerdict::Open, false),
-        wire::PlanVerdict::Approved => (PlanVerdict::Approved, false),
-        wire::PlanVerdict::ApprovedAcceptingEdits => (PlanVerdict::Approved, true),
-        wire::PlanVerdict::SentBack => (PlanVerdict::SentBack, false),
-        wire::PlanVerdict::Dismissed => (PlanVerdict::Dismissed, false),
+    let verdict = match plan.verdict() {
+        wire::PlanVerdict::Undecided => PlanVerdict::Open,
+        wire::PlanVerdict::Approved => PlanVerdict::Approved,
+        wire::PlanVerdict::ApprovedAcceptingEdits => PlanVerdict::ApprovedAcceptingEdits,
+        wire::PlanVerdict::SentBack => PlanVerdict::SentBack,
+        wire::PlanVerdict::Dismissed => PlanVerdict::Dismissed,
     };
     RowKind::Ask(AskRow::Plan {
         plan: held.item.text.clone(),
         verdict,
-        edits_accepted,
         note: plan.note.clone(),
         writing: !plan.complete,
     })
@@ -923,7 +988,7 @@ fn claude_tool(
     held: &Held,
     tool: &ToolCall,
 ) -> (RowKind, Option<Decision>, bool) {
-    let decision = decision_view(tool.decision.as_ref());
+    let decision = decision_view(tool.decision.as_ref(), &state.agent_state().permissions);
     let view = state_view(tool.state);
     let failed = view == ToolStateView::Failed;
     let input = input(tool);
@@ -943,15 +1008,6 @@ fn claude_tool(
             state: view,
             result: tool.outcome_text.clone(),
         }
-    } else if let Some(kind) = crate::plan::plan_file_row(
-        state,
-        held,
-        &tool.name,
-        &field(&input, "file_path"),
-        field(&input, "content"),
-        in_flight(view),
-    ) {
-        return (kind, None, false);
     } else if let Some(verb) = explore_verb(tool.class) {
         RowKind::Explore {
             verb,
@@ -985,26 +1041,17 @@ fn claude_tool(
                         change: FileChangeView::Edited,
                         added,
                         removed,
+                        line: tool.line,
                     }],
                     state: view,
                 }
             }
             "Write" => {
-                let content = field(&input, "content");
-                let updated = serde_json::from_slice::<Value>(&tool.outcome_json)
-                    .ok()
-                    .is_some_and(|out| out.get("type").and_then(Value::as_str) == Some("update"));
-                let change = if updated {
-                    FileChangeView::Edited
-                } else {
-                    FileChangeView::Created {
-                        lines: lines(&content),
-                    }
-                };
-                let (added, removed) = if updated {
-                    claude_counts(tool, &input)
-                } else {
-                    (lines(&content), 0)
+                let content = lines(&field(&input, "content"));
+                let (change, (added, removed)) = match tool.created {
+                    Some(true) => (FileChangeView::Created { lines: content }, (content, 0)),
+                    Some(false) => (FileChangeView::Edited, claude_counts(tool, &input)),
+                    None => (FileChangeView::Writing { lines: content }, (content, 0)),
                 };
                 RowKind::FileChange {
                     files: vec![FileRow {
@@ -1012,66 +1059,12 @@ fn claude_tool(
                         change,
                         added,
                         removed,
+                        line: tool.line,
                     }],
                     state: view,
                 }
             }
             "Agent" | "Task" => subagent(held, tool, &input),
-            "AskUserQuestion" => {
-                let questions = question_view(&input);
-                // A question cannot be declined: one that closed without
-                // answers was dismissed, by the person or by a stop.
-                let resolution = match view {
-                    ToolStateView::Pending | ToolStateView::Running => Resolution::Open,
-                    ToolStateView::Succeeded => Resolution::Answered,
-                    ToolStateView::Denied | ToolStateView::Failed | ToolStateView::Cancelled => {
-                        Resolution::Dismissed
-                    }
-                };
-                let answers = match resolution {
-                    Resolution::Answered => recorded_answers(&questions, &tool.outcome_json),
-                    _ => Vec::new(),
-                };
-                RowKind::Ask(AskRow::Question {
-                    questions,
-                    answers,
-                    note: decision.as_ref().and_then(|decision| decision.note.clone()),
-                    resolution,
-                })
-            }
-            "ExitPlanMode" => {
-                let verdict = match (view, decision.as_ref().map(|d| d.outcome)) {
-                    (_, Some(DecisionView::Allowed | DecisionView::AutoApproved)) => {
-                        PlanVerdict::Approved
-                    }
-                    (_, Some(DecisionView::Denied)) => PlanVerdict::SentBack,
-                    (_, Some(DecisionView::Dismissed)) => PlanVerdict::Dismissed,
-                    (ToolStateView::Succeeded, None) => PlanVerdict::Approved,
-                    (ToolStateView::Denied | ToolStateView::Failed, None) => PlanVerdict::SentBack,
-                    _ => PlanVerdict::Open,
-                };
-                // Claude fills the plan in from its plan file; a call that
-                // carries none reads it from that file's Write.
-                let mut plan = field(&input, "plan");
-                if plan.is_empty() {
-                    plan = crate::plan::written_before(state, held.item.order);
-                }
-                return (
-                    RowKind::Ask(AskRow::Plan {
-                        plan,
-                        verdict,
-                        edits_accepted: verdict == PlanVerdict::Approved
-                            && decision
-                                .as_ref()
-                                .and_then(|decision| decision.scope.as_deref())
-                                == Some("acceptEdits"),
-                        note: decision.as_ref().and_then(|decision| decision.note.clone()),
-                        writing: false,
-                    }),
-                    None,
-                    false,
-                );
-            }
             name if is_task_tool(name) => RowKind::Hidden,
             name => RowKind::ToolCall {
                 server: String::new(),
@@ -1168,9 +1161,13 @@ fn subagent(held: &Held, tool: &ToolCall, input: &Value) -> RowKind {
     }
 }
 
-fn codex_work(held: &Held, work: &wire::Work) -> (RowKind, Option<Decision>, bool) {
+fn codex_work(
+    state: &SessionState,
+    held: &Held,
+    work: &wire::Work,
+) -> (RowKind, Option<Decision>, bool) {
     use wire::work::Of;
-    let decision = decision_view(work.decision.as_ref());
+    let decision = decision_view(work.decision.as_ref(), &state.agent_state().permissions);
     let view = state_view(work.state);
     let failed = view == ToolStateView::Failed;
     let kind = match (&work.of, explore_verb(work.class)) {
@@ -1257,6 +1254,7 @@ fn codex_file(change: &wire::FileChange) -> FileRow {
         change: change_view,
         added,
         removed,
+        line: change.line,
     }
 }
 

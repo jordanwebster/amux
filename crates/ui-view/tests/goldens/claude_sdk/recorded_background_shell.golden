@@ -29,7 +29,7 @@
     body Command { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", cwd: "", reason: "Contains simple_expansion", description: "Run loop that prints three ticks with 2-second delays" }
   composer Send activity=None queue=[] outbox=[]
 ## 45 recorded 44: input stdin-3
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: true, duration_ms: None } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
   ask none
   composer Send activity=Some(Running { key: "toolu_0197msubRxYrMAEYvpZ2dxbz" }) queue=[] outbox=[]
 ## 55 recorded 54: fact Stream type=assistant uuid=6a2accbb-fac8-42cf-aee0-10fbf23ea3a9
@@ -41,9 +41,9 @@
   row   11 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None }
   composer Send activity=Some(Running { key: "toolu_01TfpDM8C7npd4Ff4eCUAae3" }) queue=[] outbox=[]
 ## 64 recorded 63: fact Stream type=system subtype=task_updated uuid=b19f8f6a-7ddb-49d4-bb83-07117a89af00
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(6157) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(6157) } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
 ## 65 recorded 64: fact Stream type=system subtype=task_notification uuid=59e5f220-89ca-4c87-902c-b3db8d196e73 tool_use_id=toolu_0197msubRxYrMAEYvpZ2dxbz
-  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(6157) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+  row    8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(6157) } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
 ## 69 recorded 68: fact Stream type=user uuid=105a6b9c-eac8-4e97-9c7a-9e2b917f44ed
   row   11 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(8039) }
   composer Send activity=Some(Working) queue=[] outbox=[]
@@ -72,7 +72,7 @@
      5 toolu_01VBRzFR5g9K7VvEwbiEud4e Explore { verb: Search, subject: "select:Monitor", state: Succeeded }
      6 msg_011CfREJXPZXEeiW2yMcRTkT:0 Thinking { text: "", open: false, duration_ms: Some(4594) }
      7 msg_011CfREJXPZXEeiW2yMcRTkT:1 Prose { text: [Text("Now I'll execute the task. First, I'll start the background command:")], streaming: false, working_note: false }
-     8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(6157) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
+     8 toolu_0197msubRxYrMAEYvpZ2dxbz Background { command: "for i in 1 2 3; do echo tick $i; sleep 2; done", running: false, duration_ms: Some(6157) } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: false }
      9 msg_011CfREJwNwuaDJkNzqp91kH:0 Thinking { text: "", open: false, duration_ms: Some(1971) }
     10 msg_011CfREJwNwuaDJkNzqp91kH:1 Prose { text: [Text("Now I'll wait 8 seconds:")], streaming: false, working_note: false }
     11 toolu_01TfpDM8C7npd4Ff4eCUAae3 Command { command: "sleep 8", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, output_tail: ["(Bash completed with no output)"], duration_ms: Some(8039) }

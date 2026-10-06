@@ -42,11 +42,11 @@
     body Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", cwd: "<MACHINE_PATH>", reason: "May I create the requested approval-elsewhere.txt file?", description: "" }
   composer Send activity=None queue=[] outbox=[]
 ## 61 recorded 60: fact Rpc method=serverRequest/resolved
-  row    5 exec-3f43165f-2bc7-4008-a351-7c18aab425cf Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Dismissed, scope: None, note: None, elsewhere: true }
+  row    5 exec-3f43165f-2bc7-4008-a351-7c18aab425cf Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_tail: [], duration_ms: None } decision=Decision { outcome: Dismissed, granted: None, note: None, elsewhere: true }
   ask none
   composer Send activity=Some(Running { key: "exec-3f43165f-2bc7-4008-a351-7c18aab425cf" }) queue=[] outbox=[]
 ## 65 recorded 64: fact Rpc method=item/completed
-  row    5 exec-3f43165f-2bc7-4008-a351-7c18aab425cf Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(43) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
+  row    5 exec-3f43165f-2bc7-4008-a351-7c18aab425cf Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(43) } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: true }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 70 recorded 69: fact Rpc method=item/started
   row    6 msg_02fafd3bec891489016ac4591e827887d29adb58a7d27afa4f Prose { text: [], streaming: true, working_note: false }
@@ -62,7 +62,7 @@
      2 prompt:7031 Prompt { text: [Text("Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE.")], steered: false }
      3 rs_02fafd3bec891489016ac4591a528c87d2abc434ae381c68a0 Thinking { text: "", open: false, duration_ms: Some(1852) }
      4 msg_02fafd3bec891489016ac4591afed887d2a4e7aa3f50341516 Prose { text: [Text("I’ll run the exact command you provided.")], streaming: false, working_note: true }
-     5 exec-3f43165f-2bc7-4008-a351-7c18aab425cf Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(43) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
+     5 exec-3f43165f-2bc7-4008-a351-7c18aab425cf Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Succeeded, exit_code: Some(0), output_head: [], more_lines: 0, output_tail: [], duration_ms: Some(43) } decision=Decision { outcome: Allowed, granted: None, note: None, elsewhere: true }
      6 msg_02fafd3bec891489016ac4591e827887d29adb58a7d27afa4f Prose { text: [Text("DONE")], streaming: false, working_note: false }
      7 turn:1 TurnEnd { duration_ms: Some(6151), cost_usd: None, failed: false }
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }

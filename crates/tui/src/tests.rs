@@ -1708,7 +1708,7 @@ fn a_call_row_leads_with_what_happened_to_it() {
     let denied = |mut row: ui_view::Row| {
         row.decision = Some(Decision {
             outcome: DecisionView::Denied,
-            scope: None,
+            granted: None,
             note: Some("Use cargo clean instead".into()),
             elsewhere: false,
         });

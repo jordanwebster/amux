@@ -7,8 +7,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_view::{
     AnswerView, AskRow, AttachmentView, Decision, DecisionView, ExploreVerb, FileChangeView,
-    LineKind, PatchHead, PlanVerdict, QuestionView, Resolution, Row, RowKind, RunInfo, Segment,
-    ToolStateView,
+    LineKind, PatchHead, PermissionGrant, PlanVerdict, QuestionView, Resolution, Row, RowKind,
+    RunInfo, Segment, ToolStateView,
 };
 use wire::{BoundaryKind, EnvelopeKind, SendState};
 
@@ -374,8 +374,8 @@ fn decision_meta(decision: &Decision, said: bool) -> String {
             .to_owned(),
         );
     }
-    if let Some(scope) = &decision.scope {
-        parts.push(scope.clone());
+    if let Some(granted) = &decision.granted {
+        parts.push(grant_words(granted));
     }
     if let Some(note) = &decision.note {
         parts.push(format!("\"{}\"", first_line(note)));
@@ -384,6 +384,16 @@ fn decision_meta(decision: &Decision, said: bool) -> String {
         parts.push("in the terminal".into());
     }
     parts.join(" · ")
+}
+
+/// What a permission allowed from then on, in words.
+fn grant_words(granted: &PermissionGrant) -> String {
+    match granted {
+        PermissionGrant::Claude { saved_to, .. } => super::ask::scope_words(saved_to),
+        PermissionGrant::Session => "for this session".into(),
+        PermissionGrant::CommandPrefix { words } => format!("for {} …", words.join(" ")),
+        PermissionGrant::NetworkHosts { hosts } => format!("network {}", hosts.join(", ")),
+    }
 }
 
 /// The row's meta with its permission decision after it. The decision
@@ -464,6 +474,7 @@ fn resolution_verb(resolution: Resolution, answered: &'static str) -> &'static s
         Resolution::Open => "Asking",
         Resolution::Answered => answered,
         Resolution::Declined => "Declined",
+        Resolution::Replied => "Replied instead of",
         Resolution::Cancelled => "Cancelled",
         Resolution::Dismissed => "Dismissed",
     }
@@ -614,6 +625,9 @@ fn body(
                     ),
                     FileChangeView::Created { lines } => {
                         ("Created", file.path.clone(), format!("{lines} lines"))
+                    }
+                    FileChangeView::Writing { lines } => {
+                        ("Writing", file.path.clone(), format!("{lines} lines"))
                     }
                     FileChangeView::Deleted => ("Deleted", file.path.clone(), String::new()),
                     FileChangeView::Moved { to } => {
@@ -1084,7 +1098,7 @@ pub(crate) fn rule(words: &str, width: usize, theme: Theme) -> Line<'static> {
 fn questions_lines(
     questions: &[QuestionView],
     answers: &[AnswerView],
-    note: Option<&str>,
+    reply: Option<&str>,
     resolution: Resolution,
     width: usize,
     theme: Theme,
@@ -1114,14 +1128,13 @@ fn questions_lines(
             lines.push(line);
         }
     }
-    if let Some(note) = note {
+    let notes = answers.iter().filter_map(|answer| answer.note.as_deref());
+    for said in notes
+        .map(|note| format!("Note: {}", first_line(note)))
+        .chain(reply.map(|reply| format!("Reply: {}", first_line(reply))))
+    {
         let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
-        push(
-            &mut line,
-            format!("Note: {}", first_line(note)),
-            theme.muted(),
-            width,
-        );
+        push(&mut line, said, theme.muted(), width);
         lines.push(line);
     }
     lines
@@ -1129,21 +1142,16 @@ fn questions_lines(
 
 fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'static>> {
     match ask {
-        AskRow::Question {
+        AskRow::Questions {
             questions,
             answers,
-            note,
+            reply,
             resolution,
-        }
-        | AskRow::Questions {
-            questions,
-            answers,
-            note,
-            resolution,
+            ..
         } => questions_lines(
             questions,
             answers,
-            note.as_deref(),
+            reply.as_deref(),
             *resolution,
             width,
             theme,
@@ -1156,7 +1164,9 @@ fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'st
         } => {
             let (glyph, verb) = match verdict {
                 PlanVerdict::Open => (("?", theme.attention()), "Plan proposed"),
-                PlanVerdict::Approved => (("✔", theme.ok()), "Plan approved"),
+                PlanVerdict::Approved | PlanVerdict::ApprovedAcceptingEdits => {
+                    (("✔", theme.ok()), "Plan approved")
+                }
                 PlanVerdict::SentBack => (("↩", theme.muted()), "Plan sent back"),
                 PlanVerdict::Dismissed => (("⊘", theme.muted()), "Plan dismissed"),
             };

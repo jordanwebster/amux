@@ -308,22 +308,26 @@ public struct AgentKey: Codable, Hashable, Sendable {
 }
 
 /// One question's answer: the picked options, a typed answer, or a secret
-/// answer that reads "answered (hidden)".
+/// answer that reads "answered (hidden)". None of them is a skip.
 public struct AnswerView: Codable, Hashable, Sendable {
     /// "(Recommended)" lifted off, as on the card.
     public var picked: [String]
     public var hidden: Bool
+    /// The person's note on this question.
+    public var note: String?
     public var other: String?
 
-    public init(picked: [String], hidden: Bool, other: String?) {
+    public init(picked: [String], hidden: Bool, note: String?, other: String?) {
         self.picked = picked
         self.hidden = hidden
+        self.note = note
         self.other = other
     }
 
     private enum CodingKeys: String, CodingKey {
         case picked
         case hidden
+        case note
         case other
     }
 }
@@ -581,12 +585,11 @@ public struct AskCard: Codable, Hashable, Sendable {
 }
 
 public enum AskRow: Codable, Hashable, Sendable {
-    /// A Claude AskUserQuestion call: its questions, then what was picked
-    /// and typed for each, read from the tool's recorded result.
-    case question(questions: [QuestionView], answers: [AnswerView], resolution: Resolution, note: String?)
-    case plan(plan: String, verdict: PlanVerdict, editsAccepted: Bool, writing: Bool, note: String?)
-    /// Questions asked as the work, then the answers sent.
-    case questions(questions: [QuestionView], answers: [AnswerView], resolution: Resolution, note: String?)
+    /// A plan the agent proposed, and what the person decided.
+    case plan(plan: String, verdict: PlanVerdict, writing: Bool, note: String?)
+    /// Questions asked as the work, then the answers sent: "answered 2 of
+    /// 3", or the person's own words when they replied instead.
+    case questions(questions: [QuestionView], answers: [AnswerView], skipped: UInt32, resolution: Resolution, reply: String?)
     /// A tool server's form: "Sent 3 fields to github".
     case form(server: String, message: String, fields: [String], resolution: Resolution)
     /// A tool server's link to open.
@@ -599,7 +602,6 @@ public enum AskRow: Codable, Hashable, Sendable {
     case unanswerable(reason: String, resolution: Resolution)
 
     private enum Tag: String, CodingKey {
-        case question = "Question"
         case plan = "Plan"
         case questions = "Questions"
         case form = "Form"
@@ -608,17 +610,9 @@ public enum AskRow: Codable, Hashable, Sendable {
         case unanswerable = "Unanswerable"
     }
 
-    private enum QuestionKeys: String, CodingKey {
-        case questions
-        case answers
-        case resolution
-        case note
-    }
-
     private enum PlanKeys: String, CodingKey {
         case plan
         case verdict
-        case editsAccepted = "edits_accepted"
         case writing
         case note
     }
@@ -626,8 +620,9 @@ public enum AskRow: Codable, Hashable, Sendable {
     private enum QuestionsKeys: String, CodingKey {
         case questions
         case answers
+        case skipped
         case resolution
-        case note
+        case reply
     }
 
     private enum FormKeys: String, CodingKey {
@@ -668,21 +663,12 @@ public enum AskRow: Codable, Hashable, Sendable {
                     debugDescription: "a AskRow names exactly one variant"))
         }
         switch _tag {
-        case .question:
-            let _fields = try _container.nestedContainer(
-                keyedBy: QuestionKeys.self, forKey: .question)
-            self = .question(
-                questions: try _fields.decode([QuestionView].self, forKey: .questions),
-                answers: try _fields.decode([AnswerView].self, forKey: .answers),
-                resolution: try _fields.decode(Resolution.self, forKey: .resolution),
-                note: try _fields.decodeIfPresent(String.self, forKey: .note))
         case .plan:
             let _fields = try _container.nestedContainer(
                 keyedBy: PlanKeys.self, forKey: .plan)
             self = .plan(
                 plan: try _fields.decode(String.self, forKey: .plan),
                 verdict: try _fields.decode(PlanVerdict.self, forKey: .verdict),
-                editsAccepted: try _fields.decode(Bool.self, forKey: .editsAccepted),
                 writing: try _fields.decode(Bool.self, forKey: .writing),
                 note: try _fields.decodeIfPresent(String.self, forKey: .note))
         case .questions:
@@ -691,8 +677,9 @@ public enum AskRow: Codable, Hashable, Sendable {
             self = .questions(
                 questions: try _fields.decode([QuestionView].self, forKey: .questions),
                 answers: try _fields.decode([AnswerView].self, forKey: .answers),
+                skipped: try _fields.decode(UInt32.self, forKey: .skipped),
                 resolution: try _fields.decode(Resolution.self, forKey: .resolution),
-                note: try _fields.decodeIfPresent(String.self, forKey: .note))
+                reply: try _fields.decodeIfPresent(String.self, forKey: .reply))
         case .form:
             let _fields = try _container.nestedContainer(
                 keyedBy: FormKeys.self, forKey: .form)
@@ -731,28 +718,21 @@ public enum AskRow: Codable, Hashable, Sendable {
 
     public func encode(to encoder: any Encoder) throws {
         switch self {
-        case .question(let questions, let answers, let resolution, let note):
-            var _container = encoder.container(keyedBy: Tag.self)
-            var _fields = _container.nestedContainer(keyedBy: QuestionKeys.self, forKey: .question)
-            try _fields.encode(questions, forKey: .questions)
-            try _fields.encode(answers, forKey: .answers)
-            try _fields.encode(resolution, forKey: .resolution)
-            try _fields.encodeIfPresent(note, forKey: .note)
-        case .plan(let plan, let verdict, let editsAccepted, let writing, let note):
+        case .plan(let plan, let verdict, let writing, let note):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: PlanKeys.self, forKey: .plan)
             try _fields.encode(plan, forKey: .plan)
             try _fields.encode(verdict, forKey: .verdict)
-            try _fields.encode(editsAccepted, forKey: .editsAccepted)
             try _fields.encode(writing, forKey: .writing)
             try _fields.encodeIfPresent(note, forKey: .note)
-        case .questions(let questions, let answers, let resolution, let note):
+        case .questions(let questions, let answers, let skipped, let resolution, let reply):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: QuestionsKeys.self, forKey: .questions)
             try _fields.encode(questions, forKey: .questions)
             try _fields.encode(answers, forKey: .answers)
+            try _fields.encode(skipped, forKey: .skipped)
             try _fields.encode(resolution, forKey: .resolution)
-            try _fields.encodeIfPresent(note, forKey: .note)
+            try _fields.encodeIfPresent(reply, forKey: .reply)
         case .form(let server, let message, let fields, let resolution):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: FormKeys.self, forKey: .form)
@@ -1806,27 +1786,28 @@ public struct ContextView: Codable, Hashable, Sendable {
     }
 }
 
-/// A permission decision: allowed or denied, with scope and note when the
-/// provider says them, and where it was answered.
+/// A permission decision: allowed or denied, with what it granted and a
+/// note when the provider says them, and where it was answered.
 public struct Decision: Codable, Hashable, Sendable {
     public var outcome: DecisionView
     /// Answered in the provider's own interface.
     public var elsewhere: Bool
+    /// What an allowance granted beyond this one call.
+    public var granted: PermissionGrant?
     public var note: String?
-    public var scope: String?
 
-    public init(outcome: DecisionView, elsewhere: Bool, note: String?, scope: String?) {
+    public init(outcome: DecisionView, elsewhere: Bool, granted: PermissionGrant?, note: String?) {
         self.outcome = outcome
         self.elsewhere = elsewhere
+        self.granted = granted
         self.note = note
-        self.scope = scope
     }
 
     private enum CodingKeys: String, CodingKey {
         case outcome
         case elsewhere
+        case granted
         case note
-        case scope
     }
 }
 
@@ -2181,10 +2162,14 @@ public enum FileChangeView: Codable, Hashable, Sendable {
     case deleted
     case created(lines: UInt32)
     case moved(to: String)
+    /// A whole-file write not yet done: whether it makes the file or
+    /// replaces one is known only once it is.
+    case writing(lines: UInt32)
 
     private enum Tag: String, CodingKey {
         case created = "Created"
         case moved = "Moved"
+        case writing = "Writing"
     }
 
     private enum CreatedKeys: String, CodingKey {
@@ -2193,6 +2178,10 @@ public enum FileChangeView: Codable, Hashable, Sendable {
 
     private enum MovedKeys: String, CodingKey {
         case to
+    }
+
+    private enum WritingKeys: String, CodingKey {
+        case lines
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2226,6 +2215,11 @@ public enum FileChangeView: Codable, Hashable, Sendable {
                 keyedBy: MovedKeys.self, forKey: .moved)
             self = .moved(
                 to: try _fields.decode(String.self, forKey: .to))
+        case .writing:
+            let _fields = try _container.nestedContainer(
+                keyedBy: WritingKeys.self, forKey: .writing)
+            self = .writing(
+                lines: try _fields.decode(UInt32.self, forKey: .lines))
         }
     }
 
@@ -2245,6 +2239,10 @@ public enum FileChangeView: Codable, Hashable, Sendable {
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: MovedKeys.self, forKey: .moved)
             try _fields.encode(to, forKey: .to)
+        case .writing(let lines):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: WritingKeys.self, forKey: .writing)
+            try _fields.encode(lines, forKey: .lines)
         }
     }
 }
@@ -2254,12 +2252,15 @@ public struct FileRow: Codable, Hashable, Sendable {
     public var change: FileChangeView
     public var added: UInt32
     public var removed: UInt32
+    /// The line the edit's first change landed on, once it landed.
+    public var line: UInt32?
 
-    public init(path: String, change: FileChangeView, added: UInt32, removed: UInt32) {
+    public init(path: String, change: FileChangeView, added: UInt32, removed: UInt32, line: UInt32?) {
         self.path = path
         self.change = change
         self.added = added
         self.removed = removed
+        self.line = line
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2267,6 +2268,7 @@ public struct FileRow: Codable, Hashable, Sendable {
         case change
         case added
         case removed
+        case line
     }
 }
 
@@ -3131,6 +3133,108 @@ public struct PermissionChoice: Codable, Hashable, Sendable {
     }
 }
 
+/// What a permission allowed from then on.
+public enum PermissionGrant: Codable, Hashable, Sendable {
+    /// Claude's standing permission: what it allows ("cargo test", as on
+    /// the card), folders added, the permission it switched to, and where
+    /// it was saved.
+    case claude(subjects: [String], directories: [String], mode: String, modeName: String, savedTo: Scope)
+    /// Codex: approvals like this one, for the rest of the session.
+    case session
+    /// Codex: commands starting with these words.
+    case commandPrefix(words: [String])
+    /// Codex: network access to these hosts.
+    case networkHosts(hosts: [String])
+
+    private enum Tag: String, CodingKey {
+        case claude = "Claude"
+        case commandPrefix = "CommandPrefix"
+        case networkHosts = "NetworkHosts"
+    }
+
+    private enum ClaudeKeys: String, CodingKey {
+        case subjects
+        case directories
+        case mode
+        case modeName = "mode_name"
+        case savedTo = "saved_to"
+    }
+
+    private enum CommandPrefixKeys: String, CodingKey {
+        case words
+    }
+
+    private enum NetworkHostsKeys: String, CodingKey {
+        case hosts
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "Session": self = .session
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no PermissionGrant is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a PermissionGrant names exactly one variant"))
+        }
+        switch _tag {
+        case .claude:
+            let _fields = try _container.nestedContainer(
+                keyedBy: ClaudeKeys.self, forKey: .claude)
+            self = .claude(
+                subjects: try _fields.decode([String].self, forKey: .subjects),
+                directories: try _fields.decode([String].self, forKey: .directories),
+                mode: try _fields.decode(String.self, forKey: .mode),
+                modeName: try _fields.decode(String.self, forKey: .modeName),
+                savedTo: try _fields.decode(Scope.self, forKey: .savedTo))
+        case .commandPrefix:
+            let _fields = try _container.nestedContainer(
+                keyedBy: CommandPrefixKeys.self, forKey: .commandPrefix)
+            self = .commandPrefix(
+                words: try _fields.decode([String].self, forKey: .words))
+        case .networkHosts:
+            let _fields = try _container.nestedContainer(
+                keyedBy: NetworkHostsKeys.self, forKey: .networkHosts)
+            self = .networkHosts(
+                hosts: try _fields.decode([String].self, forKey: .hosts))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .claude(let subjects, let directories, let mode, let modeName, let savedTo):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: ClaudeKeys.self, forKey: .claude)
+            try _fields.encode(subjects, forKey: .subjects)
+            try _fields.encode(directories, forKey: .directories)
+            try _fields.encode(mode, forKey: .mode)
+            try _fields.encode(modeName, forKey: .modeName)
+            try _fields.encode(savedTo, forKey: .savedTo)
+        case .session:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Session")
+        case .commandPrefix(let words):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: CommandPrefixKeys.self, forKey: .commandPrefix)
+            try _fields.encode(words, forKey: .words)
+        case .networkHosts(let hosts):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: NetworkHostsKeys.self, forKey: .networkHosts)
+            try _fields.encode(hosts, forKey: .hosts)
+        }
+    }
+}
+
 /// The header's phase: lifecycle from the entry, the rest from the snapshot.
 public enum PhaseView: Codable, Hashable, Sendable {
     case starting
@@ -3243,6 +3347,8 @@ public enum PlanVerdict: String, Codable, Hashable, Sendable, CaseIterable {
     case approved = "Approved"
     case sentBack = "SentBack"
     case dismissed = "Dismissed"
+    /// Approved, with edits accepted without asking from then on.
+    case approvedAcceptingEdits = "ApprovedAcceptingEdits"
 }
 
 public enum Presence: String, Codable, Hashable, Sendable, CaseIterable {
@@ -3361,6 +3467,8 @@ public enum Resolution: String, Codable, Hashable, Sendable, CaseIterable {
     case answered = "Answered"
     /// Declined, or a grant that granted nothing.
     case declined = "Declined"
+    /// The person replied in their own words instead of answering.
+    case replied = "Replied"
     /// Closed by a fact that did not say how.
     case dismissed = "Dismissed"
 }
