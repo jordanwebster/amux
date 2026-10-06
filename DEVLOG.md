@@ -1,3 +1,15 @@
+2026-10-06 — **Every agent gets a name.**
+An agent created without a name now gets a memorable word pair from its
+daemon, such as `quiet-otter`: lowercase and hyphenated so a branch can be
+named after it. The pair is one no other agent on that host is called and no
+local branch in the folder's repository has, nor a folder a branch sits
+under (`quiet-otter/x` rules out `quiet-otter`); the search starts at a
+random pair and walks all 2,304, and only when every one is taken does a
+number follow. It is chosen under the store lock so two creates cannot take
+the same one. A given name is kept as given, and renaming to an empty name
+is refused. Test target `agent_names` covers a given name, an assigned one,
+and a repository whose branches and agents leave exactly one pair free.
+
 2026-10-06 — **The row carries a name, since-when and git facts.**
 `Agent.name` is no longer optional on the wire, and `Agent.last_activity_ms`
 is gone: field 12 is now `phase_since_ms`, when the agent entered its phase,

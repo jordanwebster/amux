@@ -209,6 +209,8 @@ pub enum RegistryError {
     UnknownKind(i32),
     #[error("the working directory {0} is not a directory on this host")]
     BadCwd(String),
+    #[error("an agent's name cannot be empty")]
+    EmptyName,
     #[error("spawning on another host goes through that host's daemon")]
     OtherHost,
     #[error(transparent)]
@@ -235,7 +237,9 @@ impl RegistryError {
             Self::NotFound(_) | Self::NoSpec(_) => ErrorCode::NotFound,
             Self::AlreadyExists(_) => ErrorCode::AlreadyExists,
             Self::Live(_) | Self::StillLocked(_) => ErrorCode::FailedPrecondition,
-            Self::BadId(_) | Self::UnknownKind(_) | Self::BadCwd(_) => ErrorCode::InvalidArgument,
+            Self::BadId(_) | Self::UnknownKind(_) | Self::BadCwd(_) | Self::EmptyName => {
+                ErrorCode::InvalidArgument
+            }
             Self::OtherHost => ErrorCode::Unimplemented,
             Self::StartTimeout(_) | Self::StopTimeout(_) => ErrorCode::Aborted,
             Self::Store(_) | Self::Io(_) => ErrorCode::Internal,
@@ -728,26 +732,49 @@ impl ProfileRuntime {
             None => request.parent.clone(),
         };
 
+        let given = request.name.clone().filter(|name| !name.is_empty());
+        let branches = match given {
+            Some(_) => Default::default(),
+            None => crate::names::branch_names(Path::new(&request.cwd)).await,
+        };
+
         let operation = self.operation(id);
         let _operation = operation.lock().await;
         let key = self.key(id);
         let now = self.clock.now_ms();
-        {
+        let name = {
             let mut store = self.store.lock().await;
             if store.agent(&key)?.is_some() {
                 return Err(RegistryError::AlreadyExists(id));
             }
+            // Chosen under the store lock, so two creates at once cannot
+            // both take the same free name.
+            let name = match given {
+                Some(name) => name,
+                None => {
+                    let names: HashSet<String> = store
+                        .agents()?
+                        .into_iter()
+                        .filter(|row| row.agent.host == key.host)
+                        .filter_map(|row| row.name.map(|name| name.to_lowercase()))
+                        .collect();
+                    crate::names::assign_name(&|candidate| {
+                        names.contains(candidate) || branches.contains(candidate)
+                    })
+                }
+            };
             // The row comes first: a crash after it leaves a row the sweep
             // marks exited, never a directory nothing lists.
             let mut row = AgentRow::new(key.clone(), kind_name, request.cwd.clone());
-            row.name = request.name.clone().filter(|name| !name.is_empty());
+            row.name = Some(name.clone());
             row.parent = parent
                 .as_ref()
                 .map(|parent| AgentKey::new(parent.host_id.clone(), parent.agent_id.clone()));
             row.created_at = now;
             row.incarnation = 1;
             self.put_row(&mut store, &row)?;
-        }
+            name
+        };
 
         let dir = self.agent_dir(id);
         private_dir(&dir)?;
@@ -760,7 +787,7 @@ impl ProfileRuntime {
                 profile_id: self.profile.as_bytes(),
                 kind,
                 cwd: &request.cwd,
-                name: request.name.as_deref().unwrap_or_default(),
+                name: &name,
                 parent,
                 resolved: &resolved,
                 created_at_ms: now,
@@ -1080,11 +1107,14 @@ impl ProfileRuntime {
     /// thread takes the name; a missed word is made good at the next
     /// resume.
     pub async fn rename(&self, id: AgentId, name: &str) -> Result<Agent, RegistryError> {
+        if name.is_empty() {
+            return Err(RegistryError::EmptyName);
+        }
         let key = self.key(id);
         let row = {
             let mut store = self.store.lock().await;
             let mut row = store.agent(&key)?.ok_or(RegistryError::NotFound(id))?;
-            row.name = Some(name.to_owned()).filter(|name| !name.is_empty());
+            row.name = Some(name.to_owned());
             self.put_row(&mut store, &row)?;
             row
         };

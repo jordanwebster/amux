@@ -217,11 +217,15 @@ def manage_agent(journey: TerminalJourney) -> list[str]:
     made = listed(created, agent_id)
     if made is None or made["lifecycle"] != LIVE:
         raise RuntimeError(f"the desk lists the new agent as {made!r}")
+    # Created without a name, it has the word pair its host gave it.
+    if not made.get("name"):
+        raise RuntimeError(f"the desk gave the new agent no name: {made!r}")
+    journey.assigned.append(made["name"])
     journey.frame(pane, "created")
 
     # Renamed in place on home: the host lists the same agent under the name.
     journey.home(pane)
-    journey.select_agent(pane, "unnamed")
+    journey.select_agent(pane, made["name"])
     journey.keys(pane, "r", "C-u")
     journey.type(pane, "helper")
     journey.keys(pane, "Enter")

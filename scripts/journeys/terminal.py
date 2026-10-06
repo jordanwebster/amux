@@ -212,13 +212,27 @@ def logical_paths(
     text keeps its place. With no such gap they come back at the row's end."""
     if physical == logical or not physical.endswith(logical[1:]):
         return texts, styles
+    return respell(texts, styles, physical, logical)
+
+
+# What an assigned agent name is drawn as: a host gives an agent created
+# without a name a random word pair, at least eight cells wide.
+ASSIGNED = "<name>"
+
+
+def respell(
+    texts: list[str], styles: list[list[str]], physical: str, logical: str
+) -> tuple[list[str], list[list[str]]]:
+    """Spell `physical` as the shorter `logical` everywhere, its dropped
+    cells coming back as blanks in the first gap of two or more blanks
+    after it, else at the row's end."""
     drop = len(physical) - len(logical)
     out_texts, out_styles = [], []
     for text, row in zip(texts, styles):
         row = list(row)
         while (start := text.find(physical)) >= 0:
             cell = sum(_cell_width(c) for c in text[:start])
-            text = text[:start] + text[start + drop :]
+            text = text[:start] + logical + text[start + len(physical) :]
             row = row[:cell] + row[cell + drop :]
             gap = text.find("  ", start + len(logical))
             if gap < 0:
@@ -327,6 +341,8 @@ class TerminalJourney:
         self.actions: list[str] = []
         self.observations: dict[str, object] = {}
         self.frames: list[Frame] = []
+        # Names hosts assigned, drawn as ASSIGNED in every frame.
+        self.assigned: list[str] = []
         env = {k: v for k, v in os.environ.items() if k not in ("AMUX_LOG", "AMUX_CONFIG")}
         env.update({key: str(self.scratch) for key in ("TMPDIR", "TMP", "TEMP")})
         self.process = subprocess.Popen(
@@ -539,6 +555,8 @@ class TerminalJourney:
         texts, styles = logical_paths(
             texts, styles, os.path.realpath(self.scratch), str(self.scratch)
         )
+        for name in self.assigned:
+            texts, styles = respell(texts, styles, name, ASSIGNED)
         texts, styles = mask_durations(texts, styles)
         text = normalize("\n".join(texts) + "\n")
         frame = Frame(label, text, style_map(styles))

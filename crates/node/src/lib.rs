@@ -29,6 +29,7 @@ mod hosts;
 mod identity;
 mod install;
 mod link;
+mod names;
 mod net_error;
 mod outbox;
 mod pairing;
@@ -68,6 +69,7 @@ pub use install::{
     REGISTRY, REPLICAS, REPORTS, STORE, write_durably,
 };
 pub use link::{PeerChannel, PeerClient, TRUST_REVOKED};
+pub use names::{assign_name, word_pairs};
 pub use outbox::{DrainReport, HttpSender, NoopSender, Push, PushError, PushFuture, PushSender};
 pub use pairing::PairingAdmin;
 pub use pairing::qr::{

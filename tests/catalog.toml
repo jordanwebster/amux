@@ -458,7 +458,7 @@ cargo = [
 name = "single-daemon-contract"
 contract = "One daemon commits journaled steps atomically, fans out and serves subscriptions without losing committed rows across crashes, failed commits and power cuts, carries inputs, messages, deliveries and notifications exactly once, stores blobs and diffs, assembles redacted dumps, and adopts, starts, stops and resumes agent processes."
 paths = ["crates/node/tests"]
-recipe = "just test -- --test single_daemon --test messaging --test push --test blobs --test registry --test dump"
+recipe = "just test -- --test single_daemon --test messaging --test push --test blobs --test registry --test dump --test agent_names"
 boundary = "Single daemon"
 oracle = "Committed rows, the stream log, failure-cut equality with a reference run, delivery and notification rows, bundle contents with every planted secret absent, and process observations."
 real = ["SQLite store", "journal files", "Unix sockets", "agent processes in the registry and messaging cases"]
@@ -468,7 +468,7 @@ capabilities = ["desktop", "Unix for the agent-process cases"]
 lane = "fast"
 evidence = ""
 update = ""
-cargo = [{ package = "node", targets = ["blobs", "dump", "messaging", "push", "registry", "single_daemon"], features = [] }]
+cargo = [{ package = "node", targets = ["agent_names", "blobs", "dump", "messaging", "push", "registry", "single_daemon"], features = [] }]
 
 [[suite]]
 name = "supervisor-update"

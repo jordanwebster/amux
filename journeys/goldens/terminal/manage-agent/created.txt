@@ -1,5 +1,5 @@
 
-  the agent │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                   1 │ [Diff] │ [Home]
+  <name> │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                      1 │ [Diff] │ [Home]
 
 
 
@@ -28,7 +28,7 @@
     Worked <t>
 
   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-  │ › Message the agent                                                                                    │
+  │ › Message <name>                                                                                       │
   ╰────────────────────────────────────────────────────────────────────────────────────────── opus (high) ─╯
 
   shift+tab mode   ctrl+a more

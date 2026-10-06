@@ -77,8 +77,8 @@ failed and whether the call took effect is unknown. Codes a client meets often:
 | `Fetch(FetchRequest)` | `FetchResponse` | A page of older items |
 | `Get(GetRequest)` | `Item` | One item in full |
 | `SendInput(SendInputRequest)` | `SendInputResponse` | The interpreter's verdict on one input |
-| `CreateAgent(CreateAgentRequest)` | `Agent` | Spawn, optionally with a first prompt |
-| `RenameAgent` | `Agent` | |
+| `CreateAgent(CreateAgentRequest)` | `Agent` | Spawn, optionally with a first prompt. Without a name the daemon gives a word pair (`quiet-otter`) that no other agent on the host and no branch in the folder's repository has |
+| `RenameAgent` | `Agent` | An empty name is refused `INVALID_ARGUMENT` |
 | `StopAgent(StopAgentRequest)` | `Empty` | `GRACEFUL`, `ABORT` or `KILL`; a registry act, never a chat control |
 | `ResumeAgent(ResumeAgentRequest)` | `Agent` | Start the agent's directory again, optionally with a first prompt |
 | `DeleteAgent` | `DeleteAgentResponse` | Cascades to children; lists removed and unreachable children |
