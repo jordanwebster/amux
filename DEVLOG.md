@@ -1,3 +1,19 @@
+2026-10-06 — **Terminal stories tell a send that never left from one that may have arrived.**
+Two new stories on the served flows network send to the cabin's agent from
+the laptop. In `send-rejected` the laptop cannot open a call to the cabin
+while the chat stays live: the prompt reads "not sent: host unreachable",
+its words come back to the composer, the cabin never has it, and sent again
+once calls work the cabin holds it once. In `send-may-not-have-arrived` the
+cabin's agent is frozen holding the prompt when the link is cut: the send
+comes back uncertain, and with the link back (the agent still frozen) the
+prompt reads "may not have arrived" within seconds; thawed, the agent goes
+on and the prompt settles with no resend, held once. Run against the old
+forwarding, which called a cut call unreachable, the second story fails on
+"not sent". The test network's door gains `RefuseCalls`, a fault that fails
+one host's calls to another before they go out while the link stays up: no
+real path otherwise shows a never-sent rejection, because a client keeps
+the draft as soon as a host looks away.
+
 2026-10-06 — **A question can be skipped in terminal Claude's form.**
 Terminal Claude refused every skipped question on the belief that its form
 needs an answer to each, so the terminal and the phone never offered Skip

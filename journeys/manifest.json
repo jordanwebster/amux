@@ -114,6 +114,20 @@
       "claim": "With the agent's host out of reach, Enter keeps the prompt as a draft and the host never receives it; with the host back, Enter sends it and the host holds it once."
     },
     {
+      "id": "send-rejected",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "With the laptop unable to open a call to the agent's host while the chat stays live, a prompt that never left reads not sent, host unreachable, and its words come back to the composer; the host never receives it. Sent again once calls can be made, the host holds it once."
+    },
+    {
+      "id": "send-may-not-have-arrived",
+      "stage": 17,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-flows.json",
+      "claim": "The link to the agent's host is cut while the host holds a prompt it has not answered: the prompt reads may not have arrived, not not sent. When the link returns it settles without a resend, and the host holds it exactly once."
+    },
+    {
       "id": "composer-limits",
       "stage": 17,
       "clients": ["terminal"],

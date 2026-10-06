@@ -935,6 +935,97 @@ def send_while_away(journey: TerminalJourney) -> list[str]:
     ]
 
 
+NOT_SENT = "Rotate the backup keys."
+MAYBE = "Prune the old snapshots."
+BACKUP_DONE = "Last night's backup finished with no errors."
+
+
+def send_rejected(journey: TerminalJourney) -> list[str]:
+    pane = journey.launch("terminal", "laptop")
+    journey.open_chat(pane, "backups")
+    # The laptop can no longer open a call to the cabin while the cabin's
+    # chat stays live: a send fails before it leaves the laptop.
+    journey.request({"RefuseCalls": {"a": "laptop", "b": "cabin", "refuse": True}})
+    journey.type(pane, NOT_SENT)
+    journey.wait_terms(pane, NOT_SENT)
+    journey.keys(pane, "Enter")
+    journey.wait_terms(pane, "not sent: host unreachable", f"› {NOT_SENT}")
+    journey.frame(pane, "not-sent")
+    time.sleep(2)
+    refused = journey.chat("cabin", "backups", "refused")
+    never_sent(refused, NOT_SENT)
+    # The words came back to the composer: with calls made again, Enter
+    # sends them.
+    journey.request({"RefuseCalls": {"a": "laptop", "b": "cabin", "refuse": False}})
+    journey.keys(pane, "Enter")
+    journey.wait(pane, lambda frame: at_rest(frame, BACKUP_DONE) and "not sent" not in frame, "the reply")
+    heard = journey.wait_chat("cabin", "backups", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, NOT_SENT)) == 1, "sent")
+    reflected_once(heard, NOT_SENT)
+    control = negative_control(never_sent, heard, NOT_SENT)
+    journey.frame(pane, "sent")
+    journey.quit_client(pane)
+    return [
+        "a send that could not leave the laptop read not sent, host unreachable, and its words came back to the composer",
+        "the cabin never received it",
+        f"sent again once calls were made, the cabin holds {NOT_SENT!r} once",
+        control,
+        "the client exited 0",
+    ]
+
+
+def send_may_not_have_arrived(journey: TerminalJourney) -> list[str]:
+    pane = journey.launch("terminal", "laptop")
+    journey.open_chat(pane, "backups")
+    # The cabin's agent takes the prompt in and answers nothing while
+    # frozen, so the send waits on the cabin when the link is cut.
+    journey.request({"Freeze": {"agent": "backups"}})
+    journey.type(pane, MAYBE)
+    journey.wait_terms(pane, MAYBE)
+    journey.keys(pane, "Enter")
+    # Sent: the composer is empty again. The forwarded call reaches the
+    # cabin at once and waits there for an answer that does not come; it
+    # would give up after 30 seconds, so everything until the prompt reads
+    # may not have arrived happens well inside that.
+    journey.wait(pane, lambda frame: "› Message backups" in frame, "the prompt on its way", timeout=5)
+    sent_at = time.monotonic()
+    time.sleep(2)
+    journey.request({"Sever": {"a": "cabin", "b": "laptop"}})
+    journey.wait_terms(pane, "cabin away", timeout=5)
+    time.sleep(1)
+    # The link returns with the agent still frozen: catching up finds the
+    # prompt neither queued nor in the chat, so it may not have arrived.
+    journey.request({"Restore": {"a": "cabin", "b": "laptop"}})
+    journey.wait(
+        pane,
+        lambda frame: re.search(rf"{re.escape(MAYBE)}\s+may not have arrived", frame) is not None and "cabin away" not in frame,
+        "may not have arrived",
+        timeout=10,
+    )
+    if time.monotonic() - sent_at >= 25:
+        raise RuntimeError("the prompt read may not have arrived only near the answer's time limit, not from the cut")
+    journey.frame(pane, "may-not-have-arrived")
+    # The agent goes on with what it took in, and the prompt settles with
+    # no resend: the cabin had it, once.
+    journey.request({"Thaw": {"agent": "backups"}})
+    journey.wait(
+        pane,
+        lambda frame: at_rest(frame, MAYBE, BACKUP_DONE) and "may not have arrived" not in frame,
+        "the prompt settled and answered",
+    )
+    heard = journey.wait_chat("cabin", "backups", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, MAYBE)) == 1, "settled")
+    reflected_once(heard, MAYBE)
+    control = negative_control(never_sent, heard, MAYBE)
+    journey.frame(pane, "settled")
+    journey.quit_client(pane)
+    return [
+        "with the link cut while the cabin held the prompt unanswered, the send came back uncertain, not as not sent",
+        "with the link back and the cabin's agent still frozen, the prompt read may not have arrived",
+        f"once the agent went on it settled without a resend, and the cabin holds {MAYBE!r} once",
+        control,
+        "the client exited 0",
+    ]
+
+
 def composer_limits(journey: TerminalJourney) -> list[str]:
     pane = journey.launch("terminal", "laptop")
     # At a usage limit the composer says so, and sending still works.
@@ -1109,6 +1200,8 @@ STORIES = {
     "tool-server-asks": tool_server_asks,
     "queue-and-steer": queue_and_steer,
     "send-while-away": send_while_away,
+    "send-rejected": send_rejected,
+    "send-may-not-have-arrived": send_may_not_have_arrived,
     "composer-limits": composer_limits,
     "new-agent-terminal": new_agent_terminal,
     "report-a-problem": report_a_problem,

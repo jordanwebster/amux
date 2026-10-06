@@ -1339,6 +1339,18 @@ impl Net {
 
     // --- faults ------------------------------------------------------------
 
+    /// Makes `a` fail every call to `b` before it goes out, as when no
+    /// channel for it can be opened, while the link between them and the
+    /// sessions it carries stay up. `refuse: false` lifts it.
+    pub fn refuse_calls(&self, a: &str, b: &str, refuse: bool) -> Result<Ack, NetError> {
+        let peer = self.host(b)?.host_id;
+        self.edge(a)?.refuse_calls(peer, refuse);
+        Ok(self.ack(format!(
+            "{a} {} calls to {b}",
+            if refuse { "refuses" } else { "makes" }
+        )))
+    }
+
     /// Cuts the link between two hosts the way a dead connection goes: no
     /// LinkClose, the carrier just stops.
     pub fn sever_link(&mut self, a: &str, b: &str) -> Result<Ack, NetError> {

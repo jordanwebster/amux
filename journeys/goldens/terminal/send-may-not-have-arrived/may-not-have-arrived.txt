@@ -1,0 +1,34 @@
+
+  backups │ /tmp/aj-xxxxxxxx/testnetxxxxxx/cabin/work · cabin                                [Diff] │ [Home]
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                              Nothing here yet.
+
+
+
+
+
+
+
+
+
+
+
+
+    Prune the old snapshots.                                                          may not have arrived
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message backups                                                                                      │
+  ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯
+
+  shift+tab permission   ctrl+a more

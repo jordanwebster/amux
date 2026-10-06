@@ -52,6 +52,11 @@ pub enum Control {
         a: String,
         b: String,
     },
+    RefuseCalls {
+        a: String,
+        b: String,
+        refuse: bool,
+    },
     SetTier {
         account: String,
         tier: TierDecl,
@@ -152,6 +157,7 @@ pub const CAPABILITIES: &[(&str, &str)] = &[
     ("Link", "Net::link_up"),
     ("Trust", "Net::trust"),
     ("Untrust", "Net::untrust"),
+    ("RefuseCalls", "Net::refuse_calls"),
     ("SetTier", "Net::set_tier"),
     ("SignIn", "Net::sign_in"),
     ("KillDaemon", "Net::kill_daemon"),
@@ -196,6 +202,7 @@ impl Control {
             Self::Link { .. } => "Link",
             Self::Trust { .. } => "Trust",
             Self::Untrust { .. } => "Untrust",
+            Self::RefuseCalls { .. } => "RefuseCalls",
             Self::SetTier { .. } => "SetTier",
             Self::SignIn { .. } => "SignIn",
             Self::KillDaemon { .. } => "KillDaemon",
@@ -496,6 +503,7 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
     Ok(match control {
         Control::Sever { a, b } => value(net.sever_link(&a, &b)?),
         Control::Restore { a, b } => value(net.restore_link(&a, &b).await?),
+        Control::RefuseCalls { a, b, refuse } => value(net.refuse_calls(&a, &b, refuse)?),
         Control::Link { a, b } => {
             net.host(&a)?;
             net.host(&b)?;

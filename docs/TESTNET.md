@@ -246,6 +246,7 @@ verb without fields is a bare string (`"Shutdown"`).
 | `{"Sever": {"a", "b"}}`, `{"Restore": {"a", "b"}}` | Cut or restore a declared link. |
 | `{"Link": {"a", "b"}}` | Whether both ends route to each other directly: `{"up": true}`. |
 | `{"Trust": {"a", "b"}}`, `{"Untrust": {"a", "b"}}` | Trust as pairing does; forget as unpairing does. |
+| `{"RefuseCalls": {"a", "b", "refuse"}}` | While `refuse` is true, `a` fails every call to `b` before it goes out, as when no channel for it opens; the link and the chats it carries stay up. |
 | `{"SetTier": {"account", "tier"}}` | Change what an account has bought (`pro` or `free`). |
 | `{"SignIn": {"host", "account"}}` | Sign a host's profile in to a declared account. |
 | `{"KillDaemon": {"host"}}`, `{"StopDaemon": {"host"}}` | Crash or cleanly stop a host's daemon. |

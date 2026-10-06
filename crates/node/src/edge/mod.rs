@@ -229,6 +229,9 @@ pub struct Edge {
     clock: Arc<dyn Clock>,
     shutdown: watch::Sender<bool>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
+    /// Hosts no call channel opens to while the link stays up: a fault a
+    /// test network injects.
+    refused_calls: Mutex<std::collections::HashSet<HostId>>,
 }
 
 impl Edge {
@@ -414,6 +417,7 @@ impl Edge {
             clock,
             shutdown,
             tasks: Mutex::new(tasks),
+            refused_calls: Mutex::default(),
         });
         if signed_in {
             edge.start_cloud().await;
@@ -550,7 +554,23 @@ impl Edge {
     /// A PeerService client for a trusted host, over whichever route
     /// reaches it: a direct link, or the relay.
     pub async fn peer(&self, host: HostId) -> Result<crate::PeerClient, crate::link::ChannelError> {
+        if self.refused_calls.lock().unwrap().contains(&host) {
+            return Err(crate::link::ChannelError::LinkUnavailable { host_id: host });
+        }
         Ok(crate::link::peer_client(self.channel(host).await?))
+    }
+
+    /// From now on no call channel to `host` opens, or opens again, while
+    /// the link and its sessions stay up: a call to it fails before it goes
+    /// out. For a test network.
+    #[doc(hidden)]
+    pub fn refuse_calls(&self, host: HostId, refuse: bool) {
+        let mut refused = self.refused_calls.lock().unwrap();
+        if refuse {
+            refused.insert(host);
+        } else {
+            refused.remove(&host);
+        }
     }
 
     /// The channel calls to a trusted host ride, for a caller that speaks

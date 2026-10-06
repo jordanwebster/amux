@@ -1,0 +1,34 @@
+
+  backups │ /tmp/aj-xxxxxxxx/testnetxxxxxx/cabin/work · cabin                            1 │ [Diff] │ [Home]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  started ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+    Prune the old snapshots.                                                                         hh:mm
+
+
+    Last night's backup finished with no errors.
+
+    Worked <t>
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ › Message backups                                                                                      │
+  ╰─────────────────────────────────────────────────────────────────────────────── claude-fake-1 (medium) ─╯
+
+  shift+tab permission   ctrl+a more
