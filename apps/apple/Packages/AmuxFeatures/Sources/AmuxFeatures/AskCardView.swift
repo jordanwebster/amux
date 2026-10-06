@@ -610,7 +610,10 @@ private struct AskBodyView: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(current.enumerated()), id: \.offset) { index, field in
                 FormFieldView(field: field) { value in
-                    var edited = current
+                    // From the form as it is now: a control can hold on to
+                    // this closure from an earlier drawing (a menu's
+                    // choices), and the copy drawn then lacks later answers.
+                    var edited = fields ?? FormField.parse(schema)
                     edited[index].value = value
                     fields = edited
                 }
@@ -808,11 +811,10 @@ struct FormField: Equatable {
               let properties = object["properties"] as? [String: Any]
         else { return [] }
         let required = Set(object["required"] as? [String] ?? [])
-        // A decoded object has lost its order: required fields first, then by
-        // name, so the one Submit waits on is at the top.
-        let names = properties.keys.sorted {
-            (required.contains($0) ? 0 : 1, $0) < (required.contains($1) ? 0 : 1, $1)
-        }
+        // In the order the server wrote them, as every client asks them; a
+        // name the text could not be read for goes last.
+        let written = Self.written(schema).filter { properties[$0] != nil }
+        let names = written + properties.keys.filter { !written.contains($0) }.sorted()
         return names.compactMap { name in
             guard let property = properties[name] as? [String: Any] else { return nil }
             let kind: Kind
@@ -858,6 +860,63 @@ struct FormField: Equatable {
         case .number: return json != nil
         default: return true
         }
+    }
+
+    private enum Token: Equatable {
+        case string(String)
+        case mark(Character)
+    }
+
+    /// The names of the schema's top-level properties in the order its
+    /// text writes them, which a decoded dictionary no longer has.
+    static func written(_ schema: String) -> [String] {
+        let tokens = tokens(schema)
+        var names: [String] = []
+        var depth = 0
+        var inside = false
+        for (index, token) in tokens.enumerated() {
+            switch token {
+            case .mark("{"), .mark("["):
+                if depth == 1, token == .mark("{"), index >= 2,
+                   tokens[index - 1] == .mark(":"), tokens[index - 2] == .string("properties") {
+                    inside = true
+                }
+                depth += 1
+            case .mark("}"), .mark("]"):
+                depth -= 1
+                if depth < 2 { inside = false }
+            case .string(let name):
+                if inside, depth == 2, index > 0, [.mark("{"), .mark(",")].contains(tokens[index - 1]),
+                   index + 1 < tokens.count, tokens[index + 1] == .mark(":") {
+                    names.append(name)
+                }
+            default:
+                break
+            }
+        }
+        return names
+    }
+
+    /// Strings and structural marks; everything else in JSON is skipped.
+    private static func tokens(_ schema: String) -> [Token] {
+        var tokens: [Token] = []
+        var characters = schema.makeIterator()
+        while let character = characters.next() {
+            if character == "\"" {
+                var word = ""
+                while let next = characters.next(), next != "\"" {
+                    if next == "\\", let escaped = characters.next() {
+                        word.append(escaped)
+                    } else {
+                        word.append(next)
+                    }
+                }
+                tokens.append(.string(word))
+            } else if "{}[]:,".contains(character) {
+                tokens.append(.mark(character))
+            }
+        }
+        return tokens
     }
 
     static func content(_ fields: [FormField]) -> String {

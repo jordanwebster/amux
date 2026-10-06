@@ -1064,8 +1064,8 @@ private struct AskRowView: View {
 
     var body: some View {
         switch ask {
-        case .questions(let questions, let answers, _, let resolution, let reply):
-            questionsRow(questions, answers, resolution, reply)
+        case .questions(let questions, let answers, let skipped, let resolution, let reply):
+            questionsRow(questions, answers, skipped: Int(skipped), resolution, reply)
         case .plan(let plan, let verdict, _, let note):
             // An open plan reads whole under its heading while the decision
             // stands in the composer's place; once decided it folds to its
@@ -1129,16 +1129,27 @@ private struct AskRowView: View {
     /// One question names itself on the line; several say how many. The
     /// answers sit in a card under the line: each question's header, then
     /// the picks as pills and a typed answer in quotes, then the note.
+    /// Says what happened to the questions ("Answered 2 of 3 questions"),
+    /// with each answer under it and "Skipped" where one was left. A reply
+    /// instead lists only what was answered before it.
     private func questionsRow(
-        _ questions: [QuestionView], _ answers: [AnswerView], _ resolution: Resolution,
+        _ questions: [QuestionView], _ answers: [AnswerView], skipped: Int, _ resolution: Resolution,
         _ reply: String?
     ) -> some View {
         let single = questions.count == 1
-        let pairs = Array(zip(questions, answers))
+        let given = answers.count - skipped
+        let some = resolution == .answered && skipped > 0
+        var pairs = Array(zip(questions, answers))
+        if resolution == .replied { pairs = pairs.filter { !ChatWords.skipped($0.1) } }
         return GridRow(
             kind: "question", glyph: "questionmark.circle", accented: resolution == .open,
-            rail: rail, verb: ChatWords.resolution(resolution, answered: String(localized: "Answered")),
-            subject: single ? "" : String(localized: "\(questions.count) questions"),
+            rail: rail,
+            verb: some && given == 0
+                ? String(localized: "Skipped")
+                : ChatWords.resolution(resolution, answered: String(localized: "Answered")),
+            subject: some && given > 0
+                ? String(localized: "\(given) of \(questions.count) questions")
+                : single ? "" : String(localized: "\(questions.count) questions"),
             subjectFace: .text,
             below: pairs.isEmpty && reply == nil ? nil : AnyView(answerCard(pairs, reply: reply)))
     }

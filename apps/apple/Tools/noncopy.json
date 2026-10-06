@@ -1217,7 +1217,20 @@
       {"literal": "\"ask.reply\"", "context": "textLink(String(localized: \"Reply instead\"), id: \"ask.reply\") { replying = true }", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.reply.back\"", "context": ".identified(\"ask.reply.back\", label: String(localized: \"Back\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.reply.text\"", "context": ".identified(\"ask.reply.text\", value: replyText)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"ask.reply.send\"", "context": "String(localized: \"Send reply\"), kind: .primary, id: \"ask.reply.send\", enabled: !blank", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
+      {"literal": "\"ask.reply.send\"", "context": "String(localized: \"Send reply\"), kind: .primary, id: \"ask.reply.send\", enabled: !blank", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"{\"", "context": "case .mark(\"{\"), .mark(\"[\"):", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"[\"", "context": "case .mark(\"{\"), .mark(\"[\"):", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"{\"", "context": "if depth == 1, token == .mark(\"{\"), index >= 2,", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\":\"", "context": "tokens[index - 1] == .mark(\":\"), tokens[index - 2] == .string(\"properties\") {", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"}\"", "context": "case .mark(\"}\"), .mark(\"]\"):", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"]\"", "context": "case .mark(\"}\"), .mark(\"]\"):", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"{\"", "context": "if inside, depth == 2, index > 0, [.mark(\"{\"), .mark(\",\")].contains(tokens[index - 1]),", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\",\"", "context": "if inside, depth == 2, index > 0, [.mark(\"{\"), .mark(\",\")].contains(tokens[index - 1]),", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\":\"", "context": "index + 1 < tokens.count, tokens[index + 1] == .mark(\":\") {", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"\\\"\"", "context": "if character == \"\\\"\" {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
+      {"literal": "\"\\\"\"", "context": "while let next = characters.next(), next != \"\\\"\" {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
+      {"literal": "\"\\\\\"", "context": "if next == \"\\\\\", let escaped = characters.next() {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
+      {"literal": "\"{}[]:,\"", "context": "} else if \"{}[]:,\".contains(character) {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatComposer.swift": [
       {"literal": "\"chat.field\"", "context": ".identified(\"chat.field\", label: placeholder, value: model.draft)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},

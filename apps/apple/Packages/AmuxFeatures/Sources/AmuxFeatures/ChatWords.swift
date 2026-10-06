@@ -164,9 +164,15 @@ public enum ChatWords {
 
     public static func answer(_ answer: AnswerView) -> String {
         if answer.hidden { return String(localized: "answered (hidden)") }
+        if skipped(answer) { return String(localized: "Skipped") }
         var picks = answer.picked
         if let other = answer.other { picks.append("“\(other)”") }
         return picks.joined(separator: ", ")
+    }
+
+    /// Nothing picked, typed or hidden: the question was left unanswered.
+    public static func skipped(_ answer: AnswerView) -> Bool {
+        answer.picked.isEmpty && answer.other == nil && !answer.hidden
     }
 
     public static func resolution(_ resolution: Resolution, answered: String) -> String {

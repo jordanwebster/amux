@@ -493,6 +493,18 @@
         }
       }
     },
+    "%@ of %@ questions": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ of %@ questions"
+          }
+        }
+      }
+    },
     "%@ offline": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
       "extractionState": "manual",
@@ -8649,6 +8661,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "plain"
+          }
+        }
+      }
+    },
+    "properties": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "properties"
           }
         }
       }

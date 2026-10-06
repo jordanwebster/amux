@@ -207,18 +207,36 @@ final class ChatWordsTests: XCTestCase {
             ChatWords.answer(AnswerView(picked: ["macOS"], hidden: false, note: nil, other: "BSD")), "macOS, “BSD”")
     }
 
+    func testAQuestionLeftUnansweredReadsSkipped() {
+        let left = AnswerView(picked: [], hidden: false, note: "later", other: nil)
+        XCTAssertTrue(ChatWords.skipped(left))
+        XCTAssertEqual(ChatWords.answer(left), "Skipped")
+        XCTAssertFalse(ChatWords.skipped(AnswerView(picked: [], hidden: false, note: nil, other: "BSD")))
+        XCTAssertFalse(ChatWords.skipped(AnswerView(picked: [], hidden: true, note: nil, other: nil)))
+    }
+
     func testFormFieldsComeFromTheSchemaAndRequiredOnesGateSubmit() {
         let fields = FormField.parse("""
             {"required":["repo"],"properties":{"repo":{"type":"string","title":"Repository"},
             "count":{"type":"integer"},"assign":{"type":"boolean","default":true}}}
             """)
-        XCTAssertEqual(fields.map(\.name), ["repo", "assign", "count"])
+        // In the order the server wrote them.
+        XCTAssertEqual(fields.map(\.name), ["repo", "count", "assign"])
         XCTAssertFalse(fields[0].valid)
         var filled = fields
         filled[0].value = "jlw/amux"
-        filled[2].value = "3"
+        filled[1].value = "3"
         XCTAssertTrue(filled.allSatisfy(\.valid))
         XCTAssertEqual(FormField.content(filled), #"{"assign":true,"count":3,"repo":"jlw\/amux"}"#)
+    }
+
+    func testFormFieldsKeepTheServersOrderPastNestedTitles() {
+        let schema = #"""
+            {"type":"object","properties":{"team":{"type":"string","title":"Team","enum":["FOX","CORE"]},
+            "title":{"type":"string","title":"Ti\"tle"},"estimate":{"type":"integer"}},"required":["title","team"]}
+            """#
+        XCTAssertEqual(FormField.written(schema), ["team", "title", "estimate"])
+        XCTAssertEqual(FormField.parse(schema).map(\.name), ["team", "title", "estimate"])
     }
 
     func testTheReviewSaysHowMuchChangedAndWhatAttachingCarries() {
