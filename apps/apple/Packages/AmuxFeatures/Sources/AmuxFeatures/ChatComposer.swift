@@ -795,8 +795,9 @@ struct PlusCard: View {
     }
 }
 
-/// The facts strip above the composer: context near its end, what runs in
-/// the background, a usage limit coming, a tool server that failed.
+/// The facts strip above the composer: a usage limit reached and when it
+/// resets, context near its end, what runs in the background, a usage
+/// limit coming, a tool server that failed.
 /// Each part shows only while it is true.
 ///
 /// The parts are one run of text that wraps rather than a row of labels that
@@ -811,7 +812,7 @@ struct StripLine: View {
     let open: () -> Void
 
     var body: some View {
-        let parts = ChatWords.strip(context: context, overview: overview)
+        let parts = ChatWords.strip(context: context, overview: overview, now: Date())
         if !parts.isEmpty {
             Button(action: open) { line(parts) }
                 .buttonStyle(.amuxControl)
@@ -891,7 +892,7 @@ struct SlashRows: View {
 }
 
 /// Stands in place of the composer when the agent cannot take a message
-/// until something outside this chat changes: its sign-in, or its usage.
+/// until something outside this chat changes: its sign-in.
 struct FootCard: View {
     @Environment(\.design) private var design
     let kind: String

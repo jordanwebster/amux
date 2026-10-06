@@ -1,3 +1,29 @@
+2026-10-06 — **The phone tells the queue, away and usage-limit stories.**
+`queue-and-steer`, `send-while-away` and `composer-limits` now run on the
+phone. Two prompts sent while an agent works queue under the feed; the
+newest, withdrawn, comes back to the composer and is cleared, and the other,
+sent now, is steered into the running turn. With the cabin's daemon stopped,
+the draft stays in the composer and the phone will not send it; with the
+cabin back it sends, once. phone-flows gains the cabin and its `backups`
+agent for this, since the phone has no link of its own the net can cut. The
+hosts are checked as in the terminal, each with a wrong expectation shown to
+fail.
+
+Telling them on the phone found two things it did differently from the
+terminal, now fixed:
+
+- At a usage limit the phone replaced the composer with a card saying
+  only "Usage limit reached", so nothing could be sent although the
+  provider may still take a prompt. The composer now stays, and the strip
+  above it names the window reached and when it resets ("5-hour limit
+  reached · resets 22:34").
+- A refused credential's card named the sign-in state but not where to fix
+  it. It now says Claude (or Codex) needs you to sign in, and how and on
+  which host: "Run claude and sign in with /login on desk."
+
+Re-recorded deliberately: `composer.sign-in` and `composer.usage-blocked`,
+light and dark.
+
 2026-10-06 — **The phone tells the question and tool server stories.**
 `answer-questions` and `tool-server-asks` now run on the phone against the
 desk's scripted flows: a preview shown for the picked option, one question

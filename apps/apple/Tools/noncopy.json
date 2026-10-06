@@ -1131,7 +1131,8 @@
       {"literal": "\"landing\"", "context": "chat(\"landing\", chat: {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"Now run the Windows check.\"", "context": "SentPrompt(inputId: [8], text: [.text(\"Now run the Windows check.\")], lands: .feed, underway: .sending(waiting: false)),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"landing-waiting\"", "context": "chat(\"landing-waiting\", chat: {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"Now run the Windows check.\"", "context": "SentPrompt(inputId: [8], text: [.text(\"Now run the Windows check.\")], lands: .feed, underway: .sending(waiting: true)),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+      {"literal": "\"Now run the Windows check.\"", "context": "SentPrompt(inputId: [8], text: [.text(\"Now run the Windows check.\")], lands: .feed, underway: .sending(waiting: true)),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"OAuth token has expired.\"", "context": "signIn: SignInView(state: .expired, account: \"ada@example.com\", message: \"OAuth token has expired.\"))),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift": [
       {"literal": "\"arrow.up.circle\"", "context": "Image(systemName: \"arrow.up.circle\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
@@ -1321,8 +1322,6 @@
       {"literal": "\"chat.loading\"", "context": "id: \"chat.loading\", text: String(localized: \"Loading this chat from \\(subject.host)…\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"shown\"", "context": "value: \"shown\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.notice\"", "context": ".identified(\"chat.notice\", label: notice)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"sign-in\"", "context": "FootCard(kind: \"sign-in\", title: ChatWords.signIn(signIn), detail: signIn.message)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"usage\"", "context": "kind: \"usage\", title: String(localized: \"Usage limit reached\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"arrow.up.left\"", "context": "Image(systemName: \"arrow.up.left\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"needs-you\"", "context": "value: parent.attention == .needsYou ? \"needs-you\" : nil)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.family\"", "context": ".identified(\"chat.family\", value: \"parent\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
@@ -1336,7 +1335,8 @@
       {"literal": "\"\\u{2212}\\(changes.removed)\"", "context": "Text(verbatim: \"\\u{2212}\\(changes.removed)\").foregroundStyle(design.removed.color)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"chat.changes\"", "context": "\"chat.changes\", label: \"+\\(changes.added) \\u{2212}\\(changes.removed)\",", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"list.bullet.rectangle\"", "context": "MenuItem(title: String(localized: \"Overview\"), systemImage: \"list.bullet.rectangle\") {", "reason": "SF Symbol name, not interface copy.", "count": 1},
-      {"literal": "\"chat.landing.\\(index)\"", "context": "id: \"chat.landing.\\(index)\", text: prompt.text,", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
+      {"literal": "\"chat.landing.\\(index)\"", "context": "id: \"chat.landing.\\(index)\", text: prompt.text,", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"sign-in\"", "context": "kind: \"sign-in\", title: ChatWords.needsSignIn(kind),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift": [
       {"literal": "\"%.1fs\"", "context": "return String(format: \"%.1fs\", Double(ms) / 1_000)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},

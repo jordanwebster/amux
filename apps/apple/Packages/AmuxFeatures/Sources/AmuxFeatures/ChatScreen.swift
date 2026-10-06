@@ -537,11 +537,12 @@ public struct ChatStanding: View {
         let matches = model.slashMatches
         if !matches.isEmpty { SlashRows(commands: matches, codex: model.frame?.kind == .codex, pick: model.pick) }
         if let signIn = model.frame?.signIn {
-            FootCard(kind: "sign-in", title: ChatWords.signIn(signIn), detail: signIn.message)
-        } else if let usage = model.overview?.usageNearLimit, usage.blocked {
+            let kind = model.frame?.kind
             FootCard(
-                kind: "usage", title: String(localized: "Usage limit reached"),
-                detail: usage.credits ?? "")
+                kind: "sign-in", title: ChatWords.needsSignIn(kind),
+                detail: [ChatWords.signIn(signIn), signIn.message, ChatWords.signInSteps(kind, host: subject.host)]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n"))
         } else {
             ComposerBox(
                 model: model, placeholder: placeholder, activity: model.frame?.composer.activity,

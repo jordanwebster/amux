@@ -5,6 +5,11 @@
       "name": "desk",
       "lan": true,
       "bonjour": true
+    },
+    {
+      "name": "cabin",
+      "lan": true,
+      "bonjour": true
     }
   ],
   "settle": true,
@@ -444,6 +449,23 @@
               "message": "Failed to authenticate. API Error: 401 OAuth token has expired. Please obtain a new token or refresh your existing token."
             }
           }
+        ]
+      }
+    },
+    {
+      "name": "backups",
+      "host": "cabin",
+      "kind": "claude_sdk",
+      "script": {
+        "steps": [
+          {
+            "text": {
+              "chunks": [
+                "Last night's backup finished with no errors."
+              ]
+            }
+          },
+          "turn_end"
         ]
       }
     }

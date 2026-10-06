@@ -425,9 +425,12 @@ public enum ChatWords {
     /// The facts strip's parts, in order; each only while it is true. The
     /// task list is not one of them: it docks as its own card.
     public static func strip(
-        context: ContextView?, overview: Overview
+        context: ContextView?, overview: Overview, now: Date
     ) -> [(text: String, warn: Bool)] {
         var parts: [(String, Bool)] = []
+        if let usage = overview.usageNearLimit, usage.blocked {
+            parts.append((limitReached(usage, now: now), true))
+        }
         if let context, context.nearFull, let percent = context.percent {
             parts.append((String(localized: "\(percent)% context"), true))
         }
@@ -448,6 +451,18 @@ public enum ChatWords {
             parts.append((failed(server), true))
         }
         return parts
+    }
+
+    /// "5-hour limit reached · resets 23:24": the window of a usage limit
+    /// that has been reached, the fullest one when the provider does not
+    /// say which. Sending stays open: the provider may still take a prompt.
+    public static func limitReached(_ usage: UsageView, now: Date) -> String {
+        let window = usage.windows.first { $0.state == .blocked }
+            ?? usage.windows.max { $0.usedPercent < $1.usedPercent }
+        guard let window else { return String(localized: "Usage limit reached") }
+        let reached = String(localized: "\(usageLabel(window.label)) reached")
+        guard let at = window.resetsAtMs, Date(milliseconds: at) > now else { return reached }
+        return String(localized: "\(reached) · resets \(resets(at, now: now))")
     }
 
     // MARK: - The dock
@@ -616,6 +631,22 @@ public enum ChatWords {
             return String(localized: "Permissions")
         }
         return String(localized: "Permissions · \(permission(current))")
+    }
+
+    /// Who must be signed in again, for the card that stands in the
+    /// composer's place.
+    public static func needsSignIn(_ kind: Kind?) -> String {
+        kind == .codex
+            ? String(localized: "Codex needs you to sign in")
+            : String(localized: "Claude needs you to sign in")
+    }
+
+    /// Where and how to sign in again: on the agent's own host, since that
+    /// is where the provider keeps its credential.
+    public static func signInSteps(_ kind: Kind?, host: String) -> String {
+        kind == .codex
+            ? String(localized: "Run codex login on \(host).")
+            : String(localized: "Run claude and sign in with /login on \(host).")
     }
 
     public static func signIn(_ view: SignInView) -> String {

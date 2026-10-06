@@ -189,6 +189,32 @@ final class ChatWordsTests: XCTestCase {
             "a has exited · a message resumes it")
     }
 
+    func testAReachedLimitIsNamedWithItsResetAboveAComposerThatStillSends() {
+        let now = Date(milliseconds: 1_800_000_000_000)
+        let nowMs: Int64 = 1_800_000_000_000
+        let usage = UsageView(blocked: true, windows: [
+            UsageWindowView(label: .fiveHour, usedPercent: 100, state: .blocked, resetsAtMs: nowMs + 7_200_000),
+            UsageWindowView(label: .weekly(model: nil), usedPercent: 64, state: .ok, resetsAtMs: nowMs + 259_200_000),
+        ], credits: nil)
+        let reached = ChatWords.limitReached(usage, now: now)
+        XCTAssertTrue(reached.hasPrefix("5-hour limit reached · resets "), reached)
+        let overview = Overview(jobs: [], failedServers: [], changes: nil, tasks: nil, usageNearLimit: usage)
+        XCTAssertEqual(ChatWords.strip(context: nil, overview: overview, now: now).first?.text, reached)
+        XCTAssertEqual(ChatWords.strip(context: nil, overview: overview, now: now).first?.warn, true)
+        var past = usage
+        past.windows[0].resetsAtMs = nowMs - 1
+        XCTAssertEqual(ChatWords.limitReached(past, now: now), "5-hour limit reached", "a reset already past is not promised")
+        XCTAssertEqual(
+            ChatWords.limitReached(UsageView(blocked: true, windows: [], credits: nil), now: now), "Usage limit reached")
+    }
+
+    func testSigningInIsAskedForOnTheAgentsHost() {
+        XCTAssertEqual(ChatWords.needsSignIn(.claudeSdk), "Claude needs you to sign in")
+        XCTAssertEqual(ChatWords.signInSteps(.claudeSdk, host: "desk"), "Run claude and sign in with /login on desk.")
+        XCTAssertEqual(ChatWords.needsSignIn(.codex), "Codex needs you to sign in")
+        XCTAssertEqual(ChatWords.signInSteps(.codex, host: "desk"), "Run codex login on desk.")
+    }
+
     func testAQueuedPromptSaysWhetherItWasSteered() {
         let queued = QueuedRow(
             inputId: [1], text: [], mine: true, steered: false, canWithdraw: true, canSendNow: true,

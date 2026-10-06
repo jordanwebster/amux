@@ -422,7 +422,7 @@
     },
     {
       "id": "composer.sign-in",
-      "shows": "The session strip saying the provider's sign-in expired on the host."
+      "shows": "In the composer's place, Claude asking to be signed in again: the sign-in expired, and where to sign in."
     },
     {
       "id": "composer.settings-claude-sdk",
@@ -450,7 +450,7 @@
     },
     {
       "id": "composer.usage-blocked",
-      "shows": "The session strip when usage is spent, with when it resets."
+      "shows": "A spent usage window named above a composer that still sends."
     },
     {
       "id": "chat.conversation",

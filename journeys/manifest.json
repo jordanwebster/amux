@@ -107,15 +107,17 @@
     {
       "id": "queue-and-steer",
       "stage": 17,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-flows.json",
+      "phone_topology": "journeys/topologies/phone-flows.json",
       "claim": "Prompts sent while an agent works queue under the feed. The newest, withdrawn, returns to the composer as a draft and is cleared, and never reaches the host; the other, sent now, goes into the running turn, and the host holds it once."
     },
     {
       "id": "send-while-away",
       "stage": 17,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-flows.json",
+      "phone_topology": "journeys/topologies/phone-flows.json",
       "claim": "With the agent's host out of reach, Enter keeps the prompt as a draft and the host never receives it; with the host back, Enter sends it and the host holds it once."
     },
     {
@@ -135,8 +137,9 @@
     {
       "id": "composer-limits",
       "stage": 17,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-flows.json",
+      "phone_topology": "journeys/topologies/phone-flows.json",
       "claim": "At a usage limit the composer names the window and when it resets, and a prompt still goes and is answered. Refused its credential, headless Claude's chat puts signing in on the composer's box, naming the host to sign in on; the host holds each prompt once."
     },
     {

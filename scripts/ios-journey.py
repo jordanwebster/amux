@@ -655,6 +655,188 @@ def tool_server_asks(journey: PhoneJourney) -> list[str]:
     ]
 
 
+RUN = "Run the soak."
+STEER = "Also log the peak."
+WITHDRAWN = "And email me."
+
+
+def never_sent(chat: dict, text: str) -> None:
+    if prompts(chat, text):
+        raise RuntimeError(f"the host received {text!r}")
+
+
+def queued(drawn: dict) -> list[tuple[str, str]]:
+    """The prompts waiting under the feed, oldest first: each one's words
+    and how it waits."""
+    rows = sorted(
+        (int(name.rsplit(".", 1)[1]), element)
+        for name, element in drawn.items()
+        if re.fullmatch(r"chat\.queued\.\d+", name)
+    )
+    return [(element.get("label") or "", element.get("value") or "") for _, element in rows]
+
+
+def photograph_running(journey: PhoneJourney, label: str) -> None:
+    """The activity bar slides while the turn runs; under reduced motion it
+    stands still, so the screen can be photographed. Its elapsed time is
+    masked."""
+    journey.app({"kind": "assist", "motion": True, "transparency": True})
+    journey.screen(label, volatile=("chat.activity",))
+    journey.app({"kind": "assist", "motion": False, "transparency": True})
+
+
+def queue_and_steer(journey: PhoneJourney) -> list[str]:
+    journey.covered_hidden = True
+    journey.launch()
+    pair_by_code(journey, "desk")
+    worker = open_agent(journey, "worker")
+    send(journey, RUN)
+    journey.wait(lambda drawn: labelled(drawn, "scripts/soak --for 1h") and "chat.activity" in drawn, "the long run")
+    # While it works, prompts queue under the feed.
+    send(journey, STEER)
+    send(journey, WITHDRAWN)
+    both = lambda drawn: queued(drawn) == [(STEER, "queued"), (WITHDRAWN, "queued")]  # noqa: E731
+    journey.wait(both, "two queued")
+    reopen(journey, worker, both)
+    photograph_running(journey, "queued")
+    # Withdrawn, the newest is a draft again, and cleared.
+    journey.tap("chat.queued.1.withdraw")
+    journey.wait(
+        lambda drawn: drawn.get("chat.field", {}).get("value") == WITHDRAWN and queued(drawn) == [(STEER, "queued")],
+        "the withdrawn prompt back in the composer",
+    )
+    journey.app({"kind": "clear", "identifier": "chat.field"})
+    journey.wait(lambda drawn: not drawn.get("chat.field", {}).get("value"), "the draft cleared")
+    # The other goes into the turn now.
+    journey.tap("chat.queued.0.sendNow")
+    steered = lambda drawn: queued(drawn) == [(STEER, "steered")]  # noqa: E731
+    journey.wait(steered, "the prompt steered into the turn")
+    reopen(journey, worker, steered)
+    photograph_running(journey, "steered")
+    journey.request({"OpenGate": {"name": "run-done"}})
+    journey.wait(
+        lambda drawn: not queued(drawn) and labelled(drawn, "The run finished.") and "chat.activity" not in drawn,
+        "the turn's end",
+    )
+    settled = journey.wait_chat("desk", "worker", lambda chat: chat["phase"] == "IDLE", "settled")
+    reflected_once(settled, RUN)
+    reflected_once(settled, STEER)
+    never_sent(settled, WITHDRAWN)
+    control = negative_control(never_sent, settled, STEER)
+    reopen(journey, worker, lambda drawn: labelled(drawn, "The run finished.") and "chat.row.turn-end" in drawn)
+    journey.screen("finished", volatile=("chat.row.turn-end",))
+    return [
+        "two prompts sent while the agent worked queued under the feed",
+        "withdrawn, the newest came back to the composer as a draft and was cleared; the desk never received it",
+        f"sent now, {STEER!r} went into the running turn and the desk holds it once",
+        control,
+    ]
+
+
+BACKUP = "Check last night's backup."
+BACKUP_DONE = "Last night's backup finished with no errors."
+
+
+def send_while_away(journey: PhoneJourney) -> list[str]:
+    journey.covered_hidden = True
+    journey.launch()
+    pair_by_code(journey, "cabin")
+    backups = open_agent(journey, "backups")
+    # The cabin goes out of reach: its daemon stops, its agent kept.
+    journey.request({"StopDaemon": {"host": "cabin"}})
+    journey.wait(lambda drawn: labelled(drawn, "out of reach"), "the cabin out of reach")
+    journey.type("chat.field", BACKUP)
+    drawn = journey.wait(lambda drawn: drawn.get("chat.field", {}).get("value") == BACKUP, "the draft written")
+    if drawn.get("chat.send", {}).get("enabled"):
+        raise RuntimeError("the phone offers to send to a cabin out of reach")
+    away = reopen(journey, backups, lambda drawn: drawn.get("chat.field", {}).get("value") == BACKUP)
+    if away.get("chat.send", {}).get("enabled"):
+        raise RuntimeError("the phone offers to send to a cabin out of reach")
+    journey.screen("away")
+    time.sleep(2)
+
+    # The cabin back: it never received the draft, and now it can go.
+    journey.request({"RestartDaemon": {"host": "cabin"}})
+    returned = journey.request({"Chat": {"host": "cabin", "agent": "backups"}}, "while-away")
+    never_sent(returned, BACKUP)
+    journey.wait(
+        lambda drawn: drawn.get("chat.send", {}).get("enabled") is True
+        and drawn.get("chat.field", {}).get("value") == BACKUP
+        and not labelled(drawn, "out of reach"),
+        "the cabin back with the draft kept",
+    )
+    journey.tap("chat.send")
+    journey.wait(lambda drawn: labelled(drawn, BACKUP_DONE) and "chat.row.turn-end" in drawn, "the reply")
+    heard = journey.wait_chat(
+        "cabin", "backups", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, BACKUP)) == 1, "sent"
+    )
+    reflected_once(heard, BACKUP)
+    control = negative_control(never_sent, heard, BACKUP)
+    reopen(journey, backups, lambda drawn: labelled(drawn, BACKUP_DONE) and "chat.row.turn-end" in drawn)
+    journey.screen("sent", volatile=("chat.row.turn-end",))
+    return [
+        "with the cabin out of reach, the draft stayed in the composer, the phone would not send it, "
+        "and the cabin never received it",
+        f"with the cabin back, the draft sent and the cabin holds {BACKUP!r} once",
+        control,
+    ]
+
+
+LIMIT = "5-hour limit reached · resets "
+SIGN_IN = "Run claude and sign in with /login on desk."
+
+
+def limit_named(drawn: dict) -> bool:
+    return (drawn.get("chat.strip", {}).get("label") or "").startswith(LIMIT)
+
+
+def composer_limits(journey: PhoneJourney) -> list[str]:
+    journey.covered_hidden = True
+    journey.launch()
+    pair_by_code(journey, "desk")
+    # At a usage limit the strip over the composer names the window and
+    # when it resets, and sending still works. The reset is a time of day,
+    # so the strip is masked and its words checked here.
+    limited = open_agent(journey, "limited")
+    journey.wait(lambda drawn: limit_named(drawn) and "chat.field" in drawn, "the limit named over the composer")
+    reopen(journey, limited, limit_named)
+    journey.screen("limit", volatile=("chat.strip",))
+    send(journey, "Try again.")
+    journey.wait(lambda drawn: labelled(drawn, "Done after the limit.") and "chat.row.turn-end" in drawn, "the reply past the limit")
+    past = journey.wait_chat(
+        "desk", "limited", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, "Try again.")) == 1, "limited-sent"
+    )
+    reflected_once(past, "Try again.")
+    control = negative_control(reflected_once, past, "Try again. (a wrong prompt)")
+
+    # A refused credential takes the composer's place: Claude must be
+    # signed in again on the host it runs on.
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+    expired = open_agent(journey, "expired")
+    send(journey, "Check the links.")
+    asked = lambda drawn: (  # noqa: E731
+        drawn.get("chat.foot.sign-in", {}).get("label") == "Claude needs you to sign in"
+        and SIGN_IN in (drawn.get("chat.foot.sign-in", {}).get("value") or "")
+        and "chat.field" not in drawn
+    )
+    journey.wait(asked, "signing in in the composer's place")
+    refused = journey.wait_chat("desk", "expired", lambda chat: chat["phase"] == "IDLE", "refused")
+    reflected_once(refused, "Check the links.")
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat" not in drawn and f"home.row.{expired}" in drawn, "the fleet")
+    journey.tap(f"home.row.{expired}")
+    journey.wait(asked, "the chat again")
+    journey.screen("sign-in", volatile=("chat.row.turn-end",))
+    return [
+        "at its usage limit the strip over the composer named the 5-hour window and when it resets",
+        "a prompt still went past the limit and was answered; the desk holds it once",
+        control,
+        "refused its credential, Claude's chat put signing in in the composer's place, naming desk to sign in on",
+        "the desk holds the refused turn's prompt once",
+    ]
+
+
 LIVE, EXITED = 1, 2
 HELLO = "Say hello."
 BACK = "Welcome back."
@@ -1611,6 +1793,9 @@ STORIES = {
     "decide-plan-codex": decide_plan_codex,
     "answer-questions": answer_questions,
     "tool-server-asks": tool_server_asks,
+    "queue-and-steer": queue_and_steer,
+    "send-while-away": send_while_away,
+    "composer-limits": composer_limits,
     "keep-authority": keep_authority,
     "manage-agent": manage_agent,
     "attachment-or-review": attachment_or_review,

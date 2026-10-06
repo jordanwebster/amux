@@ -454,8 +454,8 @@ enum ComponentCatalog {
             composer("strip-trouble", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
                 model: "gpt-5", usage: UsageView(blocked: false, windows: [UsageWindowView(label: .fiveHour, usedPercent: 91, state: .nearLimit, resetsAtMs: nil)], credits: nil),
                 failedServers: [ServerView(name: "github", error: "exited", needsAuth: false)])),
-            composer("sign-in", height: 200, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
-                signIn: SignInView(state: .expired, account: "ada@example.com", message: "Run claude login on Studio."))),
+            composer("sign-in", height: 240, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
+                signIn: SignInView(state: .expired, account: "ada@example.com", message: "OAuth token has expired."))),
             // The settings card once per provider kind, from the settings
             // view each kind's interpreter state gives.
             composer("settings-claude-sdk", height: 640, frame: ScriptedChat.frame(kind: .claudeSdk),
@@ -477,7 +477,7 @@ enum ComponentCatalog {
                 model.type("Why does this fail? " + (1...14).map { "error[E0308]: mismatched types at line \($0)" }.joined(separator: "\n"))
             },
             composer("usage-blocked", height: 200, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
-                usage: UsageView(blocked: true, windows: [UsageWindowView(label: .weekly(model: nil), usedPercent: 100, state: .blocked, resetsAtMs: nil)], credits: "Resets Monday"))),
+                usage: UsageView(blocked: true, windows: [UsageWindowView(label: .weekly(model: nil), usedPercent: 100, state: .blocked, resetsAtMs: nil)], credits: nil))),
         ]
     }()
 
