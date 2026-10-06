@@ -621,6 +621,7 @@ async fn a_new_agent_starts_from_the_hosts_catalogue_in_a_worktree_of_its_own() 
                 return;
             }
             host.next(Wake::Fleet).await;
+            runtime.take_fleet_changes();
         }
     })
     .await
@@ -654,6 +655,7 @@ async fn a_new_agent_starts_from_the_hosts_catalogue_in_a_worktree_of_its_own() 
                 return card;
             }
             host.next(Wake::Fleet).await;
+            runtime.take_fleet_changes();
         }
     })
     .await

@@ -1,3 +1,10 @@
+2026-10-06 — **The new-agent runtime test takes each fleet batch it is woken for.**
+The runtime wakes the host once per batch of fleet changes and not again
+until the host takes it. The test that starts an agent from the host's
+catalogue waited for a second wake without taking the first batch, so when
+the host's sign-in landed after the first wake it waited out its patience.
+It now takes the batch after every wake, as a host does.
+
 2026-10-06 — **The phone's build gate passes on the changed types.**
 The stand-ins check no longer has a way to mark a row pending: the phone's
 outbox row was the last, and it is now an ordinary row its test plants a
