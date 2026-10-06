@@ -8,8 +8,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use client::{Client, Clock, EventStream, RpcError};
 use futures_util::{FutureExt as _, StreamExt as _};
@@ -92,13 +92,22 @@ struct Model {
     ended: Option<RpcError>,
 }
 
+/// Called when something outside the rows arrived on the stream: what the
+/// fleet's home is woken by.
+pub(crate) type HomeWake = Box<dyn Fn() + Send + Sync>;
+
 pub(crate) struct Inner {
     client: Arc<dyn Client>,
     agent_id: Vec<u8>,
-    tail: u32,
+    /// The rows a (re)opened stream starts with.
+    tail: AtomicU32,
     clock: Arc<dyn Clock>,
     model: Mutex<Model>,
     changed: watch::Sender<()>,
+    home: OnceLock<HomeWake>,
+    /// Whether anybody takes the changes: a session held off screen does
+    /// not gather them, so they cannot grow while nobody reads them.
+    gathering: AtomicBool,
     /// The model asked for a reload: the pump reopens the stream.
     reload: Notify,
     closed: AtomicBool,
@@ -117,6 +126,7 @@ impl Inner {
             return Outcome::default();
         }
         let at_ms = self.clock.now_ms();
+        let streamed = matches!(msg, Msg::Event(_));
         let mut model = self.model();
         let Model {
             state,
@@ -127,11 +137,21 @@ impl Inner {
         } = &mut *model;
         trace.record(state, at_ms, TraceEvent::Msg(msg.clone()));
         let outcome = state.update(msg);
-        changes.absorb(&outcome, changed_keys);
+        if self.gathering.load(Ordering::Acquire) {
+            changes.absorb(&outcome, changed_keys);
+        }
         drop(model);
         let moved = !outcome.changed.is_empty() || outcome.reloaded || outcome.session;
         if moved {
             self.changed.send_replace(());
+        }
+        // Rows alone never wake home; a snapshot (and with it a turn's
+        // end), the queue or the stream's markers do.
+        if streamed
+            && outcome.session
+            && let Some(home) = self.home.get()
+        {
+            home();
         }
         if outcome.reload {
             self.reload.notify_one();
@@ -152,7 +172,9 @@ impl Inner {
     fn subscribe_request(&self) -> SubscribeRequest {
         SubscribeRequest {
             agent_id: self.agent_id.clone(),
-            from: Some(subscribe_request::From::Tail(self.tail)),
+            from: Some(subscribe_request::From::Tail(
+                self.tail.load(Ordering::Acquire),
+            )),
         }
     }
 
@@ -253,16 +275,20 @@ impl Deref for StateGuard<'_> {
     }
 }
 
-/// One open chat.
+/// One agent's chat. The fleet holds one for every live agent, with a
+/// small window while it is off screen, and widens it for a chat.
 pub struct Session {
     inner: Arc<Inner>,
-    pump: JoinHandle<()>,
+    /// None while suspended.
+    pump: Mutex<Option<JoinHandle<()>>>,
 }
 
 /// How a stream the pump was reading ended.
 enum End {
     /// Lagged: the runtime closed it; reopen with a tail at once.
     Lagged,
+    /// Back in the foreground: reopen with a tail at once.
+    Resumed,
     /// The reader returned after the head moved on: reopen with a tail at
     /// once and build the window from it apart.
     Reload,
@@ -289,7 +315,7 @@ impl Session {
         let inner = Arc::new(Inner {
             client,
             agent_id: agent.agent_id,
-            tail,
+            tail: AtomicU32::new(tail),
             clock: Arc::new(clock),
             model: Mutex::new(Model {
                 trace: Ring::new(state.clone()),
@@ -300,6 +326,8 @@ impl Session {
                 ended: None,
             }),
             changed,
+            home: OnceLock::new(),
+            gathering: AtomicBool::new(true),
             reload: Notify::new(),
             closed: AtomicBool::new(false),
         });
@@ -356,8 +384,74 @@ impl Session {
                 None => ended = Some(End::Closed(None)),
             }
         }
-        let pump = tokio::spawn(pump(inner.clone(), stream, ended));
-        Ok(Session { inner, pump })
+        let pump = tokio::spawn(pump(inner.clone(), Some(stream), ended));
+        Ok(Session {
+            inner,
+            pump: Mutex::new(Some(pump)),
+        })
+    }
+
+    /// Wakes the fleet's home when something outside the rows arrives.
+    pub(crate) fn on_home(&self, wake: HomeWake) {
+        let _ = self.inner.home.set(wake);
+    }
+
+    /// Sets the window: the tail a reopened stream starts with and the most
+    /// rows held while the reader follows. Off screen the reader follows
+    /// and nobody takes the changes; on screen they are gathered from now.
+    pub(crate) fn set_window(&self, tail: u32, cap: u32, on_screen: bool) {
+        self.inner.tail.store(tail, Ordering::Release);
+        self.inner.note(DriverEvent::Window { tail, cap });
+        {
+            let mut model = self.inner.model();
+            model.changes = Changes::default();
+            model.changed_keys.clear();
+        }
+        self.inner.gathering.store(on_screen, Ordering::Release);
+        if !on_screen {
+            self.inner.apply(Msg::Following(true));
+        }
+        self.inner.apply(Msg::Window(cap.max(tail) as usize));
+    }
+
+    /// Out of the foreground the stream is dropped, the rows stay and the
+    /// chat reads as reconnecting; back in it, the stream reopens with a
+    /// tail at once.
+    pub(crate) fn set_foreground(&self, foreground: bool) {
+        if foreground {
+            self.reopen();
+            return;
+        }
+        let Some(pump) = self.pump().take() else {
+            return;
+        };
+        pump.abort();
+        self.inner.note(DriverEvent::Suspended);
+        self.inner.apply(Msg::Connection(Connection::Reconnecting));
+    }
+
+    fn reopen(&self) {
+        let mut pump = self.pump();
+        if pump.is_some() || self.inner.model().ended.is_some() {
+            return;
+        }
+        self.inner.note(DriverEvent::Resumed);
+        *pump = Some(tokio::spawn(self::pump(
+            self.inner.clone(),
+            None,
+            Some(End::Resumed),
+        )));
+    }
+
+    /// Whether the stream is dropped for the phone's background.
+    pub fn suspended(&self) -> bool {
+        self.pump().is_none()
+    }
+
+    fn pump(&self) -> MutexGuard<'_, Option<JoinHandle<()>>> {
+        self.pump
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     pub fn agent_id(&self) -> &[u8] {
@@ -634,7 +728,9 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.inner.closed.store(true, Ordering::Release);
-        self.pump.abort();
+        if let Some(pump) = self.pump().take() {
+            pump.abort();
+        }
     }
 }
 
@@ -682,9 +778,9 @@ async fn read(inner: &Inner, stream: &mut EventStream<SessionEvent>, backoff: &m
 /// reconnects with backoff on the session's clock and re-tails. Uncertain
 /// inputs settle at the next CaughtUp from the queue or the items, and the
 /// rest stay for the person; nothing is resent.
-async fn pump(inner: Arc<Inner>, stream: EventStream<SessionEvent>, ended: Option<End>) {
+async fn pump(inner: Arc<Inner>, stream: Option<EventStream<SessionEvent>>, ended: Option<End>) {
     let mut backoff = Backoff::default();
-    let mut stream = Some(stream);
+    let mut stream = stream;
     let mut ended = ended;
     loop {
         let end = match ended.take() {
@@ -700,6 +796,7 @@ async fn pump(inner: Arc<Inner>, stream: EventStream<SessionEvent>, ended: Optio
                 inner.note(DriverEvent::Retail);
                 false
             }
+            End::Resumed => false,
             End::Reload => {
                 inner.note(DriverEvent::Reload);
                 inner.apply(Msg::Reloading);
@@ -721,7 +818,9 @@ async fn pump(inner: Arc<Inner>, stream: EventStream<SessionEvent>, ended: Optio
             }
             match inner.client.subscribe(inner.subscribe_request()).await {
                 Ok(opened) => {
-                    inner.note(DriverEvent::Subscribed { tail: inner.tail });
+                    inner.note(DriverEvent::Subscribed {
+                        tail: inner.tail.load(Ordering::Acquire),
+                    });
                     inner.apply(Msg::Connection(Connection::Live));
                     stream = Some(opened);
                 }

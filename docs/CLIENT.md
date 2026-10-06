@@ -17,7 +17,8 @@ Three rules shape the library:
   Claude, Codex) only where it decodes a snapshot or item body. Everything above that works on kind-neutral
   facts; the views read the decoded bodies to produce typed rows and cards.
 - **Nothing is persisted.** Every value the model holds can be re-served by the runtime, so the model is never
-  saved, checkpointed or restored. Closing a chat drops it; opening it again rebuilds it from the runtime's rows.
+  saved, checkpointed or restored. Closing a chat narrows its session to the few rows the fleet keeps, or drops it
+  for an exited agent; opening it again pages or rebuilds the rest from the runtime's rows.
 
 ## The crates
 
@@ -27,7 +28,7 @@ Three rules shape the library:
 | [`model`](../crates/model/src/lib.rs) | Plain shared values: `Key`, `AgentKey`, `Attention`, `Connection`, `BlobStatus`, `Composer`, `Waiting`, `PhaseView`, `Activity`, `InputState`. The Swift mirrors are generated from these. |
 | [`ui-state`](../crates/ui-state/src/lib.rs) | `SessionState` (one open chat) and `FleetState` (the inventory), updated by messages. No I/O, no clock, no handles. |
 | [`ui-view`](../crates/ui-view/src/lib.rs) | Pure functions from the state to content values: chat rows, the ask card, the composer and strip, the settings view, fleet rows and cards, the review document. |
-| [`ui-runtime`](../crates/ui-runtime/src/lib.rs) | The drivers, `Session` and `Fleet`: subscribe, reconnect, page, send, fetch blobs, and keep a bounded trace for dumps. The only place a chat does I/O. |
+| [`ui-runtime`](../crates/ui-runtime/src/lib.rs) | The drivers, `Session` and `Fleet`: subscribe, reconnect, page, send, fetch blobs, and keep a bounded trace for dumps. The fleet holds the one session each live agent has. The only place a chat does I/O. |
 | [`replay-support`](../crates/replay-support/src/lib.rs) | Replaying a dump bundle through the interpreter, the session state and the views, and replaying recorded provider traffic for the provider spec crates. |
 | [`redaction`](../crates/redaction/src/lib.rs) | The structural redactor for free text and JSON in reports, captures and specs. |
 
@@ -211,24 +212,30 @@ attention may differ, including every ancestor whose family ranking may move. `a
 `Exited < Idle < Starting < Working < NeedsYou`, and a family is as loud as its loudest member
 (`family_attention`). A child whose parent is removed heads its own family until the parent returns.
 
-After a reconnect the fleet re-lists: rows not listed again by the next CaughtUp are dropped. Agent rows carry
-their phase and working-on text, so the fleet never subscribes to individual agents.
+After a reconnect the fleet re-lists: rows not listed again by the next CaughtUp are dropped. Agent rows stay
+small (phase, since-when, git facts); what an agent is saying or running comes from its session, which the fleet
+driver keeps open for every live agent (see [the fleet](#the-fleet)).
 
 ## The drivers
 
-[`Session`](../crates/ui-runtime/src/session.rs) owns one chat's Subscribe stream and its `Client` handle and
-feeds everything into a `SessionState` behind a mutex. It is the only place a chat does I/O.
+[`Session`](../crates/ui-runtime/src/session.rs) owns one agent's Subscribe stream and its `Client` handle and
+feeds everything into a `SessionState` behind a mutex. It is the only place a chat does I/O. Clients get
+sessions from the fleet, which holds exactly one per agent, so home and a chat on the same agent read the same
+state and the agent is subscribed to once.
 
 ```rust
-let session = Session::open(client, agent, tail, SystemClock).await?;
+let fleet = Fleet::connect(client, SystemClock).await?;
+let session = fleet.open(&agent, Window { tail: 40, cap: 200 }).await?;
 let state = session.state();          // a guard; never hold it across an await
 let mut changed = session.changed();  // level-triggered watch channel
+// ...
+fleet.close(&agent);                  // the chat left the screen
 ```
 
-`Session::open(client, agent, tail, clock)` subscribes with `tail` rows and resolves once the Snapshot and the
-rows the runtime already holds are applied, up to the first CaughtUp or Detached marker already in hand. The
-first render is therefore correct at once: from the runtime's own rows for an agent on this host, and from its
-replica for another host's agent even while that host is away. CaughtUp may follow later.
+`Session::open(client, agent, tail, cap, clock)`, which the fleet calls, subscribes with `tail` rows and resolves
+once the Snapshot and the rows the runtime already holds are applied, up to the first CaughtUp or Detached marker
+already in hand. The first render is therefore correct at once: from the runtime's own rows for an agent on this
+host, and from its replica for another host's agent even while that host is away. CaughtUp may follow later.
 
 | Method | What it does |
 |---|---|
@@ -246,6 +253,7 @@ replica for another host's agent even while that host is away. CaughtUp may foll
 | `blob(hash)`, `fetch_blob(hash)`, `put_blob(name, mime, bytes)` | Attachment bytes; see [attachments](#attachments). |
 | `working_tree_review()` | The agent's working-tree `Diff` and the patch it names, for a review page. |
 | `ended()` | Set when the runtime refuses to serve the chat again, as when the agent was deleted. |
+| `suspended()` | Whether the stream is dropped because the phone left the foreground. |
 | `trace()`, `dump_part()` | The bounded trace, and this chat's part of a dump bundle. |
 | `close()` | Drops the stream. Nothing is flushed; results of calls still in flight change nothing. |
 
@@ -262,10 +270,18 @@ transport failure ends the session (`ended()`). An Append whose base the state d
 driver's concern: Detached and CaughtUp on the stream say whether the chat is current, and the runtime's source
 reconnects to the origin on its own.
 
-[`Fleet`](../crates/ui-runtime/src/fleet.rs) is the same shape one level up: `Fleet::open(client, clock)`
+[`Fleet`](../crates/ui-runtime/src/fleet.rs) is the same shape one level up: `Fleet::connect(client, clock)`
 subscribes to the inventory and resolves once it has caught up (or once the stream ended first, in which case
 the pump reconnects). `take_changed()` returns the agent keys that moved and `take_hosts_changed()` whether any
-host did.
+host did. It also holds the sessions:
+
+| Method | What it does |
+|---|---|
+| `session(agent)` | The live agent's session, held off screen with `HELD_ROWS` (16) rows; `None` for an exited agent no chat shows, or while the session is still opening. |
+| `open(agent, window)` | The same session widened to a chat's `Window { tail, cap }`: older rows page in from the local runtime up to the tail. An exited agent's session opens here. |
+| `close(agent)` | The chat left the screen. The last close narrows a live agent's session back to its few rows and drops an exited agent's. Every `open` is paired with a `close`. |
+| `set_foreground(foreground)` | The phone leaving or returning to the foreground: every session's stream is dropped, or reopened with a tail. |
+| `sessions()` | Every session held, for a dump. |
 
 **The trace.** Each driver keeps a bounded trace (between 200 and `TRACE_EVENTS` = 400 events, memory only) of
 every message it applied and every act of its own (`DriverEvent`: subscribed, stream ended, backoff, re-tail,
@@ -332,9 +348,11 @@ row ids never move; the window changes only at its two edges; appends touch only
 
 ### Opening a chat
 
-`Session::open` subscribes to the local runtime with a tail: 40 rows in the terminal (`PAGE` in
-`crates/tui/src/chat/layout.rs`), 200 on the phone (`DEFAULT_TAIL` in `app-runtime`). The Snapshot and the
-newest rows arrive from the runtime's own rows, so the first render is correct at once. CaughtUp follows at once
+`Fleet::open` widens the agent's session to a tail: 40 rows in the terminal (`PAGE` in
+`crates/tui/src/chat/layout.rs`), 200 on the phone (`DEFAULT_TAIL` in `app-runtime`). A live agent's session is
+already open with its few rows, and the rest of the tail pages in below them from the local runtime; an exited
+agent's opens with the whole tail. Either way the Snapshot and the newest rows come from the runtime's own rows,
+so the first render is correct at once. CaughtUp follows at once
 if the runtime's source for that agent is current, or after the delta if it is catching up; live events follow.
 
 - The header always paints from the inventory entry and host presence.
@@ -385,11 +403,27 @@ only. [ATTACHMENTS.md](ATTACHMENTS.md) covers blobs, review attachments and deli
 
 ### The fleet
 
-`Fleet::open` subscribes to the inventory; `FleetState` holds hosts, agent rows with their phase and
-working-on, and families. There are no per-agent subscriptions. `fleet_list` ranks family heads by their loudest
-member, then by most recent activity, with expanded families' members beneath their parents. An open chat takes
-its entry and host from the fleet (`set_entry`, `set_host`), which is how the chat's header and its exited rule
-stay current. The two streams can disagree for one round trip, and the ownership rule above decides who wins:
+`Fleet::connect` subscribes to the inventory; `FleetState` holds hosts, agent rows with their phase,
+since-when and git facts, and families. `fleet_list` ranks family heads by their loudest member, then by most
+recent activity, with expanded families' members beneath their parents.
+
+The fleet keeps one live session per live agent, and it is the only session that agent has: home reads it for the
+row's second line, and a chat on the agent reads the same one, so one agent never has two subscriptions.
+
+- **Off screen** a session holds `HELD_ROWS` (16) rows while its reader follows, enough for what the agent last
+  said or the step it is running, and gathers no changes for a list. Opening a chat widens it and pages older
+  rows in from the local runtime; closing the chat narrows it again.
+- **An exited agent has no session** until a chat opens it, and loses it when that chat closes. An agent that
+  exits while no chat shows it loses its session at once; one going live again gets a new one.
+- **Home is woken only by what is outside the rows.** A session's rows streaming in redraw its chat, never home;
+  a snapshot (which is how a turn ending arrives), the queue or the stream's markers mark the agent changed in
+  `take_changed()` and fire the fleet's change signal.
+- **The foreground.** `set_foreground(false)` drops every session's stream, an open chat's included, leaving
+  its rows and reading as reconnecting; `set_foreground(true)` reopens each with a tail at once and starts
+  sessions for agents that went live meanwhile.
+
+The fleet feeds each session its entry and host (`set_entry`, `set_host`) whenever the inventory moves them,
+which is how the chat's header and its exited rule stay current. The two streams can disagree for one round trip, and the ownership rule above decides who wins:
 the entry on lifecycle, the snapshot on everything else.
 
 ### Streaming
@@ -443,13 +477,14 @@ layout asks for a page, no larger than the room under the cap while the reader f
 event and frame the app tells the session whether the anchor is pinned to the bottom, and the "new activity"
 line under a scrolled-back feed reads `arrivals_held()`.
 
-**The phone is retained mode.** [`app-runtime`](../crates/app-runtime/src/chat.rs) watches each session's change
-signal and gathers `take_changes()` into a coalescer that wakes the host once per main-thread turn, however many
+**The phone is retained mode.** [`app-runtime`](../crates/app-runtime/src/chat.rs) watches each open chat's session's
+change signal and gathers `take_changes()` into a coalescer that wakes the host once per main-thread turn, however many
 updates land. The Swift `ChatModel` holds the id sequence, which changes only at its two edges
 (`keys(above:)`, `keys(below:)`, and `oldestKey()` for the rows a following window dropped), reads a cell's row by
 key when the cell is first drawn, and re-reads only the cells whose keys changed, so a streaming append costs one
 cell. A `reloaded` change reads the whole sequence again. The top of the list coming into view asks for an older
-page. `ChatModel.following` is told to the session with `follow(_:)` whenever it changes, and New activity shows
+page. `AppRuntime::set_foreground` hands the app's foreground to the fleet, and dropping a `Chat` closes it to
+the fleet. `ChatModel.following` is told to the session with `follow(_:)` whenever it changes, and New activity shows
 from the frame's `arrivals_held`. [IOS.md](IOS.md) and
 [EMBEDDED.md](EMBEDDED.md) cover the phone side.
 

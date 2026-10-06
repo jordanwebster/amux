@@ -13,7 +13,7 @@ use ratatui::Frame as Paint;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc;
-use ui_runtime::{Fleet, InputError, Session, inputs};
+use ui_runtime::{Fleet, InputError, Session, Window, inputs};
 use ui_state::{AgentKey, Composer, InputOutcome, PhaseView};
 use ui_view::family_header;
 use wire::{
@@ -143,7 +143,7 @@ pub enum Tone {
 pub enum AppEvent {
     Opened {
         agent: AgentKey,
-        result: Result<Session, String>,
+        result: Result<Arc<Session>, String>,
     },
     Notice(String, Tone),
     /// Put words back in the composer of this agent's chat, saying why
@@ -212,7 +212,7 @@ impl OpenChat {
 
 pub struct App {
     client: Arc<dyn Client>,
-    pub fleet: Fleet,
+    pub fleet: Arc<Fleet>,
     pub fleet_view: FleetView,
     pub chat: Option<OpenChat>,
     pub config: TuiConfig,
@@ -274,7 +274,7 @@ impl App {
         App {
             layout,
             client,
-            fleet,
+            fleet: Arc::new(fleet),
             fleet_view,
             chat: None,
             config,
@@ -366,35 +366,14 @@ impl App {
         changed || self.chat.is_some()
     }
 
-    /// Opens the configured first chat once its row is in the fleet, and
-    /// keeps the open chat's entry and host current from the inventory.
+    /// Opens the configured first chat once its row is in the fleet. The
+    /// fleet keeps the open chat's entry and host current itself.
     pub fn fleet_changed(&mut self) {
-        let changed = self.fleet.take_changed();
         if let Some(id) = self.config.initial_chat.clone() {
             let agent = self.fleet.state().find(&id).map(ui_state::agent_key);
             if let Some(agent) = agent {
                 self.config.initial_chat = None;
                 self.open(agent);
-            }
-        }
-        let Some(chat) = &self.chat else {
-            return;
-        };
-        let (entry, host) = {
-            let fleet = self.fleet.state();
-            let entry = fleet.agent(&chat.agent).cloned();
-            let host = entry
-                .as_ref()
-                .and_then(|agent| fleet.host(&agent.host_id).cloned());
-            (entry, host)
-        };
-        if let Some(entry) = entry.filter(|_| changed.contains(&chat.agent)) {
-            chat.session.set_entry(entry);
-        }
-        if let Some(host) = host {
-            let same = chat.session.state().host() == Some(&host);
-            if !same {
-                chat.session.set_host(host);
             }
         }
     }
@@ -403,20 +382,16 @@ impl App {
         match event {
             AppEvent::Opened { agent, result } => {
                 if self.opening.as_ref() != Some(&agent) {
+                    if result.is_ok() {
+                        self.fleet.close(&agent);
+                    }
                     return Flow::Continue;
                 }
                 self.opening = None;
                 match result {
                     Ok(session) => {
-                        let session = Arc::new(session);
-                        let host = {
-                            let fleet = self.fleet.state();
-                            fleet
-                                .agent(&agent)
-                                .and_then(|entry| fleet.host(&entry.host_id).cloned())
-                        };
-                        if let Some(host) = host {
-                            session.set_host(host);
+                        if let Some(open) = self.chat.take() {
+                            self.fleet.close(&open.agent);
                         }
                         let terminal = self.fleet.state().agent(&agent).is_some_and(|entry| {
                             self.config.attach && terminal_refusal(entry, &self.config).is_none()
@@ -537,13 +512,18 @@ impl App {
     }
 
     fn open(&mut self, agent: AgentKey) {
-        let Some(entry) = self.fleet.state().agent(&agent).cloned() else {
+        if self.fleet.state().agent(&agent).is_none() {
             return;
-        };
+        }
         self.opening = Some(agent.clone());
-        let client = self.client.clone();
+        let fleet = self.fleet.clone();
         self.spawn(async move {
-            let result = Session::open(client, entry, PAGE, CAP, SystemClock)
+            let window = Window {
+                tail: PAGE,
+                cap: CAP,
+            };
+            let result = fleet
+                .open(&agent, window)
                 .await
                 .map_err(|error| error.to_string());
             Some(AppEvent::Opened { agent, result })
@@ -553,6 +533,7 @@ impl App {
     /// Back to the fleet: the chat's session closes; the fleet is home.
     pub fn close_chat(&mut self) {
         if let Some(chat) = self.chat.take() {
+            self.fleet.close(&chat.agent);
             self.fleet_view.select(chat.agent);
         }
     }

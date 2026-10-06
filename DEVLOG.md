@@ -1,3 +1,23 @@
+2026-10-06 — **The fleet keeps one session per live agent.**
+The client library's fleet driver now holds the one session each live agent
+has, and both home and a chat read it, so an agent is subscribed to once
+however many places show it. Off screen a session holds 16 rows while its
+reader follows and gathers no changes; `Fleet::open(agent, window)` widens
+it for a chat, paging older rows in from the local runtime, and
+`Fleet::close` narrows it again. An exited agent has no session until a
+chat opens it and loses it when that chat closes. Home is woken only by what
+arrives outside the rows (a snapshot, so a turn ending, the queue, the
+stream's markers), never by streamed rows. `Fleet::set_foreground` drops
+every session's stream and reopens each with a tail, which
+`AppRuntime::set_foreground` exposes for the phone. The fleet now feeds its
+sessions their entry and host itself; the terminal and the phone stopped
+doing it, and they no longer open sessions of their own (`Fleet::open` the
+constructor is now `Fleet::connect`). The session model gained `Msg::Window`
+to change its cap. Two tests that reopened a live agent's chat expecting a
+fresh one-row window now stop the agent first, since a live agent's reopened
+chat starts from the rows its session kept. Driver tests count the streams
+open per agent and fail on a second.
+
 2026-10-06 — **The snapshot carries the folder's git facts.**
 A new crate, `git-facts`, reads an agent folder's branch, its base branch
 (one recorded when amux made the worktree, else the repository's default:

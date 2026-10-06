@@ -1,8 +1,8 @@
 //! The session and fleet drivers: the only place an amux chat does I/O.
 //!
-//! A [`Session`] owns one chat's Subscribe stream and feeds it into the pure
-//! `ui_state::SessionState`; a [`Fleet`] does the same for the inventory.
-//! Both call the local runtime through a [`client::Client`], reconnect on
+//! A [`Session`] owns one agent's Subscribe stream and feeds it into the
+//! pure `ui_state::SessionState`; a [`Fleet`] does the same for the
+//! inventory and holds the one session each live agent has. Both call the local runtime through a [`client::Client`], reconnect on
 //! their own clock, and keep a bounded trace for dumps. Nothing is
 //! persisted: every open rebuilds from the runtime's rows.
 
@@ -16,7 +16,7 @@ pub mod trace;
 use std::io;
 use std::path::{Component, Path};
 
-pub use fleet::{Fleet, FleetGuard};
+pub use fleet::{Fleet, FleetGuard, HELD_ROWS, OpenError, Window};
 pub use session::{Changes, InputError, PageError, Sent, Session, StateGuard};
 pub use trace::{DriverEvent, DriverTrace, Structure, TRACE_EVENTS, TraceEvent, Traced};
 

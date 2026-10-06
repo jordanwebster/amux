@@ -110,6 +110,7 @@ impl Structure for Msg {
             Msg::Blob { hash, status } => format!("Blob {} {}", hex(hash), variant(status)),
             Msg::Following(following) => format!("Following {following}"),
             Msg::Reloading => "Reloading".into(),
+            Msg::Window(cap) => format!("Window {cap}"),
         }
     }
 }

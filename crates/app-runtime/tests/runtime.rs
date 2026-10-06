@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use app_runtime::values::{
-    ActOutcome, ChatChanges, Draft, PageOutcome, RowOptions, ToolRowsOption,
+    ActOutcome, AgentAct, ChatChanges, Draft, PageOutcome, RowOptions, ToolRowsOption,
 };
 use app_runtime::{AppRuntime, Chat, Wake};
 use client::{Client, InProcess, SystemClock};
@@ -333,6 +333,40 @@ async fn older_rows_arrive_below_the_oldest_the_host_holds() {
     .await;
     let everything = chat.keys();
     assert!(everything.len() >= 2, "{everything:?}");
+    drop(chat);
+
+    // A live agent's session stays with the fleet, holding its newest
+    // rows: a chat opened again starts from them.
+    let chat = runtime.open_chat(&worker(&net), 1).await.unwrap();
+    assert_eq!(chat.keys(), everything);
+    drop(chat);
+
+    // An exited agent's session goes with its last chat; the next chat
+    // opens a fresh one with its own tail.
+    runtime
+        .agent_act(&worker(&net), &AgentAct::Stop)
+        .await
+        .unwrap();
+    let mut changed = runtime.fleet().changed();
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            let exited = runtime
+                .fleet()
+                .state()
+                .agent(&worker(&net))
+                .is_some_and(|agent| agent.lifecycle() == wire::Lifecycle::Exited);
+            if exited {
+                return;
+            }
+            changed.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("the worker exits");
+    assert!(runtime.fleet().session(&worker(&net)).is_none());
+    let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
+    until(&mut host, &chat, "the exit", |chat| chat.frame().caught_up).await;
+    let everything = chat.keys();
     drop(chat);
 
     let chat = runtime.open_chat(&worker(&net), 1).await.unwrap();

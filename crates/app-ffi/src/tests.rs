@@ -536,7 +536,26 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     // SAFETY: the chat is open, and closed once.
     unsafe { amux_session_close(chat) };
 
-    // A one-row chat pages its history in below the oldest it holds.
+    // A live agent's session stays with the fleet once its chat closes; an
+    // exited one's goes, and a one-row chat on it pages its history in
+    // below the oldest it holds.
+    let stop = c(&json!("Stop").to_string());
+    // SAFETY: the runtime is live; the strings live for the call.
+    unsafe {
+        amux_profile_agent_act(
+            phone.profile,
+            agent_c.as_ptr(),
+            stop.as_ptr(),
+            on_result,
+            phone.context(),
+        )
+    };
+    assert!(phone.result().get("Ok").is_some());
+    phone.until(0, std::ptr::null(), "the agent exited", || {
+        // SAFETY: the runtime is live; the string lives for the call.
+        let card = take(unsafe { amux_fleet_card(phone.profile, agent_c.as_ptr()) });
+        card.to_string().contains("Exited")
+    });
     // SAFETY: the runtime is live; the string lives for the call.
     let chat = unsafe { amux_session_open(phone.profile, agent_c.as_ptr(), 1, &mut error) };
     assert!(!chat.is_null());

@@ -1,9 +1,10 @@
 //! The phone's chats and fleet over the local runtime.
 //!
-//! [`AppRuntime`] hosts the session and fleet drivers a rich client needs
-//! and gathers what they change until the host's main thread runs next: a
-//! host is woken once per turn with the chat or the fleet that moved, and
-//! takes every changed key together. Views are asked for by row key, so a
+//! [`AppRuntime`] hosts the fleet driver, which holds one session per live
+//! agent, and gathers what they change until the host's main thread runs
+//! next: a host is woken once per turn with the chat or the fleet that
+//! moved, and takes every changed key together. A chat borrows the fleet's
+//! session for its agent; leaving the foreground closes every session. Views are asked for by row key, so a
 //! host reconfigures only the cells an update changed.
 //!
 //! Nothing here opens a store or knows the node: the runtime is reached
@@ -13,17 +14,17 @@ mod chat;
 mod coalesce;
 pub mod values;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
 pub use chat::Chat;
-use client::{Client, Clock, RpcError};
+use client::{Client, RpcError};
 pub use coalesce::{Batch, Coalescer, WakeFn};
 use model::AgentKey;
 use tokio::task::JoinHandle;
-use ui_runtime::Fleet;
+pub use ui_runtime::OpenError;
+use ui_runtime::{Fleet, Window};
 use ui_view::{FamilyHeader, FleetCard, FleetRow};
 use values::{AgentAct, Directories, Directory, NewAgent};
 pub use values::{FleetChanges, HostView};
@@ -51,24 +52,15 @@ pub enum Wake {
 /// read on its main thread and returns.
 pub type HostWake = Arc<dyn Fn(Wake) + Send + Sync>;
 
-#[derive(Debug, thiserror::Error)]
-pub enum OpenError {
-    #[error("no agent {0:?} in the fleet")]
-    NoAgent(AgentKey),
-    #[error(transparent)]
-    Rpc(#[from] RpcError),
-}
-
 /// The drivers of one profile's chats and fleet.
 pub struct AppRuntime {
     client: Arc<dyn Client>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn client::Clock>,
     local_host: Vec<u8>,
     wake: HostWake,
     fleet: Arc<Fleet>,
     fleet_changes: Arc<Coalescer<AgentKey>>,
     fleet_watcher: JoinHandle<()>,
-    chats: Arc<Mutex<HashMap<u64, Weak<Chat>>>>,
     next_chat: AtomicU64,
 }
 
@@ -77,19 +69,15 @@ impl AppRuntime {
     /// runtime. `local_host` is this device's host id.
     pub async fn open(
         client: Arc<dyn Client>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn client::Clock>,
         local_host: Vec<u8>,
         wake: HostWake,
     ) -> Result<AppRuntime, RpcError> {
-        let fleet = Arc::new(Fleet::open(client.clone(), clock.clone()).await?);
+        let fleet = Arc::new(Fleet::connect(client.clone(), clock.clone()).await?);
         let fleet_wake = wake.clone();
         let fleet_changes = Arc::new(Coalescer::new(Arc::new(move || fleet_wake(Wake::Fleet))));
-        let chats: Arc<Mutex<HashMap<u64, Weak<Chat>>>> = Arc::default();
-        let fleet_watcher = tokio::spawn(watch_fleet(
-            Arc::downgrade(&fleet),
-            fleet_changes.clone(),
-            chats.clone(),
-        ));
+        let fleet_watcher =
+            tokio::spawn(watch_fleet(Arc::downgrade(&fleet), fleet_changes.clone()));
         Ok(AppRuntime {
             client,
             clock,
@@ -98,7 +86,6 @@ impl AppRuntime {
             fleet,
             fleet_changes,
             fleet_watcher,
-            chats,
             next_chat: AtomicU64::new(1),
         })
     }
@@ -111,42 +98,33 @@ impl AppRuntime {
         &self.fleet
     }
 
-    /// Opens a chat on a fleet agent. Resolves once the snapshot and the
-    /// rows the runtime holds are applied, so the host's first read is
-    /// correct: at once for rows this device already holds, even with the
-    /// agent's host away.
+    /// The phone leaving (false) or returning to (true) the foreground:
+    /// every session's stream closes, or reopens with a tail.
+    pub fn set_foreground(&self, foreground: bool) {
+        self.fleet.set_foreground(foreground);
+    }
+
+    /// Opens a chat on a fleet agent: the fleet's session for it, widened
+    /// to `tail` rows. Resolves once the snapshot and those rows are
+    /// applied, so the host's first read is correct: at once for rows this
+    /// device already holds, even with the agent's host away. Dropping the
+    /// chat narrows the session again.
     pub async fn open_chat(&self, agent: &AgentKey, tail: u32) -> Result<Arc<Chat>, OpenError> {
-        let (entry, host) = {
-            let fleet = self.fleet.state();
-            let entry = fleet
-                .agent(agent)
-                .cloned()
-                .ok_or_else(|| OpenError::NoAgent(agent.clone()))?;
-            let host = fleet.host(&entry.host_id).cloned();
-            (entry, host)
-        };
-        let session = ui_runtime::Session::open(
-            self.client.clone(),
-            entry,
+        let window = Window {
             tail,
-            DEFAULT_CAP.max(tail),
-            self.clock.clone(),
-        )
-        .await?;
-        if let Some(host) = host {
-            session.set_host(host);
-        }
+            cap: DEFAULT_CAP.max(tail),
+        };
+        let session = self.fleet.open(agent, window).await?;
         let id = self.next_chat.fetch_add(1, Ordering::Relaxed);
         let wake = self.wake.clone();
         let chat = Chat::start(
             id,
+            agent.clone(),
             session,
+            Arc::downgrade(&self.fleet),
             Arc::new(move || wake(Wake::Chat(id))),
             self.clock.clone(),
         );
-        let mut chats = self.chats.lock().unwrap_or_else(|p| p.into_inner());
-        chats.retain(|_, chat| chat.strong_count() > 0);
-        chats.insert(id, Arc::downgrade(&chat));
         Ok(chat)
     }
 
@@ -286,8 +264,8 @@ impl AppRuntime {
         }
     }
 
-    /// Writes a dump of the profile, with the fleet's part and every open
-    /// chat's, and returns the bundle's directory.
+    /// Writes a dump of the profile, with the fleet's part and every
+    /// session's, and returns the bundle's directory.
     pub async fn dump(&self, reason: &str) -> Result<PathBuf, RpcError> {
         let response = self
             .client
@@ -299,11 +277,12 @@ impl AppRuntime {
             .await?;
         let bundle = PathBuf::from(response.report_path);
         let mut parts = vec![self.fleet.dump_part()];
-        let chats: Vec<Arc<Chat>> = {
-            let chats = self.chats.lock().unwrap_or_else(|p| p.into_inner());
-            chats.values().filter_map(Weak::upgrade).collect()
-        };
-        parts.extend(chats.iter().map(|chat| chat.session().dump_part()));
+        parts.extend(
+            self.fleet
+                .sessions()
+                .iter()
+                .map(|session| session.dump_part()),
+        );
         for part in &parts {
             write_part(&bundle, part)?;
         }
@@ -322,13 +301,9 @@ impl Drop for AppRuntime {
     }
 }
 
-/// Gathers the fleet's changes for the host and keeps every open chat's
-/// entry and host current, as the terminal does from the same inventory.
-async fn watch_fleet(
-    fleet: Weak<Fleet>,
-    changes: Arc<Coalescer<AgentKey>>,
-    chats: Arc<Mutex<HashMap<u64, Weak<Chat>>>>,
-) {
+/// Gathers the fleet's changes for the host. The fleet keeps its sessions'
+/// entries and hosts current itself.
+async fn watch_fleet(fleet: Weak<Fleet>, changes: Arc<Coalescer<AgentKey>>) {
     let Some(mut changed) = fleet.upgrade().map(|fleet| fleet.changed()) else {
         return;
     };
@@ -338,31 +313,6 @@ async fn watch_fleet(
         };
         let agents = fleet.take_changed();
         let hosts = fleet.take_hosts_changed();
-        let open: Vec<Arc<Chat>> = {
-            let chats = chats.lock().unwrap_or_else(|p| p.into_inner());
-            chats.values().filter_map(Weak::upgrade).collect()
-        };
-        for chat in open {
-            let session = chat.session();
-            let key = ui_state::agent_key(session.state().agent());
-            let (entry, host) = {
-                let state = fleet.state();
-                let entry = state.agent(&key).cloned();
-                let host = entry
-                    .as_ref()
-                    .and_then(|entry| state.host(&entry.host_id).cloned());
-                (entry, host)
-            };
-            if let Some(entry) = entry.filter(|_| agents.contains(&key)) {
-                session.set_entry(entry);
-            }
-            if let Some(host) = host {
-                let same = session.state().host() == Some(&host);
-                if !same {
-                    session.set_host(host);
-                }
-            }
-        }
         changes.push(agents, false, hosts);
         drop(fleet);
         if changed.changed().await.is_err() {

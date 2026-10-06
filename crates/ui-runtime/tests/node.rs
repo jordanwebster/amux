@@ -13,7 +13,7 @@ use client::{Client, GrpcClient, InProcess, SystemClock};
 use provider_fakes::script::Step;
 use support::until_within;
 use testnet::{AgentDecl, FakeKind, Net, Topology};
-use ui_runtime::{Fleet, Session};
+use ui_runtime::{Fleet, Session, Window};
 use ui_state::{Connection, InputState};
 use wire::ListProfilesRequest;
 
@@ -105,17 +105,18 @@ fn compact(trace: &ui_runtime::DriverTrace<ui_state::SessionState, ui_state::Msg
 /// The fleet lists the agent, a session opens on it, a prompt lands and
 /// is answered, and history pages in from below.
 async fn drive(client: Arc<dyn Client>, net: &Net) {
-    let fleet = Fleet::open(client.clone(), SystemClock).await.unwrap();
+    let fleet = Fleet::connect(client, SystemClock).await.unwrap();
     assert!(fleet.state().caught_up());
     let worker = net.agent("worker").unwrap().id;
     let agent = fleet
         .state()
         .find(worker.as_bytes())
-        .cloned()
+        .map(ui_state::agent_key)
         .expect("the fleet lists the worker");
 
     // The first turn is written before the session sends anything.
-    let session = Session::open(client, agent, 2, CAP, SystemClock)
+    let session = fleet
+        .open(&agent, Window { tail: 2, cap: CAP })
         .await
         .unwrap();
     until_within(PATIENCE, session.changed(), || {
@@ -195,10 +196,15 @@ async fn a_session_over_the_socket_reconnects_across_a_daemon_restart() {
     .await
     .unwrap();
     let client: Arc<dyn Client> = Arc::new(grpc(&net).await);
-    let fleet = Fleet::open(client.clone(), SystemClock).await.unwrap();
+    let fleet = Fleet::connect(client, SystemClock).await.unwrap();
     let worker = net.agent("worker").unwrap().id;
-    let agent = fleet.state().find(worker.as_bytes()).cloned().unwrap();
-    let session = Session::open(client, agent, 40, CAP, SystemClock)
+    let agent = fleet
+        .state()
+        .find(worker.as_bytes())
+        .map(ui_state::agent_key)
+        .unwrap();
+    let session = fleet
+        .open(&agent, Window { tail: 40, cap: CAP })
         .await
         .unwrap();
     until_within(PATIENCE, session.changed(), || {
@@ -233,7 +239,8 @@ async fn a_session_over_the_socket_reconnects_across_a_daemon_restart() {
     })
     .await;
     println!("{}", compact(&session.state().trace()));
-    session.close();
-    fleet.close();
+    fleet.close(&agent);
+    drop(session);
+    drop(fleet);
     net.shutdown().await.unwrap();
 }

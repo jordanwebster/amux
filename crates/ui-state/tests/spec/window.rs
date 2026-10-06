@@ -226,3 +226,30 @@ fn an_attachment_is_a_placeholder_until_its_bytes_arrive() {
         );
     }
 }
+
+#[test]
+fn narrowing_the_window_trims_its_oldest_rows_while_following_and_widening_makes_room() {
+    for kind in KINDS {
+        let mut state = open_with(kind, 1..=30);
+        let outcome = apply_block(&mut state, Msg::Window(8));
+        assert_eq!(state.cap(), 8);
+        assert_eq!(state.oldest_order(), Some(23));
+        assert_eq!(outcome.changed.len(), 22, "every trimmed row changed");
+        let outcome = apply_block(&mut state, Msg::Window(40));
+        assert!(outcome.changed.is_empty(), "widening moves no row");
+        assert_eq!(state.page_room(), Some(32));
+        assert_eq!(state.oldest_order(), Some(23));
+    }
+}
+
+#[test]
+fn a_window_narrowed_in_history_trims_only_once_the_reader_returns() {
+    for kind in KINDS {
+        let mut state = open_with(kind, 1..=30);
+        apply_block(&mut state, Msg::Following(false));
+        apply_block(&mut state, Msg::Window(8));
+        assert_eq!(state.oldest_order(), Some(1), "the reader's rows stay");
+        apply_block(&mut state, Msg::Following(true));
+        assert_eq!(state.oldest_order(), Some(23));
+    }
+}

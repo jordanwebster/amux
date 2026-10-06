@@ -63,6 +63,16 @@ pub enum DriverEvent {
     Blob {
         hash: Vec<u8>,
     },
+    /// The window changed: widened for a chat on screen, or narrowed to
+    /// the few rows the fleet holds off screen.
+    Window {
+        tail: u32,
+        cap: u32,
+    },
+    /// The phone left the foreground: the stream was dropped.
+    Suspended,
+    /// Back in the foreground: reopened with a tail.
+    Resumed,
     /// The runtime refused to serve the stream again; the driver stopped.
     Ended {
         error: String,

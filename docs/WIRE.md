@@ -435,8 +435,10 @@ happen (`HostEntry`, `HostRemoved`, `Agent`, `AgentRemoved`).
 and `exit_cause`, `phase`, `working_on`, `phase_since_ms` (on the origin
 host's clock; the row's creation time until its first snapshot) and `git`
 copied from the agent's newest snapshot envelope, `producer_version` and
-`incarnation`. It never carries a snapshot: the fleet needs no per-agent
-subscription.
+`incarnation`. It never carries a snapshot: a client reads an agent's
+conversation from the agent's own session, which the client library keeps open
+for every live agent (see [the client library](CLIENT.md#the-fleet)), so the
+row stays small.
 
 `HostEntry` carries the host's name, version, platform and capabilities, its
 `trust` (`TRUSTED` or `CANDIDATE`), its `presence` (`ONLINE`, `OFFLINE` or

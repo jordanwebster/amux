@@ -48,7 +48,7 @@ pub async fn render(request: Request) -> Result<Vec<String>> {
         .await
         .map_err(|error| anyhow!("connecting to {}: {error}", socket.display()))?;
     let client = Arc::new(client);
-    let fleet = Fleet::open(client.clone(), SystemClock).await?;
+    let fleet = Fleet::connect(client.clone(), SystemClock).await?;
     let tui_config = TuiConfig {
         working_dir: request.working_dir.clone(),
         leader: char::from(config.keybinds.leader.char),

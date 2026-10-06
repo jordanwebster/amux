@@ -13,7 +13,7 @@ use app_embedded::{EdgeOverrides, EmbeddedRuntime, PairRequest, ProfileId, Start
 use app_runtime::values::{AccountBinding, Draft, RelayLink};
 use app_runtime::{AppRuntime, Wake};
 use client::SystemClock;
-use model::AgentKey;
+use model::{AgentKey, Connection};
 use node::SourcePolicy;
 use patience::{PATIENCE, until};
 use provider_fakes::script::Step;
@@ -33,6 +33,8 @@ fn worker() -> AgentDecl {
             text("turn one"),
             Step::TurnEnd,
             text("answered from the phone"),
+            Step::TurnEnd,
+            text("answered after the phone came back"),
             Step::TurnEnd,
         ])
         .prompt("go")
@@ -246,6 +248,34 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
         "{hosts:?}"
     );
     assert!(hosts.iter().any(|host| host.local && host.name == "phone"));
+
+    // Leaving the foreground closes every session, the open chat's
+    // included; returning reopens each, and the chat carries on.
+    let agent = worker_key(&net);
+    let chat = app.open_chat(&agent, 50).await.unwrap();
+    let session = app.fleet().session(&agent).expect("the worker's session");
+    app.set_foreground(false);
+    assert!(session.suspended());
+    assert_eq!(chat.frame().connection, Connection::Reconnecting);
+    app.set_foreground(true);
+    eventually(&app, "the chat back and current", || {
+        let frame = chat.frame();
+        frame.connection == Connection::Live && frame.caught_up
+    })
+    .await;
+    chat.send(&Draft {
+        text: "still there?".into(),
+        attachments: Vec::new(),
+    })
+    .await;
+    eventually(&app, "the desk's answer after the return", || {
+        let keys = chat.keys();
+        chat.rows_for(&keys, &Default::default())
+            .iter()
+            .any(|row| format!("{:?}", row.kind).contains("answered after the phone came back"))
+    })
+    .await;
+    drop((chat, session));
 
     // In the background only the chats asked for keep a source.
     assert_eq!(embedded.source_policy(phone).unwrap(), SourcePolicy::Listed);

@@ -1,11 +1,12 @@
-//! One open chat as the phone holds it: the session driver, its changes
-//! gathered for the host's next turn, and the views the host asks for by
-//! row key.
+//! One open chat as the phone holds it: the agent's session, borrowed from
+//! the fleet and widened while the chat is open, its changes gathered for
+//! the host's next turn, and the views the host asks for by row key.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 
+use model::AgentKey;
 use tokio::task::JoinHandle;
-use ui_runtime::{InputError, PageError, Session};
+use ui_runtime::{Fleet, InputError, PageError, Session};
 use ui_state::{InputOutcome, InputState, Key, SessionState};
 use ui_view::{AskCard, ChatOptions, Pick, Row, SettingChange, SettingsView, Strip};
 use wire::{BlobRef, send_input_response};
@@ -21,7 +22,10 @@ use crate::values::{
 /// oldest dropped as the window trims to its cap; until a reload.
 pub struct Chat {
     id: u64,
-    session: Session,
+    agent: AgentKey,
+    session: Arc<Session>,
+    /// Told when the chat closes, so the session narrows again.
+    fleet: Weak<Fleet>,
     changes: Coalescer<Key>,
     watcher: OnceLock<JoinHandle<()>>,
     clock: Arc<dyn client::Clock>,
@@ -30,7 +34,9 @@ pub struct Chat {
 impl Chat {
     pub(crate) fn start(
         id: u64,
-        session: Session,
+        agent: AgentKey,
+        session: Arc<Session>,
+        fleet: Weak<Fleet>,
         wake: WakeFn,
         clock: Arc<dyn client::Clock>,
     ) -> Arc<Chat> {
@@ -41,7 +47,9 @@ impl Chat {
         let mut changed = session.changed();
         let chat = Arc::new(Chat {
             id,
+            agent,
             session,
+            fleet,
             changes: Coalescer::new(wake),
             watcher: OnceLock::new(),
             clock,
@@ -350,6 +358,9 @@ impl Drop for Chat {
     fn drop(&mut self) {
         if let Some(watcher) = self.watcher.get() {
             watcher.abort();
+        }
+        if let Some(fleet) = self.fleet.upgrade() {
+            fleet.close(&self.agent);
         }
     }
 }

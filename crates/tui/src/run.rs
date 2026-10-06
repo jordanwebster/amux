@@ -49,7 +49,7 @@ pub async fn run(
     mut attach: Option<AttachFn>,
 ) -> Result<()> {
     config.attach = attach.is_some();
-    let fleet = Fleet::open(client.clone(), SystemClock).await?;
+    let fleet = Fleet::connect(client.clone(), SystemClock).await?;
     let mut app = App::new(client, fleet, config);
     loop {
         match session(&mut app).await? {

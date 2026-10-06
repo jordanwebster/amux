@@ -45,6 +45,10 @@ pub enum Msg {
     /// The driver reopened the stream for the reload a return asked for:
     /// what follows is a fresh tail, built apart and swapped in at CaughtUp.
     Reloading,
+    /// The window's cap changed: a chat opened on screen widens it, and a
+    /// session the fleet holds off screen narrows to a few rows, trimmed at
+    /// once while the reader follows.
+    Window(usize),
 }
 
 /// What one update did.
@@ -571,6 +575,10 @@ impl SessionState {
                 }
             }
             Msg::Following(following) => self.follow(following, &mut changed, &mut outcome),
+            Msg::Window(cap) => {
+                self.cap = cap.max(1);
+                self.trim(&mut changed);
+            }
             Msg::Reloading => {
                 // Every reopened stream re-tails; a reload builds apart.
                 self.retail = true;

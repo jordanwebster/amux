@@ -1,21 +1,74 @@
 //! The fleet driver: the inventory stream into [`FleetState`], with the
-//! same reconnect and trace as a session, one level up. No per-agent
-//! subscriptions: agent rows carry their phase.
+//! same reconnect and trace as a session, one level up, and the one
+//! [`Session`] each live agent has.
+//!
+//! Home and the chat read the same session, so an agent is subscribed to
+//! once however many places show it. Off screen a session holds a few rows,
+//! enough for its fleet row; a chat widens it, paging older rows in from the
+//! local runtime, and narrows it again when it closes. An exited agent has
+//! no session until a chat opens it, and loses it when the chat closes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use client::{Client, Clock, EventStream, RpcError};
 use futures_util::StreamExt as _;
-use tokio::sync::watch;
+use tokio::sync::{OnceCell, watch};
 use tokio::task::JoinHandle;
 use ui_state::{AgentKey, Connection, FleetMsg, FleetState};
-use wire::{DumpFile, DumpPart, InventoryEvent, inventory_event};
+use wire::{Agent, DumpFile, DumpPart, InventoryEvent, Lifecycle, inventory_event};
 
 use crate::Backoff;
+use crate::session::Session;
 use crate::trace::{DriverEvent, DriverTrace, Ring, Structure as _, TraceEvent};
+
+/// The rows a session holds while it is off screen: enough for the fleet
+/// row's second line, which reads what the agent last said or is running.
+pub const HELD_ROWS: u32 = 16;
+
+/// A chat's window: the rows it opens with and the most it keeps while the
+/// reader follows the newest (never fewer than the tail).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+    pub tail: u32,
+    pub cap: u32,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OpenError {
+    #[error("no agent {0:?} in the fleet")]
+    NoAgent(AgentKey),
+    #[error(transparent)]
+    Rpc(#[from] RpcError),
+}
+
+/// One agent's session, or the open on its way, and how many chats show it.
+struct Slot {
+    session: Arc<OnceCell<Arc<Session>>>,
+    viewers: usize,
+    /// The fleet's own open of an off-screen session, stopped with the slot.
+    opening: Option<JoinHandle<()>>,
+}
+
+impl Slot {
+    fn new() -> Slot {
+        Slot {
+            session: Arc::new(OnceCell::new()),
+            viewers: 0,
+            opening: None,
+        }
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        if let Some(opening) = self.opening.take() {
+            opening.abort();
+        }
+    }
+}
 
 struct Model {
     state: FleetState,
@@ -32,11 +85,21 @@ struct Inner {
     model: Mutex<Model>,
     changed: watch::Sender<()>,
     closed: AtomicBool,
+    /// Never locked while the model is, nor the model while this is.
+    sessions: Mutex<HashMap<AgentKey, Slot>>,
+    foreground: AtomicBool,
+    me: Weak<Inner>,
 }
 
 impl Inner {
     fn model(&self) -> MutexGuard<'_, Model> {
         self.model
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn sessions(&self) -> MutexGuard<'_, HashMap<AgentKey, Slot>> {
+        self.sessions
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
@@ -59,11 +122,138 @@ impl Inner {
         );
         let keys = state.update(msg);
         let moved = connection || host || !keys.is_empty();
-        model.changed.extend(keys);
+        model.changed.extend(keys.iter().cloned());
         model.hosts_changed |= host;
         drop(model);
+        if !keys.is_empty() || host {
+            self.tend(&keys);
+        }
         if moved {
             self.changed.send_replace(());
+        }
+    }
+
+    /// Starts a session for each live agent among `keys` that has none,
+    /// drops the unviewed sessions of agents that exited or left, and feeds
+    /// every session its entry and host where they moved.
+    fn tend(&self, keys: &[AgentKey]) {
+        let entries: Vec<(AgentKey, Option<Agent>)> = {
+            let model = self.model();
+            keys.iter()
+                .map(|key| (key.clone(), model.state.agent(key).cloned()))
+                .collect()
+        };
+        let foreground = self.foreground.load(Ordering::Acquire);
+        let mut start = Vec::new();
+        {
+            let mut sessions = self.sessions();
+            for (key, entry) in entries {
+                match entry {
+                    Some(entry) if entry.lifecycle() == Lifecycle::Live => {
+                        if foreground && !sessions.contains_key(&key) {
+                            let slot = Slot::new();
+                            start.push((key.clone(), slot.session.clone(), entry));
+                            sessions.insert(key, slot);
+                        }
+                    }
+                    _ => {
+                        if sessions.get(&key).is_some_and(|slot| slot.viewers == 0) {
+                            sessions.remove(&key);
+                        }
+                    }
+                }
+            }
+        }
+        for (key, cell, entry) in start {
+            let Some(inner) = self.me.upgrade() else {
+                return;
+            };
+            let opened = key.clone();
+            let opening = tokio::spawn(async move {
+                let made = cell
+                    .get_or_try_init(|| inner.make(key.clone(), entry, HELD_ROWS, HELD_ROWS, false))
+                    .await;
+                if made.is_err() {
+                    // The agent's next row, or a chat opening it, tries again.
+                    let mut sessions = inner.sessions();
+                    let same = sessions
+                        .get(&key)
+                        .is_some_and(|slot| slot.viewers == 0 && Arc::ptr_eq(&slot.session, &cell));
+                    if same {
+                        sessions.remove(&key);
+                    }
+                }
+            });
+            if let Some(slot) = self.sessions().get_mut(&opened) {
+                slot.opening = Some(opening);
+            }
+        }
+        self.feed();
+    }
+
+    /// Opens an agent's session; off screen it gathers no changes and the
+    /// chat that opens it sets its window.
+    async fn make(
+        &self,
+        key: AgentKey,
+        entry: Agent,
+        tail: u32,
+        cap: u32,
+        on_screen: bool,
+    ) -> Result<Arc<Session>, RpcError> {
+        let host = self.model().state.host(&entry.host_id).cloned();
+        let session =
+            Session::open(self.client.clone(), entry, tail, cap, self.clock.clone()).await?;
+        let session = Arc::new(session);
+        if !on_screen {
+            session.set_window(tail, cap, false);
+        }
+        if let Some(host) = host {
+            session.set_host(host);
+        }
+        let fleet = self.me.clone();
+        let woken = key.clone();
+        session.on_home(Box::new(move || {
+            if let Some(fleet) = fleet.upgrade() {
+                fleet.model().changed.insert(woken.clone());
+                fleet.changed.send_replace(());
+            }
+        }));
+        if !self.foreground.load(Ordering::Acquire) {
+            session.set_foreground(false);
+        }
+        Ok(session)
+    }
+
+    /// Every session's entry and host, where the inventory moved them.
+    fn feed(&self) {
+        let held: Vec<(AgentKey, Arc<Session>)> = self
+            .sessions()
+            .iter()
+            .filter_map(|(key, slot)| Some((key.clone(), slot.session.get()?.clone())))
+            .collect();
+        for (key, session) in held {
+            let (entry, host) = {
+                let model = self.model();
+                let entry = model.state.agent(&key).cloned();
+                let host = entry
+                    .as_ref()
+                    .and_then(|entry| model.state.host(&entry.host_id).cloned());
+                (entry, host)
+            };
+            let (same_entry, same_host) = {
+                let state = session.state();
+                (
+                    entry.as_ref().is_none_or(|entry| state.agent() == entry),
+                    host.as_ref().is_none_or(|host| state.host() == Some(host)),
+                )
+            };
+            if !same_entry && let Some(entry) = entry {
+                session.set_entry(entry);
+            }
+            if !same_host && let Some(host) = host {
+                session.set_host(host);
+            }
         }
     }
 
@@ -114,10 +304,10 @@ pub struct Fleet {
 impl Fleet {
     /// Subscribes to the inventory and resolves once it has caught up, or
     /// once its stream ended first, in which case the pump reconnects.
-    pub async fn open(client: Arc<dyn Client>, clock: impl Clock) -> Result<Fleet, RpcError> {
+    pub async fn connect(client: Arc<dyn Client>, clock: impl Clock) -> Result<Fleet, RpcError> {
         let state = FleetState::new();
         let (changed, _) = watch::channel(());
-        let inner = Arc::new(Inner {
+        let inner = Arc::new_cyclic(|me| Inner {
             client,
             clock: Arc::new(clock),
             model: Mutex::new(Model {
@@ -129,6 +319,9 @@ impl Fleet {
             }),
             changed,
             closed: AtomicBool::new(false),
+            sessions: Mutex::new(HashMap::new()),
+            foreground: AtomicBool::new(true),
+            me: me.clone(),
         });
         let mut stream = inner.client.subscribe_inventory().await?;
         inner.note(DriverEvent::Subscribed { tail: 0 });
@@ -161,6 +354,119 @@ impl Fleet {
         FleetGuard(self.inner.model())
     }
 
+    /// The one session for a live agent, held with a small window while no
+    /// chat shows it. None for an exited agent no chat has open, and while
+    /// a live agent's session is still opening.
+    pub fn session(&self, agent: &AgentKey) -> Option<Arc<Session>> {
+        self.inner
+            .sessions()
+            .get(agent)
+            .and_then(|slot| slot.session.get().cloned())
+    }
+
+    /// Every session the fleet holds, for a dump.
+    pub fn sessions(&self) -> Vec<Arc<Session>> {
+        self.inner
+            .sessions()
+            .values()
+            .filter_map(|slot| slot.session.get().cloned())
+            .collect()
+    }
+
+    /// The same session, widened for a chat: older rows page in from the
+    /// local runtime up to the window's tail. An exited agent's session
+    /// opens here. Every open is paired with a [`Fleet::close`].
+    pub async fn open(&self, agent: &AgentKey, window: Window) -> Result<Arc<Session>, OpenError> {
+        let entry = self
+            .state()
+            .agent(agent)
+            .cloned()
+            .ok_or_else(|| OpenError::NoAgent(agent.clone()))?;
+        let cell = {
+            let mut sessions = self.inner.sessions();
+            let slot = sessions.entry(agent.clone()).or_insert_with(Slot::new);
+            slot.viewers += 1;
+            slot.session.clone()
+        };
+        let made = cell
+            .get_or_try_init(|| {
+                self.inner
+                    .make(agent.clone(), entry, window.tail, window.cap, true)
+            })
+            .await;
+        let session = match made {
+            Ok(session) => session.clone(),
+            Err(error) => {
+                self.close(agent);
+                return Err(error.into());
+            }
+        };
+        session.set_window(window.tail, window.cap, true);
+        let (held, older) = {
+            let state = session.state();
+            (state.transcript().len(), state.transcript().has_older())
+        };
+        let wanted = (window.tail as usize).saturating_sub(held);
+        if older && wanted > 0 {
+            // A failed page leaves the chat's own paging to say why.
+            let _ = session
+                .page_older(u32::try_from(wanted).unwrap_or(u32::MAX))
+                .await;
+        }
+        Ok(session)
+    }
+
+    /// A chat on the agent closed: the last one to close narrows its
+    /// session to the fleet's few rows, or drops it if the agent is not
+    /// live.
+    pub fn close(&self, agent: &AgentKey) {
+        let live = self
+            .state()
+            .agent(agent)
+            .is_some_and(|entry| entry.lifecycle() == Lifecycle::Live);
+        let narrow = {
+            let mut sessions = self.inner.sessions();
+            let Some(slot) = sessions.get_mut(agent) else {
+                return;
+            };
+            slot.viewers = slot.viewers.saturating_sub(1);
+            if slot.viewers > 0 {
+                return;
+            }
+            if !live {
+                sessions.remove(agent);
+                return;
+            }
+            slot.session.get().cloned()
+        };
+        if let Some(session) = narrow {
+            session.set_window(HELD_ROWS, HELD_ROWS, false);
+        }
+    }
+
+    /// The phone leaving (false) or returning to (true) the foreground:
+    /// drops every session's stream, or reopens each with a tail and starts
+    /// the sessions of agents that went live meanwhile.
+    pub fn set_foreground(&self, foreground: bool) {
+        let was = self.inner.foreground.swap(foreground, Ordering::AcqRel);
+        if was == foreground {
+            return;
+        }
+        let held: Vec<Arc<Session>> = self
+            .inner
+            .sessions()
+            .values()
+            .filter_map(|slot| slot.session.get().cloned())
+            .collect();
+        for session in held {
+            session.set_foreground(foreground);
+        }
+        if foreground {
+            let keys: Vec<AgentKey> = self.state().agents().map(ui_state::agent_key).collect();
+            self.inner.tend(&keys);
+        }
+    }
+
     /// Level-triggered, as a session's.
     pub fn changed(&self) -> watch::Receiver<()> {
         self.inner.changed.subscribe()
@@ -185,7 +491,8 @@ impl Fleet {
     }
 
     /// The fleet's part of a dump bundle: the structure of its state and
-    /// its trace, with no names, paths or status text.
+    /// its trace, with no names, paths or status text. Each session writes
+    /// its own.
     pub fn dump_part(&self) -> DumpPart {
         let (state, trace) = {
             let model = self.inner.model();
@@ -205,14 +512,13 @@ impl Fleet {
             ],
         }
     }
-
-    pub fn close(self) {}
 }
 
 impl Drop for Fleet {
     fn drop(&mut self) {
         self.inner.closed.store(true, Ordering::Release);
         self.pump.abort();
+        self.inner.sessions().clear();
     }
 }
 
