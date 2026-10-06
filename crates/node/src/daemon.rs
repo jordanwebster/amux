@@ -477,16 +477,20 @@ impl Daemon {
             front_door.abort();
         }
         let hosted = std::mem::take(&mut *self.installation.hosted.lock().unwrap());
+        eprintln!("ZZ shutdown start");
         for hosted in hosted.values() {
             hosted
                 .runtime
                 .stop_edge(wire::LinkCloseReason::UserShutdown)
                 .await;
         }
+        eprintln!("ZZ edge stopped");
         for hosted in hosted.values() {
             hosted.runtime.stop_background().await;
+            eprintln!("ZZ background stopped");
             hosted.runtime.stop_watching().await;
         }
+        eprintln!("ZZ watching stopped");
         for hosted in hosted.values() {
             hosted
                 .runtime
