@@ -79,7 +79,14 @@ step to the journal as one frame; a step with nothing in it writes nothing.
   understand a later one.
 - **One appendable field.** An item that is still streaming is emitted open,
   and later steps extend its `text` with appends. Once it is emitted
-  complete, no append follows. Only the newest item may be appended to.
+  complete, no append follows. Any item still open may be appended to, so a
+  command running below newer items streams its output as appends of the
+  new text alone.
+- **Command output is bounded.** A running command keeps only its newest
+  output (`Shared::append_output`): past twice `OUTPUT_CAP` (64 KiB) the
+  kept text is cut to its last cap's worth at a line boundary, the item is
+  sent again whole with the bytes dropped in its body, and appends continue
+  from there. A command that prints without end costs bounded state.
 - **Order is journal order.** The interpreter numbers nothing. The daemon
   gives a key its place in the chat when the key first commits, in the order
   frames were written and items sit in a step, and a revision number on

@@ -1097,7 +1097,6 @@ pub fn check_invariants<I: Interpreter>(steps: &[Step], end: &EndRules) -> Vec<S
     }
 
     let mut arms = BTreeMap::<String, String>::new();
-    let mut created = Vec::<String>::new();
     let mut open = BTreeSet::<String>::new();
     let mut last_snapshot: Option<&Snapshot> = None;
     for (index, step) in steps.iter().enumerate() {
@@ -1122,7 +1121,6 @@ pub fn check_invariants<I: Interpreter>(steps: &[Step], end: &EndRules) -> Vec<S
                 }
                 None => {
                     arms.insert(item.key.clone(), view.arm.clone());
-                    created.push(item.key.clone());
                 }
             }
             if view.complete {
@@ -1140,11 +1138,6 @@ pub fn check_invariants<I: Interpreter>(steps: &[Step], end: &EndRules) -> Vec<S
             } else if !open.contains(&append.key) {
                 violations.push(format!(
                     "frame {index}: append to {} after its final item",
-                    append.key
-                ));
-            } else if created.last() != Some(&append.key) {
-                violations.push(format!(
-                    "frame {index}: append to {}, which is not the newest item",
                     append.key
                 ));
             }

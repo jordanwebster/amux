@@ -72,6 +72,9 @@ message CommandWork {
   // Codex's own label for a read, search or listing.
   string action = 4;
   bool background = 5;
+  // Output dropped from the front of the item's text: a running command
+  // keeps only its newest output, cut at a line boundary.
+  uint64 output_dropped_bytes = 6;
 }
 
 message FileChangeWork {

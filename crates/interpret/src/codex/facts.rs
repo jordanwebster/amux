@@ -36,7 +36,7 @@ use super::{
     elicitation_response, item_body, work_ask, work_complete,
 };
 use crate::claude_common::compact_json;
-use crate::shared::json_as_written;
+use crate::shared::{Output, json_as_written};
 use crate::{
     AMUX_TOOL_SERVER, Channel, Effect, Emit, Fact, ItemDraft, SendOutcome, ask_item, is_send_tool,
     is_status_tool, sent_message, status_working_on,
@@ -1083,10 +1083,7 @@ impl State {
                 self.extend(emit, &delta.item_id, &delta.delta);
             }
             ServerNotification::CommandOutputDelta(delta) => {
-                if let Some(state) = self.works.get_mut(&delta.item_id) {
-                    state.text.push_str(&delta.delta);
-                }
-                self.extend(emit, &delta.item_id, &delta.delta);
+                self.command_output(emit, &delta.item_id, &delta.delta);
             }
             ServerNotification::ReasoningSummaryPartAdded(part) => {
                 self.summary_delta(emit, &part.item_id, part.summary_index, "");
@@ -1643,6 +1640,7 @@ impl State {
                         exit_code,
                         action: kinds.join(","),
                         background: false,
+                        output_dropped_bytes: 0,
                     }),
                     class,
                 )
@@ -1741,29 +1739,47 @@ impl State {
                 DecisionOutcome::Allowed
             } as i32;
         }
-        let background = prior_work
+        let (background, dropped) = prior_work
             .as_ref()
             .and_then(|work| match &work.of {
-                Some(work::Of::Command(command)) => Some(command.background),
+                Some(work::Of::Command(command)) => {
+                    Some((command.background, command.output_dropped_bytes))
+                }
                 _ => None,
             })
-            .unwrap_or(false);
-        let of = match of {
+            .unwrap_or((false, 0));
+        let mut of = match of {
             work::Of::Command(mut command) => {
                 command.background = background;
+                command.output_dropped_bytes = dropped;
                 work::Of::Command(command)
             }
             of => of,
         };
         let started = prior.as_ref().map(|prior| prior.at_ms);
-        let text = match (item, completed) {
+        let mut text = match (item, completed) {
             (ThreadItem::CommandExecution(command), true) => {
-                some_of(command.aggregated_output.as_deref())
-                    .or_else(|| prior.as_ref().map(|prior| prior.text.clone()))
-                    .unwrap_or_default()
+                match some_of(command.aggregated_output.as_deref()) {
+                    // The whole output: what is kept of it is counted anew.
+                    Some(output) => {
+                        if let work::Of::Command(command) = &mut of {
+                            command.output_dropped_bytes = 0;
+                        }
+                        output
+                    }
+                    None => prior
+                        .as_ref()
+                        .map(|prior| prior.text.clone())
+                        .unwrap_or_default(),
+                }
             }
             _ => prior.as_ref().map(|p| p.text.clone()).unwrap_or_default(),
         };
+        if let work::Of::Command(command) = &mut of {
+            let cut = crate::shared::output_cut(&text);
+            text.drain(..cut);
+            command.output_dropped_bytes += cut as u64;
+        }
         let duration_ms = match item {
             ThreadItem::CommandExecution(command) => command.duration_ms,
             ThreadItem::McpToolCall(call) => call.duration_ms,
@@ -1800,6 +1816,39 @@ impl State {
             self.job_ended(id);
         }
         self.emit_work(emit, id);
+    }
+
+    /// A running command's new output: an append, or, past twice the cap,
+    /// the command again whole with only its newest output and the bytes
+    /// dropped counted in its body.
+    fn command_output(&mut self, emit: &mut Emit, id: &str, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        let Some(state) = self.works.get_mut(id) else {
+            return self.extend(emit, id, delta);
+        };
+        state.text.push_str(delta);
+        match self.shared.append_output(emit, id, delta) {
+            Output::Appended => {}
+            Output::Cut { dropped } => {
+                state.text.drain(..dropped as usize);
+                if let Some(Work {
+                    of: Some(work::Of::Command(command)),
+                    ..
+                }) = &mut state.work
+                {
+                    command.output_dropped_bytes += dropped;
+                }
+                self.emit_work(emit, id);
+            }
+            // Nothing shows output after its command ended; the state only
+            // stays bounded.
+            Output::NotOpen => {
+                let cut = crate::shared::output_cut(&state.text);
+                state.text.drain(..cut);
+            }
+        }
     }
 
     /// amux's send tool, drawn as the message it sent. Started and
@@ -1927,11 +1976,6 @@ impl State {
         }
         self.active_turn = None;
         self.interrupt_pending = false;
-        self.created
-            .retain(|key| self.shared.open_item(key).is_some());
-        if !self.created.contains(&self.newest) {
-            self.newest.clear();
-        }
         if self.consumption == InjectConsumption::ParkedUntilNextTurn {
             self.turn_over_parked(emit);
         }

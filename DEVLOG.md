@@ -1,3 +1,17 @@
+2026-10-06 — **Any open item takes appends, and a running command keeps bounded output.**
+The interpreters' rule that only the newest item may be appended to made the
+Codex interpreter send a command's whole output again with every chunk once
+anything else had appeared below it, which costs bytes quadratic in the
+output's length. Any item still open may now be appended to, and the
+harness's invariant changed with the rule. A running command's kept output is
+capped in the shared part (`Shared::append_output`): past twice 64 KiB the
+text is cut to its last 64 KiB at a line boundary, the item is sent again
+whole with the bytes dropped counted in `CommandWork.output_dropped_bytes`,
+and appends continue from there; a completed command's whole output is cut
+the same way. A command printing 4 MiB left a 12.6 MB checkpoint before and
+leaves under 512 KiB now, and output below a newer item now travels as an
+append of the new text alone; both tests failed before.
+
 2026-10-06 — **Each provider reports usage windows in its own terms, each with its own state.**
 The shared `UsageLimits` carried windows as short strings ("5h", "7d opus")
 with one state for the whole set, so the terminal matched strings back into

@@ -3307,6 +3307,10 @@ pub struct CommandWork {
     pub action: ::prost::alloc::string::String,
     #[prost(bool, tag = "5")]
     pub background: bool,
+    /// Output dropped from the front of the item's text: a running command
+    /// keeps only its newest output, cut at a line boundary.
+    #[prost(uint64, tag = "6")]
+    pub output_dropped_bytes: u64,
 }
 impl ::prost::Name for CommandWork {
     const NAME: &'static str = "CommandWork";

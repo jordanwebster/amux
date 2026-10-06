@@ -590,7 +590,7 @@ mod invariants {
     }
 
     #[test]
-    fn no_append_after_a_final_and_only_to_the_newest_item() {
+    fn appends_go_to_any_open_item_and_never_after_its_final() {
         let after_final = [
             first(),
             Step {
@@ -603,7 +603,7 @@ mod invariants {
             },
         ];
         assert!(check(&after_final)[0].contains("after its final item"));
-        let not_newest = [
+        let below_the_newest = [
             first(),
             Step {
                 items: vec![streaming("a", false), streaming("b", true)],
@@ -615,7 +615,7 @@ mod invariants {
                 ..Default::default()
             },
         ];
-        assert!(check(&not_newest)[0].contains("not the newest item"));
+        assert_eq!(check(&below_the_newest), Vec::<String>::new());
         let unknown_key = [
             first(),
             Step {

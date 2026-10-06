@@ -341,7 +341,7 @@ reader is looking at keeps its id and grows its count while the older members in
 extends a run at the bottom, the summary moves to the newest item, where nothing is anchored.
 
 Three guarantees follow, and any list technique, including the inverted list chat apps use, can rely on them:
-row ids never move; the window changes only at its two edges; appends touch only the newest item.
+row ids never move; the window changes only at its two edges; appends touch only items still open.
 
 ## Flows
 

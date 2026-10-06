@@ -303,6 +303,41 @@ impl Emit {
     }
 }
 
+/// How much of a running command's output an item keeps: the newest
+/// output up to twice this, then the last this much again.
+pub const OUTPUT_CAP: usize = 64 * 1024;
+
+/// What extending a command's output did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Output {
+    /// Sent as an append.
+    Appended,
+    /// The kept text was cut, dropping this many bytes from its front; the
+    /// caller sends the item whole.
+    Cut { dropped: u64 },
+    /// The item is not open; the caller sends it whole.
+    NotOpen,
+}
+
+/// Where to cut output longer than twice [`OUTPUT_CAP`] so the last cap's
+/// worth stays: just after the first line break in it, else at the first
+/// character boundary. Zero when the text is short enough to keep whole.
+pub fn output_cut(text: &str) -> usize {
+    if text.len() <= 2 * OUTPUT_CAP {
+        return 0;
+    }
+    let from = text.len() - OUTPUT_CAP;
+    match text.as_bytes()[from..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+    {
+        Some(at) if from + at + 1 < text.len() => from + at + 1,
+        _ => (from..=text.len())
+            .find(|at| text.is_char_boundary(*at))
+            .unwrap_or(text.len()),
+    }
+}
+
 /// Everything kind-neutral an interpreter holds. Every field is checkpointed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
@@ -554,6 +589,26 @@ impl<A: OpenAsk> Shared<A> {
             text: text.to_owned(),
         });
         true
+    }
+
+    /// Extends a running command's output. Past twice [`OUTPUT_CAP`] the
+    /// kept text is cut to its last cap's worth, at a line boundary, and
+    /// nothing is emitted: the caller sends the item again whole, with the
+    /// bytes dropped in its body, and appends continue from there.
+    pub fn append_output(&mut self, emit: &mut Emit, key: &str, text: &str) -> Output {
+        let Some(item) = self.open_items.get_mut(key) else {
+            return Output::NotOpen;
+        };
+        if item.text.len() + text.len() <= 2 * OUTPUT_CAP {
+            self.append(emit, key, text);
+            return Output::Appended;
+        }
+        item.text.push_str(text);
+        let dropped = output_cut(&item.text);
+        item.text.drain(..dropped);
+        Output::Cut {
+            dropped: dropped as u64,
+        }
     }
 
     pub fn open_item(&self, key: &str) -> Option<&Item> {
@@ -1087,6 +1142,20 @@ mod tests {
     use wire::{Ask, EnvelopeKind};
 
     use super::*;
+
+    #[test]
+    fn output_is_cut_to_its_last_caps_worth_at_a_line_boundary() {
+        let short = "a\n".repeat(OUTPUT_CAP);
+        assert_eq!(output_cut(&short), 0, "twice the cap is kept whole");
+        let lines = format!("{short}b\n");
+        let cut = output_cut(&lines);
+        assert!(lines.len() - cut <= OUTPUT_CAP);
+        assert_eq!(&lines[cut - 1..cut], "\n", "just after a line break");
+        let one_line = "é".repeat(OUTPUT_CAP + 1);
+        let cut = output_cut(&one_line);
+        assert!(one_line.is_char_boundary(cut));
+        assert!(one_line.len() - cut <= OUTPUT_CAP);
+    }
 
     fn shared() -> Shared<Ask> {
         let spec = AgentSpec {

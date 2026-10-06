@@ -250,10 +250,6 @@ pub struct State {
     sent: BTreeMap<String, i64>,
     streamed: BTreeMap<String, Streamed>,
     asks: BTreeMap<String, AskMeta>,
-    /// Keys emitted since the turn began, and the newest created: text is
-    /// appended only to the newest item, else the item is re-emitted whole.
-    created: BTreeSet<String>,
-    newest: String,
     context_tokens: Option<u64>,
     context_window: Option<u64>,
     #[serde(with = "serde_pb::opt_msg")]
@@ -330,8 +326,6 @@ impl State {
             sent: BTreeMap::new(),
             streamed: BTreeMap::new(),
             asks: BTreeMap::new(),
-            created: BTreeSet::new(),
-            newest: String::new(),
             context_tokens: None,
             context_window: None,
             usage: None,
@@ -433,21 +427,17 @@ impl State {
 
     // --- items -----------------------------------------------------------
 
-    /// Emits an item, remembering which key was created last.
     fn emit_item(&mut self, emit: &mut Emit, draft: ItemDraft) {
-        if self.created.insert(draft.key.clone()) {
-            self.newest = draft.key.clone();
-        }
         self.shared.item(emit, draft);
     }
 
-    /// Extends an open item's text: an append when it is the newest item,
-    /// else the whole item again.
+    /// Extends an open item's text with an append; an item not open is
+    /// sent whole.
     fn extend(&mut self, emit: &mut Emit, key: &str, delta: &str) {
         if delta.is_empty() {
             return;
         }
-        if self.newest == key && self.shared.append(emit, key, delta) {
+        if self.shared.append(emit, key, delta) {
             return;
         }
         if let Some(open) = self.shared.open_item(key).cloned() {
@@ -1206,7 +1196,7 @@ impl<A: Arm> Interpreter for CodexWith<A> {
 fn describe_work(work: &Work) -> String {
     let mut text = match &work.of {
         Some(work::Of::Command(command)) => format!(
-            "command {} cwd={} action={}{}{}",
+            "command {} cwd={} action={}{}{}{}",
             clip(&command.command, 60),
             or_dash(&command.cwd),
             or_dash(&command.action),
@@ -1217,6 +1207,10 @@ fn describe_work(work: &Work) -> String {
                 " background"
             } else {
                 ""
+            },
+            match command.output_dropped_bytes {
+                0 => String::new(),
+                dropped => format!(" dropped={dropped}"),
             }
         ),
         Some(work::Of::FileChange(change)) => format!(

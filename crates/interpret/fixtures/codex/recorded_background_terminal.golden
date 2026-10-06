@@ -74,9 +74,9 @@ item rs_02ce3e63657d5390016ab72f31d5c487d2933a4824fbdccf05 reasoning open at=179
 ## 78 recorded 77: fact Rpc method=item/completed
 item rs_02ce3e63657d5390016ab72f31d5c487d2933a4824fbdccf05 reasoning final at=1790390065837 text="" summary=[]
 ## 80 recorded 79: fact Rpc method=item/commandExecution/outputDelta
-item exec-fab58c85-33be-409e-b3fa-73402a9c2500 work open at=1790390063971 text="hello\r\n" command "/bin/zsh -lc 'read LINE; echo CODEX_SPEC_GOT $LINE'" cwd=<MACHINE_PATH> action=unknown TOOL_STATE_RUNNING
+append exec-fab58c85-33be-409e-b3fa-73402a9c2500 "hello\r\n"
 ## 82 recorded 81: fact Rpc method=item/commandExecution/outputDelta
-item exec-fab58c85-33be-409e-b3fa-73402a9c2500 work open at=1790390063971 text="hello\r\nCODEX_SPEC_GOT hello\r\n" command "/bin/zsh -lc 'read LINE; echo CODEX_SPEC_GOT $LINE'" cwd=<MACHINE_PATH> action=unknown TOOL_STATE_RUNNING
+append exec-fab58c85-33be-409e-b3fa-73402a9c2500 "CODEX_SPEC_GOT hello\r\n"
 ## 86 recorded 85: fact Rpc method=item/completed
 item exec-fab58c85-33be-409e-b3fa-73402a9c2500 work final at=1790390063971 text="hello\r\nCODEX_SPEC_GOT hello\r\n" command "/bin/zsh -lc 'read LINE; echo CODEX_SPEC_GOT $LINE'" cwd=<MACHINE_PATH> action=unknown exit=0 TOOL_STATE_SUCCEEDED ended=1790390066855
 ## 88 recorded 87: fact Rpc method=thread/tokenUsage/updated

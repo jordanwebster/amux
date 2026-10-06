@@ -543,3 +543,113 @@ fn the_job_list_empties_when_codex_exits() {
         "emptied on exit, and empty in a new incarnation"
     );
 }
+
+/// A thread whose turn runs `cargo watch` as command cmd-1.
+fn command_running() -> State {
+    let spec = wire::AgentSpec {
+        agent_id: b"agent".to_vec(),
+        ..Default::default()
+    };
+    let (mut state, _) = Codex::initial(&spec, "test");
+    for event in [
+        rpc(
+            json!({"id": 2, "result": {"thread": {"id": "t1", "cliVersion": "0.160.0", "turns": []}, "model": "m"}}),
+        ),
+        prompt(b"p1", "watch the build"),
+        rpc(
+            json!({"method": "turn/started", "params": {"threadId": "t1", "turn": {"id": "turn-1"}}}),
+        ),
+        rpc(
+            json!({"method": "item/started", "params": {"threadId": "t1", "turnId": "turn-1", "item": {
+            "type": "commandExecution", "id": "cmd-1", "command": "cargo watch", "cwd": "/work",
+            "commandActions": [], "status": "inProgress", "exitCode": null}}}),
+        ),
+    ] {
+        Codex::step(&mut state, event);
+    }
+    state
+}
+
+fn output(delta: &str) -> Event {
+    rpc(
+        json!({"method": "item/commandExecution/outputDelta", "params": {"threadId": "t1", "turnId": "turn-1", "itemId": "cmd-1", "delta": delta}}),
+    )
+}
+
+/// Output of a command that is no longer the newest item travels as an
+/// append of the new text alone, not as the whole command again.
+#[test]
+fn a_command_below_the_newest_item_streams_its_output_as_appends() {
+    let mut state = command_running();
+    Codex::step(&mut state, output("[watching]\n"));
+    Codex::step(
+        &mut state,
+        rpc(
+            json!({"method": "item/started", "params": {"threadId": "t1", "turnId": "turn-1", "item": {
+            "type": "agentMessage", "id": "msg-1", "text": ""}}}),
+        ),
+    );
+    let stepped = Codex::step(&mut state, output("[rebuilt]\n"));
+    let resent: Vec<_> = stepped
+        .step
+        .items
+        .iter()
+        .map(|item| (item.key.as_str(), item.text.len()))
+        .collect();
+    let appended: Vec<_> = stepped
+        .step
+        .appends
+        .iter()
+        .map(|append| (append.key.as_str(), append.text.as_str()))
+        .collect();
+    assert_eq!(
+        (resent, appended),
+        (vec![], vec![("cmd-1", "[rebuilt]\n")]),
+        "only the new text is sent"
+    );
+}
+
+/// A command that prints without end keeps a bounded amount of output in
+/// the interpreter's state.
+#[test]
+fn a_command_that_prints_without_end_keeps_bounded_state() {
+    use prost::Message as _;
+    let mut state = command_running();
+    let line = format!("{}\n", "x".repeat(1023));
+    let mut resent = None;
+    for printed in 1..=4096 {
+        let stepped = Codex::step(&mut state, output(&line));
+        if let Some(item) = stepped
+            .step
+            .items
+            .into_iter()
+            .find(|item| item.key == "cmd-1")
+        {
+            resent = Some((item, printed * line.len()));
+        }
+    }
+    let checkpoint = interpret::encode_checkpoint(&state).len();
+    assert!(
+        checkpoint < 512 * 1024,
+        "4 MiB of output left a checkpoint of {checkpoint} bytes"
+    );
+    let (resent, printed) = resent.expect("the command was sent again whole when cut");
+    assert!(resent.text.len() <= 2 * interpret::OUTPUT_CAP);
+    assert!(resent.text.starts_with('x'), "cut at a line boundary");
+    let Some(wire::codex_item::Kind::Work(wire::Work {
+        of: Some(wire::work::Of::Command(command)),
+        ..
+    })) = wire::CodexItem::decode(resent.body.as_slice())
+        .unwrap()
+        .kind
+    else {
+        panic!("a command item");
+    };
+    assert_eq!(
+        command.output_dropped_bytes as usize + resent.text.len(),
+        printed,
+        "the body counts every byte dropped"
+    );
+    let open = state.shared().open_item("cmd-1").unwrap().text.len();
+    assert!(open <= 2 * interpret::OUTPUT_CAP);
+}
