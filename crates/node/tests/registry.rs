@@ -916,11 +916,19 @@ async fn a_host_lists_where_its_agents_ran_and_its_repositories_for_trusted_host
         )
         .await
         .unwrap();
-    let untrusted = from_laptop
-        .list_repositories(listing(None, 50, Some(desk_runtime.host())))
-        .await
-        .unwrap_err();
-    println!("untrusted: {untrusted:?}");
+    // A call that crosses the link while the desk is closing it comes back
+    // uncertain rather than refused; ask again until the desk's answer.
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    let untrusted = loop {
+        let refused = from_laptop
+            .list_repositories(listing(None, 50, Some(desk_runtime.host())))
+            .await
+            .expect_err("a host that stopped trusting the caller answers nothing");
+        if refused.code() != tonic::Code::Aborted || tokio::time::Instant::now() > deadline {
+            break refused;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
     assert!(
         matches!(
             untrusted.code(),

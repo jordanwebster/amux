@@ -1,3 +1,11 @@
+2026-10-07 — **The repository-listing test asks through the unpairing.**
+`just test` once failed in node's registry test: after the desk unpaired
+the laptop, the laptop's next forwarded listing came back "stopped
+answering; the call may or may not have arrived" instead of a refusal. The
+desk closes the laptop's link as it unpairs, and a call that crosses the
+link while it closes is honestly uncertain. The test now asks again while
+the answer is uncertain, and still fails if the desk ever answers.
+
 2026-10-07 — **The phone's debug door waits for the account before pairing.**
 A `just ios perf` run failed before measuring anything: the app refused the
 first pairing link with "nothing is running". The door answers as soon as
