@@ -537,7 +537,8 @@ nothing is inferred.
   `rateLimitType`) and every window's use (`unifiedWindows`). The named
   window takes the status; every other keeps the last status stated for it,
   so a person can see the weekly limit reached while the five-hour one is
-  fine. Windows are five-hour or weekly, and a weekly window that belongs to
+  fine, until the window resets: a report whose reset for a window is later
+  than the one held drops the status stated for it, back to unknown. Windows are five-hour or weekly, and a weekly window that belongs to
   one model carries the model as Claude's own labels name it
   (`seven_day_opus` Opus, `seven_day_sonnet` Sonnet,
   `seven_day_overage_included` Fable); a window amux does not recognise

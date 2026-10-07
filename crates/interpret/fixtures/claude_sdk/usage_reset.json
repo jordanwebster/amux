@@ -1,0 +1,97 @@
+{
+  "about": "A usage window stated near or reached reads so only until it resets: a later report that moves the window's reset later drops the state stated for it, while the window's use keeps updating.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "init",
+          "uuid": "init-s1",
+          "session_id": "s1",
+          "claude_code_version": "2.1.292",
+          "model": "claude-opus-5-5",
+          "permissionMode": "default"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "rate_limit_event",
+          "uuid": "rl-1",
+          "session_id": "s1",
+          "rate_limit_info": {
+            "status": "rejected",
+            "rateLimitType": "seven_day",
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.2,
+                "resetsAt": 1800003600
+              },
+              "seven_day": {
+                "utilization": 1.0,
+                "resetsAt": 1800400000
+              }
+            }
+          }
+        }
+      },
+      "note": "The weekly limit is reached."
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "rate_limit_event",
+          "uuid": "rl-2",
+          "session_id": "s1",
+          "rate_limit_info": {
+            "status": "allowed",
+            "rateLimitType": "five_hour",
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.01,
+                "resetsAt": 1800421200
+              },
+              "seven_day": {
+                "utilization": 0.03,
+                "resetsAt": 1801004800
+              }
+            }
+          }
+        }
+      },
+      "note": "A week later Claude states only the five-hour window; the weekly window's reset moved later, so it has reset: its reached state is dropped and it reads unknown at its new use."
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "rate_limit_event",
+          "uuid": "rl-3",
+          "session_id": "s1",
+          "rate_limit_info": {
+            "status": "allowed",
+            "rateLimitType": "five_hour",
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.02,
+                "resetsAt": 1800421200
+              },
+              "seven_day": {
+                "utilization": 0.04,
+                "resetsAt": 1801004800
+              }
+            }
+          }
+        }
+      },
+      "note": "A report with the same resets keeps every state as it was."
+    }
+  ]
+}

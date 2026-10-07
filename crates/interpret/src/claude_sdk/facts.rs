@@ -395,7 +395,11 @@ impl State {
 
     /// Claude reports one window's status at a time, with every window's
     /// use: the named window takes the status, and every other keeps the
-    /// last status stated for it. The overall state is the report's own.
+    /// last status stated for it until it resets. A window whose reported
+    /// reset is later than the one held has reset, so the status stated for
+    /// it is dropped (back to unknown) before the report is applied: a
+    /// window stated near or reached reads so only until it resets. The
+    /// overall state is the report's own.
     fn rate_limit(&mut self, info: &RateLimitInfo) {
         let state = match info.status.as_str() {
             "allowed" => UsageState::Ok,
@@ -406,9 +410,11 @@ impl State {
         let usage = self.usage.get_or_insert_with(crate::unknown::claude_usage);
         usage.state = state as i32;
         for (name, window) in info.unified_windows.iter().flatten() {
-            let meter = claude_window(usage, name);
-            meter.used_percent = window.utilization.unwrap_or(0.0) * 100.0;
-            meter.resets_at_ms = window.resets_at.map(|at| at * 1000);
+            report_window(
+                claude_window(usage, name),
+                window.utilization,
+                window.resets_at.map(|at| at * 1000),
+            );
         }
         if let Some(name) = info
             .rate_limit_type
@@ -420,11 +426,14 @@ impl State {
                 .as_ref()
                 .is_some_and(|windows| windows.contains_key(name));
             let meter = claude_window(usage, name);
-            meter.state = state as i32;
             if !listed {
-                meter.used_percent = info.utilization.unwrap_or(0.0) * 100.0;
-                meter.resets_at_ms = info.resets_at.map(|at| at as i64 * 1000);
+                report_window(
+                    meter,
+                    info.utilization,
+                    info.resets_at.map(|at| at as i64 * 1000),
+                );
             }
+            meter.state = state as i32;
         }
     }
 
@@ -1360,6 +1369,18 @@ fn server_health<'a>(
 /// words.
 /// The meter of the window Claude calls `name`, added the first time it
 /// is named.
+/// One window's use and reset as reported; a reset later than the one held
+/// means the window has reset, which ends the status stated for it.
+fn report_window(meter: &mut UsageMeter, utilization: Option<f64>, resets_at_ms: Option<i64>) {
+    if let (Some(held), Some(reported)) = (meter.resets_at_ms, resets_at_ms)
+        && reported > held
+    {
+        meter.state = UsageState::Unknown as i32;
+    }
+    meter.used_percent = utilization.unwrap_or(0.0) * 100.0;
+    meter.resets_at_ms = resets_at_ms;
+}
+
 fn claude_window<'a>(usage: &'a mut ClaudeUsage, name: &str) -> &'a mut UsageMeter {
     let at = match usage
         .windows

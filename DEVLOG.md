@@ -1,3 +1,13 @@
+2026-10-07 — **A Claude usage window's stated limit ends when it resets.**
+Headless Claude states one usage window's status at a time and reports
+every window's use, so amux keeps the last status stated for each window.
+It never cleared it, so a weekly window once stated near or reached kept
+reading that way after it reset, at a few percent used. A report whose
+reset for a window is later than the one held now drops the status stated
+for it, back to unknown, before the report is applied. A new interpreter
+fixture plays a reached weekly window followed by a week-later report that
+names only the five-hour window.
+
 2026-10-07 — **Home redraws a working agent's step as it moves.**
 A session woke the fleet's home only for what arrived outside its rows, so
 when a working agent moved from one tool step to the next with no snapshot
