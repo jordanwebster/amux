@@ -1,3 +1,13 @@
+2026-10-07 — **The settings-picks test fetches a catalogue the way a client does.**
+The test that sends every settings pick to a copy of each interpreter
+handed the chat state a published catalogue before committing the step
+whose snapshot names it. Once the chat state started keeping the
+catalogue the newest snapshot names over one it does not, Codex's second
+start-up catalogue arrived while the first was still the named one and was
+dropped, so Codex offered no picks at all. The test now commits the step
+first and fetches its catalogue after, as a client does; what it asserts
+is unchanged.
+
 2026-10-07 — **Headless Claude's usage-window helpers each say what they do.**
 The usage-reset fix slid its new helper under the comment of the one after
 it, leaving one stacked comment over three ideas, one of them about window

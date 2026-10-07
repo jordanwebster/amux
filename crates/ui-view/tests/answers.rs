@@ -93,6 +93,7 @@ impl<S: Checkpoint + Clone> Driven<S> {
             self.session.update(Msg::Send(input.clone()));
         }
         let stepped = I::step(&mut self.interpreter, event);
+        self.commit(&stepped.step);
         // The catalogue as a client fetches it once the snapshot names it.
         for effect in &stepped.effects {
             if let Effect::WriteCatalogue { hash, bytes } = effect {
@@ -102,7 +103,6 @@ impl<S: Checkpoint + Clone> Driven<S> {
                 });
             }
         }
-        self.commit(&stepped.step);
         let replies: Vec<_> = stepped
             .effects
             .into_iter()
