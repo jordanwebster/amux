@@ -1,3 +1,14 @@
+2026-10-07 — **The phone reads the fleet at most four times a second.**
+Since home wakes when a working agent's step moves, a streaming turn woke
+it many times a second, and the phone read and laid out the whole fleet on
+the main thread for every wake, even with a chat covering home. The
+measured streaming run's main-thread CPU rose from about 34% to 56%, past
+its tolerance over the baseline. A fleet wake that comes within 250 ms of
+the last read now waits out the rest of that time; the runtime does not
+wake again until the changes are taken, so the one later read takes them
+all. A wake after a quiet spell still reads at once. Streaming CPU measures
+33% again.
+
 2026-10-07 — **The phone's Overview says when nothing has changed.**
 After the folder's changes were committed or reverted between turns, the
 header still carried the last turn's totals (by design, until the next

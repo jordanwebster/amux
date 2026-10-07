@@ -57,6 +57,12 @@ public final class StoreBundle {
     @ObservationIgnored private var held = false
     /// How long a fleet wake waits for the launch's first frame at most.
     public static let firstFrameHold: Duration = .milliseconds(250)
+    /// When the fleet was last read for a wake, and whether a read is
+    /// waiting out the spacing after it.
+    @ObservationIgnored private var lastFleetRead: ContinuousClock.Instant?
+    @ObservationIgnored private var spacing = false
+    /// The least time between two fleet reads a wake asks for.
+    public static let fleetReadSpacing: Duration = .milliseconds(250)
 
     public init(
         account: AccountId, clock: @escaping @MainActor () -> Date = { Date() },
@@ -105,6 +111,26 @@ public final class StoreBundle {
                 }
                 return
             }
+            // A working agent's step moving wakes home, which for a
+            // streaming turn is many times a second, and each read lays out
+            // the whole fleet on the main thread. A wake soon after a read
+            // waits out the spacing; its changes stay with the runtime,
+            // which wakes no more until they are taken, so the next read
+            // takes them all.
+            let at = ContinuousClock.now
+            if let last = lastFleetRead, at - last < Self.fleetReadSpacing {
+                if !spacing {
+                    spacing = true
+                    Task { [weak self] in
+                        try? await Task.sleep(until: last + Self.fleetReadSpacing)
+                        guard let self else { return }
+                        self.spacing = false
+                        self.woke(0)
+                    }
+                }
+                return
+            }
+            lastFleetRead = at
             let changes = profile.takeFleetChanges()
             read(hostsMoved: changes.hosts)
         } else {
