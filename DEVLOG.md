@@ -1,3 +1,13 @@
+2026-10-07 — **The probes reach the real provider past a wrapper on the PATH.**
+Standing in for `claude` or `codex` first on the PATH, a probe ran the real
+provider with the PATH it was given. A wrapper further along that runs the
+next `claude` it finds (here a usage meter installed ahead of the provider)
+then found the probe again, which started the wrapper again, without end:
+every live headless Claude scenario timed out with the provider respawned
+about every 40 ms. A probe in capture mode now takes the folders holding
+itself off the PATH the provider inherits. A test per probe puts a wrapper
+between the probe and a stand-in provider and expects the stand-in reached.
+
 2026-10-07 — **A Codex recording reads amux's reply instead back as a reply.**
 amux replies instead of answering Codex's question by interrupting the turn
 and starting the next with the person's words. Codex's recording reader saw

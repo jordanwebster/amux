@@ -14,7 +14,7 @@ pub use manifest::{
     Verification, append_verification, load_recording, migrate_legacy_manifest,
 };
 pub use observation::{DriftReport, drift, observe};
-pub use probe::{ProbeAttempt, ProbeOutcome, ProbeResult, ProbeRun, probe};
+pub use probe::{ProbeAttempt, ProbeOutcome, ProbeResult, ProbeRun, path_past_probe, probe};
 pub use registry::{RegistryRow, SpecEntry, below_minimum, orphan_recordings, registry_rows};
 pub use sanitize::sanitize;
 pub use transport::{

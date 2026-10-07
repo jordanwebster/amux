@@ -115,6 +115,23 @@ fn write_json(path: &std::path::Path, value: &impl Serialize) -> Result<(), io::
     std::fs::write(path, bytes)
 }
 
+/// The PATH a probe standing in for `command` hands the real provider:
+/// `path` less every folder whose `command` is the probe itself. A wrapper
+/// earlier on the PATH that runs the next `command` it finds (a usage
+/// meter, a version manager) then reaches the real provider instead of
+/// the probe again, which would start another wrapper, without end.
+pub fn path_past_probe(
+    probe: &std::path::Path,
+    command: &std::ffi::OsStr,
+    path: &std::ffi::OsStr,
+) -> std::ffi::OsString {
+    let probe = std::fs::canonicalize(probe).unwrap_or_else(|_| probe.to_owned());
+    let kept = std::env::split_paths(path).filter(|folder| {
+        std::fs::canonicalize(folder.join(command)).map_or(true, |found| found != probe)
+    });
+    std::env::join_paths(kept).unwrap_or_else(|_| path.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
