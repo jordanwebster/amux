@@ -284,13 +284,19 @@ schemes:
         - AmuxUITests
         - AmuxAppTests
 
-  # Component pictures have their own process and command. They deliberately
-  # do not join `Amux`, whose default test action remains the ordinary unit and
-  # UI suites.
-  AmuxComponentSnapshots:
+  # Every suite `just ios unit` and `just ios component-snapshots` run: the
+  # app-hosted tests, the component pictures and each package's tests. One
+  # scheme so one build-for-testing serves them all; each recipe picks its
+  # suites with `-only-testing`. Run separately, every package scheme built
+  # the packages beneath it again, and the app was built once per recipe.
+  # The component pictures still run in their own test process, apart from
+  # the ordinary unit suites, and do not join `Amux`, whose default test
+  # action remains the ordinary unit and UI suites.
+  AmuxTests:
     build:
       targets:
         Amux: all
+        AmuxAppTests: [test]
         AmuxComponentSnapshotTests: [test]
     run:
       config: Debug
@@ -298,4 +304,10 @@ schemes:
       config: Debug
       gatherCoverageData: false
       targets:
+        - AmuxAppTests
         - AmuxComponentSnapshotTests
+        - package: AmuxCore/AmuxCoreTests
+        - package: AmuxDesign/AmuxDesignTests
+        - package: AmuxFeatures/AmuxFeaturesTests
+        - package: AmuxShell/AmuxShellTests
+        - package: AmuxTestSupport/AmuxTestSupportTests

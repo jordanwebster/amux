@@ -26,3 +26,18 @@ class AppsListed(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Settle(unittest.TestCase):
+    def test_a_slow_setting_is_asked_again_and_a_lasting_one_still_fails(self):
+        from unittest.mock import patch
+        import subprocess
+
+        expired = subprocess.TimeoutExpired(["xcrun"], 120)
+        with patch.object(ios_simulators, "run", side_effect=[expired, "applied"]) as run, \
+                patch("builtins.print"):
+            ios_simulators.settle("xcrun", "simctl", "ui", "udid", "appearance", "light")
+        self.assertEqual(run.call_count, 2)
+        with patch.object(ios_simulators, "run", side_effect=expired), \
+                patch("builtins.print"), self.assertRaises(subprocess.TimeoutExpired):
+            ios_simulators.settle("xcrun", "simctl", "ui", "udid", "appearance", "light")

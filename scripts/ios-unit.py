@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Run package and app-hosted unit suites on the golden simulator.
 
-Each local package is its own Xcode scheme, so a `-only-testing:` selector
-picks the package that owns the named test target and the other arguments are handed to xcodebuild unchanged. Selectors for another
-scheme are removed before invoking each one. A package with more than one
-library gets its whole-package scheme named `<package>-Package`, and only that
-scheme carries the test action, so the scheme is asked for rather than assumed.
-Tests that need the running application's UIKit, such as the report's frozen frame, run in AmuxAppTests, hosted by the app rather than the package test runner.
+Every suite runs from the AmuxTests scheme, which holds each package's tests
+beside the app-hosted ones, so one build serves them all. A `-only-testing:`
+selector picks suites and the other arguments are handed to xcodebuild
+unchanged; with none, every package suite and AmuxAppTests run. The component
+pictures share the scheme but are `just ios component-snapshots`'s to run.
+Tests that need the running application's UIKit, such as the report's frozen
+frame, run in AmuxAppTests, hosted by the app rather than the package test
+runner.
+
+`--skip-build` runs the bundles the last build left behind, which is how the
+gate runs them after building every suite once; it never verifies a source
+edit.
 """
 
 from contextlib import contextmanager
@@ -21,42 +27,37 @@ import ios_project
 
 PACKAGES = Path("apps/apple/Packages")
 DERIVED_DATA = Path("target/ios/DerivedData")
+PROJECT = "apps/apple/Amux.xcodeproj"
+SCHEME = "AmuxTests"
+APP_HOSTED = "AmuxAppTests"
 
 
-def suites() -> dict[str, str]:
-    """Every package test target in the checkout, mapped to its package."""
-    return {
-        tests.name: package.name
+def suites() -> list[str]:
+    """Every unit test target: the app-hosted one, then each package's."""
+    return [APP_HOSTED] + [
+        tests.name
         for package in sorted(PACKAGES.iterdir()) if package.is_dir()
         for tests in sorted((package / "Tests").glob("*")) if tests.is_dir()
-    }
+    ]
 
 
-def selected(arguments: list[str]) -> tuple[list[str], list[str]]:
-    owners = suites() | {"AmuxAppTests": "AmuxAppTests"}
-    packages = []
+def selected(arguments: list[str]) -> list[str]:
+    """xcodebuild's arguments, selecting every suite when none was named."""
+    known = suites()
+    named = False
     for argument in arguments:
         if not argument.startswith("-only-testing"):
             continue
         target = argument.split(":", 1)[1].split("/", 1)[0]
-        if target not in owners:
+        if target not in known:
             raise SystemExit(
                 f"No suite owns the test target {target}; known targets: "
-                + ", ".join(sorted(owners))
+                + ", ".join(sorted(known))
             )
-        if owners[target] not in packages:
-            packages.append(owners[target])
-    return (packages or sorted(set(owners.values()))), arguments
-
-
-def scheme(package: str) -> str:
-    """The scheme that can run this package's tests."""
-    listed = subprocess.run(
-        ["xcodebuild", "-list"],
-        cwd=PACKAGES / package, check=True, text=True, capture_output=True, timeout=300,
-    ).stdout
-    whole = f"{package}-Package"
-    return whole if whole in listed.split() else package
+        named = True
+    if named:
+        return arguments
+    return [*arguments, *(f"-only-testing:{suite}" for suite in known)]
 
 
 def requested_updates() -> dict[str, str]:
@@ -99,37 +100,24 @@ def forwarded(udid: str, variables: dict[str, str]):
                 check=True, timeout=120)
 
 
-def test(package: str, udid: str, arguments: list[str]) -> None:
-    print(f"Testing {package}", flush=True)
-    owners = suites() | {"AmuxAppTests": "AmuxAppTests"}
-    arguments = [arg for arg in arguments if not arg.startswith("-only-testing:")
-                 or owners[arg.split(":", 1)[1].split("/", 1)[0]] == package]
-    if package == "AmuxAppTests":
+def command(udid: str, arguments: list[str], skip_build: bool) -> list[str]:
+    return [
+        "xcodebuild", "test-without-building" if skip_build else "test",
+        "-project", PROJECT, "-scheme", SCHEME,
+        "-configuration", "Debug", "-destination", f"id={udid}",
+        "-derivedDataPath", str(DERIVED_DATA.resolve()), *arguments,
+    ]
+
+
+def main(argv: list[str]) -> None:
+    skip_build = "--skip-build" in argv
+    arguments = selected([argument for argument in argv if argument != "--skip-build"])
+    if not skip_build:
         ios_project.generate()
-        if not any(arg.startswith("-only-testing:") for arg in arguments):
-            arguments = [*arguments, "-only-testing:AmuxAppTests"]
-        subprocess.run([
-            "xcodebuild", "test", "-project", "apps/apple/Amux.xcodeproj", "-scheme", "Amux",
-            "-configuration", "Debug", "-destination", f"id={udid}",
-            "-derivedDataPath", str(DERIVED_DATA.resolve()), *arguments,
-        ], check=True, timeout=1500)
-        return
-    subprocess.run([
-        "xcodebuild", "test",
-        "-scheme", scheme(package),
-        "-destination", f"id={udid}",
-        "-derivedDataPath", str(DERIVED_DATA.resolve()),
-        *arguments,
-    ], cwd=PACKAGES / package, check=True, timeout=1500)
-
-
-def main() -> None:
-    packages, arguments = selected(sys.argv[1:])
     udid = ios_simulators.ready("golden")
     with forwarded(udid, requested_updates()):
-        for package in packages:
-            test(package, udid, arguments)
+        subprocess.run(command(udid, arguments, skip_build), check=True, timeout=1500)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

@@ -39,7 +39,9 @@ jobs:
       - name: Boot both pinned simulators
         run: just ios simulator
       - name: Compare native component snapshots
-        run: just ios component-snapshots
+        # Every example waits to stop changing here, which is what proves the
+        # ones the gate photographs at once never change after they are ready.
+        run: just ios component-snapshots --settle-all
       - name: Compare whole-screen goldens
         if: github.event_name == 'schedule'
         run: just ios goldens

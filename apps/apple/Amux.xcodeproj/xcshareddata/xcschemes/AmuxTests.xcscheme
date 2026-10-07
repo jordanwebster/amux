@@ -29,6 +29,20 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "39E34D09D12B6D7C614BBB7E"
+               BuildableName = "AmuxAppTests.xctest"
+               BlueprintName = "AmuxAppTests"
+               ReferencedContainer = "container:Amux.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "20C6A9BE8C01A7E6031D3C35"
                BuildableName = "AmuxComponentSnapshotTests.xctest"
                BlueprintName = "AmuxComponentSnapshotTests"
@@ -58,10 +72,76 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "39E34D09D12B6D7C614BBB7E"
+               BuildableName = "AmuxAppTests.xctest"
+               BlueprintName = "AmuxAppTests"
+               ReferencedContainer = "container:Amux.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "20C6A9BE8C01A7E6031D3C35"
                BuildableName = "AmuxComponentSnapshotTests.xctest"
                BlueprintName = "AmuxComponentSnapshotTests"
                ReferencedContainer = "container:Amux.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "AmuxCoreTests"
+               BuildableName = "AmuxCoreTests"
+               BlueprintName = "AmuxCoreTests"
+               ReferencedContainer = "container:Packages/AmuxCore">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "AmuxDesignTests"
+               BuildableName = "AmuxDesignTests"
+               BlueprintName = "AmuxDesignTests"
+               ReferencedContainer = "container:Packages/AmuxDesign">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "AmuxFeaturesTests"
+               BuildableName = "AmuxFeaturesTests"
+               BlueprintName = "AmuxFeaturesTests"
+               ReferencedContainer = "container:Packages/AmuxFeatures">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "AmuxShellTests"
+               BuildableName = "AmuxShellTests"
+               BlueprintName = "AmuxShellTests"
+               ReferencedContainer = "container:Packages/AmuxShell">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "AmuxTestSupportTests"
+               BuildableName = "AmuxTestSupportTests"
+               BlueprintName = "AmuxTestSupportTests"
+               ReferencedContainer = "container:Packages/AmuxTestSupport">
             </BuildableReference>
          </TestableReference>
       </Testables>

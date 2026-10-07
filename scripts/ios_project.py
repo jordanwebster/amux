@@ -11,6 +11,14 @@ and hand the next test run an App Store with nothing in it.
 from pathlib import Path
 import subprocess
 
+# How every recipe builds for the simulator: for any device, so a build
+# holds no lease and waits for none, and for arm64 alone. The project pins
+# ARCHS for its own targets, but a local package's targets take the
+# platform's defaults, and an Intel slice of a package's tests cannot link
+# against the bridge, which is assembled for arm64 alone. One spelling, so
+# every build shares the same products.
+SIMULATOR_BUILD = ["-destination", "generic/platform=iOS Simulator", "ARCHS=arm64"]
+
 SCHEME = Path("apps/apple/Amux.xcodeproj/xcshareddata/xcschemes/Amux.xcscheme")
 STOREKIT = """      <StoreKitConfigurationFileReference
          identifier = "../../Amux/Amux.storekit">

@@ -1,3 +1,21 @@
+2026-10-07 — **The iOS gate builds once and stops waiting on pictures
+that are already final.** Every component snapshot used to wait a quiet
+second before its picture; 230 of them made the batch four and a half
+minutes on a runner. Only the four examples seen changing after they report
+ready (the draft's attachment chip, and the focused fields of rename,
+review page and comment) are marked `settlesLate` and wait now; the rest are
+photographed once two frames agree. `--settle-all`, used by the nightly
+captures run and every recording, still waits on all of them and fails an
+unmarked one that changed. The app and every unit and component suite are
+built once by the new `ios test-build` into one `AmuxTests` scheme, and the
+suites run with `--skip-build`, where before the app was compiled three
+times and each package scheme rebuilt the packages beneath it. The gate
+boots the simulator while that build runs (re-asking the device settings a
+busy runner answers slowly), and leaves `mobile-check` to the iOS target
+check job that already runs it. On a runner the gate step went from a
+median of 28.5 minutes over the last twelve green runs on main to 20.3 and
+21.8; the single build, nine to twelve minutes, is now most of what is left.
+
 2026-10-06 — **The iPhone app carries a privacy manifest.** The Share Usage
 switch put UserDefaults into release code, and Apple refuses an upload that
 uses it without a declared reason, so `PrivacyInfo.xcprivacy` declares it

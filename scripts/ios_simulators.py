@@ -70,6 +70,25 @@ def run(*command: str, timeout: int = 120) -> str:
     ).stdout.strip()
 
 
+def settle(*command: str, attempts: int = 3) -> None:
+    """Apply a device setting, asking again when the answer is slow.
+
+    A device that has just booted answers slowly while it finishes coming up,
+    and slower still when the runner is compiling the app beside it: a runner
+    building the app has taken more than two minutes to apply an appearance.
+    Applying a setting twice is harmless and an expired attempt says nothing
+    about whether it took, so it is simply asked again.
+    """
+    for attempt in range(attempts):
+        try:
+            run(*command)
+            return
+        except subprocess.TimeoutExpired:
+            if attempt + 1 == attempts:
+                raise
+            print(f"{' '.join(command[1:4])} took too long; asking again", flush=True)
+
+
 def device_inventory(attempts: int = 3) -> dict:
     """Every simulator this machine could run.
 
@@ -258,9 +277,9 @@ def pin(udid: str) -> None:
         # then disagrees with every later run.
         run("xcrun", "simctl", "shutdown", udid, timeout=300)
         run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=600)
-    run("xcrun", "simctl", "ui", udid, "appearance", "light")
+    settle("xcrun", "simctl", "ui", udid, "appearance", "light")
     quit_apps(udid)
-    run(
+    settle(
         "xcrun", "simctl", "status_bar", udid, "override",
         "--time", "9:41",
         "--dataNetwork", "wifi", "--wifiMode", "active", "--wifiBars", "3",

@@ -26,6 +26,11 @@ struct ComponentExample: Identifiable {
     let dynamicTypeSize: DynamicTypeSize
     let readinessIdentifier: String?
     let readinessValue: String?
+    /// Whether the example takes one more change after it reports ready
+    /// (an attachment chip replacing "Attaching", a focused field's caret
+    /// appearing), so its picture has to wait for the screen to stop
+    /// changing. Every other example is final once it reports ready.
+    let settlesLate: Bool
     fileprivate let build: @MainActor () -> AnyView
 
     init(
@@ -35,6 +40,7 @@ struct ComponentExample: Identifiable {
         dynamicTypeSize: DynamicTypeSize = .large,
         readinessIdentifier: String? = nil,
         readinessValue: String? = nil,
+        settlesLate: Bool = false,
         @ViewBuilder build: @escaping @MainActor () -> some View
     ) {
         self.id = id
@@ -43,6 +49,7 @@ struct ComponentExample: Identifiable {
         self.dynamicTypeSize = dynamicTypeSize
         self.readinessIdentifier = readinessIdentifier
         self.readinessValue = readinessValue
+        self.settlesLate = settlesLate
         self.build = { AnyView(build()) }
     }
 }
@@ -307,11 +314,12 @@ enum ComponentCatalog {
         _ id: String, height: CGFloat = 260, rows: [Row] = [], frame: ChatFrame,
         strip: Strip = ScriptedChat.strip(model: "opus 4.6", effort: "high"), draft: String = "",
         settings: SettingsView? = nil, showing: ChatOverlay? = nil, children: [FleetCard] = [],
-        dockExpanded: Bool = false,
+        dockExpanded: Bool = false, settlesLate: Bool = false,
         subject: ChatSubject = CatalogFixtures.subject, setUp: @escaping @MainActor (ChatModel) -> Void = { _ in }
     ) -> ComponentExample {
         ComponentExample(
-            id: "composer.\(id)", family: .composer, canvas: CGSize(width: 390, height: height)
+            id: "composer.\(id)", family: .composer, canvas: CGSize(width: 390, height: height),
+            settlesLate: settlesLate
         ) {
             CatalogChat(source: ScriptedChat(
                 rows: rows, frame: frame, strip: strip, settings: settings, images: CatalogFixtures.images
@@ -333,7 +341,7 @@ enum ComponentCatalog {
         return [
             composer("empty", height: 160, frame: ScriptedChat.frame(phase: .idle)),
             composer("draft", height: 220, frame: ScriptedChat.frame(phase: .idle),
-                     draft: "Please tighten the retry path and keep the error visible.") {
+                     draft: "Please tighten the retry path and keep the error visible.", settlesLate: true) {
                 $0.attach(F.photoData, name: "screen.jpg", mime: "image/jpeg", image: true)
             },
             composer("working", height: 190, rows: [F.runningCommand], frame: ScriptedChat.frame(
@@ -458,12 +466,12 @@ enum ComponentCatalog {
     private static func chat(
         _ id: String, height: CGFloat = 844, readiness: (String, String)? = nil,
         chat: @escaping @MainActor () -> ScriptedChat, subject: ChatSubject = CatalogFixtures.subject,
-        family: FamilyHeader? = nil, showing: ChatOverlay? = nil,
+        family: FamilyHeader? = nil, showing: ChatOverlay? = nil, settlesLate: Bool = false,
         setUp: @escaping @MainActor (ChatModel, ScriptedChat) -> Void = { _, _ in }
     ) -> ComponentExample {
         ComponentExample(
             id: "chat.\(id)", family: .chat, canvas: CGSize(width: 390, height: height),
-            readinessIdentifier: readiness?.0, readinessValue: readiness?.1
+            readinessIdentifier: readiness?.0, readinessValue: readiness?.1, settlesLate: settlesLate
         ) {
             let source = chat()
             CatalogChat(source: source) { model in
@@ -511,7 +519,8 @@ enum ComponentCatalog {
                 source.working = F.review
                 return source
             }),
-            chat("rename", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .rename),
+            chat("rename", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) },
+                 showing: .rename, settlesLate: true),
             chat("delete", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .delete),
             chat("delete-family", chat: {
                 ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame())
@@ -530,10 +539,13 @@ extension ComponentCatalog {
     // MARK: - Review
 
     private static func review(
-        _ id: String, height: CGFloat = 844, writing: Bool = false,
+        _ id: String, height: CGFloat = 844, writing: Bool = false, settlesLate: Bool = false,
         setUp: @escaping @MainActor (ReviewModel) -> Void = { _ in }
     ) -> ComponentExample {
-        ComponentExample(id: "review.\(id)", family: .review, canvas: CGSize(width: 390, height: height)) {
+        ComponentExample(
+            id: "review.\(id)", family: .review, canvas: CGSize(width: 390, height: height),
+            settlesLate: settlesLate
+        ) {
             CatalogReview(setUp: setUp) { model in
                 ReviewPage(model: model, agent: "refactor-auth", writing: writing) { _ in }
             }
@@ -543,12 +555,12 @@ extension ComponentCatalog {
     fileprivate static let review: [ComponentExample] = {
         typealias F = CatalogFixtures
         return [
-            review("page") { F.comment($0) },
+            review("page", settlesLate: true) { F.comment($0) },
             review("selection") { model in
                 model.begin(at: ReviewLine(file: 0, hunk: 0, line: 2))
                 model.extend(to: ReviewLine(file: 0, hunk: 0, line: 4))
             },
-            review("comment", writing: true) { model in
+            review("comment", writing: true, settlesLate: true) { model in
                 model.begin(at: ReviewLine(file: 0, hunk: 0, line: 2))
                 model.extend(to: ReviewLine(file: 0, hunk: 0, line: 4))
             },

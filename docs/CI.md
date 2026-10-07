@@ -116,18 +116,21 @@ runtime and the iPhone 17 Pro device type are available, installs XcodeGen,
 the stable toolchain with both ARM iOS targets, and runs `just ios gate`: the
 half of the phone's verification that building the app can settle.
 
-`just ios gate` runs, in order and stopping at the first failure:
-`just mobile-check`, then `just ios` `lint`, `script-tests`, `graph-check`,
-`rust`, `simulator golden`, `build`, `component-snapshots`, `loopback-smoke`
-and `unit`. None of it compares a photograph of the whole display, so it
-answers the same on any machine. The component snapshot batch runs under its
-own bound, sized by the rule above from a clean run: 247 s on a local Mac
-(the 230 pictures, each drawn flat and held until it has not changed for a
-second), so 400 s. No CI runner has run the batch since the pictures were
-drawn flat; its first clean run there gives the runner's number, and the
-bound follows from the slower of the two. The job uploads the component
-snapshot comparisons and the shipped-scope audit directory to the run,
-whether it passed or not.
+`just ios gate` runs, in order and stopping at the first failure,
+`just ios` `lint`, `script-tests`, `graph-check`, `rust`, `simulator golden`,
+`test-build`, `component-snapshots --skip-build`, `loopback-smoke` and
+`unit --skip-build`. The simulator boots while `test-build` compiles the app
+and every unit and component suite once, for any simulator, and the gate
+waits for both before the suites run what was built. `mobile-check` is left
+to the iOS target check, which runs it on every push. None of it compares a
+photograph of the whole display, so it answers the same on any machine. The
+component snapshot batch runs under its own bound, sized by the rule above
+from a clean CI run: 144 s with only the examples marked to settle late
+waiting, so 300 s, and 307 s when every one of the 230 pictures waits a
+quiet second (`--settle-all`, the nightly captures run and every
+recording), so 500 s. The job uploads the component snapshot
+comparisons and the shipped-scope audit directory to the run, whether it
+passed or not.
 
 `just ios verify` is the whole sequence a developer runs before pushing a
 phone change: the workspace's `fmt-check`, `lint`, `test` and `spec`, then the

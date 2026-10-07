@@ -21,7 +21,7 @@ class ComponentSnapshotRecipeTests(unittest.TestCase):
         completed = SimpleNamespace(
             returncode=0,
             stdout=("AMUX_SNAPSHOT_CONFIGURATION selected=composer.draft "
-                    "record=1 perturb=0 review=0 host=1\n"),
+                    "record=1 perturb=0 review=0 settle-all=1 host=1\n"),
         )
         with patch.object(recipe.shutil, "rmtree"), \
                 patch.object(recipe.Path, "mkdir"), \
@@ -98,12 +98,13 @@ class ComponentSnapshotRecipeTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertTrue(options.skip_build)
         build.assert_not_called()
-        run.assert_called_once_with("simulator", ["controls.primary"], record=False, review=None)
+        run.assert_called_once_with(
+            "simulator", ["controls.primary"], record=False, review=None, settle_all=False)
 
     def test_review_captures_go_to_the_test_runner_and_compare_nothing(self):
         completed = SimpleNamespace(
             returncode=0,
-            stdout="AMUX_SNAPSHOT_CONFIGURATION selected=all record=0 perturb=0 review=1 host=1\n",
+            stdout="AMUX_SNAPSHOT_CONFIGURATION selected=all record=0 perturb=0 review=1 settle-all=0 host=1\n",
         )
         with patch.object(recipe.shutil, "rmtree"), \
                 patch.object(recipe.Path, "mkdir"), \
@@ -120,6 +121,29 @@ class ComponentSnapshotRecipeTests(unittest.TestCase):
             if call.args[0][0:2] == ["xcodebuild", "test-without-building"]
         )
         self.assertEqual(invocation.kwargs["timeout"], recipe.REVIEW_BOUND)
+
+    def test_settling_all_is_forwarded_and_must_be_echoed(self):
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="AMUX_SNAPSHOT_CONFIGURATION selected=all record=0 perturb=0 review=0 settle-all=1 host=1\n",
+        )
+        with patch.object(recipe.shutil, "rmtree"), \
+                patch.object(recipe.Path, "mkdir"), \
+                patch.object(recipe.subprocess, "run", return_value=completed) as process:
+            result = recipe.run("simulator", [], settle_all=True)
+        self.assertEqual(result.returncode, 0)
+        setenv = [call.args[0] for call in process.call_args_list if "setenv" in call.args[0]]
+        settling = next(call for call in setenv if "AMUX_SNAPSHOT_SETTLE_ALL" in call)
+        self.assertEqual(settling[-1], "1")
+        invocation = next(
+            call for call in process.call_args_list
+            if call.args[0][0:2] == ["xcodebuild", "test-without-building"]
+        )
+        self.assertEqual(invocation.kwargs["timeout"], recipe.SETTLED_BOUND)
+        with patch.object(recipe.shutil, "rmtree"), \
+                patch.object(recipe.Path, "mkdir"), \
+                patch.object(recipe.subprocess, "run", return_value=completed):
+            self.assertEqual(recipe.run("simulator", []).returncode, 2)
 
     def test_review_takes_neither_recording_nor_a_negative_control(self):
         for extra in ("--record", "--negative-control"):

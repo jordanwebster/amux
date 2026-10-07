@@ -2,7 +2,9 @@
 """Generate the Xcode project and build the app for the simulator.
 
 `--configuration Measured` builds the optimised app the performance suite
-drives; the default is the Debug app every other recipe drives.
+drives; the default is the Debug app every other recipe drives. `--tests`
+builds the Debug app together with every suite `ios unit` and
+`ios component-snapshots` run, so both can run with `--skip-build`.
 """
 
 from pathlib import Path
@@ -16,15 +18,13 @@ import ios_project
 DERIVED_DATA = Path("target/ios/DerivedData")
 
 
-def build(configuration: str) -> None:
+def build(configuration: str, tests: bool = False) -> None:
     subprocess.run([
-        "xcodebuild", "build",
+        "xcodebuild", "build-for-testing" if tests else "build",
         "-project", "apps/apple/Amux.xcodeproj",
-        "-scheme", "Amux",
+        "-scheme", "AmuxTests" if tests else "Amux",
         "-configuration", configuration,
-        # Any simulator: a build needs no device, so it holds no lease and
-        # never waits for one.
-        "-destination", "generic/platform=iOS Simulator",
+        *ios_project.SIMULATOR_BUILD,
         "-derivedDataPath", str(DERIVED_DATA),
         "-quiet",
     ], check=True, timeout=1500)
@@ -37,9 +37,12 @@ def application(configuration: str) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--configuration", choices=["Debug", "Measured"], default="Debug")
+    parser.add_argument("--tests", action="store_true")
     arguments = parser.parse_args()
+    if arguments.tests and arguments.configuration != "Debug":
+        parser.error("--tests builds the Debug suites only")
     ios_project.generate()
-    build(arguments.configuration)
+    build(arguments.configuration, tests=arguments.tests)
     built = application(arguments.configuration)
     if not built.is_dir():
         raise RuntimeError(f"{built} was not produced")
