@@ -942,6 +942,37 @@ final class ChatModelTests: XCTestCase {
         XCTAssertNil(model.questionDraft(onAsk: "ask:1"), "gone for good once closed")
     }
 
+    func testAFormsValuesStayUntilItsAskCloses() async {
+        func card(_ key: String) -> AskCard {
+            AskCard(
+                kind: .claudeSdk, key: key, itemKey: "", position: 1, count: 1,
+                body: .form(server: "linear", message: "File an issue", schemaJson: "{}"),
+                choices: [], questionNote: false, questionSkip: false, questionReply: false,
+                stopsTurn: true, state: .open)
+        }
+        let source = FakeChat(rows: [row("a", 1)], frame: frame())
+        source.card = card("ask:1")
+        let model = ChatModel(source: source)
+        await settle()
+        let typed = ["title": "Fleet rows lose their branch", "team": "FOX"]
+        model.keep(form: typed, onAsk: "ask:1")
+        model.keep(form: typed, onAsk: "ask:2")
+        XCTAssertEqual(model.formDraft(onAsk: "ask:1"), typed)
+        XCTAssertNil(model.formDraft(onAsk: "ask:2"), "only the head ask keeps values")
+
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertEqual(model.formDraft(onAsk: "ask:1"), typed, "the ask is still open")
+
+        source.card = card("ask:2")
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertNil(model.formDraft(onAsk: "ask:1"), "the ask closed")
+        XCTAssertNil(model.formDraft(onAsk: "ask:2"), "a new form starts empty")
+    }
+
     private func git(uncommitted: ChangeTotals?, onBranch: ChangeTotals?, base: String? = "main") -> GitView {
         GitView(baseBranch: base, branch: "fix", onBranch: onBranch, uncommitted: uncommitted)
     }

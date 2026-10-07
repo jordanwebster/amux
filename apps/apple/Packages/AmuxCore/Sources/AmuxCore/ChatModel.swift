@@ -138,6 +138,9 @@ public final class ChatModel {
     /// not sent, kept like the draft so leaving the chat loses none of it,
     /// until that ask closes.
     @ObservationIgnored private var questionKept: (ask: String, draft: QuestionDraft)?
+    /// What the person typed into the head ask's tool server form and has
+    /// not submitted, by field name, kept the same way.
+    @ObservationIgnored private var formKept: (ask: String, values: [String: String])?
     /// The tasks, background jobs, failed tool servers and usage near a
     /// limit around the chat.
     public private(set) var overview: Overview?
@@ -415,6 +418,7 @@ public final class ChatModel {
         let ask = source.askCard()
         if self.ask != ask { self.ask = ask }
         if let kept = questionKept?.ask, kept != ask?.key { questionKept = nil }
+        if let kept = formKept?.ask, kept != ask?.key { formKept = nil }
         let overview = source.overview()
         if self.overview != overview { self.overview = overview }
         let settings = source.settings()
@@ -563,6 +567,17 @@ public final class ChatModel {
     /// The progress kept on this ask's question card, if any.
     public func questionDraft(onAsk key: String) -> QuestionDraft? {
         questionKept?.ask == key ? questionKept?.draft : nil
+    }
+
+    /// Keeps the tool server form's values, by field name, on the head ask.
+    public func keep(form values: [String: String], onAsk key: String) {
+        guard ask?.key == key else { return }
+        formKept = (key, values)
+    }
+
+    /// The values kept on this ask's form, if any.
+    public func formDraft(onAsk key: String) -> [String: String]? {
+        formKept?.ask == key ? formKept?.values : nil
     }
 
     /// Sending waits for the rows to be current and the agent live; the draft

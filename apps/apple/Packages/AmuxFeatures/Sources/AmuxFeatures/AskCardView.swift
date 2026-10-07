@@ -52,6 +52,21 @@ public struct QuestionKeeping: Sendable {
     public static let none = QuestionKeeping(kept: nil) { _ in }
 }
 
+/// Where a tool server's form keeps what was typed: the values it was left
+/// at by field name, and where each change goes.
+public struct FormKeeping: Sendable {
+    let kept: [String: String]?
+    let keep: @MainActor @Sendable ([String: String]) -> Void
+
+    public init(kept: [String: String]?, keep: @escaping @MainActor @Sendable ([String: String]) -> Void) {
+        self.kept = kept
+        self.keep = keep
+    }
+
+    /// Kept only while the card is on screen.
+    public static let none = FormKeeping(kept: nil) { _ in }
+}
+
 /// The head ask, docked where the composer was. Every kind fills one
 /// anatomy: the head (an accent mark with the kind's glyph, what it wants,
 /// "1 of 3", and the ⋯ menu that always carries Stop), the subject verbatim
@@ -62,17 +77,20 @@ public struct AskCardView: View {
     let card: AskCard
     let preset: AskPreset?
     let questions: QuestionKeeping
+    let form: FormKeeping
     let act: (AskAction) -> Void
 
-    /// `questions` holds a question card's progress somewhere that outlives
-    /// the card, so leaving the chat and coming back finds it as it was.
+    /// `questions` and `form` hold a question card's progress and a form's
+    /// values somewhere that outlives the card, so leaving the chat and
+    /// coming back finds it as it was.
     public init(
         card: AskCard, preset: AskPreset? = nil, questions: QuestionKeeping = .none,
-        act: @escaping (AskAction) -> Void
+        form: FormKeeping = .none, act: @escaping (AskAction) -> Void
     ) {
         self.card = card
         self.preset = preset
         self.questions = questions
+        self.form = form
         self.act = act
     }
 
@@ -96,7 +114,7 @@ public struct AskCardView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     head
                     stateLine
-                    if showsBody { AskBodyView(card: card, preset: preset, questions: questions, act: act) }
+                    if showsBody { AskBodyView(card: card, preset: preset, questions: questions, form: form, act: act) }
                 }
                 .padding(16)
             }
@@ -332,6 +350,7 @@ private struct AskBodyView: View {
     let card: AskCard
     let preset: AskPreset?
     let questions: QuestionKeeping
+    let form: FormKeeping
     let act: (AskAction) -> Void
     /// The deny step is open, with the note it takes.
     @State private var noting: Bool
@@ -342,10 +361,14 @@ private struct AskBodyView: View {
     @State private var opened = false
     @State private var fields: [FormField]?
 
-    init(card: AskCard, preset: AskPreset?, questions: QuestionKeeping, act: @escaping (AskAction) -> Void) {
+    init(
+        card: AskCard, preset: AskPreset?, questions: QuestionKeeping, form: FormKeeping,
+        act: @escaping (AskAction) -> Void
+    ) {
         self.card = card
         self.preset = preset
         self.questions = questions
+        self.form = form
         self.act = act
         if case .noting? = preset { _noting = State(initialValue: true) } else { _noting = State(initialValue: false) }
         _autoAccept = State(initialValue: preset == .autoAccept)
@@ -609,16 +632,17 @@ private struct AskBodyView: View {
     /// Native fields from the tool server's schema; required ones gate Submit.
     @ViewBuilder
     private func formChoices(_ schema: String) -> some View {
-        let current = fields ?? FormField.parse(schema)
+        let current = fields ?? FormField.parse(schema, kept: form.kept)
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(current.enumerated()), id: \.offset) { index, field in
                 FormFieldView(field: field) { value in
                     // From the form as it is now: a control can hold on to
                     // this closure from an earlier drawing (a menu's
                     // choices), and the copy drawn then lacks later answers.
-                    var edited = fields ?? FormField.parse(schema)
+                    var edited = fields ?? FormField.parse(schema, kept: form.kept)
                     edited[index].value = value
                     fields = edited
+                    form.keep(FormField.values(edited))
                 }
             }
             ButtonPair {
@@ -844,6 +868,20 @@ struct FormField: Equatable {
                 name: name, title: property["title"] as? String ?? name,
                 required: required.contains(name), kind: kind, value: value)
         }
+    }
+
+    /// The schema's fields holding the values kept from an earlier drawing.
+    static func parse(_ schema: String, kept: [String: String]?) -> [FormField] {
+        var fields = parse(schema)
+        for index in fields.indices {
+            if let value = kept?[fields[index].name] { fields[index].value = value }
+        }
+        return fields
+    }
+
+    /// The values by field name, as a form keeps them.
+    static func values(_ fields: [FormField]) -> [String: String] {
+        Dictionary(fields.map { ($0.name, $0.value) }, uniquingKeysWith: { _, last in last })
     }
 
     var json: Any? {

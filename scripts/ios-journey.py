@@ -616,12 +616,14 @@ def tool_server_asks(journey: PhoneJourney) -> list[str]:
     journey.choose(FORM["team"])
     journey.wait(lambda drawn: drawn.get("ask.field.team", {}).get("value") == FORM["team"], "the team picked")
     journey.type("ask.field.estimate", str(FORM["estimate"]))
-    # What goes is what the form shows.
-    journey.wait(
-        lambda drawn: drawn.get("ask.submit", {}).get("enabled") is True
-        and all(drawn.get(f"ask.field.{name}", {}).get("value") == str(value) for name, value in FORM.items()),
-        "the form filled and ready to submit",
+    filled = lambda drawn: drawn.get("ask.submit", {}).get("enabled") is True and all(
+        drawn.get(f"ask.field.{name}", {}).get("value") == str(value) for name, value in FORM.items()
     )
+    journey.wait(filled, "the form filled and ready to submit")
+    # Leaving the chat mid-form and coming back finds what was typed.
+    reopen_card(journey, filer, filled)
+    journey.screen("form-kept")
+    # What goes is what the form shows.
     journey.tap("ask.submit")
     filed = "Filed it in Linear."
     journey.wait(lambda drawn: "ask" not in drawn and labelled(drawn, filed), "the filed reply")
@@ -653,6 +655,7 @@ def tool_server_asks(journey: PhoneJourney) -> list[str]:
     journey.screen("link-done", volatile=("chat.row.turn-end",))
     return [
         "the form asked for title, team and estimate in the server's order and showed the answers before they went",
+        "leaving the chat mid-form and coming back found the values typed",
         f"Claude received the form accepted with {FORM!r}",
         control,
         "Codex's ask to run the server's tool was allowed, then the link showed its message and address",

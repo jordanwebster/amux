@@ -1,3 +1,13 @@
+2026-10-07 — **The phone keeps what was typed into a tool server's form.**
+A question card's picks and note were kept on the chat and survived leaving
+it, but a tool server's form held its values in the card itself, so going
+back to the fleet and returning while the form still stood emptied it. The
+chat now keeps the form's values by field name on the head ask, the same
+way and for as long as a question card's progress: until that ask closes,
+so the next form starts as its server wrote it. The tool-server-asks phone
+story leaves the chat mid-form, comes back, and photographs the values
+still there before submitting them.
+
 2026-10-07 — **A late older catalogue no longer blanks a chat's controls.**
 The chat state kept whichever catalogue a fetch returned last, and shows
 models, permissions and modes only from the one the newest snapshot names,

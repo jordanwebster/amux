@@ -256,6 +256,23 @@ final class ChatWordsTests: XCTestCase {
         XCTAssertEqual(FormField.content(filled), #"{"assign":true,"count":3,"repo":"jlw\/amux"}"#)
     }
 
+    func testAFormDrawnAgainRestoresTheValuesItKept() {
+        let schema = """
+            {"required":["repo"],"properties":{"repo":{"type":"string"},
+            "count":{"type":"integer"},"assign":{"type":"boolean","default":true}}}
+            """
+        var typed = FormField.parse(schema)
+        typed[0].value = "jlw/amux"
+        typed[2].value = "false"
+        let kept = FormField.values(typed)
+        XCTAssertEqual(kept, ["repo": "jlw/amux", "count": "", "assign": "false"])
+        XCTAssertEqual(FormField.parse(schema, kept: kept), typed, "drawn again, it holds what was typed")
+        XCTAssertEqual(FormField.parse(schema, kept: nil), FormField.parse(schema), "a new form starts as written")
+        XCTAssertEqual(
+            FormField.parse(schema, kept: ["repo": "jlw/amux", "gone": "x"]).map(\.value), ["jlw/amux", "", "true"],
+            "a kept name the schema lacks is ignored, and a field never typed keeps its default")
+    }
+
     func testFormFieldsKeepTheServersOrderPastNestedTitles() {
         let schema = #"""
             {"type":"object","properties":{"team":{"type":"string","title":"Team","enum":["FOX","CORE"]},

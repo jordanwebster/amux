@@ -470,6 +470,13 @@ public struct ChatStanding: View {
         }
     }
 
+    /// So are a tool server form's values.
+    private func formKeeping(_ ask: AskCard) -> FormKeeping {
+        FormKeeping(kept: model.formDraft(onAsk: ask.key)) { [model] in
+            model.keep(form: $0, onAsk: ask.key)
+        }
+    }
+
     @ViewBuilder
     private var standing: some View {
         VStack(spacing: 8) {
@@ -512,9 +519,9 @@ public struct ChatStanding: View {
                 composerStack
             case nil:
                 if let ask = model.ask, ask.state != .dismissed {
-                    AskCardView(card: ask, questions: keeping(ask), act: answer)
+                    AskCardView(card: ask, questions: keeping(ask), form: formKeeping(ask), act: answer)
                 } else {
-                    if let ask = model.ask { AskCardView(card: ask, questions: keeping(ask), act: answer) }
+                    if let ask = model.ask { AskCardView(card: ask, questions: keeping(ask), form: formKeeping(ask), act: answer) }
                     composerStack
                 }
             }
