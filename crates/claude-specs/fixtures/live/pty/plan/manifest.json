@@ -4,8 +4,8 @@
   "recorded": {
     "provider": "claude",
     "version": "2.1.292",
-    "model": "claude-sonnet-5-5",
-    "at": "2026-10-07T04:02:10.247460Z",
+    "model": "claude-haiku-4-5-20251001",
+    "at": "2026-10-07T04:36:02.295459Z",
     "source_kind": "live_capture"
   },
   "verified": [],
@@ -480,6 +480,10 @@
     "2da8f4f8-4e93-43a3-940e-9dac12a3411f"
   ],
   "provider_extra": {
-    "driven_by": "amux's interpreter, in the live qualification lane"
+    "driven_by": "amux's interpreter, in the live qualification lane",
+    "models": [
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-5-5"
+    ]
   }
 }

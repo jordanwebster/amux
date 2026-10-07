@@ -853,6 +853,11 @@ fn join(capture: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
         "driven_by".to_owned(),
         "amux's interpreter, in the live qualification lane".into(),
     );
+    if facts.models.len() > 1 {
+        manifest
+            .provider_extra
+            .insert("models".to_owned(), facts.models.clone().into());
+    }
     write_manifest(&stage.join("manifest.json"), &manifest)?;
     load_recording(&stage)?;
 
@@ -893,6 +898,8 @@ fn live_scratch(spawns: &[serde_json::Value]) -> Vec<PathBuf> {
 struct CapturedFacts {
     version: Version,
     model: String,
+    /// Every model the capture shows.
+    models: Vec<String>,
     session_ids: Vec<String>,
 }
 
@@ -903,7 +910,7 @@ fn captured_facts(
     pty: bool,
 ) -> Result<CapturedFacts, Box<dyn std::error::Error>> {
     let mut version = None;
-    let mut model = None;
+    let mut models = BTreeMap::<String, usize>::new();
     let mut session_ids = Vec::<String>::new();
     for event in events {
         if event.direction != replay_support::IoDirection::Read {
@@ -934,18 +941,26 @@ fn captured_facts(
         };
         version = version.or(found_version.map(str::to_owned));
         // Claude marks rows it wrote itself with a synthetic model.
-        model = model.or(found_model
-            .filter(|m| !m.starts_with('<'))
-            .map(str::to_owned));
+        if let Some(found) = found_model.filter(|m| !m.starts_with('<')) {
+            *models.entry(found.to_owned()).or_insert(0) += 1;
+        }
         if let Some(session) = session
             && !session_ids.iter().any(|known| known == session)
         {
             session_ids.push(session.to_owned());
         }
     }
+    // The session's own model is the one most rows show; Claude may plan on
+    // another.
+    let model = models
+        .iter()
+        .max_by_key(|(_, rows)| **rows)
+        .map(|(model, _)| model.clone())
+        .ok_or("the capture shows no model")?;
     Ok(CapturedFacts {
         version: Version::parse(&version.ok_or("the capture shows no Claude version")?)?,
-        model: model.ok_or("the capture shows no model")?,
+        model,
+        models: models.into_keys().collect(),
         session_ids,
     })
 }
