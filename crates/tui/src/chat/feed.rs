@@ -109,6 +109,14 @@ impl Drawn {
     }
 }
 
+/// "1 line", "12 lines".
+pub(crate) fn lines_words(lines: u32) -> String {
+    match lines {
+        1 => "1 line".to_owned(),
+        n => format!("{n} lines"),
+    }
+}
+
 /// "3 commands · 2 edits · 4 reads".
 pub fn counts_words(counts: &RunCounts, steps: u32, open_below: bool) -> String {
     let plus = if open_below { "+" } else { "" };
@@ -125,7 +133,10 @@ pub fn counts_words(counts: &RunCounts, steps: u32, open_below: bool) -> String 
     part(counts.subagents, "subagent", "subagents");
     part(counts.other, "call", "calls");
     if parts.is_empty() {
-        parts.push(format!("{steps}{plus} steps"));
+        parts.push(format!(
+            "{steps}{plus} {}",
+            if steps == 1 { "step" } else { "steps" }
+        ));
     }
     parts.join(" · ")
 }
@@ -1050,7 +1061,7 @@ fn step_words(row: &Row) -> (String, String, String) {
                 .map(|f| match &f.change {
                     FileChangeView::Edited => format!("+{} −{}", f.added, f.removed),
                     FileChangeView::Created { lines } | FileChangeView::Writing { lines } => {
-                        format!("{lines} lines")
+                        lines_words(*lines)
                     }
                     FileChangeView::Moved { to } => format!("→ {to}"),
                     FileChangeView::Deleted => String::new(),
@@ -1257,8 +1268,10 @@ fn step(
             push(&mut more, file.path.clone(), theme.muted(), width);
             let detail = match &file.change {
                 FileChangeView::Edited => format!(" · +{} −{}", file.added, file.removed),
-                FileChangeView::Created { lines } => format!(" · created · {lines} lines"),
-                FileChangeView::Writing { lines } => format!(" · {lines} lines"),
+                FileChangeView::Created { lines } => {
+                    format!(" · created · {}", lines_words(*lines))
+                }
+                FileChangeView::Writing { lines } => format!(" · {}", lines_words(*lines)),
                 FileChangeView::Moved { to } => format!(" → {to}"),
                 FileChangeView::Deleted => " · deleted".to_owned(),
             };

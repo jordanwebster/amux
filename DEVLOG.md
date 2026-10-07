@@ -1,3 +1,38 @@
+2026-10-08 — **Settings, model names and the new-agent pickers come from the view, typed.**
+Each client worked out parts of an agent's settings for itself. The running
+model's name: the terminal preferred the interpreter's name, the phone
+never received it and showed the raw id, so terminal Claude read
+"claude-sonnet-5" on the phone and an alias could read differently on each
+side. Whether a setting could change: the settings view carried English
+sentences, and each client guessed changeability from them and from the
+agent's kind. The model chip: the phone showed the effort or else the
+current permission, normal or not; the terminal showed the model, effort and
+only an unusual permission or mode. And a new agent's pickers: no view built
+them, so both clients filtered the host's catalogue themselves, each with
+its own copy of which permissions a model takes and its own rule for what a
+model change does. The settings view now names every choice (no empty
+display name to fall back from; the running model by the interpreter's
+name), marks Codex's unnamed settings `custom`, and carries a typed
+`Changeable` per setting (a pick, the agent's own cycle, typing its own
+named command, or not offered) instead of sentences. `controls(state)`
+hands both clients one `ControlsSummary`: the model's name, the effort in
+force, and the permission and mode only while they are not the normal ones.
+`new_agent_settings` builds a new agent's pickers from a host's catalogue in
+the same choice types, and `new_agent_pick` applies a pick: another model
+starts at its own default effort and gives up a permission it does not take
+for the normal one, picking the normal mode leaves the mode unchosen, and a
+chosen value the host does not list stays listed. The phone reaches both
+through two new bridge calls; both clients' copies are gone. Noticeable: the
+phone names the running model as the terminal does ("Fake 1", "Sonnet 5");
+its chip reads "model · effort", then an unusual permission (red when it
+acts without asking) and mode, and no longer names the normal permission;
+the terminal's Ctrl+S says an effort or model the agent has not offered
+rather than opening a one-item list; in a new agent, changing a Claude model
+leaves the effort to the model (Claude names no default), a Codex model
+starts at its default effort, a permission the model does not take goes
+back to the normal one, and a model the host does not offer is listed last;
+counts of one read "1 line" (and "1 step" in the terminal) on both clients.
+
 2026-10-07 — **The chat's judgements come from the view, typed.**
 Four things in a chat were worked out by each client on its own, from text,
 and the two disagreed. A plan's title: the terminal lifted only a `#`

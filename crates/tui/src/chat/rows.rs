@@ -230,7 +230,9 @@ pub fn chip(view: &AttachmentView) -> String {
         AttachmentView::Image(blob) | AttachmentView::File(blob) => {
             format!("[{} · {}]", blob.name, text::bytes(blob.size))
         }
-        AttachmentView::Text { name, lines, .. } => format!("[{name} · {lines} lines]"),
+        AttachmentView::Text { name, lines, .. } => {
+            format!("[{name} · {}]", super::feed::lines_words(*lines))
+        }
         AttachmentView::Review { comments, .. } => match comments {
             1 => "[review · 1 comment]".into(),
             n => format!("[review · {n} comments]"),

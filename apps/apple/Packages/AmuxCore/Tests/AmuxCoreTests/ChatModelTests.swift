@@ -221,9 +221,9 @@ private func frame(
 ) -> ChatFrame {
     ChatFrame(
         agent: AgentKey(host: [1], agent: [2]), name: "a", kind: kind, phase: phase,
-        composer: ComposerView(mode: mode, activity: nil), connection: .live, caughtUp: caughtUp,
-        hasOlder: hasOlder, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
-        model: nil, permission: nil, signIn: nil, waiting: nil)
+        composer: ComposerView(mode: mode, activity: nil), controls: ControlsSummary(effort: nil, mode: nil, model: nil, permission: nil), connection: .live, caughtUp: caughtUp,
+        hasOlder: hasOlder, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil, context: nil, ended: nil, git: nil,
+        signIn: nil, waiting: nil)
 }
 
 /// Prose rows "m<first>" through "m<last>", in order.
@@ -718,34 +718,35 @@ final class ChatModelTests: XCTestCase {
             let models = ["opus", "sonnet"].map { value in
                 ModelChoice(
                     value: value, displayName: value, description: "", efforts: [],
-                    current: value == current, reported: false, defaultEffort: nil)
+                    current: value == current, unlisted: false, defaultEffort: nil)
             }
             return SettingsView(
-                models: models, efforts: [], permissions: [], modes: [], cyclePermission: false, commands: [],
-                changeByTyping: nil, effortRefusal: nil, modelRefusal: nil, permissionRefusal: nil)
+                models: models, efforts: [], permissions: [], modes: [],
+                changeable: Changeability(model: .pick, effort: .notOffered, permission: .notOffered, mode: .notOffered),
+                commands: [])
         }
         let source = FakeChat(rows: [], frame: frame())
         source.offered = offer(current: "opus")
-        source.current.model = "opus"
+        source.current.controls.model = "opus"
         let model = ChatModel(source: source)
         model.change(.model("sonnet"))
         await settle()
         XCTAssertEqual(source.changed, [.model("sonnet")])
         XCTAssertEqual(model.settings?.models.first { $0.current }?.value, "opus", "not before the agent says so")
-        XCTAssertEqual(model.frame?.model, "opus")
+        XCTAssertEqual(model.frame?.controls.model, "opus")
         source.offered = offer(current: "sonnet")
-        source.current.model = "sonnet"
+        source.current.controls.model = "sonnet"
         source.pending.session = true
         model.woke()
         XCTAssertEqual(model.settings?.models.first { $0.current }?.value, "sonnet")
-        XCTAssertEqual(model.frame?.model, "sonnet")
+        XCTAssertEqual(model.frame?.controls.model, "sonnet")
     }
 
     private func offering(_ names: [String]) -> SettingsView {
         SettingsView(
-            models: [], efforts: [], permissions: [], modes: [], cyclePermission: false,
-            commands: names.map { CommandView(name: $0, description: "", argumentHint: "", source: "") },
-            changeByTyping: nil, effortRefusal: nil, modelRefusal: nil, permissionRefusal: nil)
+            models: [], efforts: [], permissions: [], modes: [], changeable: Changeability(
+                model: .notOffered, effort: .notOffered, permission: .notOffered, mode: .notOffered),
+            commands: names.map { CommandView(name: $0, description: "", argumentHint: "", source: "") })
     }
 
     func testALeadingSlashWordListsUpToFiveMatchingCommandsAndAPickFillsTheDraft() {

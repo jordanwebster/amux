@@ -475,11 +475,12 @@ async fn a_settings_pick_reaches_the_agent_and_the_frame_shows_it() {
     assert!(
         view.models
             .iter()
-            .any(|model| model.current && !model.reported),
+            .any(|model| model.current && !model.unlisted),
         "the offered model is marked current: {view:?}"
     );
-    assert!(
-        view.effort_refusal.is_none(),
+    assert_eq!(
+        view.changeable.effort,
+        ui_view::Changeable::Pick,
         "headless Claude takes an effort pick"
     );
     let plan = view
@@ -491,7 +492,10 @@ async fn a_settings_pick_reaches_the_agent_and_the_frame_shows_it() {
     let pick = SettingChange::Permission(plan.value.clone());
     assert_eq!(chat.change_setting(&pick).await, ActOutcome::Done);
     until(&mut host, &chat, "the plan permission", |chat| {
-        chat.frame().permission.as_deref() == Some("plan")
+        chat.frame()
+            .controls
+            .permission
+            .is_some_and(|permission| permission.value == "plan")
     })
     .await;
     assert!(chat.settings().permissions.iter().any(|permission| {

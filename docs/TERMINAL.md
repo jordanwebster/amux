@@ -85,7 +85,8 @@ chats with their agents, the installation's `ui.chat_in`:
   the folder and the host. `ctrl+s` then a letter opens one in a small panel rising from its place on the edge: `n`
   name, `m` model, `e` effort, `p` permission, `d` folder, `h` host, `a` agent (Claude or Codex); clicking an item
   does the same. The models, efforts, permissions and modes are what the chosen host says that agent offers there,
-  asked of the host before any agent runs on it; until it answers a model can be typed by name. A provider the host
+  asked of the host before any agent runs on it; until it answers a model can be typed by name. Another model starts
+  at its own default effort, and a permission it does not take gives way to the normal one. A provider the host
   says is signed out reads `Codex (not signed in)`. Long lists filter as you type; the folder's panel lists that
   host's recent folders and takes a typed path; hosts that are away cannot be picked. Shift+Tab steps Codex's mode,
   or Claude's permissions that still ask, as in a chat. Claude runs headless here, Codex on its app server.
@@ -272,8 +273,8 @@ changes a running agent's model, effort or permission where it lets a client cha
 (terminal Claude's model and effort change by typing its own `/model` or `/effort`, its permission only by
 cycling); each model in the list carries the agent's own line on it, which says what an alias such as Claude's
 Default stands for. The composer's edge names the permission and the mode when they are not the agent's normal
-ones, and Codex settings that match no named permission read custom. The phone's settings sheet offers every
-model, effort, permission and mode the agent offers.
+ones, and Codex settings that match no named permission read custom; the phone's model chip says the same. The
+phone's settings sheet offers every model, effort, permission and mode the agent offers.
 
 The terminal's appearance, its leader key and how new agents start come from the installation config file
 (`~/.config/amux/config.yaml` unless `--config` or `AMUX_CONFIG` names another), read by

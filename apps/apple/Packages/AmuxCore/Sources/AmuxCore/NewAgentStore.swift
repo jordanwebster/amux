@@ -69,10 +69,11 @@ public final class NewAgentStore {
     public private(set) var offers: [Provider: Offer] = [:]
     /// The chosen model, effort, permission and mode, by their values in
     /// the host's catalogue; nil leaves each to the host.
-    public private(set) var model: String?
-    public private(set) var effort: String?
-    public private(set) var permission: String?
-    public private(set) var mode: String?
+    public private(set) var chosen = NewAgentChoices(effort: nil, mode: nil, model: nil, permission: nil)
+    public var model: String? { chosen.model }
+    public var effort: String? { chosen.effort }
+    public var permission: String? { chosen.permission }
+    public var mode: String? { chosen.mode }
     /// Start it in a worktree of its own, made from the folder's repository.
     public var newWorktree = false
     public private(set) var typedName: String?
@@ -198,10 +199,7 @@ public final class NewAgentStore {
     }
 
     private func startAfresh() {
-        model = nil
-        effort = nil
-        permission = nil
-        mode = nil
+        chosen = NewAgentChoices(effort: nil, mode: nil, model: nil, permission: nil)
     }
 
     // MARK: - What the host offers
@@ -231,46 +229,21 @@ public final class NewAgentStore {
         return nil
     }
 
-    /// The chosen model as the catalogue offers it: by value, else by the
-    /// id an alias stands for.
-    public var offeredModel: OfferedModel? {
-        guard let model, let models = catalogue?.models else { return nil }
-        return models.first { $0.value == model } ?? models.first { $0.resolvedModel == model }
+    /// What the chosen provider offers on the chosen host, with each choice
+    /// marked, as the shared settings view builds it; nil until the host
+    /// says.
+    public var settings: SettingsView? {
+        guard let catalogue else { return nil }
+        return Bridge.newAgentSettings(catalogue, chosen)
     }
 
-    /// The efforts the chosen model takes, in the provider's order.
-    public var offeredEfforts: [String] { offeredModel?.efforts ?? [] }
-
-    /// The permissions a new agent can start with: settable, and taken by
-    /// the chosen model when they name models.
-    public var offeredPermissions: [OfferedPermission] {
-        let model = offeredModel?.value
-        return (catalogue?.permissions ?? []).filter { permission in
-            permission.settable
-                && (permission.models.isEmpty || model.map(permission.models.contains) == true)
-        }
+    /// Takes a pick. The shared view applies it, with the rules it carries:
+    /// another model starts at its own default effort, and a permission it
+    /// does not take gives way to the normal one.
+    public func choose(_ pick: NewAgentPick) {
+        let offered = catalogue ?? Catalogue(hash: [], models: [], commands: [], permissions: [], modes: [])
+        if let next = Bridge.newAgentPick(offered, chosen, pick) { chosen = next }
     }
-
-    /// The modes it can start in; only Codex offers any.
-    public var offeredModes: [OfferedMode] {
-        (catalogue?.modes ?? []).filter(\.settable)
-    }
-
-    /// Picks a model. An effort the new model does not take gives way to
-    /// its default, and a permission it does not take to the host's.
-    public func choose(model value: String?) {
-        model = value
-        if let efforts = offeredModel?.efforts, let chosen = effort, !efforts.contains(chosen) {
-            effort = nil
-        }
-        if let chosen = permission, !offeredPermissions.contains(where: { $0.value == chosen }) {
-            permission = nil
-        }
-    }
-
-    public func choose(effort value: String?) { effort = value }
-    public func choose(permission value: String?) { permission = value }
-    public func choose(mode value: String?) { mode = value }
 
     /// What the chooser shows for the search typed so far.
     public var found: [Directory] {

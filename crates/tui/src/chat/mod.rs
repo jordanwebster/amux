@@ -29,8 +29,8 @@ use ui_state::{
 };
 pub use ui_view::Comparison;
 use ui_view::{
-    AskBody, AskCard, Away, CardState, ChatOptions, ExitCause, FamilyHeader, Reach, RowKind,
-    ToolRows, ask_card, chat_rows_for, composer, overview, queue_rows,
+    AskBody, AskCard, Away, CardState, Changeable, ChatOptions, ExitCause, FamilyHeader, Reach,
+    RowKind, ToolRows, ask_card, chat_rows_for, composer, overview, queue_rows,
 };
 use wire::{Attachment, attachment};
 
@@ -697,11 +697,13 @@ impl ChatView {
             }
             KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => self.submit(state),
             KeyCode::Char('v') if ctrl => vec![ChatEffect::Paste],
-            KeyCode::BackTab if state.composer() == Composer::Send => next_control(state)
-                .and_then(|change| ui_view::setting_input(state.kind(), &change))
-                .map(ChatEffect::Answer)
-                .into_iter()
-                .collect(),
+            KeyCode::BackTab if state.composer() == Composer::Send => {
+                next_control(&ui_view::settings(state))
+                    .and_then(|change| ui_view::setting_input(state.kind(), &change))
+                    .map(ChatEffect::Answer)
+                    .into_iter()
+                    .collect()
+            }
             KeyCode::Up if self.editor.is_empty() && !self.queue_entries(state, "").is_empty() => {
                 self.tray = Some(self.queue_entries(state, "").len() - 1);
                 vec![]
@@ -823,97 +825,26 @@ impl ChatView {
             return Some(self.picked(state, pick));
         }
         if std::mem::take(&mut self.setting_prefix) {
-            let (model, effort, permission) = changeable(state);
             let view = ui_view::settings(state);
-            // A setting this agent can't change from here says why rather
-            // than doing nothing.
-            let why = |refusal: &Option<String>, what: &str| {
-                refusal
-                    .clone()
-                    .or_else(|| view.change_by_typing.clone())
-                    .unwrap_or_else(|| format!("the agent has not offered its {what} yet"))
+            let (setting, item, title) = match key.code {
+                KeyCode::Char('m') => (&view.changeable.model, Item::Model, "Model"),
+                KeyCode::Char('e') => (&view.changeable.effort, Item::Effort, "Effort"),
+                KeyCode::Char('p') => (&view.changeable.permission, Item::Permission, "Permission"),
+                _ => return Some(vec![]),
             };
-            match key.code {
-                KeyCode::Char('m') if !model => {
-                    return Some(vec![ChatEffect::Notice(why(&view.model_refusal, "models"))]);
-                }
-                KeyCode::Char('e') if !effort => {
-                    return Some(vec![ChatEffect::Notice(why(
-                        &view.effort_refusal,
-                        "efforts",
-                    ))]);
-                }
-                KeyCode::Char('p') if !permission => {
-                    return Some(vec![ChatEffect::Notice(
-                        view.permission_refusal.clone().unwrap_or_else(|| {
-                            "the agent has not offered its permissions yet".to_owned()
-                        }),
-                    )]);
-                }
-                KeyCode::Char('p') => {
-                    let choices = view
-                        .permissions
-                        .iter()
-                        .map(|permission| crate::setup::Choice {
-                            label: if permission.value.is_empty() {
-                                "custom".to_owned()
-                            } else {
-                                crate::words::named(&permission.display_name, &permission.value)
-                            },
-                            detail: if permission.never_asks {
-                                "acts without asking".into()
-                            } else if !permission.settable && !permission.reported {
-                                "not with this model".into()
-                            } else {
-                                String::new()
-                            },
-                            value: permission.value.clone(),
-                            current: permission.current,
-                            disabled: !permission.settable,
-                        })
-                        .collect();
-                    self.picker = Some(Picker::new(Item::Permission, "Permission", choices, false));
-                }
-                KeyCode::Char('m') if model => {
-                    let choices = view
-                        .models
-                        .iter()
-                        .map(|model| crate::setup::Choice {
-                            label: if model.display_name.is_empty() {
-                                model.value.clone()
-                            } else {
-                                model.display_name.clone()
-                            },
-                            // The provider's own line on it, which also
-                            // says what an alias such as Default stands for.
-                            detail: model.description.clone(),
-                            value: model.value.clone(),
-                            current: model.current,
-                            disabled: false,
-                        })
-                        .collect();
-                    self.picker = Some(Picker::new(Item::Model, "Model", choices, false));
-                }
-                KeyCode::Char('e') if effort => {
-                    let choices = view
-                        .efforts
-                        .iter()
-                        .map(|effort| crate::setup::Choice {
-                            label: effort.value.clone(),
-                            detail: if effort.default {
-                                "default".into()
-                            } else {
-                                String::new()
-                            },
-                            value: effort.value.clone(),
-                            current: effort.current,
-                            disabled: false,
-                        })
-                        .collect();
-                    self.picker = Some(Picker::new(Item::Effort, "Effort", choices, false));
-                }
-                _ => {}
+            if *setting != Changeable::Pick {
+                // A setting this agent can't change from here says why
+                // rather than doing nothing.
+                return Some(vec![ChatEffect::Notice(unchangeable_words(
+                    &view, setting, item,
+                ))]);
             }
+            let choices = match item {
+                Item::Model => crate::setup::model_choices(&view),
+                Item::Effort => crate::setup::effort_choices(&view),
+                _ => crate::setup::permission_choices(&view),
+            };
+            self.picker = Some(Picker::new(item, title, choices, false));
             return Some(vec![]);
         }
         if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -1746,7 +1677,7 @@ impl ChatView {
 
         let overview = self.overview(state);
         let sign_in = ui_view::sign_in(state);
-        let effort = ui_view::effort_in_force(state.agent_state());
+        let edge_words = EdgeWords::of(&ui_view::controls(state));
         let items = pane::Contents {
             overview: &overview,
             folded: &self.pane_folds,
@@ -1946,18 +1877,7 @@ impl ChatView {
                 Composer::Disabled(_) | Composer::Resume => format!("Message {name}"),
                 composer => placeholder(&composer, &name, &host, self.reach),
             };
-            let boxed = boxed_composer(
-                editor,
-                &invite,
-                &EdgeWords {
-                    model: crate::words::model_words(state),
-                    effort: effort.clone(),
-                    controls: crate::words::control_words(state),
-                },
-                !pane_keys,
-                width,
-                theme,
-            );
+            let boxed = boxed_composer(editor, &invite, &edge_words, !pane_keys, width, theme);
             if takes_keys {
                 *cursor = Some((bottom.len() + boxed.cursor.0, boxed.cursor.1));
             }
@@ -1988,17 +1908,8 @@ impl ChatView {
                 let inner = width.saturating_sub(2 * MARGIN + 4).max(1);
                 self.ask.set_room(usize::from(area.height), self.attach);
                 let drawn = self.ask.box_lines(card, inner, theme);
-                let (lines, mode, _) = framed(
-                    drawn.lines,
-                    theme.attention(),
-                    &EdgeWords {
-                        model: crate::words::model_words(state),
-                        effort: effort.clone(),
-                        controls: crate::words::control_words(state),
-                    },
-                    width,
-                    theme,
-                );
+                let (lines, mode, _) =
+                    framed(drawn.lines, theme.attention(), &edge_words, width, theme);
                 let at = bottom.len();
                 if let Some((row, col)) = drawn.cursor {
                     cursor = Some((at + 1 + row, MARGIN + 2 + col));
@@ -2042,17 +1953,7 @@ impl ChatView {
                 let body = sign_in.as_ref().map_or_else(Vec::new, |sign_in| {
                     sign_in_lines(state.kind(), &host, sign_in, inner, theme)
                 });
-                let (lines, mode, _) = framed(
-                    body,
-                    theme.attention(),
-                    &EdgeWords {
-                        model: crate::words::model_words(state),
-                        effort: effort.clone(),
-                        controls: crate::words::control_words(state),
-                    },
-                    width,
-                    theme,
-                );
+                let (lines, mode, _) = framed(body, theme.attention(), &edge_words, width, theme);
                 if let Some(cols) = mode {
                     ask_mode = Some((bottom.len() + lines.len() - 1, cols));
                 }
@@ -2083,20 +1984,19 @@ impl ChatView {
                 hint = Err(picker.hint());
                 cursor = None;
             } else if self.setting_prefix {
-                let (model, effort, permission) = changeable(state);
+                let view = ui_view::settings(state);
                 let mut pairs = Vec::new();
-                if model {
-                    pairs.push("m model");
-                }
-                if effort {
-                    pairs.push("e effort");
-                }
-                if permission {
-                    pairs.push("p permission");
+                for (setting, pair) in [
+                    (&view.changeable.model, "m model"),
+                    (&view.changeable.effort, "e effort"),
+                    (&view.changeable.permission, "p permission"),
+                ] {
+                    if *setting == Changeable::Pick {
+                        pairs.push(pair);
+                    }
                 }
                 hint = Err(if pairs.is_empty() {
-                    ui_view::settings(state)
-                        .change_by_typing
+                    crate::words::by_typing_words(&view.changeable.model, &view.changeable.effort)
                         .unwrap_or_else(|| "Nothing here can change from amux".to_owned())
                 } else {
                     pairs.push("esc back");
@@ -2751,25 +2651,31 @@ fn problem_words(
     }
 }
 
-/// While the agent works, one quiet line that it is, and for how long.
-/// What it is doing shows as live steps in the feed.
-/// Whether a running chat's model and effort can change from here: the
-/// agent offers them and takes the input.
-fn changeable(state: &SessionState) -> (bool, bool, bool) {
-    let view = ui_view::settings(state);
-    (
-        view.model_refusal.is_none()
-            && !view.models.is_empty()
-            && state.kind() != wire::Kind::ClaudePty,
-        view.effort_refusal.is_none()
-            && !view.efforts.is_empty()
-            && state.kind() != wire::Kind::ClaudePty,
-        view.permission_refusal.is_none()
-            && view
-                .permissions
-                .iter()
-                .any(|permission| permission.settable),
-    )
+/// Why a setting cannot change from here, as a notice: how it does
+/// change, or that the agent has not offered any yet.
+fn unchangeable_words(
+    view: &ui_view::SettingsView,
+    setting: &Changeable,
+    item: crate::setup::Item,
+) -> String {
+    use crate::setup::Item;
+    match setting {
+        Changeable::ByTyping(_) => {
+            crate::words::by_typing_words(&view.changeable.model, &view.changeable.effort)
+                .unwrap_or_default()
+        }
+        Changeable::Cycle => {
+            "Terminal Claude changes permission only by cycling through its permissions.".to_owned()
+        }
+        Changeable::Pick | Changeable::NotOffered => {
+            let what = match item {
+                Item::Model => "models",
+                Item::Effort => "efforts",
+                _ => "permissions",
+            };
+            format!("the agent has not offered its {what} yet")
+        }
+    }
 }
 
 /// "finished", "exited", or "exited · its directory is gone": how an
@@ -2979,6 +2885,8 @@ pub(crate) fn activity_words(kind: &ActivityKind) -> String {
     }
 }
 
+/// While the agent works, one quiet line that it is, and for how long.
+/// What it is doing shows as live steps in the feed.
 fn quiet_activity(activity: &ui_state::Activity, width: usize, theme: Theme) -> Line<'static> {
     let elapsed = text::duration(activity.elapsed_ms - activity.elapsed_ms % 1_000);
     let words = activity_words(&activity.kind);
@@ -2994,6 +2902,16 @@ struct EdgeWords {
     model: Option<String>,
     effort: Option<String>,
     controls: Option<String>,
+}
+
+impl EdgeWords {
+    fn of(controls: &ui_view::ControlsSummary) -> EdgeWords {
+        EdgeWords {
+            model: controls.model.clone(),
+            effort: controls.effort.clone(),
+            controls: crate::words::control_words(controls),
+        }
+    }
 }
 
 /// The composer in its box, as drawn: its lines, the cursor's (line,
@@ -3154,7 +3072,7 @@ fn framed(
 /// not a legend start with a capital and read as a sentence.
 fn turn_hint_words(state: &SessionState, editor: &Editor, reach: Reach, leader: char) -> String {
     let working = state.phase() == PhaseView::Working;
-    let shift_tab = next_control(state).map(|change| match change {
+    let shift_tab = next_control(&ui_view::settings(state)).map(|change| match change {
         ui_view::SettingChange::Mode(_) => "shift+tab mode",
         _ => "shift+tab permission",
     });
@@ -3521,22 +3439,22 @@ fn family_line(family: &FamilyHeader, width: usize, theme: Theme) -> Line<'stati
 /// else its own next permission where it only cycles; else the next
 /// settable permission that still asks before acting. None where neither
 /// can change from here.
-pub(crate) fn next_control(state: &SessionState) -> Option<ui_view::SettingChange> {
-    let view = ui_view::settings(state);
+pub(crate) fn next_control(view: &ui_view::SettingsView) -> Option<ui_view::SettingChange> {
     let modes: Vec<(&str, bool, bool)> = view
         .modes
         .iter()
         .filter(|mode| mode.settable)
         .map(|mode| (mode.value.as_str(), mode.current, mode.normal))
         .collect();
-    if let Some(value) = next_of(&modes) {
+    if view.changeable.mode == Changeable::Pick
+        && let Some(value) = next_of(&modes)
+    {
         return Some(ui_view::SettingChange::Mode(value));
     }
-    if view.cycle_permission {
-        return Some(ui_view::SettingChange::CyclePermission);
-    }
-    if view.permission_refusal.is_some() {
-        return None;
+    match view.changeable.permission {
+        Changeable::Cycle => return Some(ui_view::SettingChange::CyclePermission),
+        Changeable::Pick => {}
+        _ => return None,
     }
     let permissions: Vec<(&str, bool, bool)> = view
         .permissions

@@ -1406,6 +1406,90 @@ public struct ChangeTotals: Codable, Hashable, Sendable {
     }
 }
 
+/// How each of an agent's settings changes from a client.
+public struct Changeability: Codable, Hashable, Sendable {
+    public var model: Changeable
+    public var effort: Changeable
+    public var permission: Changeable
+    public var mode: Changeable
+
+    public init(model: Changeable, effort: Changeable, permission: Changeable, mode: Changeable) {
+        self.model = model
+        self.effort = effort
+        self.permission = permission
+        self.mode = mode
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case model
+        case effort
+        case permission
+        case mode
+    }
+}
+
+/// How one setting changes from a client. `Pick`: a pick from its list
+/// sets it. `Cycle`: only stepping to the agent's next one changes it, never
+/// a pick (terminal Claude's permission, which its own cycle key steps).
+/// `ByTyping`: only the agent's own command, named here ("/model"), typed in
+/// the composer as any prompt (terminal Claude's model and effort).
+/// `NotOffered`: nothing to pick from, as the agent offers none yet, or
+/// none of this setting at all.
+public enum Changeable: Codable, Hashable, Sendable {
+    case pick
+    case cycle
+    case notOffered
+    case byTyping(String)
+
+    private enum Tag: String, CodingKey {
+        case byTyping = "ByTyping"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "Pick": self = .pick
+            case "Cycle": self = .cycle
+            case "NotOffered": self = .notOffered
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no Changeable is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a Changeable names exactly one variant"))
+        }
+        switch _tag {
+        case .byTyping:
+            self = .byTyping(try _container.decode(String.self, forKey: .byTyping))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .pick:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Pick")
+        case .cycle:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Cycle")
+        case .notOffered:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("NotOffered")
+        case .byTyping(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .byTyping)
+        }
+    }
+}
+
 public struct ChangedFile: Codable, Hashable, Sendable {
     /// From the repository's root.
     public var path: String
@@ -1483,6 +1567,9 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     public var kind: Kind
     public var phase: PhaseView
     public var composer: ComposerView
+    /// The model, effort in force, and a permission or mode other than the
+    /// normal one, as the composer says them.
+    public var controls: ControlsSummary
     public var connection: Connection
     /// The rows are current with the agent's host.
     public var caughtUp: Bool
@@ -1502,26 +1589,22 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     /// confirmed resends or discards.
     public var askInput: [UInt8]?
     public var context: ContextView?
-    public var effort: String?
     /// The runtime no longer serves this chat: the agent is gone.
     public var ended: String?
     /// The agent's branch and change totals as of its last turn end; None
     /// outside a repository.
     public var git: GitView?
-    /// The agent's model, effort in force, permission and mode, as it
-    /// reports them (values from its catalogue; see the settings view).
-    public var model: String?
-    public var permission: String?
     /// Only a problem; it replaces the composer with a foot card.
     public var signIn: SignInView?
     public var waiting: Waiting?
 
-    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], underway: [SentPrompt], refused: [RefusedPrompt], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, git: GitView?, model: String?, permission: String?, signIn: SignInView?, waiting: Waiting?) {
+    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, controls: ControlsSummary, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], underway: [SentPrompt], refused: [RefusedPrompt], askInput: [UInt8]?, context: ContextView?, ended: String?, git: GitView?, signIn: SignInView?, waiting: Waiting?) {
         self.agent = agent
         self.name = name
         self.kind = kind
         self.phase = phase
         self.composer = composer
+        self.controls = controls
         self.connection = connection
         self.caughtUp = caughtUp
         self.hasOlder = hasOlder
@@ -1531,11 +1614,8 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         self.refused = refused
         self.askInput = askInput
         self.context = context
-        self.effort = effort
         self.ended = ended
         self.git = git
-        self.model = model
-        self.permission = permission
         self.signIn = signIn
         self.waiting = waiting
     }
@@ -1546,6 +1626,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         case kind
         case phase
         case composer
+        case controls
         case connection
         case caughtUp = "caught_up"
         case hasOlder = "has_older"
@@ -1555,11 +1636,8 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         case refused
         case askInput = "ask_input"
         case context
-        case effort
         case ended
         case git
-        case model
-        case permission
         case signIn = "sign_in"
         case waiting
     }
@@ -1888,6 +1966,34 @@ public struct ContextView: Codable, Hashable, Sendable {
     }
 }
 
+/// What a running agent's controls come to, said beside its composer: the
+/// model by the name a person reads, the effort in force, and the
+/// permission and mode only while they are not the agent's normal ones.
+/// The permission is not said until the agent's catalogue is held, which
+/// says which one is normal; a reported mode the catalogue does not list is
+/// said as it is.
+public struct ControlsSummary: Codable, Hashable, Sendable {
+    public var effort: String?
+    public var mode: ModeChoice?
+    /// None until the agent says which model runs.
+    public var model: String?
+    public var permission: PermissionChoice?
+
+    public init(effort: String?, mode: ModeChoice?, model: String?, permission: PermissionChoice?) {
+        self.effort = effort
+        self.mode = mode
+        self.model = model
+        self.permission = permission
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case effort
+        case mode
+        case model
+        case permission
+    }
+}
+
 /// A permission decision: allowed or denied, with what it granted and a
 /// note when the provider says them, and where it was answered.
 public struct Decision: Codable, Hashable, Sendable {
@@ -2200,20 +2306,20 @@ public struct EffortChoice: Codable, Hashable, Sendable {
     public var current: Bool
     /// What the model runs at when none is chosen.
     public var `default`: Bool
-    public var reported: Bool
+    public var unlisted: Bool
 
-    public init(value: String, current: Bool, `default`: Bool, reported: Bool) {
+    public init(value: String, current: Bool, `default`: Bool, unlisted: Bool) {
         self.value = value
         self.current = current
         self.`default` = `default`
-        self.reported = reported
+        self.unlisted = unlisted
     }
 
     private enum CodingKeys: String, CodingKey {
         case value
         case current
         case `default` = "default"
-        case reported
+        case unlisted
     }
 }
 
@@ -3051,18 +3157,18 @@ public struct LoudMember: Codable, Hashable, Sendable {
 public struct ModeChoice: Codable, Hashable, Sendable {
     /// What a mode input names.
     public var value: String
-    /// The catalogue's name for it; empty for a reported one.
+    /// The name a person reads: the catalogue's, else the value.
     public var displayName: String
     public var current: Bool
-    public var reported: Bool
+    public var unlisted: Bool
     public var normal: Bool
     public var settable: Bool
 
-    public init(value: String, displayName: String, current: Bool, reported: Bool, normal: Bool, settable: Bool) {
+    public init(value: String, displayName: String, current: Bool, unlisted: Bool, normal: Bool, settable: Bool) {
         self.value = value
         self.displayName = displayName
         self.current = current
-        self.reported = reported
+        self.unlisted = unlisted
         self.normal = normal
         self.settable = settable
     }
@@ -3071,7 +3177,7 @@ public struct ModeChoice: Codable, Hashable, Sendable {
         case value
         case displayName = "display_name"
         case current
-        case reported
+        case unlisted
         case normal
         case settable
     }
@@ -3080,22 +3186,26 @@ public struct ModeChoice: Codable, Hashable, Sendable {
 public struct ModelChoice: Codable, Hashable, Sendable {
     /// What a model input names.
     public var value: String
+    /// The name a person reads: the catalogue's, else (for the running
+    /// model) the interpreter's, else the value.
     public var displayName: String
     public var description: String
     /// The efforts it takes, in the provider's order.
     public var efforts: [String]
     public var current: Bool
-    /// The agent reports it but the provider does not offer it.
-    public var reported: Bool
+    /// Current, but the catalogue does not list it: the agent reports it,
+    /// or a new agent was given it elsewhere (the installation's settings,
+    /// a chat, typed).
+    public var unlisted: Bool
     public var defaultEffort: String?
 
-    public init(value: String, displayName: String, description: String, efforts: [String], current: Bool, reported: Bool, defaultEffort: String?) {
+    public init(value: String, displayName: String, description: String, efforts: [String], current: Bool, unlisted: Bool, defaultEffort: String?) {
         self.value = value
         self.displayName = displayName
         self.description = description
         self.efforts = efforts
         self.current = current
-        self.reported = reported
+        self.unlisted = unlisted
         self.defaultEffort = defaultEffort
     }
 
@@ -3105,7 +3215,7 @@ public struct ModelChoice: Codable, Hashable, Sendable {
         case description
         case efforts
         case current
-        case reported
+        case unlisted
         case defaultEffort = "default_effort"
     }
 }
@@ -3148,6 +3258,82 @@ public struct NewAgent: Codable, Hashable, Sendable {
         case model
         case newWorktree = "new_worktree"
         case permission
+    }
+}
+
+/// What a new agent will start with, by catalogue values. None leaves the
+/// model, effort and permission to the host's defaults, and starts in the
+/// agent's normal mode.
+public struct NewAgentChoices: Codable, Hashable, Sendable {
+    public var effort: String?
+    public var mode: String?
+    public var model: String?
+    public var permission: String?
+
+    public init(effort: String?, mode: String?, model: String?, permission: String?) {
+        self.effort = effort
+        self.mode = mode
+        self.model = model
+        self.permission = permission
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case effort
+        case mode
+        case model
+        case permission
+    }
+}
+
+/// A person's pick for a new agent; None goes back to the host's default.
+public enum NewAgentPick: Codable, Hashable, Sendable {
+    case model(String?)
+    case effort(String?)
+    case permission(String?)
+    case mode(String?)
+
+    private enum Tag: String, CodingKey {
+        case model = "Model"
+        case effort = "Effort"
+        case permission = "Permission"
+        case mode = "Mode"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a NewAgentPick names exactly one variant"))
+        }
+        switch _tag {
+        case .model:
+            self = .model(try _container.decodeIfPresent(String.self, forKey: .model))
+        case .effort:
+            self = .effort(try _container.decodeIfPresent(String.self, forKey: .effort))
+        case .permission:
+            self = .permission(try _container.decodeIfPresent(String.self, forKey: .permission))
+        case .mode:
+            self = .mode(try _container.decodeIfPresent(String.self, forKey: .mode))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .model(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encodeIfPresent(_value, forKey: .model)
+        case .effort(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encodeIfPresent(_value, forKey: .effort)
+        case .permission(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encodeIfPresent(_value, forKey: .permission)
+        case .mode(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encodeIfPresent(_value, forKey: .mode)
+        }
     }
 }
 
@@ -3500,27 +3686,29 @@ public struct PendingPair: Codable, Hashable, Sendable {
 
 /// A permission: how much the agent may do without asking.
 public struct PermissionChoice: Codable, Hashable, Sendable {
-    /// What a permission input names. Empty for Codex settings that match
-    /// no named permission, which read as custom.
+    /// What a permission input names. Empty when `custom`.
     public var value: String
-    /// The catalogue's name for it; empty for a reported one.
+    /// The name a person reads: the catalogue's, else the value; empty when
+    /// `custom`.
     public var displayName: String
+    /// Codex settings that match no named permission.
+    public var custom: Bool
     public var current: Bool
-    /// The agent reports it but does not offer it.
-    public var reported: Bool
+    public var unlisted: Bool
     /// The agent's ordinary one, which a client may leave unsaid.
     public var normal: Bool
     /// Under it the agent acts without asking first.
     public var neverAsks: Bool
-    /// A pick sets it now: the agent offers it to be set and the running
-    /// model takes it.
+    /// A pick sets it now: the agent offers it to be set and the model
+    /// takes it.
     public var settable: Bool
 
-    public init(value: String, displayName: String, current: Bool, reported: Bool, normal: Bool, neverAsks: Bool, settable: Bool) {
+    public init(value: String, displayName: String, custom: Bool, current: Bool, unlisted: Bool, normal: Bool, neverAsks: Bool, settable: Bool) {
         self.value = value
         self.displayName = displayName
+        self.custom = custom
         self.current = current
-        self.reported = reported
+        self.unlisted = unlisted
         self.normal = normal
         self.neverAsks = neverAsks
         self.settable = settable
@@ -3529,8 +3717,9 @@ public struct PermissionChoice: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case value
         case displayName = "display_name"
+        case custom
         case current
-        case reported
+        case unlisted
         case normal
         case neverAsks = "never_asks"
         case settable
@@ -5102,40 +5291,28 @@ public enum SettingChange: Codable, Hashable, Sendable {
 }
 
 public struct SettingsView: Codable, Hashable, Sendable {
-    /// The offered models, then a reported model the provider does not
+    /// The offered models, then a current model the catalogue does not
     /// list.
     public var models: [ModelChoice]
-    /// The current model's efforts, then a reported effort outside them.
+    /// The current model's efforts, then a current effort outside them.
     public var efforts: [EffortChoice]
-    /// The offered permissions, then a reported one the agent does not
-    /// offer.
+    /// The offered permissions, then a current one the catalogue does not
+    /// list.
     public var permissions: [PermissionChoice]
-    /// The offered modes, then a reported one the agent does not offer;
+    /// The offered modes, then a current one the catalogue does not list;
     /// empty for an agent without modes (Claude).
     public var modes: [ModeChoice]
-    /// The permission changes by cycling to the next (the cycle key),
-    /// never by a pick.
-    public var cyclePermission: Bool
+    /// How each setting changes from a client.
+    public var changeable: Changeability
     public var commands: [CommandView]
-    /// How a person changes the model and effort of a kind that offers no
-    /// pick: by typing the agent's own command in the composer.
-    public var changeByTyping: String?
-    public var effortRefusal: String?
-    /// Why the model cannot change from here, when it cannot.
-    public var modelRefusal: String?
-    public var permissionRefusal: String?
 
-    public init(models: [ModelChoice], efforts: [EffortChoice], permissions: [PermissionChoice], modes: [ModeChoice], cyclePermission: Bool, commands: [CommandView], changeByTyping: String?, effortRefusal: String?, modelRefusal: String?, permissionRefusal: String?) {
+    public init(models: [ModelChoice], efforts: [EffortChoice], permissions: [PermissionChoice], modes: [ModeChoice], changeable: Changeability, commands: [CommandView]) {
         self.models = models
         self.efforts = efforts
         self.permissions = permissions
         self.modes = modes
-        self.cyclePermission = cyclePermission
+        self.changeable = changeable
         self.commands = commands
-        self.changeByTyping = changeByTyping
-        self.effortRefusal = effortRefusal
-        self.modelRefusal = modelRefusal
-        self.permissionRefusal = permissionRefusal
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -5143,12 +5320,8 @@ public struct SettingsView: Codable, Hashable, Sendable {
         case efforts
         case permissions
         case modes
-        case cyclePermission = "cycle_permission"
+        case changeable
         case commands
-        case changeByTyping = "change_by_typing"
-        case effortRefusal = "effort_refusal"
-        case modelRefusal = "model_refusal"
-        case permissionRefusal = "permission_refusal"
     }
 }
 

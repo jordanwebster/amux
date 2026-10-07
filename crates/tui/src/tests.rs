@@ -2734,8 +2734,7 @@ fn a_new_agent_offers_what_its_host_offers() {
         ["default ✓", "plan"]
     );
 
-    // A model that does not take the chosen effort starts at its own
-    // default.
+    // Another model starts at its own default effort.
     home.open_setup(&HOME_PLACE)
         .unwrap()
         .pick(Item::Model, "gpt-6-mini");

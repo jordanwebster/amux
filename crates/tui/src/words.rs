@@ -1,33 +1,7 @@
 //! Words for what the agent reports, in the phone's words (its
 //! `ChatWords`): the shared views carry facts, and each client words them.
 
-use ui_state::SessionState;
-use ui_view::settings;
-
-/// The model running, by the name a person reads: the name the agent's
-/// snapshot gives it, else the catalogue's name for the entry it matches,
-/// else its id. None when unknown.
-pub(crate) fn model_words(state: &SessionState) -> Option<String> {
-    if let Some(name) = &state.agent_state().model_name {
-        return Some(name.clone());
-    }
-    let view = settings(state);
-    let current = view.models.iter().find(|model| model.current)?;
-    if !current.display_name.is_empty() {
-        return Some(current.display_name.clone());
-    }
-    Some(current.value.clone()).filter(|value| !value.is_empty())
-}
-
-/// An offered model by the name a person reads: the catalogue's name, else
-/// its value.
-pub(crate) fn named_model(model: &wire::OfferedModel) -> String {
-    if model.display_name.is_empty() {
-        model.value.clone()
-    } else {
-        model.display_name.clone()
-    }
-}
+use ui_view::{Changeable, ControlsSummary, ModeChoice, PermissionChoice};
 
 /// A permission or mode by the name a person reads, lowercase as the
 /// terminal's own words are: the catalogue's name, else the provider's
@@ -40,31 +14,59 @@ pub(crate) fn named(display_name: &str, value: &str) -> String {
     }
 }
 
+/// A permission as the terminal names it: a catalogue's name lowercase,
+/// as the terminal's own words are, a provider's value as it is, and Codex
+/// settings that match no named permission "custom".
+pub(crate) fn permission_words(permission: &PermissionChoice) -> String {
+    if permission.custom {
+        "custom".to_owned()
+    } else {
+        lowercase_name(&permission.display_name, &permission.value)
+    }
+}
+
+/// A mode as the terminal names it, as a permission is.
+pub(crate) fn mode_words(mode: &ModeChoice) -> String {
+    lowercase_name(&mode.display_name, &mode.value)
+}
+
+fn lowercase_name(name: &str, value: &str) -> String {
+    if name == value {
+        name.to_owned()
+    } else {
+        name.to_lowercase()
+    }
+}
+
 /// The permission and mode as the composer's edge names them, "full access
-/// · plan": each left unsaid while it is the agent's normal one, so the
-/// edge speaks only when the agent asks less or works otherwise. Codex
-/// settings that match no named permission read "custom". Nothing is said
-/// until the agent's catalogue is held, which says which one is normal.
-pub(crate) fn control_words(state: &SessionState) -> Option<String> {
-    let agent = state.agent_state();
-    let view = settings(state);
-    let mut words: Vec<String> = Vec::new();
-    if !agent.permissions.is_empty()
-        && let Some(permission) = view
-            .permissions
-            .iter()
-            .find(|permission| permission.current && !permission.normal)
-    {
-        words.push(if permission.value.is_empty() {
-            "custom".to_owned()
-        } else {
-            named(&permission.display_name, &permission.value)
-        });
-    }
-    if let Some(mode) = view.modes.iter().find(|mode| mode.current && !mode.normal) {
-        words.push(named(&mode.display_name, &mode.value));
-    }
+/// · plan": the view hands over only those that are not the agent's normal
+/// ones.
+pub(crate) fn control_words(controls: &ControlsSummary) -> Option<String> {
+    let words: Vec<String> = controls
+        .permission
+        .iter()
+        .map(permission_words)
+        .chain(controls.mode.iter().map(mode_words))
+        .collect();
     (!words.is_empty()).then(|| words.join(" · "))
+}
+
+/// How a setting that changes only by typing the agent's own command is
+/// changed, "type /model <name> in the composer"; both when model and
+/// effort do.
+pub(crate) fn by_typing_words(model: &Changeable, effort: &Changeable) -> Option<String> {
+    match (model, effort) {
+        (Changeable::ByTyping(model), Changeable::ByTyping(effort)) => Some(format!(
+            "To change the model or effort, type {model} <name> or {effort} <level> in the composer."
+        )),
+        (Changeable::ByTyping(model), _) => Some(format!(
+            "To change the model, type {model} <name> in the composer."
+        )),
+        (_, Changeable::ByTyping(effort)) => Some(format!(
+            "To change the effort, type {effort} <level> in the composer."
+        )),
+        _ => None,
+    }
 }
 
 /// Why a typed name will not do.

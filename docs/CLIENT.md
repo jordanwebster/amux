@@ -308,8 +308,9 @@ a size, a width or a theme. Views carry typed facts; wording, wrapping, geometry
 each renderer.
 
 A view decides; a client presents. Any judgement both clients must agree on (whether an agent needs you, how a
-session ended, why a prompt was refused, what a model is called, where a tool call stands, what a plan's title is,
-which lines an edit changes) is computed once in a view and handed over as a
+session ended, why a prompt was refused, what a model is called, how a setting can change, which settings the
+composer mentions, what a new agent's pickers hold and what a pick there does, where a tool call stands, what a plan's
+title is, which lines an edit changes) is computed once in a view and handed over as a
 typed value, never as text: each client words it. Where a client's own choice changes what a view returns, such
 as folding tool steps, the client passes the choice in as an argument. A client may read plain facts from the state
 directly (a name, a path, a count the state holds), but never works out a judgement from them.
@@ -324,8 +325,10 @@ directly (a name, a path, a count the state holds), but never works out a judgem
 | `composer_tokens(draft, attachments)`, `segments(text, attachments)` | Text runs and attachment chips at their placeholder positions. |
 | `queue_rows(state)`, `sends_to_feed(state)`, `prompts_underway(state, in_feed)`, `refused_prompts(state)` | Queued prompts (withdraw, send now); whether a new prompt lands at the feed's end or in the queue; this client's prompts on their way, each where it was first drawn, sending or may not have arrived; the prompts the agent refused, with why. |
 | `overview(state, diff)`, `changes(diff)`, `diff_base(state, comparison)` | The `Overview`: tasks, background jobs, failed tool servers, usage near a limit, and the changed files by folder (root files first) from a `Diff` fetched without a patch; the base a comparison asks `Diff` for. |
-| `context(state)`, `sign_in(state)`, `effort_in_force(agent)` | Context use (near full from 80%), a sign-in problem, and the effort the agent runs at. |
-| `settings(state)`, `setting_input(kind, change)` | What the agent offers to change (models, efforts, modes, commands), why a setting cannot change from here, and the input a pick sends. |
+| `context(state)`, `sign_in(state)` | Context use (near full from 80%) and a sign-in problem. |
+| `settings(state)`, `setting_input(kind, change)` | What the agent offers to change (models, efforts, permissions, modes, commands), each choice named and its current one marked; how each setting changes (`Changeable`: a pick, the agent's own cycle, typing its own command, or not offered); and the input a pick sends. |
+| `controls(state)` | The `ControlsSummary` beside the composer: the running model by its one name, the effort in force, and the permission and mode only while they are not the agent's normal ones. |
+| `new_agent_settings(catalogue, chosen)`, `new_agent_pick(catalogue, chosen, pick)` | A new agent's settings from its host's catalogue, in the settings view's own choices (what can be set at start, the chosen ones marked, the normal mode in force when none is chosen, a chosen value the host does not list kept); and what is chosen after a pick: another model starts at its default effort and gives up a permission it does not take for the normal one, and picking the normal mode leaves the mode unchosen. |
 | `fleet_view(fleet, local_host, lines, expand, keep)`, `session_line(state, now_ms)` | Home's sections (needs you, live, exited) with each family in its loudest member's section, newest since-when first, whether each starts folded, and every row's second line; the fleet-wide counts of agents that need you and that are working; what one session knows for that line. |
 | `fleet_card(fleet, local_host, agent_id)`, `family_header(fleet, local_host, agent_id)` | One agent's card (name, branch, host and its reach, how it ended, family counts), and a chat's family header with how many of the family need you. |
 | `reach(fleet, local_host, host)` | How this machine reaches a host: online over a route, away for a reason this machine can name (the relay sees it, this machine is signed out, or the host no longer trusts it), or offline. |

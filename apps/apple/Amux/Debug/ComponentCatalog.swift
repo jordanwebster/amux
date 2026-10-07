@@ -690,20 +690,20 @@ enum CatalogFixtures {
         let efforts = ["low", "medium", "high", "xhigh", "max"]
         return SettingsView(
             models: [
-                ModelChoice(value: "default", displayName: "Default (recommended)", description: "Opus 5.5 · Most capable for complex work", efforts: efforts, current: true, reported: false, defaultEffort: "high"),
-                ModelChoice(value: "sonnet", displayName: "Sonnet", description: "Sonnet 5 · Best for everyday tasks", efforts: efforts, current: false, reported: false, defaultEffort: "high"),
-                ModelChoice(value: "haiku", displayName: "Haiku", description: "Haiku 4.5 · Fastest for quick answers", efforts: [], current: false, reported: false, defaultEffort: nil),
+                ModelChoice(value: "default", displayName: "Default (recommended)", description: "Opus 5.5 · Most capable for complex work", efforts: efforts, current: true, unlisted: false, defaultEffort: "high"),
+                ModelChoice(value: "sonnet", displayName: "Sonnet", description: "Sonnet 5 · Best for everyday tasks", efforts: efforts, current: false, unlisted: false, defaultEffort: "high"),
+                ModelChoice(value: "haiku", displayName: "Haiku", description: "Haiku 4.5 · Fastest for quick answers", efforts: [], current: false, unlisted: false, defaultEffort: nil),
             ],
-            efforts: [EffortChoice(value: "low", current: true, default: false, reported: false)],
+            efforts: [EffortChoice(value: "low", current: true, default: false, unlisted: false)],
             permissions: claudeModes.map {
                 PermissionChoice(
-                    value: $0, displayName: claudeModeNames[$0] ?? $0, current: $0 == mode,
-                    reported: false, normal: $0 == "default", neverAsks: $0 == "bypassPermissions",
+                    value: $0, displayName: claudeModeNames[$0] ?? $0, custom: false, current: $0 == mode,
+                    unlisted: false, normal: $0 == "default", neverAsks: $0 == "bypassPermissions",
                     settable: true)
             },
-            modes: [], cyclePermission: false, commands: [], changeByTyping: nil,
-            effortRefusal: "Claude takes its effort when the agent starts and keeps it until it restarts.",
-            modelRefusal: nil, permissionRefusal: nil)
+            modes: [],
+            changeable: Changeability(model: .pick, effort: .pick, permission: .pick, mode: .notOffered),
+            commands: [])
     }
 
     static let withCommands: SettingsView = {
@@ -726,33 +726,33 @@ enum CatalogFixtures {
         ]
         return SettingsView(
             models: [
-                ModelChoice(value: "gpt-6-astra", displayName: "GPT-6-Astra", description: "Frontier agentic coding model.", efforts: efforts, current: true, reported: false, defaultEffort: "medium"),
-                ModelChoice(value: "gpt-6-sol", displayName: "GPT-6-Sol", description: "Smaller, faster and cheaper.", efforts: efforts, current: false, reported: false, defaultEffort: "medium"),
+                ModelChoice(value: "gpt-6-astra", displayName: "GPT-6-Astra", description: "Frontier agentic coding model.", efforts: efforts, current: true, unlisted: false, defaultEffort: "medium"),
+                ModelChoice(value: "gpt-6-sol", displayName: "GPT-6-Sol", description: "Smaller, faster and cheaper.", efforts: efforts, current: false, unlisted: false, defaultEffort: "medium"),
             ],
-            efforts: efforts.map { EffortChoice(value: $0, current: $0 == "medium", default: $0 == "medium", reported: false) },
+            efforts: efforts.map { EffortChoice(value: $0, current: $0 == "medium", default: $0 == "medium", unlisted: false) },
             permissions: presets.map { value, name in
                 PermissionChoice(
-                    value: value, displayName: name, current: value == "default", reported: false,
+                    value: value, displayName: name, custom: false, current: value == "default", unlisted: false,
                     normal: value == "default", neverAsks: value == "full-access", settable: true)
             },
             modes: [
-                ModeChoice(value: "default", displayName: "Default", current: true, reported: false, normal: true, settable: true),
-                ModeChoice(value: "plan", displayName: "Plan", current: false, reported: false, normal: false, settable: true),
+                ModeChoice(value: "default", displayName: "Default", current: true, unlisted: false, normal: true, settable: true),
+                ModeChoice(value: "plan", displayName: "Plan", current: false, unlisted: false, normal: false, settable: true),
             ],
-            cyclePermission: false, commands: [], changeByTyping: nil, effortRefusal: nil,
-            modelRefusal: nil, permissionRefusal: nil)
+            changeable: Changeability(model: .pick, effort: .pick, permission: .pick, mode: .pick),
+            commands: [])
     }()
 
     static let settingsClaudePty = SettingsView(
-        models: [ModelChoice(value: "claude-sonnet-5", displayName: "", description: "", efforts: [], current: true, reported: true, defaultEffort: nil)],
-        efforts: [EffortChoice(value: "high", current: true, default: false, reported: true)],
+        models: [ModelChoice(value: "claude-sonnet-5", displayName: "Sonnet 5", description: "", efforts: [], current: true, unlisted: true, defaultEffort: nil)],
+        efforts: [EffortChoice(value: "high", current: true, default: false, unlisted: true)],
         permissions: [PermissionChoice(
-            value: "acceptEdits", displayName: "Accept edits", current: true, reported: false,
+            value: "acceptEdits", displayName: "Accept edits", custom: false, current: true, unlisted: false,
             normal: false, neverAsks: false, settable: false)],
-        modes: [], cyclePermission: true, commands: [],
-        changeByTyping: "To change the model or effort, type /model <name> or /effort <level> in the composer.",
-        effortRefusal: nil, modelRefusal: nil,
-        permissionRefusal: "Terminal Claude changes mode only by cycling through its modes.")
+        modes: [],
+        changeable: Changeability(
+            model: .byTyping("/model"), effort: .byTyping("/effort"), permission: .cycle, mode: .notOffered),
+        commands: [])
 
     static let photoData: Data = {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 120, height: 80))
@@ -1211,10 +1211,10 @@ extension CatalogFixtures {
         }
         store.choose(provider: provider)
         if provider == .codex {
-            store.choose(model: "gpt-6-astra")
-            store.choose(effort: "high")
-            store.choose(permission: "read-only")
-            store.choose(mode: "plan")
+            store.choose(.model("gpt-6-astra"))
+            store.choose(.effort("high"))
+            store.choose(.permission("read-only"))
+            store.choose(.mode("plan"))
         }
         store.newWorktree = true
         return (store, hosts)

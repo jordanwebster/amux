@@ -673,6 +673,18 @@
         }
       }
     },
+    "%@ · 1 line": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 1 line"
+          }
+        }
+      }
+    },
     "%@ · away": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatScreen.swift.",
       "extractionState": "manual",
@@ -1017,6 +1029,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "1 host"
+          }
+        }
+      }
+    },
+    "1 line": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 line"
           }
         }
       }
@@ -5749,6 +5773,18 @@
         }
       }
     },
+    "Terminal Claude changes permission only by cycling through its permissions.": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminal Claude changes permission only by cycling through its permissions."
+          }
+        }
+      }
+    },
     "That code did not work. Get a new code from the host.": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
       "extractionState": "manual",
@@ -6177,6 +6213,42 @@
           "stringUnit": {
             "state": "translated",
             "value": "To %@"
+          }
+        }
+      }
+    },
+    "To change the effort, type %@ <level> in the composer.": {
+      "comment": "English app copy. Substituted values appear as %@: the agent's own command. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To change the effort, type %@ <level> in the composer."
+          }
+        }
+      }
+    },
+    "To change the model or effort, type %@ <name> or %@ <level> in the composer.": {
+      "comment": "English app copy. Substituted values appear as %@: the agent's own commands. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To change the model or effort, type %@ <name> or %@ <level> in the composer."
+          }
+        }
+      }
+    },
+    "To change the model, type %@ <name> in the composer.": {
+      "comment": "English app copy. Substituted values appear as %@: the agent's own command. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To change the model, type %@ <name> in the composer."
           }
         }
       }

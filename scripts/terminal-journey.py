@@ -1149,7 +1149,9 @@ def new_agent_worktree(journey: TerminalJourney) -> list[str]:
     journey.wait_terms(pane, "╭─ Model", ". Fable 5")
     journey.frame(pane, "desk-models")
     pick(journey, pane, "Fable 5")
-    journey.wait(pane, lambda frame: "Fable 5 (high)" in frame and "╭─ Model" not in frame, "Fable 5 chosen")
+    # Another model starts at its own default effort; Claude names none, so
+    # the effort is left to the model.
+    journey.wait(pane, lambda frame: "Claude · Fable 5 · " in frame and "╭─ Model" not in frame, "Fable 5 chosen")
     # In the desk's repository, which its agent already works in.
     journey.keys(pane, "C-s", "d")
     journey.wait_terms(pane, "╭─ Folder")
@@ -1168,7 +1170,15 @@ def new_agent_worktree(journey: TerminalJourney) -> list[str]:
     journey.wait_terms(pane, "› Redesign the landing page.")
     journey.frame(pane, "worktree-set")
     journey.keys(pane, "Enter")
-    journey.wait(pane, lambda frame: chat_of(frame) == name and at_rest(frame, "Working in the new worktree."), "the new agent's reply")
+    # The branch reaches the header with the turn's end, which can land just
+    # after the reply does.
+    journey.wait(
+        pane,
+        lambda frame: chat_of(frame) == name
+        and at_rest(frame, "Working in the new worktree.")
+        and f"{name} │ {name} " in frame,
+        "the new agent's reply, on its branch",
+    )
     journey.frame(pane, "worktree-chat")
 
     # The desk made it there, on the chosen model, in a worktree of its

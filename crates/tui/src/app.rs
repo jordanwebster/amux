@@ -1429,12 +1429,12 @@ fn sibling_setup(
         permission: view
             .permissions
             .iter()
-            .find(|permission| permission.current && !permission.value.is_empty())
+            .find(|permission| permission.current && !permission.custom)
             .map(|permission| permission.value.clone()),
         mode: view
             .modes
             .iter()
-            .find(|mode| mode.current && !mode.reported)
+            .find(|mode| mode.current && !mode.unlisted)
             .map(|mode| mode.value.clone()),
         offered: None,
         folder: agent.map(|agent| agent.cwd.clone()).unwrap_or_default(),

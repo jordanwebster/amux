@@ -47,10 +47,14 @@ pub use rows::{
 pub use run::{LIVE_STEPS, Run, RunCounts, keep_open_runs, run_is_open, toggle_run};
 pub use segments::{AttachmentView, Segment, segments};
 pub use settings::{
-    CommandView, EffortChoice, ModeChoice, ModelChoice, PermissionChoice, SettingChange,
-    SettingsView, effort_in_force, setting_input, settings,
+    Changeability, Changeable, CommandView, ControlsSummary, EffortChoice, ModeChoice, ModelChoice,
+    NewAgentChoices, NewAgentPick, PermissionChoice, SettingChange, SettingsView, controls,
+    new_agent_pick, new_agent_settings, setting_input, settings,
 };
 /// Why an input was refused, which every client words.
 pub use ui_state::RefusalReason;
+/// What a host offers an agent to pick from, which a new agent's settings
+/// are built from.
+pub use wire::Catalogue;
 /// The rule a host holds every agent name to, for a client's name field.
 pub use wire::{AgentNameProblem, agent_name_problem};

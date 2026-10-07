@@ -31,7 +31,9 @@
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
 == context Some(ContextView { used_tokens: 12463, window_tokens: Some(258400), percent: Some(4), near_full: false }) sign-in None
 == settings
-  model* reported gpt-5.6-luna "" efforts=[]
-  effort* reported high
-  permission* reported "" "" unsettable
-  mode* reported "default" "" unsettable
+  model* unlisted gpt-5.6-luna "GPT-5.6 Luna" efforts=[]
+  effort* unlisted high
+  permission* unlisted custom "" "" unsettable
+  mode* unlisted "default" "default" unsettable
+  changes: model NotOffered · effort NotOffered · permission NotOffered · mode NotOffered
+  controls: model=Some("GPT-5.6 Luna") effort=Some("high") permission=None mode=Some("default")

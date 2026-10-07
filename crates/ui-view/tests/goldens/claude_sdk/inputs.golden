@@ -34,6 +34,8 @@
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
 == context None sign-in None
 == settings
-  model* reported claude-sonnet-5 "" efforts=[]
-  effort* reported high
-  permission* reported "plan" "" unsettable
+  model* unlisted claude-sonnet-5 "Sonnet 5" efforts=[]
+  effort* unlisted high
+  permission* unlisted "plan" "plan" unsettable
+  changes: model NotOffered · effort NotOffered · permission NotOffered · mode NotOffered
+  controls: model=Some("Sonnet 5") effort=Some("high") permission=None mode=None

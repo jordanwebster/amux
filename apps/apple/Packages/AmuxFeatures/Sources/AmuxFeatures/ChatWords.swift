@@ -260,7 +260,8 @@ public enum ChatWords {
         switch view {
         case .image(let blob): "\(blob.name) · \(bytes(blob.size))"
         case .file(let blob): "\(blob.name) · \(bytes(blob.size))"
-        case .text(let name, let lines, _): String(localized: "\(name) · \(lines) lines")
+        case .text(let name, let lines, _):
+            lines == 1 ? String(localized: "\(name) · 1 line") : String(localized: "\(name) · \(lines) lines")
         case .review(let comments, _):
             comments == 1
                 ? String(localized: "Review · 1 comment")
@@ -415,6 +416,11 @@ public enum ChatWords {
         case .removed: return String(localized: "Removed line \(line.oldLine ?? 0), \(text)")
         case .context: return String(localized: "Line \(line.newLine ?? line.oldLine ?? 0), \(text)")
         }
+    }
+
+    /// "1 line", "12 lines".
+    public static func lines(_ count: UInt32) -> String {
+        count == 1 ? String(localized: "1 line") : String(localized: "\(count) lines")
     }
 
     public static func commentOn(lines: Int) -> String {
@@ -587,44 +593,58 @@ public enum ChatWords {
             : String(localized: "\(server.name) failed to start")
     }
 
-    /// The model chip: the model by the name the settings card gives it,
-    /// then the effort, or the permission when the agent reports no effort.
+    /// The model chip's words, from the controls the view sums up: the
+    /// model by the one name the view gives it, its effort, and the
+    /// permission and mode only while they are not the agent's normal ones.
     /// Nil when nothing is reported.
-    public static func chip(_ frame: ChatFrame, _ settings: SettingsView?) -> (model: String, detail: String)? {
-        let current = settings?.permissions.first { $0.current }
-        let permission = current.map(self.permission) ?? frame.permission
-        let detail = [frame.effort, permission].compactMap { $0 }.first { !$0.isEmpty } ?? ""
-        let model = settings?.models.first { $0.current }.map(self.model) ?? frame.model ?? ""
-        if model.isEmpty && detail.isEmpty { return nil }
-        return (model, detail)
+    public static func chip(_ controls: ControlsSummary)
+        -> (model: String, detail: String, unusual: [String])?
+    {
+        let unusual = [controls.permission.map(permission), controls.mode.map(mode)]
+            .compactMap { $0 }
+        let model = controls.model ?? ""
+        let detail = controls.effort ?? ""
+        if model.isEmpty && detail.isEmpty && unusual.isEmpty { return nil }
+        return (model, detail, unusual)
     }
 
-    /// A model by the name its agent offers it under, else the id the agent
-    /// reports.
-    public static func model(_ choice: ModelChoice) -> String {
-        choice.displayName.isEmpty ? choice.value : choice.displayName
-    }
-
-    /// A permission by the name its agent offers it under, else the value
-    /// the agent reports; a Codex permission no name fits is custom.
+    /// A permission by the name the view gives it; Codex settings no name
+    /// fits are custom.
     public static func permission(_ choice: PermissionChoice) -> String {
-        if !choice.displayName.isEmpty { return choice.displayName }
-        return choice.value.isEmpty ? String(localized: "Custom") : choice.value
+        choice.custom ? String(localized: "Custom") : choice.displayName
     }
 
     /// What the catalogue says of a permission beyond its name: that it
     /// acts without asking, that the agent reported it without offering
     /// it, or that it cannot be picked from here.
     public static func permissionDetail(_ choice: PermissionChoice) -> String {
-        if choice.reported { return String(localized: "Reported by the agent") }
+        if choice.unlisted { return String(localized: "Reported by the agent") }
         if choice.neverAsks { return String(localized: "Acts without asking") }
         if !choice.settable { return String(localized: "Can’t be picked from here") }
         return ""
     }
 
-    /// A mode by the name its agent offers it under, else its value.
-    public static func mode(_ choice: ModeChoice) -> String {
-        choice.displayName.isEmpty ? choice.value : choice.displayName
+    /// A mode by the name the view gives it.
+    public static func mode(_ choice: ModeChoice) -> String { choice.displayName }
+
+    /// How the model and effort change where only the agent's own commands
+    /// change them, typed in the composer; nil where a pick does.
+    public static func byTyping(_ changeable: Changeability) -> String? {
+        switch (changeable.model, changeable.effort) {
+        case (.byTyping(let model), .byTyping(let effort)):
+            String(localized: "To change the model or effort, type \(model) <name> or \(effort) <level> in the composer.")
+        case (.byTyping(let model), _):
+            String(localized: "To change the model, type \(model) <name> in the composer.")
+        case (_, .byTyping(let effort)):
+            String(localized: "To change the effort, type \(effort) <level> in the composer.")
+        default: nil
+        }
+    }
+
+    /// Where the permission changes only by stepping through the agent's
+    /// own cycle.
+    public static var cyclesOnly: String {
+        String(localized: "Terminal Claude changes permission only by cycling through its permissions.")
     }
 
     /// The permissions card's heading, by the agent's kind.

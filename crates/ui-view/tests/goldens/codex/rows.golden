@@ -82,5 +82,7 @@
 == overview Overview { tasks: Some(TasksView { done: 1, total: 3, current: "Split the lexer", entries: [TaskLine { subject: "Read the parser", mark: Done }, TaskLine { subject: "Split the lexer", mark: Current }, TaskLine { subject: "Run the tests", mark: Todo }] }), jobs: [], failed_servers: [ServerView { name: "docs", error: "connection refused", needs_auth: false }], usage_near_limit: Some(UsageView { blocked: true, windows: [UsageWindowView { label: FiveHour, used_percent: 100.0, resets_at_ms: Some(1800003600000), state: Blocked }, UsageWindowView { label: Weekly { model: None }, used_percent: 40.0, resets_at_ms: Some(1800600000000), state: Ok }], credits: Some("0") }), changes: None }
 == context Some(ContextView { used_tokens: 48000, window_tokens: Some(258400), percent: Some(18), near_full: false }) sign-in Some(SignInView { state: SignedOut, account: "", message: "" })
 == settings
-  model* reported gpt-5.6-mini "" efforts=[]
-  permission* reported "default" "" unsettable
+  model* unlisted gpt-5.6-mini "GPT-5.6 Mini" efforts=[]
+  permission* unlisted "default" "default" unsettable
+  changes: model NotOffered · effort NotOffered · permission NotOffered · mode NotOffered
+  controls: model=Some("GPT-5.6 Mini") effort=None permission=None mode=None

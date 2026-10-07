@@ -275,14 +275,15 @@ fn render(kind: Kind, frames: &[Replayed]) -> String {
 }
 
 /// The settings view, one choice per line: the current one starred, one
-/// the provider does not offer marked reported.
+/// the catalogue does not list marked unlisted; how each setting changes;
+/// and what the composer says of them.
 fn describe_settings(out: &mut String, state: &SessionState) {
     let view = settings(state);
-    let marks = |current: bool, reported: bool| {
+    let marks = |current: bool, unlisted: bool| {
         format!(
             "{}{}",
             if current { "*" } else { " " },
-            if reported { " reported" } else { "" }
+            if unlisted { " unlisted" } else { "" }
         )
     };
     let _ = writeln!(out, "== settings");
@@ -290,7 +291,7 @@ fn describe_settings(out: &mut String, state: &SessionState) {
         let _ = writeln!(
             out,
             "  model{} {} {:?} efforts=[{}]{}",
-            marks(model.current, model.reported),
+            marks(model.current, model.unlisted),
             model.value,
             model.display_name,
             model.efforts.join(","),
@@ -305,7 +306,7 @@ fn describe_settings(out: &mut String, state: &SessionState) {
         let _ = writeln!(
             out,
             "  effort{} {}{}",
-            marks(effort.current, effort.reported),
+            marks(effort.current, effort.unlisted),
             effort.value,
             if effort.default { " (default)" } else { "" }
         );
@@ -313,8 +314,9 @@ fn describe_settings(out: &mut String, state: &SessionState) {
     for permission in &view.permissions {
         let _ = writeln!(
             out,
-            "  permission{} {:?} {:?}{}{}{}",
-            marks(permission.current, permission.reported),
+            "  permission{}{} {:?} {:?}{}{}{}",
+            marks(permission.current, permission.unlisted),
+            if permission.custom { " custom" } else { "" },
             permission.value,
             permission.display_name,
             if permission.normal { " normal" } else { "" },
@@ -334,16 +336,21 @@ fn describe_settings(out: &mut String, state: &SessionState) {
         let _ = writeln!(
             out,
             "  mode{} {:?} {:?}{}{}",
-            marks(mode.current, mode.reported),
+            marks(mode.current, mode.unlisted),
             mode.value,
             mode.display_name,
             if mode.normal { " normal" } else { "" },
             if mode.settable { "" } else { " unsettable" }
         );
     }
-    if view.cycle_permission {
-        let _ = writeln!(out, "  permission: cycle to the next");
-    }
+    let _ = writeln!(
+        out,
+        "  changes: model {:?} · effort {:?} · permission {:?} · mode {:?}",
+        view.changeable.model,
+        view.changeable.effort,
+        view.changeable.permission,
+        view.changeable.mode
+    );
     for command in &view.commands {
         let _ = writeln!(
             out,
@@ -354,18 +361,19 @@ fn describe_settings(out: &mut String, state: &SessionState) {
             clip(format!("{:?}", command.description))
         );
     }
-    for (setting, refusal) in [
-        ("model", &view.model_refusal),
-        ("effort", &view.effort_refusal),
-        ("permission", &view.permission_refusal),
-    ] {
-        if let Some(refusal) = refusal {
-            let _ = writeln!(out, "  refused {setting}: {refusal}");
-        }
-    }
-    if let Some(typing) = &view.change_by_typing {
-        let _ = writeln!(out, "  by typing: {typing}");
-    }
+    let controls = ui_view::controls(state);
+    let _ = writeln!(
+        out,
+        "  controls: model={:?} effort={:?} permission={:?} mode={:?}",
+        controls.model,
+        controls.effort,
+        controls.permission.map(|permission| if permission.custom {
+            "custom".to_owned()
+        } else {
+            permission.value
+        }),
+        controls.mode.map(|mode| mode.value)
+    );
 }
 
 fn check(

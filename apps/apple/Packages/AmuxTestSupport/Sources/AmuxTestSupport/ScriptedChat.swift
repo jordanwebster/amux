@@ -58,19 +58,18 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     ) -> ChatFrame {
         ChatFrame(
             agent: agent, name: name, kind: kind, phase: phase,
-            composer: ComposerView(mode: mode, activity: activity), connection: .live,
+            composer: ComposerView(mode: mode, activity: activity), controls: ControlsSummary(effort: nil, mode: nil, model: nil, permission: nil), connection: .live,
             caughtUp: caughtUp, hasOlder: hasOlder, arrivalsHeld: false, queue: queue,
-            underway: underway, refused: refused, askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
-            model: nil, permission: nil, signIn: nil, waiting: waiting)
+            underway: underway, refused: refused, askInput: nil, context: nil,
+            ended: nil,
+            git: nil, signIn: nil, waiting: waiting)
     }
 
     /// The facts around a chat's rows: what the frame reports of the agent,
     /// and the overview.
     public struct Surroundings: Sendable {
         public var overview: Overview
-        public var model: String?
-        public var effort: String?
-        public var permission: String?
+        public var controls: ControlsSummary
         public var context: ContextView?
         public var signIn: SignInView?
         public var git: GitView?
@@ -80,9 +79,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
         /// The frame reporting these facts.
         func applied(to frame: ChatFrame) -> ChatFrame {
             var frame = frame
-            frame.model = model
-            frame.effort = effort
-            frame.permission = permission
+            frame.controls = controls
             frame.context = context
             frame.signIn = signIn
             frame.git = git
@@ -103,8 +100,24 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
             overview: Overview(
                 jobs: jobs, failedServers: failedServers, changes: nil, tasks: tasks,
                 usageNearLimit: usage),
-            model: model, effort: effort, permission: mode, context: context, signIn: signIn,
-            git: git, changes: changes)
+            controls: ControlsSummary(
+                effort: effort, mode: nil, model: model, permission: mode.flatMap(Self.unusual)),
+            context: context, signIn: signIn, git: git, changes: changes)
+    }
+
+    /// A permission by its provider value as the controls summary carries
+    /// it: only one that is not the provider's normal one.
+    static func unusual(_ value: String) -> PermissionChoice? {
+        let names = [
+            "acceptEdits": "Accept edits", "plan": "Plan", "auto": "Auto",
+            "bypassPermissions": "Bypass permissions", "read-only": "Read only",
+            "full-access": "Full access",
+        ]
+        guard let name = names[value] else { return nil }
+        return PermissionChoice(
+            value: value, displayName: name, custom: false, current: true, unlisted: false,
+            normal: false, neverAsks: value == "bypassPermissions" || value == "full-access",
+            settable: true)
     }
 
     public static func row(

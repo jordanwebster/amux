@@ -118,15 +118,19 @@ final class NewAgentTests: XCTestCase {
         store.offered(.success(codex), for: .codex, asked: asked)
         XCTAssertEqual(store.catalogue, codex)
 
-        XCTAssertEqual(store.offeredPermissions.map(\.value), ["default"],
+        let values = { (choices: [PermissionChoice]) in choices.map(\.value) }
+        XCTAssertEqual(values(store.settings?.permissions ?? []), ["default"],
                        "a permission naming models waits for one of them; one not settable is never offered")
-        store.choose(model: "gpt-6-astra")
-        XCTAssertEqual(store.offeredEfforts, ["low", "high"])
-        XCTAssertEqual(store.offeredPermissions.map(\.value), ["default", "auto"])
-        XCTAssertEqual(store.offeredModes.map(\.value), ["default", "plan"])
-        store.choose(effort: "high")
-        store.choose(permission: "auto")
-        store.choose(mode: "plan")
+        store.choose(.model("gpt-6-astra"))
+        XCTAssertEqual(store.effort, "low", "a model starts at its own default effort")
+        XCTAssertEqual(store.settings?.efforts.map(\.value), ["low", "high"])
+        XCTAssertEqual(values(store.settings?.permissions ?? []), ["default", "auto"])
+        XCTAssertEqual(store.settings?.modes.map(\.value), ["default", "plan"])
+        XCTAssertEqual(store.settings?.modes.first(where: \.current)?.value, "default",
+                       "none chosen: the normal mode is in force")
+        store.choose(.effort("high"))
+        store.choose(.permission("auto"))
+        store.choose(.mode("plan"))
         store.newWorktree = true
         XCTAssertEqual(
             store.request,
@@ -134,10 +138,13 @@ final class NewAgentTests: XCTestCase {
                      effort: "high", mode: "plan", model: "gpt-6-astra", newWorktree: true,
                      permission: "auto"))
 
-        // A model that takes neither drops them back to the host's defaults.
-        store.choose(model: "gpt-6-sol")
-        XCTAssertNil(store.effort)
-        XCTAssertNil(store.permission)
+        // Another model starts at its own default effort and gives up a
+        // permission it does not take for the normal one.
+        store.choose(.model("gpt-6-sol"))
+        XCTAssertEqual(store.effort, "low")
+        XCTAssertEqual(store.permission, "default")
+        store.choose(.mode("default"))
+        XCTAssertNil(store.mode, "the normal mode is no choice at all")
     }
 
     func testAnotherProviderStartsAfreshAndOnlyCodexTakesAMode() {
@@ -146,8 +153,8 @@ final class NewAgentTests: XCTestCase {
         store.choose(directory: "/src/x")
         store.choose(provider: .codex)
         store.offered(.success(codex), for: .codex, asked: store.askingOffer(for: .codex))
-        store.choose(model: "gpt-6-astra")
-        store.choose(mode: "plan")
+        store.choose(.model("gpt-6-astra"))
+        store.choose(.mode("plan"))
         store.choose(provider: .claude)
         XCTAssertNil(store.model)
         XCTAssertNil(store.mode)

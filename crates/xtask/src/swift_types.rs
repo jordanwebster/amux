@@ -55,6 +55,8 @@ pub fn definitions() -> Map<String, Value> {
         ui_view::ReviewDoc,
         ui_view::SettingsView,
         ui_view::SettingChange,
+        ui_view::NewAgentChoices,
+        ui_view::NewAgentPick,
         ui_view::Segment,
         app_runtime::values::StartConfig,
         app_runtime::values::ChatChanges,

@@ -4,9 +4,10 @@ import SwiftUI
 
 /// What the agent offers to change, as the settings view lists it: the
 /// models, the current model's efforts, the permissions and (Codex) the
-/// modes, each from the agent's catalogue with the current value marked. A pick is sent at once and the mark moves when
-/// the agent reports the new value. Where a setting cannot change from here
-/// the card says why instead of offering a pick.
+/// modes, each from the agent's catalogue with the current value marked. A
+/// pick is sent at once and the mark moves when the agent reports the new
+/// value. Where the view says a setting changes otherwise, the card shows
+/// the current value and says how.
 struct SettingsCard: View {
     @Environment(\.design) private var design
     let view: SettingsView
@@ -52,17 +53,17 @@ struct SettingsCard: View {
 
     private var sections: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if !view.models.isEmpty || view.modelRefusal != nil { models }
-            if !view.efforts.isEmpty || view.effortRefusal != nil { efforts }
-            if let typing = view.changeByTyping { sentence(typing, id: "chat.settings.typing") }
-            if !view.permissions.isEmpty || view.cyclePermission || view.permissionRefusal != nil { permissions }
-            if !view.modes.isEmpty { modes }
+            if !view.models.isEmpty { models }
+            if !view.efforts.isEmpty { efforts }
+            if let typing = ChatWords.byTyping(view.changeable) { sentence(typing, id: "chat.settings.typing") }
+            if !view.permissions.isEmpty || view.changeable.permission == .cycle { permissions }
+            if !shownModes.isEmpty { modes }
         }
     }
 
     // MARK: - Model
 
-    private var picksModel: Bool { view.modelRefusal == nil && view.changeByTyping == nil }
+    private var picksModel: Bool { view.changeable.model == .pick }
 
     @ViewBuilder
     private var models: some View {
@@ -73,23 +74,22 @@ struct SettingsCard: View {
                     if index > 0 { rule }
                     radio(
                         id: "chat.settings.model.\(choice.value)",
-                        title: ChatWords.model(choice),
-                        detail: choice.reported ? String(localized: "Reported by the agent") : choice.description,
+                        title: choice.displayName,
+                        detail: choice.unlisted ? String(localized: "Reported by the agent") : choice.description,
                         current: choice.current, warn: false
                     ) { change(.model(choice.value)) }
                 }
             } else {
                 if let current = view.models.first(where: { $0.current }) {
-                    fact(ChatWords.model(current), id: "chat.settings.model")
+                    fact(current.displayName, id: "chat.settings.model")
                 }
-                if let refusal = view.modelRefusal { sentence(refusal, id: "chat.settings.model.refusal") }
             }
         }
     }
 
     // MARK: - Effort
 
-    private var picksEffort: Bool { view.effortRefusal == nil && view.changeByTyping == nil }
+    private var picksEffort: Bool { view.changeable.effort == .pick }
 
     @ViewBuilder
     private var efforts: some View {
@@ -109,7 +109,6 @@ struct SettingsCard: View {
                 if let current = view.efforts.first(where: { $0.current }) {
                     fact(current.value, id: "chat.settings.effort")
                 }
-                if let refusal = view.effortRefusal { sentence(refusal, id: "chat.settings.effort.refusal") }
             }
         }
     }
@@ -126,7 +125,7 @@ struct SettingsCard: View {
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 4) {
             heading(ChatWords.permissionsHeading(kind))
-            if view.cyclePermission {
+            if view.changeable.permission == .cycle {
                 HStack(alignment: .center, spacing: 10) {
                     if let current = view.permissions.first(where: { $0.current }) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -150,9 +149,11 @@ struct SettingsCard: View {
                     .buttonStyle(.amuxControl)
                     .identified("chat.settings.cycle", label: "Cycle")
                 }
-                if let refusal = view.permissionRefusal { sentence(refusal, id: "chat.settings.mode.refusal") }
-            } else if let refusal = view.permissionRefusal {
-                sentence(refusal, id: "chat.settings.mode.refusal")
+                sentence(ChatWords.cyclesOnly, id: "chat.settings.mode.cycles")
+            } else if view.changeable.permission != .pick {
+                if let current = view.permissions.first(where: { $0.current }) {
+                    fact(ChatWords.permission(current), id: "chat.settings.mode")
+                }
             } else {
                 ForEach(Array(pickable.enumerated()), id: \.offset) { index, choice in
                     if index > 0 { rule }
@@ -169,20 +170,27 @@ struct SettingsCard: View {
 
     // MARK: - Modes
 
+    /// The modes a pick can set and the current one, where modes are picked;
+    /// otherwise the current one alone.
+    private var shownModes: [ModeChoice] {
+        view.changeable.mode == .pick
+            ? view.modes.filter { $0.settable || $0.current }
+            : view.modes.filter(\.current)
+    }
+
     /// How the agent works (Codex's default or plan), beside how much it
     /// may do: a second pick.
     private var modes: some View {
         VStack(alignment: .leading, spacing: 4) {
             heading(String(localized: "MODE"))
-            ForEach(Array(view.modes.filter { $0.settable || $0.current }.enumerated()), id: \.offset) {
-                index, choice in
+            ForEach(Array(shownModes.enumerated()), id: \.offset) { index, choice in
                 if index > 0 { rule }
                 radio(
                     id: "chat.settings.workmode.\(choice.value)",
                     title: ChatWords.mode(choice),
-                    detail: choice.reported ? String(localized: "Reported by the agent") : "",
+                    detail: choice.unlisted ? String(localized: "Reported by the agent") : "",
                     current: choice.current, warn: false
-                ) { change(.mode(choice.value)) }
+                ) { if choice.settable { change(.mode(choice.value)) } }
             }
         }
     }

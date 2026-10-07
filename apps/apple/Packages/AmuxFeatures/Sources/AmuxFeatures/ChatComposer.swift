@@ -85,8 +85,8 @@ struct ComposerBox: View {
                 .buttonStyle(.amuxControl)
                 .accessibilityLabel("Attach")
                 .identified("chat.attach", label: String(localized: "Attach"), value: plusOpen ? "open" : "closed")
-                if let frame = model.frame, let chip = ChatWords.chip(frame, model.settings) {
-                    modelChip(chip)
+                if let controls = model.frame?.controls, let chip = ChatWords.chip(controls) {
+                    modelChip(chip, warns: controls.permission?.neverAsks == true)
                 }
                 Spacer(minLength: 4)
                 Button { dictate(.dictate) } label: {
@@ -136,29 +136,27 @@ struct ComposerBox: View {
         .identified("chat.exited", label: title, value: host)
     }
 
-    /// The model and its effort, or its mode, as one mono pill. A mode that
-    /// stops asking reads in red. A tap opens the settings card.
-    private func modelChip(_ chip: (model: String, detail: String)) -> some View {
-        let stopping = model.settings?.permissions.first { $0.current && $0.neverAsks }
-            .map(ChatWords.permission)
-        let words = [chip.model, chip.detail].filter { !$0.isEmpty }.joined(separator: " · ")
-        // The effort took the detail's place: the stopping mode follows it.
-        let warn = stopping.flatMap { $0 == chip.detail ? nil : $0 }
-        let label = [words, warn ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
-        let red = stopping != nil && warn == nil
+    /// The model and its effort, then a permission or mode other than the
+    /// normal one, as one mono pill. A permission that stops asking reads
+    /// in red. A tap opens the settings card.
+    private func modelChip(
+        _ chip: (model: String, detail: String, unusual: [String]), warns: Bool
+    ) -> some View {
+        let label = ([chip.model, chip.detail] + chip.unusual).filter { !$0.isEmpty }
+            .joined(separator: " · ")
         return Button(action: openSettings) {
             HStack(spacing: 5) {
                 // Where the row is tight the effort goes first, then the
-                // model name shortens; a mode that stops asking stays.
+                // model name shortens; the permission and mode stay.
                 ViewThatFits(in: .horizontal) {
-                    chipWords(chip.model, detail: chip.detail, red: red, warn: warn)
-                    chipWords(chip.model, detail: red ? chip.detail : "", red: red, warn: warn)
+                    chipWords(chip.model, detail: chip.detail, unusual: chip.unusual, warns: warns)
+                    chipWords(chip.model, detail: "", unusual: chip.unusual, warns: warns)
                     HStack(spacing: 0) {
                         Text(verbatim: chip.model)
                             .foregroundStyle(design.inkMuted.color)
                             .truncationMode(.tail)
                             .frame(minWidth: 52, alignment: .leading)
-                        chipWords("", detail: red ? chip.detail : "", red: red, warn: warn, after: true)
+                        chipWords("", detail: "", unusual: chip.unusual, warns: warns, after: true)
                             .layoutPriority(1)
                     }
                 }
@@ -180,19 +178,24 @@ struct ComposerBox: View {
         .identified("chat.model", label: label)
     }
 
-    /// The chip's words; `after` when they follow a name drawn apart.
+    /// The chip's words; `after` when they follow a name drawn apart. The
+    /// first of `unusual` is the permission when `warns`, and reads in red.
     private func chipWords(
-        _ name: String, detail: String, red: Bool, warn: String?, after: Bool = false
+        _ name: String, detail: String, unusual: [String], warns: Bool, after: Bool = false
     ) -> some View {
-        let head = Text(verbatim: name).foregroundStyle(design.inkMuted.color)
-        let tail = detail.isEmpty
-            ? Text(verbatim: "")
-            : Text(verbatim: (name.isEmpty && !after ? "" : " · ") + detail)
-                .foregroundStyle(red ? design.removed.color : design.inkMuted.color)
-        let led = after || !name.isEmpty || !detail.isEmpty
-        let stop = warn.map { Text(verbatim: (led ? " · " : "") + $0).foregroundStyle(design.removed.color) }
-            ?? Text(verbatim: "")
-        return (head + tail + stop).truncationMode(.tail)
+        var led = after || !name.isEmpty
+        var words = Text(verbatim: name).foregroundStyle(design.inkMuted.color)
+        if !detail.isEmpty {
+            words = words + Text(verbatim: (led ? " · " : "") + detail).foregroundStyle(design.inkMuted.color)
+            led = true
+        }
+        for (index, word) in unusual.enumerated() {
+            let red = warns && index == 0
+            words = words + Text(verbatim: (led ? " · " : "") + word)
+                .foregroundStyle(red ? design.removed.color : design.ink.color)
+            led = true
+        }
+        return words.truncationMode(.tail)
     }
 
     private var dictationLabel: String {
@@ -729,7 +732,7 @@ struct PlusCard: View {
                 tile(String(localized: "Photo"), glyph: "photo", id: "chat.attach.photo") { attach(.photo) }
                 tile(String(localized: "File"), glyph: "doc", id: "chat.attach.file") { attach(.file) }
             }
-            if let settings, !settings.permissions.isEmpty || settings.cyclePermission {
+            if let settings, !settings.permissions.isEmpty || settings.changeable.permission == .cycle {
                 permissions(settings)
             }
         }

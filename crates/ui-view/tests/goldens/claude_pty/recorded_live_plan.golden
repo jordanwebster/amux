@@ -104,11 +104,10 @@
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
 == context Some(ContextView { used_tokens: 27954, window_tokens: None, percent: None, near_full: false }) sign-in None
 == settings
-  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  model* unlisted claude-haiku-4-5-20251001 "Haiku 4.5" efforts=[]
   permission* "default" "Ask" normal unsettable
   permission  "acceptEdits" "Accept edits" unsettable
   permission  "plan" "Plan" unsettable
   permission  "auto" "Auto" unsettable
-  permission: cycle to the next
-  refused permission: Terminal Claude changes permission only by cycling through its permissions.
-  by typing: To change the model or effort, type /model <name> or /effort <level> in the composer.
+  changes: model ByTyping("/model") · effort ByTyping("/effort") · permission Cycle · mode NotOffered
+  controls: model=Some("Haiku 4.5") effort=None permission=None mode=None

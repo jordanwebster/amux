@@ -961,3 +961,38 @@ fn a_name_field_hears_the_hosts_rule_while_it_is_typed() {
     assert_eq!(problem("fix login"), json!("Characters"));
     assert_eq!(problem(""), json!("Empty"));
 }
+
+#[test]
+fn a_new_agents_settings_and_picks_come_from_the_shared_view() {
+    let catalogue = c(&json!({
+        "hash": [1],
+        "models": [
+            {"value": "astra", "display_name": "Astra", "description": "", "efforts": ["low", "high"],
+             "default_effort": "low", "resolved_model": ""},
+            {"value": "sol", "display_name": "", "description": "", "efforts": ["low", "medium"],
+             "default_effort": "medium", "resolved_model": ""},
+        ],
+        "commands": [],
+        "permissions": [],
+        "modes": [],
+    })
+    .to_string());
+    let chosen = c(r#"{"model": "astra", "effort": "high", "permission": null, "mode": null}"#);
+    // SAFETY: the strings live for the call.
+    let view = take(unsafe { amux_new_agent_settings(catalogue.as_ptr(), chosen.as_ptr()) });
+    assert_eq!(view["models"][1]["display_name"], json!("sol"));
+    assert_eq!(view["changeable"]["effort"], json!("Pick"));
+    let pick = c(r#"{"Model": "sol"}"#);
+    // SAFETY: the strings live for the call.
+    let next =
+        take(unsafe { amux_new_agent_pick(catalogue.as_ptr(), chosen.as_ptr(), pick.as_ptr()) });
+    assert_eq!(next["model"], json!("sol"));
+    assert_eq!(
+        next["effort"],
+        json!("medium"),
+        "another model, its own default"
+    );
+    let broken = c("{");
+    // SAFETY: the strings live for the call.
+    assert!(unsafe { amux_new_agent_settings(broken.as_ptr(), chosen.as_ptr()) }.is_null());
+}

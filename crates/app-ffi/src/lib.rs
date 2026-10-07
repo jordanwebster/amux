@@ -449,6 +449,54 @@ pub unsafe extern "C" fn amux_agent_name_problem(name: *const c_char) -> *mut c_
     owned(&ui_view::agent_name_problem(name))
 }
 
+/// A new agent's `SettingsView` from a host's `Catalogue` and the
+/// `NewAgentChoices` made so far, both JSON; null when either does not
+/// parse. The caller frees the answer.
+///
+/// # Safety
+/// The strings are NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_new_agent_settings(
+    catalogue: *const c_char,
+    chosen: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let catalogue: Option<ui_view::Catalogue> = unsafe { parse(catalogue) };
+    // SAFETY: the caller's contract.
+    let chosen: Option<ui_view::NewAgentChoices> = unsafe { parse(chosen) };
+    guard(std::ptr::null_mut(), || match (catalogue, chosen) {
+        (Some(catalogue), Some(chosen)) => owned(&ui_view::new_agent_settings(&catalogue, &chosen)),
+        _ => std::ptr::null_mut(),
+    })
+}
+
+/// The `NewAgentChoices` after a `NewAgentPick`, with the rules a pick
+/// carries (another model starts at its default effort, and so on); every
+/// argument JSON, null when one does not parse. The caller frees the
+/// answer.
+///
+/// # Safety
+/// The strings are NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_new_agent_pick(
+    catalogue: *const c_char,
+    chosen: *const c_char,
+    pick: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let catalogue: Option<ui_view::Catalogue> = unsafe { parse(catalogue) };
+    // SAFETY: the caller's contract.
+    let chosen: Option<ui_view::NewAgentChoices> = unsafe { parse(chosen) };
+    // SAFETY: the caller's contract.
+    let pick: Option<ui_view::NewAgentPick> = unsafe { parse(pick) };
+    guard(std::ptr::null_mut(), || match (catalogue, chosen, pick) {
+        (Some(catalogue), Some(chosen), Some(pick)) => {
+            owned(&ui_view::new_agent_pick(&catalogue, &chosen, &pick))
+        }
+        _ => std::ptr::null_mut(),
+    })
+}
+
 /// Starts the installation from a `StartConfig` as JSON. Blocks until every
 /// profile's store is open; `wake` is called with 0 whenever the profile
 /// list moves. Null on failure, with the reason in `error` when it is not

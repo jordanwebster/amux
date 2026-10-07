@@ -17,8 +17,8 @@ use interpret::{Checkpoint, Effect, Event, Interpreter, decode_checkpoint, encod
 use support::Committer;
 use ui_state::{InputOutcome, Msg, SessionState};
 use ui_view::{
-    Answer, AskBody, AskCard, CardState, Pick, QuestionResponse, SettingChange, answer_input,
-    ask_card, question_answer, reply_answer, setting_input, settings,
+    Answer, AskBody, AskCard, CardState, Changeable, Pick, QuestionResponse, SettingChange,
+    answer_input, ask_card, question_answer, reply_answer, setting_input, settings,
 };
 use wire::{Kind, SessionEvent, send_input_response, session_event};
 
@@ -324,11 +324,11 @@ where
         let mut picks: Vec<(&'static str, SettingChange, bool)> = Vec::new();
         for model in view.models.iter().filter(|model| !model.current) {
             let change = SettingChange::Model(model.value.clone());
-            picks.push(("model", change, view.model_refusal.is_none()));
+            picks.push(("model", change, view.changeable.model == Changeable::Pick));
         }
         for effort in view.efforts.iter().filter(|effort| !effort.current) {
             let change = SettingChange::Effort(effort.value.clone());
-            picks.push(("effort", change, view.effort_refusal.is_none()));
+            picks.push(("effort", change, view.changeable.effort == Changeable::Pick));
         }
         // A permission or mode the view marks not settable is not offered
         // as a pick; those it offers must be accepted.
@@ -338,7 +338,11 @@ where
             .filter(|permission| !permission.current && permission.settable)
         {
             let change = SettingChange::Permission(permission.value.clone());
-            picks.push(("permission", change, view.permission_refusal.is_none()));
+            picks.push((
+                "permission",
+                change,
+                view.changeable.permission == Changeable::Pick,
+            ));
         }
         for mode in view
             .modes
@@ -346,9 +350,9 @@ where
             .filter(|mode| !mode.current && mode.settable)
         {
             let change = SettingChange::Mode(mode.value.clone());
-            picks.push(("mode", change, true));
+            picks.push(("mode", change, view.changeable.mode == Changeable::Pick));
         }
-        if view.cycle_permission {
+        if view.changeable.permission == Changeable::Cycle {
             picks.push(("cycle", SettingChange::CyclePermission, true));
         }
         for (setting, change, offered) in picks {

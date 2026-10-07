@@ -65,7 +65,9 @@
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
 == context None sign-in None
 == settings
-  model* reported gpt-5.6-luna "" efforts=[]
-  effort* reported high
-  permission* reported "auto" "" unsettable
-  mode* reported "plan" "" unsettable
+  model* unlisted gpt-5.6-luna "GPT-5.6 Luna" efforts=[]
+  effort* unlisted high
+  permission* unlisted "auto" "auto" unsettable
+  mode* unlisted "plan" "plan" unsettable
+  changes: model NotOffered · effort NotOffered · permission NotOffered · mode NotOffered
+  controls: model=Some("GPT-5.6 Luna") effort=Some("high") permission=None mode=Some("plan")

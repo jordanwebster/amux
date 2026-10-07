@@ -233,14 +233,14 @@ public struct ChatRowView: View {
             ("plusminus", "", file.path, .change(added: file.added, removed: file.removed))
         case .created(let lines):
             ("square.and.pencil", String(localized: "Created"), file.path,
-             RowMeta(String(localized: "\(lines) lines")))
+             RowMeta(ChatWords.lines(lines)))
         case .deleted:
             ("trash", String(localized: "Deleted"), file.path, RowMeta())
         case .moved(let to):
             ("arrow.right", String(localized: "Moved"), "\(file.path) → \(to)", RowMeta())
         case .writing(let lines):
             ("square.and.pencil", String(localized: "Writing"), file.path,
-             RowMeta(String(localized: "\(lines) lines")))
+             RowMeta(ChatWords.lines(lines)))
         }
     }
 

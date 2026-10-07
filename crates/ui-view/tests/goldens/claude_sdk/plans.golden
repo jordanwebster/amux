@@ -48,5 +48,7 @@
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
 == context None sign-in None
 == settings
-  model* reported claude-opus-5-5 "" efforts=[]
-  permission* reported "acceptEdits" "" unsettable
+  model* unlisted claude-opus-5-5 "Opus 5.5" efforts=[]
+  permission* unlisted "acceptEdits" "acceptEdits" unsettable
+  changes: model NotOffered · effort NotOffered · permission NotOffered · mode NotOffered
+  controls: model=Some("Opus 5.5") effort=None permission=None mode=None

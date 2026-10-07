@@ -10,8 +10,8 @@ use model::{AgentKey, Connection, InputState, Key, PhaseView, RefusalReason, Wai
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui_view::{
-    ChangeTotals, ComposerView, ContextView, QueuedRow, Reach, RefusedPrompt, SentPrompt,
-    SignInView, ToolRows,
+    ChangeTotals, ComposerView, ContextView, ControlsSummary, QueuedRow, Reach, RefusedPrompt,
+    SentPrompt, SignInView, ToolRows,
 };
 use wire::{BlobRef, HostVia, Kind};
 
@@ -81,11 +81,9 @@ pub struct ChatFrame {
     pub phase: PhaseView,
     pub composer: ComposerView,
     pub waiting: Option<Waiting>,
-    /// The agent's model, effort in force, permission and mode, as it
-    /// reports them (values from its catalogue; see the settings view).
-    pub model: Option<String>,
-    pub effort: Option<String>,
-    pub permission: Option<String>,
+    /// The model, effort in force, and a permission or mode other than the
+    /// normal one, as the composer says them.
+    pub controls: ControlsSummary,
     /// The agent's branch and change totals as of its last turn end; None
     /// outside a repository.
     pub git: Option<GitView>,

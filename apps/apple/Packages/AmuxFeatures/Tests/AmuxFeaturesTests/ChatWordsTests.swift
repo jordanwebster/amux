@@ -105,19 +105,22 @@ final class ChatWordsTests: XCTestCase {
     }
 
     func testPermissionsAndModesAreWordedFromTheCatalogue() {
-        func permission(_ value: String, _ name: String, reported: Bool = false, neverAsks: Bool = false, settable: Bool = true) -> PermissionChoice {
+        func permission(
+            _ value: String, _ name: String, custom: Bool = false, unlisted: Bool = false,
+            neverAsks: Bool = false, settable: Bool = true
+        ) -> PermissionChoice {
             PermissionChoice(
-                value: value, displayName: name, current: false, reported: reported, normal: false,
-                neverAsks: neverAsks, settable: settable)
+                value: value, displayName: name, custom: custom, current: false, unlisted: unlisted,
+                normal: false, neverAsks: neverAsks, settable: settable)
         }
         XCTAssertEqual(ChatWords.permission(permission("acceptEdits", "Accept edits")), "Accept edits")
-        XCTAssertEqual(ChatWords.permission(permission("", "")), "Custom")
+        XCTAssertEqual(ChatWords.permission(permission("", "", custom: true)), "Custom")
         XCTAssertEqual(ChatWords.permissionDetail(permission("auto", "Auto")), "")
         XCTAssertEqual(ChatWords.permissionDetail(permission("full", "Full", neverAsks: true)), "Acts without asking")
-        XCTAssertEqual(ChatWords.permissionDetail(permission("odd", "", reported: true)), "Reported by the agent")
+        XCTAssertEqual(ChatWords.permissionDetail(permission("odd", "odd", unlisted: true)), "Reported by the agent")
         XCTAssertEqual(ChatWords.permissionDetail(permission("auto", "Auto", settable: false)), "Can’t be picked from here")
         XCTAssertEqual(
-            ChatWords.mode(ModeChoice(value: "plan", displayName: "Plan", current: true, reported: false, normal: false, settable: true)),
+            ChatWords.mode(ModeChoice(value: "plan", displayName: "Plan", current: true, unlisted: false, normal: false, settable: true)),
             "Plan")
         let switching = Choice(
             outcome: .allowAlways(subjects: [], directories: [], mode: "acceptEdits", modeName: "Accept edits", scope: .session, label: ""),
@@ -308,45 +311,43 @@ final class ChatWordsTests: XCTestCase {
         XCTAssertEqual(ChatWords.spoken(removed), "Removed line 13, Busy,")
     }
 
-    /// The chip names the model the way the settings card lists it: by the
-    /// offered display name, else the id the agent reports.
-    func testTheModelChipReadsTheNameTheSettingsCardGivesTheModel() {
-        let frame = ChatFrame(
-            agent: AgentKey(host: [1], agent: [2]), name: "a", kind: .claudeSdk, phase: .idle,
-            composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: true,
-            hasOlder: false, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil,
-            context: nil, effort: nil, ended: nil, git: nil, model: "claude-sonnet-5",
-            permission: "acceptEdits", signIn: nil, waiting: nil)
+    /// The chip says the model by the one name the view gives it, its
+    /// effort, and only a permission or mode other than the normal one.
+    func testTheModelChipSaysTheSummaryTheViewHandsOver() {
         let permission = PermissionChoice(
-            value: "acceptEdits", displayName: "Accept edits", current: true, reported: false,
-            normal: false, neverAsks: false, settable: true)
-        func settings(_ models: [ModelChoice]) -> SettingsView {
-            SettingsView(
-                models: models, efforts: [], permissions: [permission], modes: [],
-                cyclePermission: false, commands: [], changeByTyping: nil, effortRefusal: nil,
-                modelRefusal: nil, permissionRefusal: nil)
-        }
-        let offered = settings([
-            ModelChoice(
-                value: "opus", displayName: "Opus 5.5", description: "", efforts: [], current: false,
-                reported: false, defaultEffort: nil),
-            ModelChoice(
-                value: "sonnet", displayName: "Sonnet 5", description: "", efforts: [], current: true,
-                reported: false, defaultEffort: nil),
-        ])
-        let chip = ChatWords.chip(frame, offered)
+            value: "acceptEdits", displayName: "Accept edits", custom: false, current: true,
+            unlisted: false, normal: false, neverAsks: false, settable: true)
+        let plan = ModeChoice(
+            value: "plan", displayName: "Plan", current: true, unlisted: false, normal: false,
+            settable: true)
+        let summary = ControlsSummary(effort: "high", mode: nil, model: "Sonnet 5", permission: nil)
+        let chip = ChatWords.chip(summary)
         XCTAssertEqual(chip?.model, "Sonnet 5")
-        XCTAssertEqual(chip?.detail, "Accept edits")
-        var effort = frame
-        effort.effort = "high"
-        XCTAssertEqual(ChatWords.chip(effort, offered)?.detail, "high", "the effort, when reported, stands for the mode")
+        XCTAssertEqual(chip?.detail, "high")
+        XCTAssertEqual(chip?.unusual, [])
+        var unusual = summary
+        unusual.permission = permission
+        unusual.mode = plan
+        XCTAssertEqual(ChatWords.chip(unusual)?.unusual, ["Accept edits", "Plan"])
+        var custom = permission
+        custom.custom = true
+        custom.value = ""
+        custom.displayName = ""
+        XCTAssertEqual(ChatWords.permission(custom), "Custom")
+        XCTAssertNil(ChatWords.chip(ControlsSummary(effort: nil, mode: nil, model: nil, permission: nil)))
+    }
 
-        let reported = settings([
-            ModelChoice(
-                value: "claude-sonnet-5", displayName: "", description: "", efforts: [], current: true,
-                reported: true, defaultEffort: nil),
-        ])
-        XCTAssertEqual(ChatWords.chip(frame, reported)?.model, "claude-sonnet-5")
-        XCTAssertEqual(ChatWords.chip(frame, nil)?.model, "claude-sonnet-5")
+    /// Where only the agent's own commands change the model and effort,
+    /// the phone says so, naming the commands the view hands over.
+    func testTypedChangesNameTheAgentsCommands() {
+        let typed = Changeability(
+            model: .byTyping("/model"), effort: .byTyping("/effort"), permission: .cycle, mode: .notOffered)
+        XCTAssertEqual(
+            ChatWords.byTyping(typed),
+            "To change the model or effort, type /model <name> or /effort <level> in the composer.")
+        let picked = Changeability(model: .pick, effort: .pick, permission: .pick, mode: .notOffered)
+        XCTAssertNil(ChatWords.byTyping(picked))
+        XCTAssertEqual(ChatWords.lines(1), "1 line")
+        XCTAssertEqual(ChatWords.lines(3), "3 lines")
     }
 }

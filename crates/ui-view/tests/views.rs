@@ -1265,9 +1265,16 @@ fn settings_mark_the_current_model_effort_and_permission() {
         ["compact", "stripe:test-cards"],
         "a terminal-only command is dropped"
     );
-    assert_eq!(view.model_refusal, None);
-    assert_eq!(view.effort_refusal, None, "headless Claude takes effort");
-    assert_eq!(view.permission_refusal, None);
+    assert_eq!(
+        view.changeable,
+        Changeability {
+            model: Changeable::Pick,
+            effort: Changeable::Pick,
+            permission: Changeable::Pick,
+            mode: Changeable::NotOffered,
+        },
+        "headless Claude takes a model, effort and permission pick"
+    );
 }
 
 #[test]
@@ -1285,14 +1292,19 @@ fn a_reported_value_outside_the_offer_is_shown_as_current() {
         Vec::new(),
     );
     let last = view.models.last().unwrap();
-    assert!(last.current && last.reported);
+    assert!(last.current && last.unlisted);
     assert_eq!(last.value, "claude-haiku-4-5-20251001");
+    assert_eq!(
+        last.display_name, "claude-haiku-4-5-20251001",
+        "no name from the interpreter or the catalogue: the id"
+    );
     assert!(!view.models[0].current);
     assert_eq!(view.efforts.len(), 1);
-    assert!(view.efforts[0].current && view.efforts[0].reported);
+    assert!(view.efforts[0].current && view.efforts[0].unlisted);
     let permission = view.permissions.last().unwrap();
     assert_eq!(permission.value, "dontAsk");
-    assert!(permission.current && permission.reported && !permission.settable);
+    assert!(permission.current && permission.unlisted && !permission.settable);
+    assert!(!permission.custom);
     assert_eq!(
         view.permissions
             .iter()
@@ -1367,14 +1379,14 @@ fn codex_offers_permissions_and_modes_and_settings_outside_them_read_custom() {
     );
     assert_eq!(view.commands.len(), 1, "a Codex skill is never filtered");
     assert_eq!(
-        (
-            &view.model_refusal,
-            &view.effort_refusal,
-            &view.permission_refusal
-        ),
-        (&None, &None, &None)
+        view.changeable,
+        Changeability {
+            model: Changeable::Pick,
+            effort: Changeable::Pick,
+            permission: Changeable::Pick,
+            mode: Changeable::Pick,
+        }
     );
-    assert!(!view.cycle_permission);
 
     let view = codex(wire::CodexSnapshot {
         approval_policy: Some("untrusted".into()),
@@ -1383,7 +1395,7 @@ fn codex_offers_permissions_and_modes_and_settings_outside_them_read_custom() {
     });
     let custom = view.permissions.last().unwrap();
     assert_eq!(custom.value, "", "settings that match no name");
-    assert!(custom.current && custom.reported && !custom.settable);
+    assert!(custom.custom && custom.current && custom.unlisted && !custom.settable);
     assert_eq!(view.permissions.len(), 5);
     assert_eq!(
         setting_input(Kind::Codex, &SettingChange::Permission(String::new())),
@@ -1419,7 +1431,7 @@ fn an_offered_alias_is_marked_for_the_model_id_it_resolves_to() {
         .models
         .iter()
         .filter(|model| model.current)
-        .map(|model| (model.value.as_str(), model.reported))
+        .map(|model| (model.value.as_str(), model.unlisted))
         .collect();
     assert_eq!(
         current,
@@ -1447,7 +1459,7 @@ fn terminal_claude_shows_what_it_reports_and_says_how_to_type_a_change() {
     assert_eq!(
         view.models
             .iter()
-            .map(|model| (model.value.as_str(), model.current, model.reported))
+            .map(|model| (model.value.as_str(), model.current, model.unlisted))
             .collect::<Vec<_>>(),
         [("claude-sonnet-5", true, true)],
         "the reported model alone: nothing is offered"
@@ -1471,18 +1483,293 @@ fn terminal_claude_shows_what_it_reports_and_says_how_to_type_a_change() {
         ],
         "listed, but reached only by cycling"
     );
-    assert!(view.cycle_permission);
-    assert_eq!((&view.model_refusal, &view.effort_refusal), (&None, &None));
-    assert!(view.permission_refusal.is_some());
-    let typing = view.change_by_typing.expect("the typing sentence");
-    assert!(typing.contains("/model <name>") && typing.contains("/effort <level>"));
+    assert_eq!(
+        view.changeable,
+        Changeability {
+            model: Changeable::ByTyping("/model".into()),
+            effort: Changeable::ByTyping("/effort".into()),
+            permission: Changeable::Cycle,
+            mode: Changeable::NotOffered,
+        }
+    );
 
     let sdk = settings_of(Kind::ClaudeSdk, Vec::new());
-    assert!(
-        !sdk.cycle_permission,
-        "headless Claude picks its permission"
+    assert_eq!(
+        sdk.changeable,
+        Changeability {
+            permission: Changeable::Pick,
+            ..Changeability::default()
+        },
+        "headless Claude picks its permission, and its model once it lists models"
     );
-    assert_eq!(sdk.change_by_typing, None);
+}
+
+#[test]
+fn the_running_model_has_one_name_and_only_unusual_controls_are_summarised() {
+    let claude = |permission: &str| {
+        let catalogue = {
+            let (permissions, modes) = offered_controls(Kind::ClaudeSdk);
+            wire::Catalogue {
+                models: vec![offered("sonnet", &["low", "high"], Some("high"))],
+                permissions,
+                modes,
+                ..Default::default()
+            }
+        };
+        let mut state = SessionState::new(agent(Kind::ClaudeSdk), CAP);
+        state.set_catalogue(wire::Catalogue {
+            hash: b"offered".to_vec(),
+            ..catalogue
+        });
+        state.update(event(session_event::Of::Snapshot(wire::Snapshot {
+            kind: wire::kind_tag(Kind::ClaudeSdk).into(),
+            body: wire::ClaudeSdkSnapshot {
+                model: Some("id-sonnet".into()),
+                model_name: Some("Sonnet 5".into()),
+                permission: Some(permission.into()),
+                ..Default::default()
+            }
+            .encode_to_vec(),
+            phase: Phase::Idle as i32,
+            catalogue: Some(b"offered".to_vec()),
+            ..wire::Snapshot::default()
+        })));
+        state
+    };
+    let normal = controls(&claude("default"));
+    assert_eq!(
+        normal.model.as_deref(),
+        Some("Sonnet 5"),
+        "the interpreter's name"
+    );
+    assert_eq!(
+        normal.effort.as_deref(),
+        Some("high"),
+        "the model's default"
+    );
+    assert_eq!(normal.permission, None, "the normal permission goes unsaid");
+    let plan = controls(&claude("plan"));
+    assert_eq!(
+        plan.permission.map(|permission| permission.display_name),
+        Some("Plan".to_owned())
+    );
+
+    let custom = |snapshot: wire::CodexSnapshot| {
+        let mut state = SessionState::new(agent(Kind::Codex), CAP);
+        let (permissions, modes) = offered_controls(Kind::Codex);
+        state.set_catalogue(wire::Catalogue {
+            hash: b"offered".to_vec(),
+            permissions,
+            modes,
+            ..Default::default()
+        });
+        state.update(event(session_event::Of::Snapshot(wire::Snapshot {
+            kind: wire::kind_tag(Kind::Codex).into(),
+            body: snapshot.encode_to_vec(),
+            phase: Phase::Idle as i32,
+            catalogue: Some(b"offered".to_vec()),
+            ..wire::Snapshot::default()
+        })));
+        controls(&state)
+    };
+    let codex = custom(wire::CodexSnapshot {
+        approval_policy: Some("untrusted".into()),
+        sandbox: Some("workspace-write".into()),
+        mode: Some("plan".into()),
+        ..Default::default()
+    });
+    assert!(codex.permission.is_some_and(|permission| permission.custom));
+    assert_eq!(codex.mode.map(|mode| mode.value), Some("plan".to_owned()));
+    let unsaid = custom(wire::CodexSnapshot {
+        permission: Some("default".into()),
+        mode: Some("default".into()),
+        ..Default::default()
+    });
+    assert_eq!((unsaid.permission, unsaid.mode), (None, None));
+
+    // Terminal Claude offers no models: the interpreter's tidied name names
+    // the reported one, in the list as beside the composer.
+    let mut state = SessionState::new(agent(Kind::ClaudePty), CAP);
+    state.update(event(session_event::Of::Snapshot(wire::Snapshot {
+        kind: wire::kind_tag(Kind::ClaudePty).into(),
+        body: wire::ClaudePtySnapshot {
+            model: Some("claude-sonnet-5".into()),
+            model_name: Some("Sonnet 5".into()),
+            permission: Some("plan".into()),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+        phase: Phase::Idle as i32,
+        ..wire::Snapshot::default()
+    })));
+    assert_eq!(settings(&state).models[0].display_name, "Sonnet 5");
+    let pty = controls(&state);
+    assert_eq!(pty.model.as_deref(), Some("Sonnet 5"));
+    assert_eq!(
+        pty.permission, None,
+        "nothing says plan is unusual until the catalogue is held"
+    );
+}
+
+/// A host's Codex catalogue: two models, a permission only the first
+/// takes, one never settable, and two modes.
+fn new_agent_catalogue() -> wire::Catalogue {
+    let permission = |value: &str, normal: bool, models: &[&str]| wire::OfferedPermission {
+        value: value.into(),
+        display_name: value.to_uppercase(),
+        normal,
+        settable: true,
+        models: models.iter().map(|model| (*model).into()).collect(),
+        ..Default::default()
+    };
+    let (_, modes) = offered_controls(Kind::Codex);
+    wire::Catalogue {
+        models: vec![
+            offered("astra", &["low", "high"], Some("low")),
+            wire::OfferedModel {
+                display_name: String::new(),
+                ..offered("sol", &["low", "medium"], Some("medium"))
+            },
+        ],
+        permissions: vec![
+            permission("default", true, &[]),
+            permission("auto", false, &["astra"]),
+            wire::OfferedPermission {
+                settable: false,
+                ..permission("locked", false, &[])
+            },
+        ],
+        modes,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_new_agent_lists_what_its_host_offers_for_the_chosen_model() {
+    let catalogue = new_agent_catalogue();
+    let nothing = new_agent_settings(&catalogue, &NewAgentChoices::default());
+    assert_eq!(
+        nothing
+            .models
+            .iter()
+            .map(|model| (model.display_name.as_str(), model.current))
+            .collect::<Vec<_>>(),
+        [("ASTRA", false), ("sol", false)],
+        "a model without a name reads its value"
+    );
+    assert!(nothing.efforts.is_empty(), "no model: no efforts");
+    assert_eq!(
+        nothing
+            .permissions
+            .iter()
+            .map(|permission| permission.value.as_str())
+            .collect::<Vec<_>>(),
+        ["default"],
+        "one naming models waits for one of them; one not settable never shows"
+    );
+    assert_eq!(
+        nothing
+            .modes
+            .iter()
+            .map(|mode| (mode.value.as_str(), mode.current))
+            .collect::<Vec<_>>(),
+        [("default", true), ("plan", false)],
+        "none chosen: the normal mode is in force"
+    );
+    assert_eq!(
+        nothing.changeable,
+        Changeability {
+            model: Changeable::Pick,
+            effort: Changeable::NotOffered,
+            permission: Changeable::Pick,
+            mode: Changeable::Pick,
+        }
+    );
+
+    let astra = new_agent_settings(
+        &catalogue,
+        &NewAgentChoices {
+            model: Some("astra".into()),
+            effort: Some("high".into()),
+            permission: Some("auto".into()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        astra
+            .efforts
+            .iter()
+            .map(|effort| (effort.value.as_str(), effort.current, effort.default))
+            .collect::<Vec<_>>(),
+        [("low", false, true), ("high", true, false)]
+    );
+    assert_eq!(
+        astra
+            .permissions
+            .iter()
+            .map(|permission| (permission.value.as_str(), permission.current))
+            .collect::<Vec<_>>(),
+        [("default", false), ("auto", true)]
+    );
+
+    let elsewhere = new_agent_settings(
+        &catalogue,
+        &NewAgentChoices {
+            model: Some("gpt-old".into()),
+            effort: Some("xhigh".into()),
+            permission: Some("yolo".into()),
+            mode: Some("pair".into()),
+        },
+    );
+    let unlisted = |current: bool, unlisted: bool| current && unlisted;
+    let last = elsewhere.models.last().unwrap();
+    assert!(unlisted(last.current, last.unlisted) && last.display_name == "gpt-old");
+    let last = elsewhere.efforts.last().unwrap();
+    assert!(unlisted(last.current, last.unlisted));
+    let last = elsewhere.permissions.last().unwrap();
+    assert!(unlisted(last.current, last.unlisted) && !last.settable);
+    let last = elsewhere.modes.last().unwrap();
+    assert!(unlisted(last.current, last.unlisted));
+}
+
+#[test]
+fn a_new_agents_pick_keeps_its_choices_consistent() {
+    let catalogue = new_agent_catalogue();
+    let pick =
+        |chosen: &NewAgentChoices, pick: NewAgentPick| new_agent_pick(&catalogue, chosen, &pick);
+    let chosen = NewAgentChoices {
+        model: Some("astra".into()),
+        effort: Some("low".into()),
+        permission: Some("auto".into()),
+        mode: None,
+    };
+    let sol = pick(&chosen, NewAgentPick::Model(Some("sol".into())));
+    assert_eq!(sol.effort.as_deref(), Some("medium"), "its own default");
+    assert_eq!(
+        sol.permission.as_deref(),
+        Some("default"),
+        "sol does not take auto: back to the normal one"
+    );
+    let again = pick(&chosen, NewAgentPick::Model(Some("astra".into())));
+    assert_eq!(again, chosen, "the same model changes nothing");
+    let host = pick(&chosen, NewAgentPick::Model(None));
+    assert_eq!(
+        (host.effort, host.permission.as_deref()),
+        (None, Some("default")),
+        "the host's model: its default effort, a permission every model takes"
+    );
+    let typed = pick(&chosen, NewAgentPick::Model(Some("gpt-old".into())));
+    assert_eq!(
+        typed.effort.as_deref(),
+        Some("low"),
+        "nothing is known of a model the catalogue does not list"
+    );
+    let plan = pick(&chosen, NewAgentPick::Mode(Some("plan".into())));
+    assert_eq!(plan.mode.as_deref(), Some("plan"));
+    let normal = pick(&plan, NewAgentPick::Mode(Some("default".into())));
+    assert_eq!(normal.mode, None, "the normal mode is no choice at all");
+    let effort = pick(&chosen, NewAgentPick::Effort(None));
+    assert_eq!(effort.effort, None);
 }
 
 fn tool_item(

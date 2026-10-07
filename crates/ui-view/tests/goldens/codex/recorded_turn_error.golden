@@ -18,6 +18,8 @@
 == overview Overview { tasks: None, jobs: [], failed_servers: [], usage_near_limit: None, changes: None }
 == context None sign-in None
 == settings
-  model* reported codex-spec-no-such-model "" efforts=[]
-  permission* reported "" "" unsettable
-  mode* reported "default" "" unsettable
+  model* unlisted codex-spec-no-such-model "Codex Spec No Such Model" efforts=[]
+  permission* unlisted custom "" "" unsettable
+  mode* unlisted "default" "default" unsettable
+  changes: model NotOffered · effort NotOffered · permission NotOffered · mode NotOffered
+  controls: model=Some("Codex Spec No Such Model") effort=None permission=None mode=Some("default")
