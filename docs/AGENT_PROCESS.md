@@ -178,8 +178,7 @@ parent. See [agent tools](AGENT_TOOLS.md) for families.
 ([`agent.proto`](../crates/wire/proto/amux/v1/agent.proto)), each a varint
 length followed by the encoded message, the same framing the journal uses for
 steps. A frame over 64 MiB is treated as a broken peer. The surface has no
-version integer at all: fields are only ever added, and a frame an older
-reader does not know is ignored.
+version integer, and a frame a reader does not know is ignored.
 
 | Frame | Direction | Meaning |
 |---|---|---|

@@ -1,3 +1,22 @@
+2026-10-07 — **The protocol is cleaned up as an unreleased one.**
+Nothing depends on an older build yet, so the protobuf schemas stop
+carrying compatibility they do not need. All 31 `reserved` lines are gone
+and every message's fields and every enum's values are renumbered in
+reading order. Unused items are deleted: three error details nothing
+returns (`BlobMissing`, `BlobTooLarge`, `DiffUnavailable`), six request
+messages the profile service never takes, `ProfileInfo`'s `startup_error`
+and `minimum_version`, and Codex's `resume_thread_id`. `PROTOCOL_VERSION`
+resets to 1. The only-add check (`just proto-check`, its baseline and its CI
+step) is removed, since it blocked exactly these changes and steered agents
+into reservations; the architecture and wire docs now say version-skew
+discipline starts at the first release, and AGENTS.md tells agents to
+delete and renumber rather than reserve. The committed debug bundle is
+re-encoded field by field from the old numbers to the new ones, so its
+content is unchanged. A store, journal or running agent from an earlier
+build is not read correctly after this change and must start fresh, and the
+deployed relay must run this build before signed-in hosts can link through
+it.
+
 2026-10-07 — **What the protocol-gaps work left behind is deleted.**
 An audit of everything the work added found the old runtime paths it
 replaced already gone, but a layer of dead code the compiler cannot flag

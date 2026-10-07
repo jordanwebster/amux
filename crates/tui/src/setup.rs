@@ -586,7 +586,6 @@ impl Setup {
                 permission,
                 mode,
                 effort,
-                resume_thread_id: None,
             })
         };
         CreateAgentRequest {

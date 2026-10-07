@@ -85,7 +85,6 @@ The recipes a build or change usually needs:
 | `just fmt`, `just fmt-check` | Format, or check formatting, with the pinned nightly |
 | `just protobuf` | Regenerates the committed protobuf output |
 | `just codegen-check` | Fails if the committed protobuf output is stale |
-| `just proto-check` | Fails if the protos drop or change anything the committed baseline has |
 | `just embedded-check`, `just mobile-check` | Check the provider-free client graph on the desktop and for iOS |
 | `just warm` | `just build` and `just test-build` |
 | `just ci` | The whole check sequence; see [CI](CI.md) |
@@ -106,17 +105,12 @@ schema:
 ```sh
 just protobuf
 just codegen-check
-just proto-check
 ```
 
 `just protobuf` runs `cargo run -p xtask -- codegen`. `just codegen-check`
-regenerates and fails if the committed result differs. `just proto-check`
-compiles the protos and compares them with the committed baseline,
-`crates/wire/proto/baseline.binpb`: anything the baseline has that the
-current schema removed, renumbered, retyped or made required fails with its
-full name, because binaries of other versions read every amux protocol
-surface. Additions pass. `just proto-check --update` rewrites the baseline
-once a breaking change is deliberate. [The wire](WIRE.md) explains the rule.
+regenerates and fails if the committed result differs. Until the first
+release a schema change may remove or renumber anything; [the wire](WIRE.md)
+explains why.
 
 **Swift value types.** The Swift mirrors of the view values the phone reads,
 `apps/apple/Packages/AmuxCore/Sources/AmuxValues/Values.swift`, are generated

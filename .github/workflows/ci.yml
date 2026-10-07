@@ -53,8 +53,6 @@ jobs:
       - uses: extractions/setup-just@v2
       - name: Check committed protobuf code
         run: just codegen-check
-      - name: Check the protos only add to the committed baseline
-        run: just proto-check
       - name: Enforce dependency boundaries
         run: just dependency-policy
       - name: Check provider messages go through the protocol crates

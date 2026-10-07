@@ -2,7 +2,9 @@
 
 amux is unreleased and in active development. Never preserve backwards
 compatibility — old local protocols, config keys, and public APIs may be
-broken freely. Simplify decisions accordingly.
+broken freely. Simplify decisions accordingly. That includes the protobuf
+schemas: delete a retired field outright and renumber, never `reserved`, and
+leave `PROTOCOL_VERSION` at 1.
 
 - Build, test and lint through `just` (`just --list`); `wt` is for worktrees,
   sessions and this tree's daemon. Recipes carry timeouts; a firing timeout is

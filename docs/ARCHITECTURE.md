@@ -28,9 +28,10 @@ What the design holds itself to:
    self-contained items any client can draw without knowing the provider.
 3. **A client opens a chat with "the last N items"** and pages older
    history only if it needs it. There is no replay protocol.
-4. **Every surface tolerates version skew by field discipline,** because
-   paired machines, pinned agent processes and long-lived clients never
-   update together.
+4. **From the first release, every surface tolerates version skew by field
+   discipline,** because paired machines, pinned agent processes and
+   long-lived clients never update together. Until then the protocols change
+   freely ([the wire](WIRE.md#compatibility)).
 5. **Lean on the operating system.** Files, file locks, sockets closing on
    process death and inodes surviving a binary swap do the work before any
    protocol does.
@@ -148,14 +149,11 @@ The daemon dials in the other direction exactly once per agent: it connects
 to `ctl.sock`, reads a Hello, ingests the journal whenever a Nudge arrives,
 and writes inputs and stops. The agent never dials the daemon.
 
-Every surface is protobuf with one discipline: fields are only ever added,
-never required, renumbered or retyped. `just proto-check` compares the
-schema with a committed baseline (`crates/wire/proto/baseline.binpb`) and
-fails on anything the baseline has that the schema lost. The link carries a
-version integer for a deliberate break both sides must take; the control
-socket and the journal carry none at all, because a daemon must always be
-able to read an agent started by an older binary. [The wire](WIRE.md) has
-the calls and records.
+Every surface is protobuf. The link carries a version integer for a
+deliberate break both sides must take; the control socket and the journal
+carry none. Until the first release nothing depends on an older build, so
+the schemas change freely; [the wire](WIRE.md) has the calls, the records
+and the rule.
 
 ## Inside the daemon
 
@@ -490,7 +488,7 @@ checks.
 | [`replay-support`](../crates/replay-support/src/lib.rs) | Replays a debug bundle's three pure stages, and manages provider recordings for the capture tools. |
 | [`fake-amux`](../crates/fake-amux/src/main.rs) | A stand-in `amux` binary running the real supervisor over a scripted daemon. |
 | [`shot`](../crates/shot/README.md) | Deterministic PNG renderings of the terminal client's named states. |
-| [`xtask`](../crates/xtask/src/main.rs) | Developer tasks: protobuf codegen and the only-add check, Swift type generation, re-stamping, iOS verification. |
+| [`xtask`](../crates/xtask/src/main.rs) | Developer tasks: protobuf codegen, Swift type generation, re-stamping, iOS verification. |
 
 ## The dependency policy
 

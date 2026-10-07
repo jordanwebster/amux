@@ -8,9 +8,10 @@
 // links exchange length-prefixed Message values on their control stream and
 // carry application channels on separate native streams.
 //
-// Compatibility: never renumber, never reuse a number, never make a field
-// required. PROTOCOL_VERSION (Hello.supported_protocol_versions) is bumped
-// only for a deliberate semantic break.
+// Until amux's first release nothing depends on an older build, so messages,
+// fields and numbers change freely: a removed field leaves no reservation and
+// the numbers stay in reading order. PROTOCOL_VERSION
+// (Hello.supported_protocol_versions) stays 1 until then.
 
 syntax = "proto3";
 
@@ -42,19 +43,6 @@ message ErrorDetail {
 message ProtocolVersionMismatch {
   repeated uint32 supported_protocol_versions = 1;
   repeated uint32 peer_supported_protocol_versions = 2;
-}
-
-message BlobMissing {
-  bytes hash = 1;
-}
-
-message BlobTooLarge {
-  uint64 size = 1;
-  uint64 max = 2;
-}
-
-message DiffUnavailable {
-  string message = 1;
 }
 
 // ResolveAgent found more than one agent by that name.
@@ -94,15 +82,14 @@ enum ErrorCode {
 
 // Host-to-host control envelope exchanged on the link's control stream.
 message Message {
-  reserved 5 to 7;
 
   oneof body {
     Hello hello = 1;
     HelloAck hello_ack = 2;
     NeighborUp neighbor_up = 3;
     NeighborDown neighbor_down = 4;
-    Reauth reauth = 8;
-    LinkClose link_close = 9;
+    Reauth reauth = 5;
+    LinkClose link_close = 6;
   }
 }
 
@@ -195,13 +182,12 @@ enum LinkCloseReason {
   LINK_CLOSE_REASON_UNSPECIFIED = 0;
   LINK_CLOSE_REASON_USER_SHUTDOWN = 1;
   LINK_CLOSE_REASON_UPDATING = 2;
-  reserved 3;
-  LINK_CLOSE_REASON_RESTARTING = 4;
-  LINK_CLOSE_REASON_AUTH_EXPIRED = 5;
-  LINK_CLOSE_REASON_PROTOCOL_ERROR = 6;
+  LINK_CLOSE_REASON_RESTARTING = 3;
+  LINK_CLOSE_REASON_AUTH_EXPIRED = 4;
+  LINK_CLOSE_REASON_PROTOCOL_ERROR = 5;
   // The peers share no protocol version; the older one needs updating.
-  LINK_CLOSE_REASON_VERSION_MISMATCH = 7;
-  LINK_CLOSE_REASON_USER_REVOKED = 8;
+  LINK_CLOSE_REASON_VERSION_MISMATCH = 6;
+  LINK_CLOSE_REASON_USER_REVOKED = 7;
 }
 
 message Host {
@@ -210,8 +196,7 @@ message Host {
   string version = 3;
   Capabilities capabilities = 4;
   // What kind of machine this is, in the host's own words: the operating
-  // system it runs, as it named itself when it was built. A host that
-  // predates this field says nothing rather than guessing.
+  // system it runs, as it named itself when it was built.
   optional string platform = 5;
   optional bool signed_in = 6;
 }
@@ -275,7 +260,7 @@ message InventoryEvent {
     HostRemoved host_removed = 2;
     Agent agent = 3;
     AgentRemoved agent_removed = 4;
-    CaughtUp caught_up = 100;
+    CaughtUp caught_up = 5;
   }
 }
 
@@ -283,35 +268,34 @@ message InventoryEvent {
 // presence; candidates come and go with discovery. HostRemoved only on
 // untrust, or when a candidate disappears.
 message HostEntry {
-  reserved 3, 6;
   bytes host_id = 1;
   string name = 2;
-  optional string version = 4;
-  optional Capabilities capabilities = 5;
+  optional string version = 3;
+  optional Capabilities capabilities = 4;
   // The outcome of the daemon's last failed dial attempt at this host,
   // cleared when a route comes up.
-  optional string last_dial_error = 7;
-  HostVia via = 8;
-  optional bool signed_in = 9;
+  optional string last_dial_error = 5;
+  HostVia via = 6;
+  optional bool signed_in = 7;
   // The machine's kind, as it announced itself in the handshake. Unset for a
   // host that has never been adjacent.
-  optional string platform = 10;
+  optional string platform = 8;
   // Bumped only after an unclean reboot of that host.
-  uint64 generation = 11;
-  Trust trust = 12;
-  Presence presence = 13;
+  uint64 generation = 9;
+  Trust trust = 10;
+  Presence presence = 11;
   // Where discovery found a candidate; what pairing dials.
-  repeated string addrs = 14;
+  repeated string addrs = 12;
   // Set when this host closed its link saying it no longer trusts this
   // machine; cleared when it links to this machine again.
-  optional bool revoked = 15;
+  optional bool revoked = 13;
   // Whether this machine's copy of the host's inventory has caught up on a
   // live stream from it: its agents are as the host lists them now, not as
   // they were remembered. Cleared when the host is lost; a client that
   // reads every trusted host current has reconciled with its fleet.
-  optional bool current = 16;
+  optional bool current = 14;
   // What each provider offers on the host, once the host has asked it.
-  repeated ProviderOnHost providers = 17;
+  repeated ProviderOnHost providers = 15;
 }
 
 message ProviderOnHost {
@@ -341,7 +325,6 @@ enum HostVia {
   HOST_VIA_DIRECT = 1;
   HOST_VIA_RELAY = 2;
   HOST_VIA_SSH = 3;
-  reserved 4;
 }
 
 message HostRemoved {
@@ -366,11 +349,10 @@ message Agent {
   // The snapshot's phase_since_ms: when the agent entered its phase, on the
   // clock of the host where it runs.
   int64 phase_since_ms = 12;
-  reserved 13;
-  string producer_version = 14;
-  uint32 incarnation = 15;
+  string producer_version = 13;
+  uint32 incarnation = 14;
   // The snapshot's git facts; absent outside a repository.
-  optional Git git = 16;
+  optional Git git = 15;
 }
 
 // The kind is the interpreter.
@@ -488,11 +470,11 @@ message SessionEvent {
     Snapshot snapshot = 1;
     Item item = 2;
     Append append = 3;
-    CaughtUp caught_up = 5;
-    Lagged lagged = 6;
-    Reset reset = 7;
-    Detached detached = 8;
-    Opening opening = 9;
+    CaughtUp caught_up = 4;
+    Lagged lagged = 5;
+    Reset reset = 6;
+    Detached detached = 7;
+    Opening opening = 8;
   }
 }
 
@@ -558,8 +540,8 @@ message CreateAgentRequest {
   // are set; neither means this host.
   optional string host_name = 8;
   oneof config {
-    ClaudeCreateConfig claude = 10;
-    CodexCreateConfig codex = 11;
+    ClaudeCreateConfig claude = 9;
+    CodexCreateConfig codex = 10;
   }
   // Start the agent in a new git worktree of cwd's repository, on a new
   // branch named after the agent, made from whatever cwd has checked out.
@@ -567,7 +549,7 @@ message CreateAgentRequest {
   // the worktree. Fails the call, making no agent, when cwd is not in a
   // repository or the branch exists. The name is valid as a branch, so it
   // is the branch as given.
-  bool new_worktree = 12;
+  bool new_worktree = 11;
 }
 
 message RenameAgentRequest {
@@ -725,10 +707,9 @@ enum Observed {
   OBSERVED_CONNECTED = 3;
   OBSERVED_RETRYING = 4;
   OBSERVED_AUTHENTICATION_REQUIRED = 5;
-  reserved 6;
   // The cloud refused this build as too old for its protocol.
-  OBSERVED_VERSION_MISMATCH = 7;
-  OBSERVED_STARTUP_FAILED = 8;
+  OBSERVED_VERSION_MISMATCH = 6;
+  OBSERVED_STARTUP_FAILED = 7;
 }
 enum Tier {
   TIER_UNSPECIFIED = 0;
@@ -750,14 +731,12 @@ message ProfileInfo {
   Intent intent = 7;
   Observed observed = 8;
   uint64 revision = 9;
-  string startup_error = 10;
-  bool available = 11;
-  optional string minimum_version = 12;
-  Tier tier = 13;
-  RelayCarrier relay_carrier = 14;
+  bool available = 10;
+  Tier tier = 11;
+  RelayCarrier relay_carrier = 12;
   // The bound account's subject at its service, which stays after a
   // sign-out; empty when unbound. What tells two profiles' accounts apart.
-  string account_subject = 15;
+  string account_subject = 13;
 }
 message ListProfilesRequest {}
 message ListProfilesResponse { repeated ProfileInfo profiles = 1; }
@@ -901,29 +880,20 @@ message PeerEntry {
   repeated PeerReachability reachabilities = 5;
 }
 
-message GetDeviceIdentityRequest {}
 message DeviceIdentity {
   bytes host_id = 1;
   string name = 2;
   bytes pubkey = 3;
 }
 
-message ListPeersRequest {}
 message ListPeersResponse {
   repeated PeerEntry peers = 1;
 }
 
-message GetPeerRequest {
-  PeerRef peer = 1;
-}
 message GetPeerResponse {
   PeerEntry peer = 1;
 }
 
-message UnpairRequest {
-  PeerRef peer = 1;
-  string reason = 2;
-}
 message UnpairResponse {
   PeerEntry removed_peer = 1;
 }
@@ -941,8 +911,8 @@ message StartPairingRequest {
   // Operator-chosen reusable PIN for unattended demos. When set, `mode`
   // must be PIN; the session lasts `ttl_seconds` instead of the one-shot
   // window and is neither consumed by success nor locked out by failures.
-  optional DemoPairing demo = 3;
-  optional uint64 ttl_seconds = 4;
+  optional DemoPairing demo = 2;
+  optional uint64 ttl_seconds = 3;
 }
 
 message DemoPairing {
@@ -957,17 +927,13 @@ message StartPairingResponse {
   optional string cloud_url = 4;
 
   oneof secret {
-    string pin = 10;
-    bytes qr_secret = 11;
+    string pin = 5;
+    bytes qr_secret = 6;
   }
 }
 
-message GetPairingStatusRequest {}
 message GetPairingStatusResponse {
   bool active = 1;
 }
 
-message CancelPairingRequest {}
 message CancelPairingResponse {}
-
-// Host-owned discovery; the client chooses a host, never a search root.

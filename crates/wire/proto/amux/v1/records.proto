@@ -10,9 +10,6 @@ package amux.v1;
 // `kind`, encoded, and is decoded only by the interpreter that wrote it and
 // by the client's per-kind layer. Bodies therefore pass through a daemon of
 // any version intact.
-//
-// Compatibility: never renumber, never reuse a number, never make a field
-// required.
 
 // ---------------------------------------------------------------------------
 // Common
@@ -78,9 +75,8 @@ message Step {
   // Rides along when the step changed it; re-derived on restart, never
   // relied on.
   optional Snapshot snapshot = 3;
-  reserved 4;
   // Set when this step ended a turn.
-  optional TurnEnd turn_end = 5;
+  optional TurnEnd turn_end = 4;
 }
 
 // Full state per revision. Keys and at_ms come from the interpreter; order
@@ -140,14 +136,14 @@ message Snapshot {
   // The interpreter's clock when `phase` last changed; streamed output and
   // other changes within one phase leave it alone. The daemon copies it onto
   // the inventory row.
-  int64 phase_since_ms = 10;
+  int64 phase_since_ms = 9;
   // The branch and change totals of the agent's folder, read by the agent
   // process at start and at each turn end. Absent outside a repository. The
   // daemon copies it onto the inventory row.
-  optional Git git = 11;
+  optional Git git = 10;
   // The SHA-256 of the encoded Catalogue the agent offers now; absent until
   // its provider says what it offers. Not copied onto the row.
-  optional bytes catalogue = 9;
+  optional bytes catalogue = 11;
 }
 
 // What a row says about the git repository an agent works in.
@@ -372,17 +368,16 @@ enum ToolClass {
 }
 
 message ToolDecision {
-  reserved 2;
   DecisionOutcome outcome = 1;
-  string note = 3;
+  string note = 2;
   // Answered in the provider's own interface rather than through amux.
-  bool elsewhere = 4;
+  bool elsewhere = 3;
   // What an allowance granted beyond this one call. Absent when it allowed
   // the call alone, and when the provider did not say which choice was
   // made: Claude's own terminal does not report it.
   oneof granted {
-    ClaudeGrant claude = 5;
-    CodexGrant codex = 6;
+    ClaudeGrant claude = 4;
+    CodexGrant codex = 5;
   }
 }
 
@@ -671,9 +666,8 @@ message QuestionOption {
 
 // A decision on a plan; the plan is the text of the item the ask points at.
 message PlanAsk {
-  reserved 1, 2;
   // What the provider takes, in its order.
-  repeated PlanChoice choices = 3;
+  repeated PlanChoice choices = 1;
 }
 
 enum PlanChoice {
@@ -687,10 +681,9 @@ enum PlanChoice {
 }
 
 message PlanAnswer {
-  reserved 1, 2;
-  PlanChoice choice = 3;
+  PlanChoice choice = 1;
   // With keep planning: what to change.
-  optional string note = 4;
+  optional string note = 2;
 }
 
 message FormAsk {
@@ -725,20 +718,19 @@ message AskItem {
     FormAsk form = 2;
     LinkAsk link = 3;
     AccessGrant access = 4;
-    UnanswerableAsk unanswerable = 6;
+    UnanswerableAsk unanswerable = 5;
   }
   // Absent while the ask is open.
-  AskClosed closed = 5;
+  AskClosed closed = 6;
 }
 
 message AskClosed {
-  reserved 3;
   AskOutcome outcome = 1;
   // A question's answers, one per question in the ask's order; with reply
   // instead, the answers given before it.
   repeated AnsweredQuestion answers = 2;
   // The person's own words, when they replied instead of answering.
-  string reply = 6;
+  string reply = 3;
   // The names of the form fields sent; the values went to the server only.
   repeated string fields = 4;
   // What an access grant granted.
@@ -936,8 +928,6 @@ message PromptInput {
   string text = 1;
   repeated Attachment attachments = 2;
   // Prompts always queue; steering is SendQueuedNow on a queued entry.
-  reserved 3;
-  reserved "steer";
 }
 
 // Rejected if ask_key is not open. `body` is the per-kind answer message
@@ -990,7 +980,6 @@ message SetEffort {
 // Answer pieces shared by the per-kind answer bodies.
 
 message QuestionAnswer {
-  reserved 2;
   // One per question, in the ask's order.
   repeated QuestionResponse answers = 1;
 }

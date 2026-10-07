@@ -12,11 +12,10 @@ message ClaudeCreateConfig {
   // Extra provider arguments exactly as the person gave them.
   repeated string args = 1;
   optional string model = 2;
-  reserved 3;
-  optional string effort = 4;
+  optional string effort = 3;
   // A permission Claude offers ("default", "acceptEdits", "plan", "auto",
   // "bypassPermissions").
-  optional string permission = 5;
+  optional string permission = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,22 +64,19 @@ message Interruption {}
 
 // Phase lives in the Snapshot envelope, once.
 message ClaudePtySnapshot {
-  reserved 1;
-  repeated Ask asks = 2;
-  TaskList tasks = 3;
-  ContextMeter context = 4;
-  optional string model = 5;
+  repeated Ask asks = 1;
+  TaskList tasks = 2;
+  ContextMeter context = 3;
+  optional string model = 4;
   // The running model as a person reads it; absent while the model is.
-  optional string model_name = 15;
+  optional string model_name = 5;
   optional string permission_mode = 6;
   // Absent until SessionStart or the first system event names it.
   optional string provider_session = 7;
-  reserved 8;
-  ClaudeUsage usage = 14;
+  ClaudeUsage usage = 8;
   ToolServerHealth servers = 9;
   SignIn sign_in = 10;
-  reserved 11;
-  BackgroundJobs background_jobs = 13;
+  BackgroundJobs background_jobs = 11;
   // The calls PreToolUse hooks announced that no result has ended yet,
   // oldest first. A call's transcript row can lag its hook by seconds while
   // a background task runs, so the activity line reads the call from here
@@ -161,7 +157,7 @@ message Task {
   TaskState state = 3;
   uint32 tool_count = 4;
   string last_tool = 5;
-  uint64 tokens = 7;
+  uint64 tokens = 6;
 }
 
 enum TaskState {
@@ -179,37 +175,32 @@ message Status {
 }
 
 message ClaudeSdkSnapshot {
-  reserved 1;
-  repeated Ask asks = 2;
-  TaskList tasks = 3;
-  ContextMeter context = 4;
-  optional string model = 5;
+  repeated Ask asks = 1;
+  TaskList tasks = 2;
+  ContextMeter context = 3;
+  optional string model = 4;
   // The running model as a person reads it: the catalogue entry it was set
   // from, else the entry whose value is its id, else its id tidied.
   // Absent while the model is.
-  optional string model_name = 18;
+  optional string model_name = 5;
   optional string effort = 6;
   optional string permission_mode = 7;
   repeated Task active_tasks = 8;
-  reserved 9;
-  ClaudeUsage usage = 17;
+  ClaudeUsage usage = 9;
   ToolServerHealth servers = 10;
   SignIn sign_in = 11;
-  reserved 12;
-  BackgroundJobs background_jobs = 16;
+  BackgroundJobs background_jobs = 12;
   // Absent until the init event names it.
   optional string provider_session = 13;
   // What it offers is in the catalogue the Snapshot names.
-  reserved 14, 15;
 }
 
 message ClaudeSdkInput {
-  reserved 4;
   oneof of {
     PromptInput prompt = 1;
     AnswerInput answer = 2;
     Interrupt interrupt = 3;
-    SetPermission permission = 10;
+    SetPermission permission = 4;
     SetModel model = 5;
     Clear clear = 6;
     WithdrawQueued withdraw = 7;

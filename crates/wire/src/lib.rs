@@ -3,9 +3,9 @@
 //! and control frames, and the client, peer, pairing, profile and
 //! installation services.
 
-/// Protocol version for the native-stream link handshake. Bumped only for a
-/// deliberate semantic break; the only-add rule keeps it otherwise unused.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// Protocol version for the native-stream link handshake. It stays 1 until
+/// the first release; see the header of `amux.proto`.
+pub const PROTOCOL_VERSION: u32 = 1;
 
 pub mod amux {
     pub mod v1 {
@@ -216,94 +216,6 @@ mod tests {
         assert_eq!(
             installation,
             BTreeSet::from(["GetInfo", "Shutdown"].map(str::to_owned))
-        );
-    }
-
-    #[test]
-    fn envelope_numbers_match_the_record_schema() {
-        let set = descriptor();
-        let messages = messages(&set);
-        let expect = |name: &str, pairs: &[(&str, i32)]| {
-            assert_eq!(
-                fields(&messages[name]),
-                pairs.iter().copied().collect::<BTreeMap<_, _>>(),
-                "{name}"
-            );
-        };
-        expect(
-            "Step",
-            &[
-                ("items", 1),
-                ("appends", 2),
-                ("snapshot", 3),
-                ("turn_end", 5),
-            ],
-        );
-        expect(
-            "Item",
-            &[
-                ("agent", 1),
-                ("key", 2),
-                ("order", 3),
-                ("revision", 4),
-                ("producer_version", 5),
-                ("input_id", 6),
-                ("text", 7),
-                ("attachments", 8),
-                ("kind", 9),
-                ("body", 10),
-                ("at_ms", 11),
-            ],
-        );
-        expect(
-            "Append",
-            &[
-                ("agent", 1),
-                ("key", 2),
-                ("base_revision", 3),
-                ("revision", 4),
-                ("text", 5),
-            ],
-        );
-        expect(
-            "Snapshot",
-            &[
-                ("agent", 1),
-                ("revision", 2),
-                ("queue", 3),
-                ("kind", 4),
-                ("body", 5),
-                ("phase", 6),
-                ("working_on", 7),
-                ("at_ms", 8),
-                ("catalogue", 9),
-                ("phase_since_ms", 10),
-                ("git", 11),
-            ],
-        );
-        expect(
-            "CtlFrame",
-            &[
-                ("hello", 1),
-                ("nudge", 2),
-                ("input", 3),
-                ("stop", 4),
-                ("dump", 5),
-                ("reply", 6),
-            ],
-        );
-        expect(
-            "SessionEvent",
-            &[
-                ("snapshot", 1),
-                ("item", 2),
-                ("append", 3),
-                ("caught_up", 5),
-                ("lagged", 6),
-                ("reset", 7),
-                ("detached", 8),
-                ("opening", 9),
-            ],
         );
     }
 

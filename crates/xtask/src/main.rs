@@ -9,9 +9,6 @@ mod simulator;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match std::env::args().nth(1).as_deref() {
         Some("codegen") => codegen(),
-        Some("proto-check") => {
-            xtask::proto_check::main(&std::env::args().skip(2).collect::<Vec<_>>())
-        }
         Some("door") => door::main(),
         Some("golden") => golden::main(),
         Some("ios-verify") => ios_verify::run(),
@@ -22,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("restamp") => restamp(&std::env::args().skip(2).collect::<Vec<_>>()),
         _ => {
             eprintln!(
-                "usage: xtask <codegen|swift-types [--check]|proto-check [--update]|golden diff [ARGS]|restamp FROM TO [VERSION]|release <key generate|key public|cut VERSION|deploy VERSION [--channel C] [--rollout N]>|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
+                "usage: xtask <codegen|swift-types [--check]|golden diff [ARGS]|restamp FROM TO [VERSION]|release <key generate|key public|cut VERSION|deploy VERSION [--channel C] [--rollout N]>|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
             );
             std::process::exit(2);
         }
@@ -81,6 +78,15 @@ const VIEW_VALUES: &[&str] = &[
 /// generated Rust is an ordinary tracked input — visible to git, review,
 /// rust-analyzer, and every build cache — and so building amux needs no
 /// protoc. CI regenerates and fails if the committed output is stale.
+/// The proto files that make up the wire, relative to the proto root.
+const PROTO_FILES: &[&str] = &[
+    "amux/v1/amux.proto",
+    "amux/v1/agent.proto",
+    "amux/v1/claude.proto",
+    "amux/v1/codex.proto",
+    "amux/v1/records.proto",
+];
+
 fn codegen() -> Result<(), Box<dyn std::error::Error>> {
     let wire_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -122,7 +128,7 @@ fn codegen() -> Result<(), Box<dyn std::error::Error>> {
         .out_dir(&out_dir)
         .compile_with_config(
             config,
-            &xtask::proto_check::PROTO_FILES
+            &PROTO_FILES
                 .iter()
                 .map(|file| proto_dir.join(file))
                 .collect::<Vec<_>>(),

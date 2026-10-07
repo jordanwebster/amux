@@ -96,8 +96,7 @@ embedded runtime reads no configuration file and runs with the defaults.
    asking for a 1,000-row page at a collapsed run gets 500 and asks again.
 
 5. **Blob size.** There is no separate limit on `PutBlob` or `GetBlob`: a blob
-   is bounded by the RPC message limit. `BlobTooLarge` is declared in
-   `amux.proto`, but no code path returns it.
+   is bounded by the RPC message limit.
 
 ## Related constants
 

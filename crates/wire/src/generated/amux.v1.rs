@@ -133,7 +133,7 @@ pub struct Step {
     #[prost(message, optional, tag = "3")]
     pub snapshot: ::core::option::Option<Snapshot>,
     /// Set when this step ended a turn.
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag = "4")]
     pub turn_end: ::core::option::Option<TurnEnd>,
 }
 impl ::prost::Name for Step {
@@ -248,16 +248,16 @@ pub struct Snapshot {
     /// The interpreter's clock when `phase` last changed; streamed output and
     /// other changes within one phase leave it alone. The daemon copies it onto
     /// the inventory row.
-    #[prost(int64, tag = "10")]
+    #[prost(int64, tag = "9")]
     pub phase_since_ms: i64,
     /// The branch and change totals of the agent's folder, read by the agent
     /// process at start and at each turn end. Absent outside a repository. The
     /// daemon copies it onto the inventory row.
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag = "10")]
     pub git: ::core::option::Option<Git>,
     /// The SHA-256 of the encoded Catalogue the agent offers now; absent until
     /// its provider says what it offers. Not copied onto the row.
-    #[prost(bytes = "vec", optional, tag = "9")]
+    #[prost(bytes = "vec", optional, tag = "11")]
     pub catalogue: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
 impl ::prost::Name for Snapshot {
@@ -700,15 +700,15 @@ impl ::prost::Name for ToolCall {
 pub struct ToolDecision {
     #[prost(enumeration = "DecisionOutcome", tag = "1")]
     pub outcome: i32,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag = "2")]
     pub note: ::prost::alloc::string::String,
     /// Answered in the provider's own interface rather than through amux.
-    #[prost(bool, tag = "4")]
+    #[prost(bool, tag = "3")]
     pub elsewhere: bool,
     /// What an allowance granted beyond this one call. Absent when it allowed
     /// the call alone, and when the provider did not say which choice was
     /// made: Claude's own terminal does not report it.
-    #[prost(oneof = "tool_decision::Granted", tags = "5, 6")]
+    #[prost(oneof = "tool_decision::Granted", tags = "4, 5")]
     pub granted: ::core::option::Option<tool_decision::Granted>,
 }
 /// Nested message and enum types in `ToolDecision`.
@@ -718,9 +718,9 @@ pub mod tool_decision {
     /// made: Claude's own terminal does not report it.
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Granted {
-        #[prost(message, tag = "5")]
+        #[prost(message, tag = "4")]
         Claude(super::ClaudeGrant),
-        #[prost(message, tag = "6")]
+        #[prost(message, tag = "5")]
         Codex(super::CodexGrant),
     }
 }
@@ -1341,7 +1341,7 @@ impl ::prost::Name for QuestionOption {
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PlanAsk {
     /// What the provider takes, in its order.
-    #[prost(enumeration = "PlanChoice", repeated, tag = "3")]
+    #[prost(enumeration = "PlanChoice", repeated, tag = "1")]
     pub choices: ::prost::alloc::vec::Vec<i32>,
 }
 impl ::prost::Name for PlanAsk {
@@ -1356,10 +1356,10 @@ impl ::prost::Name for PlanAsk {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PlanAnswer {
-    #[prost(enumeration = "PlanChoice", tag = "3")]
+    #[prost(enumeration = "PlanChoice", tag = "1")]
     pub choice: i32,
     /// With keep planning: what to change.
-    #[prost(string, optional, tag = "4")]
+    #[prost(string, optional, tag = "2")]
     pub note: ::core::option::Option<::prost::alloc::string::String>,
 }
 impl ::prost::Name for PlanAnswer {
@@ -1442,9 +1442,9 @@ impl ::prost::Name for AccessGrant {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AskItem {
     /// Absent while the ask is open.
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag = "6")]
     pub closed: ::core::option::Option<AskClosed>,
-    #[prost(oneof = "ask_item::Ask", tags = "1, 2, 3, 4, 6")]
+    #[prost(oneof = "ask_item::Ask", tags = "1, 2, 3, 4, 5")]
     pub ask: ::core::option::Option<ask_item::Ask>,
 }
 /// Nested message and enum types in `AskItem`.
@@ -1459,7 +1459,7 @@ pub mod ask_item {
         Link(super::LinkAsk),
         #[prost(message, tag = "4")]
         Access(super::AccessGrant),
-        #[prost(message, tag = "6")]
+        #[prost(message, tag = "5")]
         Unanswerable(super::UnanswerableAsk),
     }
 }
@@ -1482,7 +1482,7 @@ pub struct AskClosed {
     #[prost(message, repeated, tag = "2")]
     pub answers: ::prost::alloc::vec::Vec<AnsweredQuestion>,
     /// The person's own words, when they replied instead of answering.
-    #[prost(string, tag = "6")]
+    #[prost(string, tag = "3")]
     pub reply: ::prost::alloc::string::String,
     /// The names of the form fields sent; the values went to the server only.
     #[prost(string, repeated, tag = "4")]
@@ -1832,6 +1832,7 @@ impl ::prost::Name for BackgroundJob {
 pub struct PromptInput {
     #[prost(string, tag = "1")]
     pub text: ::prost::alloc::string::String,
+    /// Prompts always queue; steering is SendQueuedNow on a queued entry.
     #[prost(message, repeated, tag = "2")]
     pub attachments: ::prost::alloc::vec::Vec<Attachment>,
 }
@@ -2873,11 +2874,11 @@ pub struct ClaudeCreateConfig {
     pub args: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "2")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "4")]
+    #[prost(string, optional, tag = "3")]
     pub effort: ::core::option::Option<::prost::alloc::string::String>,
     /// A permission Claude offers ("default", "acceptEdits", "plan", "auto",
     /// "bypassPermissions").
-    #[prost(string, optional, tag = "5")]
+    #[prost(string, optional, tag = "4")]
     pub permission: ::core::option::Option<::prost::alloc::string::String>,
 }
 impl ::prost::Name for ClaudeCreateConfig {
@@ -3002,29 +3003,29 @@ impl ::prost::Name for Interruption {
 /// Phase lives in the Snapshot envelope, once.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudePtySnapshot {
-    #[prost(message, repeated, tag = "2")]
+    #[prost(message, repeated, tag = "1")]
     pub asks: ::prost::alloc::vec::Vec<Ask>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag = "2")]
     pub tasks: ::core::option::Option<TaskList>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag = "3")]
     pub context: ::core::option::Option<ContextMeter>,
-    #[prost(string, optional, tag = "5")]
+    #[prost(string, optional, tag = "4")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
     /// The running model as a person reads it; absent while the model is.
-    #[prost(string, optional, tag = "15")]
+    #[prost(string, optional, tag = "5")]
     pub model_name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
     pub permission_mode: ::core::option::Option<::prost::alloc::string::String>,
     /// Absent until SessionStart or the first system event names it.
     #[prost(string, optional, tag = "7")]
     pub provider_session: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "14")]
+    #[prost(message, optional, tag = "8")]
     pub usage: ::core::option::Option<ClaudeUsage>,
     #[prost(message, optional, tag = "9")]
     pub servers: ::core::option::Option<ToolServerHealth>,
     #[prost(message, optional, tag = "10")]
     pub sign_in: ::core::option::Option<SignIn>,
-    #[prost(message, optional, tag = "13")]
+    #[prost(message, optional, tag = "11")]
     pub background_jobs: ::core::option::Option<BackgroundJobs>,
     /// The calls PreToolUse hooks announced that no result has ended yet,
     /// oldest first. A call's transcript row can lag its hook by seconds while
@@ -3190,7 +3191,7 @@ pub struct Task {
     pub tool_count: u32,
     #[prost(string, tag = "5")]
     pub last_tool: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "7")]
+    #[prost(uint64, tag = "6")]
     pub tokens: u64,
 }
 impl ::prost::Name for Task {
@@ -3222,18 +3223,18 @@ impl ::prost::Name for Status {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudeSdkSnapshot {
-    #[prost(message, repeated, tag = "2")]
+    #[prost(message, repeated, tag = "1")]
     pub asks: ::prost::alloc::vec::Vec<Ask>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag = "2")]
     pub tasks: ::core::option::Option<TaskList>,
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag = "3")]
     pub context: ::core::option::Option<ContextMeter>,
-    #[prost(string, optional, tag = "5")]
+    #[prost(string, optional, tag = "4")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
     /// The running model as a person reads it: the catalogue entry it was set
     /// from, else the entry whose value is its id, else its id tidied.
     /// Absent while the model is.
-    #[prost(string, optional, tag = "18")]
+    #[prost(string, optional, tag = "5")]
     pub model_name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
     pub effort: ::core::option::Option<::prost::alloc::string::String>,
@@ -3241,15 +3242,17 @@ pub struct ClaudeSdkSnapshot {
     pub permission_mode: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, repeated, tag = "8")]
     pub active_tasks: ::prost::alloc::vec::Vec<Task>,
-    #[prost(message, optional, tag = "17")]
+    #[prost(message, optional, tag = "9")]
     pub usage: ::core::option::Option<ClaudeUsage>,
     #[prost(message, optional, tag = "10")]
     pub servers: ::core::option::Option<ToolServerHealth>,
     #[prost(message, optional, tag = "11")]
     pub sign_in: ::core::option::Option<SignIn>,
-    #[prost(message, optional, tag = "16")]
+    #[prost(message, optional, tag = "12")]
     pub background_jobs: ::core::option::Option<BackgroundJobs>,
     /// Absent until the init event names it.
+    ///
+    /// What it offers is in the catalogue the Snapshot names.
     #[prost(string, optional, tag = "13")]
     pub provider_session: ::core::option::Option<::prost::alloc::string::String>,
 }
@@ -3265,7 +3268,7 @@ impl ::prost::Name for ClaudeSdkSnapshot {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudeSdkInput {
-    #[prost(oneof = "claude_sdk_input::Of", tags = "1, 2, 3, 10, 5, 6, 7, 8, 9")]
+    #[prost(oneof = "claude_sdk_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
     pub of: ::core::option::Option<claude_sdk_input::Of>,
 }
 /// Nested message and enum types in `ClaudeSdkInput`.
@@ -3278,7 +3281,7 @@ pub mod claude_sdk_input {
         Answer(super::AnswerInput),
         #[prost(message, tag = "3")]
         Interrupt(super::Interrupt),
-        #[prost(message, tag = "10")]
+        #[prost(message, tag = "4")]
         Permission(super::SetPermission),
         #[prost(message, tag = "5")]
         Model(super::SetModel),
@@ -3476,17 +3479,14 @@ impl TaskState {
 pub struct CodexCreateConfig {
     #[prost(string, optional, tag = "1")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "4")]
+    #[prost(string, optional, tag = "2")]
     pub effort: ::core::option::Option<::prost::alloc::string::String>,
     /// A permission and a mode the catalogue offers: "read-only", "default",
     /// "auto", "full-access"; "default", "plan".
-    #[prost(string, optional, tag = "6")]
+    #[prost(string, optional, tag = "3")]
     pub permission: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "7")]
+    #[prost(string, optional, tag = "4")]
     pub mode: ::core::option::Option<::prost::alloc::string::String>,
-    /// Adopt an existing Codex thread instead of starting a new one.
-    #[prost(string, optional, tag = "5")]
-    pub resume_thread_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 impl ::prost::Name for CodexCreateConfig {
     const NAME: &'static str = "CodexCreateConfig";
@@ -3827,52 +3827,54 @@ impl ::prost::Name for ReviewerVerdict {
 /// Phase lives in the Snapshot envelope, once.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CodexSnapshot {
-    #[prost(message, repeated, tag = "2")]
+    #[prost(message, repeated, tag = "1")]
     pub asks: ::prost::alloc::vec::Vec<CodexAsk>,
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag = "2")]
     pub context: ::core::option::Option<ContextMeter>,
-    #[prost(string, optional, tag = "4")]
+    #[prost(string, optional, tag = "3")]
     pub model: ::core::option::Option<::prost::alloc::string::String>,
     /// The running model as a person reads it: the catalogue entry whose value
     /// is its id, else its id tidied. Absent while the model is.
-    #[prost(string, optional, tag = "19")]
+    #[prost(string, optional, tag = "4")]
     pub model_name: ::core::option::Option<::prost::alloc::string::String>,
     /// The permission the raw settings below name; absent when they match no
     /// name, which reads as custom.
-    #[prost(string, optional, tag = "20")]
+    #[prost(string, optional, tag = "5")]
     pub permission: ::core::option::Option<::prost::alloc::string::String>,
     /// The mode the collaboration mode names: "default" or "plan"; absent
     /// until Codex says, or when it names neither.
-    #[prost(string, optional, tag = "21")]
+    #[prost(string, optional, tag = "6")]
     pub mode: ::core::option::Option<::prost::alloc::string::String>,
     /// Codex's own settings, absent until Codex says.
-    #[prost(string, optional, tag = "22")]
+    #[prost(string, optional, tag = "7")]
     pub approval_policy: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "23")]
+    #[prost(string, optional, tag = "8")]
     pub sandbox: ::core::option::Option<::prost::alloc::string::String>,
     /// Who answers approvals: "user", or a reviewer model ("auto_review").
-    #[prost(string, optional, tag = "24")]
+    #[prost(string, optional, tag = "9")]
     pub approvals_reviewer: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "25")]
+    #[prost(string, optional, tag = "10")]
     pub collaboration_mode: ::core::option::Option<::prost::alloc::string::String>,
     /// Absent while no turn is known to be running.
-    #[prost(string, optional, tag = "7")]
+    #[prost(string, optional, tag = "11")]
     pub active_turn: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "8")]
+    #[prost(message, optional, tag = "12")]
     pub servers: ::core::option::Option<ToolServerHealth>,
-    #[prost(message, optional, tag = "18")]
+    #[prost(message, optional, tag = "13")]
     pub usage: ::core::option::Option<CodexUsage>,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag = "14")]
     pub sign_in: ::core::option::Option<SignIn>,
-    #[prost(message, optional, tag = "17")]
+    #[prost(message, optional, tag = "15")]
     pub background_jobs: ::core::option::Option<BackgroundJobs>,
     /// Plan steps with status.
-    #[prost(message, optional, tag = "12")]
+    #[prost(message, optional, tag = "16")]
     pub plan: ::core::option::Option<TaskList>,
-    #[prost(string, optional, tag = "13")]
+    #[prost(string, optional, tag = "17")]
     pub effort: ::core::option::Option<::prost::alloc::string::String>,
     /// Absent until the thread start response names it.
-    #[prost(string, optional, tag = "14")]
+    ///
+    /// What it offers is in the catalogue the Snapshot names.
+    #[prost(string, optional, tag = "18")]
     pub thread_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 impl ::prost::Name for CodexSnapshot {
@@ -3895,9 +3897,9 @@ pub struct CodexAsk {
     #[prost(string, tag = "2")]
     pub item_key: ::prost::alloc::string::String,
     /// The decisions this request offers, in the server's order.
-    #[prost(enumeration = "Decision", repeated, tag = "10")]
+    #[prost(enumeration = "Decision", repeated, tag = "11")]
     pub decisions: ::prost::alloc::vec::Vec<i32>,
-    #[prost(oneof = "codex_ask::Body", tags = "3, 4, 5, 6, 7, 8, 9, 11")]
+    #[prost(oneof = "codex_ask::Body", tags = "3, 4, 5, 6, 7, 8, 9, 10")]
     pub body: ::core::option::Option<codex_ask::Body>,
 }
 /// Nested message and enum types in `CodexAsk`.
@@ -3920,7 +3922,7 @@ pub mod codex_ask {
         McpTool(super::McpToolApproval),
         /// Codex asks nothing about a plan: amux opens this when a turn in plan
         /// mode ends with one. Its key is amux's own.
-        #[prost(message, tag = "11")]
+        #[prost(message, tag = "10")]
         Plan(super::PlanAsk),
     }
 }
@@ -3999,7 +4001,7 @@ impl ::prost::Name for McpToolApproval {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CodexInput {
-    #[prost(oneof = "codex_input::Of", tags = "1, 2, 3, 11, 12, 5, 6, 7, 8, 9, 10")]
+    #[prost(oneof = "codex_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11")]
     pub of: ::core::option::Option<codex_input::Of>,
 }
 /// Nested message and enum types in `CodexInput`.
@@ -4012,21 +4014,21 @@ pub mod codex_input {
         Approve(super::Approve),
         #[prost(message, tag = "3")]
         Interrupt(super::Interrupt),
-        #[prost(message, tag = "11")]
+        #[prost(message, tag = "4")]
         Permission(super::SetPermission),
-        #[prost(message, tag = "12")]
-        Mode(super::SetMode),
         #[prost(message, tag = "5")]
-        Model(super::SetModel),
+        Mode(super::SetMode),
         #[prost(message, tag = "6")]
-        Withdraw(super::WithdrawQueued),
+        Model(super::SetModel),
         #[prost(message, tag = "7")]
-        Answer(super::AnswerInput),
+        Withdraw(super::WithdrawQueued),
         #[prost(message, tag = "8")]
-        Effort(super::SetEffort),
+        Answer(super::AnswerInput),
         #[prost(message, tag = "9")]
-        SendNow(super::SendQueuedNow),
+        Effort(super::SetEffort),
         #[prost(message, tag = "10")]
+        SendNow(super::SendQueuedNow),
+        #[prost(message, tag = "11")]
         Rename(super::RenameThread),
     }
 }
@@ -4192,7 +4194,7 @@ impl Decision {
 pub struct Input {
     #[prost(bytes = "vec", tag = "1")]
     pub input_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(oneof = "input::Of", tags = "2, 3, 10, 11, 12")]
+    #[prost(oneof = "input::Of", tags = "2, 3, 4, 5, 6")]
     pub of: ::core::option::Option<input::Of>,
 }
 /// Nested message and enum types in `Input`.
@@ -4207,11 +4209,11 @@ pub mod input {
         /// answered with CtlFrame.dump.
         #[prost(message, tag = "3")]
         Dump(super::DumpInput),
-        #[prost(message, tag = "10")]
+        #[prost(message, tag = "4")]
         ClaudePty(super::ClaudePtyInput),
-        #[prost(message, tag = "11")]
+        #[prost(message, tag = "5")]
         ClaudeSdk(super::ClaudeSdkInput),
-        #[prost(message, tag = "12")]
+        #[prost(message, tag = "6")]
         Codex(super::CodexInput),
     }
 }
@@ -4366,18 +4368,18 @@ pub struct EffectiveConfig {
     pub model: ::core::option::Option<::prost::alloc::string::String>,
     /// The permission and mode the agent was created with, as its catalogue
     /// names them.
-    #[prost(string, optional, tag = "10")]
+    #[prost(string, optional, tag = "7")]
     pub permission: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "11")]
+    #[prost(string, optional, tag = "8")]
     pub mode: ::core::option::Option<::prost::alloc::string::String>,
     /// Environment additions for the provider child.
-    #[prost(map = "string, string", tag = "8")]
+    #[prost(map = "string, string", tag = "9")]
     pub env: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
     /// The canonical install path the hook binary and tool server run from.
-    #[prost(string, tag = "9")]
+    #[prost(string, tag = "10")]
     pub install_path: ::prost::alloc::string::String,
 }
 impl ::prost::Name for EffectiveConfig {
@@ -4390,7 +4392,7 @@ impl ::prost::Name for EffectiveConfig {
         "/amux.v1.EffectiveConfig".into()
     }
 }
-/// ctl.sock frames, length-prefixed, no version integer, only-add forever.
+/// ctl.sock frames, length-prefixed, no version integer.
 /// EOF in either direction means the peer is gone.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CtlFrame {
@@ -4729,53 +4731,6 @@ impl ::prost::Name for ProtocolVersionMismatch {
         "/amux.v1.ProtocolVersionMismatch".into()
     }
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct BlobMissing {
-    #[prost(bytes = "vec", tag = "1")]
-    pub hash: ::prost::alloc::vec::Vec<u8>,
-}
-impl ::prost::Name for BlobMissing {
-    const NAME: &'static str = "BlobMissing";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.BlobMissing".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.BlobMissing".into()
-    }
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct BlobTooLarge {
-    #[prost(uint64, tag = "1")]
-    pub size: u64,
-    #[prost(uint64, tag = "2")]
-    pub max: u64,
-}
-impl ::prost::Name for BlobTooLarge {
-    const NAME: &'static str = "BlobTooLarge";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.BlobTooLarge".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.BlobTooLarge".into()
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct DiffUnavailable {
-    #[prost(string, tag = "1")]
-    pub message: ::prost::alloc::string::String,
-}
-impl ::prost::Name for DiffUnavailable {
-    const NAME: &'static str = "DiffUnavailable";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.DiffUnavailable".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.DiffUnavailable".into()
-    }
-}
 /// ResolveAgent found more than one agent by that name.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AmbiguousAgentName {
@@ -4815,7 +4770,7 @@ impl ::prost::Name for AmbiguousHostName {
 /// Host-to-host control envelope exchanged on the link's control stream.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Message {
-    #[prost(oneof = "message::Body", tags = "1, 2, 3, 4, 8, 9")]
+    #[prost(oneof = "message::Body", tags = "1, 2, 3, 4, 5, 6")]
     pub body: ::core::option::Option<message::Body>,
 }
 /// Nested message and enum types in `Message`.
@@ -4830,9 +4785,9 @@ pub mod message {
         NeighborUp(super::NeighborUp),
         #[prost(message, tag = "4")]
         NeighborDown(super::NeighborDown),
-        #[prost(message, tag = "8")]
+        #[prost(message, tag = "5")]
         Reauth(super::Reauth),
-        #[prost(message, tag = "9")]
+        #[prost(message, tag = "6")]
         LinkClose(super::LinkClose),
     }
 }
@@ -5049,8 +5004,7 @@ pub struct Host {
     #[prost(message, optional, tag = "4")]
     pub capabilities: ::core::option::Option<Capabilities>,
     /// What kind of machine this is, in the host's own words: the operating
-    /// system it runs, as it named itself when it was built. A host that
-    /// predates this field says nothing rather than guessing.
+    /// system it runs, as it named itself when it was built.
     #[prost(string, optional, tag = "5")]
     pub platform: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(bool, optional, tag = "6")]
@@ -5220,7 +5174,7 @@ impl ::prost::Name for PairingIdentity {
 /// this stream read to CaughtUp.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct InventoryEvent {
-    #[prost(oneof = "inventory_event::Of", tags = "1, 2, 3, 4, 100")]
+    #[prost(oneof = "inventory_event::Of", tags = "1, 2, 3, 4, 5")]
     pub of: ::core::option::Option<inventory_event::Of>,
 }
 /// Nested message and enum types in `InventoryEvent`.
@@ -5235,7 +5189,7 @@ pub mod inventory_event {
         Agent(super::Agent),
         #[prost(message, tag = "4")]
         AgentRemoved(super::AgentRemoved),
-        #[prost(message, tag = "100")]
+        #[prost(message, tag = "5")]
         CaughtUp(super::CaughtUp),
     }
 }
@@ -5258,44 +5212,44 @@ pub struct HostEntry {
     pub host_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
-    #[prost(string, optional, tag = "4")]
+    #[prost(string, optional, tag = "3")]
     pub version: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag = "4")]
     pub capabilities: ::core::option::Option<Capabilities>,
     /// The outcome of the daemon's last failed dial attempt at this host,
     /// cleared when a route comes up.
-    #[prost(string, optional, tag = "7")]
+    #[prost(string, optional, tag = "5")]
     pub last_dial_error: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(enumeration = "HostVia", tag = "8")]
+    #[prost(enumeration = "HostVia", tag = "6")]
     pub via: i32,
-    #[prost(bool, optional, tag = "9")]
+    #[prost(bool, optional, tag = "7")]
     pub signed_in: ::core::option::Option<bool>,
     /// The machine's kind, as it announced itself in the handshake. Unset for a
     /// host that has never been adjacent.
-    #[prost(string, optional, tag = "10")]
+    #[prost(string, optional, tag = "8")]
     pub platform: ::core::option::Option<::prost::alloc::string::String>,
     /// Bumped only after an unclean reboot of that host.
-    #[prost(uint64, tag = "11")]
+    #[prost(uint64, tag = "9")]
     pub generation: u64,
-    #[prost(enumeration = "Trust", tag = "12")]
+    #[prost(enumeration = "Trust", tag = "10")]
     pub trust: i32,
-    #[prost(enumeration = "Presence", tag = "13")]
+    #[prost(enumeration = "Presence", tag = "11")]
     pub presence: i32,
     /// Where discovery found a candidate; what pairing dials.
-    #[prost(string, repeated, tag = "14")]
+    #[prost(string, repeated, tag = "12")]
     pub addrs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Set when this host closed its link saying it no longer trusts this
     /// machine; cleared when it links to this machine again.
-    #[prost(bool, optional, tag = "15")]
+    #[prost(bool, optional, tag = "13")]
     pub revoked: ::core::option::Option<bool>,
     /// Whether this machine's copy of the host's inventory has caught up on a
     /// live stream from it: its agents are as the host lists them now, not as
     /// they were remembered. Cleared when the host is lost; a client that
     /// reads every trusted host current has reconciled with its fleet.
-    #[prost(bool, optional, tag = "16")]
+    #[prost(bool, optional, tag = "14")]
     pub current: ::core::option::Option<bool>,
     /// What each provider offers on the host, once the host has asked it.
-    #[prost(message, repeated, tag = "17")]
+    #[prost(message, repeated, tag = "15")]
     pub providers: ::prost::alloc::vec::Vec<ProviderOnHost>,
 }
 impl ::prost::Name for HostEntry {
@@ -5375,12 +5329,12 @@ pub struct Agent {
     /// clock of the host where it runs.
     #[prost(int64, tag = "12")]
     pub phase_since_ms: i64,
-    #[prost(string, tag = "14")]
+    #[prost(string, tag = "13")]
     pub producer_version: ::prost::alloc::string::String,
-    #[prost(uint32, tag = "15")]
+    #[prost(uint32, tag = "14")]
     pub incarnation: u32,
     /// The snapshot's git facts; absent outside a repository.
-    #[prost(message, optional, tag = "16")]
+    #[prost(message, optional, tag = "15")]
     pub git: ::core::option::Option<Git>,
 }
 impl ::prost::Name for Agent {
@@ -5497,7 +5451,7 @@ impl ::prost::Name for After {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SessionEvent {
-    #[prost(oneof = "session_event::Of", tags = "1, 2, 3, 5, 6, 7, 8, 9")]
+    #[prost(oneof = "session_event::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
     pub of: ::core::option::Option<session_event::Of>,
 }
 /// Nested message and enum types in `SessionEvent`.
@@ -5510,15 +5464,15 @@ pub mod session_event {
         Item(super::Item),
         #[prost(message, tag = "3")]
         Append(super::Append),
-        #[prost(message, tag = "5")]
+        #[prost(message, tag = "4")]
         CaughtUp(super::CaughtUp),
-        #[prost(message, tag = "6")]
+        #[prost(message, tag = "5")]
         Lagged(super::Lagged),
-        #[prost(message, tag = "7")]
+        #[prost(message, tag = "6")]
         Reset(super::Reset),
-        #[prost(message, tag = "8")]
+        #[prost(message, tag = "7")]
         Detached(super::Detached),
-        #[prost(message, tag = "9")]
+        #[prost(message, tag = "8")]
         Opening(super::Opening),
     }
 }
@@ -5709,18 +5663,18 @@ pub struct CreateAgentRequest {
     /// the worktree. Fails the call, making no agent, when cwd is not in a
     /// repository or the branch exists. The name is valid as a branch, so it
     /// is the branch as given.
-    #[prost(bool, tag = "12")]
+    #[prost(bool, tag = "11")]
     pub new_worktree: bool,
-    #[prost(oneof = "create_agent_request::Config", tags = "10, 11")]
+    #[prost(oneof = "create_agent_request::Config", tags = "9, 10")]
     pub config: ::core::option::Option<create_agent_request::Config>,
 }
 /// Nested message and enum types in `CreateAgentRequest`.
 pub mod create_agent_request {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Config {
-        #[prost(message, tag = "10")]
+        #[prost(message, tag = "9")]
         Claude(super::ClaudeCreateConfig),
-        #[prost(message, tag = "11")]
+        #[prost(message, tag = "10")]
         Codex(super::CodexCreateConfig),
     }
 }
@@ -6078,19 +6032,15 @@ pub struct ProfileInfo {
     pub observed: i32,
     #[prost(uint64, tag = "9")]
     pub revision: u64,
-    #[prost(string, tag = "10")]
-    pub startup_error: ::prost::alloc::string::String,
-    #[prost(bool, tag = "11")]
+    #[prost(bool, tag = "10")]
     pub available: bool,
-    #[prost(string, optional, tag = "12")]
-    pub minimum_version: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(enumeration = "Tier", tag = "13")]
+    #[prost(enumeration = "Tier", tag = "11")]
     pub tier: i32,
-    #[prost(enumeration = "RelayCarrier", tag = "14")]
+    #[prost(enumeration = "RelayCarrier", tag = "12")]
     pub relay_carrier: i32,
     /// The bound account's subject at its service, which stays after a
     /// sign-out; empty when unbound. What tells two profiles' accounts apart.
-    #[prost(string, tag = "15")]
+    #[prost(string, tag = "13")]
     pub account_subject: ::prost::alloc::string::String,
 }
 impl ::prost::Name for ProfileInfo {
@@ -6681,18 +6631,6 @@ impl ::prost::Name for PeerEntry {
         "/amux.v1.PeerEntry".into()
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct GetDeviceIdentityRequest {}
-impl ::prost::Name for GetDeviceIdentityRequest {
-    const NAME: &'static str = "GetDeviceIdentityRequest";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.GetDeviceIdentityRequest".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.GetDeviceIdentityRequest".into()
-    }
-}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeviceIdentity {
     #[prost(bytes = "vec", tag = "1")]
@@ -6712,18 +6650,6 @@ impl ::prost::Name for DeviceIdentity {
         "/amux.v1.DeviceIdentity".into()
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ListPeersRequest {}
-impl ::prost::Name for ListPeersRequest {
-    const NAME: &'static str = "ListPeersRequest";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.ListPeersRequest".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.ListPeersRequest".into()
-    }
-}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListPeersResponse {
     #[prost(message, repeated, tag = "1")]
@@ -6739,21 +6665,6 @@ impl ::prost::Name for ListPeersResponse {
         "/amux.v1.ListPeersResponse".into()
     }
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct GetPeerRequest {
-    #[prost(message, optional, tag = "1")]
-    pub peer: ::core::option::Option<PeerRef>,
-}
-impl ::prost::Name for GetPeerRequest {
-    const NAME: &'static str = "GetPeerRequest";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.GetPeerRequest".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.GetPeerRequest".into()
-    }
-}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetPeerResponse {
     #[prost(message, optional, tag = "1")]
@@ -6767,23 +6678,6 @@ impl ::prost::Name for GetPeerResponse {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.GetPeerResponse".into()
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct UnpairRequest {
-    #[prost(message, optional, tag = "1")]
-    pub peer: ::core::option::Option<PeerRef>,
-    #[prost(string, tag = "2")]
-    pub reason: ::prost::alloc::string::String,
-}
-impl ::prost::Name for UnpairRequest {
-    const NAME: &'static str = "UnpairRequest";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.UnpairRequest".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.UnpairRequest".into()
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -6820,9 +6714,9 @@ pub struct StartPairingRequest {
     /// Operator-chosen reusable PIN for unattended demos. When set, `mode`
     /// must be PIN; the session lasts `ttl_seconds` instead of the one-shot
     /// window and is neither consumed by success nor locked out by failures.
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag = "2")]
     pub demo: ::core::option::Option<DemoPairing>,
-    #[prost(uint64, optional, tag = "4")]
+    #[prost(uint64, optional, tag = "3")]
     pub ttl_seconds: ::core::option::Option<u64>,
 }
 /// Nested message and enum types in `StartPairingRequest`.
@@ -6904,16 +6798,16 @@ pub struct StartPairingResponse {
     pub addrs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "4")]
     pub cloud_url: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(oneof = "start_pairing_response::Secret", tags = "10, 11")]
+    #[prost(oneof = "start_pairing_response::Secret", tags = "5, 6")]
     pub secret: ::core::option::Option<start_pairing_response::Secret>,
 }
 /// Nested message and enum types in `StartPairingResponse`.
 pub mod start_pairing_response {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Secret {
-        #[prost(string, tag = "10")]
+        #[prost(string, tag = "5")]
         Pin(::prost::alloc::string::String),
-        #[prost(bytes, tag = "11")]
+        #[prost(bytes, tag = "6")]
         QrSecret(::prost::alloc::vec::Vec<u8>),
     }
 }
@@ -6925,18 +6819,6 @@ impl ::prost::Name for StartPairingResponse {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.StartPairingResponse".into()
-    }
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct GetPairingStatusRequest {}
-impl ::prost::Name for GetPairingStatusRequest {
-    const NAME: &'static str = "GetPairingStatusRequest";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.GetPairingStatusRequest".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.GetPairingStatusRequest".into()
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -6952,18 +6834,6 @@ impl ::prost::Name for GetPairingStatusResponse {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.GetPairingStatusResponse".into()
-    }
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct CancelPairingRequest {}
-impl ::prost::Name for CancelPairingRequest {
-    const NAME: &'static str = "CancelPairingRequest";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.CancelPairingRequest".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.CancelPairingRequest".into()
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -7091,12 +6961,12 @@ pub enum LinkCloseReason {
     Unspecified = 0,
     UserShutdown = 1,
     Updating = 2,
-    Restarting = 4,
-    AuthExpired = 5,
-    ProtocolError = 6,
+    Restarting = 3,
+    AuthExpired = 4,
+    ProtocolError = 5,
     /// The peers share no protocol version; the older one needs updating.
-    VersionMismatch = 7,
-    UserRevoked = 8,
+    VersionMismatch = 6,
+    UserRevoked = 7,
 }
 impl LinkCloseReason {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -7334,8 +7204,8 @@ pub enum Observed {
     Retrying = 4,
     AuthenticationRequired = 5,
     /// The cloud refused this build as too old for its protocol.
-    VersionMismatch = 7,
-    StartupFailed = 8,
+    VersionMismatch = 6,
+    StartupFailed = 7,
 }
 impl Observed {
     /// String value of the enum field names used in the ProtoBuf definition.

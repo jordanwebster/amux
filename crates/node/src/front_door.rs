@@ -86,7 +86,6 @@ pub(crate) fn info(hosted: &Hosted) -> ProfileInfo {
         host_id: hosted.runtime.host().to_string(),
         revision: hosted.entry.revision,
         available: true,
-        ..ProfileInfo::default()
     }
 }
 

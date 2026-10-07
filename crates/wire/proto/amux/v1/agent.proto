@@ -23,9 +23,9 @@ message Input {
     // Kind-neutral: asks the agent process for its part of a dump bundle,
     // answered with CtlFrame.dump.
     DumpInput dump = 3;
-    ClaudePtyInput claude_pty = 10;
-    ClaudeSdkInput claude_sdk = 11;
-    CodexInput codex = 12;
+    ClaudePtyInput claude_pty = 4;
+    ClaudeSdkInput claude_sdk = 5;
+    CodexInput codex = 6;
   }
 }
 
@@ -105,18 +105,17 @@ message EffectiveConfig {
   uint64 facts_ring_bytes = 4;
   uint64 journal_segment_bytes = 5;
   optional string model = 6;
-  reserved 7;
   // The permission and mode the agent was created with, as its catalogue
   // names them.
-  optional string permission = 10;
-  optional string mode = 11;
+  optional string permission = 7;
+  optional string mode = 8;
   // Environment additions for the provider child.
-  map<string, string> env = 8;
+  map<string, string> env = 9;
   // The canonical install path the hook binary and tool server run from.
-  string install_path = 9;
+  string install_path = 10;
 }
 
-// ctl.sock frames, length-prefixed, no version integer, only-add forever.
+// ctl.sock frames, length-prefixed, no version integer.
 // EOF in either direction means the peer is gone.
 message CtlFrame {
   oneof of {

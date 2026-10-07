@@ -207,7 +207,6 @@ impl AppRuntime {
                     effort: agent.effort.clone(),
                     permission: agent.permission.clone(),
                     mode: agent.mode.clone(),
-                    ..Default::default()
                 },
             )),
             Kind::ClaudeSdk | Kind::ClaudePty => Some(create_agent_request::Config::Claude(

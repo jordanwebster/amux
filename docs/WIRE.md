@@ -503,44 +503,28 @@ and close.
 
 ## Compatibility
 
-Paired machines, long-running agent processes and long-lived clients all run
-different versions of amux at once. Every surface tolerates it by one
-discipline.
+amux is unreleased, so nothing depends on an older build: every protobuf
+surface (the client and peer services, the `ctl.sock` frames and the journal's
+records) changes freely. A removed field or message is deleted outright,
+leaving no reservation, and every message keeps its field numbers in reading
+order. A store, journal or agent written by an earlier build is not read
+correctly after such a change; start it fresh.
 
-### Fields are only added
-
-Every protobuf surface (the client and peer services, the `ctl.sock` frames and
-the journal's records) follows the same rule: fields, enum values, messages and
-calls are only ever added. Never renumber, never reuse a number, never retype,
-never make a field required. A retired field keeps its number reserved, as
-`Step` does with field 4 and `PromptInput` with field 3.
-
-The rule is checked mechanically. [`crates/wire/proto/baseline.binpb`](../crates/wire/proto/baseline.binpb)
-is a committed descriptor set of the protos. `just proto-check` compiles the
-current protos and compares them with it
-([`crates/xtask/src/proto_check.rs`](../crates/xtask/src/proto_check.rs)). It
-fails, naming each full name, on a removed message, field, enum value, service
-or rpc, a renumbered or retyped field, or a required field. Additions pass. The
-same comparison runs as the test
-`the_committed_baseline_matches_the_current_protos` in `just test`, which CI
-runs.
-
-A deliberate break is recorded with `just proto-check --update`, which rewrites
-the baseline, committed in the same change. The latest: `Agent` field 12
-is now `phase_since_ms`, when the phase began rather than when anything last
-happened, and `Agent.name` stopped being optional.
+From the first release, paired machines, long-running agent processes and
+long-lived clients will run different versions of amux at once, and every
+surface will tolerate it by field discipline: fields only added, never
+renumbered, reused, retyped or required. That rule is taken up then, not
+before.
 
 After any edit to a `.proto`, run `just protobuf` to regenerate the committed
 Rust; `just codegen-check`, which CI runs, fails on stale output.
 
-What the rule buys at runtime:
+What the design already relies on:
 
-- A body written by a later agent passes through an earlier daemon and store
-  intact, because they never decode it.
+- A body is decoded only by the interpreter that wrote it and by clients, so
+  the daemon and store pass bodies through without reading them.
 - An input arm an interpreter does not know is answered `rejected { reason:
   "unsupported" }`.
-- The store keeps lifecycle and phase as integers, so a value from a later
-  peer is stored and served rather than refused.
 
 ### Versions
 
@@ -549,9 +533,8 @@ is checked in one place: the link handshake between hosts. A connecting host
 lists its versions in `Hello.supported_protocol_versions`; the acceptor
 refuses a `Hello` that does not include its own version, answering with a
 `ProtocolVersionMismatch` detail, and the link closes with
-`LINK_CLOSE_REASON_VERSION_MISMATCH`. The integer changes only for a
-deliberate semantic break that both sides must take; the only-add rule keeps it
-otherwise unused.
+`LINK_CLOSE_REASON_VERSION_MISMATCH`. It is 1 and stays 1 until the first
+release.
 
 Nothing else carries a version integer:
 
