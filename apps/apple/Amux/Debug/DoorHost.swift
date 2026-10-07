@@ -302,7 +302,12 @@ final class DoorHost {
     }
 
     private func pair(link: String) async -> DoorReply {
-        guard let stores, stores.pair(link: link) else { return .error("nothing is running") }
+        // The door opens before the runtime has brought the account's
+        // profile up, so a link handed over straight after launch waits
+        // for it rather than being refused.
+        guard case .ack = await until(30, "the account running", { self.stores?.profile != nil }),
+              let stores, stores.pair(link: link)
+        else { return .error("nothing is running") }
         return await confirm(in: stores)
     }
 

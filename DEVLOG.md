@@ -1,3 +1,10 @@
+2026-10-07 — **The phone's debug door waits for the account before pairing.**
+A `just ios perf` run failed before measuring anything: the app refused the
+first pairing link with "nothing is running". The door answers as soon as
+the app is up, while the runtime is still opening the account's profile, so
+on a busy machine the link arrived before there was a profile to pair it
+with. The door's pair now waits up to 30 s for the profile, then pairs.
+
 2026-10-07 — **The phone's home is built once for the launch's first frame.**
 `just ios perf` measured the cold fleet render — from the store read ending
 to the first frame with rows on screen — at 103.9 ms (budget 100; baseline
