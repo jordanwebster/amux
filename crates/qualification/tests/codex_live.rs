@@ -12,11 +12,13 @@ fn main() -> std::process::ExitCode {
         kind: wire::Kind::Codex,
         command: "codex",
         recording: |scenario| match scenario {
-            Scenario::Initialize => "recorded_initialize_and_start",
-            Scenario::Respond | Scenario::Resume => "recorded_turn_round_trip",
+            Scenario::Initialize => Some("recorded_initialize_and_start"),
+            Scenario::Respond | Scenario::Resume => Some("recorded_turn_round_trip"),
             // The app's prompt leads to the same approval, answered from amux.
-            Scenario::Decide | Scenario::Attach => "recorded_approval_allow",
-            Scenario::Interrupt => "recorded_interrupt",
+            Scenario::Decide | Scenario::Attach => Some("recorded_approval_allow"),
+            Scenario::Interrupt => Some("recorded_interrupt"),
+            // Judged against their own recorded traffic.
+            _ => None,
         },
         replay: interpret::replay::<interpret::codex::Codex>,
     })

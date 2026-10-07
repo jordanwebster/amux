@@ -11,10 +11,10 @@ fn main() -> std::process::ExitCode {
         kind: wire::Kind::ClaudePty,
         command: "claude",
         recording: |scenario| match scenario {
-            Scenario::Initialize | Scenario::Respond | Scenario::Resume => "recorded_prompt",
-            Scenario::Decide => "recorded_permission_allow_once",
-            Scenario::Interrupt => "recorded_interrupt",
-            Scenario::Attach => unreachable!("not one of this target's scenarios"),
+            Scenario::Initialize | Scenario::Respond | Scenario::Resume => Some("recorded_prompt"),
+            Scenario::Decide => Some("recorded_permission_allow_once"),
+            Scenario::Interrupt => Some("recorded_interrupt"),
+            _ => None,
         },
         replay: interpret::replay::<interpret::claude_pty::ClaudePty>,
     })

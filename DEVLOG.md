@@ -1,3 +1,22 @@
+2026-10-07 — **The live lane covers plans, questions, usage, catalogues and Codex's settings, and records its traffic.**
+`just live <kind> all` now also decides a plan, skips one of two questions
+and replies instead to a third (terminal Claude's skip goes through its form
+to the review screen), reads the usage windows, reads what an agent and the
+host with no agent offer, and on Codex changes the permission and the mode
+from amux. The provider runs behind the probes' capture proxies, put first
+on the daemon's PATH: claude-probe already proxied headless Claude's stdio
+and now also stands in front of terminal Claude in a terminal of its own,
+recording keys, screen, hook payloads and transcript rows; codex-probe now
+proxies Codex's app server on its socket or stdio. Each scenario's traffic
+lands in `target/live/recordings/<kind>/<scenario>/` with a fixture that
+replays it, ready to join the corpus. The new scenarios are judged against
+that replay: what the daemon committed must have the shape the interpreter
+gives the provider's own traffic. Two recording readers learned what amux
+writes: Codex's turn-start permission and mode changes become those inputs
+(the plan-mode recording's replay now writes its turn exactly as recorded),
+and a headless Claude question refused with the person's words reads as a
+reply instead. With no arguments `just live` still starts nothing.
+
 2026-10-07 — **The strings lint knows the fleet row's branch identifier again.**
 Giving the branch label a reported value changed the line its exemption
 records, so `just ios lint` saw the identifier as uncatalogued and the old

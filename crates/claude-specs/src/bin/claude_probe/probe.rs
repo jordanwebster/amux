@@ -21,6 +21,13 @@ pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("__pty-hook") {
         return forward_pty_hook();
     }
+    #[cfg(unix)]
+    if std::env::args().nth(1).as_deref() == Some(super::capture::HOOK) {
+        let command = std::env::args()
+            .nth(2)
+            .ok_or("a wrapped hook names its command")?;
+        return super::capture::hook(&command);
+    }
     if std::env::current_exe()?
         .file_stem()
         .is_some_and(|name| name == claude_specs::specs::channels::PEER_MESSAGE_HELPER)
@@ -848,9 +855,19 @@ async fn run_capture_proxy() -> Result<(), Box<dyn std::error::Error>> {
         &serde_json::json!({
             "us": 0,
             "transport_id": transport_id,
+            "process": transport_id,
             "argv": args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>(),
+            "cwd": std::env::current_dir()?,
         }),
     )?;
+    #[cfg(unix)]
+    if super::capture::in_terminal() {
+        let args = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        return super::capture::terminal(capture_dir, real, args, transport_id).await;
+    }
     let mut child = tokio::process::Command::new(real)
         .args(&args)
         .stdin(std::process::Stdio::piped())
@@ -868,9 +885,9 @@ async fn run_capture_proxy() -> Result<(), Box<dyn std::error::Error>> {
             .append(true)
             .open(io_path)
             .await?;
+        // One append per line: proxies sharing the file never interleave.
         while let Some(line) = io_rx.recv().await {
-            file.write_all(line.as_bytes()).await?;
-            file.write_all(b"\n").await?;
+            file.write_all(format!("{line}\n").as_bytes()).await?;
         }
         file.flush().await
     });
@@ -934,12 +951,14 @@ async fn run_capture_proxy() -> Result<(), Box<dyn std::error::Error>> {
     });
     drop(io_tx);
     let status = child.wait().await?;
-    stdin_task.await??;
+    // The host may hold its end open until the provider is gone.
+    stdin_task.abort();
     stdout_task.await??;
     let _ = stderr_task.await?;
     io_writer.await??;
     if !status.success() {
-        return Err(format!("Claude exited with {status}").into());
+        // The host reads the provider's own exit.
+        std::process::exit(status.code().unwrap_or(1));
     }
     Ok(())
 }
@@ -950,6 +969,7 @@ fn io_row(us: u64, direction: &str, line: &str, transport: &str) -> serde_json::
         "dir": direction,
         "line": line,
         "transport_id": transport,
+        "process": transport,
     });
     if let Some(session_id) = serde_json::from_str::<serde_json::Value>(line)
         .ok()

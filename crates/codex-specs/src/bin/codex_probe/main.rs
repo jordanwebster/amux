@@ -1,3 +1,5 @@
+#[cfg(unix)]
+mod capture;
 mod probe;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

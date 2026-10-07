@@ -3,20 +3,32 @@
 //! login, driven through the CLI verbs, and judged by what the daemon
 //! committed to the profile store as a client subscribed to it reads it.
 //!
-//! Each target runs one provider entry point through five scenarios:
+//! Each target runs one provider entry point through its scenarios:
 //! initialization and capabilities, one response, one native decision,
-//! interrupt, and resume. Codex has a sixth, attach: its own app co-driving
-//! the agent beside amux's client, captured terminal by terminal (attach.rs). A scenario asserts protocol structure and real
-//! effects, never generated prose: the item classes, asks, decisions, phase
-//! changes and turn ends the interpreter records have the shape it records
-//! for the matching probe recording, replayed from the interpreter fixture
-//! that points at the recording in claude-specs or codex-specs.
+//! interrupt and resume; a plan decided, questions skipped and replied to
+//! instead (asks.rs); usage windows read, and what the agent and the host
+//! offer (offers.rs). Codex adds a permission change, a mode change and
+//! attach: its own app co-driving the agent beside amux's client, captured
+//! terminal by terminal (attach.rs). A scenario asserts protocol structure
+//! and real effects, never generated prose: the item classes, asks,
+//! decisions, phase changes and turn ends the interpreter records have the
+//! shape it records for the matching probe recording, replayed from the
+//! interpreter fixture that points at the recording in claude-specs or
+//! codex-specs. A scenario with no such recording is judged against its own
+//! provider traffic replayed through the interpreter.
+//!
+//! The provider runs behind the probes' capture proxies, so every
+//! scenario's traffic is recorded where it can join the corpus
+//! (capture.rs).
 //!
 //! Every result is pass, fail, unavailable (no login, no binary, or a
 //! provider older than the corpus) or not_run. With no scenario selected a
 //! target reports not_run for each one and starts nothing.
 
+mod asks;
 mod attach;
+mod capture;
+mod offers;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -68,17 +80,30 @@ pub enum Scenario {
     Decide,
     Interrupt,
     Resume,
+    Plan,
+    Questions,
+    Usage,
+    Catalogue,
+    HostCatalogue,
+    Permission,
+    Mode,
     Attach,
 }
 
-/// Every scenario: the first five each provider entry point runs, then
-/// Codex's own app attached beside amux, which only Codex has.
-pub const SCENARIOS: [Scenario; 6] = [
+/// Every scenario, in the order a run takes them.
+pub const SCENARIOS: [Scenario; 13] = [
     Scenario::Initialize,
     Scenario::Respond,
     Scenario::Decide,
     Scenario::Interrupt,
     Scenario::Resume,
+    Scenario::Plan,
+    Scenario::Questions,
+    Scenario::Usage,
+    Scenario::Catalogue,
+    Scenario::HostCatalogue,
+    Scenario::Permission,
+    Scenario::Mode,
     Scenario::Attach,
 ];
 
@@ -90,7 +115,25 @@ impl Scenario {
             Scenario::Decide => "decide",
             Scenario::Interrupt => "interrupt",
             Scenario::Resume => "resume",
+            Scenario::Plan => "plan",
+            Scenario::Questions => "questions",
+            Scenario::Usage => "usage",
+            Scenario::Catalogue => "catalogue",
+            Scenario::HostCatalogue => "host_catalogue",
+            Scenario::Permission => "permission",
+            Scenario::Mode => "mode",
             Scenario::Attach => "attach",
+        }
+    }
+
+    /// Whether `kind` has what the scenario exercises: terminal Claude
+    /// reports no usage; only Codex has amux-set permissions and modes and
+    /// an app of its own to attach.
+    fn applies(self, kind: Kind) -> bool {
+        match self {
+            Scenario::Usage => kind != Kind::ClaudePty,
+            Scenario::Permission | Scenario::Mode | Scenario::Attach => kind == Kind::Codex,
+            _ => true,
         }
     }
 }
@@ -101,17 +144,18 @@ pub struct Driver {
     /// The provider command, found on the PATH as the daemon finds it.
     pub command: &'static str,
     /// The interpreter fixture replaying each scenario's probe recording,
-    /// by name under crates/interpret/fixtures/<kind>.
-    pub recording: fn(Scenario) -> &'static str,
+    /// by name under crates/interpret/fixtures/<kind>; None for a scenario
+    /// judged against its own traffic.
+    pub recording: fn(Scenario) -> Option<&'static str>,
     pub replay: fn(&Path) -> Result<Vec<Replayed>, String>,
 }
 
 impl Driver {
-    fn scenarios(&self) -> &'static [Scenario] {
-        match self.kind {
-            Kind::Codex => &SCENARIOS,
-            _ => &SCENARIOS[..5],
-        }
+    fn scenarios(&self) -> Vec<Scenario> {
+        SCENARIOS
+            .into_iter()
+            .filter(|scenario| scenario.applies(self.kind))
+            .collect()
     }
 
     fn tag(&self) -> &'static str {
@@ -123,11 +167,13 @@ impl Driver {
         }
     }
 
-    fn fixture(&self, scenario: Scenario) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../interpret/fixtures")
-            .join(self.tag())
-            .join(format!("{}.json", (self.recording)(scenario)))
+    fn fixture(&self, scenario: Scenario) -> Option<PathBuf> {
+        (self.recording)(scenario).map(|recording| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../interpret/fixtures")
+                .join(self.tag())
+                .join(format!("{recording}.json"))
+        })
     }
 }
 
@@ -164,7 +210,7 @@ impl Report {
         println!("corpus    {}", self.corpus);
         println!("model     {}", self.model);
         for (scenario, verdict) in &self.results {
-            println!("{:<10} {verdict}", scenario.name());
+            println!("{:<15} {verdict}", scenario.name());
         }
     }
 
@@ -184,7 +230,7 @@ pub fn main(driver: Driver) -> ExitCode {
         .filter(|arg| !arg.starts_with('-'))
         .collect();
     let selected: Vec<Scenario> = if names.iter().any(|name| name == "all") {
-        driver.scenarios().to_vec()
+        driver.scenarios()
     } else {
         driver
             .scenarios()
@@ -215,7 +261,7 @@ pub fn main(driver: Driver) -> ExitCode {
     let mut report = Report {
         kind: driver.tag(),
         provider: "not probed".into(),
-        corpus: corpus(&driver, driver.scenarios()).to_string(),
+        corpus: corpus(&driver, &driver.scenarios()).to_string(),
         model: "none".into(),
         results: Vec::new(),
     };
@@ -234,10 +280,10 @@ pub fn main(driver: Driver) -> ExitCode {
         .expect("a runtime");
     runtime.block_on(run(&driver, &selected, &mut report));
     for scenario in driver.scenarios() {
-        if !selected.contains(scenario) {
+        if !selected.contains(&scenario) {
             report
                 .results
-                .push((*scenario, Verdict::NotRun("not selected".into())));
+                .push((scenario, Verdict::NotRun("not selected".into())));
         }
     }
     report
@@ -298,6 +344,12 @@ async fn run(driver: &Driver, selected: &[Scenario], report: &mut Report) {
             Err(_) => Verdict::Fail(format!("did not finish within {SCENARIO:?}")),
         };
         eprintln!("{} {}: {verdict}", driver.tag(), scenario.name());
+        // Whatever the verdict, an agent's traffic is kept for a look.
+        if install.has_agent(*scenario)
+            && let Err(why) = install.collect(*scenario)
+        {
+            eprintln!("{} {}: no recording: {why}", driver.tag(), scenario.name());
+        }
         report.results.push((*scenario, verdict));
     }
     if let Some(model) = install.model.lock().unwrap().clone() {
@@ -363,8 +415,10 @@ fn corpus(driver: &Driver, scenarios: &[Scenario]) -> Corpus {
     let mut version = Version::default();
     let mut recordings = BTreeSet::new();
     for scenario in scenarios {
-        let fixture = driver.fixture(*scenario);
-        let Some(recording) = recording_dir(&fixture) else {
+        let Some(recording) = driver
+            .fixture(*scenario)
+            .and_then(|fixture| recording_dir(&fixture))
+        else {
             continue;
         };
         recordings.insert(
@@ -410,9 +464,12 @@ struct Install {
     env: Vec<(String, OsString)>,
     daemon: tokio::sync::Mutex<Child>,
     client: ClientServiceClient<Channel>,
-    driver_fixture: Box<dyn Fn(Scenario) -> PathBuf + Send + Sync>,
+    driver_fixture: Box<dyn Fn(Scenario) -> Option<PathBuf> + Send + Sync>,
     replay: fn(&Path) -> Result<Vec<Replayed>, String>,
     model: Mutex<Option<String>>,
+    capture: capture::Capture,
+    /// Each scenario's agent, as it was created.
+    agents: Mutex<Vec<(Scenario, Vec<u8>)>>,
 }
 
 impl Install {
@@ -457,6 +514,9 @@ impl Install {
         if driver.kind == Kind::Codex {
             env.push(("CODEX_HOME".into(), seed_codex_home(&path)?.into()));
         }
+        let (capture, proxied) =
+            capture::Capture::install(&path, driver.kind, driver.tag(), driver.command)?;
+        env.extend(proxied);
 
         let log = std::fs::File::create(path.join("daemon.log")).map_err(|e| e.to_string())?;
         let mut daemon = Command::new(&amux);
@@ -488,10 +548,10 @@ impl Install {
                 .await
                 .map_err(|error| error.to_string())?,
         );
-        let fixtures: Vec<(Scenario, PathBuf)> = driver
+        let fixtures: Vec<(Scenario, Option<PathBuf>)> = driver
             .scenarios()
-            .iter()
-            .map(|scenario| (*scenario, driver.fixture(*scenario)))
+            .into_iter()
+            .map(|scenario| (scenario, driver.fixture(scenario)))
             .collect();
         Ok(Install {
             kind: driver.kind,
@@ -505,11 +565,12 @@ impl Install {
                 fixtures
                     .iter()
                     .find(|(s, _)| *s == scenario)
-                    .map(|(_, path)| path.clone())
-                    .expect("every scenario has a recording")
+                    .and_then(|(_, path)| path.clone())
             }),
             replay: driver.replay,
             model: Mutex::new(None),
+            capture,
+            agents: Mutex::new(Vec::new()),
         })
     }
 
@@ -566,6 +627,11 @@ impl Install {
 
     /// `amux create`, named after the scenario, in its own project.
     async fn create(&self, scenario: Scenario) -> Result<Vec<u8>, String> {
+        self.create_with(scenario, &[]).await
+    }
+
+    /// `amux create` with more of the provider's own arguments.
+    async fn create_with(&self, scenario: Scenario, extra: &[&str]) -> Result<Vec<u8>, String> {
         let cwd = self.project(scenario)?.to_string_lossy().into_owned();
         let mut args = vec![
             "create",
@@ -593,8 +659,47 @@ impl Install {
         if self.kind == Kind::ClaudePty && scenario == Scenario::Interrupt {
             args.extend(["--allowedTools", "Bash"]);
         }
+        args.extend(extra);
         let output = self.amux(&args).await?;
-        created_id(&output).ok_or_else(|| format!("amux create said {output:?}"))
+        let agent = created_id(&output).ok_or_else(|| format!("amux create said {output:?}"))?;
+        self.created(scenario, &agent);
+        Ok(agent)
+    }
+
+    fn created(&self, scenario: Scenario, agent: &[u8]) {
+        self.agents.lock().unwrap().push((scenario, agent.to_vec()));
+    }
+
+    fn has_agent(&self, scenario: Scenario) -> bool {
+        self.agents
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(s, _)| *s == scenario)
+    }
+
+    /// Writes the scenario's recorded traffic beside the run and returns
+    /// the fixture that replays it.
+    fn collect(&self, scenario: Scenario) -> Result<PathBuf, String> {
+        let agent = self
+            .agents
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(s, _)| *s == scenario)
+            .map(|(_, agent)| agent.clone());
+        let prelude = match (self.kind, agent) {
+            (Kind::ClaudePty, Some(agent)) => capture::launch_facts(self.root.path(), &agent),
+            _ => Vec::new(),
+        };
+        self.capture
+            .collect(scenario, &self.project(scenario)?, prelude)
+    }
+
+    /// What the real provider did in this scenario, as the interpreter
+    /// replays the traffic the probe recorded.
+    fn captured(&self, scenario: Scenario) -> Result<Log, String> {
+        self.replay_log(&self.collect(scenario)?, false)
     }
 
     /// Codex asks before a command only under an asking approval policy,
@@ -602,6 +707,23 @@ impl Install {
     /// The CLI has no verb for either, so this create goes through the
     /// client service, as the apps issue it.
     async fn create_asking_codex(&self, scenario: Scenario) -> Result<Vec<u8>, String> {
+        self.create_codex(
+            scenario,
+            CodexCreateConfig {
+                permission: Some("read-only".into()),
+                ..CodexCreateConfig::default()
+            },
+        )
+        .await
+    }
+
+    /// A Codex agent made as the apps make one, with settings the CLI has
+    /// no flag for.
+    async fn create_codex(
+        &self,
+        scenario: Scenario,
+        config: CodexCreateConfig,
+    ) -> Result<Vec<u8>, String> {
         let agent = self
             .client
             .clone()
@@ -610,15 +732,13 @@ impl Install {
                 name: Some(scenario.name().to_owned()),
                 cwd: self.project(scenario)?.to_string_lossy().into_owned(),
                 kind: Kind::Codex as i32,
-                config: Some(create_agent_request::Config::Codex(CodexCreateConfig {
-                    permission: Some("read-only".into()),
-                    ..CodexCreateConfig::default()
-                })),
+                config: Some(create_agent_request::Config::Codex(config)),
                 ..CreateAgentRequest::default()
             })
             .await
             .map_err(|status| status.to_string())?
             .into_inner();
+        self.created(scenario, &agent.agent_id);
         Ok(agent.agent_id)
     }
 
@@ -670,11 +790,19 @@ impl Install {
     /// What the scenario's recording replays to, up to and including the
     /// first frame that takes input when `until_ready`.
     fn replayed(&self, scenario: Scenario, until_ready: bool) -> Result<Log, String> {
-        let fixture = (self.driver_fixture)(scenario);
-        let frames = (self.replay)(&fixture)
+        let fixture = (self.driver_fixture)(scenario)
+            .ok_or_else(|| format!("{} has no recording in the corpus", scenario.name()))?;
+        self.replay_log(&fixture, until_ready)
+    }
+
+    fn replay_log(&self, fixture: &Path, until_ready: bool) -> Result<Log, String> {
+        let frames = (self.replay)(fixture)
             .map_err(|error| format!("replaying {}: {error}", fixture.display()))?;
         let mut log = Log::default();
         for frame in frames {
+            if let Some(catalogue) = frame.catalogue {
+                log.catalogue = Some(catalogue);
+            }
             for item in frame.step.items {
                 log.item(item);
             }
@@ -789,6 +917,13 @@ impl Install {
             Scenario::Decide => self.decide().await,
             Scenario::Interrupt => self.interrupt_turn().await,
             Scenario::Resume => self.resume().await,
+            Scenario::Plan => self.plan().await,
+            Scenario::Questions => self.questions().await,
+            Scenario::Usage => self.usage().await,
+            Scenario::Catalogue => self.catalogue().await,
+            Scenario::HostCatalogue => self.host_catalogue().await,
+            Scenario::Permission => self.permission().await,
+            Scenario::Mode => self.mode().await,
             Scenario::Attach => self.attach().await,
         }
     }
@@ -1101,6 +1236,8 @@ fn seed_codex_home(root: &Path) -> Result<PathBuf, String> {
 struct Log {
     items: BTreeMap<String, (u64, Item)>,
     snapshots: Vec<Snapshot>,
+    /// The last catalogue a replay wrote.
+    catalogue: Option<wire::Catalogue>,
 }
 
 impl Log {
@@ -1162,6 +1299,7 @@ impl Log {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect(),
             snapshots: self.snapshots[before.snapshots.len().min(self.snapshots.len())..].to_vec(),
+            catalogue: None,
         }
     }
 
@@ -1302,6 +1440,7 @@ fn item_token(kind: Kind, item: &Item) -> Option<String> {
             Pty::Tool(call) => Some(tool(call.state, call.decision.as_ref())),
             Pty::ApiError(_) => Some("error".into()),
             Pty::AgentMessage(_) => Some("agent message".into()),
+            Pty::Plan(plan) => Some(plan_token(&plan)),
             _ => None,
         },
         ItemBody::ClaudeSdk(body) => match body {
@@ -1311,6 +1450,7 @@ fn item_token(kind: Kind, item: &Item) -> Option<String> {
             Sdk::ApiError(_) => Some("error".into()),
             Sdk::AgentMessage(_) => Some("agent message".into()),
             Sdk::Ask(item) => Some(ask(&item)),
+            Sdk::Plan(plan) => Some(plan_token(&plan)),
             _ => None,
         },
         ItemBody::Codex(body) => match body {
@@ -1320,10 +1460,18 @@ fn item_token(kind: Kind, item: &Item) -> Option<String> {
             Codex::Error(_) => Some("error".into()),
             Codex::AgentMessage(_) => Some("agent message".into()),
             Codex::Ask(item) => Some(ask(&item)),
+            Codex::Plan(plan) => Some(plan_token(&plan)),
             _ => None,
         },
         ItemBody::Undecodable => Some("undecodable".into()),
     }
+}
+
+fn plan_token(plan: &wire::Plan) -> String {
+    format!(
+        "plan {}",
+        short(plan.verdict().as_str_name(), "PLAN_VERDICT_")
+    )
 }
 
 fn boundary(kind: Kind, item: &Item) -> Option<wire::Boundary> {
@@ -1369,6 +1517,7 @@ fn ask_token(ask: &OpenAsk) -> String {
             Some(wire::codex_ask::Body::Access(_)) => "access",
             Some(wire::codex_ask::Body::Question(_)) => "question",
             Some(wire::codex_ask::Body::McpTool(_)) => "tool",
+            Some(wire::codex_ask::Body::Plan(_)) => "plan",
             None => "empty",
         },
     }

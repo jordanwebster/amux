@@ -82,6 +82,15 @@ fn approval_name(policy: &AskForApproval) -> Option<String> {
     }
 }
 
+/// The named permission a turn's overrides make, if they make one.
+pub(super) fn named_permission(
+    approval: &AskForApproval,
+    sandbox: &SandboxPolicy,
+    reviewer: Option<&str>,
+) -> Option<&'static str> {
+    super::permission_of(&approval_name(approval)?, &sandbox_mode(sandbox)?, reviewer)
+}
+
 fn effort_name(effort: Option<&ReasoningEffort>) -> Option<String> {
     some_of(effort.map(ReasoningEffort::as_str))
 }

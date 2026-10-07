@@ -17,6 +17,10 @@ use uuid::Uuid;
 
 #[tokio::main]
 pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(unix)]
+    if std::env::var_os(super::capture::PROXY_ENV).is_some() {
+        return super::capture::run().await;
+    }
     if std::env::var_os(TOOL_SERVER_ENV).is_some() {
         run_spec_tool_server();
         return Ok(());

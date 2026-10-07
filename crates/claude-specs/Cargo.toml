@@ -23,6 +23,9 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [[bin]]
 name = "claude-probe"
 path = "src/bin/claude_probe/main.rs"

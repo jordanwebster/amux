@@ -11,10 +11,12 @@ fn main() -> std::process::ExitCode {
         kind: wire::Kind::ClaudeSdk,
         command: "claude",
         recording: |scenario| match scenario {
-            Scenario::Initialize | Scenario::Respond | Scenario::Resume => "recorded_text_turn",
-            Scenario::Decide => "recorded_permission_callback",
-            Scenario::Interrupt => "recorded_interrupted",
-            Scenario::Attach => unreachable!("not one of this target's scenarios"),
+            Scenario::Initialize | Scenario::Respond | Scenario::Resume => {
+                Some("recorded_text_turn")
+            }
+            Scenario::Decide => Some("recorded_permission_callback"),
+            Scenario::Interrupt => Some("recorded_interrupted"),
+            _ => None,
         },
         replay: interpret::replay::<interpret::claude_sdk::ClaudeSdk>,
     })

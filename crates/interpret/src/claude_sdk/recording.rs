@@ -4,7 +4,7 @@
 //! Stdout lines are facts. What the recording's host wrote to stdin becomes
 //! the inputs that would make this interpreter write the same thing: user
 //! messages are prompts, answers to permission and elicitation requests are
-//! answers, and model, mode and interrupt requests are those inputs. A user
+//! answers (a question refused with words is a reply instead), and model, mode and interrupt requests are those inputs. A user
 //! message that carries a uuid gets the input id that makes the interpreter
 //! write that same uuid, so Claude's replay of it correlates. One written
 //! while a turn runs, at default priority, is Claude folding it into that
@@ -23,8 +23,8 @@ use serde::Deserialize;
 use wire::{
     AnswerInput, ClaudeAnswer, ClaudeSdkInput, FormAction, FormAnswer, Input, Interrupt,
     PermissionAllow, PermissionAnswer, PermissionDeny, PlanAnswer, PlanChoice, PromptInput,
-    QuestionAnswer, QuestionResponse, SendQueuedNow, SetModel, SetPermission, claude_answer,
-    claude_sdk_input, input, permission_answer,
+    QuestionAnswer, QuestionResponse, ReplyInstead, SendQueuedNow, SetModel, SetPermission,
+    claude_answer, claude_sdk_input, input, permission_answer,
 };
 
 use crate::claude_common::{AnsweredResult, PLAN_TOOL, QUESTION_TOOL, QuestionInput, message_text};
@@ -287,6 +287,13 @@ fn answer(request: &ControlRequestBody, response: &ControlResponse) -> Option<cl
                                 }
                             })
                             .collect(),
+                    }))
+                }
+                // Refused with words of the person's own: replied instead.
+                QUESTION_TOOL if !message.is_empty() && !stop => {
+                    Some(claude_answer::Of::Reply(ReplyInstead {
+                        text: message,
+                        answers_so_far: Vec::new(),
                     }))
                 }
                 _ => Some(claude_answer::Of::Permission(PermissionAnswer {

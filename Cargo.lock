@@ -680,6 +680,7 @@ dependencies = [
  "claude",
  "claude-protocol",
  "futures-core",
+ "libc",
  "pty-host",
  "redaction",
  "replay-support",
@@ -754,6 +755,7 @@ dependencies = [
  "chrono",
  "codex",
  "codex-protocol",
+ "futures-util",
  "redaction",
  "replay-support",
  "semver",
@@ -761,6 +763,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-tungstenite",
  "uuid",
 ]
 

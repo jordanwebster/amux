@@ -3,7 +3,8 @@
 //!
 //! What the server wrote is facts. What the recording's host wrote becomes
 //! the inputs that would make this interpreter write the same: a turn with
-//! text is a prompt, a steer a prompt then its send-now, an injected item an agent
+//! text is a prompt, after the model, effort, permission and mode changes
+//! it carries, a steer a prompt then its send-now, an injected item an agent
 //! message, an interrupt an interrupt, a compaction a `/compact` prompt, and
 //! a response to a server request an answer. The handshake and the host's
 //! own introspection are left out; their responses stay in as facts. An
@@ -196,6 +197,36 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                         of: Some(input::Of::Codex(CodexInput {
                             of: Some(codex_input::Of::Effort(wire::SetEffort {
                                 effort: Some(effort.as_str().to_owned()),
+                            })),
+                        })),
+                    }));
+                }
+                if let (Some(approval), Some(sandbox)) =
+                    (&params.approval_policy, &params.sandbox_policy)
+                    && let Some(value) = super::facts::named_permission(
+                        approval,
+                        sandbox,
+                        params
+                            .approvals_reviewer
+                            .as_ref()
+                            .map(|reviewer| reviewer.as_str()),
+                    )
+                {
+                    push(Event::Input(Input {
+                        input_id: format!("stdin-{inputs}-permission").into_bytes(),
+                        of: Some(input::Of::Codex(CodexInput {
+                            of: Some(codex_input::Of::Permission(wire::SetPermission {
+                                value: value.to_owned(),
+                            })),
+                        })),
+                    }));
+                }
+                if let Some(collaboration) = &params.collaboration_mode {
+                    push(Event::Input(Input {
+                        input_id: format!("stdin-{inputs}-mode").into_bytes(),
+                        of: Some(input::Of::Codex(CodexInput {
+                            of: Some(codex_input::Of::Mode(wire::SetMode {
+                                value: collaboration.mode.as_str().to_owned(),
                             })),
                         })),
                     }));
