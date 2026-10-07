@@ -1,3 +1,17 @@
+2026-10-07 — **The nightly and weekly runs pass again, on warm caches.**
+The nightly iOS captures run had been green once since 18 September. A stale
+golden accounted for a week of it; the rest were bounds a cold runner
+overran. Neither scheduled job ever had a Rust cache to restore: each was
+keyed to its own job, saved only after a green run, and evicted before the
+next one. The nightly now restores the iOS gate's cache and the weekly the
+macOS test job's, without saving their own. The nightly also boots only the
+golden simulator, since nothing it runs uses the small one, which took
+seven minutes, and the `--settle-all` snapshot bound is sized from the
+nightly's own 487 s, 800 s, where 500 s left it 13 s to spare. The weekly
+offline run skips the one test that loads a LaunchAgent: launchd refuses to
+load one for a sandboxed process. A trial of the nightly's path took 25
+minutes, where this morning's took 57, with the test host starting in 67 s.
+
 2026-10-07 — **The iOS gate builds once and stops waiting on pictures
 that are already final.** Every component snapshot used to wait a quiet
 second before its picture; 230 of them made the batch four and a half

@@ -28,9 +28,10 @@ MISMATCH = "does not match reference"
 # example), sized by docs/CI.md's rule: the slowest clean run times 1.5,
 # rounded up to the hundred. An ordinary batch, where only the examples
 # marked to settle late wait, took 144 s on a CI runner; one that settles
-# every example (--settle-all, and every recording) took 307 s there.
+# every example (--settle-all, and every recording) took 487 s in the nightly
+# captures run, whose test host took 180 s of that to start.
 BATCH_BOUND = 300
-SETTLED_BOUND = 500
+SETTLED_BOUND = 800
 # The same for a batch of review captures, every frosted example held 2.5 s
 # for its glass: 372 s for all of them on a local Mac.
 REVIEW_BOUND = 600

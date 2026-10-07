@@ -12,8 +12,8 @@ recipes; [Testing](TESTING.md) describes the suites they run.
 | Workflow | File | When | What |
 | --- | --- | --- | --- |
 | CI | [`ci.yml`](../.github/workflows/ci.yml) | Pushes to `main`; pull requests into `main` | Every check a change is held to, on Linux, macOS and Windows, plus the iOS gate |
-| Weekly offline tests | [`offline.yml`](../.github/workflows/offline.yml) | Sundays 04:00 UTC, and by hand | The workspace tests with no external network |
-| iOS captures | [`ios-captures.yml`](../.github/workflows/ios-captures.yml) | Nightly 03:00 UTC, and by hand | The phone's photographed suites |
+| Weekly offline tests | [`offline.yml`](../.github/workflows/offline.yml) | Sundays 04:00 UTC (GitHub often starts it hours late), and by hand | The workspace tests with no external network |
+| iOS captures | [`ios-captures.yml`](../.github/workflows/ios-captures.yml) | Nightly 03:00 UTC (GitHub often starts it hours late), and by hand | The phone's photographed suites |
 | Release | [`release.yml`](../.github/workflows/release.yml) | A pushed `v*` tag | The `amux` release binaries; see [Release](RELEASE.md) |
 
 Every workflow sets `CARGO_INCREMENTAL=0`, and every job has a
@@ -126,9 +126,9 @@ to the iOS target check, which runs it on every push. None of it compares a
 photograph of the whole display, so it answers the same on any machine. The
 component snapshot batch runs under its own bound, sized by the rule above
 from a clean CI run: 144 s with only the examples marked to settle late
-waiting, so 300 s, and 307 s when every one of the 230 pictures waits a
-quiet second (`--settle-all`, the nightly captures run and every
-recording), so 500 s. The job uploads the component snapshot
+waiting, so 300 s, and 487 s in the nightly captures run, where every one
+of the 230 pictures waits a quiet second (`--settle-all`, also used by
+every recording), so 800 s. The job uploads the component snapshot
 comparisons and the shipped-scope audit directory to the run, whether it
 passed or not.
 
@@ -142,8 +142,12 @@ and `just ios shipping` run those halves alone.
 
 ### iOS captures
 
-The nightly workflow boots both pinned simulators on `macos-26`, compares the
-native component snapshots, and compares the whole-screen goldens. Run by
+The nightly workflow boots the golden simulator on `macos-26`, compares the
+native component snapshots, and compares the whole-screen goldens. Nothing
+it runs uses the small simulator, which took seven minutes to boot. It
+restores the iOS gate's Rust cache and never saves its own: a cache keyed to
+the nightly job was saved only after a green run and evicted before the next
+one, so every night built the Rust bridge and tools from nothing. Run by
 hand, it instead runs `just ios captures` — goldens, journeys and the
 accessibility sweep. It uploads the golden comparisons, the journey evidence
 and the component snapshots. [The iPhone app](IOS.md) explains what those
