@@ -3205,6 +3205,18 @@
         }
       }
     },
+    "Line %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Line %@"
+          }
+        }
+      }
+    },
     "Line %@, %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
       "extractionState": "manual",
@@ -7693,18 +7705,6 @@
         }
       }
     },
-    "it is shutting down": {
-      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "it is shutting down"
-          }
-        }
-      }
-    },
     "it no longer trusts this phone, pair again to reach it": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
       "extractionState": "manual",
@@ -7729,6 +7729,18 @@
         }
       }
     },
+    "it was no longer queued": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "it was no longer queued"
+          }
+        }
+      }
+    },
     "its agents’ state is unknown": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
       "extractionState": "manual",
@@ -7737,6 +7749,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "its agents’ state is unknown"
+          }
+        }
+      }
+    },
+    "its host can’t be reached": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "its host can’t be reached"
+          }
+        }
+      }
+    },
+    "its host is shutting down": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "its host is shutting down"
           }
         }
       }
@@ -8601,6 +8637,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "the app has no window to open a browser over"
+          }
+        }
+      }
+    },
+    "the ask had already closed": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the ask had already closed"
           }
         }
       }

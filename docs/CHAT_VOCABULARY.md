@@ -66,6 +66,12 @@ kind is the [`ui_view::RowKind`](../crates/ui-view/src/rows.rs) variant the view
 | Image | `Image { image, path, generated }` | A thumbnail opening full size; Codex can report generated images. | partial | partial | full |
 | Slash command output | `SlashOutput { command, args, output }` | The command, then its output block. | partial | partial | n/a: skills run as prompts |
 
+A call's `state` is a `CallPhase`, decided once in the view for both clients: `Asking` while an open ask points
+at the call and nothing has decided it (it runs only if the person allows it, and both clients mark it as
+waiting on the person), `Pending` when it is announced, not started and asks nobody, `Running`, `Succeeded`,
+`Failed`, `Denied` when the person or the agent's rules refused it whatever the call reports after, and
+`Cancelled`. Each client words the phase and branches on it, never on its own words.
+
 A native subagent (Claude's Task tool, a Codex child thread) is a row with detail inside the parent's
 transcript, not an agent. Only an amux spawn makes an agent with a chat of its own
 ([AGENT_TOOLS.md](AGENT_TOOLS.md)).
@@ -125,9 +131,9 @@ of ask has one anatomy, the [`AskCard`](../crates/ui-view/src/ask.rs):
   dismisses the open ask, and the agent stays live and idle. It never ends the process; stopping or deleting the
   agent does that.
 - **Sending, then a row.** After an answer, `CardState` goes `Sending` and the card shrinks to one line until the
-  agent confirms; the decision then lands in the chat. A rejection brings the card back as `Rejected(reason)`. If
-  the connection dropped before any reply, `NotConfirmed` offers resend and discard; nothing is resent on its
-  own. An exited agent's open asks are drawn `Dismissed`, and the composer offers Resume.
+  agent confirms; the decision then lands in the chat. A rejection brings the card back as `Rejected(reason)`,
+  the reason a typed `RefusalReason` each client words. If the connection dropped before any reply,
+  `NotConfirmed` offers resend and discard; nothing is resent on its own. An exited agent's open asks are drawn `Dismissed`, and the composer offers Resume.
 
 An answer names its ask by key, so any open ask can be answered from any client, not only the head one. Before
 CaughtUp a card is drawn only if the inventory entry says the agent needs you, so an ask already answered on
@@ -135,8 +141,15 @@ another device does not flash from a cached snapshot.
 
 ### Permissions
 
-The body is `Command` (command, working directory, reason, description), `Edit` (path, file count, counts and a
-short diff, the full document one key away) or `Tool` (server, tool and pretty-printed arguments).
+The body is `Command` (command, working directory, reason, description), `Edit` (path, file count, counts, the
+patch as parsed lines and the new file's line its first change lands on) or `Tool` (server, tool and
+pretty-printed arguments). The edit's lines are `EditLine`s: a `Hunk` marker with where the hunk starts in the
+old and new file, or a `PatchLine` (added, removed or context, numbered where the patch says). A file's header
+lines are dropped and only outside a hunk, so a removed `-- comment` or an added `++i` stays a line of the patch;
+a file Codex adds or deletes whole reads as added or removed lines. Each client decides whether to draw a
+hunk's start: the terminal names the first change's line beside the path, the phone draws each hunk's start
+as its line in the new file. A Claude edit is only the text replaced and the text replacing it, so its lines
+carry no numbers and no line.
 
 | Outcome | Offered by |
 |---|---|
@@ -179,11 +192,16 @@ question: `Options(indices)` or `Other(text)`.
 
 | Body | Choices |
 |---|---|
-| `Plan { plan }` | `ApprovePlan { auto_accept_edits: false }`, `ApprovePlan { auto_accept_edits: true }` where the provider offers it, and `SendBack`, whose note says what should change. Codex proposes plans in plan mode with no approval step; its plan is a prose row and you reply in the composer. |
+| `Plan { title, body }` | `ApprovePlan { auto_accept_edits: false }`, `ApprovePlan { auto_accept_edits: true }` where the provider offers it, and `SendBack`, whose note says what should change. Codex proposes plans in plan mode with no approval step; its plan is a prose row and you reply in the composer. |
 | `Form { server, message, fields }` | `Submit` and `Decline`. The view reads the tool server's schema once into fields in the order it writes them, each text, a number, a toggle, one choice or several picks, with its title, whether it is required and what it starts holding; the client draws native controls for them, required fields gate Submit, and `with_form_content` puts the values in the answer. |
 | `Link { server, message, url }` | `OpenLink` and `Decline`. |
 | `Access { reason, read, write, network, hosts }` | `GrantForTurn`, `GrantForSession` and `Deny` (Codex). A grant covers everything the agent asked for; the row records what was granted and for how long. |
 | `Unanswerable { reason }` | None: the provider showed something this build cannot read. The only ways out are Stop and, where the agent's own terminal is on this machine, attaching to it. |
+
+A plan's title is its first line when that line is a `#` heading, past any blank lines, unless the heading only
+says "plan"; the body is the rest. While the first line is still arriving there is no title yet, so a heading
+never shows half-written as prose. The view splits the plan once, for the card and for the row it becomes, and
+both clients draw the title and body they are handed.
 
 ![A plan's decision in the composer's box, the plan itself in the feed above: start building, start and accept edits without asking, or keep planning with a note.](figures/vocabulary/ask_plan.light.png)
 
@@ -202,7 +220,7 @@ Once settled, an ask leaves one of two things behind, because rows are one per i
   rather than guessed.
 - **An ask that is the work is its own row**, `RowKind::Ask(AskRow)`, which resolves in place: `Question`
   (Claude's question tool: its questions, then each `AnswerView` with the picks, what was typed and whether it was
-  hidden, and the note), `Questions` (Codex), `Plan` with its `PlanVerdict` and send-back note, `Form` with the
+  hidden, whether it was skipped, and the note), `Questions` (Codex), `Plan` with its title, body, `PlanVerdict` and send-back note, `Form` with the
   fields sent, `Link`, `Grant` with what was `Granted` and for how long, and `Unanswerable`. Each carries a
   `Resolution`: `Open`, `Answered`, `Declined`, `Cancelled` or `Dismissed`.
 

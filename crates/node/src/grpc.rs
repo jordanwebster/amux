@@ -195,8 +195,8 @@ impl ClientApi {
     }
 }
 
-/// The verdict for an input to an agent whose host cannot be reached.
-pub const HOST_UNREACHABLE: &str = "host_unreachable";
+// The verdict for an input to an agent whose host cannot be reached.
+use wire::refusal::HOST_UNREACHABLE;
 
 /// One call made on another host's daemon, answered with its answer.
 async fn forwarded<T, F, Fut>(

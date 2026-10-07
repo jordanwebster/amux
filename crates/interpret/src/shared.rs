@@ -8,22 +8,14 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
+/// Why an input was refused: the wire's reason vocabulary.
+pub use wire::refusal as reason;
 use wire::{
     AgentMessage, AgentSpec, Append, Attachment, Envelope, Input, Item, Phase, PromptInput,
     QueuedInput, Sender, Snapshot, Step, TurnEnd, input, sender,
 };
 
 use crate::{Effect, Stepped, reply, serde_pb};
-
-/// Why an input was refused. The strings are the wire's reason vocabulary.
-pub mod reason {
-    pub const CLOSED_ASK: &str = "closed_ask";
-    pub const NOT_QUEUED: &str = "not_queued";
-    pub const UNSUPPORTED: &str = "unsupported";
-    pub const DRAINING: &str = "draining";
-    pub const EXITING: &str = "exiting";
-    pub const EXITED: &str = "exited";
-}
 
 /// The tool server name amux's own tools are registered under, and the tool
 /// whose call sets working_on.

@@ -475,13 +475,6 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
-    /// Markdown italic emphasis.
-    pub(crate) fn italic(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.text))
-            .add_modifier(Modifier::ITALIC)
-    }
-
     /// Inline code and fenced code blocks.
     pub(crate) fn code(self) -> Style {
         Style::default().fg(self.color(self.tokens.code))
@@ -556,13 +549,6 @@ impl Theme {
     /// composer's edge.
     pub(crate) fn attention(self) -> Style {
         Style::default().fg(self.color(self.tokens.attention))
-    }
-
-    /// The attention column down the left edge of a filled surface.
-    pub(crate) fn attention_bar(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.attention))
-            .bg(self.color(self.tokens.user_surface))
     }
 
     /// The bar marking the focused feed block.
@@ -1366,6 +1352,13 @@ mod tests {
         assert_eq!(token.resolve(ColorMode::Ansi), Color::Cyan);
     }
 
+    /// The attention ink on the person's message surface.
+    fn attention_on_surface(theme: Theme) -> Style {
+        Style::default()
+            .fg(theme.color(theme.tokens.attention))
+            .bg(theme.color(theme.tokens.user_surface))
+    }
+
     #[test]
     fn classify_recognizes_semantic_styles() {
         let theme = Theme::default();
@@ -1373,13 +1366,16 @@ mod tests {
         assert_eq!(theme.classify(theme.text()), '.');
         assert_eq!(theme.classify(theme.muted()), 'm');
         assert_eq!(theme.classify(theme.emphasis()), 'e');
-        assert_eq!(theme.classify(theme.italic()), 'i');
+        let italic = Style::default()
+            .fg(theme.color(theme.tokens.text))
+            .add_modifier(Modifier::ITALIC);
+        assert_eq!(theme.classify(italic), 'i');
         assert_eq!(theme.classify(theme.code()), 'c');
         assert_eq!(theme.classify(theme.ok()), 'o');
         assert_eq!(theme.classify(theme.warning()), 'w');
         assert_eq!(theme.classify(theme.error()), 'x');
         assert_eq!(theme.classify(theme.user_surface()), 'U');
-        assert_eq!(theme.classify(theme.attention_bar()), 'A');
+        assert_eq!(theme.classify(attention_on_surface(theme)), 'A');
         assert_eq!(theme.classify(theme.focus_bar()), 'F');
         assert_eq!(theme.classify(theme.diff_added()), '+');
         assert_eq!(theme.classify(theme.diff_removed()), '-');
@@ -1397,7 +1393,7 @@ mod tests {
     #[test]
     fn classify_resolves_ansi_faces_without_confusing_attention_and_code() {
         for theme in [Theme::dark(ColorMode::Ansi), Theme::light(ColorMode::Ansi)] {
-            assert_eq!(theme.classify(theme.attention_bar()), 'A');
+            assert_eq!(theme.classify(attention_on_surface(theme)), 'A');
             assert_eq!(theme.classify(theme.code()), 'c');
             assert_eq!(theme.classify(theme.diff_added()), '+');
             assert_eq!(theme.classify(theme.diff_removed()), '-');

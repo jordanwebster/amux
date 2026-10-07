@@ -46,7 +46,7 @@
     body Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", cwd: "<MACHINE_PATH>", reason: "Allow the exact requested command to create the file?", description: "" }
   composer Send activity=None queue=[] underway=[] refused=[]
 ## 59 recorded 58: input stdin-5
-  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Running, exit_code: None, output_head: [], more_lines: 0, output_trimmed: false, output_tail: [], duration_ms: None } run[exec-5509f507-4aa7-4fac-aa66-d088ac31060f..exec-5509f507-4aa7-4fac-aa66-d088ac31060f x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: …
+  row    5 exec-5509f507-4aa7-4fac-aa66-d088ac31060f Command { command: "/bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'", state: Denied, exit_code: None, output_head: [], more_lines: 0, output_trimmed: false, output_tail: [], duration_ms: None } run[exec-5509f507-4aa7-4fac-aa66-d088ac31060f..exec-5509f507-4aa7-4fac-aa66-d088ac31060f x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0…
   ask none
   composer Send activity=Some(Running { key: "exec-5509f507-4aa7-4fac-aa66-d088ac31060f" }) queue=[] underway=[] refused=[]
 ## 61 recorded 60: fact Rpc method=item/completed

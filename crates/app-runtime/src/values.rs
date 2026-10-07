@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use model::{AgentKey, Connection, InputState, Key, PhaseView, Waiting};
+use model::{AgentKey, Connection, InputState, Key, PhaseView, RefusalReason, Waiting};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui_view::{
@@ -291,7 +291,8 @@ pub struct SendOutcome {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ActOutcome {
     Done,
-    Rejected(String),
+    /// The agent or its host refused it.
+    Rejected(RefusalReason),
     /// The connection dropped before the agent answered.
     NotConfirmed,
     /// The call did not reach the agent.

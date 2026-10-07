@@ -1,14 +1,62 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "# Collapse the pairing failures onto one message\n\nThe client maps gRPC statuses onto distinct strings in three places. The protocol refuses to distinguish them, so the client must not either.\n\n1. One arm, one string\n2. Update the three specs": {
+    "      Code::InvalidPin => \"wrong PIN\",": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "# Collapse the pairing failures onto one message\n\nThe client maps gRPC statuses onto distinct strings in three places. The protocol refuses to distinguish them, so the client must not either.\n\n1. One arm, one string\n2. Update the three specs"
+            "value": "      Code::InvalidPin => \"wrong PIN\","
+          }
+        }
+      }
+    },
+    "      Code::NotFound => \"no such host\",": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "      Code::NotFound => \"no such host\","
+          }
+        }
+      }
+    },
+    "      _ => \"could not pair, check the code\",": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "      _ => \"could not pair, check the code\","
+          }
+        }
+      }
+    },
+    "  match status {": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "  match status {"
+          }
+        }
+      }
+    },
+    "  }": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "  }"
           }
         }
       }
@@ -105,18 +153,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "<instructions>"
-          }
-        }
-      }
-    },
-    "@@ -12,6 +12,5 @@\n   match status {\n-      Code::NotFound => \"no such host\",\n-      Code::InvalidPin => \"wrong PIN\",\n+      _ => \"could not pair, check the code\",\n   }": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "@@ -12,6 +12,5 @@\n   match status {\n-      Code::NotFound => \"no such host\",\n-      Code::InvalidPin => \"wrong PIN\",\n+      _ => \"could not pair, check the code\",\n   }"
           }
         }
       }
@@ -369,6 +405,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Collapse the pairing errors onto one string."
+          }
+        }
+      }
+    },
+    "Collapse the pairing failures onto one message": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapse the pairing failures onto one message"
           }
         }
       }
@@ -1257,6 +1305,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "The API returned 529 ten times in a row."
+          }
+        }
+      }
+    },
+    "The client maps gRPC statuses onto distinct strings in three places. The protocol refuses to distinguish them, so the client must not either.\n\n1. One arm, one string\n2. Update the three specs": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The client maps gRPC statuses onto distinct strings in three places. The protocol refuses to distinguish them, so the client must not either.\n\n1. One arm, one string\n2. Update the three specs"
           }
         }
       }

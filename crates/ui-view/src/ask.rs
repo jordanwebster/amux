@@ -5,10 +5,10 @@ use prost::Message as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ui_state::{InputState, OpenAsk, SessionState};
+use ui_state::{InputState, OpenAsk, RefusalReason, SessionState};
 use wire::{ClaudeAnswer, CodexAnswer, Decision as CodexDecision, ask, claude_answer, codex_ask};
 
-use crate::rows::patch_counts;
+use crate::rows::{EditLine, change_lines, counts, first_change, plan_parts, replaced_lines};
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct AskCard {
@@ -48,8 +48,8 @@ pub enum CardState {
     Open,
     /// Shrunk to one line until the agent confirms.
     Sending,
-    /// The card is back, with the reason.
-    Rejected(String),
+    /// The card is back, with why the answer was refused.
+    Rejected(RefusalReason),
     /// The connection dropped before a reply: resend or discard.
     NotConfirmed,
     /// The agent exited with the ask open.
@@ -64,12 +64,16 @@ pub enum AskBody {
         reason: String,
         description: String,
     },
+    /// The patch's lines, and the new file's line its first change lands
+    /// on when the patch says (a Claude edit's does not: it is only the
+    /// text replaced and the text replacing it).
     Edit {
         path: String,
         files: u32,
         added: u32,
         removed: u32,
-        diff: String,
+        lines: Vec<EditLine>,
+        line: Option<u32>,
         reason: String,
         /// Whether the file is new: true "Wants to create", false "Wants
         /// to edit". None for a write that may do either: Claude says
@@ -82,8 +86,10 @@ pub enum AskBody {
         arguments: String,
     },
     Question(Vec<QuestionView>),
+    /// The plan's title and body, as its row has them.
     Plan {
-        plan: String,
+        title: Option<String>,
+        body: String,
     },
     Form {
         server: String,
@@ -439,33 +445,15 @@ fn permission_body(p: &wire::PermissionAsk) -> AskBody {
                 .into_iter()
                 .find(|s| !s.is_empty())
                 .unwrap_or_default();
-            let edits = input
-                .get("edits")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_else(|| vec![input.clone()]);
-            let mut diff = String::new();
-            for edit in &edits {
-                let field = |name: &str| {
-                    edit.get(name)
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned()
-                };
-                for line in field("old_string").lines() {
-                    diff.push_str(&format!("-{line}\n"));
-                }
-                for line in field("new_string").lines().chain(field("content").lines()) {
-                    diff.push_str(&format!("+{line}\n"));
-                }
-            }
-            let (added, removed) = patch_counts(&diff);
+            let lines = replaced_lines(&input);
+            let (added, removed) = counts(&lines);
             AskBody::Edit {
                 path,
                 files: 1,
                 added,
                 removed,
-                diff,
+                line: first_change(&lines),
+                lines,
                 reason: p.reason.clone(),
                 created: (p.tool_name != "Write").then_some(false),
             }
@@ -743,12 +731,21 @@ fn plan_card(
             Some(choice(outcome, answer))
         })
         .collect();
-    let plan = state
+    let (title, body) = state
         .transcript()
         .get(item_key)
-        .map(|held| held.item.text.clone())
+        .map(|held| {
+            let writing = matches!(
+                &held.body,
+                ui_state::ItemBody::ClaudePty(wire::claude_pty_item::Kind::Plan(plan))
+                | ui_state::ItemBody::ClaudeSdk(wire::claude_sdk_item::Kind::Plan(plan))
+                | ui_state::ItemBody::Codex(wire::codex_item::Kind::Plan(plan))
+                    if !plan.complete
+            );
+            plan_parts(&held.item.text, writing)
+        })
         .unwrap_or_default();
-    (AskBody::Plan { plan }, choices)
+    (AskBody::Plan { title, body }, choices)
 }
 
 fn codex(state: &SessionState, ask: &wire::CodexAsk) -> (AskBody, Vec<Choice>) {
@@ -793,12 +790,8 @@ fn codex(state: &SessionState, ask: &wire::CodexAsk) -> (AskBody, Vec<Choice>) {
             decision_choices(c.allow_prefix.clone(), c.network_hosts.clone()),
         ),
         Some(codex_ask::Body::FileChange(f)) => {
-            let diff: String = f
-                .changes
-                .iter()
-                .map(|change| change.patch.as_str())
-                .collect();
-            let (added, removed) = patch_counts(&diff);
+            let lines: Vec<EditLine> = f.changes.iter().flat_map(change_lines).collect();
+            let (added, removed) = counts(&lines);
             (
                 AskBody::Edit {
                     path: f
@@ -809,7 +802,8 @@ fn codex(state: &SessionState, ask: &wire::CodexAsk) -> (AskBody, Vec<Choice>) {
                     files: f.changes.len() as u32,
                     added,
                     removed,
-                    diff,
+                    line: first_change(&lines),
+                    lines,
                     reason: f.reason.clone(),
                     created: Some(
                         f.changes.len() == 1 && f.changes[0].kind() == wire::FileChangeKind::Add,

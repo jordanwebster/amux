@@ -636,7 +636,8 @@ public final class ChatModel {
                 if composed == sent { clearDraft() }
                 setFollowing(true)
                 toNewest += 1
-            case .rejected(let reason)?, .failed(let reason)?: notice = reason
+            case .rejected(let reason)?: notice = Self.notSent(reason)
+            case .failed(let reason)?: notice = reason
             case .notConfirmed?: notice = Self.notConfirmed
             case nil: notice = Self.closed
             }
@@ -850,16 +851,24 @@ public final class ChatModel {
         source.discard(refused.inputId)
     }
 
-    /// Why a prompt was not sent, from the reason the agent's host gave.
-    static func notSent(_ reason: String) -> String {
-        let why = switch reason {
-        case "exited": String(localized: "it had exited")
-        case "exiting": String(localized: "it was exiting")
-        case "draining": String(localized: "it is shutting down")
-        case "unsupported": String(localized: "this agent can’t take it")
-        default: reason.replacingOccurrences(of: "_", with: " ")
+    /// Why an input was not sent, as a notice.
+    static func notSent(_ reason: RefusalReason) -> String {
+        String(localized: "Not sent: \(refusal(reason))")
+    }
+
+    /// Why the agent or its host refused an input. A reason this build does
+    /// not know is shown as the host gave it.
+    public static func refusal(_ reason: RefusalReason) -> String {
+        switch reason {
+        case .exited: String(localized: "it had exited")
+        case .exiting: String(localized: "it was exiting")
+        case .draining: String(localized: "its host is shutting down")
+        case .hostUnreachable: String(localized: "its host can’t be reached")
+        case .unsupported: String(localized: "this agent can’t take it")
+        case .closedAsk: String(localized: "the ask had already closed")
+        case .notQueued: String(localized: "it was no longer queued")
+        case .other(let reason): reason
         }
-        return String(localized: "Not sent: \(why)")
     }
 
     /// This client's prompts on their way that are drawn at the feed's
@@ -930,7 +939,8 @@ public final class ChatModel {
         Task {
             switch await body(source) {
             case .done?: done?()
-            case .rejected(let reason)?, .failed(let reason)?: notice = reason
+            case .rejected(let reason)?: notice = Self.notSent(reason)
+            case .failed(let reason)?: notice = reason
             case .notConfirmed?: notice = Self.notConfirmed
             case nil: notice = Self.closed
             }

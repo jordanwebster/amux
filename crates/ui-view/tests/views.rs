@@ -2127,7 +2127,7 @@ fn prompts_on_their_way_follow_the_sending_rules() {
         refused_prompts(&state),
         vec![RefusedPrompt {
             input_id: b"p3".to_vec(),
-            reason: "host_unreachable".into(),
+            reason: ui_view::RefusalReason::HostUnreachable,
         }]
     );
 }

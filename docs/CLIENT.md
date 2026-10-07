@@ -308,7 +308,8 @@ a size, a width or a theme. Views carry typed facts; wording, wrapping, geometry
 each renderer.
 
 A view decides; a client presents. Any judgement both clients must agree on (whether an agent needs you, how a
-session ended, why a prompt was refused, what a model is called) is computed once in a view and handed over as a
+session ended, why a prompt was refused, what a model is called, where a tool call stands, what a plan's title is,
+which lines an edit changes) is computed once in a view and handed over as a
 typed value, never as text: each client words it. Where a client's own choice changes what a view returns, such
 as folding tool steps, the client passes the choice in as an argument. A client may read plain facts from the state
 directly (a name, a path, a count the state holds), but never works out a judgement from them.

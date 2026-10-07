@@ -1,3 +1,34 @@
+2026-10-07 — **The chat's judgements come from the view, typed.**
+Four things in a chat were worked out by each client on its own, from text,
+and the two disagreed. A plan's title: the terminal lifted only a `#`
+heading and dropped one that just said "plan", the phone lifted any first
+line. A refused prompt's reason: both compared the wire's reason strings
+and worded what they recognised, and the terminal's exited-agent path had a
+notice of its own. An edit's diff: each client parsed the patch, both
+treating any line starting `---` or `+++` as a file header, so a removed
+`-- comment` or an added `++i` vanished from the preview. And a tool call's
+state: whether a call waited on the person was guessed from the row's
+attention and decision, differently on each side. The view now hands each
+over as a value. A plan ask and plan row carry the title and body split by
+the terminal's rule. A refusal is a `RefusalReason`, mapped once from the
+wire's reasons, which now live in one place every side refuses from. An
+edit ask carries the patch as parsed lines with typed hunk starts, its
+counts and the line its first change lands on; header lines are dropped
+only outside a hunk, and a file Codex creates or deletes whole reads as
+added or removed lines rather than none. Every call row carries a
+`CallPhase`, with `Asking` set when an open ask points at the call and
+nothing has decided it. Both clients word these and decide nothing; the
+terminal's dead row-drawing duplicates went with them. Noticeable: the
+phone titles a plan only by its heading; a draining host reads "its host is
+shutting down", and closed asks, prompts no longer queued and unreachable
+hosts get words of their own on both clients; the terminal's refused send
+to an exited agent comes back to the composer with "not sent: it had
+exited"; the terminal's "line N" beside an edit is its first change, and
+the phone marks where each hunk starts; a created file counts its lines; a
+call announced but asking nobody reads "Running" on the phone rather than
+"Wants to run"; an asked Codex file change reads "Wants to edit" in the
+terminal, and a refused one "Denied" rather than "Edited".
+
 2026-10-07 — **The fleet's judgements come from the view, typed.**
 Both clients worked out parts of the fleet themselves, and disagreed. The
 terminal counted needing-you by family and the phone by visible row; each

@@ -88,7 +88,7 @@ fn answered(kind: &ui_view::RowKind) -> String {
             if answer.hidden {
                 said.push_str("(hidden)");
             }
-            if answer.skipped() {
+            if answer.skipped {
                 said.push_str("(skipped)");
             }
             if let Some(note) = &answer.note {

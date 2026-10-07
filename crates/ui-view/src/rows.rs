@@ -14,6 +14,7 @@ use wire::{
 };
 
 use crate::ask::{QuestionView, Scope, lift_rule, lifted, question, scope_of};
+use crate::review::LineKind;
 use crate::run::Run;
 use crate::segments::{Segment, segments};
 
@@ -90,16 +91,16 @@ pub enum RowKind {
         server: String,
         tool: String,
         fact: String,
-        state: ToolStateView,
+        state: CallPhase,
         result: String,
     },
     FileChange {
         files: Vec<FileRow>,
-        state: ToolStateView,
+        state: CallPhase,
     },
     Command {
         command: String,
-        state: ToolStateView,
+        state: CallPhase,
         exit_code: Option<i32>,
         output_head: Vec<String>,
         more_lines: usize,
@@ -115,7 +116,7 @@ pub enum RowKind {
     Explore {
         verb: ExploreVerb,
         subject: String,
-        state: ToolStateView,
+        state: CallPhase,
     },
     Subagent {
         description: String,
@@ -195,9 +196,13 @@ pub enum RowKind {
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub enum AskRow {
-    /// A plan the agent proposed, and what the person decided.
+    /// A plan the agent proposed, and what the person decided: its title,
+    /// lifted from an opening heading that names it, and the rest as its
+    /// body. While its first line is still being written there is no title
+    /// yet and nothing of that line in the body.
     Plan {
-        plan: String,
+        title: Option<String>,
+        body: String,
         verdict: PlanVerdict,
         /// Why it was sent back, when the person said.
         note: Option<String>,
@@ -267,7 +272,7 @@ pub enum Resolution {
 }
 
 /// One question's answer: the picked options, a typed answer, or a secret
-/// answer that reads "answered (hidden)". None of them is a skip.
+/// answer that reads "answered (hidden)"; skipped when it is none of them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct AnswerView {
     /// "(Recommended)" lifted off, as on the card.
@@ -276,13 +281,7 @@ pub struct AnswerView {
     pub hidden: bool,
     /// The person's note on this question.
     pub note: Option<String>,
-}
-
-impl AnswerView {
-    /// Nothing picked, typed or hidden: the question was skipped.
-    pub fn skipped(&self) -> bool {
-        self.picked.is_empty() && self.other.is_none() && !self.hidden
-    }
+    pub skipped: bool,
 }
 
 /// What an access grant granted, and for how long.
@@ -304,14 +303,44 @@ pub enum PlanVerdict {
     Dismissed,
 }
 
+/// Where a call stands for the person: one answer both clients word and
+/// branch on. Asking: an open ask points at it and nothing has decided it
+/// yet, so it runs only if the person allows it. Pending: announced, not
+/// started, and asking nobody. Denied: refused, by the person or by the
+/// agent's own rules, whatever the call reports after. The rest are the
+/// call's own state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub enum ToolStateView {
+pub enum CallPhase {
+    Asking,
     Pending,
     Running,
     Succeeded,
     Failed,
     Denied,
     Cancelled,
+}
+
+impl CallPhase {
+    /// Not yet done: asking, pending or running.
+    pub fn in_flight(self) -> bool {
+        matches!(
+            self,
+            CallPhase::Asking | CallPhase::Pending | CallPhase::Running
+        )
+    }
+}
+
+impl Row {
+    /// The call's phase, for a row that is a call with one.
+    pub fn call_phase(&self) -> Option<CallPhase> {
+        match &self.kind {
+            RowKind::ToolCall { state, .. }
+            | RowKind::FileChange { state, .. }
+            | RowKind::Command { state, .. }
+            | RowKind::Explore { state, .. } => Some(*state),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
@@ -439,10 +468,7 @@ fn row(state: &SessionState, held: &Held, opts: &ChatOptions) -> Row {
                 !shown && !crate::run::run_is_open(state, item.order, open)
             }),
         };
-    let asked = state
-        .open_asks()
-        .iter()
-        .any(|ask| ask.item_key() == item.key);
+    let asked = asked(state, held);
     let parent = parent_of(held);
     let collapsed = collapsed || parent.is_some();
     Row {
@@ -456,6 +482,14 @@ fn row(state: &SessionState, held: &Held, opts: &ChatOptions) -> Row {
         attention: asked || failed,
         parent,
     }
+}
+
+/// Whether an open ask points at the item.
+fn asked(state: &SessionState, held: &Held) -> bool {
+    state
+        .open_asks()
+        .iter()
+        .any(|ask| ask.item_key() == held.item.key)
 }
 
 /// The subagent call a step belongs to, when it is a subagent's own step.
@@ -485,15 +519,28 @@ pub(crate) fn subject_of(held: &Held) -> String {
     }
 }
 
-fn state_view(state: i32) -> ToolStateView {
+/// The call's phase from its state, its decision, and whether an open ask
+/// points at it. A refusal decides it whatever state the call reports.
+fn call_phase(state: i32, decision: Option<&Decision>, asked: bool) -> CallPhase {
+    let denied = decision.is_some_and(|decision| decision.outcome == DecisionView::Denied);
     match ToolState::try_from(state).unwrap_or(ToolState::Unspecified) {
-        ToolState::Unspecified | ToolState::Pending => ToolStateView::Pending,
-        ToolState::Running => ToolStateView::Running,
-        ToolState::Succeeded => ToolStateView::Succeeded,
-        ToolState::Failed => ToolStateView::Failed,
-        ToolState::Denied => ToolStateView::Denied,
-        ToolState::Cancelled => ToolStateView::Cancelled,
+        _ if denied => CallPhase::Denied,
+        ToolState::Unspecified | ToolState::Pending | ToolState::Running
+            if asked && decision.is_none() =>
+        {
+            CallPhase::Asking
+        }
+        ToolState::Unspecified | ToolState::Pending => CallPhase::Pending,
+        ToolState::Running => CallPhase::Running,
+        ToolState::Succeeded => CallPhase::Succeeded,
+        ToolState::Failed => CallPhase::Failed,
+        ToolState::Denied => CallPhase::Denied,
+        ToolState::Cancelled => CallPhase::Cancelled,
     }
+}
+
+fn succeeded(state: i32) -> bool {
+    ToolState::try_from(state) == Ok(ToolState::Succeeded)
 }
 
 fn decision_view(
@@ -689,11 +736,12 @@ fn ask_row(item: &wire::AskItem) -> RowKind {
                     other: answer.other.clone(),
                     hidden: answer.hidden,
                     note: answer.note.clone(),
+                    skipped: answer.picked.is_empty() && answer.other.is_none() && !answer.hidden,
                 })
                 .collect();
             AskRow::Questions {
                 questions: asked.questions.iter().map(question).collect(),
-                skipped: answers.iter().filter(|answer| answer.skipped()).count() as u32,
+                skipped: answers.iter().filter(|answer| answer.skipped).count() as u32,
                 answers,
                 reply: (!closed.reply.is_empty()).then_some(closed.reply),
                 resolution,
@@ -747,12 +795,37 @@ fn plan_row(held: &Held, plan: &wire::Plan) -> RowKind {
         wire::PlanVerdict::SentBack => PlanVerdict::SentBack,
         wire::PlanVerdict::Dismissed => PlanVerdict::Dismissed,
     };
+    let (title, body) = plan_parts(&held.item.text, !plan.complete);
     RowKind::Ask(AskRow::Plan {
-        plan: held.item.text.clone(),
+        title,
+        body,
         verdict,
         note: plan.note.clone(),
         writing: !plan.complete,
     })
+}
+
+/// A plan's title and body. An opening heading of any level is lifted out
+/// as the title, unless it only says "Plan", which names nothing beyond
+/// the plan's own landmark; the body is what follows it. While the first
+/// line is still being written it may yet become a heading, so there is
+/// no title yet and nothing of that line in the body.
+pub(crate) fn plan_parts(text: &str, writing: bool) -> (Option<String>, String) {
+    let text = text.trim_start_matches(['\n', '\r', ' ']);
+    let (first, rest) = match text.split_once('\n') {
+        Some(split) => split,
+        None if writing && (text.is_empty() || text.starts_with('#')) => {
+            return (None, String::new());
+        }
+        None => (text, ""),
+    };
+    let heading = first.trim_start();
+    if !heading.starts_with('#') {
+        return (None, text.to_owned());
+    }
+    let title = heading.trim_start_matches('#').trim();
+    let named = !title.is_empty() && !title.eq_ignore_ascii_case("plan");
+    (named.then(|| title.to_owned()), rest.to_owned())
 }
 
 fn prose(held: &Held, complete: bool, working_note: bool) -> RowKind {
@@ -945,8 +1018,8 @@ fn claude_tool(
     tool: &ToolCall,
 ) -> (RowKind, Option<Decision>, bool) {
     let decision = decision_view(tool.decision.as_ref(), &state.agent_state().permissions);
-    let view = state_view(tool.state);
-    let failed = view == ToolStateView::Failed;
+    let view = call_phase(tool.state, decision.as_ref(), asked(state, held));
+    let failed = view == CallPhase::Failed;
     let input = input(tool);
     let subject = claude_subject(tool);
     let duration_ms = duration(held, tool.ended_at_ms);
@@ -974,7 +1047,7 @@ fn claude_tool(
         match tool.name.as_str() {
             "Bash" if tool.background => RowKind::Background {
                 command: field(&input, "command"),
-                running: in_flight(view),
+                running: view.in_flight(),
                 duration_ms,
             },
             "Bash" => {
@@ -1021,7 +1094,7 @@ fn claude_tool(
                     state: view,
                 }
             }
-            "Agent" | "Task" => subagent(held, tool, &input),
+            "Agent" | "Task" => subagent(held, tool, &input, view),
             name if ui_state::is_task_tool(name) => RowKind::Hidden,
             name => RowKind::ToolCall {
                 server: String::new(),
@@ -1033,10 +1106,6 @@ fn claude_tool(
         }
     };
     (kind, decision, failed)
-}
-
-fn in_flight(view: ToolStateView) -> bool {
-    matches!(view, ToolStateView::Pending | ToolStateView::Running)
 }
 
 /// The first string argument, as the one fact a generic tool row shows.
@@ -1097,12 +1166,11 @@ fn explore_verb(class: i32) -> Option<ExploreVerb> {
     }
 }
 
-fn subagent(held: &Held, tool: &ToolCall, input: &Value) -> RowKind {
+fn subagent(held: &Held, tool: &ToolCall, input: &Value, view: CallPhase) -> RowKind {
     let progress = tool.subagent.clone().unwrap_or_default();
-    let view = state_view(tool.state);
     RowKind::Subagent {
         description: field(input, "description"),
-        running: in_flight(view) || (tool.background && !progress.finished),
+        running: view.in_flight() || (tool.background && !progress.finished),
         tool_count: progress.tool_count,
         last_tool: progress.last_tool,
         answer: tool.outcome_text.clone(),
@@ -1117,8 +1185,8 @@ fn codex_work(
 ) -> (RowKind, Option<Decision>, bool) {
     use wire::work::Of;
     let decision = decision_view(work.decision.as_ref(), &state.agent_state().permissions);
-    let view = state_view(work.state);
-    let failed = view == ToolStateView::Failed;
+    let view = call_phase(work.state, decision.as_ref(), asked(state, held));
+    let failed = view == CallPhase::Failed;
     let kind = match (&work.of, explore_verb(work.class)) {
         (Some(Of::Command(command)), Some(verb)) => RowKind::Explore {
             verb,
@@ -1128,7 +1196,7 @@ fn codex_work(
         (of, _) => match of {
             Some(Of::Command(command)) if command.background => RowKind::Background {
                 command: command.command.clone(),
-                running: in_flight(view),
+                running: view.in_flight(),
                 duration_ms: duration(held, work.ended_at_ms),
             },
             Some(Of::Command(command)) => {
@@ -1173,7 +1241,7 @@ fn codex_work(
             },
             Some(Of::Collab(collab)) => RowKind::Subagent {
                 description: collab.prompt.clone(),
-                running: in_flight(view),
+                running: view.in_flight(),
                 tool_count: 0,
                 last_tool: collab.tool.clone(),
                 answer: String::new(),
@@ -1189,7 +1257,7 @@ fn codex_work(
 }
 
 fn codex_file(change: &wire::FileChange) -> FileRow {
-    let (added, removed) = patch_counts(&change.patch);
+    let (added, removed) = counts(&change_lines(change));
     let change_view =
         match FileChangeKind::try_from(change.kind).unwrap_or(FileChangeKind::Unspecified) {
             FileChangeKind::Add => FileChangeView::Created { lines: added },
@@ -1208,31 +1276,67 @@ fn codex_file(change: &wire::FileChange) -> FileRow {
     }
 }
 
-/// Added and removed lines of a unified diff body.
-pub(crate) fn patch_counts(patch: &str) -> (u32, u32) {
-    let mut added = 0;
-    let mut removed = 0;
-    for line in patch.lines() {
-        if line.starts_with("+++") || line.starts_with("---") {
-            continue;
-        }
-        match line.chars().next() {
-            Some('+') => added += 1,
-            Some('-') => removed += 1,
-            _ => {}
-        }
+/// A Codex file change's patch lines. Codex gives a file it adds or
+/// deletes as the file's text, not as a diff, so each of its lines is added
+/// or removed whole.
+pub(crate) fn change_lines(change: &wire::FileChange) -> Vec<EditLine> {
+    let whole = |kind| {
+        change
+            .patch
+            .lines()
+            .enumerate()
+            .map(|(i, text)| {
+                EditLine::Line(PatchLine {
+                    number: Some(i as u32 + 1),
+                    kind,
+                    text: text.to_owned(),
+                })
+            })
+            .collect()
+    };
+    let diff = change.patch.lines().any(|line| line.starts_with("@@"));
+    match FileChangeKind::try_from(change.kind).unwrap_or(FileChangeKind::Unspecified) {
+        FileChangeKind::Add if !diff => whole(LineKind::Added),
+        FileChangeKind::Delete if !diff => whole(LineKind::Removed),
+        _ => unified_patch(&change.patch),
     }
-    (added, removed)
 }
 
-/// One line of a landed edit's patch, numbered on the side it belongs to
-/// (the new file for context and added lines, the old for removed ones)
-/// when the provider said where its hunk starts.
+/// Added and removed lines among parsed patch lines.
+pub(crate) fn counts(lines: &[EditLine]) -> (u32, u32) {
+    lines
+        .iter()
+        .fold((0, 0), |(added, removed), line| match line {
+            EditLine::Line(PatchLine {
+                kind: LineKind::Added,
+                ..
+            }) => (added + 1, removed),
+            EditLine::Line(PatchLine {
+                kind: LineKind::Removed,
+                ..
+            }) => (added, removed + 1),
+            _ => (added, removed),
+        })
+}
+
+/// One line of a patch, numbered on the side it belongs to (the new file
+/// for context and added lines, the old for removed ones) when the provider
+/// said where its hunk starts.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PatchLine {
     pub number: Option<u32>,
-    pub kind: crate::review::LineKind,
+    pub kind: LineKind,
     pub text: String,
+}
+
+/// One line of an edit's patch as an ask carries it: where a hunk starts,
+/// by its first line in the old file and the new, or a line of the patch.
+/// A file's own header lines are not carried. Each client decides whether
+/// to draw a hunk's start.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum EditLine {
+    Hunk { old_start: u32, new_start: u32 },
+    Line(PatchLine),
 }
 
 /// The head of a landed file change: its first file's first lines, and
@@ -1251,18 +1355,18 @@ pub fn patch_head(state: &SessionState, key: &Key, max: usize) -> Option<PatchHe
     let lines = match &held.body {
         ItemBody::ClaudePty(wire::claude_pty_item::Kind::Tool(tool))
         | ItemBody::ClaudeSdk(wire::claude_sdk_item::Kind::Tool(tool)) => {
-            if state_view(tool.state) != ToolStateView::Succeeded {
+            if !succeeded(tool.state) {
                 return None;
             }
             claude_patch(tool)?
         }
         ItemBody::Codex(wire::codex_item::Kind::Work(work)) => {
-            if state_view(work.state) != ToolStateView::Succeeded {
+            if !succeeded(work.state) {
                 return None;
             }
             match &work.of {
                 Some(wire::work::Of::FileChange(change)) => {
-                    unified_lines(&change.changes.first()?.patch)
+                    patch_lines(change_lines(change.changes.first()?))
                 }
                 _ => return None,
             }
@@ -1279,8 +1383,18 @@ pub fn patch_head(state: &SessionState, key: &Key, max: usize) -> Option<PatchHe
     })
 }
 
+/// The lines of a parsed patch, without where its hunks start.
+fn patch_lines(lines: Vec<EditLine>) -> Vec<PatchLine> {
+    lines
+        .into_iter()
+        .filter_map(|line| match line {
+            EditLine::Line(line) => Some(line),
+            EditLine::Hunk { .. } => None,
+        })
+        .collect()
+}
+
 fn claude_patch(tool: &ToolCall) -> Option<Vec<PatchLine>> {
-    use crate::review::LineKind;
     if !matches!(
         tool.name.as_str(),
         "Edit" | "MultiEdit" | "NotebookEdit" | "Write"
@@ -1321,6 +1435,13 @@ fn claude_patch(tool: &ToolCall) -> Option<Vec<PatchLine>> {
                 .collect(),
         );
     }
+    Some(patch_lines(replaced_lines(&input)))
+}
+
+/// What a Claude edit replaces and writes, as unnumbered patch lines: each
+/// edit's old text removed, then its new text (or a write's content)
+/// added. There is no file to number them against.
+pub(crate) fn replaced_lines(input: &Value) -> Vec<EditLine> {
     let edits = input
         .get("edits")
         .and_then(Value::as_array)
@@ -1331,20 +1452,22 @@ fn claude_patch(tool: &ToolCall) -> Option<Vec<PatchLine>> {
         for (name, kind) in [
             ("old_string", LineKind::Removed),
             ("new_string", LineKind::Added),
+            ("content", LineKind::Added),
         ] {
-            lines.extend(field(edit, name).lines().map(|text| PatchLine {
-                number: None,
-                kind,
-                text: text.to_owned(),
+            lines.extend(field(edit, name).lines().map(|text| {
+                EditLine::Line(PatchLine {
+                    number: None,
+                    kind,
+                    text: text.to_owned(),
+                })
             }));
         }
     }
-    Some(lines)
+    lines
 }
 
 /// One patch line, numbered from the running old and new positions.
 fn numbered(line: &str, old: &mut Option<u32>, new: &mut Option<u32>) -> PatchLine {
-    use crate::review::LineKind;
     let (kind, text) = match line.chars().next() {
         Some('+') => (LineKind::Added, &line[1..]),
         Some('-') => (LineKind::Removed, &line[1..]),
@@ -1376,14 +1499,18 @@ fn numbered(line: &str, old: &mut Option<u32>, new: &mut Option<u32>) -> PatchLi
     }
 }
 
-/// The body lines of a unified diff, numbered from its hunk headers.
-fn unified_lines(patch: &str) -> Vec<PatchLine> {
+/// A unified diff's lines, numbered from its hunk headers, with where each
+/// hunk starts. A file's header lines ("--- ", "+++ ", "index " and the
+/// rest) come only outside a hunk: inside one, the header's counts say how
+/// many lines are the hunk's, so a removed "-- comment" or an added "++i"
+/// is a line of the patch. A hunk header without counts runs to the next
+/// header.
+pub(crate) fn unified_patch(patch: &str) -> Vec<EditLine> {
     let mut lines = Vec::new();
     let (mut old, mut new) = (None, None);
-    // Lines each side of the open hunk still holds, from its header: a
-    // file's header lines ("--- ", "+++ ", "index ") come only between
-    // hunks, so a removed "-- comment" inside one is a line of the patch.
+    // Lines each side of the open hunk still holds, from its header.
     let (mut old_left, mut new_left) = (0u32, 0u32);
+    let mut uncounted = false;
     for line in patch.lines() {
         if line.starts_with('\\') {
             continue;
@@ -1397,10 +1524,10 @@ fn unified_lines(patch: &str) -> Vec<PatchLine> {
                     new_left = new_left.saturating_sub(1);
                 }
             }
-            lines.push(numbered(line, &mut old, &mut new));
+            lines.push(EditLine::Line(numbered(line, &mut old, &mut new)));
             continue;
         }
-        if let Some(header) = line.strip_prefix("@@ ") {
+        if let Some(header) = line.strip_prefix("@@") {
             let range = |sign: char| {
                 let range = header
                     .split_whitespace()
@@ -1416,18 +1543,103 @@ fn unified_lines(patch: &str) -> Vec<PatchLine> {
                 from.map_or(0, |(_, count)| count),
                 to.map_or(0, |(_, count)| count),
             );
+            uncounted = from.is_none() || to.is_none();
+            if let (Some((old_start, _)), Some((new_start, _))) = (from, to) {
+                lines.push(EditLine::Hunk {
+                    old_start,
+                    new_start,
+                });
+            }
             continue;
         }
-        if line.starts_with("diff --git")
-            || line.starts_with("index ")
-            || line.starts_with("--- ")
-            || line.starts_with("+++ ")
-            || line.starts_with("new file")
-            || line.starts_with("deleted file")
+        if line.starts_with("diff --git") {
+            uncounted = false;
+            continue;
+        }
+        if !uncounted
+            && (line.starts_with("index ")
+                || line.starts_with("--- ")
+                || line.starts_with("+++ ")
+                || line.starts_with("new file")
+                || line.starts_with("deleted file"))
         {
             continue;
         }
-        lines.push(numbered(line, &mut old, &mut new));
+        lines.push(EditLine::Line(numbered(line, &mut old, &mut new)));
     }
     lines
+}
+
+/// The new file's line the patch's first change lands on: an added line's
+/// own, or for a removal the new-side line where it was, counting from its
+/// hunk's start past the context before it.
+pub(crate) fn first_change(lines: &[EditLine]) -> Option<u32> {
+    let mut at = None;
+    for line in lines {
+        match line {
+            EditLine::Hunk { new_start, .. } => at = Some(*new_start),
+            EditLine::Line(line) => match line.kind {
+                LineKind::Added => return line.number.or(at).map(|n| n.max(1)),
+                LineKind::Removed => return at.map(|n| n.max(1)),
+                LineKind::Context => at = line.number.map(|n| n + 1),
+            },
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(number: u32, kind: LineKind, text: &str) -> EditLine {
+        EditLine::Line(PatchLine {
+            number: Some(number),
+            kind,
+            text: text.to_owned(),
+        })
+    }
+
+    /// Inside a hunk its header's counts say which lines are the patch's,
+    /// so a removed SQL comment and an added increment are lines of it, not
+    /// a file's header lines; the file's own headers before it are dropped.
+    #[test]
+    fn a_patch_keeps_lines_that_look_like_file_headers_inside_its_hunks() {
+        let patch = "--- a/q.sql\n+++ b/q.sql\n@@ -3,3 +3,3 @@\n select 1;\n--- old note\n+++i;\n select 2;\n";
+        let lines = unified_patch(patch);
+        assert_eq!(
+            lines,
+            vec![
+                EditLine::Hunk {
+                    old_start: 3,
+                    new_start: 3
+                },
+                line(3, LineKind::Context, "select 1;"),
+                line(4, LineKind::Removed, "-- old note"),
+                line(4, LineKind::Added, "++i;"),
+                line(5, LineKind::Context, "select 2;"),
+            ]
+        );
+        assert_eq!(counts(&lines), (1, 1));
+        assert_eq!(first_change(&lines), Some(4), "past the hunk's context");
+    }
+
+    #[test]
+    fn a_plan_lifts_an_opening_heading_that_names_it() {
+        let parts = |text, writing| plan_parts(text, writing);
+        assert_eq!(
+            parts("\n## Ship it\n\n- one", false),
+            (Some("Ship it".to_owned()), "\n- one".to_owned())
+        );
+        // "Plan" names nothing the landmark does not.
+        assert_eq!(parts("# Plan\n- one", false), (None, "- one".to_owned()));
+        assert_eq!(parts("- one", false), (None, "- one".to_owned()));
+        // A first line still being written may yet be a heading.
+        assert_eq!(parts("## Shi", true), (None, String::new()));
+        assert_eq!(parts("Do", true), (None, "Do".to_owned()));
+        assert_eq!(
+            parts("# Ship it", false),
+            (Some("Ship it".to_owned()), String::new())
+        );
+    }
 }

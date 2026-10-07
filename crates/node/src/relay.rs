@@ -16,6 +16,9 @@ use std::time::Duration;
 use store::{AgentKey, Store as _, StoreError};
 use tokio::sync::oneshot;
 use uuid::Uuid;
+/// The agent has exited, or has decided to exit, which the daemon treats as
+/// exited.
+pub use wire::refusal::{EXITED, EXITING};
 use wire::{
     AgentSender, Envelope, EnvelopeKind, ErrorCode, Human, Input, Lifecycle, Rejected,
     SendInputRequest, SendInputResponse, SendMessageResponse, Sender, input, send_input_response,
@@ -23,11 +26,6 @@ use wire::{
 };
 
 use crate::runtime::{AgentId, ProfileRuntime, RegistryError, Sent, ms};
-
-/// The agent has exited; the composer offers Resume.
-pub const EXITED: &str = "exited";
-/// The agent has decided to exit; the daemon treats it as exited.
-pub const EXITING: &str = "exiting";
 
 /// How long an input waits for the agent to be connected.
 const CONNECT_PATIENCE: Duration = Duration::from_secs(5);

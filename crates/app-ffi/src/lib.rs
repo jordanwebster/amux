@@ -1825,7 +1825,7 @@ pub unsafe extern "C" fn amux_session_answer_questions(
             match given {
                 Some(given) => chat.answer_questions(&ask_key, &given).await,
                 None => {
-                    ActOutcome::Rejected("the responses are not a list of QuestionResponse".into())
+                    ActOutcome::Failed("the responses are not a list of QuestionResponse".into())
                 }
             }
         })
@@ -1858,7 +1858,7 @@ pub unsafe extern "C" fn amux_session_reply_instead(
         act(chat, callback, context, move |chat| async move {
             match so_far {
                 Some(so_far) => chat.reply_instead(&ask_key, &reply, &so_far).await,
-                None => ActOutcome::Rejected(
+                None => ActOutcome::Failed(
                     "the answers so far are not a list of QuestionResponse".into(),
                 ),
             }
@@ -1885,7 +1885,7 @@ pub unsafe extern "C" fn amux_session_change_setting(
         act(chat, callback, context, move |chat| async move {
             match change {
                 Some(change) => chat.change_setting(&change).await,
-                None => ActOutcome::Rejected("the change is not a SettingChange".into()),
+                None => ActOutcome::Failed("the change is not a SettingChange".into()),
             }
         })
     }
@@ -2035,7 +2035,7 @@ pub unsafe extern "C" fn amux_session_resume(
         act(chat, callback, context, |chat| async move {
             match draft {
                 Some(draft) => chat.resume_with(&draft).await,
-                None => ActOutcome::Rejected("the draft is not a Draft".into()),
+                None => ActOutcome::Failed("the draft is not a Draft".into()),
             }
         })
     }

@@ -15,7 +15,9 @@ use client::{Client, Clock, EventStream, RpcError};
 use futures_util::{FutureExt as _, StreamExt as _};
 use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
-use ui_state::{BlobStatus, Connection, InputId, InputOutcome, Key, Msg, Outcome, SessionState};
+use ui_state::{
+    BlobStatus, Connection, InputId, InputOutcome, Key, Msg, Outcome, RefusalReason, SessionState,
+};
 use ui_view::SessionLine;
 use wire::{
     Agent, BlobRef, DumpFile, DumpPart, ErrorCode, FetchRequest, GetBlobRequest, GetRequest,
@@ -36,8 +38,8 @@ pub struct Sent {
 /// Why an act on the chat did not take effect.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum InputError {
-    #[error("rejected: {0}")]
-    Rejected(String),
+    #[error("rejected: {0:?}")]
+    Rejected(RefusalReason),
     /// The connection dropped before the verdict: the chat shows it not
     /// confirmed until it has caught up again.
     #[error("not confirmed: the connection dropped before the agent answered")]
@@ -691,7 +693,7 @@ impl Session {
             Some(input) => self.send(input).await,
             None => Sent {
                 id: Vec::new(),
-                outcome: InputOutcome::Reply(rejected("unsupported".into())),
+                outcome: InputOutcome::Reply(rejected(wire::refusal::UNSUPPORTED.into())),
             },
         }
     }
@@ -767,7 +769,7 @@ impl Session {
 
     async fn act(&self, input: Option<Input>) -> Result<(), InputError> {
         let Some(input) = input else {
-            return Err(InputError::Rejected("unsupported".into()));
+            return Err(InputError::Rejected(RefusalReason::Unsupported));
         };
         match self.send(input).await.outcome {
             InputOutcome::Reply(SendInputResponse {
@@ -775,7 +777,9 @@ impl Session {
             }) => Ok(()),
             InputOutcome::Reply(SendInputResponse {
                 of: Some(send_input_response::Of::Rejected(rejected)),
-            }) => Err(InputError::Rejected(rejected.reason)),
+            }) => Err(InputError::Rejected(ui_state::refusal_reason(
+                &rejected.reason,
+            ))),
             InputOutcome::Reply(SendInputResponse { of: None }) | InputOutcome::Lost => {
                 Err(InputError::Uncertain)
             }

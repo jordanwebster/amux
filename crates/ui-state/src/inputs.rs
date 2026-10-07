@@ -1,8 +1,22 @@
 //! What this client sent and what became of each input: the one thing only
 //! the sender can know.
 
-pub use model::{InputId, InputState};
-use wire::{Attachment, Input, SendInputResponse};
+pub use model::{InputId, InputState, RefusalReason};
+use wire::{Attachment, Input, SendInputResponse, refusal};
+
+/// Why an input was refused, from the reason its `Rejected` reply carries.
+pub fn refusal_reason(reason: &str) -> RefusalReason {
+    match reason {
+        refusal::EXITED => RefusalReason::Exited,
+        refusal::EXITING => RefusalReason::Exiting,
+        refusal::DRAINING => RefusalReason::Draining,
+        refusal::HOST_UNREACHABLE => RefusalReason::HostUnreachable,
+        refusal::UNSUPPORTED => RefusalReason::Unsupported,
+        refusal::CLOSED_ASK => RefusalReason::ClosedAsk,
+        refusal::NOT_QUEUED => RefusalReason::NotQueued,
+        other => RefusalReason::Other(other.to_owned()),
+    }
+}
 
 /// What became of a SendInput call.
 #[derive(Clone, Debug, PartialEq)]
@@ -151,5 +165,26 @@ impl Inputs {
         let before = self.sent.len();
         self.sent.retain(|sent| sent.id != id);
         before != self.sent.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reason one side of the wire refuses with that the clients read as
+    /// unknown would reach the person as the raw code.
+    #[test]
+    fn every_reason_the_wire_refuses_with_has_its_own_value() {
+        for reason in refusal::ALL {
+            assert!(
+                !matches!(refusal_reason(reason), RefusalReason::Other(_)),
+                "{reason} maps to Other"
+            );
+        }
+        assert_eq!(
+            refusal_reason("rate_limited"),
+            RefusalReason::Other("rate_limited".into())
+        );
     }
 }

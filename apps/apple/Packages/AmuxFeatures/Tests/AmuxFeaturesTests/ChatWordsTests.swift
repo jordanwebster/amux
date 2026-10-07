@@ -35,16 +35,17 @@ final class ChatWordsTests: XCTestCase {
         XCTAssertEqual(ChatWords.run(open), "40+ reads · 1+ more")
     }
 
-    func testACallsVerbSaysWhetherItWaitsRunsWasRefusedOrRan() {
-        let words = { (state: ToolStateView, row: Row) in
-            ChatWords.verb(state, row, wants: "Wants to run", doing: "Running", done: "Ran")
+    func testACallsVerbSaysWhetherItAsksRunsWasRefusedOrRan() {
+        let words = { (phase: CallPhase, row: Row) in
+            ChatWords.verb(phase, row, wants: "Wants to run", doing: "Running", done: "Ran")
         }
-        XCTAssertEqual(words(.pending, row(.stopped)), "Wants to run")
-        XCTAssertEqual(words(.running, row(.stopped, attention: true)), "Wants to run")
+        XCTAssertEqual(words(.asking, row(.stopped, attention: true)), "Wants to run")
+        // Announced and asking nobody, it reads as under way.
+        XCTAssertEqual(words(.pending, row(.stopped)), "Running")
         XCTAssertEqual(words(.running, row(.stopped)), "Running")
         XCTAssertEqual(words(.succeeded, row(.stopped)), "Ran")
         let denied = Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean")
-        XCTAssertEqual(words(.succeeded, row(.stopped, decision: denied)), "Denied")
+        XCTAssertEqual(words(.denied, row(.stopped, decision: denied)), "Denied")
         let allowed = Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil)
         XCTAssertEqual(words(.succeeded, row(.stopped, decision: allowed)), "Allowed")
         XCTAssertEqual(words(.running, row(.stopped, decision: allowed)), "Running")
@@ -54,11 +55,13 @@ final class ChatWordsTests: XCTestCase {
     func testAVerbThatNamesTheOutcomeLeavesItOutOfTheMeta() {
         let allowed = Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil)
         XCTAssertEqual(
-            ChatWords.meta(["12s"], row(.stopped, decision: allowed), verb: "Allowed"),
+            ChatWords.meta(["12s"], row(.stopped, decision: allowed), verbPhase: .succeeded),
             "12s · this session")
         let denied = Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean")
         XCTAssertEqual(
-            ChatWords.meta([], row(.stopped, decision: denied), verb: "Denied", note: false), "")
+            ChatWords.meta([], row(.stopped, decision: denied), verbPhase: .denied, note: false), "")
+        XCTAssertNil(ChatWords.state(.denied, decided: true), "the decision says it")
+        XCTAssertEqual(ChatWords.state(.asking, decided: false), "waiting")
     }
 
     func testTheRailRunsBetweenGridRowsAndBreaksAtProse() {
@@ -78,7 +81,7 @@ final class ChatWordsTests: XCTestCase {
         XCTAssertEqual(ChatWords.meta(["12s"], row(.stopped, decision: allowed)), "12s · allowed · this session")
         let denied = Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean\nplease")
         XCTAssertEqual(
-            ChatWords.meta(["denied"], row(.stopped, decision: denied), verb: "Denied"),
+            ChatWords.meta([], row(.stopped, decision: denied), verbPhase: .denied),
             "“Use cargo clean”")
         let elsewhere = Decision(outcome: .allowed, elsewhere: true, granted: nil, note: nil)
         XCTAssertEqual(ChatWords.decision(elsewhere), "allowed · in the terminal")
@@ -228,17 +231,14 @@ final class ChatWordsTests: XCTestCase {
     }
 
     func testASecretAnswerIsNeverShown() {
-        XCTAssertEqual(ChatWords.answer(AnswerView(picked: [], hidden: true, note: nil, other: nil)), "answered (hidden)")
+        XCTAssertEqual(ChatWords.answer(AnswerView(picked: [], hidden: true, skipped: false, note: nil, other: nil)), "answered (hidden)")
         XCTAssertEqual(
-            ChatWords.answer(AnswerView(picked: ["macOS"], hidden: false, note: nil, other: "BSD")), "macOS, “BSD”")
+            ChatWords.answer(AnswerView(picked: ["macOS"], hidden: false, skipped: false, note: nil, other: "BSD")), "macOS, “BSD”")
     }
 
     func testAQuestionLeftUnansweredReadsSkipped() {
-        let left = AnswerView(picked: [], hidden: false, note: "later", other: nil)
-        XCTAssertTrue(ChatWords.skipped(left))
+        let left = AnswerView(picked: [], hidden: false, skipped: true, note: "later", other: nil)
         XCTAssertEqual(ChatWords.answer(left), "Skipped")
-        XCTAssertFalse(ChatWords.skipped(AnswerView(picked: [], hidden: false, note: nil, other: "BSD")))
-        XCTAssertFalse(ChatWords.skipped(AnswerView(picked: [], hidden: true, note: nil, other: nil)))
     }
 
     private func field(

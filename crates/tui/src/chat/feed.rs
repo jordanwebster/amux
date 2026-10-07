@@ -15,8 +15,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_state::Key;
 use ui_view::{
-    AnswerView, AskRow, AttachmentView, DecisionView, FileChangeView, PlanVerdict, QuestionView,
-    Resolution, Row, RowKind, Run, RunCounts, Segment, ToolStateView,
+    AnswerView, AskRow, AttachmentView, CallPhase, DecisionView, FileChangeView, PlanVerdict,
+    QuestionView, Resolution, Row, RowKind, Run, RunCounts, Segment,
 };
 
 use super::rows::{
@@ -175,7 +175,8 @@ pub fn row_lines(
                 text, streaming, ..
             } => prose(&mut drawn, text, *streaming, width, theme),
             RowKind::Ask(AskRow::Plan {
-                plan,
+                title,
+                body,
                 verdict,
                 note,
                 writing,
@@ -183,7 +184,8 @@ pub fn row_lines(
                 &mut drawn,
                 &row.id,
                 &Plan {
-                    text: plan,
+                    title: title.as_deref(),
+                    body,
                     verdict: *verdict,
                     note: note.as_deref(),
                     writing: *writing,
@@ -672,33 +674,13 @@ fn prose(drawn: &mut Drawn, words: &[Segment], streaming: bool, width: usize, th
     drawn.blank();
 }
 
-/// A plan, as the feed reads it.
+/// A plan, as the feed reads it: the title and body the view lifted.
 struct Plan<'a> {
-    text: &'a str,
+    title: Option<&'a str>,
+    body: &'a str,
     verdict: PlanVerdict,
     note: Option<&'a str>,
     writing: bool,
-}
-
-/// The plan's title and body: an opening heading of any level is lifted
-/// out as the title. None while the first line is still being written and
-/// may yet be a heading.
-fn plan_title(text: &str, writing: bool) -> Option<(Option<String>, &str)> {
-    let text = text.trim_start_matches(['\n', '\r', ' ']);
-    let (first, rest) = match text.split_once('\n') {
-        Some(split) => split,
-        None if writing && (text.is_empty() || text.starts_with('#')) => return None,
-        None => (text, ""),
-    };
-    let heading = first.trim_start();
-    if heading.starts_with('#') {
-        // A heading that only says "Plan" repeats the landmark's own word.
-        let title = heading.trim_start_matches('#').trim();
-        let named = !title.is_empty() && !title.eq_ignore_ascii_case("plan");
-        Some((named.then(|| title.to_owned()), rest))
-    } else {
-        Some((None, text))
-    }
 }
 
 /// A plan the agent proposed, set apart by a landmark that folds like a
@@ -715,9 +697,10 @@ fn plan_lines(
     width: usize,
     theme: Theme,
 ) {
-    let Some((title, body)) = plan_title(plan.text, plan.writing) else {
+    // Nothing to show yet: its first line is still being written.
+    if plan.writing && plan.title.is_none() && plan.body.is_empty() {
         return;
-    };
+    }
     let outcome = match plan.verdict {
         PlanVerdict::Open => None,
         PlanVerdict::ApprovedAcceptingEdits => Some("approved · accepting edits"),
@@ -738,7 +721,7 @@ fn plan_lines(
     );
     pad_to(&mut head, WORDS);
     push(&mut head, "Plan", theme.faint(), end);
-    if let Some(title) = &title {
+    if let Some(title) = plan.title {
         push(&mut head, " · ", theme.faint(), end);
         let room = end
             .saturating_sub(text::line_width(&head))
@@ -773,7 +756,7 @@ fn plan_lines(
     if !folded {
         prose(
             drawn,
-            &[Segment::Text(body.to_owned())],
+            &[Segment::Text(plan.body.to_owned())],
             plan.writing,
             width,
             theme,
@@ -801,7 +784,7 @@ fn questions_step(
     } else {
         format!("{} questions", questions.len())
     };
-    let answered = answers.iter().filter(|answer| !answer.skipped()).count();
+    let answered = answers.iter().filter(|answer| !answer.skipped).count();
     let words = match resolution {
         Resolution::Open => return,
         Resolution::Answered if answered == 0 => format!("Skipped {count}"),
@@ -834,7 +817,7 @@ fn questions_step(
         // note under that. A reply lists only what was answered before it.
         for (at, question) in questions.iter().enumerate() {
             let answer = answers.get(at);
-            if replied && answer.is_none_or(AnswerView::skipped) {
+            if replied && answer.is_none_or(|answer| answer.skipped) {
                 continue;
             }
             for part in text::wrap(&question.question, room) {
@@ -997,18 +980,18 @@ fn step_words(row: &Row) -> (String, String, String) {
             duration_ms,
             ..
         } => {
-            let verb = call_verb(*state, row, ["Wants to run", "Running", "Ran"]);
+            let verb = call_verb(*state, ["Wants to run", "Running", "Ran"]);
             let mut meta = Vec::new();
             match (exit_code, state) {
                 (Some(code), _) if *code != 0 => meta.push(format!("exit {code}")),
-                (None, ToolStateView::Failed) => meta.push("failed".into()),
+                (None, CallPhase::Failed) => meta.push("failed".into()),
                 _ => {}
             }
             // A denied call never ran, so it took no time.
-            if let Some(ms) = duration_ms.filter(|_| verb != "Denied") {
+            if let Some(ms) = duration_ms.filter(|_| *state != CallPhase::Denied) {
                 meta.push(text::duration(ms));
             }
-            let meta = decided(meta.join(" · "), row, verb);
+            let meta = decided(meta, row, *state == CallPhase::Denied);
             (verb.to_owned(), first_line(command).to_owned(), meta)
         }
         RowKind::Explore {
@@ -1016,7 +999,8 @@ fn step_words(row: &Row) -> (String, String, String) {
             subject,
             state,
         } => {
-            let meta = decided(state_meta(*state).unwrap_or_default().to_owned(), row, "");
+            let said = state_meta(*state, row.decision.is_some());
+            let meta = decided(said.map(str::to_owned).into_iter().collect(), row, false);
             (explore_verb(*verb).to_owned(), subject.clone(), meta)
         }
         RowKind::ToolCall {
@@ -1026,7 +1010,7 @@ fn step_words(row: &Row) -> (String, String, String) {
             state,
             ..
         } => {
-            let verb = call_verb(*state, row, ["Wants to use", "Using", "Used"]);
+            let verb = call_verb(*state, ["Wants to use", "Using", "Used"]);
             // "Used tracker sign_in": the server, then the tool, which
             // `step` draws in the reading ink.
             let subject = if server.is_empty() {
@@ -1034,28 +1018,28 @@ fn step_words(row: &Row) -> (String, String, String) {
             } else {
                 format!("{server} {tool}")
             };
-            let mut meta = fact.clone();
-            if *state == ToolStateView::Failed {
-                meta = if meta.is_empty() {
-                    "failed".into()
-                } else {
-                    format!("{meta} · failed")
-                };
+            let mut meta = vec![fact.clone()];
+            if *state == CallPhase::Failed {
+                meta.push("failed".into());
             }
-            let meta = decided(meta, row, verb);
+            let meta = decided(meta, row, *state == CallPhase::Denied);
             (verb.to_owned(), subject, meta)
         }
         RowKind::FileChange { files, state } => {
             let file = files.first();
             let verb = match (state, file.map(|f| &f.change)) {
-                (ToolStateView::Pending, Some(FileChangeView::Created { .. })) => "Wants to create",
-                (ToolStateView::Pending, Some(FileChangeView::Writing { .. })) => "Wants to write",
-                (ToolStateView::Running, Some(FileChangeView::Writing { .. })) => "Writing",
+                (CallPhase::Denied, _) => "Denied",
+                (CallPhase::Cancelled, _) => "Cancelled",
+                (CallPhase::Asking, Some(FileChangeView::Created { .. })) => "Wants to create",
+                (CallPhase::Asking, Some(FileChangeView::Writing { .. })) => "Wants to write",
+                (CallPhase::Asking, Some(FileChangeView::Deleted)) => "Wants to delete",
+                (CallPhase::Asking, Some(FileChangeView::Moved { .. })) => "Wants to move",
+                (CallPhase::Asking, _) => "Wants to edit",
+                (CallPhase::Pending | CallPhase::Running, Some(FileChangeView::Writing { .. })) => {
+                    "Writing"
+                }
+                (CallPhase::Pending | CallPhase::Running, _) => "Editing",
                 (_, Some(FileChangeView::Writing { .. })) => "Write",
-                (ToolStateView::Pending, Some(FileChangeView::Deleted)) => "Wants to delete",
-                (ToolStateView::Pending, Some(FileChangeView::Moved { .. })) => "Wants to move",
-                (ToolStateView::Pending, _) => "Wants to edit",
-                (ToolStateView::Running, _) => "Editing",
                 (_, Some(FileChangeView::Created { .. })) => "Created",
                 (_, Some(FileChangeView::Deleted)) => "Deleted",
                 (_, Some(FileChangeView::Moved { .. })) => "Moved",
@@ -1072,7 +1056,8 @@ fn step_words(row: &Row) -> (String, String, String) {
                     FileChangeView::Deleted => String::new(),
                 })
                 .unwrap_or_default();
-            (verb.to_owned(), subject, decided(meta, row, verb))
+            let meta = decided(vec![meta], row, *state == CallPhase::Denied);
+            (verb.to_owned(), subject, meta)
         }
         RowKind::Subagent {
             description,
@@ -1140,41 +1125,24 @@ fn step_words(row: &Row) -> (String, String, String) {
 /// "allowed", "always allowed" when the answer made a rule, "denied"
 /// unless the verb already says so. A refusal's note goes on its own line,
 /// not here.
-fn decided(meta: String, row: &Row, verb: &str) -> String {
-    let Some(decision) = &row.decision else {
-        return meta;
-    };
-    let mut parts: Vec<String> = meta
-        .split(" · ")
-        .filter(|part| !part.is_empty() && !matches!(*part, "denied" | "cancelled" | "waiting"))
-        .map(str::to_owned)
-        .collect();
-    match decision.outcome {
-        DecisionView::Allowed => parts.push(match &decision.granted {
-            Some(granted) => super::ask::grant_words(granted),
-            None => "allowed".into(),
-        }),
-        DecisionView::AutoApproved => parts.push("auto-approved".into()),
-        DecisionView::Denied if verb == "Denied" => {}
-        DecisionView::Denied => parts.push("denied".into()),
-        DecisionView::Dismissed => parts.push("dismissed".into()),
-    }
-    if decision.elsewhere {
-        parts.push("in the terminal".into());
+fn decided(mut parts: Vec<String>, row: &Row, verb_says_denied: bool) -> String {
+    parts.retain(|part| !part.is_empty());
+    if let Some(decision) = &row.decision {
+        match decision.outcome {
+            DecisionView::Allowed => parts.push(match &decision.granted {
+                Some(granted) => super::ask::grant_words(granted),
+                None => "allowed".into(),
+            }),
+            DecisionView::AutoApproved => parts.push("auto-approved".into()),
+            DecisionView::Denied if verb_says_denied => {}
+            DecisionView::Denied => parts.push("denied".into()),
+            DecisionView::Dismissed => parts.push("dismissed".into()),
+        }
+        if decision.elsewhere {
+            parts.push("in the terminal".into());
+        }
     }
     parts.join(" · ")
-}
-
-fn failed(row: &Row) -> bool {
-    match &row.kind {
-        RowKind::Command {
-            state, exit_code, ..
-        } => *state == ToolStateView::Failed || exit_code.is_some_and(|code| code != 0),
-        RowKind::Explore { state, .. }
-        | RowKind::ToolCall { state, .. }
-        | RowKind::FileChange { state, .. } => *state == ToolStateView::Failed,
-        _ => false,
-    }
 }
 
 /// One step: a line of verb, subject and meta on the rail, then its detail
@@ -1196,9 +1164,9 @@ fn step(
     // An open ask points at this step: it waits on the person, so it reads
     // as the step under way, marked in the attention ink, and nothing it has not
     // done yet is said about it.
-    let asking = row.attention && verb.starts_with("Wants");
+    let asking = row.call_phase() == Some(CallPhase::Asking);
     let meta = if asking { String::new() } else { meta };
-    let failed = !asking && failed(row);
+    let failed = row.call_phase() == Some(CallPhase::Failed);
     let current = current || asking;
     let (words, subject_style) = if failed {
         (theme.error(), theme.error())
@@ -1329,7 +1297,7 @@ fn step_detail(row: &Row, facts: &RowFacts, width: usize, theme: Theme) -> Vec<L
         } => {
             // How it ended: the output's last lines, the rest counted above
             // them. Long output is not for reading here.
-            let style = if *state == ToolStateView::Failed {
+            let style = if *state == CallPhase::Failed {
                 theme.error()
             } else {
                 theme.muted()

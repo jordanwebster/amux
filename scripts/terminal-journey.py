@@ -949,7 +949,7 @@ def send_rejected(journey: TerminalJourney) -> list[str]:
     journey.type(pane, NOT_SENT)
     journey.wait_terms(pane, NOT_SENT)
     journey.keys(pane, "Enter")
-    journey.wait_terms(pane, "not sent: host unreachable", f"› {NOT_SENT}")
+    journey.wait_terms(pane, "not sent: its host can't be reached", f"› {NOT_SENT}")
     journey.frame(pane, "not-sent")
     time.sleep(2)
     refused = journey.chat("cabin", "backups", "refused")

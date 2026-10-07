@@ -69,8 +69,8 @@ public struct ChatRowView: View {
                 kind: "tool", glyph: glyph(state, "wrench.adjustable"), accented: accented(state),
                 rail: rail, verb: verb, subject: server.isEmpty ? tool : "\(server) · \(tool)",
                 meta: RowMeta(ChatWords.meta(
-                    [fact, state == .failed ? String(localized: "failed") : ""], row, verb: verb,
-                    note: false)),
+                    [fact, state == .failed ? String(localized: "failed") : ""], row,
+                    verbPhase: state, note: false)),
                 quote: denialNote,
                 detail: expanded && !result.isEmpty ? result : nil,
                 opens: !result.isEmpty, open: expanded, toggle: toggle)
@@ -86,14 +86,15 @@ public struct ChatRowView: View {
                 accented: accented(state), rail: rail, verb: verb,
                 subject: ChatWords.firstLine(command),
                 meta: RowMeta(ChatWords.meta(
-                    commandMeta(state, exitCode: exitCode, durationMs: durationMs), row, verb: verb,
-                    note: false)),
+                    commandMeta(state, exitCode: exitCode, durationMs: durationMs), row,
+                    verbPhase: state, note: false)),
                 quote: denialNote, output: outputHead, trimmed: outputTrimmed, more: moreLines)
         case .explore(let verb, let subject, let state):
             GridRow(
                 kind: "explore", glyph: glyph(state, "magnifyingglass"), accented: accented(state),
                 rail: rail, verb: ChatWords.explore(verb), subject: subject,
-                meta: RowMeta([ChatWords.meta([ChatWords.state(state) ?? ""], row, note: false),
+                meta: RowMeta([ChatWords.meta(
+                        [ChatWords.state(state, decided: row.decision != nil) ?? ""], row, note: false),
                        row.run.map { expanded && $0.folds(row) ? ChatWords.run($0) : "" } ?? ""]
                     .filter { !$0.isEmpty }.joined(separator: " · ")),
                 truncation: .head, quote: denialNote,
@@ -188,8 +189,8 @@ public struct ChatRowView: View {
     /// Edited, created, deleted and moved files: one grid row each, joined to
     /// one another on the rail.
     @ViewBuilder
-    private func fileChange(_ files: [FileRow], _ state: ToolStateView) -> some View {
-        let tail = [ChatWords.state(state) ?? ""]
+    private func fileChange(_ files: [FileRow], _ state: CallPhase) -> some View {
+        let tail = [ChatWords.state(state, decided: row.decision != nil) ?? ""]
         if files.isEmpty {
             GridRow(
                 kind: "file-change", glyph: glyph(state, "plusminus"), accented: accented(state),
@@ -243,23 +244,18 @@ public struct ChatRowView: View {
         }
     }
 
-    /// A refused call's mark is the hand; one an open ask points at waits on
+    /// A refused call's mark is the hand; one asking the person waits on
     /// the same hand. Otherwise the kind's own glyph, in the accent when it failed.
-    private func glyph(_ state: ToolStateView, _ done: String) -> String {
-        if denied(state) { return "hand.raised" }
-        switch state {
-        case .pending, .running: return row.attention ? "hand.raised" : done
-        case .cancelled: return "nosign"
-        case .succeeded, .failed, .denied: return done
+    private func glyph(_ phase: CallPhase, _ done: String) -> String {
+        switch phase {
+        case .denied, .asking: "hand.raised"
+        case .cancelled: "nosign"
+        case .pending, .running, .succeeded, .failed: done
         }
     }
 
-    private func denied(_ state: ToolStateView) -> Bool {
-        state == .denied || row.decision?.outcome == .denied
-    }
-
-    private func accented(_ state: ToolStateView) -> Bool {
-        row.attention || state == .failed || denied(state)
+    private func accented(_ phase: CallPhase) -> Bool {
+        row.attention || phase == .failed || phase == .denied
     }
 
     /// What the person said when they refused, under the row in their words.
@@ -271,7 +267,7 @@ public struct ChatRowView: View {
     }
 
     /// "exit 101 · 4.2s": a failure names its code where the agent gives one.
-    private func commandMeta(_ state: ToolStateView, exitCode: Int32?, durationMs: Int64?) -> [String] {
+    private func commandMeta(_ state: CallPhase, exitCode: Int32?, durationMs: Int64?) -> [String] {
         var meta: [String] = []
         if let exitCode, exitCode != 0 {
             meta.append(String(localized: "exit \(exitCode)"))
@@ -843,6 +839,9 @@ struct Prose: View {
     @Environment(\.photographed) private var photographed
     let markdown: String
     var muted = false
+    /// A heading drawn above the document, for text whose title arrives
+    /// apart from it, such as a plan's.
+    var title: String?
     @State private var document: MarkdownDocument?
     @State private var parsed: String?
 
@@ -856,6 +855,9 @@ struct Prose: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let title {
+                MarkdownBlockView(block: .heading(level: 1, text: AttributedString(title)), muted: muted)
+            }
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 MarkdownBlockView(block: block, muted: muted)
             }
@@ -1074,7 +1076,7 @@ private struct AskRowView: View {
         switch ask {
         case .questions(let questions, let answers, let skipped, let resolution, let reply):
             questionsRow(questions, answers, skipped: Int(skipped), resolution, reply)
-        case .plan(let plan, let verdict, _, let note):
+        case .plan(let body, let verdict, _, let note, let title):
             // An open plan reads whole under its heading while the decision
             // stands in the composer's place; once decided it folds to its
             // heading and opens on a tap.
@@ -1082,11 +1084,11 @@ private struct AskRowView: View {
             let sentBack = verdict == .sentBack && !(note ?? "").isEmpty
             GridRow(
                 kind: "plan", glyph: "list.bullet.rectangle", accented: open,
-                rail: rail, verb: planVerb(verdict), subject: sentBack ? "" : planTitle(plan),
+                rail: rail, verb: planVerb(verdict), subject: sentBack ? "" : title ?? "",
                 subjectFace: .text,
                 meta: RowMeta(verdict == .approvedAcceptingEdits ? String(localized: "accepting edits") : ""),
                 quote: sentBack ? ChatWords.firstLine(note ?? "") : nil,
-                below: open || expanded ? AnyView(planBody(plan)) : nil,
+                below: open || expanded ? AnyView(planBody(title, body)) : nil,
                 opens: !open, open: expanded, toggle: toggle)
         case .form(let server, let message, let fields, let resolution):
             GridRow(
@@ -1148,7 +1150,7 @@ private struct AskRowView: View {
         let given = answers.count - skipped
         let some = resolution == .answered && skipped > 0
         var pairs = Array(zip(questions, answers))
-        if resolution == .replied { pairs = pairs.filter { !ChatWords.skipped($0.1) } }
+        if resolution == .replied { pairs = pairs.filter { !$0.1.skipped } }
         return GridRow(
             kind: "question", glyph: "questionmark.circle", accented: resolution == .open,
             rail: rail,
@@ -1230,8 +1232,8 @@ private struct AskRowView: View {
         }
     }
 
-    private func planBody(_ plan: String) -> some View {
-        Prose(markdown: plan)
+    private func planBody(_ title: String?, _ body: String) -> some View {
+        Prose(markdown: body, title: title)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
@@ -1272,10 +1274,6 @@ private struct AskRowView: View {
         case .sentBack: String(localized: "Plan sent back")
         case .dismissed: String(localized: "Plan dismissed")
         }
-    }
-
-    private func planTitle(_ plan: String) -> String {
-        ChatWords.firstLine(plan).drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
     }
 }
 

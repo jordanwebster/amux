@@ -160,7 +160,7 @@ Enter on a row opens its chat. From top to bottom:
   (Claude's and Codex's `default`); otherwise it reads `auto`, `accept edits`, `plan`, `bypass permissions`
   (Claude) or `read only`, `full access`, `plan` (Codex), and `custom` for a Codex pair outside its presets. Its
   top edge says what stands in the way of sending, most pressing first: a prompt the
-  agent refused (`not sent: it is shutting down`, in red), the host away (`desk is away`), an exited agent (`Enter
+  agent refused (`not sent: its host is shutting down`, in red), the host away (`desk is away`), an exited agent (`Enter
   resumes`), a usage limit reached (`5-hour limit reached · resets 23:24`, in the warning ink; sending stays
   open). One blank line below it, the key line: `shift+tab permission · ctrl+a more` at rest
   (`shift+tab mode` for an agent with modes), `enter queue · ctrl+x
@@ -171,7 +171,8 @@ The composer takes a draft at any time. Enter sends while the chat is current an
 agent works it queues the prompt behind the running turn; when the agent has exited it resumes it with the draft as
 its first prompt (an empty Enter just resumes). A prompt to an idle agent shows at once in the feed, and one to a
 busy agent at once in the queue. A draft typed while the host is away stays in the composer. A prompt the agent
-refuses comes back into the composer with the reason; one whose connection dropped before a reply waits in the
+refuses, an exited agent's included, comes back into the composer with the reason, worded from the typed reason
+the view hands over, the same as the phone's; one whose connection dropped before a reply waits in the
 queue as `may not have arrived`, to resend or discard, and nothing is resent by itself.
 
 Scrolled back, a control floats at the bottom centre of the feed, `↓ Jump to Bottom  ctrl+end`, or `↓ 3 new` when
@@ -195,7 +196,7 @@ When the agent waits on you, the ask takes over the composer's box, its edge in 
 behind it and comes back after. The plan or the call it is about stays in the feed above.
 
 - **A permission** (`● Wants to run`, `Wants to edit`, `Wants to create`, `Wants to use`): the command, the file
-  with its diff, or the tool and its arguments, then numbered choices worded as what happens (`1. Yes`, `2. Yes,
+  with its diff and the line of its first change, or the tool and its arguments, then numbered choices worded as what happens (`1. Yes`, `2. Yes,
   and always allow cargo test in this project`, `3. Yes, and don't ask again this session`) and the way out last
   (`No`). Tab on `No` adds a note that goes back to the agent with the refusal. A long diff or command is cut,
   with `[Full Diff]` or `[Show All]` (or `f`) opening the whole of it inside the box.

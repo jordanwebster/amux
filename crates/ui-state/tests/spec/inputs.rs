@@ -1,7 +1,7 @@
 //! The five input states, resolution at CaughtUp, the exited composer and
 //! steering a queued prompt.
 
-use ui_state::{Composer, InputOutcome, InputState, Msg, SessionState};
+use ui_state::{Composer, InputOutcome, InputState, Msg, RefusalReason, SessionState};
 use wire::{Kind, Phase};
 
 use crate::harness::*;
@@ -126,7 +126,7 @@ fn a_rejection_is_final_and_touches_no_row() {
         assert!(outcome.changed.is_empty());
         assert_eq!(
             state.input_state(b"p1"),
-            Some(InputState::Rejected("draining".into()))
+            Some(InputState::Rejected(RefusalReason::Draining))
         );
         assert_eq!(projection(state.transcript()), before);
     }
@@ -289,7 +289,7 @@ fn a_send_that_raced_the_exit_flips_the_composer_to_resume() {
         );
         assert_eq!(
             state.input_state(b"p1"),
-            Some(InputState::Rejected("exited".into()))
+            Some(InputState::Rejected(RefusalReason::Exited))
         );
         let draft = &state.inputs().get(b"p1").unwrap().input;
         assert_eq!(
@@ -373,7 +373,7 @@ fn a_host_unreachable_rejection_is_never_uncertain() {
         );
         assert_eq!(
             state.input_state(b"p1"),
-            Some(InputState::Rejected("host_unreachable".into()))
+            Some(InputState::Rejected(RefusalReason::HostUnreachable))
         );
         assert_eq!(state.not_confirmed().count(), 0);
     }

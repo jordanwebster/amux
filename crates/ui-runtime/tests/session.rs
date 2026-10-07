@@ -8,7 +8,7 @@ use std::sync::Arc;
 use client::{ManualClock, RpcError};
 use support::*;
 use ui_runtime::{DriverEvent, InputError, PageError, Session, TRACE_EVENTS, TraceEvent};
-use ui_state::{Composer, Connection, InputOutcome, InputState, Waiting};
+use ui_state::{Composer, Connection, InputOutcome, InputState, RefusalReason, Waiting};
 use wire::{
     AnswerInput, ErrorCode, FetchResponse, GetBlobResponse, Input, Kind, SendInputRequest,
     claude_pty_input, claude_sdk_input, codex_input, input, subscribe_request,
@@ -430,7 +430,7 @@ async fn acts_on_the_chat_go_in_the_kinds_own_arm_and_return_the_verdict() {
             }
             let expected = match &verdict {
                 Ok(response) if *response == accepted(false) => Ok(()),
-                Ok(_) => Err(InputError::Rejected("unsupported".into())),
+                Ok(_) => Err(InputError::Rejected(RefusalReason::Unsupported)),
                 Err(_) => Err(InputError::Uncertain),
             };
             reply.send(verdict).ok();
@@ -497,7 +497,7 @@ async fn a_send_that_raced_the_exit_is_rejected_and_the_composer_offers_resume()
     let sent = sending.await.unwrap();
     assert_eq!(
         session.state().input_state(&sent.id),
-        Some(InputState::Rejected("exited".into()))
+        Some(InputState::Rejected(RefusalReason::Exited))
     );
     assert_eq!(session.state().composer(), Composer::Resume);
 }
@@ -521,7 +521,9 @@ async fn a_refused_call_is_a_rejection_never_uncertain() {
     let sent = sending.await.unwrap();
     assert_eq!(
         session.state().input_state(&sent.id),
-        Some(InputState::Rejected("no such agent".into()))
+        Some(InputState::Rejected(RefusalReason::Other(
+            "no such agent".into()
+        )))
     );
 }
 

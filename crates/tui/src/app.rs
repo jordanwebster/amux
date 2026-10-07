@@ -14,11 +14,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc;
 use ui_runtime::{Fleet, InputError, Session, Window, inputs};
-use ui_state::{AgentKey, Composer, InputOutcome, PhaseView};
+use ui_state::{AgentKey, Composer, PhaseView};
 use ui_view::family_header;
 use wire::{
-    Agent, Attachment, DeleteAgentRequest, Diff, RenameAgentRequest, SendInputResponse,
-    StopAgentRequest, StopMode, send_input_response,
+    Agent, Attachment, DeleteAgentRequest, Diff, RenameAgentRequest, StopAgentRequest, StopMode,
 };
 
 use crate::chat::layout::{CAP, PAGE};
@@ -292,7 +291,9 @@ pub(crate) fn terminal_refusal(agent: &Agent, config: &TuiConfig) -> Option<&'st
 
 fn plain(error: InputError) -> String {
     match error {
-        InputError::Rejected(reason) => format!("not sent: {reason}"),
+        InputError::Rejected(reason) => {
+            format!("not sent: {}", crate::chat::refusal_words(&reason))
+        }
         InputError::Uncertain => error.to_string(),
     }
 }
@@ -970,24 +971,12 @@ impl App {
         let session = chat.session.clone();
         let agent_id = chat.view.agent_id.clone();
         match effect {
+            // A refusal, a send that raced the exit among them, comes back
+            // through the chat's own state: its words return to the
+            // composer with why it was not sent.
             ChatEffect::Prompt { text, attachments } => self.spawn(async move {
-                let sent = session.send_prompt(&text, attachments.clone()).await;
-                match sent.outcome {
-                    // A send that raced the exit: the composer turns to
-                    // Resume and the draft goes back into it.
-                    InputOutcome::Reply(SendInputResponse {
-                        of: Some(send_input_response::Of::Rejected(rejected)),
-                    }) if rejected.reason == "exited" => {
-                        session.discard(&sent.id);
-                        Some(AppEvent::Restore {
-                            agent_id,
-                            text,
-                            attachments,
-                            notice: None,
-                        })
-                    }
-                    _ => None,
-                }
+                session.send_prompt(&text, attachments).await;
+                None
             }),
             ChatEffect::Resume { text, attachments }
                 if text.trim().is_empty() && attachments.is_empty() =>

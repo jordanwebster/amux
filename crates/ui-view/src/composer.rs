@@ -3,7 +3,9 @@
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use ui_state::{Activity, Composer, InputState, InputWhat, PhaseView, SessionState, Waiting};
+use ui_state::{
+    Activity, Composer, InputState, InputWhat, PhaseView, RefusalReason, SessionState, Waiting,
+};
 use wire::{Attachment, SignInState};
 
 use crate::segments::{Segment, segments};
@@ -165,11 +167,11 @@ pub struct SentPrompt {
 }
 
 /// A prompt the agent refused. Its words go back to the composer, with
-/// the reason, and it is forgotten.
+/// why, and it is forgotten.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct RefusedPrompt {
     pub input_id: Vec<u8>,
-    pub reason: String,
+    pub reason: RefusalReason,
 }
 
 /// This client's prompts on their way, in the order they will land: those

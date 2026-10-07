@@ -13,7 +13,7 @@
 ## 22 recorded 20: fact Transcript type=assistant uuid=5add42fe-53cd-41b5-b1cb-6673595143b7
   row    3 5add42fe-53cd-41b5-b1cb-6673595143b7 Thinking { text: "", open: false, duration_ms: Some(2423) }
 ## 23 recorded 21: fact Transcript type=assistant uuid=72eafc06-9389-449d-8818-c1ae42056c79
-  row    4 toolu_01QMearN6kQdqbAdp2iEYZpc Command { command: "printf allow-scoped > allow-scoped.txt; printf allow-scoped", state: Running, exit_code: None, output_head: [], more_lines: 0, output_trimmed: false, output_tail: [], duration_ms: None } run[toolu_01QMearN6kQdqbAdp2iEYZpc..toolu_01QMearN6kQdqbAdp2iEYZpc x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, o…
+  row    4 toolu_01QMearN6kQdqbAdp2iEYZpc Command { command: "printf allow-scoped > allow-scoped.txt; printf allow-scoped", state: Asking, exit_code: None, output_head: [], more_lines: 0, output_trimmed: false, output_tail: [], duration_ms: None } run[toolu_01QMearN6kQdqbAdp2iEYZpc..toolu_01QMearN6kQdqbAdp2iEYZpc x1 recent=0 live RunCounts { commands: 1, edits: 0, reads: 0, searches: 0, subagents: 0, ot…
   ask ask:1 -> "toolu_01QMearN6kQdqbAdp2iEYZpc" 1/1 Open
     choices AllowOnce*, AllowAlways { subjects: [], directories: ["<MACHINE_PATH>"], mode: "", mode_name: "", scope: Session, label: "" }, Deny { stops: true }+note
     body Command { command: "printf allow-scoped > allow-scoped.txt; printf allow-scoped", cwd: "", reason: "", description: "Create file and print content as requested" }

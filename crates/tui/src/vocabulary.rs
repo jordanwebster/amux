@@ -15,10 +15,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ui_state::{Composer, Waiting};
 use ui_view::{
-    AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CardState, Choice, ChoiceOutcome,
-    Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, LineKind, OptionView,
-    PatchHead, PatchLine, PermissionGrant, PlanVerdict, QuestionView, QueuedRow, Reach, Resolution,
-    Row, RowKind, Scope, Segment, ToolStateView,
+    AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CallPhase, CardState, Choice,
+    ChoiceOutcome, Decision, DecisionView, EditLine, ExploreVerb, FileChangeView, FileRow, Granted,
+    LineKind, OptionView, PatchHead, PatchLine, PermissionGrant, PlanVerdict, QuestionView,
+    QueuedRow, Reach, RefusalReason, Resolution, Row, RowKind, Scope, Segment,
 };
 use wire::{BlobRef, BoundaryKind, EnvelopeKind, SendState};
 
@@ -168,7 +168,7 @@ fn feed_lines(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Lin
             | RowKind::Ask(_)
     ) || feed::is_step(row);
     if !feeds {
-        return row_lines(row, state, &facts(row), width, theme);
+        return row_lines(row, state, width, theme);
     }
     let Some(drawn) = feed::row_lines(
         row,
@@ -642,7 +642,7 @@ const FOCUSED: RowState = RowState {
 fn facts(row: &Row) -> RowFacts {
     let mut facts = RowFacts::default();
     if let RowKind::FileChange { files, state } = &row.kind
-        && *state == ToolStateView::Succeeded
+        && *state == CallPhase::Succeeded
         && files
             .first()
             .is_some_and(|file| file.path == "crates/tui/src/fleet.rs")
@@ -738,6 +738,7 @@ fn row_sets() -> Vec<RowSet> {
         other: other.map(Into::into),
         hidden: false,
         note: None,
+        skipped: picked.is_empty() && other.is_none(),
     };
     let mut attention = row(RowKind::Prose {
         text: text("Waiting on you above."),
@@ -846,7 +847,7 @@ fn row_sets() -> Vec<RowSet> {
                         server: "github".into(),
                         tool: "create_issue".into(),
                         fact: "jlw/amux".into(),
-                        state: ToolStateView::Running,
+                        state: CallPhase::Running,
                         result: String::new(),
                     }),
                     CLOSED,
@@ -857,7 +858,7 @@ fn row_sets() -> Vec<RowSet> {
                             server: String::new(),
                             tool: "WebFetch".into(),
                             fact: "docs.rs/ratatui".into(),
-                            state: ToolStateView::Succeeded,
+                            state: CallPhase::Succeeded,
                             result: String::new(),
                         }),
                         DecisionView::Allowed,
@@ -872,7 +873,7 @@ fn row_sets() -> Vec<RowSet> {
                             server: "linear".into(),
                             tool: "delete_issue".into(),
                             fact: "FOX-12".into(),
-                            state: ToolStateView::Denied,
+                            state: CallPhase::Denied,
                             result: String::new(),
                         }),
                         DecisionView::Denied,
@@ -886,7 +887,7 @@ fn row_sets() -> Vec<RowSet> {
                         server: "github".into(),
                         tool: "get_pr".into(),
                         fact: "#412".into(),
-                        state: ToolStateView::Failed,
+                        state: CallPhase::Failed,
                         result: "404 Not Found".into(),
                     }),
                     OPEN,
@@ -915,7 +916,7 @@ fn row_sets() -> Vec<RowSet> {
                                 line: None,
                             },
                         ],
-                        state: ToolStateView::Succeeded,
+                        state: CallPhase::Succeeded,
                     }),
                     CLOSED,
                 ),
@@ -929,7 +930,7 @@ fn row_sets() -> Vec<RowSet> {
                                 removed: 0,
                                 line: None,
                             }],
-                            state: ToolStateView::Succeeded,
+                            state: CallPhase::Succeeded,
                         }),
                         DecisionView::AutoApproved,
                         None,
@@ -955,7 +956,7 @@ fn row_sets() -> Vec<RowSet> {
                                 line: None,
                             },
                         ],
-                        state: ToolStateView::Pending,
+                        state: CallPhase::Asking,
                     }),
                     CLOSED,
                 ),
@@ -968,14 +969,14 @@ fn row_sets() -> Vec<RowSet> {
                 (
                     Row {
                         attention: true,
-                        ..command(ToolStateView::Running, None, &[], 0)
+                        ..command(CallPhase::Asking, None, &[], 0)
                     },
                     CLOSED,
                 ),
-                (command(ToolStateView::Running, None, &[], 0), CLOSED),
+                (command(CallPhase::Running, None, &[], 0), CLOSED),
                 (
                     decided(
-                        command(ToolStateView::Denied, None, &[], 0),
+                        command(CallPhase::Denied, None, &[], 0),
                         DecisionView::Denied,
                         None,
                         Some("Use cargo clean instead"),
@@ -984,7 +985,7 @@ fn row_sets() -> Vec<RowSet> {
                 ),
                 (
                     command(
-                        ToolStateView::Succeeded,
+                        CallPhase::Succeeded,
                         Some(0),
                         &["running 42 tests", "test result: ok. 42 passed"],
                         0,
@@ -993,7 +994,7 @@ fn row_sets() -> Vec<RowSet> {
                 ),
                 (
                     decided(
-                        command(ToolStateView::Succeeded, Some(0), &[], 0),
+                        command(CallPhase::Succeeded, Some(0), &[], 0),
                         DecisionView::Allowed,
                         Some(PermissionGrant::Claude {
                             subjects: vec!["cargo test".into()],
@@ -1008,7 +1009,7 @@ fn row_sets() -> Vec<RowSet> {
                 ),
                 (
                     decided(
-                        command(ToolStateView::Succeeded, Some(0), &[], 0),
+                        command(CallPhase::Succeeded, Some(0), &[], 0),
                         DecisionView::Allowed,
                         Some(PermissionGrant::CommandPrefix {
                             words: vec!["cargo".into(), "test".into()],
@@ -1019,7 +1020,7 @@ fn row_sets() -> Vec<RowSet> {
                 ),
                 (
                     decided(
-                        command(ToolStateView::Succeeded, Some(0), &[], 0),
+                        command(CallPhase::Succeeded, Some(0), &[], 0),
                         DecisionView::Allowed,
                         Some(PermissionGrant::NetworkHosts {
                             hosts: vec!["crates.io".into()],
@@ -1030,7 +1031,7 @@ fn row_sets() -> Vec<RowSet> {
                 ),
                 (
                     command(
-                        ToolStateView::Failed,
+                        CallPhase::Failed,
                         Some(101),
                         &[
                             "running 42 tests",
@@ -1051,7 +1052,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Explore {
                         verb: ExploreVerb::Read,
                         subject: "crates/tui/src/fleet.rs".into(),
-                        state: ToolStateView::Succeeded,
+                        state: CallPhase::Succeeded,
                     }),
                     CLOSED,
                 ),
@@ -1059,7 +1060,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Explore {
                         verb: ExploreVerb::Search,
                         subject: "redraw".into(),
-                        state: ToolStateView::Running,
+                        state: CallPhase::Running,
                     }),
                     CLOSED,
                 ),
@@ -1067,7 +1068,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Explore {
                         verb: ExploreVerb::List,
                         subject: "crates/".into(),
-                        state: ToolStateView::Succeeded,
+                        state: CallPhase::Succeeded,
                     }),
                     CLOSED,
                 ),
@@ -1075,7 +1076,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Explore {
                         verb: ExploreVerb::Fetch,
                         subject: "https://docs.rs/ratatui".into(),
-                        state: ToolStateView::Succeeded,
+                        state: CallPhase::Succeeded,
                     }),
                     CLOSED,
                 ),
@@ -1083,7 +1084,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Explore {
                         verb: ExploreVerb::WebSearch,
                         subject: "ratatui flicker".into(),
-                        state: ToolStateView::Succeeded,
+                        state: CallPhase::Succeeded,
                     }),
                     CLOSED,
                 ),
@@ -1244,7 +1245,8 @@ fn row_sets() -> Vec<RowSet> {
                 ),
                 (
                     row(RowKind::Ask(AskRow::Plan {
-                        plan: "Collapse the pairing failures into one error.".into(),
+                        title: None,
+                        body: "Collapse the pairing failures into one error.".into(),
                         verdict: PlanVerdict::Approved,
                         writing: false,
                         note: None,
@@ -1253,7 +1255,8 @@ fn row_sets() -> Vec<RowSet> {
                 ),
                 (
                     row(RowKind::Ask(AskRow::Plan {
-                        plan: "Rename every wire code.".into(),
+                        title: None,
+                        body: "Rename every wire code.".into(),
                         verdict: PlanVerdict::SentBack,
                         writing: false,
                         note: Some("Don't touch the wire codes yet".into()),
@@ -1515,6 +1518,15 @@ fn choice(outcome: ChoiceOutcome) -> Choice {
     }
 }
 
+/// One numbered line of an authored edit ask's patch.
+fn patch(number: Option<u32>, kind: LineKind, text: &str) -> EditLine {
+    EditLine::Line(PatchLine {
+        number,
+        kind,
+        text: text.into(),
+    })
+}
+
 fn card(body: AskBody, mut choices: Vec<Choice>) -> AskCard {
     if let Some(first) = choices.first_mut() {
         first.primary = true;
@@ -1652,7 +1664,7 @@ fn cards() -> Vec<CardSet> {
     let mut sending = card(command(), command_choices());
     sending.state = CardState::Sending;
     let mut rejected = card(command(), command_choices());
-    rejected.state = CardState::Rejected("the ask was already answered".into());
+    rejected.state = CardState::Rejected(RefusalReason::ClosedAsk);
     let mut not_confirmed = card(command(), command_choices());
     not_confirmed.state = CardState::NotConfirmed;
     let mut second = card(command(), command_choices());
@@ -1675,7 +1687,17 @@ fn cards() -> Vec<CardSet> {
                     files: 1,
                     added: 2,
                     removed: 1,
-                    diff: "@@ -10,3 +10,4 @@\n let a = 1;\n-let b = 2;\n+let b = 3;\n+let c = 4;".into(),
+                    lines: vec![
+                        EditLine::Hunk {
+                            old_start: 10,
+                            new_start: 10,
+                        },
+                        patch(Some(10), LineKind::Context, "let a = 1;"),
+                        patch(Some(11), LineKind::Removed, "let b = 2;"),
+                        patch(Some(11), LineKind::Added, "let b = 3;"),
+                        patch(Some(12), LineKind::Added, "let c = 4;"),
+                    ],
+                    line: Some(11),
                     reason: String::new(),
                     created: Some(false),
                 },
@@ -1773,7 +1795,8 @@ fn cards() -> Vec<CardSet> {
             "A plan to approve, approve with edits accepted automatically, or send back with a note.",
             card(
                 AskBody::Plan {
-                    plan: "## Plan\n\n1. Collapse the pairing failures into one error.\n2. Update the three specs.\n3. Keep the wire codes.".into(),
+                    title: None,
+                    body: "\n1. Collapse the pairing failures into one error.\n2. Update the three specs.\n3. Keep the wire codes.".into(),
                 },
                 vec![
                     choice(ChoiceOutcome::ApprovePlan {
@@ -1842,7 +1865,8 @@ fn cards() -> Vec<CardSet> {
                 stops_turn: false,
                 ..card(
                     AskBody::Plan {
-                        plan: "## Plan\n\n1. Collapse the pairing failures into one error.".into(),
+                        title: None,
+                        body: "\n1. Collapse the pairing failures into one error.".into(),
                     },
                     vec![
                         choice(ChoiceOutcome::ApprovePlan {

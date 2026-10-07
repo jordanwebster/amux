@@ -40,9 +40,9 @@ pub use overview::{
 };
 pub use review::{DiffLine, FileStatus, Hunk, LineKind, ReviewDoc, ReviewFile, review_doc};
 pub use rows::{
-    AnswerView, AskRow, ChatOptions, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow,
-    Granted, OUTPUT_HEAD_LINES, PatchHead, PatchLine, PermissionGrant, PlanVerdict, Resolution,
-    Row, RowKind, ToolRows, ToolStateView, chat_rows, chat_rows_for, patch_head,
+    AnswerView, AskRow, CallPhase, ChatOptions, Decision, DecisionView, EditLine, ExploreVerb,
+    FileChangeView, FileRow, Granted, OUTPUT_HEAD_LINES, PatchHead, PatchLine, PermissionGrant,
+    PlanVerdict, Resolution, Row, RowKind, ToolRows, chat_rows, chat_rows_for, patch_head,
 };
 pub use run::{LIVE_STEPS, Run, RunCounts, keep_open_runs, run_is_open, toggle_run};
 pub use segments::{AttachmentView, Segment, segments};
@@ -50,5 +50,7 @@ pub use settings::{
     CommandView, EffortChoice, ModeChoice, ModelChoice, PermissionChoice, SettingChange,
     SettingsView, effort_in_force, setting_input, settings,
 };
+/// Why an input was refused, which every client words.
+pub use ui_state::RefusalReason;
 /// The rule a host holds every agent name to, for a client's name field.
 pub use wire::{AgentNameProblem, agent_name_problem};

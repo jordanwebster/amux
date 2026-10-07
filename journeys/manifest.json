@@ -125,7 +125,7 @@
       "stage": 17,
       "clients": ["terminal"],
       "topology": "journeys/topologies/terminal-flows.json",
-      "claim": "With the laptop unable to open a call to the agent's host while the chat stays live, a prompt that never left reads not sent, host unreachable, and its words come back to the composer; the host never receives it. Sent again once calls can be made, the host holds it once."
+      "claim": "With the laptop unable to open a call to the agent's host while the chat stays live, a prompt that never left reads not sent because its host cannot be reached, and its words come back to the composer; the host never receives it. Sent again once calls can be made, the host holds it once."
     },
     {
       "id": "send-may-not-have-arrived",

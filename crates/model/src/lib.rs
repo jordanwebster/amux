@@ -144,11 +144,29 @@ pub enum InputState {
     Queued,
     /// Accepted and, for a prompt, reflected by an item.
     Settled,
-    Rejected(String),
+    Rejected(RefusalReason),
     /// The connection dropped before a reply. Resolved only at CaughtUp from
     /// the snapshot's queue and the items; one found in neither stays here
     /// and the person decides. Nothing is resent on its own.
     Uncertain,
+}
+
+/// Why the agent or its host refused an input, as every client tells it:
+/// the agent had exited or was exiting, its host is shutting down or cannot
+/// be reached, this agent cannot take an input of the kind, the ask the
+/// answer names had closed, or the queued prompt it names was no longer
+/// queued. A reason this build does not know is kept as the host gave it,
+/// to show as it is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum RefusalReason {
+    Exited,
+    Exiting,
+    Draining,
+    HostUnreachable,
+    Unsupported,
+    ClosedAsk,
+    NotQueued,
+    Other(String),
 }
 
 #[cfg(test)]
@@ -158,8 +176,16 @@ mod tests {
     #[test]
     fn every_shared_value_has_a_schema_for_the_swift_mirrors() {
         let schema = schemars::schema_for!((
-            AgentKey, Attention, Connection, BlobStatus, Composer, PhaseView, ExitCause, Activity,
-            InputState
+            AgentKey,
+            Attention,
+            Connection,
+            BlobStatus,
+            Composer,
+            PhaseView,
+            ExitCause,
+            Activity,
+            InputState,
+            RefusalReason
         ));
         let text = serde_json::to_string(&schema).unwrap();
         for name in [

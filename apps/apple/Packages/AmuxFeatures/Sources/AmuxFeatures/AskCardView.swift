@@ -178,11 +178,12 @@ public struct AskCardView: View {
     private var stateLine: some View {
         switch card.state {
         case .rejected(let reason):
-            Text(String(localized: "Not sent · \(reason)"))
+            let why = ChatModel.refusal(reason)
+            Text(String(localized: "Not sent · \(why)"))
                 .designFont(.detail, design)
                 .foregroundStyle(design.accent.color)
                 .fixedSize(horizontal: false, vertical: true)
-                .identified("ask.rejected", label: reason)
+                .identified("ask.rejected", label: why)
         case .notConfirmed:
             VStack(alignment: .leading, spacing: 12) {
                 Text("Your answer was not confirmed. The connection dropped before the agent replied.")
@@ -396,10 +397,10 @@ private struct AskBodyView: View {
                            cwd.isEmpty ? "" : String(localized: "in \(cwd)")]
                 .filter { !$0.isEmpty }.joined(separator: " · ")
             if !purpose.isEmpty { why(purpose) }
-        case .edit(let path, _, let added, let removed, let diff, let reason, _):
+        case .edit(let path, _, let added, let removed, let lines, let reason, _, _):
             SubjectBox(text: path, lines: 2, counts: (added, removed))
-            if !diff.isEmpty { DiffPreview(diff: diff, whole: wholeDiff) }
-            if diff.split(separator: "\n").count > DiffPreview.lines {
+            if !lines.isEmpty { DiffPreview(lines: lines, whole: wholeDiff) }
+            if lines.count > DiffPreview.lines {
                 link(wholeDiff ? String(localized: "Show less") : String(localized: "Show the whole diff"),
                      id: "ask.diff", value: wholeDiff ? "open" : "folded") { wholeDiff.toggle() }
             }
@@ -774,20 +775,19 @@ private struct AskBodyView: View {
 }
 
 /// A short diff inline, green and red, with the whole of it one tap away.
+/// Where each hunk starts reads as its first line in the new file.
 struct DiffPreview: View {
     @Environment(\.design) private var design
     static let lines = 12
-    let diff: String
+    let lines: [EditLine]
     let whole: Bool
 
     var body: some View {
-        let lines = diff.split(separator: "\n", omittingEmptySubsequences: false)
-            .filter { !$0.hasPrefix("+++") && !$0.hasPrefix("---") }
         let shown = whole ? Array(lines.prefix(400)) : Array(lines.prefix(Self.lines))
         ScrollView(.horizontal) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.offset) { _, line in
-                    Text(String(line))
+                    Text(text(line))
                         .designFont(.monoSmall, design)
                         .foregroundStyle(ink(line))
                         .padding(.horizontal, 8)
@@ -805,15 +805,30 @@ struct DiffPreview: View {
         .clipShape(RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous))
     }
 
-    private func ink(_ line: Substring) -> Color {
-        if line.hasPrefix("@@") { return design.inkFaint.color }
+    private func text(_ line: EditLine) -> String {
+        switch line {
+        case .hunk(_, let newStart): String(localized: "Line \(newStart)")
+        case .line(let line):
+            switch line.kind {
+            case .added: "+" + line.text
+            case .removed: "-" + line.text
+            case .context: " " + line.text
+            }
+        }
+    }
+
+    private func ink(_ line: EditLine) -> Color {
+        if case .hunk = line { return design.inkFaint.color }
         return design.ink.color
     }
 
-    private func wash(_ line: Substring) -> Color {
-        if line.hasPrefix("+") { return design.added.color.opacity(0.18) }
-        if line.hasPrefix("-") { return design.removed.color.opacity(0.18) }
-        return .clear
+    private func wash(_ line: EditLine) -> Color {
+        guard case .line(let line) = line else { return .clear }
+        switch line.kind {
+        case .added: return design.added.color.opacity(0.18)
+        case .removed: return design.removed.color.opacity(0.18)
+        case .context: return .clear
+        }
     }
 }
 

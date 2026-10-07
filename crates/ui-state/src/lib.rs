@@ -23,7 +23,9 @@ pub use fleet::{
     AgentKey, Attention, ExitCause, Families, FleetMsg, FleetState, HostId, agent_key, attention,
     exit_cause, parent_key,
 };
-pub use inputs::{InputId, InputOutcome, InputState, InputWhat, Inputs, SentInput};
+pub use inputs::{
+    InputId, InputOutcome, InputState, InputWhat, Inputs, RefusalReason, SentInput, refusal_reason,
+};
 pub use model::Key;
 pub use session::{
     Activity, ActivityKind, BlobStatus, Composer, Connection, Msg, Outcome, PhaseView, QueueRow,

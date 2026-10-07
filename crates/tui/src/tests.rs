@@ -1680,18 +1680,27 @@ fn a_question_mark_types_into_a_review_comment() {
     assert_eq!(review.comments[0].text, "why? ok");
 }
 
-fn row_text(row: &ui_view::Row) -> String {
-    let state = crate::chat::rows::RowState::default();
-    crate::chat::rows::row_lines(row, state, &Default::default(), 100, theme())
-        .iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+/// A step as the feed draws it outside any run, opened or not.
+fn row_text(row: &ui_view::Row, open: bool) -> String {
+    crate::chat::feed::row_lines(
+        row,
+        &crate::chat::feed::Placement::Plain,
+        open,
+        &Default::default(),
+        100,
+        theme(),
+    )
+    .map(|drawn| drawn.lines)
+    .unwrap_or_default()
+    .iter()
+    .map(|line| {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn call_row(kind: ui_view::RowKind) -> ui_view::Row {
@@ -1712,11 +1721,11 @@ fn call_row(kind: ui_view::RowKind) -> ui_view::Row {
 /// so the first lines shown are not taken for the command's first.
 #[test]
 fn a_trimmed_commands_output_says_its_start_was_dropped() {
-    use ui_view::{RowKind, ToolStateView};
+    use ui_view::{CallPhase, RowKind};
     let command = |output_trimmed| {
         call_row(RowKind::Command {
             command: "cargo test".into(),
-            state: ToolStateView::Running,
+            state: CallPhase::Running,
             exit_code: None,
             output_head: vec!["test b ... ok".into()],
             more_lines: 0,
@@ -1725,15 +1734,15 @@ fn a_trimmed_commands_output_says_its_start_was_dropped() {
             duration_ms: None,
         })
     };
-    let screen = row_text(&command(true));
+    let screen = row_text(&command(true), true);
     let notice = screen.find("earlier output trimmed").expect(&screen);
     assert!(notice < screen.find("test b ... ok").unwrap(), "{screen}");
-    assert!(!row_text(&command(false)).contains("trimmed"));
+    assert!(!row_text(&command(false), true).contains("trimmed"));
 }
 
 #[test]
 fn a_call_row_leads_with_what_happened_to_it() {
-    use ui_view::{Decision, DecisionView, RowKind, ToolStateView};
+    use ui_view::{CallPhase, Decision, DecisionView, RowKind};
     let command = |state| {
         call_row(RowKind::Command {
             command: "rm -rf target".into(),
@@ -1756,38 +1765,47 @@ fn a_call_row_leads_with_what_happened_to_it() {
         row
     };
 
-    let mut asking = command(ToolStateView::Running);
+    let mut asking = command(CallPhase::Asking);
     asking.attention = true;
-    let screen = row_text(&asking);
+    let screen = row_text(&asking, false);
     assert!(screen.contains("Wants to run rm -rf target"), "{screen}");
     assert!(!screen.contains("running"), "{screen}");
 
-    let screen = row_text(&command(ToolStateView::Running));
-    assert!(screen.contains("Running rm -rf target"), "{screen}");
-    assert!(!screen.contains("running"), "{screen}");
+    // Announced and not started, it asks nobody: it reads as under way.
+    for phase in [CallPhase::Pending, CallPhase::Running] {
+        let screen = row_text(&command(phase), false);
+        assert!(screen.contains("Running rm -rf target"), "{screen}");
+        assert!(
+            !screen.contains("running") && !screen.contains("Wants"),
+            "{screen}"
+        );
+    }
 
-    let screen = row_text(&denied(command(ToolStateView::Denied)));
+    let screen = row_text(&denied(command(CallPhase::Denied)), false);
     assert!(screen.contains("Denied rm -rf target"), "{screen}");
-    assert!(screen.contains("\"Use cargo clean instead\""), "{screen}");
+    assert!(screen.contains("Use cargo clean instead"), "{screen}");
     assert!(
         !screen.contains("Ran") && !screen.contains("denied"),
         "{screen}"
     );
 
-    let screen = row_text(&denied(call_row(RowKind::ToolCall {
-        server: "linear".into(),
-        tool: "delete_issue".into(),
-        fact: "FOX-12".into(),
-        state: ToolStateView::Denied,
-        result: String::new(),
-    })));
-    assert!(screen.contains("Denied linear · delete_issue"), "{screen}");
+    let screen = row_text(
+        &denied(call_row(RowKind::ToolCall {
+            server: "linear".into(),
+            tool: "delete_issue".into(),
+            fact: "FOX-12".into(),
+            state: CallPhase::Denied,
+            result: String::new(),
+        })),
+        false,
+    );
+    assert!(screen.contains("Denied linear delete_issue"), "{screen}");
     assert!(
         !screen.contains("Used") && !screen.contains("denied"),
         "{screen}"
     );
 
-    let screen = row_text(&command(ToolStateView::Succeeded));
+    let screen = row_text(&command(CallPhase::Succeeded), false);
     assert!(screen.contains("Ran rm -rf target"), "{screen}");
 }
 
@@ -3815,7 +3833,7 @@ fn a_plan_reads_under_its_heading_and_folds_once_decided() {
         let frames = fixtures::frames(kind, "plans");
         let plan_card = |state: &SessionState| {
             ask_card(state).filter(|card| {
-                matches!(card.body, AskBody::Plan { ref plan } if !plan.is_empty())
+                matches!(card.body, AskBody::Plan { ref title, ref body } if title.is_some() || !body.is_empty())
                     && card.state == CardState::Open
             })
         };

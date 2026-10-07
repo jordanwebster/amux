@@ -24,7 +24,8 @@ use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ui_state::{
-    ActivityKind, Composer, InputState, InputWhat, Key, PhaseView, SessionState, Waiting,
+    ActivityKind, Composer, InputState, InputWhat, Key, PhaseView, RefusalReason, SessionState,
+    Waiting,
 };
 pub use ui_view::Comparison;
 use ui_view::{
@@ -469,25 +470,33 @@ impl ChatView {
     /// prompt on its way draws, and, for one the agent refused, its words
     /// back in the composer (after any draft) and why on the box's edge.
     fn note_sent(&mut self, state: &SessionState, now_ms: i64) {
+        for refused in ui_view::refused_prompts(state) {
+            if !self.rejected_seen.insert(refused.input_id.clone()) {
+                continue;
+            }
+            if let Some(InputWhat::Prompt { text, attachments }) = state
+                .inputs()
+                .iter()
+                .find(|sent| sent.id == refused.input_id)
+                .map(|sent| &sent.what)
+            {
+                self.editor.restore(text, attachments.clone());
+            }
+            self.not_sent = Some(format!("not sent: {}", refusal_words(&refused.reason)));
+        }
         let to_feed = ui_view::sends_to_feed(state);
         for sent in state.inputs().iter() {
-            let InputWhat::Prompt { text, attachments } = &sent.what else {
+            if !matches!(sent.what, InputWhat::Prompt { .. }) {
                 continue;
-            };
+            }
             match &sent.state {
-                InputState::Rejected(reason) => {
-                    if self.rejected_seen.insert(sent.id.clone()) {
-                        self.editor.restore(text, attachments.clone());
-                        self.not_sent = Some(not_sent_words(reason));
-                    }
-                }
                 InputState::Sent | InputState::Queued | InputState::Uncertain => {
                     self.sending.entry(sent.id.clone()).or_insert(Sending {
                         at_ms: now_ms,
                         in_feed: to_feed && sent.state != InputState::Queued,
                     });
                 }
-                InputState::Settled => {}
+                InputState::Rejected(_) | InputState::Settled => {}
             }
         }
     }
@@ -2941,16 +2950,19 @@ pub(crate) fn composer_lines(
     lines
 }
 
-/// Why the agent refused a prompt, in words, from the wire's reasons.
-fn not_sent_words(reason: &str) -> String {
-    let why = match reason {
-        "exited" => "it had exited".to_owned(),
-        "exiting" => "it was exiting".to_owned(),
-        "draining" => "it is shutting down".to_owned(),
-        "unsupported" => "this agent can't take it".to_owned(),
-        other => other.replace('_', " "),
-    };
-    format!("not sent: {why}")
+/// Why the agent or its host refused an input, in words. A reason this
+/// build does not know is shown as the host gave it.
+pub(crate) fn refusal_words(reason: &RefusalReason) -> String {
+    match reason {
+        RefusalReason::Exited => "it had exited".to_owned(),
+        RefusalReason::Exiting => "it was exiting".to_owned(),
+        RefusalReason::Draining => "its host is shutting down".to_owned(),
+        RefusalReason::HostUnreachable => "its host can't be reached".to_owned(),
+        RefusalReason::Unsupported => "this agent can't take it".to_owned(),
+        RefusalReason::ClosedAsk => "the ask had already closed".to_owned(),
+        RefusalReason::NotQueued => "it was no longer queued".to_owned(),
+        RefusalReason::Other(reason) => reason.clone(),
+    }
 }
 
 /// What an agent is doing, as the activity line names it.

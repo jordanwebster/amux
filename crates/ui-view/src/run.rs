@@ -23,7 +23,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use ui_state::{Fold, Held, ItemClass, Key, SessionState};
 
-use crate::rows::{ExploreVerb, RowKind, ToolStateView, kind_of, subject_of};
+use crate::rows::{CallPhase, ExploreVerb, RowKind, kind_of, subject_of};
 
 /// While a run is under way, how many of its newest steps show.
 pub const LIVE_STEPS: u32 = 3;
@@ -243,10 +243,10 @@ fn failed_kind(kind: &RowKind) -> bool {
     match kind {
         RowKind::Command {
             state, exit_code, ..
-        } => *state == ToolStateView::Failed || exit_code.is_some_and(|code| code != 0),
+        } => *state == CallPhase::Failed || exit_code.is_some_and(|code| code != 0),
         RowKind::Explore { state, .. }
         | RowKind::ToolCall { state, .. }
-        | RowKind::FileChange { state, .. } => *state == ToolStateView::Failed,
+        | RowKind::FileChange { state, .. } => *state == CallPhase::Failed,
         _ => false,
     }
 }

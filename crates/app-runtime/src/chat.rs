@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use model::AgentKey;
 use tokio::task::JoinHandle;
 use ui_runtime::{Fleet, InputError, PageError, Session};
-use ui_state::{InputOutcome, InputState, Key, SessionState};
+use ui_state::{InputOutcome, InputState, Key, RefusalReason, SessionState};
 use ui_view::{
     AskCard, ChatOptions, Comparison, Overview, QuestionResponse, Row, SettingChange, SettingsView,
 };
@@ -260,7 +260,7 @@ impl Chat {
                 return moved_on();
             };
             let Some(choice) = card.choices.get(index) else {
-                return ActOutcome::Rejected(format!("the ask has no choice {index}"));
+                return ActOutcome::Failed(format!("the ask has no choice {index}"));
             };
             let answer = match content {
                 Some(content) => ui_view::with_form_content(&choice.answer, content),
@@ -309,7 +309,7 @@ impl Chat {
     async fn answer(&self, input: Option<wire::Input>) -> ActOutcome {
         match input {
             Some(input) => acted(self.session.answer(input).await),
-            None => ActOutcome::Rejected("this agent does not take that answer".into()),
+            None => ActOutcome::Rejected(RefusalReason::Unsupported),
         }
     }
 
@@ -319,7 +319,7 @@ impl Chat {
         let kind = self.session.state().kind();
         match ui_view::setting_input(kind, change) {
             Some(input) => acted(self.session.answer(input).await),
-            None => ActOutcome::Rejected("this agent does not take that change".into()),
+            None => ActOutcome::Rejected(RefusalReason::Unsupported),
         }
     }
 
@@ -382,7 +382,7 @@ impl Chat {
         let kind = self.session.state().kind();
         let attachments = draft.attachments.iter().map(|a| a.to_wire()).collect();
         let Some(input) = ui_runtime::inputs::prompt(kind, &draft.text, attachments) else {
-            return ActOutcome::Rejected("unsupported".into());
+            return ActOutcome::Rejected(RefusalReason::Unsupported);
         };
         match self.session.resume_with(input).await {
             Ok(_) => ActOutcome::Done,
@@ -501,7 +501,7 @@ fn outcome_state(outcome: &InputOutcome) -> InputState {
             }
             Some(send_input_response::Of::Accepted(_)) => InputState::Settled,
             Some(send_input_response::Of::Rejected(rejected)) => {
-                InputState::Rejected(rejected.reason.clone())
+                InputState::Rejected(ui_state::refusal_reason(&rejected.reason))
             }
             None => InputState::Uncertain,
         },
@@ -516,8 +516,9 @@ fn acted(result: Result<(), InputError>) -> ActOutcome {
     }
 }
 
+/// The ask the person answered is no longer the one waiting: it closed.
 fn moved_on() -> ActOutcome {
-    ActOutcome::Rejected("that ask is no longer the one waiting".into())
+    ActOutcome::Rejected(RefusalReason::ClosedAsk)
 }
 
 #[cfg(test)]

@@ -686,7 +686,7 @@ final class ChatModelTests: XCTestCase {
     /// photo, with why it was not sent, and is forgotten.
     func testARefusedPromptReturnsToTheComposerWithTheReason() async {
         var refusing = frame()
-        refusing.refused = [RefusedPrompt(inputId: [8], reason: "host_unreachable")]
+        refusing.refused = [RefusedPrompt(inputId: [8], reason: .hostUnreachable)]
         let source = FakeChat(rows: [], frame: refusing)
         let photo = BlobRef(hash: [5], name: "screen.png", mime: "image/png", size: 2048)
         source.drafts[[8]] = Draft(text: "What is this?", attachments: [.image(photo)])
@@ -694,7 +694,7 @@ final class ChatModelTests: XCTestCase {
         await settle()
         XCTAssertEqual(model.draft, "What is this?")
         XCTAssertEqual(model.attachments, [.image(photo)])
-        XCTAssertEqual(model.notice, "Not sent: host unreachable")
+        XCTAssertEqual(model.notice, "Not sent: its host can’t be reached")
         XCTAssertEqual(source.discarded, [[8]])
         XCTAssertEqual(model.frame?.refused, [], "taken back once")
     }

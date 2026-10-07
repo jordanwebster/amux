@@ -106,7 +106,7 @@ enum ComponentCatalog {
             row("tool-call", r("c1", 8, .toolCall(
                 server: "github", tool: "create_issue", fact: "#482", state: .succeeded, result: "Created #482"))),
             row("tool-call-asking", r("c2", 9, .toolCall(
-                server: "github", tool: "merge_pull_request", fact: "", state: .running, result: ""),
+                server: "github", tool: "merge_pull_request", fact: "", state: .asking, result: ""),
                 attention: true)),
             row("file-change", height: 170, r("f1", 10, .fileChange(files: [
                 FileRow(path: "crates/amux-ui/src/pairing.rs", change: .edited, added: 9, removed: 14, line: nil),
@@ -143,7 +143,7 @@ enum ComponentCatalog {
                 server: "github", tool: "create_issue", fact: "", state: .succeeded, result: ""),
                 decision: Decision(outcome: .allowed, elsewhere: true, granted: nil, note: nil))),
             row("command-asking", r("x6", 16, .command(
-                command: "cargo test -p amux-ui", state: .pending, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
+                command: "cargo test -p amux-ui", state: .asking, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
                 durationMs: nil, exitCode: nil), attention: true)),
             row("explore", r("e1", 17, .explore(verb: .read, subject: "crates/wire/src/codes.rs", state: .succeeded))),
             row("run", r("e2", 18, .explore(verb: .search, subject: "INVALID_PIN", state: .succeeded),
@@ -186,30 +186,30 @@ enum ComponentCatalog {
                 r("a4", 36, .explore(verb: .search, subject: "INVALID_PIN", state: .succeeded), parent: "a3"),
                 r("a5", 37, .explore(verb: .read, subject: "wire/src/codes.rs", state: .succeeded), parent: "a3")),
             row("ask-question", height: 130, r("q1", 38, .ask(.questions(
-                questions: [F.redactionQuestion], answers: [AnswerView(picked: ["amux-core"], hidden: false, note: nil, other: nil)],
+                questions: [F.redactionQuestion], answers: [AnswerView(picked: ["amux-core"], hidden: false, skipped: false, note: nil, other: nil)],
                 skipped: 0, resolution: .answered, reply: nil)))),
             row("ask-questions", height: 280, r("q2", 39, .ask(.questions(
                 questions: F.threeQuestions,
-                answers: [AnswerView(picked: ["macOS", "Linux"], hidden: false, note: nil, other: nil),
-                          AnswerView(picked: ["All at once"], hidden: false, note: nil, other: nil),
+                answers: [AnswerView(picked: ["macOS", "Linux"], hidden: false, skipped: false, note: nil, other: nil),
+                          AnswerView(picked: ["All at once"], hidden: false, skipped: false, note: nil, other: nil),
                           AnswerView(
-                            picked: [], hidden: false, note: "keep the old strings for one release",
+                            picked: [], hidden: false, skipped: false, note: "keep the old strings for one release",
                             other: "Only failures, with the host id")],
                 skipped: 0, resolution: .answered, reply: nil)))),
             row("ask-secret", height: 130, r("q3", 40, .ask(.questions(
-                questions: [F.secretQuestion], answers: [AnswerView(picked: [], hidden: true, note: nil, other: nil)],
+                questions: [F.secretQuestion], answers: [AnswerView(picked: [], hidden: true, skipped: false, note: nil, other: nil)],
                 skipped: 0, resolution: .answered, reply: nil)))),
-            row("ask-plan-approved", r("l1", 41, .ask(.plan(plan: F.plan, verdict: .approved, writing: false, note: nil)))),
-            row("ask-plan-sent-back", r("l2", 42, .ask(.plan(plan: F.plan, verdict: .sentBack, writing: false, note: "Don’t touch the wire codes yet")))),
-            row("ask-plan-accepting-edits", r("l4", 42, .ask(.plan(plan: F.plan, verdict: .approvedAcceptingEdits, writing: false, note: nil)))),
+            row("ask-plan-approved", r("l1", 41, .ask(.plan(body: F.planBody, verdict: .approved, writing: false, note: nil, title: F.planTitle)))),
+            row("ask-plan-sent-back", r("l2", 42, .ask(.plan(body: F.planBody, verdict: .sentBack, writing: false, note: "Don’t touch the wire codes yet", title: F.planTitle)))),
+            row("ask-plan-accepting-edits", r("l4", 42, .ask(.plan(body: F.planBody, verdict: .approvedAcceptingEdits, writing: false, note: nil, title: F.planTitle)))),
             row("ask-questions-replied", height: 280, r("q4", 39, .ask(.questions(
                 questions: F.threeQuestions,
-                answers: [AnswerView(picked: ["macOS"], hidden: false, note: "Linux comes later", other: nil),
-                          AnswerView(picked: [], hidden: false, note: nil, other: nil),
-                          AnswerView(picked: [], hidden: false, note: nil, other: nil)],
+                answers: [AnswerView(picked: ["macOS"], hidden: false, skipped: false, note: "Linux comes later", other: nil),
+                          AnswerView(picked: [], hidden: false, skipped: true, note: nil, other: nil),
+                          AnswerView(picked: [], hidden: false, skipped: true, note: nil, other: nil)],
                 skipped: 2, resolution: .replied, reply: "Hold off on the rollout; ask me again after the release.")))),
             row("ask-plan-open", height: 330, expanded: true, readiness: true,
-                r("l3", 43, .ask(.plan(plan: F.plan, verdict: .open, writing: false, note: nil)))),
+                r("l3", 43, .ask(.plan(body: F.planBody, verdict: .open, writing: false, note: nil, title: F.planTitle)))),
             row("ask-form", r("g1", 44, .ask(.form(server: "github", message: "Create the issue", fields: ["repository", "labels", "assignee"], resolution: .answered)))),
             row("ask-link", r("g2", 45, .ask(.link(server: "linear", message: "Sign in to Linear", url: "https://linear.app/login", resolution: .answered)))),
             row("ask-grant", r("g3", 46, .ask(.grant(
@@ -243,8 +243,8 @@ enum ComponentCatalog {
                 command: "rm -rf target", cwd: "~/src/amux", reason: "", description: "Clean the build"),
                 F.sdkPermissionChoices)),
             ask("permission-edit", height: 560, F.card(.claudeSdk, .edit(
-                path: "crates/amux-ui/src/pairing.rs", files: 1, added: 1, removed: 2, diff: F.diff,
-                reason: "", created: false), [
+                path: "crates/amux-ui/src/pairing.rs", files: 1, added: 1, removed: 2, lines: F.diff,
+                reason: "", created: false, line: 13), [
                     Choice(outcome: .allowOnce, primary: true, takesNote: false),
                     Choice(outcome: .allowAlways(subjects: [], directories: [], mode: "acceptEdits", modeName: "Accept edits", scope: .session, label: ""), primary: false, takesNote: false),
                     Choice(outcome: .deny(stops: false), primary: false, takesNote: true),
@@ -287,12 +287,12 @@ enum ComponentCatalog {
             ask("question-other", height: 460, preset: .other("Put it in amux-wire next to the codes"),
                 F.card(.claudeSdk, .question([F.redactionQuestion]), [])),
             ask("question-secret", height: 360, preset: .other("hunter2"), F.card(.codex, .question([F.secretQuestion]), [])),
-            ask("plan", height: 260, preset: .autoAccept, F.card(.claudeSdk, .plan(plan: F.plan), [
+            ask("plan", height: 260, preset: .autoAccept, F.card(.claudeSdk, .plan(body: F.planBody, title: F.planTitle), [
                 Choice(outcome: .approvePlan(autoAcceptEdits: true), primary: true, takesNote: false),
                 Choice(outcome: .approvePlan(autoAcceptEdits: false), primary: false, takesNote: false),
                 Choice(outcome: .sendBack, primary: false, takesNote: true),
             ])),
-            ask("plan-codex", height: 220, F.card(.codex, .plan(plan: F.plan), F.codexPlanChoices)),
+            ask("plan-codex", height: 220, F.card(.codex, .plan(body: F.planBody, title: F.planTitle), F.codexPlanChoices)),
             ask("form", height: 520, F.card(.claudeSdk, .form(
                 server: "github", message: "Create the issue in which repository?", fields: F.formFields), [
                     Choice(outcome: .submit, primary: true, takesNote: false),
@@ -314,7 +314,7 @@ enum ComponentCatalog {
                 command: "cargo test", cwd: "", reason: "", description: ""), [], state: .sending)),
             ask("rejected", height: 460, F.card(.claudeSdk, .command(
                 command: "cargo test -p amux-ui", cwd: "~/src/amux", reason: "", description: ""),
-                F.sdkPermissionChoices, state: .rejected("the ask was already answered in the terminal"))),
+                F.sdkPermissionChoices, state: .rejected(.closedAsk))),
             ask("not-confirmed", height: 260, F.card(.claudeSdk, .command(
                 command: "cargo test -p amux-ui", cwd: "", reason: "", description: ""),
                 F.sdkPermissionChoices, state: .notConfirmed)),
@@ -381,7 +381,7 @@ enum ComponentCatalog {
                 SentPrompt(inputId: [4], text: [.text("Run the focused tests.")], lands: .queue, underway: .mayNotHaveArrived),
             ])),
             composer("rejected", height: 240, frame: ScriptedChat.frame(refused: [
-                RefusedPrompt(inputId: [5], reason: "host_unreachable"),
+                RefusedPrompt(inputId: [5], reason: .hostUnreachable),
             ]), refusedWords: [[5]: "Run the focused tests."]),
             composer("sending", height: 280, frame: ScriptedChat.frame(
                 phase: .working, activity: Activity(kind: .working, sinceMs: 0, elapsedMs: 4_000),
@@ -549,7 +549,7 @@ enum ComponentCatalog {
             chat("plan", chat: {
                 ScriptedChat(
                     rows: F.planned, frame: ScriptedChat.frame(kind: .codex, phase: .needsYou),
-                    card: F.card(.codex, .plan(plan: F.plan), F.codexPlanChoices))
+                    card: F.card(.codex, .plan(body: F.planBody, title: F.planTitle), F.codexPlanChoices))
             }),
             chat("landing", chat: {
                 ScriptedChat(
@@ -893,9 +893,10 @@ enum CatalogFixtures {
         ```
         """
 
-    static let plan = """
-        # Collapse the pairing failures onto one message
-
+    /// A plan as the shared view hands it: the title lifted from its
+    /// opening heading, and the rest.
+    static let planTitle = "Collapse the pairing failures onto one message"
+    static let planBody = """
         The client maps gRPC statuses onto distinct strings in three places. The protocol refuses \
         to distinguish them, so the client must not either.
 
@@ -903,14 +904,16 @@ enum CatalogFixtures {
         2. Update the three specs
         """
 
-    static let diff = """
-        @@ -12,6 +12,5 @@
-           match status {
-        -      Code::NotFound => "no such host",
-        -      Code::InvalidPin => "wrong PIN",
-        +      _ => "could not pair, check the code",
-           }
-        """
+    /// An edit's patch as the shared view hands it: where its hunk starts,
+    /// then its lines.
+    static let diff: [EditLine] = [
+        .hunk(oldStart: 12, newStart: 12),
+        .line(PatchLine(kind: .context, text: "  match status {", number: 12)),
+        .line(PatchLine(kind: .removed, text: "      Code::NotFound => \"no such host\",", number: 13)),
+        .line(PatchLine(kind: .removed, text: "      Code::InvalidPin => \"wrong PIN\",", number: 14)),
+        .line(PatchLine(kind: .added, text: "      _ => \"could not pair, check the code\",", number: 13)),
+        .line(PatchLine(kind: .context, text: "  }", number: 14)),
+    ]
 
     /// As the shared view reads a schema with a defaulted repository, a
     /// choice of labels and a defaulted toggle.
@@ -994,7 +997,7 @@ enum CatalogFixtures {
         ScriptedChat.row("p1", 1, .prompt(text: [.text("Plan how to collapse the pairing errors.")], steered: false)),
         ScriptedChat.row("e1", 2, .explore(verb: .search, subject: "INVALID_PIN", state: .succeeded)),
         ScriptedChat.row("e2", 3, .explore(verb: .read, subject: "wire/src/codes.rs", state: .succeeded)),
-        ScriptedChat.row("l1", 4, .ask(.plan(plan: plan, verdict: .open, writing: false, note: nil))),
+        ScriptedChat.row("l1", 4, .ask(.plan(body: planBody, verdict: .open, writing: false, note: nil, title: planTitle))),
     ]
 
     static func card(
@@ -1011,7 +1014,7 @@ enum CatalogFixtures {
         durationMs: nil, exitCode: nil))
 
     static let askedCommand = ScriptedChat.row("x6", 60, .command(
-        command: "cargo test -p amux-ui", state: .pending, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
+        command: "cargo test -p amux-ui", state: .asking, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
         durationMs: nil, exitCode: nil), attention: true)
 
     static let conversation: [Row] = {

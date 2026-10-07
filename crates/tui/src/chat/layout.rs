@@ -15,7 +15,7 @@ use ui_state::{Fold, ItemClass, Key, SessionState};
 use ui_view::{ChatOptions, LIVE_STEPS, Row, RunCounts, ToolRows, chat_rows_for};
 
 use super::feed::{self, Header, LineHits, Placement};
-use super::rows::{OPEN_LINES, PATCH_HEAD_LINES, RowFacts, RowState, on_rail, row_lines};
+use super::rows::{RowFacts, RowState, on_rail, row_lines};
 use crate::theme::Theme;
 
 /// How a chat draws its runs of tool steps: the person's choice, kept for
@@ -209,19 +209,7 @@ impl Frame<'_> {
             rail: joined || (tool && self.tool_beside(state, order, true)),
             joined,
         };
-        let mut facts = RowFacts {
-            leader: self.leader,
-            ..RowFacts::default()
-        };
-        if matches!(shown.kind, ui_view::RowKind::FileChange { .. }) {
-            let lines = if expanded {
-                OPEN_LINES
-            } else {
-                PATCH_HEAD_LINES
-            };
-            facts.patch = ui_view::patch_head(state, &shown.id, lines);
-        }
-        let mut lines = row_lines(&shown, row_state, &facts, self.width, self.theme);
+        let mut lines = row_lines(&shown, row_state, self.width, self.theme);
         if child_open {
             for line in &mut lines {
                 line.spans.insert(0, "  ".into());

@@ -79,6 +79,38 @@ pub fn kind_from_tag(tag: &str) -> Option<Kind> {
     }
 }
 
+/// Why an input was refused: the reasons a `Rejected` reply carries. Every
+/// side that refuses an input takes its reason from here, and the clients'
+/// shared state maps each to a typed value, so the two cannot drift.
+pub mod refusal {
+    /// The ask the answer names is no longer open.
+    pub const CLOSED_ASK: &str = "closed_ask";
+    /// The queued prompt the input names is no longer queued.
+    pub const NOT_QUEUED: &str = "not_queued";
+    /// This agent cannot take an input of this kind.
+    pub const UNSUPPORTED: &str = "unsupported";
+    /// The agent's host is shutting down.
+    pub const DRAINING: &str = "draining";
+    /// The agent has decided to exit.
+    pub const EXITING: &str = "exiting";
+    /// The agent has exited; the composer offers Resume.
+    pub const EXITED: &str = "exited";
+    /// The agent's host cannot be reached from the daemon that took the
+    /// input.
+    pub const HOST_UNREACHABLE: &str = "host_unreachable";
+
+    /// Every reason above.
+    pub const ALL: [&str; 7] = [
+        CLOSED_ASK,
+        NOT_QUEUED,
+        UNSUPPORTED,
+        DRAINING,
+        EXITING,
+        EXITED,
+        HOST_UNREACHABLE,
+    ];
+}
+
 /// The longest name an agent can have.
 pub const AGENT_NAME_MOST: usize = 64;
 

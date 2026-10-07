@@ -12,9 +12,9 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde_json::{Map, Value};
 use ui_view::{
-    AskBody, AskCard, CardState, Choice, ChoiceOutcome, FormField as Field,
-    FormFieldKind as FieldKind, PermissionGrant, Pick, QuestionResponse, QuestionView, Scope,
-    answer_input, question_answer, reply_answer, with_form_content,
+    AskBody, AskCard, CardState, Choice, ChoiceOutcome, EditLine, FormField as Field,
+    FormFieldKind as FieldKind, LineKind, PermissionGrant, Pick, QuestionResponse, QuestionView,
+    Scope, answer_input, question_answer, reply_answer, with_form_content,
 };
 
 use crate::editor::Editor;
@@ -661,8 +661,10 @@ impl AskUi {
         }
         out.lines.push(head);
         if let CardState::Rejected(reason) = &card.state {
-            out.lines
-                .push(line(format!("Not sent: {reason}"), theme.error()));
+            out.lines.push(line(
+                format!("Not sent: {}", super::refusal_words(reason)),
+                theme.error(),
+            ));
         }
 
         // The subject, verbatim in the code colour: never cut short
@@ -743,7 +745,8 @@ impl AskUi {
             AskBody::Edit {
                 path,
                 files,
-                diff,
+                lines: patch,
+                line: first,
                 reason,
                 ..
             } => {
@@ -758,18 +761,21 @@ impl AskUi {
                         width,
                     );
                 }
-                if let Some(line) = first_hunk_line(diff) {
+                if let Some(line) = first {
                     push(&mut name, format!(" · line {line}"), theme.faint(), width);
                 }
                 out.lines.push(name);
                 for part in text::wrap(reason, width.max(1)) {
                     out.lines.push(line(part, theme.faint()));
                 }
-                // The patch's first lines as the review page draws them.
-                let lines: Vec<&str> = diff
-                    .lines()
-                    .filter(|l| {
-                        !l.starts_with("@@") && !l.starts_with("---") && !l.starts_with("+++")
+                // The patch's first lines as the review page draws them; the
+                // line beside the path says where its change starts, so the
+                // hunks' starts are not drawn.
+                let lines: Vec<_> = patch
+                    .iter()
+                    .filter_map(|line| match line {
+                        EditLine::Line(line) => Some(line),
+                        EditLine::Hunk { .. } => None,
                     })
                     .collect();
                 // Opened ([Full Diff] or f), the whole patch shows in the
@@ -794,12 +800,12 @@ impl AskUi {
                     lines.len()
                 };
                 for l in lines.iter().skip(scroll).take(take) {
-                    let (mark, style) = match l.chars().next() {
-                        Some('+') => ('+', theme.diff_added()),
-                        Some('-') => ('-', theme.diff_removed()),
-                        _ => (' ', theme.diff_context()),
+                    let (mark, style) = match l.kind {
+                        LineKind::Added => ('+', theme.diff_added()),
+                        LineKind::Removed => ('-', theme.diff_removed()),
+                        LineKind::Context => (' ', theme.diff_context()),
                     };
-                    let body = l.get(1..).unwrap_or_default();
+                    let body = &l.text;
                     let mut row = Line::default();
                     push(
                         &mut row,
@@ -899,15 +905,6 @@ impl AskUi {
         }
         out
     }
-}
-
-/// The new file's first line a patch touches: "@@ -10,3 +12,4 @@" is 12.
-fn first_hunk_line(diff: &str) -> Option<u32> {
-    let header = diff.lines().find(|line| line.starts_with("@@"))?;
-    let new = header
-        .split_whitespace()
-        .find(|part| part.starts_with('+'))?;
-    new[1..].split(',').next()?.parse().ok()
 }
 
 /// The end of `words` in at most `max` columns, "…" where it is cut.

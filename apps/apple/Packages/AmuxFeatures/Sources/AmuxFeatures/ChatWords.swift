@@ -84,36 +84,45 @@ public enum ChatWords {
         }
     }
 
-    /// A call's state beside it, when the verb does not already say it.
-    public static func state(_ state: ToolStateView) -> String? {
-        switch state {
-        case .pending: String(localized: "waiting")
+    /// A call's phase beside it, for a row whose verb does not say it. With
+    /// a decision on the row, the decision says what came of asking, so the
+    /// phase's word for the same thing is left to it.
+    public static func state(_ phase: CallPhase, decided: Bool) -> String? {
+        switch phase {
+        case .asking, .pending: decided ? nil : String(localized: "waiting")
         case .running: String(localized: "running")
         case .succeeded: nil
         case .failed: String(localized: "failed")
-        case .denied: String(localized: "denied")
-        case .cancelled: String(localized: "cancelled")
+        case .denied: decided ? nil : String(localized: "denied")
+        case .cancelled: decided ? nil : String(localized: "cancelled")
         }
     }
 
-    /// A call's verb says what happened to it: waiting for the person, under
-    /// way, refused, cancelled or done.
+    /// A call's verb says what happened to it: asking the person, under way,
+    /// refused, cancelled or done.
     public static func verb(
-        _ state: ToolStateView, _ row: Row, wants: String, doing: String, done: String
+        _ phase: CallPhase, _ row: Row, wants: String, doing: String, done: String
     ) -> String {
-        let denied = state == .denied || row.decision?.outcome == .denied
-        if denied { return String(localized: "Denied") }
-        switch state {
-        case .pending: return wants
-        // An open ask points at the call: it runs only if the person allows it.
-        case .running where row.attention && row.decision == nil: return wants
-        case .running: return doing
+        switch phase {
+        case .denied: return String(localized: "Denied")
+        case .asking: return wants
+        case .pending, .running: return doing
         case .cancelled: return String(localized: "Cancelled")
         // A call that went through on a decision says so; its glyph says what it was.
         case .succeeded where row.decision?.outcome == .allowed: return String(localized: "Allowed")
         case .succeeded where row.decision?.outcome == .autoApproved:
             return String(localized: "Auto-approved")
-        case .succeeded, .failed, .denied: return done
+        case .succeeded, .failed: return done
+        }
+    }
+
+    /// Whether the verb ``verb(_:_:wants:doing:done:)`` gives a call in this
+    /// phase already names its decision's outcome.
+    public static func verbSays(_ phase: CallPhase, _ outcome: DecisionView) -> Bool {
+        switch outcome {
+        case .denied: phase == .denied
+        case .allowed, .autoApproved: phase == .succeeded
+        case .dismissed: false
         }
     }
 
@@ -139,50 +148,33 @@ public enum ChatWords {
         return parts.joined(separator: " · ")
     }
 
-    /// The row's meta with its decision after it; the call's own state word
-    /// for the same thing is dropped. A row that says the person's note on
-    /// a line of its own leaves it out with `note: false`.
+    /// The row's meta with its decision after it. `verbPhase` is the phase
+    /// of a row whose verb comes from ``verb(_:_:wants:doing:done:)``, so the
+    /// decision's outcome is left off where that verb says it. A row that
+    /// says the person's note on a line of its own leaves it out with
+    /// `note: false`.
     public static func meta(
-        _ meta: [String], _ row: Row, verb: String = "", note: Bool = true
+        _ meta: [String], _ row: Row, verbPhase: CallPhase? = nil, note: Bool = true
     ) -> String {
-        guard let decision = row.decision else {
-            return meta.filter { !$0.isEmpty }.joined(separator: " · ")
+        var kept = meta.filter { !$0.isEmpty }
+        if let decision = row.decision {
+            let decided = Self.decision(
+                decision,
+                verbSaysIt: verbPhase.map { verbSays($0, decision.outcome) } ?? false,
+                note: note)
+            if !decided.isEmpty { kept.append(decided) }
         }
-        let dropped: Set<String> = [
-            String(localized: "denied"), String(localized: "cancelled"),
-            String(localized: "waiting"),
-        ]
-        var kept = meta.filter { !$0.isEmpty && !dropped.contains($0) }
-        let decided = Self.decision(
-            decision,
-            verbSaysIt: Self.says(verb, decision.outcome),
-            note: note)
-        if !decided.isEmpty { kept.append(decided) }
         return kept.joined(separator: " · ")
-    }
-
-    /// Whether a row's verb already names the decision's outcome.
-    private static func says(_ verb: String, _ outcome: DecisionView) -> Bool {
-        switch outcome {
-        case .denied: verb == String(localized: "Denied")
-        case .allowed: verb == String(localized: "Allowed")
-        case .autoApproved: verb == String(localized: "Auto-approved")
-        case .dismissed: false
-        }
     }
 
     public static func answer(_ answer: AnswerView) -> String {
         if answer.hidden { return String(localized: "answered (hidden)") }
-        if skipped(answer) { return String(localized: "Skipped") }
+        if answer.skipped { return String(localized: "Skipped") }
         var picks = answer.picked
         if let other = answer.other { picks.append("“\(other)”") }
         return picks.joined(separator: ", ")
     }
 
-    /// Nothing picked, typed or hidden: the question was left unanswered.
-    public static func skipped(_ answer: AnswerView) -> Bool {
-        answer.picked.isEmpty && answer.other == nil && !answer.hidden
-    }
 
     public static func resolution(_ resolution: Resolution, answered: String) -> String {
         switch resolution {
@@ -687,7 +679,7 @@ public enum ChatWords {
     public static func headline(_ card: AskCard) -> String {
         switch card.body {
         case .command: return String(localized: "Wants to run a command")
-        case .edit(_, let files, _, _, _, _, _) where files > 1:
+        case .edit(_, let files, _, _, _, _, _, _) where files > 1:
             return String(localized: "Wants to edit \(files) files")
         case .edit: return String(localized: "Wants to edit a file")
         case .tool(let server, let tool, _):

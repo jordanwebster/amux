@@ -43,7 +43,8 @@ public struct AccountView: Codable, Hashable, Sendable {
 /// What an act on a chat came to.
 public enum ActOutcome: Codable, Hashable, Sendable {
     case done
-    case rejected(String)
+    /// The agent or its host refused it.
+    case rejected(RefusalReason)
     /// The connection dropped before the agent answered.
     case notConfirmed
     /// The call did not reach the agent.
@@ -76,7 +77,7 @@ public enum ActOutcome: Codable, Hashable, Sendable {
         }
         switch _tag {
         case .rejected:
-            self = .rejected(try _container.decode(String.self, forKey: .rejected))
+            self = .rejected(try _container.decode(RefusalReason.self, forKey: .rejected))
         case .failed:
             self = .failed(try _container.decode(String.self, forKey: .failed))
         }
@@ -318,18 +319,20 @@ public enum AgentNameProblem: String, Codable, Hashable, Sendable, CaseIterable 
 }
 
 /// One question's answer: the picked options, a typed answer, or a secret
-/// answer that reads "answered (hidden)". None of them is a skip.
+/// answer that reads "answered (hidden)"; skipped when it is none of them.
 public struct AnswerView: Codable, Hashable, Sendable {
     /// "(Recommended)" lifted off, as on the card.
     public var picked: [String]
     public var hidden: Bool
+    public var skipped: Bool
     /// The person's note on this question.
     public var note: String?
     public var other: String?
 
-    public init(picked: [String], hidden: Bool, note: String?, other: String?) {
+    public init(picked: [String], hidden: Bool, skipped: Bool, note: String?, other: String?) {
         self.picked = picked
         self.hidden = hidden
+        self.skipped = skipped
         self.note = note
         self.other = other
     }
@@ -337,6 +340,7 @@ public struct AnswerView: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case picked
         case hidden
+        case skipped
         case note
         case other
     }
@@ -344,10 +348,14 @@ public struct AnswerView: Codable, Hashable, Sendable {
 
 public enum AskBody: Codable, Hashable, Sendable {
     case command(command: String, cwd: String, reason: String, description: String)
-    case edit(path: String, files: UInt32, added: UInt32, removed: UInt32, diff: String, reason: String, created: Bool?)
+    /// The patch's lines, and the new file's line its first change lands
+    /// on when the patch says (a Claude edit's does not: it is only the
+    /// text replaced and the text replacing it).
+    case edit(path: String, files: UInt32, added: UInt32, removed: UInt32, lines: [EditLine], reason: String, created: Bool?, line: UInt32?)
     case tool(server: String, tool: String, arguments: String)
     case question([QuestionView])
-    case plan(plan: String)
+    /// The plan's title and body, as its row has them.
+    case plan(body: String, title: String?)
     case form(server: String, message: String, fields: [FormField])
     case link(server: String, message: String, url: String)
     case access(reason: String, read: [String], write: [String], network: Bool, hosts: [String])
@@ -379,9 +387,10 @@ public enum AskBody: Codable, Hashable, Sendable {
         case files
         case added
         case removed
-        case diff
+        case lines
         case reason
         case created
+        case line
     }
 
     private enum ToolKeys: String, CodingKey {
@@ -391,7 +400,8 @@ public enum AskBody: Codable, Hashable, Sendable {
     }
 
     private enum PlanKeys: String, CodingKey {
-        case plan
+        case body
+        case title
     }
 
     private enum FormKeys: String, CodingKey {
@@ -443,9 +453,10 @@ public enum AskBody: Codable, Hashable, Sendable {
                 files: try _fields.decode(UInt32.self, forKey: .files),
                 added: try _fields.decode(UInt32.self, forKey: .added),
                 removed: try _fields.decode(UInt32.self, forKey: .removed),
-                diff: try _fields.decode(String.self, forKey: .diff),
+                lines: try _fields.decode([EditLine].self, forKey: .lines),
                 reason: try _fields.decode(String.self, forKey: .reason),
-                created: try _fields.decodeIfPresent(Bool.self, forKey: .created))
+                created: try _fields.decodeIfPresent(Bool.self, forKey: .created),
+                line: try _fields.decodeIfPresent(UInt32.self, forKey: .line))
         case .tool:
             let _fields = try _container.nestedContainer(
                 keyedBy: ToolKeys.self, forKey: .tool)
@@ -459,7 +470,8 @@ public enum AskBody: Codable, Hashable, Sendable {
             let _fields = try _container.nestedContainer(
                 keyedBy: PlanKeys.self, forKey: .plan)
             self = .plan(
-                plan: try _fields.decode(String.self, forKey: .plan))
+                body: try _fields.decode(String.self, forKey: .body),
+                title: try _fields.decodeIfPresent(String.self, forKey: .title))
         case .form:
             let _fields = try _container.nestedContainer(
                 keyedBy: FormKeys.self, forKey: .form)
@@ -500,16 +512,17 @@ public enum AskBody: Codable, Hashable, Sendable {
             try _fields.encode(cwd, forKey: .cwd)
             try _fields.encode(reason, forKey: .reason)
             try _fields.encode(description, forKey: .description)
-        case .edit(let path, let files, let added, let removed, let diff, let reason, let created):
+        case .edit(let path, let files, let added, let removed, let lines, let reason, let created, let line):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: EditKeys.self, forKey: .edit)
             try _fields.encode(path, forKey: .path)
             try _fields.encode(files, forKey: .files)
             try _fields.encode(added, forKey: .added)
             try _fields.encode(removed, forKey: .removed)
-            try _fields.encode(diff, forKey: .diff)
+            try _fields.encode(lines, forKey: .lines)
             try _fields.encode(reason, forKey: .reason)
             try _fields.encodeIfPresent(created, forKey: .created)
+            try _fields.encodeIfPresent(line, forKey: .line)
         case .tool(let server, let tool, let arguments):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: ToolKeys.self, forKey: .tool)
@@ -519,10 +532,11 @@ public enum AskBody: Codable, Hashable, Sendable {
         case .question(let _value):
             var _container = encoder.container(keyedBy: Tag.self)
             try _container.encode(_value, forKey: .question)
-        case .plan(let plan):
+        case .plan(let body, let title):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: PlanKeys.self, forKey: .plan)
-            try _fields.encode(plan, forKey: .plan)
+            try _fields.encode(body, forKey: .body)
+            try _fields.encodeIfPresent(title, forKey: .title)
         case .form(let server, let message, let fields):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: FormKeys.self, forKey: .form)
@@ -612,8 +626,11 @@ public struct AskCard: Codable, Hashable, Sendable {
 }
 
 public enum AskRow: Codable, Hashable, Sendable {
-    /// A plan the agent proposed, and what the person decided.
-    case plan(plan: String, verdict: PlanVerdict, writing: Bool, note: String?)
+    /// A plan the agent proposed, and what the person decided: its title,
+    /// lifted from an opening heading that names it, and the rest as its
+    /// body. While its first line is still being written there is no title
+    /// yet and nothing of that line in the body.
+    case plan(body: String, verdict: PlanVerdict, writing: Bool, note: String?, title: String?)
     /// Questions asked as the work, then the answers sent: "answered 2 of
     /// 3", or the person's own words when they replied instead.
     case questions(questions: [QuestionView], answers: [AnswerView], skipped: UInt32, resolution: Resolution, reply: String?)
@@ -638,10 +655,11 @@ public enum AskRow: Codable, Hashable, Sendable {
     }
 
     private enum PlanKeys: String, CodingKey {
-        case plan
+        case body
         case verdict
         case writing
         case note
+        case title
     }
 
     private enum QuestionsKeys: String, CodingKey {
@@ -694,10 +712,11 @@ public enum AskRow: Codable, Hashable, Sendable {
             let _fields = try _container.nestedContainer(
                 keyedBy: PlanKeys.self, forKey: .plan)
             self = .plan(
-                plan: try _fields.decode(String.self, forKey: .plan),
+                body: try _fields.decode(String.self, forKey: .body),
                 verdict: try _fields.decode(PlanVerdict.self, forKey: .verdict),
                 writing: try _fields.decode(Bool.self, forKey: .writing),
-                note: try _fields.decodeIfPresent(String.self, forKey: .note))
+                note: try _fields.decodeIfPresent(String.self, forKey: .note),
+                title: try _fields.decodeIfPresent(String.self, forKey: .title))
         case .questions:
             let _fields = try _container.nestedContainer(
                 keyedBy: QuestionsKeys.self, forKey: .questions)
@@ -745,13 +764,14 @@ public enum AskRow: Codable, Hashable, Sendable {
 
     public func encode(to encoder: any Encoder) throws {
         switch self {
-        case .plan(let plan, let verdict, let writing, let note):
+        case .plan(let body, let verdict, let writing, let note, let title):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: PlanKeys.self, forKey: .plan)
-            try _fields.encode(plan, forKey: .plan)
+            try _fields.encode(body, forKey: .body)
             try _fields.encode(verdict, forKey: .verdict)
             try _fields.encode(writing, forKey: .writing)
             try _fields.encodeIfPresent(note, forKey: .note)
+            try _fields.encodeIfPresent(title, forKey: .title)
         case .questions(let questions, let answers, let skipped, let resolution, let reply):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: QuestionsKeys.self, forKey: .questions)
@@ -1256,14 +1276,30 @@ public enum BoundaryKind: String, Codable, Hashable, Sendable, CaseIterable {
     case daemonLost = "DaemonLost"
 }
 
+/// Where a call stands for the person: one answer both clients word and
+/// branch on. Asking: an open ask points at it and nothing has decided it
+/// yet, so it runs only if the person allows it. Pending: announced, not
+/// started, and asking nobody. Denied: refused, by the person or by the
+/// agent's own rules, whatever the call reports after. The rest are the
+/// call's own state.
+public enum CallPhase: String, Codable, Hashable, Sendable, CaseIterable {
+    case asking = "Asking"
+    case pending = "Pending"
+    case running = "Running"
+    case succeeded = "Succeeded"
+    case failed = "Failed"
+    case denied = "Denied"
+    case cancelled = "Cancelled"
+}
+
 /// Where the card is after the person acts. Stop is in the menu while a
 /// turn runs: it is the interrupt, and the agent stays.
 public enum CardState: Codable, Hashable, Sendable {
     case open
     /// Shrunk to one line until the agent confirms.
     case sending
-    /// The card is back, with the reason.
-    case rejected(String)
+    /// The card is back, with why the answer was refused.
+    case rejected(RefusalReason)
     /// The connection dropped before a reply: resend or discard.
     case notConfirmed
     /// The agent exited with the ask open.
@@ -1297,7 +1333,7 @@ public enum CardState: Codable, Hashable, Sendable {
         }
         switch _tag {
         case .rejected:
-            self = .rejected(try _container.decode(String.self, forKey: .rejected))
+            self = .rejected(try _container.decode(RefusalReason.self, forKey: .rejected))
         }
     }
 
@@ -2107,6 +2143,58 @@ public enum DraftAttachment: Codable, Hashable, Sendable {
     }
 }
 
+/// One line of an edit's patch as an ask carries it: where a hunk starts,
+/// by its first line in the old file and the new, or a line of the patch.
+/// A file's own header lines are not carried. Each client decides whether
+/// to draw a hunk's start.
+public enum EditLine: Codable, Hashable, Sendable {
+    case hunk(oldStart: UInt32, newStart: UInt32)
+    case line(PatchLine)
+
+    private enum Tag: String, CodingKey {
+        case hunk = "Hunk"
+        case line = "Line"
+    }
+
+    private enum HunkKeys: String, CodingKey {
+        case oldStart = "old_start"
+        case newStart = "new_start"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a EditLine names exactly one variant"))
+        }
+        switch _tag {
+        case .hunk:
+            let _fields = try _container.nestedContainer(
+                keyedBy: HunkKeys.self, forKey: .hunk)
+            self = .hunk(
+                oldStart: try _fields.decode(UInt32.self, forKey: .oldStart),
+                newStart: try _fields.decode(UInt32.self, forKey: .newStart))
+        case .line:
+            self = .line(try _container.decode(PatchLine.self, forKey: .line))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .hunk(let oldStart, let newStart):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: HunkKeys.self, forKey: .hunk)
+            try _fields.encode(oldStart, forKey: .oldStart)
+            try _fields.encode(newStart, forKey: .newStart)
+        case .line(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .line)
+        }
+    }
+}
+
 public struct EffortChoice: Codable, Hashable, Sendable {
     public var value: String
     public var current: Bool
@@ -2841,7 +2929,7 @@ public enum InputState: Codable, Hashable, Sendable {
     case queued
     /// Accepted and, for a prompt, reflected by an item.
     case settled
-    case rejected(String)
+    case rejected(RefusalReason)
     /// The connection dropped before a reply. Resolved only at CaughtUp from
     /// the snapshot's queue and the items; one found in neither stays here
     /// and the person decides. Nothing is resent on its own.
@@ -2875,7 +2963,7 @@ public enum InputState: Codable, Hashable, Sendable {
         }
         switch _tag {
         case .rejected:
-            self = .rejected(try _container.decode(String.self, forKey: .rejected))
+            self = .rejected(try _container.decode(RefusalReason.self, forKey: .rejected))
         }
     }
 
@@ -3357,6 +3445,27 @@ public struct PairedPeer: Codable, Hashable, Sendable {
     }
 }
 
+/// One line of a patch, numbered on the side it belongs to (the new file
+/// for context and added lines, the old for removed ones) when the provider
+/// said where its hunk starts.
+public struct PatchLine: Codable, Hashable, Sendable {
+    public var kind: LineKind
+    public var text: String
+    public var number: UInt32?
+
+    public init(kind: LineKind, text: String, number: UInt32?) {
+        self.kind = kind
+        self.text = text
+        self.number = number
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case text
+        case number
+    }
+}
+
 /// A machine a pairing has reached and authenticated, before this device
 /// trusts it: what the person compares and then accepts or turns away.
 public struct PendingPair: Codable, Hashable, Sendable {
@@ -3822,13 +3931,94 @@ public enum Reach: Codable, Hashable, Sendable {
     }
 }
 
+/// Why the agent or its host refused an input, as every client tells it:
+/// the agent had exited or was exiting, its host is shutting down or cannot
+/// be reached, this agent cannot take an input of the kind, the ask the
+/// answer names had closed, or the queued prompt it names was no longer
+/// queued. A reason this build does not know is kept as the host gave it,
+/// to show as it is.
+public enum RefusalReason: Codable, Hashable, Sendable {
+    case exited
+    case exiting
+    case draining
+    case hostUnreachable
+    case unsupported
+    case closedAsk
+    case notQueued
+    case other(String)
+
+    private enum Tag: String, CodingKey {
+        case other = "Other"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "Exited": self = .exited
+            case "Exiting": self = .exiting
+            case "Draining": self = .draining
+            case "HostUnreachable": self = .hostUnreachable
+            case "Unsupported": self = .unsupported
+            case "ClosedAsk": self = .closedAsk
+            case "NotQueued": self = .notQueued
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no RefusalReason is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a RefusalReason names exactly one variant"))
+        }
+        switch _tag {
+        case .other:
+            self = .other(try _container.decode(String.self, forKey: .other))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .exited:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Exited")
+        case .exiting:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Exiting")
+        case .draining:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Draining")
+        case .hostUnreachable:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("HostUnreachable")
+        case .unsupported:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Unsupported")
+        case .closedAsk:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("ClosedAsk")
+        case .notQueued:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("NotQueued")
+        case .other(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .other)
+        }
+    }
+}
+
 /// A prompt the agent refused. Its words go back to the composer, with
-/// the reason, and it is forgotten.
+/// why, and it is forgotten.
 public struct RefusedPrompt: Codable, Hashable, Sendable {
     public var inputId: [UInt8]
-    public var reason: String
+    public var reason: RefusalReason
 
-    public init(inputId: [UInt8], reason: String) {
+    public init(inputId: [UInt8], reason: RefusalReason) {
         self.inputId = inputId
         self.reason = reason
     }
@@ -4012,10 +4202,10 @@ public enum RowKind: Codable, Hashable, Sendable {
     case prose(text: [Segment], streaming: Bool, workingNote: Bool)
     /// "Thought for 8s"; the text when the provider records it.
     case thinking(text: String, open: Bool, durationMs: Int64?)
-    case toolCall(server: String, tool: String, fact: String, state: ToolStateView, result: String)
-    case fileChange(files: [FileRow], state: ToolStateView)
-    case command(command: String, state: ToolStateView, outputHead: [String], moreLines: UInt, outputTrimmed: Bool, outputTail: [String], durationMs: Int64?, exitCode: Int32?)
-    case explore(verb: ExploreVerb, subject: String, state: ToolStateView)
+    case toolCall(server: String, tool: String, fact: String, state: CallPhase, result: String)
+    case fileChange(files: [FileRow], state: CallPhase)
+    case command(command: String, state: CallPhase, outputHead: [String], moreLines: UInt, outputTrimmed: Bool, outputTail: [String], durationMs: Int64?, exitCode: Int32?)
+    case explore(verb: ExploreVerb, subject: String, state: CallPhase)
     case subagent(description: String, running: Bool, toolCount: UInt32, lastTool: String, answer: String, durationMs: Int64?)
     case background(command: String, running: Bool, durationMs: Int64?)
     case image(path: String, generated: Bool, image: BlobRef?)
@@ -4229,20 +4419,20 @@ public enum RowKind: Codable, Hashable, Sendable {
                 server: try _fields.decode(String.self, forKey: .server),
                 tool: try _fields.decode(String.self, forKey: .tool),
                 fact: try _fields.decode(String.self, forKey: .fact),
-                state: try _fields.decode(ToolStateView.self, forKey: .state),
+                state: try _fields.decode(CallPhase.self, forKey: .state),
                 result: try _fields.decode(String.self, forKey: .result))
         case .fileChange:
             let _fields = try _container.nestedContainer(
                 keyedBy: FileChangeKeys.self, forKey: .fileChange)
             self = .fileChange(
                 files: try _fields.decode([FileRow].self, forKey: .files),
-                state: try _fields.decode(ToolStateView.self, forKey: .state))
+                state: try _fields.decode(CallPhase.self, forKey: .state))
         case .command:
             let _fields = try _container.nestedContainer(
                 keyedBy: CommandKeys.self, forKey: .command)
             self = .command(
                 command: try _fields.decode(String.self, forKey: .command),
-                state: try _fields.decode(ToolStateView.self, forKey: .state),
+                state: try _fields.decode(CallPhase.self, forKey: .state),
                 outputHead: try _fields.decode([String].self, forKey: .outputHead),
                 moreLines: try _fields.decode(UInt.self, forKey: .moreLines),
                 outputTrimmed: try _fields.decode(Bool.self, forKey: .outputTrimmed),
@@ -4255,7 +4445,7 @@ public enum RowKind: Codable, Hashable, Sendable {
             self = .explore(
                 verb: try _fields.decode(ExploreVerb.self, forKey: .verb),
                 subject: try _fields.decode(String.self, forKey: .subject),
-                state: try _fields.decode(ToolStateView.self, forKey: .state))
+                state: try _fields.decode(CallPhase.self, forKey: .state))
         case .subagent:
             let _fields = try _container.nestedContainer(
                 keyedBy: SubagentKeys.self, forKey: .subagent)
@@ -5205,15 +5395,6 @@ public enum ToolRowsOption: Codable, Hashable, Sendable {
             try _fields.encode(open, forKey: .open)
         }
     }
-}
-
-public enum ToolStateView: String, Codable, Hashable, Sendable, CaseIterable {
-    case pending = "Pending"
-    case running = "Running"
-    case succeeded = "Succeeded"
-    case failed = "Failed"
-    case denied = "Denied"
-    case cancelled = "Cancelled"
 }
 
 /// How a prompt of this client's is on its way.

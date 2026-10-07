@@ -1,5 +1,5 @@
 ● Wants to edit
-crates/tui/src/fleet.rs · line 10
+crates/tui/src/fleet.rs · line 11
 
   let a = 1;
 - let b = 2;
