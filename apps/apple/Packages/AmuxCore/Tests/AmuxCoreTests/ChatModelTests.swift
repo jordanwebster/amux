@@ -313,6 +313,30 @@ final class ChatModelTests: XCTestCase {
         XCTAssertGreaterThan(model.revision(of: "b"), laidOut, "a row that changed is measured again")
     }
 
+    /// The frame is read from the session as it is now, while the rows it
+    /// caught up on are named by a change that can come a wake later: the
+    /// chat never offers to send the draft without those rows.
+    func testAChatThatCaughtUpHoldsTheRowsItCaughtUpOnBeforeItCanSend() {
+        let source = FakeChat(rows: [row("a", 1)], frame: frame(caughtUp: false))
+        let model = ChatModel(source: source)
+        model.draft = "Pick up where we left off."
+        XCTAssertFalse(model.canSend)
+
+        // The session caught up on b, and a wake for the connection reads
+        // the frame before the change naming b has come.
+        source.ordered.append(row("b", 2))
+        source.current.caughtUp = true
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        XCTAssertTrue(model.canSend)
+        XCTAssertEqual(model.ids, ["a", "b"], "the rows it caught up on are held once it can send")
+
+        // The change naming b comes after: nothing is added twice.
+        source.pending = ChatChanges(keys: ["b"], reloaded: false, session: false)
+        model.woke()
+        XCTAssertEqual(model.ids, ["a", "b"])
+    }
+
     /// A running activity's elapsed time moves with every frame read; the
     /// activity line counts it from when the activity began, so the frame is
     /// assigned again only for what else moved.

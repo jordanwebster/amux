@@ -1,3 +1,12 @@
+2026-10-07 — **A phone chat that catches up holds what it caught up on before it can send.**
+The leave-and-recover phone story once saw the composer ready to send
+before the turn the phone had missed was on screen. The phone reads a
+chat's frame (which says whether it has caught up) from the session as it
+is now, but learns of new rows only from the change batch that names them,
+which a separate task pushes a moment later. A wake landing in between
+showed "caught up" one wake before the missed rows. When a frame turns
+caught up, the chat now takes the session's newer rows at once.
+
 2026-10-07 — **The repository-listing test asks through the unpairing.**
 `just test` once failed in node's registry test: after the desk unpaired
 the laptop, the laptop's next forwarded listing came back "stopped

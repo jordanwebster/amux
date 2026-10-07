@@ -405,6 +405,13 @@ public final class ChatModel {
             frame = source.frame()
         }
         if self.frame.map(Self.drawn) != frame.map(Self.drawn) { self.frame = frame }
+        // The frame is read from the session as it is now, but rows arrive
+        // with the change that names them, which can come a wake later. A
+        // chat that has just caught up says the draft can go, so the rows
+        // it caught up on are taken now, not after it says so.
+        if frame?.caughtUp == true, before?.caughtUp != true, !ids.isEmpty || !source.keys().isEmpty {
+            extend()
+        }
         let ask = source.askCard()
         if self.ask != ask { self.ask = ask }
         if let kept = questionKept?.ask, kept != ask?.key { questionKept = nil }
