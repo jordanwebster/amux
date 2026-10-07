@@ -1,3 +1,12 @@
+2026-10-07 — **The phone reads a host moving at once.**
+Spacing the phone's fleet reads 250 ms apart also delayed the read that
+shows a host has come current, so a phone reconnecting through the relay
+reached its reconciled fleet about 240 ms later (1244 ms median against a
+1007 ms baseline). Each wake now takes its changes first: a host moving is
+read at once, and only agents' changes soon after a read wait out the
+spacing, with one read taking everything owed. Relay reconciliation is
+back to 996 ms and streaming CPU stays at 33%.
+
 2026-10-07 — **The phone reads the fleet at most four times a second.**
 Since home wakes when a working agent's step moves, a streaming turn woke
 it many times a second, and the phone read and laid out the whole fleet on

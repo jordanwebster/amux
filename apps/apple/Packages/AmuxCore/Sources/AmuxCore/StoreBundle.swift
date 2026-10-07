@@ -57,10 +57,11 @@ public final class StoreBundle {
     @ObservationIgnored private var held = false
     /// How long a fleet wake waits for the launch's first frame at most.
     public static let firstFrameHold: Duration = .milliseconds(250)
-    /// When the fleet was last read for a wake, and whether a read is
-    /// waiting out the spacing after it.
+    /// When the fleet was last read for a wake, whether a read is waiting
+    /// out the spacing after it, and whether changes taken since are unread.
     @ObservationIgnored private var lastFleetRead: ContinuousClock.Instant?
     @ObservationIgnored private var spacing = false
+    @ObservationIgnored private var owed = false
     /// The least time between two fleet reads a wake asks for.
     public static let fleetReadSpacing: Duration = .milliseconds(250)
 
@@ -113,33 +114,43 @@ public final class StoreBundle {
             }
             // A working agent's step moving wakes home, which for a
             // streaming turn is many times a second, and each read lays out
-            // the whole fleet on the main thread. A wake soon after a read
-            // waits out the spacing; its changes stay with the runtime,
-            // which wakes no more until they are taken, so the next read
-            // takes them all.
+            // the whole fleet on the main thread. Agents' changes soon after
+            // a read wait out the spacing and one read takes them all; a
+            // host moving is read at once, since that is what a reconnecting
+            // fleet is waiting on.
+            let changes = profile.takeFleetChanges()
             let at = ContinuousClock.now
-            if let last = lastFleetRead, at - last < Self.fleetReadSpacing {
+            if !changes.hosts, !changes.agents.isEmpty,
+               let last = lastFleetRead, at - last < Self.fleetReadSpacing {
+                owed = true
                 if !spacing {
                     spacing = true
-                    Task { [weak self] in
-                        try? await Task.sleep(until: last + Self.fleetReadSpacing)
-                        guard let self else { return }
-                        self.spacing = false
-                        self.woke(0)
-                    }
+                    Task { [weak self] in await self?.readOwed() }
                 }
                 return
             }
             lastFleetRead = at
-            let changes = profile.takeFleetChanges()
             read(hostsMoved: changes.hosts)
         } else {
             chats[chat]?.woke()
         }
     }
 
+    /// Reads the fleet for the changes a wake left owed once the spacing
+    /// after the latest read has passed.
+    private func readOwed() async {
+        while let last = lastFleetRead, ContinuousClock.now < last + Self.fleetReadSpacing {
+            try? await Task.sleep(until: last + Self.fleetReadSpacing)
+        }
+        spacing = false
+        guard owed else { return }
+        lastFleetRead = ContinuousClock.now
+        read(hostsMoved: false)
+    }
+
     private func read(hostsMoved: Bool) {
         guard let profile else { return }
+        owed = false
         let views = profile.hosts()
         fleet.show(profile.fleetView(expanding: Array(fleet.expanded)), hosts: views)
         hosts.show(views)
