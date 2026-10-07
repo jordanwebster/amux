@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use client::ManualClock;
+use prost::Message as _;
 use support::*;
 use ui_runtime::{Fleet, HELD_ROWS, Window};
 use ui_state::{AgentKey, Connection};
@@ -317,7 +318,7 @@ async fn home_and_the_chat_share_one_session_per_live_agent_and_never_subscribe_
 }
 
 #[tokio::test]
-async fn home_wakes_for_what_is_outside_the_rows_and_not_for_rows() {
+async fn home_wakes_for_what_is_outside_the_rows_and_not_for_rows_that_leave_its_line() {
     let (fleet, mut calls, _inventory) = fleet_of(vec![named(b"a")]).await;
     let mut streams = Streams::default();
     let (_, tail) = streams.answer(&mut calls).await;
@@ -325,7 +326,8 @@ async fn home_wakes_for_what_is_outside_the_rows_and_not_for_rows() {
     let held = session_of(&fleet, &key(b"a")).await;
     fleet.take_changed();
 
-    // A streamed row moves the session and leaves home asleep.
+    // A streamed row that leaves home's line as it was moves the session
+    // and leaves home asleep.
     streams
         .feed(b"a")
         .send(ev(text_item(Kind::Codex, 4, 4, "streaming")));
@@ -347,6 +349,53 @@ async fn home_wakes_for_what_is_outside_the_rows_and_not_for_rows() {
     })
     .await;
     assert_eq!(woke, [key(b"a")]);
+}
+
+/// A Codex command row at `order`, running or finished.
+fn command(order: u64, revision: u64, command: &str, state: wire::ToolState) -> SessionEvent {
+    let body = wire::CodexItem {
+        kind: Some(wire::codex_item::Kind::Work(wire::Work {
+            of: Some(wire::work::Of::Command(wire::CommandWork {
+                command: command.into(),
+                ..Default::default()
+            })),
+            state: state as i32,
+            ..Default::default()
+        })),
+    };
+    ev(wire::Item {
+        body: body.encode_to_vec(),
+        ..text_item(Kind::Codex, order, revision, "")
+    })
+}
+
+/// Waits for a wake of home after which home draws `step` for the agent.
+async fn home_woken_with(fleet: &Fleet, held: &ui_runtime::Session, step: &str) {
+    until(fleet.changed(), || {
+        let drawn = ui_view::session_line(&held.state(), 0)
+            .step
+            .and_then(|line| line.step);
+        (drawn.as_deref() == Some(step) && fleet.take_changed() == [key(b"a")]).then_some(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn home_wakes_when_a_working_agent_moves_to_its_next_step() {
+    let (fleet, mut calls, _inventory) = fleet_of(vec![named(b"a")]).await;
+    let mut streams = Streams::default();
+    let (_, tail) = streams.answer(&mut calls).await;
+    serve(streams.feed(b"a"), 3, tail);
+    let held = session_of(&fleet, &key(b"a")).await;
+    fleet.take_changed();
+
+    // No snapshot moves: only the rows say the agent is on a new step.
+    let feed = streams.feed(b"a");
+    feed.send(command(4, 4, "cargo build", wire::ToolState::Running));
+    home_woken_with(&fleet, &held, "cargo build").await;
+    feed.send(command(4, 5, "cargo build", wire::ToolState::Succeeded));
+    feed.send(command(5, 6, "cargo test", wire::ToolState::Running));
+    home_woken_with(&fleet, &held, "cargo test").await;
 }
 
 #[tokio::test]

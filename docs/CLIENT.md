@@ -38,7 +38,7 @@ The terminal client ([`tui`](../crates/tui/src/lib.rs)) and the phone's runtime
 `ui-state`, `ui-view`, `ui-runtime`, `tui` and `app-runtime` may not link the daemon (`node`), its `store`, the
 interpreters (`interpret`), the agent process (`agent`) or any provider crate, directly or through another crate.
 Among amux's own crates, `ui-state` links only `model` and `wire`; `ui-view` adds `attachments`; `ui-runtime`
-adds `client`.
+adds `client` and `ui-view`, whose fleet line decides when a session wakes home.
 
 Every value the views return for drawing derives `Serialize` and `JsonSchema`. The phone receives them as JSON over the C
 bridge, and its Swift types are generated from the Rust definitions (`cargo run -p xtask -- swift-types`), so
@@ -449,9 +449,12 @@ row's second line, and a chat on the agent reads the same one, so one agent neve
   rows in from the local runtime; closing the chat narrows it again.
 - **An exited agent has no session** until a chat opens it, and loses it when that chat closes. An agent that
   exits while no chat shows it loses its session at once; one going live again gets a new one.
-- **Home is woken only by what is outside the rows.** A session's rows streaming in redraw its chat, never home;
-  a snapshot (which is how a turn ending arrives), the queue or the stream's markers mark the agent changed in
-  `take_changed()` and fire the fleet's change signal.
+- **Home is woken by what changes its line.** A session's rows streaming in redraw its chat, and wake home only
+  when they change the line home draws for the agent (`session_line`): a new running step, the step ending, what
+  the agent last said. Rows that leave that line as it was never wake home, and a step's age moving is not a
+  change; a client redraws home on a wake, never on a tick. A snapshot (which is how a turn ending arrives), the
+  queue or the stream's markers wake it too. A wake marks the agent changed in `take_changed()` and fires the
+  fleet's change signal.
 - **The foreground.** `set_foreground(false)` drops every session's stream, an open chat's included, leaving
   its rows and reading as reconnecting; `set_foreground(true)` reopens each with a tail at once and starts
   sessions for agents that went live meanwhile.

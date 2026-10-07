@@ -1,3 +1,14 @@
+2026-10-07 — **Home redraws a working agent's step as it moves.**
+A session woke the fleet's home only for what arrived outside its rows, so
+when a working agent moved from one tool step to the next with no snapshot
+in between, home kept drawing the previous step until something else woke
+it; the terminal has no tick on home and the phone reads the same wake. A
+session now remembers the line home draws for its agent (the fleet's
+`session_line`, read with no age) and wakes home when a row batch changes
+it: a new running step, the step ending, what the agent last said. Rows
+that leave the line as it was still never wake home. `ui-runtime` now links
+`ui-view` for that line.
+
 2026-10-07 — **Claude's messaging socket writes typed lines.**
 The auth line and the user message amux writes to terminal Claude's
 messaging socket are now types in `claude-protocol` that serialize to the

@@ -56,7 +56,7 @@ ALLOWED_LOCAL = {
     "client": {"agent-dir", "wire"},
     "ui-state": {"model", "wire"},
     "ui-view": {"attachments", "ui-state", "wire"},
-    "ui-runtime": {"client", "ui-state", "wire"},
+    "ui-runtime": {"client", "ui-state", "ui-view", "wire"},
     # The phone's chats and fleet over the local runtime, with no node.
     "app-runtime": {"client", "model", "ui-runtime", "ui-state", "ui-view", "wire"},
     # The daemon's profile runtime hosted in the phone's process.

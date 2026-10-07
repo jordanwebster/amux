@@ -925,7 +925,8 @@ claim = "The fleet keeps one session per live agent, shared by home and the chat
 tests = [
   "ui-runtime/fleet::home_and_the_chat_share_one_session_per_live_agent_and_never_subscribe_twice",
   "ui-runtime/fleet::an_agent_that_exits_loses_its_session_unless_a_chat_shows_it",
-  "ui-runtime/fleet::home_wakes_for_what_is_outside_the_rows_and_not_for_rows",
+  "ui-runtime/fleet::home_wakes_for_what_is_outside_the_rows_and_not_for_rows_that_leave_its_line",
+  "ui-runtime/fleet::home_wakes_when_a_working_agent_moves_to_its_next_step",
   "app-runtime/runtime::a_chat_catches_up_after_the_app_returns_to_the_foreground",
 ]
 

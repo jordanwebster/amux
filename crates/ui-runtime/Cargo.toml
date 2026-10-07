@@ -12,11 +12,13 @@ futures-util = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 ui-state = { workspace = true }
+ui-view = { workspace = true }
 uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
+prost = { workspace = true }
 provider-fakes = { workspace = true }
 tempfile = { workspace = true }
 testnet = { workspace = true }

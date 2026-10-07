@@ -16,6 +16,7 @@ use futures_util::{FutureExt as _, StreamExt as _};
 use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use ui_state::{BlobStatus, Connection, InputId, InputOutcome, Key, Msg, Outcome, SessionState};
+use ui_view::SessionLine;
 use wire::{
     Agent, BlobRef, DumpFile, DumpPart, ErrorCode, FetchRequest, GetBlobRequest, GetRequest,
     HostEntry, Input, PutBlobRequest, ResumeAgentRequest, SendInputRequest, SendInputResponse,
@@ -90,10 +91,14 @@ struct Model {
     blobs: HashMap<Vec<u8>, Arc<[u8]>>,
     /// The runtime refused to serve the stream again: the agent is gone.
     ended: Option<RpcError>,
+    /// What home last drew for this agent, as of the rows applied so far;
+    /// home is woken when a row moves it.
+    home_line: Option<SessionLine>,
 }
 
-/// Called when something outside the rows arrived on the stream: what the
-/// fleet's home is woken by.
+/// Called when something outside the rows arrived on the stream, or rows
+/// that move the line home draws for the agent: what the fleet's home is
+/// woken by.
 pub(crate) type HomeWake = Box<dyn Fn() + Send + Sync>;
 
 /// The catalogues this client fetched, by hash: one fetch per version,
@@ -156,6 +161,7 @@ impl Inner {
             trace,
             changes,
             changed_keys,
+            home_line,
             ..
         } = &mut *model;
         trace.record(state, at_ms, TraceEvent::Msg(msg.clone()));
@@ -163,16 +169,25 @@ impl Inner {
         if self.gathering.load(Ordering::Acquire) {
             changes.absorb(&outcome, changed_keys);
         }
+        let home = self.home.get().filter(|_| streamed);
+        // Rows wake home only when they move the line it draws for the
+        // agent: a new running step, the step ending, what it last said.
+        // Read at time zero, so a step's age alone never counts as a move.
+        let line_moved = home.is_some()
+            && (!outcome.changed.is_empty() || outcome.reloaded || outcome.session)
+            && {
+                let line = ui_view::session_line(state, 0);
+                home_line.replace(line.clone()).as_ref() != Some(&line)
+            };
         drop(model);
         let moved = !outcome.changed.is_empty() || outcome.reloaded || outcome.session;
         if moved {
             self.changed.send_replace(());
         }
-        // Rows alone never wake home; a snapshot (and with it a turn's
-        // end), the queue or the stream's markers do.
-        if streamed
-            && outcome.session
-            && let Some(home) = self.home.get()
+        // Besides those rows, a snapshot (and with it a turn's end), the
+        // queue or the stream's markers wake home.
+        if let Some(home) = home
+            && (outcome.session || line_moved)
         {
             home();
         }
@@ -424,6 +439,7 @@ impl Session {
                 changed_keys: BTreeSet::new(),
                 blobs: HashMap::new(),
                 ended: None,
+                home_line: None,
             }),
             changed,
             home: OnceLock::new(),
@@ -494,8 +510,13 @@ impl Session {
         })
     }
 
-    /// Wakes the fleet's home when something outside the rows arrives.
+    /// Wakes the fleet's home when something outside the rows arrives, or
+    /// rows that move the line home draws for the agent.
     pub(crate) fn on_home(&self, wake: HomeWake) {
+        {
+            let mut model = self.inner.model();
+            model.home_line = Some(ui_view::session_line(&model.state, 0));
+        }
         let _ = self.inner.home.set(wake);
     }
 
