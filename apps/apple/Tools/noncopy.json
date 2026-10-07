@@ -477,7 +477,7 @@
       {"literal": "\"expanded\"", "context": "\"home.family.\\(row.id)\", label: said, value: row.expanded ? \"expanded\" : \"folded\")", "reason": "State name a driver reads, not interface copy.", "count": 1},
       {"literal": "\"home.pair.\\(host.id?.description ?? host.name)\"", "context": ".identified(\"home.pair.\\(host.id?.description ?? host.name)\", label: \"Pair with \\(host.name)\")", "reason": "Accessibility identifier a driver reads, not interface copy.", "count": 1},
       {"literal": "\"home.offer.\\(host.id?.description ?? host.name)\"", "context": ".identified(\"home.offer.\\(host.id?.description ?? host.name)\", label: spokenOffer(host), value: \"found\")", "reason": "Accessibility identifier a driver reads, not interface copy.", "count": 1},
-      {"literal": "\"home.row.\\(row.id).branch\"", "context": ".reported(\"home.row.\\(row.id).branch\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"home.row.\\(row.id).branch\"", "context": ".reported(\"home.row.\\(row.id).branch\", value: branch)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"home.row.\\(row.id).second\"", "context": ".reported(\"home.row.\\(row.id).second\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift": [

@@ -1,3 +1,8 @@
+2026-10-07 — **The strings lint knows the fleet row's branch identifier again.**
+Giving the branch label a reported value changed the line its exemption
+records, so `just ios lint` saw the identifier as uncatalogued and the old
+exemption as stale. The exemption now records the line as it stands.
+
 2026-10-07 — **A phone story checks the branch on the fleet.**
 No phone capture showed a row's branch: every served agent's folder was
 not a repository. The attachment-or-review story already makes the
