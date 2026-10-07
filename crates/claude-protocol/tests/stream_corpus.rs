@@ -18,9 +18,12 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures/sdk")
+fn fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures")
 }
+
+/// The registered corpus and the live captures beside it.
+const ROOTS: [&str; 2] = ["sdk", "live/sdk"];
 
 /// One recording's lines: where each came from, whether Claude wrote it,
 /// and the line.
@@ -28,12 +31,16 @@ type Recording = Vec<(String, bool, String)>;
 
 /// Each recording's lines, in the order they were written.
 fn recorded() -> Vec<Recording> {
-    let mut recordings: Vec<_> = std::fs::read_dir(root())
-        .expect("fixtures/sdk")
-        .map(|entry| entry.expect("entry").path().join("io.jsonl"))
-        .filter(|path| path.is_file())
-        .collect();
-    recordings.sort();
+    let mut recordings = Vec::new();
+    for root in ROOTS {
+        let mut found: Vec<_> = std::fs::read_dir(fixtures().join(root))
+            .unwrap_or_else(|error| panic!("fixtures/{root}: {error}"))
+            .map(|entry| entry.expect("entry").path().join("io.jsonl"))
+            .filter(|path| path.is_file())
+            .collect();
+        found.sort();
+        recordings.extend(found);
+    }
     assert!(
         recordings.len() >= 41,
         "found only {} recordings",
@@ -41,13 +48,10 @@ fn recorded() -> Vec<Recording> {
     );
     let mut recorded = Vec::new();
     for path in recordings {
-        let name = format!(
-            "fixtures/sdk/{}/io.jsonl",
-            path.parent()
-                .and_then(Path::file_name)
-                .expect("a recording folder")
-                .to_string_lossy()
-        );
+        let name = path
+            .strip_prefix(fixtures())
+            .map(|relative| format!("fixtures/{}", relative.display()))
+            .expect("a recording under fixtures");
         let text = std::fs::read_to_string(&path).expect("recording");
         let mut lines = Vec::new();
         for (number, record) in text.lines().enumerate() {
@@ -201,7 +205,13 @@ fn misread_answers(recording: &Recording) -> Vec<String> {
         if answer.response.subtype != ControlOutcome::Success {
             continue;
         }
-        let Some(subtype) = asked.get(&(!from_claude, answer.request_id().to_owned())) else {
+        // Started with --replay-user-messages, Claude echoes the host's
+        // answer to its own request back on stdout.
+        let id = answer.request_id().to_owned();
+        let asked_of = asked
+            .get(&(!from_claude, id.clone()))
+            .or_else(|| asked.get(&(true, id)).filter(|_| *from_claude));
+        let Some(subtype) = asked_of else {
             failures.push(format!(
                 "{place}: answers {}, which nobody asked",
                 answer.request_id()

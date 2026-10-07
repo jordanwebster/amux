@@ -1,3 +1,22 @@
+2026-10-07 — **The live run's recordings join the corpus as live captures.**
+The live qualification run records each scenario's provider traffic, but
+nothing carried those captures into the corpus the protocol tests read. A
+new `join <capture dir> <name>` command in `claude-probe` and `codex-probe`
+sanitizes one capture as a recording is (paths of the scratch installation
+and the machine's temporary folder, the owner's context, host identifiers),
+drops the lane's process ids, and writes a manifest naming the provider
+version and the model the capture shows. The captures land in
+`fixtures/live/` beside each registered corpus rather than in it: amux's
+interpreter drove them, so no specification reproduces them, and Codex ran
+on the account's default model rather than the pinned one. Ten join (plans,
+questions and usage for both Claude kinds where they apply; plan,
+questions, usage, permission and mode for Codex). The strict decode tests
+and the fakes' conformance run walk them, and each has an interpreter
+golden. Walking them found two gaps: Codex 0.160.0 offers reasoning efforts
+`max` and `ultra`, now typed; and Claude started with
+`--replay-user-messages` echoes the host's answer to its own request back,
+which the answer-typing test now reads as an answer to that request.
+
 2026-10-07 — **A Codex recording reads amux's start on a plan back as that answer.**
 amux starts on a Codex plan by starting a turn that leaves plan mode with
 Codex's own words for carrying it out. Codex's recording reader read that

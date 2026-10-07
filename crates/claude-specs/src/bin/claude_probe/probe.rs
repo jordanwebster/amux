@@ -67,12 +67,13 @@ pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
         [command, rest @ ..] if command == "list" => list(rest),
         [command, rest @ ..] if command == "record" => record_command(rest).await,
         [command, rest @ ..] if command == "probe" => probe_command(rest).await,
+        [command, capture, name] if command == "join" => join(Path::new(capture), name),
         _ => Err(usage().into()),
     }
 }
 
 fn usage() -> &'static str {
-    "usage: claude-probe list [--sdk|--pty] | record (--sdk|--pty) <spec>... | probe [--sdk] [--pty] [--out <dir>]"
+    "usage: claude-probe list [--sdk|--pty] | record (--sdk|--pty) <spec>... | probe [--sdk] [--pty] [--out <dir>] | join <capture dir> <name>"
 }
 
 fn list(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -766,6 +767,187 @@ async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::er
     }
     std::fs::rename(stage, destination)?;
     Ok(())
+}
+
+/// Join one live qualification capture to the unregistered live corpus as
+/// `fixtures/live/{sdk,pty}/<name>`. The capture is a folder the live lane
+/// wrote: one provider process's `io.jsonl` and `spawn.jsonl`, and the
+/// `fixture.json` that names its format. It is sanitized as a recording is,
+/// and its manifest records the Claude version and model the capture shows.
+fn join(capture: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(capture.join("fixture.json"))?)?;
+    let pty = match fixture
+        .pointer("/recording/format")
+        .and_then(|f| f.as_str())
+    {
+        Some("claude_sdk_io") => false,
+        Some("claude_pty_io") => true,
+        other => {
+            return Err(format!("{}: not a Claude capture ({other:?})", capture.display()).into());
+        }
+    };
+    let spawns = std::fs::read_to_string(capture.join("spawn.jsonl"))?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut events = replay_support::load_script(capture.join("io.jsonl"));
+    if pty {
+        stabilize_pty_transcript_paths(&mut events)?;
+        scrub_personal_context(&mut events)?;
+    } else {
+        scrub_settings(&mut events)?;
+    }
+    let rules = Redaction {
+        home: owner_home(),
+        extra_paths: live_scratch(&spawns),
+        secret_env: secret_values(),
+        hostname: None,
+        user: None,
+        extra_personal_identifiers: Vec::new(),
+        personal_identifier_keys: Vec::new(),
+    };
+    let mut redaction = sanitize(&mut events, &rules);
+    let facts = captured_facts(&events, pty)?;
+
+    let root = claude_specs::specs::live_fixtures_root().join(if pty { "pty" } else { "sdk" });
+    std::fs::create_dir_all(&root)?;
+    let stage = root.join(format!(".{name}.{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&stage)?;
+    write_events(&stage.join("io.jsonl"), &events)?;
+    let mut spawn = String::new();
+    for mut row in spawns {
+        let mut kept = serde_json::Map::new();
+        // A terminal process's channels are all `pty`; a stdio process is
+        // named by its transport.
+        kept.insert(
+            "transport_id".into(),
+            if pty {
+                "pty".into()
+            } else {
+                row["transport_id"].take()
+            },
+        );
+        kept.insert("argv".into(), row["argv"].take());
+        kept.insert("cwd".into(), row["cwd"].take());
+        let mut row = serde_json::Value::Object(kept);
+        redaction::redact_value(&mut row, &rules, &mut redaction);
+        spawn.push_str(&serde_json::to_string(&row)?);
+        spawn.push('\n');
+    }
+    std::fs::write(stage.join("spawn.jsonl"), spawn)?;
+    let legacy = serde_json::json!({
+        "schema_version": 1,
+        "spec": name,
+        "claude_code_version": facts.version.to_string(),
+        "model": facts.model,
+        "recorded_at": Utc::now().to_rfc3339(),
+        "session_ids": facts.session_ids,
+    });
+    let mut manifest = migrate_legacy_manifest(&legacy, "claude", &stage)?;
+    manifest.recorded.source_kind = SourceKind::LiveCapture;
+    manifest.observed = replay_support::observe(&events);
+    manifest.redaction = redaction;
+    manifest.provider_extra.insert(
+        "driven_by".to_owned(),
+        "amux's interpreter, in the live qualification lane".into(),
+    );
+    write_manifest(&stage.join("manifest.json"), &manifest)?;
+    load_recording(&stage)?;
+
+    let destination = root.join(name);
+    if destination.exists() {
+        std::fs::remove_dir_all(&destination)?;
+    }
+    std::fs::rename(&stage, &destination)?;
+    println!("joined {} as {}", capture.display(), destination.display());
+    Ok(())
+}
+
+/// The scratch installation a live capture ran in: the folder under the
+/// temporary directory that holds each process's working directory, in both
+/// of the spellings macOS gives it, and this machine's temporary directory,
+/// where the lane keeps its sockets.
+fn live_scratch(spawns: &[serde_json::Value]) -> Vec<PathBuf> {
+    let mut paths = vec![std::env::temp_dir()];
+    for spawn in spawns {
+        let Some(cwd) = spawn["cwd"].as_str() else {
+            continue;
+        };
+        let cwd = Path::new(cwd);
+        let Some(root) = cwd.ancestors().find(|dir| {
+            dir.parent().is_some_and(|parent| {
+                parent == Path::new("/tmp") || parent == Path::new("/private/tmp")
+            })
+        }) else {
+            continue;
+        };
+        let tail = root.strip_prefix("/private").unwrap_or(root);
+        paths.push(tail.to_path_buf());
+        paths.push(Path::new("/private").join(tail.strip_prefix("/").unwrap_or(tail)));
+    }
+    paths
+}
+
+struct CapturedFacts {
+    version: Version,
+    model: String,
+    session_ids: Vec<String>,
+}
+
+/// The Claude version, model and sessions a capture shows: the SDK's init
+/// message, or a terminal session's transcript rows.
+fn captured_facts(
+    events: &[replay_support::IoEvent],
+    pty: bool,
+) -> Result<CapturedFacts, Box<dyn std::error::Error>> {
+    let mut version = None;
+    let mut model = None;
+    let mut session_ids = Vec::<String>::new();
+    for event in events {
+        if event.direction != replay_support::IoDirection::Read {
+            continue;
+        }
+        let Ok(frame) = serde_json::from_str::<serde_json::Value>(&event.line) else {
+            continue;
+        };
+        let (found_version, found_model, session) = if pty {
+            if event.transport_id.as_deref() != Some("transcript") {
+                continue;
+            }
+            let row = &frame["row"];
+            (
+                row["version"].as_str(),
+                row.pointer("/message/model").and_then(|m| m.as_str()),
+                row["sessionId"].as_str(),
+            )
+        } else {
+            if frame["type"] != "system" || frame["subtype"] != "init" {
+                continue;
+            }
+            (
+                frame["claude_code_version"].as_str(),
+                frame["model"].as_str(),
+                frame["session_id"].as_str(),
+            )
+        };
+        version = version.or(found_version.map(str::to_owned));
+        // Claude marks rows it wrote itself with a synthetic model.
+        model = model.or(found_model
+            .filter(|m| !m.starts_with('<'))
+            .map(str::to_owned));
+        if let Some(session) = session
+            && !session_ids.iter().any(|known| known == session)
+        {
+            session_ids.push(session.to_owned());
+        }
+    }
+    Ok(CapturedFacts {
+        version: Version::parse(&version.ok_or("the capture shows no Claude version")?)?,
+        model: model.ok_or("the capture shows no model")?,
+        session_ids,
+    })
 }
 
 fn write_events(path: &Path, events: &[replay_support::IoEvent]) -> io::Result<()> {

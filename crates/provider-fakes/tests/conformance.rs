@@ -1,5 +1,6 @@
-//! Every recording in the claude-specs and codex-specs corpora plays back
-//! through its fake binary, byte for byte, one test per recording.
+//! Every recording in the claude-specs and codex-specs corpora, and the live
+//! captures beside them, plays back through its fake binary, byte for byte,
+//! one test per recording.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -183,5 +184,38 @@ mod codex {
         two_clients_prompt => "two_clients_prompt",
         two_clients_steer => "two_clients_steer",
         web_search => "web_search",
+    });
+}
+
+/// Captures from a live run, driven by amux's own interpreter.
+mod claude_sdk_live {
+    use super::*;
+
+    recordings!(Kind::ClaudeSdk, "claude-specs/fixtures/live/sdk", {
+        plan => "plan",
+        questions => "questions",
+        usage => "usage",
+    });
+}
+
+#[cfg(unix)]
+mod claude_pty_live {
+    use super::*;
+
+    recordings!(Kind::ClaudePty, "claude-specs/fixtures/live/pty", {
+        plan => "plan",
+        questions => "questions",
+    });
+}
+
+mod codex_live {
+    use super::*;
+
+    recordings!(Kind::Codex, "codex-specs/fixtures/live", {
+        mode => "mode",
+        permission => "permission",
+        plan => "plan",
+        questions => "questions",
+        usage => "usage",
     });
 }

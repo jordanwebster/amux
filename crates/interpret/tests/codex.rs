@@ -80,6 +80,11 @@ goldens! {
     recorded_two_clients_approval => "recorded_two_clients_approval",
     recorded_two_clients_steer => "recorded_two_clients_steer",
     recorded_web_search => "recorded_web_search",
+    recorded_live_plan => "recorded_live_plan",
+    recorded_live_questions => "recorded_live_questions",
+    recorded_live_usage => "recorded_live_usage",
+    recorded_live_permission => "recorded_live_permission",
+    recorded_live_mode => "recorded_live_mode",
 }
 
 /// Each consumption arm has its own golden over the same facts, so the

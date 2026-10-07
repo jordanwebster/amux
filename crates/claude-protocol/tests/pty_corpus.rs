@@ -12,9 +12,12 @@ use serde_json::Value;
 /// to its end; amux's, not Claude's.
 const TAILER_MARKER: &str = "amux.transcript_ready";
 
-fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures/pty")
+fn fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures")
 }
+
+/// The registered corpus and the live captures beside it.
+const ROOTS: [&str; 2] = ["pty", "live/pty"];
 
 enum Line {
     Row(String),
@@ -23,12 +26,16 @@ enum Line {
 
 /// Each recorded row and payload with where it came from.
 fn lines() -> Vec<(String, Line)> {
-    let mut recordings: Vec<_> = std::fs::read_dir(root())
-        .expect("fixtures/pty")
-        .map(|entry| entry.expect("entry").path().join("io.jsonl"))
-        .filter(|path| path.is_file())
-        .collect();
-    recordings.sort();
+    let mut recordings = Vec::new();
+    for root in ROOTS {
+        let mut found: Vec<_> = std::fs::read_dir(fixtures().join(root))
+            .unwrap_or_else(|error| panic!("fixtures/{root}: {error}"))
+            .map(|entry| entry.expect("entry").path().join("io.jsonl"))
+            .filter(|path| path.is_file())
+            .collect();
+        found.sort();
+        recordings.extend(found);
+    }
     assert!(
         recordings.len() >= 31,
         "found only {} recordings",
@@ -36,13 +43,10 @@ fn lines() -> Vec<(String, Line)> {
     );
     let mut lines = Vec::new();
     for path in recordings {
-        let name = format!(
-            "fixtures/pty/{}/io.jsonl",
-            path.parent()
-                .and_then(Path::file_name)
-                .expect("a recording folder")
-                .to_string_lossy()
-        );
+        let name = path
+            .strip_prefix(fixtures())
+            .map(|relative| format!("fixtures/{}", relative.display()))
+            .expect("a recording under fixtures");
         let text = std::fs::read_to_string(&path).expect("recording");
         for (number, record) in text.lines().enumerate() {
             let place = format!("{name}:{}", number + 1);

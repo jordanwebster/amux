@@ -228,6 +228,8 @@ string_enum! {
         Medium = "medium",
         High = "high",
         XHigh = "xhigh",
+        Max = "max",
+        Ultra = "ultra",
     }
 }
 

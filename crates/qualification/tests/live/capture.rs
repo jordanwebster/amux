@@ -13,9 +13,10 @@
 //! A scenario's recording is the spawns started in its own project folder:
 //! `target/live/recordings/<kind>/<scenario>/` gets their `io.jsonl` and
 //! `spawn.jsonl` and a `fixture.json` that replays them through the
-//! interpreter. Joining the corpus is copying a passing one into
-//! claude-specs or codex-specs through the probe's own sanitizing record
-//! step; the recordings here are unsanitized and never committed.
+//! interpreter. A passing one joins the live captures beside the spec
+//! corpus through the probe's sanitizing `join` command (`claude-probe join`,
+//! `codex-probe join`); the recordings here are unsanitized and never
+//! committed.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;

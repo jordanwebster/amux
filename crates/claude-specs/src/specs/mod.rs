@@ -1151,6 +1151,12 @@ pub fn fixtures_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/sdk")
 }
 
+/// Live captures amux's own interpreter drove, which no specification
+/// replays: `sdk/` and `pty/` beside the registered corpora.
+pub fn live_fixtures_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/live")
+}
+
 pub enum SpecSource {
     Live {
         binary: std::path::PathBuf,

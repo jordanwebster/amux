@@ -32,6 +32,7 @@ pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
             record_selected(names).await
         }
         [command] if command == "probe" => run_probe(default_probe_dir()).await,
+        [command, capture, name] if command == "join" => join(Path::new(capture), name),
         [command, flag, out] if command == "probe" && flag == "--out" => {
             run_probe(PathBuf::from(out)).await
         }
@@ -40,7 +41,7 @@ pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn usage() -> &'static str {
-    "usage: codex-probe list | record <spec>... | probe [--out <dir>]"
+    "usage: codex-probe list | record <spec>... | probe [--out <dir>] | join <capture dir> <name>"
 }
 
 fn list() -> Result<(), Box<dyn std::error::Error>> {
@@ -218,6 +219,144 @@ async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::er
     );
     write_manifest(&destination.join("manifest.json"), &manifest)?;
     Ok(())
+}
+
+/// Join one live qualification capture to the unregistered live corpus as
+/// `fixtures/live/<name>`. The capture is a folder the live lane wrote: one
+/// app-server process's `io.jsonl` and `spawn.jsonl`, each line naming the
+/// process it came from. It is sanitized as a recording is, the process
+/// names are dropped, and its manifest records the Codex version and the
+/// model the capture shows.
+fn join(capture: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let spawns = std::fs::read_to_string(capture.join("spawn.jsonl"))?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut events = replay_support::load_script(capture.join("io.jsonl"));
+    let rules = Redaction {
+        home: owner_home(),
+        extra_paths: live_scratch(&spawns),
+        secret_env: secret_values(),
+        hostname: None,
+        user: None,
+        extra_personal_identifiers: Vec::new(),
+        personal_identifier_keys: vec!["installationId".into(), "serverName".into()],
+    };
+    let mut redaction = sanitize(&mut events, &rules);
+    let (version, model, session_ids) = captured_facts(&events)?;
+
+    let root = codex_specs::specs::live_fixtures_root();
+    std::fs::create_dir_all(&root)?;
+    let stage = root.join(format!(".{name}.{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&stage)?;
+    write_events(&stage.join("io.jsonl"), &events)?;
+    let transports = events
+        .iter()
+        .filter_map(|event| event.transport_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let transport = match transports.into_iter().collect::<Vec<_>>().as_slice() {
+        [transport] => transport.clone(),
+        _ => {
+            return Err(
+                format!("{}: only a capture of one client joins", capture.display()).into(),
+            );
+        }
+    };
+    let mut spawn = String::new();
+    for mut row in spawns {
+        let mut row = serde_json::json!({
+            "transport_id": transport,
+            "argv": row["argv"].take(),
+            "cwd": row["cwd"].take(),
+        });
+        redaction::redact_value(&mut row, &rules, &mut redaction);
+        spawn.push_str(&serde_json::to_string(&row)?);
+        spawn.push('\n');
+    }
+    std::fs::write(stage.join("spawn.jsonl"), spawn)?;
+    let legacy = serde_json::json!({
+        "schema_version": 1,
+        "spec": name,
+        "codex_version": version.to_string(),
+        "model": model,
+        "recorded_at": Utc::now().to_rfc3339(),
+    });
+    let mut manifest = migrate_legacy_manifest(&legacy, "codex", &stage)?;
+    manifest.recorded.source_kind = SourceKind::LiveCapture;
+    manifest.observed = replay_support::observe(&events);
+    manifest.redaction = redaction;
+    manifest.session_ids = session_ids;
+    manifest.provider_extra.insert(
+        "driven_by".to_string(),
+        "amux's interpreter, in the live qualification lane".into(),
+    );
+    write_manifest(&stage.join("manifest.json"), &manifest)?;
+    load_recording(&stage)?;
+
+    let destination = root.join(name);
+    if destination.exists() {
+        std::fs::remove_dir_all(&destination)?;
+    }
+    std::fs::rename(&stage, &destination)?;
+    println!("joined {} as {}", capture.display(), destination.display());
+    Ok(())
+}
+
+/// The scratch installation a live capture ran in: the folder under the
+/// temporary directory that holds each process's working directory, in both
+/// of the spellings macOS gives it, and this machine's temporary directory,
+/// where the lane keeps its sockets.
+fn live_scratch(spawns: &[serde_json::Value]) -> Vec<PathBuf> {
+    let mut paths = vec![std::env::temp_dir()];
+    for spawn in spawns {
+        let Some(cwd) = spawn["cwd"].as_str() else {
+            continue;
+        };
+        let Some(root) = Path::new(cwd).ancestors().find(|dir| {
+            dir.parent().is_some_and(|parent| {
+                parent == Path::new("/tmp") || parent == Path::new("/private/tmp")
+            })
+        }) else {
+            continue;
+        };
+        let tail = root.strip_prefix("/private").unwrap_or(root);
+        paths.push(tail.to_path_buf());
+        paths.push(Path::new("/private").join(tail.strip_prefix("/").unwrap_or(tail)));
+    }
+    paths
+}
+
+/// The Codex version, model and threads a capture shows, from the server's
+/// answers about its threads.
+fn captured_facts(
+    events: &[replay_support::IoEvent],
+) -> Result<(Version, String, Vec<String>), Box<dyn std::error::Error>> {
+    let mut version = None;
+    let mut model = None;
+    let mut threads = Vec::<String>::new();
+    for event in events {
+        if event.direction != replay_support::IoDirection::Read {
+            continue;
+        }
+        let Ok(frame) = serde_json::from_str::<serde_json::Value>(&event.line) else {
+            continue;
+        };
+        let result = &frame["result"];
+        model = model.or(result["model"].as_str().map(str::to_owned));
+        let thread = &result["thread"];
+        version = version.or(thread["cliVersion"].as_str().map(str::to_owned));
+        if let Some(id) = thread["id"].as_str()
+            && !threads.iter().any(|known| known == id)
+        {
+            threads.push(id.to_owned());
+        }
+    }
+    Ok((
+        Version::parse(&version.ok_or("the capture shows no Codex version")?)?,
+        model.ok_or("the capture shows no model")?,
+        threads,
+    ))
 }
 
 /// A scratch Codex home and project. The project holds the files the

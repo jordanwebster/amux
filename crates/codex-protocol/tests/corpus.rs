@@ -19,10 +19,15 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Every io.jsonl recorded from Codex: the live corpus and the journeys'.
+/// Every io.jsonl recorded from Codex: the spec corpus, the live captures
+/// beside it and the journeys'.
 fn recordings() -> Vec<PathBuf> {
     let mut found = Vec::new();
-    for dir in ["crates/codex-specs/fixtures/runtime", "journeys/recordings"] {
+    for dir in [
+        "crates/codex-specs/fixtures/runtime",
+        "crates/codex-specs/fixtures/live",
+        "journeys/recordings",
+    ] {
         let mut entries: Vec<_> = std::fs::read_dir(root().join(dir))
             .unwrap_or_else(|error| panic!("{dir}: {error}"))
             .map(|entry| entry.expect("entry").path())

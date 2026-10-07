@@ -91,6 +91,12 @@ pub fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/runtime")
 }
 
+/// Live captures amux's own interpreter drove, which no specification
+/// replays.
+pub fn live_fixtures_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/live")
+}
+
 pub fn live_io_path(codex_home: &Path) -> PathBuf {
     codex_home.join(LIVE_IO_FILE)
 }

@@ -1,0 +1,10 @@
+{
+  "about": "A live run at Codex 0.160.0, driven by amux: codex put in plan mode from amux.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/live/mode/io.jsonl",
+    "format": "codex_io"
+  }
+}

@@ -81,6 +81,9 @@ goldens! {
     recorded_elicitation_cancelled => "recorded_elicitation_cancelled",
     recorded_steer_folded => "recorded_steer_folded",
     recorded_steer_preempted => "recorded_steer_preempted",
+    recorded_live_plan => "recorded_live_plan",
+    recorded_live_questions => "recorded_live_questions",
+    recorded_live_usage => "recorded_live_usage",
 }
 
 #[test]
