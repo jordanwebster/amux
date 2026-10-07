@@ -1,3 +1,15 @@
+2026-10-07 — **The terminal folds tool steps by the shared view.**
+The terminal asked the view for every row and then decided again itself
+which steps of a run show, so the two rules could drift. It now passes its
+choice (collapse, show all, hide) and its open runs to the view and draws
+only the steps the view shows; what it still decides is the drawing: a
+header over an opened run, the newest few steps of one under way, the
+folded line, a kept failure. Two differences came out. Under hide, the view
+kept a subagent call showing, because its list of tool kinds left subagents
+out; every step of a run now hides, as the option says, which the phone
+also gets. And the terminal showed every step of a run opened before
+switching to hide; hide now hides it.
+
 2026-10-07 — **The protocol is cleaned up as an unreleased one.**
 Nothing depends on an older build yet, so the protobuf schemas stop
 carrying compatibility they do not need. All 31 `reserved` lines are gone

@@ -25,6 +25,7 @@ enum It {
     Run(&'static str, i32),
     Running(&'static str),
     Edit(&'static str),
+    Subagent(&'static str),
     Turn,
 }
 
@@ -82,6 +83,16 @@ fn item(order: u64, it: &It) -> Item {
             tool(
                 "Edit",
                 format!(r#"{{"file_path":"{path}","old_string":"a","new_string":"b"}}"#),
+                ToolState::Succeeded,
+                false,
+                None,
+            ),
+            "",
+        ),
+        It::Subagent(description) => (
+            tool(
+                "Agent",
+                format!(r#"{{"description":"{description}","prompt":"go"}}"#),
                 ToolState::Succeeded,
                 false,
                 None,
@@ -256,6 +267,18 @@ fn a_folded_run_keeps_its_newest_step_and_a_failure_left_unresolved() {
     // Hidden, only the failure stays.
     assert_eq!(shown(&state, ToolRows::Hide), vec![1, 3, 5, 6]);
     assert_eq!(shown(&state, ToolRows::ShowAll), vec![1, 2, 3, 4, 5, 6]);
+}
+
+#[test]
+fn hidden_steps_include_a_subagent_call() {
+    let state = session(&[
+        It::Prompt("look"),
+        It::Read("a.rs"),
+        It::Subagent("survey the docs"),
+        It::Say("done"),
+        It::Turn,
+    ]);
+    assert_eq!(shown(&state, ToolRows::Hide), vec![1, 4, 5]);
 }
 
 #[test]

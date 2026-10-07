@@ -7,7 +7,7 @@ use std::ops::RangeInclusive;
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::Value;
-use ui_state::{Held, ItemBody, Key, SessionState};
+use ui_state::{Fold, Held, ItemBody, Key, SessionState};
 use wire::{
     Attachment, BlobRef, BoundaryKind, DecisionOutcome, EnvelopeKind, FileChangeKind, SendState,
     ToolCall, ToolState, TurnOutcome,
@@ -424,19 +424,12 @@ fn row(state: &SessionState, held: &Held, opts: &ChatOptions) -> Row {
     let item = &held.item;
     let (kind, decision, failed) = kind_of(state, held);
     let run = crate::run::run_of(state, held, &kind, failed);
-    let is_tool = matches!(
-        kind,
-        RowKind::Explore { .. }
-            | RowKind::Command { .. }
-            | RowKind::ToolCall { .. }
-            | RowKind::FileChange { .. }
-            | RowKind::Background { .. }
-    );
+    let step = held.class.fold() == Fold::Step;
     let kept = run.as_ref().is_some_and(|run| run.unresolved_failure);
     let collapsed = matches!(kind, RowKind::Hidden)
         || match opts.tools {
             ToolRows::ShowAll => false,
-            ToolRows::Hide => is_tool && !kept,
+            ToolRows::Hide => step && !kept,
             ToolRows::Collapse { open } => run.as_ref().is_some_and(|run| {
                 let shown = if run.live {
                     run.shows_live()

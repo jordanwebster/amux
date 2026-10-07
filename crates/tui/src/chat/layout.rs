@@ -3,9 +3,10 @@
 //! anything is painted and the cost is the rows on screen, not the window.
 //!
 //! Rows come from ui-view one item at a time, each carrying its place in
-//! its run of tool steps; what a run's rows draw follows from it: open,
-//! every step; under way, its newest few; folded, one line on its newest
-//! step and any failure its turn left unresolved.
+//! its run of tool steps and, from the chat's tool-step choice, whether it
+//! shows at all. Of the steps that show, layout picks the drawing: open,
+//! every step under a header; under way, its newest few; folded, one line
+//! on its newest step and any failure its turn left unresolved.
 
 use std::collections::HashSet;
 
@@ -33,6 +34,16 @@ pub enum ToolSteps {
 }
 
 impl ToolSteps {
+    /// The choice as the shared view takes it, with the runs the reader
+    /// opened.
+    pub fn rows(self, open: &HashSet<Key>) -> ToolRows<'_> {
+        match self {
+            ToolSteps::Collapse => ToolRows::Collapse { open },
+            ToolSteps::ShowAll => ToolRows::ShowAll,
+            ToolSteps::Hide => ToolRows::Hide,
+        }
+    }
+
     /// The next choice, round from collapse through show all and hide.
     pub fn next(self) -> ToolSteps {
         match self {
@@ -129,7 +140,7 @@ pub struct Frame<'a> {
     pub theme: Theme,
     pub leader: char,
     /// Runs the reader opened, each held by one of its steps (see
-    /// `ui_view::run_is_open`): they show every step whatever `tools` says.
+    /// `ui_view::run_is_open`): folding, they show every step.
     pub open_runs: &'a HashSet<Key>,
     pub tools: ToolSteps,
     /// The step an ask in the composer's box points at: the box shows it,
@@ -142,11 +153,17 @@ pub struct Frame<'a> {
 }
 
 impl Frame<'_> {
+    fn options(&self) -> ChatOptions<'_> {
+        ChatOptions {
+            tools: self.tools.rows(self.open_runs),
+        }
+    }
+
     /// The row drawn at one held order, as shown, with whether its subagent
     /// parent is open; None when it draws nothing here.
     fn shown(&self, state: &SessionState, order: u64) -> Option<(Row, bool)> {
         let held = state.transcript().at(order)?;
-        let row = chat_rows_for(state, std::slice::from_ref(&held.item.key), &EVERYTHING).pop()?;
+        let row = chat_rows_for(state, std::slice::from_ref(&held.item.key), &self.options()).pop()?;
         let child_open = row
             .parent
             .as_ref()
@@ -232,12 +249,13 @@ impl Frame<'_> {
         if self.asking == Some(&held.item.key) {
             return None;
         }
-        let in_run = chat_rows_for(state, std::slice::from_ref(&held.item.key), &EVERYTHING)
+        let in_run = chat_rows_for(state, std::slice::from_ref(&held.item.key), &self.options())
             .pop()
             .filter(|row| row.run.is_some());
         let (placement, row, toggle) = match in_run {
             Some(row) => {
-                // Inside a run only its steps draw.
+                // Inside a run only its steps draw, and of them only those
+                // the view shows.
                 if held.class.fold() != Fold::Step
                     || row.collapsed
                     || matches!(row.kind, ui_view::RowKind::Hidden)
@@ -251,7 +269,8 @@ impl Frame<'_> {
                     run.is_last() || (run.recent == Some(1) && self.asking == Some(&run.last));
                 let running =
                     matches!(&held.class, ItemClass::Tool(tool) if tool.in_flight) && run.is_last();
-                let opened = ui_view::run_is_open(state, order, self.open_runs);
+                let opened = self.tools == ToolSteps::Collapse
+                    && ui_view::run_is_open(state, order, self.open_runs);
                 if opened || self.tools == ToolSteps::ShowAll {
                     // Opened, a run lists every step on its own line, under
                     // the line that folds it again.
@@ -270,17 +289,11 @@ impl Frame<'_> {
                     let toggle = Toggle::Step(row.id.clone());
                     (placement, row, toggle)
                 } else if self.tools == ToolSteps::Hide {
-                    if !run.unresolved_failure {
-                        return None;
-                    }
                     let toggle = Toggle::Step(row.id.clone());
                     (Placement::Failed { blank: true }, row, toggle)
                 } else if run.live {
                     // Under way: the newest few steps, the newest bright
                     // while it runs.
-                    if !run.shows_live() {
-                        return None;
-                    }
                     let earlier = run.steps.saturating_sub(LIVE_STEPS);
                     let first = run.recent == Some(run.steps.min(LIVE_STEPS) - 1);
                     let placement = Placement::Step {
@@ -297,11 +310,11 @@ impl Frame<'_> {
                 } else if run.is_last() {
                     let toggle = Toggle::Run(run.last.clone());
                     (Placement::Folded { run }, row, toggle)
-                } else if run.unresolved_failure {
+                } else {
+                    // Folded, the other steps that show are failures their
+                    // turn left unresolved.
                     let toggle = Toggle::Step(row.id.clone());
                     (Placement::Failed { blank: false }, row, toggle)
-                } else {
-                    return None;
                 }
             }
             None => {
@@ -367,8 +380,9 @@ impl Frame<'_> {
             if *span.start() >= top {
                 break;
             }
-            if ui_view::run_is_open(state, *span.start(), self.open_runs)
-                || self.tools == ToolSteps::ShowAll
+            if self.tools == ToolSteps::ShowAll
+                || (self.tools == ToolSteps::Collapse
+                    && ui_view::run_is_open(state, *span.start(), self.open_runs))
             {
                 continue;
             }
