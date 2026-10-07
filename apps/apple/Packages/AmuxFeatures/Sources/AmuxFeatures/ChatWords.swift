@@ -2,12 +2,21 @@ import AmuxCore
 import Foundation
 
 /// How the phone words the chat's typed facts. The rows, the card and the
-/// strip arrive as values; every sentence a person reads about them is
+/// overview arrive as values; every sentence a person reads about them is
 /// written here, so each can be read and tested apart from any view.
 public enum ChatWords {
     // MARK: - Numbers
 
     /// "1m 42s", "8s", "4.2s", "850ms".
+    /// Why a typed agent name will not do.
+    public static func nameProblem(_ problem: AgentNameProblem) -> String {
+        switch problem {
+        case .empty: String(localized: "A name cannot be empty")
+        case .tooLong: String(localized: "A name is at most 64 characters")
+        case .characters: String(localized: "Lowercase letters, digits and hyphens, starting with a letter or digit")
+        }
+    }
+
     public static func duration(_ ms: Int64) -> String {
         let ms = max(0, ms)
         if ms < 1_000 { return "\(ms)ms" }

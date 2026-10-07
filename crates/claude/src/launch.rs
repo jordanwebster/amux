@@ -123,30 +123,6 @@ pub fn merged_settings(user: Option<Value>, managed: &ManagedSettings) -> Merged
     MergedSettings(merged)
 }
 
-/// Remove arguments owned by the host while retaining all user arguments.
-pub fn without_managed_spawn_args(args: &[String]) -> Vec<String> {
-    let mut retained = Vec::with_capacity(args.len());
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--name" | "--messaging-socket-path" => {
-                index += 1;
-                if index < args.len() && !args[index].starts_with('-') {
-                    index += 1;
-                }
-            }
-            arg if arg.starts_with("--name=") || arg.starts_with("--messaging-socket-path=") => {
-                index += 1;
-            }
-            _ => {
-                retained.push(args[index].clone());
-                index += 1;
-            }
-        }
-    }
-    retained
-}
-
 /// Remove and return every user settings source from an argument list.
 pub fn take_settings_args(args: &mut Vec<String>) -> Result<Vec<String>> {
     let mut retained = Vec::with_capacity(args.len());
@@ -182,31 +158,6 @@ pub fn pty_spawn_args(launch: &Launch) -> Vec<String> {
     let mut args = Vec::new();
     if launch.resume {
         args.extend(["--resume".to_string(), launch.session_id.to_string()]);
-    }
-    args.extend(launch.args.clone());
-    append_managed(&mut args, launch);
-    args
-}
-
-/// Build stream-JSON arguments over the same managed launch configuration.
-pub fn stream_json_spawn_args(launch: &Launch, model: Option<&str>) -> Vec<String> {
-    let mut args = vec![
-        "--print".to_string(),
-        "--input-format".to_string(),
-        "stream-json".to_string(),
-        "--output-format".to_string(),
-        "stream-json".to_string(),
-        "--verbose".to_string(),
-        "--permission-prompt-tool".to_string(),
-        "stdio".to_string(),
-    ];
-    if launch.resume {
-        args.extend(["--resume".to_string(), launch.session_id.to_string()]);
-    } else {
-        args.extend(["--session-id".to_string(), launch.session_id.to_string()]);
-    }
-    if let Some(model) = model {
-        args.extend(["--model".to_string(), model.to_string()]);
     }
     args.extend(launch.args.clone());
     append_managed(&mut args, launch);
@@ -387,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_and_pty_launches_share_managed_settings() {
+    fn pty_launch_carries_managed_settings() {
         let launch = Launch {
             binary: "claude".into(),
             cwd: "/work".into(),
@@ -400,10 +351,7 @@ mod tests {
             env_scrub: CHILD_SESSION_ENV_SCRUB,
         };
         let pty = pty_spawn_args(&launch);
-        let stream = stream_json_spawn_args(&launch, Some("haiku"));
         assert!(pty.windows(2).any(|args| args[0] == "--settings"));
-        assert!(stream.windows(2).any(|args| args == ["--model", "haiku"]));
-        assert!(stream.windows(2).any(|args| args[0] == "--settings"));
     }
 
     #[test]

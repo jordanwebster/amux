@@ -479,7 +479,7 @@ async fn a_key_that_does_not_match_the_pinned_one_is_refused() {
     net.stop_daemon("desk").await.unwrap();
     let impostor_addr = edge(&net, "impostor").lan_addr().unwrap();
     net.discovery()
-        .announce_unchecked(advert(&net, "desk", impostor_addr, "home"));
+        .announce(advert(&net, "desk", impostor_addr, "home"));
     until(
         "the laptop to dial the claimed address and fail",
         || async {

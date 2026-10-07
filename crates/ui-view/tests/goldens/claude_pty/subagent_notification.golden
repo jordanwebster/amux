@@ -42,9 +42,9 @@
   row    8 u3 Prompt { text: [Text("Meanwhile, what time is it?")], steered: false }
   composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 18 input {"id":"p3","prompt":{"text":"Use UTC."}}
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 51], text: [Text("Use UTC.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 51], text: [Text("Use UTC.")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 19 input {"id":"n3","send_now":{"target":"p3"}}
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 51], text: [Text("Use UTC.")], from_agent: None, mine: true, steered: true, can_withdraw: false, can_send_now: false }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 51], text: [Text("Use UTC.")], from_agent: None, steered: true, can_withdraw: false, can_send_now: false }] underway=[] refused=[]
 ## 21 fact {"channel":"transcript","json":{"attachment":{"commandMode":"prompt","prompt":"Use UTC.","type":"queued_command"},"sessionId":"s1","timestamp":"2027-01-15T08:00:00.110Z","type":"attachment","uuid":"q1"}}
   row    9 q1 Prompt { text: [Text("Use UTC.")], steered: true }
   composer Send activity=Some(Working) queue=[] underway=[] refused=[]

@@ -1,5 +1,6 @@
-//! Codex: one `codex app-server` per agent, spoken to over JSON-RPC on
-//! stdio. The facts are the messages the server writes: notifications about
+//! Codex: one `codex app-server` per agent, spoken to over JSON-RPC in
+//! WebSocket text frames on a Unix socket (on Windows, over stdio). The
+//! facts are the messages the server writes: notifications about
 //! the thread, its turns and their items, requests that ask the person
 //! something, and responses to the requests this interpreter sent.
 //!

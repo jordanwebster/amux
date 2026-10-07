@@ -1,24 +1,24 @@
 ## 0 initial
   composer Send activity=None queue=[] underway=[] refused=[]
 ## 1 input {"id":"p1","prompt":{"text":"Start."}}
-  composer Send activity=None queue=[QueuedRow { input_id: [112, 49], text: [Text("Start.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=None queue=[QueuedRow { input_id: [112, 49], text: [Text("Start.")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 2 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
   row    1 boundary:1 Boundary { kind: Started, cause: "" }
   row    2 prompt:7031 Prompt { text: [Text("Start.")], steered: false }
   composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 6 input {"id":"s1","prompt":{"text":"Use the staging config."}}
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [115, 49], text: [Text("Use the staging config.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [115, 49], text: [Text("Use the staging config.")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 7 input {"id":"n1","send_now":{"target":"s1"}}
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [115, 49], text: [Text("Use the staging config.")], from_agent: None, mine: true, steered: true, can_withdraw: false, can_send_now: false }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [115, 49], text: [Text("Use the staging config.")], from_agent: None, steered: true, can_withdraw: false, can_send_now: false }] underway=[] refused=[]
 ## 9 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"content":[{"text":"Use the staging config.","type":"text"}],"id":"u-2","type":"userMessage"},"threadId":"t1","turnId":"turn-1"}}}
   row    3 steer:7331 Prompt { text: [Text("Use the staging config.")], steered: true }
   composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 10 input {"id":"p2","prompt":{"text":"Then summarise."}}
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 50], text: [Text("Then summarise.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 50], text: [Text("Then summarise.")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 11 input {"id":"w1","withdraw":{"target":"p2"}}
   composer Send activity=Some(Working) queue=[] underway=[] refused=[]
 ## 18 input {"id":"p3","prompt":{"text":"Next."}}
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 51], text: [Text("Next.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 51], text: [Text("Next.")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 20 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-1","status":"interrupted"}}}}
   row    4 turn:1 Stopped
   row    5 prompt:7033 Prompt { text: [Text("Next.")], steered: false }

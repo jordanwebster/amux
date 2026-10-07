@@ -97,18 +97,6 @@
         }
       }
     },
-    "5h": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "5h"
-          }
-        }
-      }
-    },
     "<instructions>": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -1033,18 +1021,6 @@
         }
       }
     },
-    "Resets Monday": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Resets Monday"
-          }
-        }
-      }
-    },
     "Resume from the live checklist": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -1101,18 +1077,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rows"
-          }
-        }
-      }
-    },
-    "Run claude login on Studio.": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Run claude login on Studio."
           }
         }
       }
@@ -2461,18 +2425,6 @@
         }
       }
     },
-    "danger-full-access": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "danger-full-access"
-          }
-        }
-      }
-    },
     "default": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -3177,18 +3129,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "n1"
-          }
-        }
-      }
-    },
-    "never": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "never"
           }
         }
       }
@@ -4165,18 +4105,6 @@
         }
       }
     },
-    "the agent is not taking prompts": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the agent is not taking prompts"
-          }
-        }
-      }
-    },
     "the ask was already answered in the terminal": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -4357,18 +4285,6 @@
         }
       }
     },
-    "weekly": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "weekly"
-          }
-        }
-      }
-    },
     "worker-2": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -4413,18 +4329,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "working"
-          }
-        }
-      }
-    },
-    "workspace-write": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "workspace-write"
           }
         }
       }

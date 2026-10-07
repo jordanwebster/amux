@@ -1610,7 +1610,12 @@ impl Home {
                 if let Some(problem) =
                     wire::agent_name_problem(editor.text().trim()).filter(|_| !editor.is_empty())
                 {
-                    push(&mut line, problem, theme.warning(), width);
+                    push(
+                        &mut line,
+                        crate::words::name_problem(problem),
+                        theme.warning(),
+                        width,
+                    );
                     push(&mut line, " · ", theme.muted(), width);
                     vec![("esc", "cancel", key(KeyCode::Esc))]
                 } else {

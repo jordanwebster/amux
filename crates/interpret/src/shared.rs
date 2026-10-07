@@ -796,20 +796,6 @@ impl<A: OpenAsk> Shared<A> {
         self.queue.drop_steered();
     }
 
-    /// Queues an agent message on a provider with no injection channel, as
-    /// an ordinary entry labelled with its sender.
-    pub fn queue_agent_message(&mut self, emit: &mut Emit, input_id: &[u8], envelope: &Envelope) {
-        let entry = QueuedInput {
-            input_id: envelope.id.clone(),
-            text: envelope.text.clone(),
-            attachments: Vec::new(),
-            steer: false,
-            sender: envelope.from.clone(),
-        };
-        self.queue.push(entry);
-        self.accept(emit, input_id, true);
-    }
-
     pub fn queue(&self) -> &Queue {
         &self.queue
     }
@@ -1289,7 +1275,7 @@ fn capitalised(word: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use wire::{Ask, EnvelopeKind};
+    use wire::Ask;
 
     use super::*;
 
@@ -1314,15 +1300,6 @@ mod tests {
             ..Default::default()
         };
         Shared::new(&spec, "test", "v")
-    }
-
-    fn envelope(id: &[u8]) -> Envelope {
-        Envelope {
-            id: id.to_vec(),
-            kind: EnvelopeKind::Message as i32,
-            text: "hi".into(),
-            ..Default::default()
-        }
     }
 
     #[test]
@@ -1361,24 +1338,6 @@ mod tests {
         );
         shared.turn_ended(&mut emit);
         assert!(shared.quiescent());
-    }
-
-    #[test]
-    fn an_agent_message_without_a_carrier_queues_labelled_with_its_sender() {
-        let mut shared = shared();
-        let mut emit = Emit::default();
-        let mut message = envelope(b"e1");
-        message.from = Some(Sender {
-            value: Some(sender::Value::Agent(wire::AgentSender {
-                name: "reviewer".into(),
-                ..Default::default()
-            })),
-        });
-        shared.queue_agent_message(&mut emit, b"in", &message);
-        let entry = &shared.queue().entries()[0];
-        assert_eq!(entry.input_id, b"e1");
-        assert_eq!(entry.sender, message.from);
-        assert_eq!(emit.effects().len(), 1);
     }
 
     #[test]

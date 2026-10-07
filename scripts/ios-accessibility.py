@@ -140,7 +140,7 @@ def main() -> int:
         audit.pairing()
         audit.hosts()
         audit.fleet()
-        audit.chat_strip()
+        audit.chat_turn()
         audit.question()
         audit.escape()
         audit.you()

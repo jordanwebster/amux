@@ -2,7 +2,7 @@
 //! written against.
 
 use client::{Client, RpcError};
-use wire::{Diff, DiffBase, DiffRequest, GetBlobRequest, diff_base};
+use wire::{Diff, DiffBase, DiffRequest, GetBlobRequest};
 
 /// Asks the agent's host which files changed against `base`, with their
 /// line counts. Builds no patch: only a review page needs one.
@@ -18,18 +18,6 @@ pub async fn changed_files(
             with_patch: false,
         })
         .await
-}
-
-/// Asks the agent's host for its working-tree diff and fetches the patch
-/// the diff names.
-pub async fn working_tree_review(
-    client: &dyn Client,
-    agent_id: &[u8],
-) -> Result<(Diff, String), RpcError> {
-    let base = DiffBase {
-        base: Some(diff_base::Base::WorkingTree(wire::Empty {})),
-    };
-    review(client, agent_id, base).await
 }
 
 /// Asks the agent's host for its diff against `base` and fetches the patch

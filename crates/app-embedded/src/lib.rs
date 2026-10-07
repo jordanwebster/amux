@@ -545,7 +545,6 @@ impl EmbeddedRuntime {
                 fingerprint: fingerprint(&peer.pubkey),
                 host_id: peer.host_id,
                 name: peer.name,
-                paired_at_ms: peer.paired_at_unix_ms,
             })
             .collect();
         peers.sort_by_key(|peer| peer.name.to_lowercase());

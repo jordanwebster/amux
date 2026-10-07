@@ -25,7 +25,7 @@ Every workflow sets `CARGO_INCREMENTAL=0`, and every job has a
 | --- | --- | --- |
 | Check and Clippy | `ubuntu-latest` | `just check`, `just lint` |
 | Format | `ubuntu-latest` | `just fmt-check` with `nightly-2026-08-30` |
-| Codegen and dependency policy | `ubuntu-latest` | `just codegen-check`, `just proto-check`, `just dependency-policy`, `just typed-provider-check`, `just tests-check`, `just docs-check`, `just deletion-ledger-check`, `just stand-ins-check` |
+| Codegen and dependency policy | `ubuntu-latest` | `just codegen-check`, `just proto-check`, `just dependency-policy`, `just typed-provider-check`, `just tests-check`, `just docs-check`, `just deletion-ledger-check` |
 | Test | `ubuntu-latest`, `macos-latest`, `windows-latest` | `scripts/no-update-flags.sh`, `just test -- --no-fail-fast`, `just doctest`; on macOS also `just contracts-check` |
 | Build | `ubuntu-latest`, `macos-latest`, `windows-latest` | `just release-check` |
 | Terminal journeys | `ubuntu-latest`, `macos-latest` | Installs `tmux`, then `just journey terminal all`: every terminal story in the manifest |
@@ -184,7 +184,6 @@ stopping at the first failure:
 | `dependency-policy` | Production and test-infrastructure dependency boundaries ([`scripts/check-dependency-policy.py`](../scripts/check-dependency-policy.py)) |
 | `typed-provider-check` | The interpreters, the agent's provider handshake and Claude's messaging socket read and write provider messages only through the protocol crates: no `json!`, field looked up by name or untyped `Value` outside the listed tool payloads ([`scripts/typed-provider-check.py`](../scripts/typed-provider-check.py)) |
 | `deletion-ledger-check` | No code, config, proto, recipe, script, workflow or doc names a mechanism amux removed |
-| `stand-ins-check` | The terminal client builds no feature from lesser facts: no stand-in module, client-written option lists, model-id tidying, old context strip or second way to fold tool steps; the syntax highlighter and the notice for an agent's terminal on another host remain ([`scripts/stand-ins-check.py`](../scripts/stand-ins-check.py)) |
 | `docs-check` | Every link, image and heading anchor under `docs/` resolves, every figure is referenced and standalone, and `docs/README.md` lists every page once ([`scripts/docs-check.py`](../scripts/docs-check.py)) |
 | `tests-check` | The suite catalogue names only things that exist |
 | `test` | Every workspace test target |

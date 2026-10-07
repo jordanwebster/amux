@@ -26,7 +26,6 @@ pub trait PairingAdmin: Sync {
 
 pub(crate) const QR_SECRET_LEN: usize = 32;
 pub(crate) const PAIR_MODE_TTL: Duration = Duration::from_secs(5 * 60);
-pub const ONRAMP_PAIR_MODE_TTL: Duration = Duration::from_secs(15 * 60);
 pub(crate) const PAIR_ATTEMPT_LIMIT: u8 = 5;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -107,15 +106,6 @@ impl PairMode {
         let pin = generate_pin()?;
         self.start_pin_for_duration(pin.clone(), PAIR_MODE_TTL)?;
         Ok(pin)
-    }
-
-    pub(crate) fn start_qr_secret(&self) -> Result<[u8; QR_SECRET_LEN], PairModeError> {
-        let mut secret = [0_u8; QR_SECRET_LEN];
-        SystemRandom::new()
-            .fill(&mut secret)
-            .map_err(|_| PairModeError::SecretGeneration)?;
-        self.start_qr_secret_for_duration(secret, PAIR_MODE_TTL)?;
-        Ok(secret)
     }
 
     pub fn start_pin_for_duration(&self, pin: String, ttl: Duration) -> Result<(), PairModeError> {

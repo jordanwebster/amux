@@ -15,7 +15,7 @@
 ## 7 input {"id":"p2","prompt":{"text":"never mind, just fix the typo"}}
   row    3 t1 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: Dismissed, note: None, writing: false })
   ask none
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 50], text: [Text("never mind, just fix the typo")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 50], text: [Text("never mind, just fix the typo")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 9 fact {"channel":"stream","json":{"duration_ms":1000,"is_error":false,"session_id":"s1","subtype":"success","total_cost_usd":0.01,"type":"result","uuid":"r1"}}
   row    4 turn:1 Stopped
   row    5 70320000-0000-4000-8000-000000000000 Prompt { text: [Text("never mind, just fix the typo")], steered: false }

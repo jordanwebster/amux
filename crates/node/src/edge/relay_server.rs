@@ -168,16 +168,6 @@ impl CloudLinkServer {
         spawn_cloud_carrier_server(self.clone(), tcp_incoming(listener))
     }
 
-    /// Serves the relay on an arbitrary accepted-transport stream. Used by
-    /// the testnet harness to keep kill-switch handles on accepted sockets.
-    pub fn serve_on_incoming<I, IO>(&self, incoming: I) -> JoinHandle<()>
-    where
-        I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
-        IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    {
-        spawn_cloud_carrier_server(self.clone(), incoming)
-    }
-
     pub fn serve_on_tls_tcp_listener(
         &self,
         listener: TcpListener,

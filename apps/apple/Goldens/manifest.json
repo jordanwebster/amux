@@ -567,8 +567,8 @@
       "shows": "The fleet: an agent asking a question first, then the rest by most recent activity."
     },
     {
-      "id": "chat-strip",
-      "shows": "A claude_sdk chat after a turn with an exploration step, its composer and its session strip."
+      "id": "chat-turn",
+      "shows": "A claude_sdk chat after a turn with an exploration step, its header and its composer."
     },
     {
       "id": "claude-sdk-ask-question",

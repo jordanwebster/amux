@@ -141,7 +141,6 @@ impl From<QueryOptions> for QueryRuntimeConfig {
             per_task_stop_affordance,
             hook_subscriptions,
             agents,
-            output_format,
             system_prompt,
             plan_mode_instructions,
             tool_aliases,
@@ -203,7 +202,7 @@ impl From<QueryOptions> for QueryRuntimeConfig {
             initialize_request: InitializeRequestBody {
                 sdk_mcp_servers: (!sdk_mcp_server_names.is_empty()).then_some(sdk_mcp_server_names),
                 hooks: (!wire_hooks.is_empty()).then_some(wire_hooks),
-                json_schema: output_format.map(|format| format.schema),
+                json_schema: None,
                 system_prompt,
                 append_system_prompt,
                 plan_mode_instructions,

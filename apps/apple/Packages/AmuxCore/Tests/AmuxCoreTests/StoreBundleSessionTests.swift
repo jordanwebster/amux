@@ -32,7 +32,7 @@ final class CaughtUpSession: OpenChat, @unchecked Sendable {
             agent: agent, name: "a", kind: .claudeSdk, phase: .needsYou,
             composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: current,
             hasOlder: false, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
-            mode: nil, model: nil, permission: nil, signIn: nil, waiting: nil)
+            model: nil, permission: nil, signIn: nil, waiting: nil)
     }
     func takeChanges() -> ChatChanges { ChatChanges(keys: [], reloaded: false, session: true) }
     func send(_ draft: Draft) async -> Result<SendOutcome, RuntimeFailure> { .failure(RuntimeFailure("no")) }

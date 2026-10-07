@@ -52,7 +52,11 @@ pub fn main() -> i32 {
         return 0;
     }
     if let Some(thread) = crate::codex_view::resumed_thread(&args) {
-        return crate::codex_view::run(thread, crate::codex_view::remote(&args));
+        let Some(remote) = crate::codex_view::remote(&args) else {
+            eprintln!("fake-codex: resume needs --remote");
+            return DRIFT_EXIT;
+        };
+        return crate::codex_view::run(thread, remote);
     }
     let mode = match crate::mode_from_env() {
         Ok(mode) => mode,

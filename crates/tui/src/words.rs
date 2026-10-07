@@ -66,3 +66,17 @@ pub(crate) fn control_words(state: &SessionState) -> Option<String> {
     }
     (!words.is_empty()).then(|| words.join(" · "))
 }
+
+/// Why a typed name will not do.
+pub(crate) fn name_problem(problem: wire::AgentNameProblem) -> String {
+    match problem {
+        wire::AgentNameProblem::Empty => "a name cannot be empty".to_owned(),
+        wire::AgentNameProblem::TooLong => {
+            format!("a name is at most {} characters", wire::AGENT_NAME_MOST)
+        }
+        wire::AgentNameProblem::Characters => {
+            "a name is lowercase letters, digits and hyphens, starting with a letter or digit"
+                .to_owned()
+        }
+    }
+}

@@ -51,4 +51,4 @@ pub use settings::{
     SettingsView, effort_in_force, setting_input, settings,
 };
 /// The rule a host holds every agent name to, for a client's name field.
-pub use wire::agent_name_problem;
+pub use wire::{AgentNameProblem, agent_name_problem};

@@ -319,15 +319,15 @@ each renderer. A client may also read the state directly.
 | `overview(state, diff)`, `changes(diff)`, `diff_base(state, comparison)` | The `Overview`: tasks, background jobs, failed tool servers, usage near a limit, and the changed files by folder (root files first) from a `Diff` fetched without a patch; the base a comparison asks `Diff` for. |
 | `context(state)`, `sign_in(state)`, `effort_in_force(agent)` | Context use (near full from 80%), a sign-in problem, and the effort the agent runs at. |
 | `settings(state)`, `setting_input(kind, change)` | What the agent offers to change (models, efforts, modes, commands), why a setting cannot change from here, and the input a pick sends. |
-| `fleet_view(fleet, lines, expand, keep)`, `session_line(state, now_ms)` | Home's sections (needs you, running, exited) with each family in its loudest member's section, newest since-when first, and every row's second line; what one session knows for that line. |
+| `fleet_view(fleet, lines, expand, keep)`, `session_line(state, now_ms)` | Home's sections (needs you, live, exited) with each family in its loudest member's section, newest since-when first, and every row's second line; what one session knows for that line. |
 | `fleet_card(fleet, agent_id)`, `family_header(fleet, agent_id)` | One agent's card (name, branch, host, family counts), and a chat's family header. |
 | `away(fleet, local_host, host)`, `signed_out(fleet, local_host)` | Why a host is out of reach, as far as this machine can say. |
 | `review_doc(diff, patch, comments)` | A patch parsed into files, hunks and lines, with review comments placed. |
 | `patch_head(state, key, max)` | The first lines of an edit's patch. |
 
 A few facts exist so that a client can say what happened without reading further: an edit's ask says whether it
-`created` the file (so it reads "Wants to create"); a plan's row carries `edits_accepted` (approved with edits
-accepted from then on) and `writing` (the plan still streaming in); pasted text's chip carries the `text` itself, so
+`created` the file (so it reads "Wants to create"); a plan's row carries its `verdict` (approved, approved accepting edits
+from then on, sent back) and `writing` (the plan still streaming in); pasted text's chip carries the `text` itself, so
 a sent message can show what was pasted in place of the chip; a command's row keeps its `output_tail` beside its
 head, for a step opened to show how it ended; and a background command's row its `duration_ms` once it has ended.
 

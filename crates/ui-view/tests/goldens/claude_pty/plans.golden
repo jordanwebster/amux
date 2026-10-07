@@ -18,9 +18,9 @@
 ## 13 input {"id":"p2","prompt":{"text":"never mind, just fix the typo"}}
   row    3 t1 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: Dismissed, note: None, writing: false })
   ask none
-  composer Send activity=Some(Running { key: "t1" }) queue=[QueuedRow { input_id: [112, 50], text: [Text("never mind, just fix the typo")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Running { key: "t1" }) queue=[QueuedRow { input_id: [112, 50], text: [Text("never mind, just fix the typo")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 14 fact {"channel":"transcript","json":{"message":{"content":[{"content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.","is_error":true,"tool_use_id":"t1","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":…
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 50], text: [Text("never mind, just fix the typo")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 50], text: [Text("never mind, just fix the typo")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 15 fact {"channel":"transcript","json":{"durationMs":12,"sessionId":"s1","subtype":"turn_duration","timestamp":"2027-01-15T08:00:00.022Z","type":"system","uuid":"d1"}}
   row    4 turn:1 TurnEnd { duration_ms: Some(12), cost_usd: None, failed: false }
   composer Send activity=Some(Working) queue=[] underway=[] refused=[]

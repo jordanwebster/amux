@@ -121,7 +121,6 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
     private var state: ScriptedCloudState
     private var recorded: [CloudCall] = []
     private var uploads: [ReportBundle] = []
-    private var purchases: [String] = []
 
     public init(state: ScriptedCloudState = ScriptedCloudState()) {
         self.state = state
@@ -143,11 +142,6 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
     /// themselves can say whether it was.
     public var uploaded: [ReportBundle] { lock.withLock { uploads } }
 
-    /// Every signed transaction this was handed, in order, whether it took it
-    /// or refused it. A retry has to be the same transaction, and only these
-    /// can say whether it was.
-    public var recordedPurchases: [String] { lock.withLock { purchases } }
-
     public var scripted: ScriptedCloudState {
         get { lock.withLock { state } }
         set { lock.withLock { state = newValue } }
@@ -157,7 +151,6 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         lock.withLock {
             recorded = []
             uploads = []
-            purchases = []
         }
     }
 
@@ -227,7 +220,6 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
     ) async throws(CloudError) {
         let state = lock.withLock {
             recorded.append(.recordPurchase(id))
-            purchases.append(signedTransaction)
             return self.state
         }
         await wait(state)

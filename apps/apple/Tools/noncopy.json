@@ -891,9 +891,6 @@
       {"literal": "\"amux-door-ready\"", "context": "public static let readyArgument = \"amux-door-ready\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"amux-door-port\"", "context": "public static let portArgument = \"amux-door-port\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"amux-relay\"", "context": "public static let relayArgument = \"amux-relay\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"amux-token\"", "context": "public static let tokenArgument = \"amux-token\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"amux-user\"", "context": "public static let userArgument = \"amux-user\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"amux-pair\"", "context": "public static let pairArgument = \"amux-pair\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"amux-scripted-cloud\"", "context": "public static let scriptedCloudArgument = \"amux-scripted-cloud\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"amux-link\"", "context": "public static let linkArgument = \"amux-link\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"unknown\"", "context": "Self.doorNames.first { $0.value == self }?.key ?? \"unknown\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -975,7 +972,6 @@
       {"literal": "\"£79.99\"", "context": "Plan(id: Plan.yearlyID, period: .yearly, price: \"£79.99\", saving: \"2 months free\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"2 months free\"", "context": "Plan(id: Plan.yearlyID, period: .yearly, price: \"£79.99\", saving: \"2 months free\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"scripted.signed.transaction\"", "context": "public static let signedTransaction = \"scripted.signed.transaction\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"the App Store could not be reached\"", "context": "ScriptedStoreState(plans: [], purchase: .fails(\"the App Store could not be reached\"))", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"scripted-approval\"", "context": "id: \"scripted-approval\", productID: plan,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"scripted-transaction\"", "context": "id: \"scripted-transaction\", productID: plan,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"bought\"", "context": "public var purchase = \"bought\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -1313,7 +1309,7 @@
       {"literal": "\"list.bullet.rectangle\"", "context": "MenuItem(title: String(localized: \"Overview\"), systemImage: \"list.bullet.rectangle\") {", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"chat.landing.\\(index)\"", "context": "id: \"chat.landing.\\(index)\", text: prompt.text,", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"sign-in\"", "context": "kind: \"sign-in\", title: ChatWords.needsSignIn(kind),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"chat.rename.problem\"", "context": ".identified(\"chat.rename.problem\", value: problem)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
+      {"literal": "\"chat.rename.problem\"", "context": ".identified(\"chat.rename.problem\", value: problem.rawValue)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift": [
       {"literal": "\"%.1fs\"", "context": "return String(format: \"%.1fs\", Double(ms) / 1_000)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},

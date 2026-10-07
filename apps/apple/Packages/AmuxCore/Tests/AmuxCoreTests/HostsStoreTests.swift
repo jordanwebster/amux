@@ -61,7 +61,7 @@ final class HostsStoreTests: XCTestCase {
         let hosts = HostsStore()
         let roster = Roster(
             identity: Identity(hostId: phone.bytes, name: "phone", fingerprint: "ab"),
-            peers: [PairedPeer(hostId: studio.bytes, name: "studio", fingerprint: "cd", pairedAtMs: 1)])
+            peers: [PairedPeer(hostId: studio.bytes, name: "studio", fingerprint: "cd")])
         hosts.show(roster)
         hosts.sawLocalNetwork(.denied)
         XCTAssertEqual(hosts.devices.map(\.name), ["studio"])

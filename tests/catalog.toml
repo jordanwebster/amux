@@ -821,7 +821,7 @@ cargo = [
 
 [[suite]]
 name = "view-goldens"
-contract = "Each view is a pure function of the session state; row ids are item keys and never move, run membership is an attribute, a stretch of tool steps is found from any member and names only the failures its ended turn left unresolved, attachments keep their positions, and every choice an ask card offers reaches the interpreter as an input it accepts."
+contract = "Each view is a pure function of the session state; row ids are item keys and never move, run membership is an attribute, a run of tool steps names only the failures its ended turn left unresolved, attachments keep their positions, and every choice an ask card offers reaches the interpreter as an input it accepts."
 paths = ["crates/ui-view/tests"]
 recipe = "just test-crate ui-view"
 boundary = "Views"

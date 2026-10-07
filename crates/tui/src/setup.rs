@@ -1549,7 +1549,10 @@ impl Form {
 fn name_problem(line: &mut Line<'static>, typed: &str, theme: Theme) {
     if let Some(problem) = wire::agent_name_problem(typed.trim()) {
         line.spans.push(Span::styled(" · ", theme.muted()));
-        line.spans.push(Span::styled(problem, theme.warning()));
+        line.spans.push(Span::styled(
+            crate::words::name_problem(problem),
+            theme.warning(),
+        ));
     }
 }
 

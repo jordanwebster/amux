@@ -1,3 +1,35 @@
+2026-10-07 — **What the protocol-gaps work left behind is deleted.**
+An audit of everything the work added found the old runtime paths it
+replaced already gone, but a layer of dead code the compiler cannot flag
+because it is public or only its own tests call it. Deleted: the claude
+crate's version cache, transcript wrapper and two launch helpers; three
+Codex client settings, a notification queue nothing read and a test-only
+re-registration; four pairing, relay and discovery leftovers in the node;
+the interpreter's agent-message queue for a provider with no injection
+channel; the unused `explores` helpers; spec-driver methods and options no
+spec sets; the fake Codex view's pre-socket mode (`--remote` is now
+required); three view fields no client reads (a queued prompt's `mine`, the
+frame's `mode`, a paired peer's `paired_at_ms`); two whole phone files and
+about ten unused phone functions; 66 catalogue strings no source uses; and
+`scripts/ios_testnet.py` and an unreferenced architecture image. The
+stand-ins check went too: every absence it held is in the deletion ledger,
+and what it held present is covered by tests. Stale wording about the
+strip, the outbox, stretches and the "Running" section is fixed, and the
+phone golden "chat-strip" is now "chat-turn".
+
+2026-10-07 — **A killed test network takes its Bonjour adverts with it.**
+Each served host's `dns-sd -P` advertiser outlived a test network that was
+SIGKILLed or terminated, and later phone discovery runs saw renamed
+duplicates such as "desk (4)". `dns-sd` now runs under a shell tied to its
+owner by a pipe and dies when that pipe closes, however the owner ends, and
+`testnet serve` shuts down cleanly on SIGTERM.
+
+2026-10-07 — **A refused agent name is a reason, worded by each client.**
+The name rule returned an English sentence from Rust. It now returns
+`AgentNameProblem` (empty, too long, or characters outside the rule); the
+daemon's error, the terminal and the phone each say it in their own words,
+so shared code carries meaning and the clients carry the copy.
+
 2026-10-07 — **The phone's local-network story holds its refusal.**
 The journey refuses the local network through the debug door, which set
 the Hosts store's permission once. The real browser kept reporting its own

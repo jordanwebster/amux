@@ -271,7 +271,6 @@ pub struct Report {
     pub verdicts: Vec<Verdict>,
     pub runs: Vec<MetricRun>,
     reference_state: Option<&'static str>,
-    diagnostic: bool,
 }
 
 impl Report {
@@ -287,7 +286,6 @@ impl Report {
             baselines,
             recording,
             Some(DESKTOP_REFERENCE_STATE),
-            false,
         )
     }
 
@@ -297,11 +295,7 @@ impl Report {
         baselines: Option<&Baselines>,
         recording: bool,
     ) -> Result<Self, PerfError> {
-        Self::evaluate_mode(machine, runs, baselines, recording, None, false)
-    }
-
-    pub fn evaluate_diagnostic(machine: Machine, runs: Vec<MetricRun>) -> Result<Self, PerfError> {
-        Self::evaluate_mode(machine, runs, None, false, None, true)
+        Self::evaluate_mode(machine, runs, baselines, recording, None)
     }
 
     fn evaluate_mode(
@@ -310,7 +304,6 @@ impl Report {
         baselines: Option<&Baselines>,
         recording: bool,
         reference_state: Option<&'static str>,
-        diagnostic: bool,
     ) -> Result<Self, PerfError> {
         let metric_names = runs
             .iter()
@@ -384,17 +377,7 @@ impl Report {
             verdicts,
             runs,
             reference_state,
-            diagnostic,
         })
-    }
-
-    pub fn validate_recording(recording: bool, diagnostic: bool) -> Result<(), PerfError> {
-        if recording && diagnostic {
-            return Err(PerfError::Baseline(
-                "a shortened diagnostic soak cannot become a baseline".to_owned(),
-            ));
-        }
-        Ok(())
     }
 
     pub fn passed(&self) -> bool {
@@ -408,9 +391,6 @@ impl Report {
         );
         if let Some(reference_state) = self.reference_state {
             println!("reference state: {reference_state}");
-        }
-        if self.diagnostic {
-            println!("drift: not applied to diagnostic runs");
         }
         println!("metric | median | measured | budget | baseline | drift | verdict");
         for (run, verdict) in self.runs.iter().zip(&self.verdicts) {
@@ -456,7 +436,7 @@ impl Report {
                 run.started_at.to_rfc3339(),
                 run.ended_at.to_rfc3339(),
             );
-            if verdict.baseline.is_none() && !ceiling_only && !self.diagnostic {
+            if verdict.baseline.is_none() && !ceiling_only {
                 println!("  no committed baseline for this workload");
             }
         }
@@ -855,13 +835,6 @@ mod tests {
         assert_eq!(baseline.reference_state, None);
         assert_eq!(baseline.medians["slope"], None);
         assert_eq!(baseline.medians["peak"], Some(12.0));
-    }
-
-    #[test]
-    fn diagnostic_soaks_are_refused_before_baseline_recording() {
-        assert!(Report::validate_recording(true, true).is_err());
-        assert!(Report::validate_recording(false, true).is_ok());
-        assert!(Report::validate_recording(true, false).is_ok());
     }
 
     #[test]

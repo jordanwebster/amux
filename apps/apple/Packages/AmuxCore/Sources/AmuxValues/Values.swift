@@ -307,6 +307,16 @@ public struct AgentKey: Codable, Hashable, Sendable {
     }
 }
 
+/// Why a name cannot name an agent. Each client words it.
+public enum AgentNameProblem: String, Codable, Hashable, Sendable, CaseIterable {
+    case empty = "Empty"
+    /// Longer than [`AGENT_NAME_MOST`].
+    case tooLong = "TooLong"
+    /// Not lowercase letters, digits and hyphens starting with a letter or
+    /// digit.
+    case characters = "Characters"
+}
+
 /// One question's answer: the picked options, a typed answer, or a secret
 /// answer that reads "answered (hidden)". None of them is a skip.
 public struct AnswerView: Codable, Hashable, Sendable {
@@ -1462,7 +1472,6 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     /// The agent's branch and change totals as of its last turn end; None
     /// outside a repository.
     public var git: GitView?
-    public var mode: String?
     /// The agent's model, effort in force, permission and mode, as it
     /// reports them (values from its catalogue; see the settings view).
     public var model: String?
@@ -1471,7 +1480,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     public var signIn: SignInView?
     public var waiting: Waiting?
 
-    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], underway: [SentPrompt], refused: [RefusedPrompt], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, git: GitView?, mode: String?, model: String?, permission: String?, signIn: SignInView?, waiting: Waiting?) {
+    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, arrivalsHeld: Bool, queue: [QueuedRow], underway: [SentPrompt], refused: [RefusedPrompt], askInput: [UInt8]?, context: ContextView?, effort: String?, ended: String?, git: GitView?, model: String?, permission: String?, signIn: SignInView?, waiting: Waiting?) {
         self.agent = agent
         self.name = name
         self.kind = kind
@@ -1489,7 +1498,6 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         self.effort = effort
         self.ended = ended
         self.git = git
-        self.mode = mode
         self.model = model
         self.permission = permission
         self.signIn = signIn
@@ -1514,7 +1522,6 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         case effort
         case ended
         case git
-        case mode
         case model
         case permission
         case signIn = "sign_in"
@@ -3324,20 +3331,17 @@ public struct PairedPeer: Codable, Hashable, Sendable {
     public var hostId: [UInt8]
     public var name: String
     public var fingerprint: String
-    public var pairedAtMs: Int64
 
-    public init(hostId: [UInt8], name: String, fingerprint: String, pairedAtMs: Int64) {
+    public init(hostId: [UInt8], name: String, fingerprint: String) {
         self.hostId = hostId
         self.name = name
         self.fingerprint = fingerprint
-        self.pairedAtMs = pairedAtMs
     }
 
     private enum CodingKeys: String, CodingKey {
         case hostId = "host_id"
         case name
         case fingerprint
-        case pairedAtMs = "paired_at_ms"
     }
 }
 
@@ -3729,7 +3733,6 @@ public struct QuestionView: Codable, Hashable, Sendable {
 public struct QueuedRow: Codable, Hashable, Sendable {
     public var inputId: [UInt8]
     public var text: [Segment]
-    public var mine: Bool
     /// Reads "steered" until its reflection lands.
     public var steered: Bool
     public var canWithdraw: Bool
@@ -3738,10 +3741,9 @@ public struct QueuedRow: Codable, Hashable, Sendable {
     /// Who queued it: None for a person, the agent's name for an agent.
     public var fromAgent: String?
 
-    public init(inputId: [UInt8], text: [Segment], mine: Bool, steered: Bool, canWithdraw: Bool, canSendNow: Bool, fromAgent: String?) {
+    public init(inputId: [UInt8], text: [Segment], steered: Bool, canWithdraw: Bool, canSendNow: Bool, fromAgent: String?) {
         self.inputId = inputId
         self.text = text
-        self.mine = mine
         self.steered = steered
         self.canWithdraw = canWithdraw
         self.canSendNow = canSendNow
@@ -3751,7 +3753,6 @@ public struct QueuedRow: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case inputId = "input_id"
         case text
-        case mine
         case steered
         case canWithdraw = "can_withdraw"
         case canSendNow = "can_send_now"
@@ -3967,7 +3968,7 @@ public enum RowKind: Codable, Hashable, Sendable {
     case agentMessage(from: String, kind: EnvelopeKind, text: String, to: String, sent: SendState, rejection: String)
     case autoReview(decision: String, risk: String, rationale: String, subject: String)
     case unrecognized(what: String, summary: String)
-    /// An item that belongs to the strip or the activity line, never a row.
+    /// An item that belongs to the overview or the activity line, never a row.
     case hidden
 
     private enum Tag: String, CodingKey {

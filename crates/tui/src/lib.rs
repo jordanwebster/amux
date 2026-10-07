@@ -3,7 +3,7 @@
 //! A library the CLI invokes (bare `amux` opens it), never a second
 //! executable. It reads the local runtime only through ui-runtime's
 //! drivers and composes ui-view's values — fleet rows, chat rows, the ask
-//! card, the session strip, composer tokens — inside its own layout. It
+//! card, the overview, composer tokens — inside its own layout. It
 //! owns panes, the anchor, the expansion set, drafts and focus, and
 //! nothing it holds outlives the process.
 

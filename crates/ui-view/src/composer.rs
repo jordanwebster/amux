@@ -94,7 +94,6 @@ pub struct QueuedRow {
     pub text: Vec<Segment>,
     /// Who queued it: None for a person, the agent's name for an agent.
     pub from_agent: Option<String>,
-    pub mine: bool,
     /// Reads "steered" until its reflection lands.
     pub steered: bool,
     pub can_withdraw: bool,
@@ -121,7 +120,6 @@ pub fn queue_rows(state: &SessionState) -> Vec<QueuedRow> {
                 input_id: row.entry.input_id.clone(),
                 text: segments(&row.entry.text, &row.entry.attachments),
                 from_agent,
-                mine: row.mine,
                 steered: row.steered,
                 can_withdraw: live && !row.steered,
                 can_send_now: live && !row.steered,

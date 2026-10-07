@@ -436,8 +436,8 @@ pub extern "C" fn amux_version() -> *const c_char {
         .as_ptr()
 }
 
-/// Why `name` cannot name an agent, as a JSON string, or JSON null when it
-/// can: the rule every host holds a create or a rename to, so a field can
+/// Why `name` cannot name an agent, as a JSON `AgentNameProblem`, or JSON
+/// null when it can: the rule every host holds a create or a rename to, so a field can
 /// say so while it is typed. The caller frees the answer.
 ///
 /// # Safety
@@ -1678,7 +1678,7 @@ pub unsafe extern "C" fn amux_session_settings(chat: *const AmuxChat) -> *mut c_
     unsafe { read(chat, Chat::settings) }
 }
 
-/// The `ChatFrame`: phase, composer, activity, queue and outbox.
+/// The `ChatFrame`: phase, composer, settings in force, git and context.
 ///
 /// # Safety
 /// `chat` is from `amux_session_open`.

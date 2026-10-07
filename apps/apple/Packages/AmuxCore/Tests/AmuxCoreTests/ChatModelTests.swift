@@ -223,7 +223,7 @@ private func frame(
         agent: AgentKey(host: [1], agent: [2]), name: "a", kind: kind, phase: phase,
         composer: ComposerView(mode: mode, activity: nil), connection: .live, caughtUp: caughtUp,
         hasOlder: hasOlder, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
-        mode: nil, model: nil, permission: nil, signIn: nil, waiting: nil)
+        model: nil, permission: nil, signIn: nil, waiting: nil)
 }
 
 /// Prose rows "m<first>" through "m<last>", in order.
@@ -647,7 +647,7 @@ final class ChatModelTests: XCTestCase {
         source.drafts[[7]] = Draft(text: "Then run the Windows check.", attachments: nil)
         let model = ChatModel(source: source)
         let queued = QueuedRow(
-            inputId: [7], text: [.text("Then run the Windows check.")], mine: true, steered: false,
+            inputId: [7], text: [.text("Then run the Windows check.")], steered: false,
             canWithdraw: true, canSendNow: true, fromAgent: nil)
         model.withdraw(queued)
         await settle()
@@ -674,7 +674,7 @@ final class ChatModelTests: XCTestCase {
                 .text("Look at these."),
                 .attachment(.text(name: "Pasted text", lines: 3, text: "line one\nline two\nline three")),
             ],
-            mine: true, steered: false, canWithdraw: true, canSendNow: true, fromAgent: nil)
+            steered: false, canWithdraw: true, canSendNow: true, fromAgent: nil)
         model.withdraw(queued)
         await settle()
         XCTAssertEqual(source.withdrawn, [[7]])

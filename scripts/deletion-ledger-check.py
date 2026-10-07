@@ -318,7 +318,7 @@ ROWS = [
 ]
 
 # Files that name removed things on purpose, to hold them gone.
-HOLDERS = [SELF, "scripts/stand-ins-check.py", "scripts/tests/stand_ins_check_test.py"]
+HOLDERS = [SELF]
 
 # A hit that names a removed thing on purpose.
 EXEMPTIONS = [

@@ -24,7 +24,7 @@
 ## 9 input {"answer":{"answer":{"reply":{"selected":[0,null,null],"text":"Hold the deploy until Monday."}},"ask":"10"},"id":"a2"}
   row    4 ask:10 [Replied: Env = staging; Window = (skipped); Tag = (skipped) skipped=2 reply="Hold the deploy until Monday."] Ask(Questions { questions: [QuestionView { header: "Env", question: "Which environment?", multi_select: false, options: [OptionView { label: "staging", description: "Safe first.", preview: "", recommended: true }, OptionView { label: "production", description: "Live.", preview:…
   ask none
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [97, 50], text: [Text("Hold the deploy until Monday.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [97, 50], text: [Text("Hold the deploy until Monday.")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 11 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-1","status":"interrupted"}}}}
   row    5 turn:1 Stopped
   row    6 prompt:6132 Prompt { text: [Text("Hold the deploy until Monday.")], steered: false }

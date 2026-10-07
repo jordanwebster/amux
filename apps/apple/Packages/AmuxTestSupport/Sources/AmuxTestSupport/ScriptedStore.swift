@@ -48,12 +48,6 @@ public struct ScriptedStoreState: Codable, Sendable, Equatable {
     /// signed transaction. It is not a JWS and nothing verifies it: the only
     /// thing that reads it is the scripted account service on the other side.
     public static let signedTransaction = "scripted.signed.transaction"
-
-    /// A store that has nothing to sell — no network, or a build the App Store
-    /// has never heard of.
-    public static var silent: ScriptedStoreState {
-        ScriptedStoreState(plans: [], purchase: .fails("the App Store could not be reached"))
-    }
 }
 
 /// One call the paywall made, in the order it made it.

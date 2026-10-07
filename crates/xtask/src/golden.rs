@@ -1011,7 +1011,7 @@ mod tests {
                 "pairing",
                 "hosts",
                 "fleet",
-                "chat-strip",
+                "chat-turn",
                 "claude-sdk-ask-question",
                 "ask-escape",
                 "origin-rewind"

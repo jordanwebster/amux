@@ -9,13 +9,12 @@ use codex_protocol::server::{
 };
 use codex_protocol::{ClientNotification, ClientRequest, Extra};
 use tokio::io::{AsyncBufRead, AsyncWrite};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::CodexConfig;
 use crate::dispatch::ServerInner;
 use crate::error::Error;
-use crate::event::Event;
 use crate::thread::Thread;
 use crate::transport;
 
@@ -28,7 +27,6 @@ use crate::transport;
 #[derive(Clone)]
 pub struct Codex {
     pub(crate) inner: Arc<ServerInner>,
-    global_rx: Arc<Mutex<Option<mpsc::Receiver<Event>>>>,
 }
 
 impl Codex {
@@ -75,20 +73,11 @@ impl Codex {
             .map(transport::WireRecorder::new)
             .transpose()?;
         let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(64);
-        let (global_tx, global_rx) = mpsc::channel::<Event>(64);
-        let inner = Arc::new(ServerInner::new(
-            stdin_tx,
-            global_tx,
-            cancel.clone(),
-            child_waiter,
-        ));
+        let inner = Arc::new(ServerInner::new(stdin_tx, cancel.clone(), child_waiter));
         transport::spawn_reader_task(reader, inner.clone(), cancel.clone(), recorder.clone());
         transport::spawn_writer_task(writer, stdin_rx, cancel, recorder);
 
-        let codex = Self {
-            inner,
-            global_rx: Arc::new(Mutex::new(Some(global_rx))),
-        };
+        let codex = Self { inner };
         if let Err(error) = codex.initialize(&config).await {
             codex.inner.shutdown().await;
             return Err(error);
@@ -102,12 +91,12 @@ impl Codex {
             .request(ClientRequest::Initialize(InitializeParams {
                 client_info: ClientInfo {
                     name: config.client_name.clone(),
-                    title: config.client_title.clone(),
+                    title: None,
                     version: config.client_version.clone(),
                     extra: Extra::new(),
                 },
                 capabilities: Some(Capabilities {
-                    experimental_api: Some(config.experimental_api),
+                    experimental_api: Some(true),
                     extra: Extra::new(),
                 }),
                 extra: Extra::new(),
@@ -203,11 +192,6 @@ impl Codex {
         request: ClientRequest,
     ) -> Result<R, Error> {
         self.inner.request(request).await
-    }
-
-    /// Take the receiver for what names no thread. `None` once taken.
-    pub fn take_notifications(&self) -> Option<mpsc::Receiver<Event>> {
-        self.global_rx.try_lock().ok()?.take()
     }
 
     // ── Shutdown ─────────────────────────────────────────────────

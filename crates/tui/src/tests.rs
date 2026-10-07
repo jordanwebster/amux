@@ -1645,7 +1645,10 @@ impl client::Client for DiffHost {
 #[tokio::test]
 async fn a_review_asks_for_the_working_tree_diff_then_its_patch() {
     let host = DiffHost::default();
-    let (diff, patch) = ui_runtime::review::working_tree_review(&host, b"agent")
+    let base = wire::DiffBase {
+        base: Some(wire::diff_base::Base::WorkingTree(wire::Empty {})),
+    };
+    let (diff, patch) = ui_runtime::review::review(&host, b"agent", base)
         .await
         .unwrap();
     assert_eq!(*host.asked.lock().unwrap(), ["diff", "get_blob"]);

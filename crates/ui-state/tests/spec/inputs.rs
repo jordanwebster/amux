@@ -70,7 +70,7 @@ fn a_queued_prompt_is_queued_until_it_leaves_the_queue() {
         );
         let queue = state.queue();
         assert_eq!(queue.len(), 1);
-        assert!(queue[0].mine && !queue[0].steered);
+        assert!(!queue[0].steered);
         apply_checked(
             &mut state,
             ev_snapshot(snapshot(kind, 8, Phase::Working, &[], &[])),

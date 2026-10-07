@@ -217,8 +217,8 @@ pub enum RegistryError {
     UnknownKind(i32),
     #[error("the working directory {0} is not a directory on this host")]
     BadCwd(String),
-    #[error("{0}")]
-    BadName(String),
+    #[error("{}", name_words(*.0))]
+    BadName(wire::AgentNameProblem),
     #[error("starting in a new worktree: {0}")]
     Worktree(#[from] git_facts::WorktreeError),
     #[error("spawning on another host goes through that host's daemon")]
@@ -239,6 +239,20 @@ pub enum RegistryError {
     Store(#[from] StoreError),
     #[error("the agent directory: {0}")]
     Io(#[from] io::Error),
+}
+
+/// A refused name, as the daemon's error says it.
+fn name_words(problem: wire::AgentNameProblem) -> String {
+    match problem {
+        wire::AgentNameProblem::Empty => "an agent's name cannot be empty".to_owned(),
+        wire::AgentNameProblem::TooLong => {
+            format!("an agent's name is at most {} characters", wire::AGENT_NAME_MOST)
+        }
+        wire::AgentNameProblem::Characters => {
+            "an agent's name is lowercase letters, digits and hyphens, starting with a letter or digit"
+                .to_owned()
+        }
+    }
 }
 
 impl RegistryError {

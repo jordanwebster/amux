@@ -78,8 +78,6 @@ pub struct Outcome {
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueueRow<'a> {
     pub entry: &'a QueuedInput,
-    /// Sent by this client.
-    pub mine: bool,
     /// Sent now into the running turn, by the queue's word or by this
     /// client's Send now in flight; reads "steered" until its reflection.
     pub steered: bool,
@@ -448,15 +446,15 @@ impl SessionState {
             .queue
             .iter()
             .filter_map(|entry| {
-                let mine = self.inputs.get(&entry.input_id);
-                if mine.is_some_and(|sent| sent.state == InputState::Uncertain) {
+                let own = self.inputs.get(&entry.input_id);
+                if own.is_some_and(|sent| sent.state == InputState::Uncertain) {
                     return None;
                 }
                 let sending_now = self.inputs.iter().any(|sent| {
                     sent.state == InputState::Sent
                         && matches!(&sent.what, InputWhat::SendNow { target } if *target == entry.input_id)
                 });
-                Some(QueueRow { entry, mine: mine.is_some(), steered: entry.steer || sending_now })
+                Some(QueueRow { entry, steered: entry.steer || sending_now })
             })
             .collect()
     }

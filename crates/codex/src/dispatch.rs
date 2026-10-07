@@ -22,8 +22,6 @@ pub(crate) struct ServerInner {
     pub stdin_tx: mpsc::Sender<Vec<u8>>,
     pub pending_requests: Mutex<HashMap<i64, oneshot::Sender<Result<Value, RpcError>>>>,
     pub thread_channels: Mutex<HashMap<String, Weak<ThreadRegistration>>>,
-    /// Notifications that name no thread.
-    pub global_tx: mpsc::Sender<Event>,
     pub init_result: OnceLock<InitializeResponse>,
     pub request_counter: AtomicI64,
     pub cancel: CancellationToken,
@@ -209,7 +207,6 @@ impl ThreadRegistration {
 impl ServerInner {
     pub(crate) fn new(
         stdin_tx: mpsc::Sender<Vec<u8>>,
-        global_tx: mpsc::Sender<Event>,
         cancel: CancellationToken,
         child_waiter: Option<tokio::task::JoinHandle<()>>,
     ) -> Self {
@@ -217,7 +214,6 @@ impl ServerInner {
             stdin_tx,
             pending_requests: Mutex::new(HashMap::new()),
             thread_channels: Mutex::new(HashMap::new()),
-            global_tx,
             init_result: OnceLock::new(),
             request_counter: AtomicI64::new(1),
             cancel,
@@ -270,17 +266,11 @@ impl ServerInner {
         registration
     }
 
-    /// Replace any existing registration with a fresh queue.
-    ///
-    /// Used by `thread/resume` to recover from overflow and connection-local
-    /// terminal state. The old consumer is closed and wakes promptly.
-    #[cfg(test)]
-    pub async fn reregister_thread(&self, thread_id: &str) -> Arc<ThreadRegistration> {
-        self.replace_thread_registration(thread_id, ThreadRegistration::new())
-            .await
-    }
-
     /// Install an unbounded pre-response staging registration for `thread/resume`.
+    ///
+    /// Replaces any existing registration, which recovers from overflow and
+    /// connection-local terminal state. The old consumer is closed and wakes
+    /// promptly.
     pub async fn reregister_thread_for_resume(&self, thread_id: &str) -> Arc<ThreadRegistration> {
         self.replace_thread_registration(thread_id, ThreadRegistration::new_staging())
             .await
@@ -361,29 +351,20 @@ impl ServerInner {
                 }
             }
             ServerMessage::Notification { notification, .. } => {
-                match notification.thread_id().map(str::to_owned) {
-                    Some(thread_id) => {
-                        let _ = self
-                            .send_thread_event(&thread_id, Event::Notification(notification))
-                            .await;
-                    }
-                    // Non-blocking so a missing consumer cannot stall the reader.
-                    None => {
-                        let _ = self.global_tx.try_send(Event::Notification(notification));
-                    }
+                // Nothing reads the notifications that name no thread.
+                if let Some(thread_id) = notification.thread_id().map(str::to_owned) {
+                    let _ = self
+                        .send_thread_event(&thread_id, Event::Notification(notification))
+                        .await;
                 }
             }
             ServerMessage::Unknown(unknown) => {
                 // A request this client cannot read can never be answered;
-                // refusing it keeps Codex from waiting on it.
-                match unknown.id.clone() {
-                    Some(id) => {
-                        let method = unknown.method.clone().unwrap_or_default();
-                        self.refuse(id, &method, -32601);
-                    }
-                    None => {
-                        let _ = self.global_tx.try_send(Event::Unknown(unknown));
-                    }
+                // refusing it keeps Codex from waiting on it. Nothing reads
+                // an unknown notification.
+                if let Some(id) = unknown.id.clone() {
+                    let method = unknown.method.clone().unwrap_or_default();
+                    self.refuse(id, &method, -32601);
                 }
             }
         }
@@ -417,9 +398,8 @@ mod tests {
 
     fn test_inner() -> (ServerInner, mpsc::Receiver<Vec<u8>>) {
         let (stdin_tx, stdin_rx) = mpsc::channel(8);
-        let (global_tx, _global_rx) = mpsc::channel(1);
         (
-            ServerInner::new(stdin_tx, global_tx, CancellationToken::new(), None),
+            ServerInner::new(stdin_tx, CancellationToken::new(), None),
             stdin_rx,
         )
     }
@@ -651,10 +631,12 @@ mod tests {
         assert!(!old.send(warning()));
         assert_eq!(old.state(), ThreadChannelState::Overflow);
 
-        let fresh = inner.reregister_thread("thread-1").await;
+        let fresh = inner.reregister_thread_for_resume("thread-1").await;
         assert!(!Arc::ptr_eq(&old, &fresh));
+        assert_eq!(old.state(), ThreadChannelState::Overflow);
         assert_eq!(fresh.state(), ThreadChannelState::Open);
         assert!(fresh.send(warning()));
+        fresh.finish_staging().await;
         let mut rx = fresh.take_receiver().await.unwrap();
         assert!(rx.recv().await.is_some());
     }

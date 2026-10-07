@@ -1,5 +1,5 @@
-//! `fake-codex resume <thread>`: the Codex terminal view an attach opens on
-//! an agent's thread.
+//! `fake-codex resume <thread> --remote unix://PATH`: the Codex terminal
+//! view an attach opens on an agent's thread.
 //!
 //! The real one is Codex's TUI repainting the thread from its rollout. The
 //! fake draws plain lines a test can look for: the thread it opened, its
@@ -7,12 +7,12 @@
 //! ends on Ctrl-C or Ctrl-D, at the end of its input, or when its terminal
 //! hangs up or it is asked to terminate.
 //!
-//! With `--remote unix://PATH` it is a client of the app server on that
-//! socket, as Codex's own app is: it resumes the thread there, or says why
-//! it could not and exits 1. A typed line starts a turn, or steers the one
-//! running; `y` or `n` answers the oldest approval waiting, which it draws
-//! as `approval <id>: <what>` until the server says it was resolved. It
-//! also draws each prompt and reply as it completes and each turn's end.
+//! It is a client of the app server on the `--remote` socket, as Codex's own
+//! app is: it resumes the thread there, or says why it could not and exits
+//! with 1. A typed line starts a turn, or steers the one running; `y` or `n`
+//! answers the oldest approval waiting, which it draws as
+//! `approval <id>: <what>` until the server says it was resolved. It also
+//! draws each prompt and reply as it completes and each turn's end.
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -55,11 +55,11 @@ pub fn remote(args: &[String]) -> Option<&str> {
     args.get(at + 1).map(String::as_str)
 }
 
-pub fn run(thread: &str, remote: Option<&str>) -> i32 {
+pub fn run(thread: &str, remote: &str) -> i32 {
     crate::pty::raw_mode();
     let (tx, events) = mpsc::channel();
     signals(tx.clone());
-    let server = remote.map(|url| connect(url, thread, tx.clone()));
+    let server = connect(remote, thread, tx.clone());
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin().lock();
         let mut buffer = [0u8; 1024];
@@ -82,24 +82,21 @@ pub fn run(thread: &str, remote: Option<&str>) -> i32 {
         .unwrap_or_default();
     // Keys typed before the server answers wait for it.
     let mut early = Vec::new();
-    let mut client = match server {
-        None => None,
-        Some(server) => loop {
-            match events.recv() {
-                Ok(Event::Joined(answer)) => {
-                    if let Some(at) = answer["result"]["cwd"].as_str() {
-                        cwd = at.to_owned();
-                    }
-                    break Some(Remote::new(thread, server));
+    let mut client = loop {
+        match events.recv() {
+            Ok(Event::Joined(answer)) => {
+                if let Some(at) = answer["result"]["cwd"].as_str() {
+                    cwd = at.to_owned();
                 }
-                Ok(Event::Refused(why)) => {
-                    draw(&format!("fake codex: {why}"));
-                    return 1;
-                }
-                Ok(Event::Ended) | Err(_) => return 0,
-                Ok(event) => early.push(event),
+                break Remote::new(thread, server);
             }
-        },
+            Ok(Event::Refused(why)) => {
+                draw(&format!("fake codex: {why}"));
+                return 1;
+            }
+            Ok(Event::Ended) | Err(_) => return 0,
+            Ok(event) => early.push(event),
+        }
     };
     draw(&format!("fake codex resume {thread} in {cwd}"));
     draw(&crate::pty::size_line());
@@ -118,9 +115,7 @@ pub fn run(thread: &str, remote: Option<&str>) -> i32 {
                         b'\r' | b'\n' => {
                             let typed = String::from_utf8_lossy(&line).into_owned();
                             draw(&format!("> {typed}"));
-                            if let Some(client) = &mut client {
-                                client.typed(&typed);
-                            }
+                            client.typed(&typed);
                             line.clear();
                         }
                         byte => line.push(byte),
@@ -129,11 +124,7 @@ pub fn run(thread: &str, remote: Option<&str>) -> i32 {
             }
             Event::Resized => draw(&crate::pty::size_line()),
             Event::Ended => return 0,
-            Event::Server(frame) => {
-                if let Some(client) = &mut client {
-                    client.heard(frame);
-                }
-            }
+            Event::Server(frame) => client.heard(frame),
             Event::Disconnected => {
                 draw("fake codex: the app server hung up");
                 return 1;

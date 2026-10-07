@@ -958,6 +958,6 @@ fn a_name_field_hears_the_hosts_rule_while_it_is_typed() {
         take(unsafe { amux_agent_name_problem(name.as_ptr()) })
     };
     assert_eq!(problem("fix-login"), Value::Null);
-    assert!(problem("fix login").as_str().unwrap().contains("lowercase"));
-    assert!(problem("").as_str().unwrap().contains("empty"));
+    assert_eq!(problem("fix login"), json!("Characters"));
+    assert_eq!(problem(""), json!("Empty"));
 }

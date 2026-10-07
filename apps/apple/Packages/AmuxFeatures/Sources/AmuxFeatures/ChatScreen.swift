@@ -663,7 +663,7 @@ private struct RenameCard: View {
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
     /// Why the host would refuse the name, said while it is typed.
-    private var problem: String? { Bridge.agentNameProblem(trimmed) }
+    private var problem: AgentNameProblem? { Bridge.agentNameProblem(trimmed) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -684,10 +684,10 @@ private struct RenameCard: View {
                 }
                 .identified("chat.rename.field", value: name)
             if let problem, !trimmed.isEmpty {
-                Text(problem)
+                Text(ChatWords.nameProblem(problem))
                     .designFont(.detail, design)
                     .foregroundStyle(design.accent.color)
-                    .identified("chat.rename.problem", value: problem)
+                    .identified("chat.rename.problem", value: problem.rawValue)
             }
             ButtonPair {
                 choiceButton(String(localized: "Cancel"), kind: .outline, id: "chat.rename.cancel", action: cancel)

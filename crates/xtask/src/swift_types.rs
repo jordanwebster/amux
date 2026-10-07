@@ -38,6 +38,7 @@ pub fn definitions() -> Map<String, Value> {
         model::InputState,
         ui_view::Row,
         ui_view::AskCard,
+        ui_view::AgentNameProblem,
         ui_view::Pick,
         ui_view::QuestionResponse,
         ui_view::Overview,

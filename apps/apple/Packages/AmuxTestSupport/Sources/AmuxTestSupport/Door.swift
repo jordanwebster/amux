@@ -1081,18 +1081,10 @@ public enum Door {
     /// over the loopback both processes share.
     public static let portArgument = "amux-door-port"
 
-    /// `-amux-relay URL -amux-token BEARER -amux-user NAME`, and optionally
-    /// `-amux-pair PAYLOAD`: connect the shared runtime as the launch starts,
-    /// and trust the host that payload names before drawing anything.
-    ///
-    /// A driver that speaks through the door connects by asking. A UI test
-    /// cannot ask — it launches the app and presses things — so a launch it
-    /// starts says up front what to reach, and everything a tap then does
-    /// happens against a real relay and a real machine.
+    /// `-amux-relay URL`: the relay an account added through the door signs
+    /// in to. The request to add an account carries the user and the bearer;
+    /// where to reach them is fixed for the launch.
     public static let relayArgument = "amux-relay"
-    public static let tokenArgument = "amux-token"
-    public static let userArgument = "amux-user"
-    public static let pairArgument = "amux-pair"
 
     /// `-amux-scripted-cloud`: the app runs as itself, against the scripted
     /// account service and the scripted App Store instead of the real ones.

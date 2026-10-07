@@ -1,6 +1,6 @@
 //! `testnet serve <topology.json>`: starts a topology on wall time, prints
 //! one readiness JSON line once it is ready, and serves its door until a
-//! driver sends Shutdown or the process is interrupted.
+//! driver sends Shutdown or the process is interrupted or terminated.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -57,7 +57,26 @@ async fn main() -> Result<()> {
     tokio::select! {
         () = served.closed() => {}
         _ = tokio::signal::ctrl_c() => {}
+        () = terminated() => {}
     }
     served.shutdown().await?;
     Ok(())
+}
+
+/// Resolves on SIGTERM, which a supervisor sends to stop the net politely;
+/// its default action would end the process without the shutdown that
+/// stops the hosts and withdraws their records.
+async fn terminated() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                terminate.recv().await;
+            }
+            Err(_) => std::future::pending().await,
+        }
+    }
+    #[cfg(not(unix))]
+    std::future::pending::<()>().await;
 }

@@ -373,9 +373,9 @@ enum ComponentCatalog {
             composer("queued", height: 400, frame: ScriptedChat.frame(
                 phase: .working, activity: Activity(kind: .working, sinceMs: 0, elapsedMs: 41_000),
                 queue: [
-                    QueuedRow(inputId: [1], text: [.text("Then run the Windows check.")], mine: true, steered: false, canWithdraw: true, canSendNow: true, fromAgent: nil),
-                    QueuedRow(inputId: [2], text: [.text("Use the new error table instead.")], mine: true, steered: true, canWithdraw: false, canSendNow: false, fromAgent: nil),
-                    QueuedRow(inputId: [3], text: [.text("worker-2 finished the specs.")], mine: false, steered: false, canWithdraw: false, canSendNow: true, fromAgent: "worker-2"),
+                    QueuedRow(inputId: [1], text: [.text("Then run the Windows check.")], steered: false, canWithdraw: true, canSendNow: true, fromAgent: nil),
+                    QueuedRow(inputId: [2], text: [.text("Use the new error table instead.")], steered: true, canWithdraw: false, canSendNow: false, fromAgent: nil),
+                    QueuedRow(inputId: [3], text: [.text("worker-2 finished the specs.")], steered: false, canWithdraw: false, canSendNow: true, fromAgent: "worker-2"),
                 ])),
             composer("not-confirmed", height: 280, frame: ScriptedChat.frame(underway: [
                 SentPrompt(inputId: [4], text: [.text("Run the focused tests.")], lands: .queue, underway: .mayNotHaveArrived),
@@ -430,7 +430,7 @@ enum ComponentCatalog {
             composer("strip-expanded", height: 1000, frame: ScriptedChat.frame(
                 phase: .working, activity: Activity(kind: .working, sinceMs: 0, elapsedMs: 8_000),
                 queue: [
-                    QueuedRow(inputId: [1], text: [.text("Once the suite is green, squash it into one commit.")], mine: true, steered: false, canWithdraw: true, canSendNow: true, fromAgent: nil),
+                    QueuedRow(inputId: [1], text: [.text("Once the suite is green, squash it into one commit.")], steered: false, canWithdraw: true, canSendNow: true, fromAgent: nil),
                 ]),
                      strip: ScriptedChat.strip(tasks: F.pairingTasks, model: "opus 4.6", effort: "high"),
                      children: F.family.children + [F.docsSweep], dockExpanded: true),

@@ -474,7 +474,6 @@ pub(crate) fn frame(
         model: state.agent_state().model.clone(),
         effort: ui_view::effort_in_force(state.agent_state()),
         permission: state.agent_state().permission.clone(),
-        mode: state.agent_state().mode.clone(),
         git: agent.git.as_ref().map(GitView::of),
         context: ui_view::context(state),
         sign_in: ui_view::sign_in(state),

@@ -189,7 +189,7 @@ pub enum RowKind {
         what: String,
         summary: String,
     },
-    /// An item that belongs to the strip or the activity line, never a row.
+    /// An item that belongs to the overview or the activity line, never a row.
     Hidden,
 }
 

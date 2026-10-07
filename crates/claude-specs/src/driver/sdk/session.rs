@@ -16,10 +16,7 @@ use crate::driver::sdk::control::{
     ReloadSkillsResult, RewindFilesResult,
 };
 use crate::driver::sdk::dispatch::{IncomingRequestKind, QueryInner};
-use crate::driver::sdk::init::{
-    AccountInfo, AgentInfo, AppliedSettings, ContextUsage, InitializationResult, ModelInfo,
-    SlashCommand,
-};
+use crate::driver::sdk::init::{AppliedSettings, ContextUsage, InitializationResult};
 use crate::driver::sdk::message::Message;
 use crate::driver::sdk::options::{
     ElicitationRequest, ElicitationResult, HookCallbackContext, HookInput, HookOutput,
@@ -187,18 +184,6 @@ impl Control {
         Ok(())
     }
 
-    /// Change effort for subsequent work; `None` clears the session override.
-    pub async fn set_effort(
-        &self,
-        effort: Option<crate::driver::sdk::Effort>,
-    ) -> Result<(), Error> {
-        self.apply_flag_settings(FlagSettings {
-            effort_level: Some(effort.map(|effort| effort.as_str().to_owned())),
-            ..FlagSettings::default()
-        })
-        .await
-    }
-
     pub async fn set_mcp_permission_mode_override(
         &self,
         server_name: &str,
@@ -254,25 +239,6 @@ impl Control {
 
     pub fn session_id(&self) -> &str {
         &self.inner.session_id
-    }
-
-    pub fn supported_commands(&self) -> Option<&[SlashCommand]> {
-        self.initialization_result()
-            .map(|init| init.commands.as_slice())
-    }
-
-    pub fn supported_models(&self) -> Option<&[ModelInfo]> {
-        self.initialization_result()
-            .map(|init| init.models.as_slice())
-    }
-
-    pub fn supported_agents(&self) -> Option<&[AgentInfo]> {
-        self.initialization_result()
-            .map(|init| init.agents.as_slice())
-    }
-
-    pub fn account_info(&self) -> Option<&AccountInfo> {
-        self.initialization_result().map(|init| &init.account)
     }
 
     pub async fn mcp_server_status(&self) -> Result<Vec<McpServerStatus>, Error> {

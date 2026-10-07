@@ -9,9 +9,9 @@
 ## 4 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"clientId":"tui-2","content":[{"text":"Only the parser tests.","type":"text"}],"id":"u-2","type":"userMessage"},"threadId":"t1","turnId":"turn-1"}}}
   row    3 u-2 Prompt { text: [Text("Only the parser tests.")], steered: true }
 ## 5 input {"id":"p1","prompt":{"text":"Keep the old fixtures."}}
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 49], text: [Text("Keep the old fixtures.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 49], text: [Text("Keep the old fixtures.")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 6 input {"id":"n1","send_now":{"target":"p1"}}
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 49], text: [Text("Keep the old fixtures.")], from_agent: None, mine: true, steered: true, can_withdraw: false, can_send_now: false }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [112, 49], text: [Text("Keep the old fixtures.")], from_agent: None, steered: true, can_withdraw: false, can_send_now: false }] underway=[] refused=[]
 ## 7 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"clientId":"tui-3","content":[{"text":"And run them twice.","type":"text"}],"id":"u-3","type":"userMessage"},"threadId":"t1","turnId":"turn-1"}}}
   row    4 u-3 Prompt { text: [Text("And run them twice.")], steered: true }
 ## 9 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"clientId":"7031","content":[{"text":"Keep the old fixtures.","type":"text"}],"id":"u-4","type":"userMessage"},"threadId":"t1","turnId":"turn-1"}}}

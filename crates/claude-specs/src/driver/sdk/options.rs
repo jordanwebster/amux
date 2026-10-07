@@ -73,13 +73,9 @@ pub struct QueryOptions {
     pub agent_progress_summaries: Option<bool>,
     pub forward_subagent_text: Option<bool>,
     pub fallback_model: Option<String>,
-    pub enable_file_checkpointing: bool,
     pub debug: bool,
-    pub debug_file: Option<PathBuf>,
-    pub output_format: Option<OutputFormat>,
     pub title: Option<String>,
     pub resume_session_at: Option<String>,
-    pub resume_drops_turn: Option<String>,
 
     // Permissions
     pub permission_mode: Option<PermissionMode>,
@@ -88,7 +84,6 @@ pub struct QueryOptions {
     pub supported_dialog_kinds: Vec<String>,
     pub per_task_stop_affordance: Option<bool>,
     pub allow_dangerously_skip_permissions: bool,
-    pub permission_prompt_tool_name: Option<String>,
 
     // Tools & MCP
     pub tools: Option<ToolsConfig>,
@@ -97,7 +92,6 @@ pub struct QueryOptions {
     pub strict_mcp_config: bool,
 
     // Agents
-    pub agent: Option<String>,
     pub agents: HashMap<String, AgentDefinition>,
     pub tool_aliases: HashMap<String, String>,
     pub skills: Option<SkillsConfig>,
@@ -111,9 +105,6 @@ pub struct QueryOptions {
 
     // Sandbox
     pub sandbox: Option<SandboxSettings>,
-
-    // Plugins
-    pub plugins: Vec<SdkPluginConfig>,
 
     // Betas
     pub betas: Vec<SdkBeta>,
@@ -146,25 +137,19 @@ impl QueryOptions {
             agent_progress_summaries: None,
             forward_subagent_text: None,
             fallback_model: None,
-            enable_file_checkpointing: false,
             debug: false,
-            debug_file: None,
-            output_format: None,
             title: None,
             resume_session_at: None,
-            resume_drops_turn: None,
             permission_mode: Some(PermissionMode::Default),
             allowed_tools: Vec::new(),
             disallowed_tools: Vec::new(),
             supported_dialog_kinds: Vec::new(),
             per_task_stop_affordance: None,
             allow_dangerously_skip_permissions: false,
-            permission_prompt_tool_name: None,
             tools: None,
             tool_config: None,
             mcp_servers: HashMap::new(),
             strict_mcp_config: false,
-            agent: None,
             agents: HashMap::new(),
             tool_aliases: HashMap::new(),
             skills: None,
@@ -173,7 +158,6 @@ impl QueryOptions {
             settings: None,
             managed_settings: None,
             sandbox: None,
-            plugins: Vec::new(),
             betas: Vec::new(),
             hook_subscriptions: Vec::new(),
             include_hook_events: false,
@@ -203,11 +187,6 @@ impl QueryOptions {
         if self.resume_session_at.is_some() && self.resume.is_none() {
             return Err(Error::InvalidOptions(
                 "resume_session_at requires resume".into(),
-            ));
-        }
-        if self.resume_drops_turn.is_some() && self.resume_session_at.is_none() {
-            return Err(Error::InvalidOptions(
-                "resume_drops_turn requires resume_session_at".into(),
             ));
         }
         for (name, config) in &self.mcp_servers {
@@ -246,7 +225,6 @@ impl QueryOptions {
             ("session_id", self.session_id.as_deref()),
             ("resume", self.resume.as_deref()),
             ("resume_session_at", self.resume_session_at.as_deref()),
-            ("resume_drops_turn", self.resume_drops_turn.as_deref()),
         ] {
             if let Some(value) = value
                 && uuid::Uuid::parse_str(value).is_err()

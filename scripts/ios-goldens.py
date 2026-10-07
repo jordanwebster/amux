@@ -184,9 +184,9 @@ class Goldens:
         # A row tapped while the chat is still leaving does not open.
         self.journey.app({"kind": "settle"})
 
-    def chat_strip(self) -> None:
+    def chat_turn(self) -> None:
         self.open("planner", lambda drawn: labelled(drawn, "share one string") and TURN[0] in drawn, "the answered chat")
-        self.photograph("chat-strip", volatile=TURN)
+        self.photograph("chat-turn", volatile=TURN)
         self.back()
 
     def question(self) -> None:
@@ -258,7 +258,7 @@ WAY = {
     "pairing": None,
     "hosts": Goldens.hosts,
     "fleet": Goldens.fleet,
-    "chat-strip": Goldens.chat_strip,
+    "chat-turn": Goldens.chat_turn,
     "claude-sdk-ask-question": Goldens.question,
     "ask-escape": Goldens.escape,
     "origin-rewind": Goldens.origin_rewind,

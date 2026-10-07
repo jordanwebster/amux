@@ -35,8 +35,7 @@ mod tests {
     #[test]
     fn default_config_has_expected_values() {
         let config = CodexConfig::default();
-        assert_eq!(config.client_name, "codex-rust-sdk");
-        assert!(config.experimental_api);
+        assert_eq!(config.client_name, "amux");
         assert!(config.codex_path.is_none());
         assert!(config.model.is_none());
     }

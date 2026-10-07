@@ -71,12 +71,6 @@ pub(crate) fn process_command(config: &CodexConfig) -> tokio::process::Command {
         cmd.arg(model);
     }
 
-    // Add --config overrides
-    for (key, value) in &config.config_overrides {
-        cmd.arg("--config");
-        cmd.arg(format!("{key}={value}"));
-    }
-
     cmd.arg("app-server");
     cmd.arg("--listen");
     cmd.arg("stdio://");

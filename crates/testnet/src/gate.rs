@@ -139,10 +139,6 @@ impl UdpGate {
         self.shared.blocked.store(blocked, Ordering::SeqCst);
     }
 
-    pub fn is_blocked(&self) -> bool {
-        self.shared.blocked.load(Ordering::SeqCst)
-    }
-
     pub fn set_faults(&self, faults: Faults) {
         *self.shared.faults.lock().unwrap() = faults;
     }

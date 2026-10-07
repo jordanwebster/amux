@@ -181,27 +181,6 @@ async fn send_line(line: &str, rows: &mpsc::Sender<Row>) -> Result<(), ()> {
     Ok(())
 }
 
-/// An ingest owns relinking and exposes the crate row stream.
-pub struct TranscriptIngest {
-    tailer: TranscriptTailer,
-}
-
-impl TranscriptIngest {
-    pub fn follow(path: PathBuf) -> Self {
-        Self {
-            tailer: TranscriptTailer::follow(path),
-        }
-    }
-
-    pub fn relink(&mut self, path: PathBuf) {
-        self.tailer.relink(path);
-    }
-
-    pub fn rows(&self) -> mpsc::Receiver<Row> {
-        self.tailer.rows()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

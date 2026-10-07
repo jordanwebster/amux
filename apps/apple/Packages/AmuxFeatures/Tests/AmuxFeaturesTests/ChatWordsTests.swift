@@ -217,7 +217,7 @@ final class ChatWordsTests: XCTestCase {
 
     func testAQueuedPromptSaysWhetherItWasSteered() {
         let queued = QueuedRow(
-            inputId: [1], text: [], mine: true, steered: false, canWithdraw: true, canSendNow: true,
+            inputId: [1], text: [], steered: false, canWithdraw: true, canSendNow: true,
             fromAgent: nil)
         XCTAssertEqual(ChatWords.queued(queued), "queued")
         var steered = queued
@@ -288,6 +288,12 @@ final class ChatWordsTests: XCTestCase {
             "a kept name the form lacks is ignored, and a field never typed keeps its default")
     }
 
+    func testEveryNameProblemHasWords() {
+        for problem in AgentNameProblem.allCases {
+            XCTAssertFalse(ChatWords.nameProblem(problem).isEmpty, "\(problem)")
+        }
+    }
+
     func testTheReviewSaysHowMuchChangedAndWhatAttachingCarries() {
         XCTAssertEqual(ChatWords.changes(files: 1, added: 18, removed: 2), "1 file, 18 added, 2 removed")
         XCTAssertEqual(ChatWords.changes(files: 4, added: 0, removed: 28), "4 files, 0 added, 28 removed")
@@ -309,7 +315,7 @@ final class ChatWordsTests: XCTestCase {
             agent: AgentKey(host: [1], agent: [2]), name: "a", kind: .claudeSdk, phase: .idle,
             composer: ComposerView(mode: .send, activity: nil), connection: .live, caughtUp: true,
             hasOlder: false, arrivalsHeld: false, queue: [], underway: [], refused: [], askInput: nil,
-            context: nil, effort: nil, ended: nil, git: nil, mode: nil, model: "claude-sonnet-5",
+            context: nil, effort: nil, ended: nil, git: nil, model: "claude-sonnet-5",
             permission: "acceptEdits", signIn: nil, waiting: nil)
         let permission = PermissionChoice(
             value: "acceptEdits", displayName: "Accept edits", current: true, reported: false,

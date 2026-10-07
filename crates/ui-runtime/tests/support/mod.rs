@@ -67,13 +67,6 @@ impl<T> Feed<T> {
             .expect("the driver reads its stream");
     }
 
-    /// The transport fails mid-stream.
-    pub fn fail(self) {
-        let _ = self
-            .tx
-            .send(Err(RpcError::Transport("connection reset".into())));
-    }
-
     /// Whether the driver dropped the stream.
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()

@@ -308,14 +308,6 @@ public final class Profile: @unchecked Sendable {
         call(()) { live in amux_profile_set_foreground(live, foreground) }
     }
 
-    public func fleetCard(_ agent: AgentKey) -> FleetCard? {
-        call(nil) { live in
-            Bridge.json(agent).withCString {
-                Bridge.read(FleetCard?.self, amux_fleet_card(live, $0))
-            } ?? nil
-        }
-    }
-
     /// The family around an agent's chat: its parent and its children.
     public func family(_ agent: AgentKey) -> FamilyHeader? {
         call(nil) { live in

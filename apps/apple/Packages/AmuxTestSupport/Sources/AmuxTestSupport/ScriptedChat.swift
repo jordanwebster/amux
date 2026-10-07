@@ -61,7 +61,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
             composer: ComposerView(mode: mode, activity: activity), connection: .live,
             caughtUp: caughtUp, hasOlder: hasOlder, arrivalsHeld: false, queue: queue,
             underway: underway, refused: refused, askInput: nil, context: nil, effort: nil, ended: nil, git: nil,
-            mode: nil, model: nil, permission: nil, signIn: nil, waiting: waiting)
+            model: nil, permission: nil, signIn: nil, waiting: waiting)
     }
 
     /// The facts around a chat's rows: what the frame reports of the agent,

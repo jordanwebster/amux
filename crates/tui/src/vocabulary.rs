@@ -203,7 +203,6 @@ fn queue(width: usize, theme: Theme) -> Vec<Line<'static>> {
             input_id: vec![1],
             text: text("Then run the relay tests."),
             from_agent: None,
-            mine: true,
             steered: false,
             can_withdraw: true,
             can_send_now: true,
@@ -1949,7 +1948,7 @@ fn cards() -> Vec<CardSet> {
     ]
 }
 
-// --- the strip -------------------------------------------------------------
+// --- the composer ----------------------------------------------------------
 
 fn composers() -> Vec<(&'static str, &'static str, Composer, Away, &'static str)> {
     vec![

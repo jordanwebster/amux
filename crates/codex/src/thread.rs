@@ -184,14 +184,8 @@ mod tests {
 
     fn test_server() -> Arc<ServerInner> {
         let (stdin_tx, stdin_rx) = mpsc::channel(1);
-        let (global_tx, _global_rx) = mpsc::channel(1);
         drop(stdin_rx);
-        Arc::new(ServerInner::new(
-            stdin_tx,
-            global_tx,
-            CancellationToken::new(),
-            None,
-        ))
+        Arc::new(ServerInner::new(stdin_tx, CancellationToken::new(), None))
     }
 
     fn test_thread(server: Arc<ServerInner>) -> Thread {

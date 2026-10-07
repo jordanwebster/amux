@@ -1,14 +1,11 @@
-//! Claude Code version probing and shared observation cache.
+//! Claude Code version probing.
 
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use semver::Version;
-use serde_json::Value;
 use tokio::process::Command;
-use tokio::sync::watch;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -75,102 +72,8 @@ async fn probe_command(mut command: Command) -> Result<ClaudeVersion, VersionErr
         .map_err(|source| VersionError::Invalid { value: raw, source })
 }
 
-struct VersionCacheInner {
-    probe_complete: OnceLock<watch::Receiver<bool>>,
-    version: RwLock<Option<ClaudeVersion>>,
-}
-
-/// One process-wide semantic version observation shared by hosted sessions.
-#[derive(Clone)]
-pub struct VersionCache {
-    inner: Arc<VersionCacheInner>,
-}
-
-impl Default for VersionCache {
-    fn default() -> Self {
-        Self {
-            inner: Arc::new(VersionCacheInner {
-                probe_complete: OnceLock::new(),
-                version: RwLock::new(None),
-            }),
-        }
-    }
-}
-
-impl VersionCache {
-    pub async fn probe_once(&self) {
-        self.probe_once_with(Path::new("claude")).await;
-    }
-
-    pub async fn probe_once_with(&self, binary: &Path) {
-        let binary = binary.to_path_buf();
-        self.probe_once_using(move || async move { probe_version(&binary).await })
-            .await;
-    }
-
-    async fn probe_once_using<F>(&self, probe: impl FnOnce() -> F)
-    where
-        F: std::future::Future<Output = Result<ClaudeVersion, VersionError>> + Send + 'static,
-    {
-        let mut complete = self
-            .inner
-            .probe_complete
-            .get_or_init(|| {
-                let (complete_tx, complete_rx) = watch::channel(false);
-                let cache = self.clone();
-                let probe = probe();
-                tokio::spawn(async move {
-                    let probed = probe.await.ok();
-                    let mut version = cache
-                        .inner
-                        .version
-                        .write()
-                        .unwrap_or_else(|poison| poison.into_inner());
-                    if version.is_none() {
-                        *version = probed;
-                    }
-                    complete_tx.send_replace(true);
-                });
-                complete_rx
-            })
-            .clone();
-        if !*complete.borrow() {
-            let _ = complete.changed().await;
-        }
-    }
-
-    pub fn current(&self) -> Option<ClaudeVersion> {
-        self.inner
-            .version
-            .read()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clone()
-    }
-
-    pub fn observe_transcript_row(&self, row: &Value) {
-        let Some(observed) = row
-            .get("version")
-            .and_then(Value::as_str)
-            .and_then(|value| value.parse().ok())
-        else {
-            return;
-        };
-        let mut version = self
-            .inner
-            .version
-            .write()
-            .unwrap_or_else(|poison| poison.into_inner());
-        if version.as_ref() != Some(&observed) {
-            *version = Some(observed);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::future::Future as _;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
 
     #[test]
@@ -183,55 +86,6 @@ mod tests {
             "2.1.251"
         );
         assert!("not a version".parse::<ClaudeVersion>().is_err());
-    }
-
-    #[tokio::test]
-    async fn cache_probes_once_and_accepts_newer_transcript_fact() {
-        let count = Arc::new(AtomicUsize::new(0));
-        let cache = VersionCache::default();
-        for _ in 0..2 {
-            let count = count.clone();
-            cache
-                .probe_once_using(move || async move {
-                    count.fetch_add(1, Ordering::SeqCst);
-                    Ok("2.1.250".parse().unwrap())
-                })
-                .await;
-        }
-        assert_eq!(count.load(Ordering::SeqCst), 1);
-        assert_eq!(cache.current().unwrap().to_string(), "2.1.250");
-        cache.observe_transcript_row(&serde_json::json!({"version":"2.1.251"}));
-        assert_eq!(cache.current().unwrap().to_string(), "2.1.251");
-    }
-
-    #[tokio::test]
-    async fn concurrent_probe_callers_wait_without_overwriting_a_transcript_fact() {
-        let cache = VersionCache::default();
-        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
-        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
-        let first_cache = cache.clone();
-        let first = tokio::spawn(async move {
-            first_cache
-                .probe_once_using(|| async move {
-                    started_tx.send(()).unwrap();
-                    release_rx.await.unwrap();
-                    Ok("2.1.250".parse().unwrap())
-                })
-                .await;
-        });
-        started_rx.await.unwrap();
-        let second = cache.probe_once_using(|| async { panic!("probe ran twice") });
-        tokio::pin!(second);
-        assert!(
-            std::future::poll_fn(|cx| std::task::Poll::Ready(second.as_mut().poll(cx)))
-                .await
-                .is_pending()
-        );
-        cache.observe_transcript_row(&serde_json::json!({"version":"2.1.251"}));
-        release_tx.send(()).unwrap();
-        first.await.unwrap();
-        second.await;
-        assert_eq!(cache.current().unwrap().to_string(), "2.1.251");
     }
 
     #[cfg(unix)]

@@ -15,7 +15,6 @@ pub struct ScriptedDiscovery {
 struct ScriptedBus {
     events: broadcast::Sender<DiscoveryEvent>,
     active: Mutex<HashMap<HostId, Advertisement>>,
-    suppressed: Mutex<std::collections::HashSet<HostId>>,
 }
 
 impl ScriptedDiscovery {
@@ -25,15 +24,6 @@ impl ScriptedDiscovery {
 
     /// Emits a resolved service to every current browser.
     pub fn announce(&self, advert: Advertisement) {
-        if self
-            .bus
-            .suppressed
-            .lock()
-            .unwrap()
-            .contains(&advert.host_id)
-        {
-            return;
-        }
         self.bus
             .active
             .lock()
@@ -47,24 +37,6 @@ impl ScriptedDiscovery {
         self.bus.active.lock().unwrap().remove(&host_id);
         let _ = self.bus.events.send(DiscoveryEvent::Lost { host_id });
     }
-
-    pub fn suppress(&self, host_id: HostId) {
-        self.bus.suppressed.lock().unwrap().insert(host_id);
-        if self.bus.active.lock().unwrap().remove(&host_id).is_some() {
-            let _ = self.bus.events.send(DiscoveryEvent::Lost { host_id });
-        }
-    }
-
-    /// Injects a hostile claim even when its claimed id was suppressed from
-    /// the ordinary test LAN. Used only to exercise identity verification.
-    pub fn announce_unchecked(&self, advert: Advertisement) {
-        self.bus
-            .active
-            .lock()
-            .unwrap()
-            .insert(advert.host_id, advert.clone());
-        let _ = self.bus.events.send(DiscoveryEvent::Found(advert));
-    }
 }
 
 impl Default for ScriptedDiscovery {
@@ -74,7 +46,6 @@ impl Default for ScriptedDiscovery {
             bus: Arc::new(ScriptedBus {
                 events,
                 active: Mutex::new(HashMap::new()),
-                suppressed: Mutex::new(std::collections::HashSet::new()),
             }),
             advertised: Mutex::new(None),
         }

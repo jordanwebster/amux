@@ -11,35 +11,26 @@ pub struct CodexConfig {
     pub cwd: Option<PathBuf>,
     /// Client name sent in the initialize handshake.
     pub client_name: String,
-    /// Optional client title sent in the initialize handshake.
-    pub client_title: Option<String>,
     /// Client version sent in the initialize handshake.
     pub client_version: String,
-    /// Whether to enable the experimental API surface.
-    pub experimental_api: bool,
     /// Extra environment variables for the subprocess.
     pub env: Option<HashMap<String, String>>,
-    /// `--config key=value` pairs passed to the codex CLI.
-    pub config_overrides: Vec<(String, String)>,
     /// Optional JSONL path that receives an exact timestamped tee of JSON-RPC
     /// lines in both directions.
     pub record_io: Option<PathBuf>,
 }
 
-// Manual Default because the identity and experimental-API defaults are not
-// the field types' own defaults.
+// Manual Default because the client identity defaults are not the field
+// types' own defaults.
 impl Default for CodexConfig {
     fn default() -> Self {
         Self {
             codex_path: None,
             model: None,
             cwd: None,
-            client_name: "codex-rust-sdk".into(),
-            client_title: None,
+            client_name: "amux".into(),
             client_version: env!("CARGO_PKG_VERSION").into(),
-            experimental_api: true,
             env: None,
-            config_overrides: Vec::new(),
             record_io: None,
         }
     }

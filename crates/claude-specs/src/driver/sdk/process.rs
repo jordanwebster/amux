@@ -6,7 +6,7 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
 use crate::driver::sdk::Error;
 use crate::driver::sdk::options::{
-    Effort, PluginType, QueryOptions, SdkBeta, SettingSource, ThinkingConfig, ToolsConfig,
+    Effort, QueryOptions, SdkBeta, SettingSource, ThinkingConfig, ToolsConfig,
 };
 use crate::driver::sdk::types::PermissionMode;
 
@@ -91,11 +91,7 @@ pub(crate) fn query_command(session_id: &str, options: &QueryOptions) -> Result<
         .arg("stream-json")
         .arg("--verbose");
 
-    if let Some(tool_name) = &options.permission_prompt_tool_name {
-        cmd.arg("--permission-prompt-tool").arg(tool_name);
-    } else {
-        cmd.arg("--permission-prompt-tool").arg("stdio");
-    }
+    cmd.arg("--permission-prompt-tool").arg("stdio");
 
     if let Some(ref resume_id) = options.resume {
         cmd.arg("--resume").arg(resume_id);
@@ -110,9 +106,6 @@ pub(crate) fn query_command(session_id: &str, options: &QueryOptions) -> Result<
     }
     if let Some(resume_at) = &options.resume_session_at {
         cmd.arg(format!("--resume-session-at={resume_at}"));
-    }
-    if let Some(drops_turn) = &options.resume_drops_turn {
-        cmd.arg(format!("--resume-drops-turn={drops_turn}"));
     }
 
     if let Some(environment) = &options.env {
@@ -227,10 +220,6 @@ fn apply_common_options(cmd: &mut Command, options: &QueryOptions) -> Result<(),
         cmd.arg("--strict-mcp-config");
     }
 
-    // Agent selection and definitions
-    if let Some(ref agent) = options.agent {
-        cmd.arg("--agent").arg(agent);
-    }
     // Additional working directories
     for dir in &options.additional_directories {
         cmd.arg("--add-dir").arg(dir);
@@ -239,13 +228,6 @@ fn apply_common_options(cmd: &mut Command, options: &QueryOptions) -> Result<(),
     // Session persistence opt-out
     if let Some(false) = options.persist_session {
         cmd.arg("--no-session-persistence");
-    }
-
-    // Structured output schema
-    if let Some(ref fmt) = options.output_format
-        && let Ok(schema) = serde_json::to_string(&fmt.schema)
-    {
-        cmd.arg("--json-schema").arg(schema);
     }
 
     // Fallback model
@@ -274,19 +256,6 @@ fn apply_common_options(cmd: &mut Command, options: &QueryOptions) -> Result<(),
 
     if options.include_partial_messages {
         cmd.arg("--include-partial-messages");
-    }
-
-    if !options.plugins.is_empty() {
-        for plugin in &options.plugins {
-            if matches!(plugin.r#type, PluginType::Local) {
-                cmd.arg(if plugin.skip_mcp_discovery == Some(true) {
-                    "--plugin-dir-no-mcp"
-                } else {
-                    "--plugin-dir"
-                })
-                .arg(&plugin.path);
-            }
-        }
     }
 
     if let Some(thinking) = &options.thinking {
@@ -323,9 +292,7 @@ fn apply_common_options(cmd: &mut Command, options: &QueryOptions) -> Result<(),
     }
 
     // Debug mode
-    if let Some(debug_file) = &options.debug_file {
-        cmd.arg("--debug-file").arg(debug_file);
-    } else if options.debug {
+    if options.debug {
         cmd.arg("--debug");
     }
 
@@ -340,10 +307,6 @@ fn apply_common_options(cmd: &mut Command, options: &QueryOptions) -> Result<(),
             .collect::<Vec<_>>()
             .join(",");
         cmd.arg("--betas").arg(betas);
-    }
-
-    if options.enable_file_checkpointing {
-        cmd.env("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true");
     }
 
     if let Some(preview_format) = options

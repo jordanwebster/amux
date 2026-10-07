@@ -24,7 +24,7 @@
 ## 56 recorded 55: input 0x2737deea7ca544238185bcd0c9b1428c
   row    4 ask:1 [Replied: Shape = (skipped) skipped=1 reply="Never mind the shape. Reply with the single word done and nothing else."] Ask(Questions { questions: [QuestionView { header: "Shape", question: "Which shape?", multi_select: false, options: [OptionView { label: "Circle", description: "Circle", preview: "", recommended: false }, OptionView { label: "Square", description: "Square", preview: "",…
   ask none
-  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [39, 55, 222, 234, 124, 165, 68, 35, 129, 133, 188, 208, 201, 177, 66, 140], text: [Text("Never mind the shape. Reply with the single word done and nothing else.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [39, 55, 222, 234, 124, 165, 68, 35, 129, 133, 188, 208, 201, 177, 66, 140], text: [Text("Never mind the shape. Reply with the single word done and nothing else.")], from_agent: None, steered: false, can_withdraw: true, can_send_now: true }] underway=[] refused=[]
 ## 63 recorded 62: fact Rpc method=turn/completed
   row    5 turn:1 Stopped
   row    6 prompt:2737deea7ca544238185bcd0c9b1428c Prompt { text: [Text("Never mind the shape. Reply with the single word done and nothing else.")], steered: false }

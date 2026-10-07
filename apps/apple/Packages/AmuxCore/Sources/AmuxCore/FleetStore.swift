@@ -181,16 +181,8 @@ public final class FleetStore {
         id.flatMap { hosts[$0] }
     }
 
-    public func reach(ofHost id: HostId?) -> HostReach? {
-        host(id)?.reach
-    }
-
     public func row(_ agent: AgentKey) -> AgentRow? {
         rows.first { $0.id == agent }
-    }
-
-    public func name(of agent: AgentKey) -> String {
-        row(agent)?.name ?? agent.description
     }
 
     /// Hosts other than this phone.

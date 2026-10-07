@@ -86,7 +86,6 @@ pub struct ChatFrame {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permission: Option<String>,
-    pub mode: Option<String>,
     /// The agent's branch and change totals as of its last turn end; None
     /// outside a repository.
     pub git: Option<GitView>,
@@ -448,7 +447,6 @@ pub struct PairedPeer {
     pub host_id: Vec<u8>,
     pub name: String,
     pub fingerprint: String,
-    pub paired_at_ms: i64,
 }
 
 /// This device and the machines it trusts, by name.
