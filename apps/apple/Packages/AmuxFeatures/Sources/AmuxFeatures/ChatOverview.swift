@@ -106,7 +106,11 @@ public struct ChatOverview: View {
                 .buttonStyle(.amuxControl)
                 .identified("chat.overview.review", label: String(localized: "Review changes"))
             } else {
-                Text(totals == nil ? String(localized: "Nothing changed") : String(localized: "Listing the changed files…"))
+                // A listing that came back empty is the answer, even while
+                // the last turn's totals still count files the folder has
+                // since dropped.
+                Text(changes == nil && totals != nil
+                    ? String(localized: "Listing the changed files…") : String(localized: "Nothing changed"))
                     .designFont(.detail, design)
                     .foregroundStyle(design.inkFaint.color)
                     .identified("chat.overview.changes.none")

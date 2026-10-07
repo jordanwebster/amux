@@ -1,3 +1,12 @@
+2026-10-07 — **The phone's Overview says when nothing has changed.**
+After the folder's changes were committed or reverted between turns, the
+header still carried the last turn's totals (by design, until the next
+turn), and the Overview chose its empty wording from those totals, so a
+listing that came back with no files read "Listing the changed files…"
+forever. A listing that came back empty now reads "Nothing changed"; the
+waiting wording shows only before any listing has answered. The header's
+totals still move only at turn ends.
+
 2026-10-07 — **The settings-picks test fetches a catalogue the way a client does.**
 The test that sends every settings pick to a copy of each interpreter
 handed the chat state a published catalogue before committing the step
