@@ -359,13 +359,10 @@ pub struct State {
     shared: Shared<CodexAsk>,
     consumption: InjectConsumption,
     /// The spec's incarnation: a later one's first thread is a resume.
-    #[serde(default)]
     incarnation: u32,
     /// The agent's name, which the thread carries.
-    #[serde(default)]
     name: String,
     /// How many times the thread was named, for the requests' ids.
-    #[serde(default)]
     names_set: u64,
     thread_id: Option<String>,
     version: Option<String>,
@@ -375,10 +372,8 @@ pub struct State {
     approval: Option<String>,
     sandbox: Option<String>,
     /// Who answers approvals, as Codex names it.
-    #[serde(default)]
     reviewer: Option<String>,
     /// The collaboration mode, as Codex names it.
-    #[serde(default)]
     collaboration: Option<String>,
     /// What `model/list` and `skills/list` answered, whole: the catalogue.
     #[serde(with = "serde_pb::msgs")]
@@ -388,24 +383,20 @@ pub struct State {
     /// This server was asked what it offers.
     offers_asked: bool,
     /// How many times `skills/list` was asked, which names each ask.
-    #[serde(default)]
     skills_asked: u32,
     /// Codex said its skills changed after the pending `skills/list` was
     /// sent, so its answer may be stale: ask again once it comes.
-    #[serde(default)]
     skills_stale: bool,
     overrides: Overrides,
     /// The turn Codex reports running.
     active_turn: Option<String>,
     /// The running turn has reported its prompt: a later user message in
     /// it is a steer.
-    #[serde(default)]
     turn_prompted: bool,
     /// An interrupt asked for before Codex named the turn.
     interrupt_pending: bool,
     /// amux interrupted the running turn: the asks Codex then resolves are
     /// withdrawn, not answered elsewhere.
-    #[serde(default)]
     interrupted_here: bool,
     requests: BTreeMap<String, Request>,
     next_request: u64,
@@ -441,11 +432,9 @@ pub struct State {
     background: Option<BTreeSet<String>>,
     /// How many times Codex was asked for its background jobs, which
     /// names each ask.
-    #[serde(default)]
     jobs_asked: u32,
     plan: Option<Vec<(String, i32)>>,
     /// The plan Codex proposed last.
-    #[serde(default)]
     proposed: Option<Proposed>,
 }
 

@@ -300,10 +300,8 @@ struct Provider {
     transcript: Option<String>,
     version: Option<String>,
     keymap: String,
-    #[serde(default)]
     permission_menus: PermissionMenus,
     /// Why this Claude's keymap cannot type send now, when it cannot.
-    #[serde(default)]
     send_now_refused: Option<String>,
     launches: u32,
     /// Launched again after an earlier launch; the next session start is a
@@ -312,11 +310,10 @@ struct Provider {
     model: Option<String>,
     permission_mode: Option<String>,
     /// Launched allowing the never-ask permission.
-    #[serde(default)]
     never_ask: bool,
     /// What the host's Claude offers, from the spec: a terminal offers
     /// nothing a program can read.
-    #[serde(default, with = "serde_pb::opt_msg")]
+    #[serde(with = "serde_pb::opt_msg")]
     offered: Option<wire::Catalogue>,
 }
 
@@ -353,13 +350,11 @@ struct Tool {
     #[serde(with = "serde_pb::msgs")]
     images: Vec<Attachment>,
     /// An ExitPlanMode call is drawn as its plan, with this verdict.
-    #[serde(default)]
     plan: Option<Verdict>,
     /// An AskUserQuestion call is drawn as its question, closed with this
     /// record once decided.
-    #[serde(default)]
     question: bool,
-    #[serde(default, with = "serde_pb::opt_msg")]
+    #[serde(with = "serde_pb::opt_msg")]
     asked: Option<AskClosed>,
     #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
@@ -376,15 +371,14 @@ struct Decision {
     outcome: i32,
     /// What allowing granted; None when it allowed only the call, and when
     /// it was answered in Claude's own terminal, which does not say.
-    #[serde(default, with = "serde_pb::opt_msg")]
+    #[serde(with = "serde_pb::opt_msg")]
     grant: Option<ClaudeGrant>,
     note: String,
     elsewhere: bool,
     /// How a plan ask closed, which its plan carries instead.
-    #[serde(default)]
     verdict: Option<Verdict>,
     /// How a question closed, which its item carries instead.
-    #[serde(default, with = "serde_pb::opt_msg")]
+    #[serde(with = "serde_pb::opt_msg")]
     record: Option<AskClosed>,
 }
 
@@ -473,7 +467,6 @@ enum AskShape {
         grants: Vec<ClaudeGrant>,
         /// How many suggestions the hook carried: what the keymap reads
         /// the terminal's menu by.
-        #[serde(default)]
         suggestions: u32,
     },
     Plan,
@@ -533,7 +526,6 @@ pub struct State {
     tasks: Option<Vec<Task>>,
     context_tokens: Option<u64>,
     /// Claude's background jobs; the shared part publishes them.
-    #[serde(default)]
     jobs: Jobs,
     messages: Vec<PendingMessage>,
     /// Each subagent's agent id and the tool-use id of its Agent call.
@@ -544,7 +536,6 @@ pub struct State {
     /// The row that ended the last turn as interrupted. Claude follows it
     /// with that turn's duration row, which must not end the turn begun
     /// since (a reply typed the moment the interruption landed).
-    #[serde(default)]
     interruption: Option<String>,
     running: Vec<Running>,
     /// The text of each prompt typed through amux and not yet reflected,
@@ -553,7 +544,6 @@ pub struct State {
     submitted: Vec<PendingMessage>,
     /// Plans announced by their hook and not yet drawn: they wait for the
     /// row of the prompt that began their turn.
-    #[serde(default)]
     announced_plans: Vec<AnnouncedPlan>,
 }
 

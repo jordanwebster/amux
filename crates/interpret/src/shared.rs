@@ -371,15 +371,14 @@ pub struct Shared<A: OpenAsk> {
     #[serde(with = "serde_pb::opt_msg")]
     last_snapshot: Option<Snapshot>,
     /// The repository facts the agent process last read.
-    #[serde(default, with = "serde_pb::opt_msg")]
+    #[serde(with = "serde_pb::opt_msg")]
     git: Option<wire::Git>,
     /// What the provider runs in the background, as its interpreter last
     /// tracked it; None until the provider says.
-    #[serde(default, with = "serde_pb::opt_msg")]
+    #[serde(with = "serde_pb::opt_msg")]
     jobs: Option<wire::BackgroundJobs>,
     /// The hash of the catalogue last written; None until the provider
     /// says what it offers.
-    #[serde(default)]
     catalogue: Option<Vec<u8>>,
 }
 

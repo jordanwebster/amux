@@ -1,3 +1,12 @@
+2026-10-07 — **Interpreter checkpoints no longer read older shapes.**
+39 fields of the three interpreters' saved state, and of the part they
+share, carried a fallback so a checkpoint written before the field existed
+still loaded. Nothing older needs reading before the first release, so the
+fallbacks are gone and a checkpoint must hold every field. The fallbacks on
+the formats amux reads from Claude and Codex, on facts and on authored
+fixtures stay, since those legitimately leave fields out. The committed
+debug bundle's checkpoint gains the two fields it predated.
+
 2026-10-07 — **Claude's snapshots name the permission `permission`.**
 Both Claude snapshots called the setting `permission_mode` while the Codex
 snapshot and both create requests call it `permission`; the snapshots now

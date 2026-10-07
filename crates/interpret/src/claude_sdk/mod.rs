@@ -116,19 +116,16 @@ struct Tool {
     /// The task this call started and Claude reports on: a subagent, or a
     /// shell in the background. The call stays open until the task ends,
     /// since its own result only says the task was launched.
-    #[serde(default)]
     task: Option<TaskProgress>,
     /// Images the tool read, by the blobs that hold them.
     #[serde(with = "serde_pb::msgs")]
     images: Vec<Attachment>,
     /// An ExitPlanMode call is drawn as its plan, with this verdict.
-    #[serde(default)]
     plan: Option<Verdict>,
     /// An AskUserQuestion call is drawn as its question, closed with this
     /// record once decided.
-    #[serde(default)]
     question: bool,
-    #[serde(default, with = "serde_pb::opt_msg")]
+    #[serde(with = "serde_pb::opt_msg")]
     asked: Option<AskClosed>,
     #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
@@ -144,7 +141,7 @@ enum Decided {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct ToolDecisionState {
     outcome: i32,
-    #[serde(default, with = "serde_pb::opt_msg")]
+    #[serde(with = "serde_pb::opt_msg")]
     grant: Option<ClaudeGrant>,
     note: String,
 }
@@ -203,7 +200,6 @@ struct TaskState {
     tool_key: String,
     tokens: u64,
     /// A shell Claude runs as a task: a background job, never a subagent.
-    #[serde(default)]
     shell: bool,
 }
 
@@ -217,16 +213,13 @@ pub struct State {
     model: Option<String>,
     /// The offered model amux last chose, which names the running one
     /// while it stands for it.
-    #[serde(default)]
     chosen_model: Option<String>,
     effort: Option<String>,
     permission_mode: Option<String>,
     /// The models that take the auto permission, once Claude listed its
     /// models.
-    #[serde(default)]
     auto_models: Option<Vec<String>>,
     /// Launched allowing the never-ask permission.
-    #[serde(default)]
     never_ask: bool,
     /// The models the initialize response offers and the commands Claude
     /// last listed: the catalogue.
@@ -251,7 +244,6 @@ pub struct State {
     /// The boundary drawn above a prompt submitted before the init that
     /// makes it: headless Claude reports its init only after it reads the
     /// first message. That init fills it in.
-    #[serde(default)]
     early_boundary: Option<String>,
     tasks: Option<Vec<Task>>,
     active_tasks: BTreeMap<String, TaskState>,
@@ -265,7 +257,6 @@ pub struct State {
     #[serde(with = "serde_pb::opt_msg")]
     sign_in: Option<SignIn>,
     /// Claude's background jobs; the shared part publishes them.
-    #[serde(default)]
     jobs: Jobs,
     /// The newest slash command sent, which a local command's output
     /// belongs to.
