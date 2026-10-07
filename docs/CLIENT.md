@@ -88,7 +88,8 @@ parts:
   models and commands come from the catalogue the snapshot names. The driver fetches it with `GetCatalogue`
   only while a chat shows the session, never for a session held for a fleet row, and keeps every catalogue
   it fetched by hash for the fleet's sessions, so each version is fetched once; it reaches the state as
-  `Msg::Catalogue`. A field the provider has not
+  `Msg::Catalogue`. Fetches can answer out of order, so the state never replaces a held catalogue the newest
+  snapshot names with one it does not name; any other catalogue is kept as it arrives. A field the provider has not
   reported stays at its explicit unknown. Open asks keep the provider's own shape as `OpenAsk::Claude` or
   `OpenAsk::Codex`.
 - **`Transcript`**, the window of items by order, and the rows that arrived above it while the reader was in

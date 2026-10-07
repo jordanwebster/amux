@@ -292,10 +292,22 @@ impl SessionState {
     }
 
     /// A catalogue fetched for the agent. What it offers shows while
-    /// the newest snapshot names it.
-    pub fn set_catalogue(&mut self, catalogue: wire::Catalogue) {
+    /// the newest snapshot names it. Fetches can answer out of order, so a
+    /// held catalogue the newest snapshot names is never replaced by one it
+    /// does not name; any other is. Returns whether it was kept.
+    pub fn set_catalogue(&mut self, catalogue: wire::Catalogue) -> bool {
+        let named = |hash: &[u8]| self.state.catalogue.as_deref() == Some(hash);
+        if self
+            .catalogue
+            .as_ref()
+            .is_some_and(|held| named(&held.hash))
+            && !named(&catalogue.hash)
+        {
+            return false;
+        }
         self.catalogue = Some(catalogue);
         self.offer();
+        true
     }
 
     /// The hash of the catalogue held, whether or not the newest snapshot
@@ -616,8 +628,7 @@ impl SessionState {
                 self.trim(&mut changed);
             }
             Msg::Catalogue(catalogue) => {
-                self.set_catalogue(catalogue);
-                outcome.session = true;
+                outcome.session = self.set_catalogue(catalogue);
             }
             Msg::Reloading => {
                 // Every reopened stream re-tails; a reload builds apart.

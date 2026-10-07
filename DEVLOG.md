@@ -1,3 +1,12 @@
+2026-10-07 — **A late older catalogue no longer blanks a chat's controls.**
+The chat state kept whichever catalogue a fetch returned last, and shows
+models, permissions and modes only from the one the newest snapshot names,
+so an older catalogue answering after a newer one emptied those controls
+until the next session event. Codex publishes two catalogues back to back
+at start, so a chat on a new Codex agent could hit it. A held catalogue the
+newest snapshot names is now never replaced by one it does not name; the
+runtime still caches every fetched catalogue by hash.
+
 2026-10-07 — **A Claude usage window's stated limit ends when it resets.**
 Headless Claude states one usage window's status at a time and reports
 every window's use, so amux keeps the last status stated for each window.

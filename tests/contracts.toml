@@ -981,8 +981,9 @@ tests = [
 id = "catalogue-once-per-version"
 source = "invariant"
 section = "Catalogue"
-claim = "What an agent offers is a catalogue written by hash outside the snapshot, fetched once per hash by a chat on screen and never by home; a host says what its providers offer with no agent running, and a new agent is configured from it."
+claim = "What an agent offers is a catalogue written by hash outside the snapshot, fetched once per hash by a chat on screen and never by home, and never displaced by an older one answering late; a host says what its providers offer with no agent running, and a new agent is configured from it."
 tests = [
+  "ui-state/spec::snapshot::an_older_catalogue_answering_late_never_replaces_the_one_the_snapshot_names",
   "agent/providers::the_catalogue_a_snapshot_names_is_in_the_agent_directory",
   "ui-runtime/fleet::a_chat_on_screen_fetches_its_catalogue_once_per_hash_and_home_never_does",
   "node/catalogue::a_paired_host_reads_its_peers_catalogue_keeps_a_copy_and_follows_a_new_hash",
