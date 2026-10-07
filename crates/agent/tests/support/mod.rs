@@ -857,12 +857,12 @@ impl Log {
         self.snapshot()?.working_on.clone()
     }
 
-    /// The permission mode the newest terminal Claude snapshot reports.
-    pub fn permission_mode(&self) -> Option<String> {
+    /// The permission the newest terminal Claude snapshot reports.
+    pub fn permission(&self) -> Option<String> {
         let snapshot = self.snapshot()?;
         wire::ClaudePtySnapshot::decode(snapshot.body.as_slice())
             .ok()?
-            .permission_mode
+            .permission
     }
 
     pub fn phase(&self) -> Option<Phase> {

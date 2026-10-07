@@ -652,7 +652,7 @@ fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAs
             tasks: Some(tasks),
             context: Some(context),
             model: Some("opus".into()),
-            permission_mode: Some("default".into()),
+            permission: Some("default".into()),
             usage: Some(claude_usage.clone()),
             servers: Some(servers),
             sign_in: Some(sign_in),
@@ -666,7 +666,7 @@ fn full_snapshot(kind: Kind, asks: Vec<wire::Ask>, codex_asks: Vec<wire::CodexAs
             context: Some(context),
             model: Some("opus".into()),
             effort: Some("high".into()),
-            permission_mode: Some("default".into()),
+            permission: Some("default".into()),
             usage: Some(claude_usage),
             servers: Some(servers),
             sign_in: Some(sign_in),
@@ -1152,7 +1152,7 @@ fn settings_mark_the_current_model_effort_and_permission() {
         wire::ClaudeSdkSnapshot {
             model: Some("sonnet".into()),
             effort: Some("high".into()),
-            permission_mode: Some("plan".into()),
+            permission: Some("plan".into()),
             ..Default::default()
         }
         .encode_to_vec(),
@@ -1223,7 +1223,7 @@ fn a_reported_value_outside_the_offer_is_shown_as_current() {
         wire::ClaudeSdkSnapshot {
             model: Some("claude-haiku-4-5-20251001".into()),
             effort: Some("max".into()),
-            permission_mode: Some("dontAsk".into()),
+            permission: Some("dontAsk".into()),
             ..Default::default()
         }
         .encode_to_vec(),
@@ -1381,7 +1381,7 @@ fn terminal_claude_shows_what_it_reports_and_says_how_to_type_a_change() {
         Kind::ClaudePty,
         wire::ClaudePtySnapshot {
             model: Some("claude-sonnet-5".into()),
-            permission_mode: Some("acceptEdits".into()),
+            permission: Some("acceptEdits".into()),
             ..Default::default()
         }
         .encode_to_vec(),

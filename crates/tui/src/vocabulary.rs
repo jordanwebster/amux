@@ -2214,7 +2214,7 @@ fn chat_surroundings(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> 
     let claude_working = wire::ClaudeSdkSnapshot {
         model: Some("opus".into()),
         model_name: Some("Opus".into()),
-        permission_mode: Some("default".into()),
+        permission: Some("default".into()),
         background_jobs: Some(jobs.clone()),
         ..Default::default()
     }
@@ -2225,7 +2225,7 @@ fn chat_surroundings(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> 
         wire::ClaudeSdkSnapshot {
             model: Some("opus".into()),
             model_name: Some("Opus".into()),
-            permission_mode: Some("default".into()),
+            permission: Some("default".into()),
             usage: Some(claude_usage),
             ..Default::default()
         }
@@ -2451,7 +2451,7 @@ fn chat_controls(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> {
             model: Some("claude-opus-5-5".into()),
             model_name: Some("Opus 5.5".into()),
             effort: Some("high".into()),
-            permission_mode: Some("acceptEdits".into()),
+            permission: Some("acceptEdits".into()),
             ..Default::default()
         }
         .encode_to_vec(),
@@ -2503,7 +2503,7 @@ fn chat_controls(theme: Theme) -> Vec<(&'static str, &'static str, Buffer)> {
         wire::ClaudePtySnapshot {
             model: Some("claude-opus-5-5".into()),
             model_name: Some("Opus 5.5".into()),
-            permission_mode: Some("plan".into()),
+            permission: Some("plan".into()),
             ..Default::default()
         }
         .encode_to_vec(),

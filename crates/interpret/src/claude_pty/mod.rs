@@ -632,7 +632,7 @@ impl State {
                 .as_deref()
                 .filter(|model| !model.is_empty())
                 .map(crate::claude_common::tidy_model),
-            permission_mode: self.provider.permission_mode.clone(),
+            permission: self.provider.permission_mode.clone(),
             provider_session: self.provider.session.clone(),
             background_jobs: Some(self.shared.jobs()),
             running_calls: self
@@ -1661,7 +1661,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             snapshot.provider_session.as_deref().unwrap_or("?"),
             snapshot.model.as_deref().unwrap_or("?"),
             crate::claude_common::describe_model_name(snapshot.model_name.as_deref()),
-            snapshot.permission_mode.as_deref().unwrap_or("?"),
+            snapshot.permission.as_deref().unwrap_or("?"),
             if context.known {
                 context.used_tokens.to_string()
             } else {

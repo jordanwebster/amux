@@ -1,3 +1,8 @@
+2026-10-07 — **Claude's snapshots name the permission `permission`.**
+Both Claude snapshots called the setting `permission_mode` while the Codex
+snapshot and both create requests call it `permission`; the snapshots now
+use `permission` too. Claude's own protocol keeps its name for it.
+
 2026-10-07 — **The terminal folds tool steps by the shared view.**
 The terminal asked the view for every row and then decided again itself
 which steps of a run show, so the two rules could drift. It now passes its

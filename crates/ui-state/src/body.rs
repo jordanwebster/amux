@@ -356,7 +356,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.context = snapshot.context.unwrap_or_default();
             state.model = snapshot.model;
             state.model_name = snapshot.model_name;
-            state.permission = snapshot.permission_mode;
+            state.permission = snapshot.permission;
             state.provider_session = snapshot.provider_session;
             state.usage = snapshot.usage.map_or(Usage::Unknown, Usage::Claude);
             state.servers = snapshot.servers.unwrap_or_default();
@@ -374,7 +374,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.model = snapshot.model;
             state.model_name = snapshot.model_name;
             state.effort = snapshot.effort;
-            state.permission = snapshot.permission_mode;
+            state.permission = snapshot.permission;
             state.active_tasks = snapshot.active_tasks;
             state.provider_session = snapshot.provider_session;
             state.usage = snapshot.usage.map_or(Usage::Unknown, Usage::Claude);

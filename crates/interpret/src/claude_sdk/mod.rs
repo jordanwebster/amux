@@ -415,7 +415,7 @@ impl State {
                 crate::claude_common::tidy_model,
             ),
             effort: self.effort.clone(),
-            permission_mode: self.permission_mode.clone(),
+            permission: self.permission_mode.clone(),
             active_tasks: self
                 .active_tasks
                 .iter()
@@ -1456,7 +1456,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             snapshot.model.as_deref().unwrap_or("?"),
             crate::claude_common::describe_model_name(snapshot.model_name.as_deref()),
             snapshot.effort.as_deref().unwrap_or("?"),
-            snapshot.permission_mode.as_deref().unwrap_or("?"),
+            snapshot.permission.as_deref().unwrap_or("?"),
             if context.known {
                 format!(
                     "{}/{}{}",

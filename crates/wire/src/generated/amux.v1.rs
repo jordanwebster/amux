@@ -3015,7 +3015,7 @@ pub struct ClaudePtySnapshot {
     #[prost(string, optional, tag = "5")]
     pub model_name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
-    pub permission_mode: ::core::option::Option<::prost::alloc::string::String>,
+    pub permission: ::core::option::Option<::prost::alloc::string::String>,
     /// Absent until SessionStart or the first system event names it.
     #[prost(string, optional, tag = "7")]
     pub provider_session: ::core::option::Option<::prost::alloc::string::String>,
@@ -3239,7 +3239,7 @@ pub struct ClaudeSdkSnapshot {
     #[prost(string, optional, tag = "6")]
     pub effort: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "7")]
-    pub permission_mode: ::core::option::Option<::prost::alloc::string::String>,
+    pub permission: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, repeated, tag = "8")]
     pub active_tasks: ::prost::alloc::vec::Vec<Task>,
     #[prost(message, optional, tag = "9")]

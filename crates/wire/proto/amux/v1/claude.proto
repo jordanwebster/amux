@@ -70,7 +70,7 @@ message ClaudePtySnapshot {
   optional string model = 4;
   // The running model as a person reads it; absent while the model is.
   optional string model_name = 5;
-  optional string permission_mode = 6;
+  optional string permission = 6;
   // Absent until SessionStart or the first system event names it.
   optional string provider_session = 7;
   ClaudeUsage usage = 8;
@@ -184,7 +184,7 @@ message ClaudeSdkSnapshot {
   // Absent while the model is.
   optional string model_name = 5;
   optional string effort = 6;
-  optional string permission_mode = 7;
+  optional string permission = 7;
   repeated Task active_tasks = 8;
   ClaudeUsage usage = 9;
   ToolServerHealth servers = 10;

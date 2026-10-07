@@ -824,7 +824,7 @@ fn terminal_claude_denies_on_the_menu_that_offers_auto_mode() {
         assert_eq!(decision.note, "No network in this test");
         assert!(!log.has_text("never said"), "the deny ended the turn");
         assert!(log.has_text("Noted."), "the note followed as a prompt");
-        assert_ne!(log.permission_mode().as_deref(), Some("auto"));
+        assert_ne!(log.permission().as_deref(), Some("auto"));
         daemon.stop(StopMode::Graceful).await;
         assert_eq!(agent.exit().await, ExitCause::Stopped);
     });
