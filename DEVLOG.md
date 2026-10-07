@@ -1,3 +1,12 @@
+2026-10-07 — **A Codex recording reads amux's start on a plan back as that answer.**
+amux starts on a Codex plan by starting a turn that leaves plan mode with
+Codex's own words for carrying it out. Codex's recording reader read that
+turn as a mode change and then a prompt, so a replay passed through idle
+between the plan and the work where the live session went straight from
+the decision to working; the live plan scenario found it. After a plan
+item, a turn leaving plan mode with those words now reads as the plan's
+start answer, under the id the words were sent with.
+
 2026-10-07 — **A reply typed after an interruption keeps its turn running on terminal Claude.**
 Claude 2.1.292 follows the row that says a turn was interrupted with that
 turn's duration row, which 2.1.251 did not write. When amux replies instead

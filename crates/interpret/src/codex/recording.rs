@@ -118,6 +118,8 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
     let mut responded = std::collections::BTreeSet::<String>::new();
     // Turn starts read as part of a reply instead.
     let mut replied = std::collections::BTreeSet::<usize>::new();
+    // The plan item Codex completed since the host last started a turn.
+    let mut planned = None::<String>;
     for (at, recorded) in lines.iter().enumerate() {
         if replied.contains(&at) {
             continue;
@@ -152,6 +154,14 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                         notification: ServerNotification::TurnCompleted(_),
                         ..
                     } => busy = false,
+                    ServerMessage::Notification {
+                        notification: ServerNotification::ItemCompleted(completed),
+                        ..
+                    } => {
+                        if let codex_protocol::items::ThreadItem::Plan(plan) = &completed.item {
+                            planned = Some(plan.id.clone());
+                        }
+                    }
                     _ => {}
                 }
                 push(Event::Fact(Fact {
@@ -189,6 +199,17 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                     if text.is_empty() && std::mem::take(&mut injected_while_idle) {
                         continue;
                     }
+                    // A plan waiting, then a turn leaving plan mode with
+                    // Codex's own words for carrying it out, is how amux
+                    // starts on a plan: one answer, not a mode change and
+                    // then a prompt.
+                    let started = planned.take().filter(|_| {
+                        text == super::IMPLEMENT
+                            && params
+                                .collaboration_mode
+                                .as_ref()
+                                .is_some_and(|mode| mode.mode.as_str() == "default")
+                    });
                     // Overrides the host put on the turn are inputs before it.
                     if let Some(model) = params.model {
                         push(Event::Input(Input {
@@ -230,20 +251,34 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                             })),
                         }));
                     }
-                    if let Some(collaboration) = &params.collaboration_mode {
-                        push(Event::Input(Input {
-                            input_id: format!("stdin-{inputs}-mode").into_bytes(),
-                            of: Some(input::Of::Codex(CodexInput {
-                                of: Some(codex_input::Of::Mode(wire::SetMode {
-                                    value: collaboration.mode.as_str().to_owned(),
+                    if let Some(plan) = started {
+                        codex_input::Of::Answer(AnswerInput {
+                            ask_key: super::plan_ask_key(&plan),
+                            kind: "codex".into(),
+                            body: CodexAnswer {
+                                of: Some(codex_answer::Of::Plan(wire::PlanAnswer {
+                                    choice: wire::PlanChoice::Start as i32,
+                                    note: None,
                                 })),
-                            })),
-                        }));
+                            }
+                            .encode_to_vec(),
+                        })
+                    } else {
+                        if let Some(collaboration) = &params.collaboration_mode {
+                            push(Event::Input(Input {
+                                input_id: format!("stdin-{inputs}-mode").into_bytes(),
+                                of: Some(input::Of::Codex(CodexInput {
+                                    of: Some(codex_input::Of::Mode(wire::SetMode {
+                                        value: collaboration.mode.as_str().to_owned(),
+                                    })),
+                                })),
+                            }));
+                        }
+                        codex_input::Of::Prompt(PromptInput {
+                            text,
+                            ..Default::default()
+                        })
                     }
-                    codex_input::Of::Prompt(PromptInput {
-                        text,
-                        ..Default::default()
-                    })
                 }
                 ClientMessage::Request {
                     request: ClientRequest::TurnSteer(params),
@@ -649,6 +684,74 @@ mod tests {
                     codex_input::Of::Mode(mode),
                     codex_input::Of::Prompt(_),
                 ] if permission.value == "read-only" && mode.value == "plan"
+            ),
+            "{got:?}"
+        );
+    }
+
+    /// amux starts on a plan by leaving plan mode with Codex's own words for
+    /// carrying it out; read back, that is the plan's start answer, under
+    /// the id the words were sent with, not a mode change and then a prompt.
+    #[test]
+    fn a_turn_leaving_plan_mode_to_implement_a_plan_is_the_start_answer() {
+        let plan = serde_json::json!({
+            "method": "item/completed",
+            "params": {
+                "threadId": "t1",
+                "turnId": "turn-1",
+                "item": {"type": "plan", "id": "p1", "text": "Change the line."},
+            },
+        });
+        let turn = |text: &str| {
+            serde_json::json!({
+                "id": "host-1",
+                "method": "turn/start",
+                "params": {
+                    "threadId": "t1",
+                    "clientUserMessageId": "7231",
+                    "collaborationMode": {"mode": "default", "settings": {"model": "m"}},
+                    "input": [{"type": "text", "text": text, "text_elements": []}],
+                },
+            })
+        };
+        let recording = [
+            line("stdout", 1_000, plan.clone()),
+            line("stdin", 2_000, turn(super::super::IMPLEMENT)),
+        ]
+        .join("\n");
+        let events = read("codex_io", recording.as_bytes()).unwrap();
+        let ids = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Input(input) => Some(input.input_id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ids, [vec![0x72, 0x31]]);
+        let got = inputs(events);
+        let [codex_input::Of::Answer(answer)] = got.as_slice() else {
+            panic!("one answer, not {got:?}");
+        };
+        assert_eq!(answer.ask_key, "plan:p1");
+        assert_eq!(
+            CodexAnswer::decode(answer.body.as_slice()).unwrap().of,
+            Some(codex_answer::Of::Plan(wire::PlanAnswer {
+                choice: wire::PlanChoice::Start as i32,
+                note: None,
+            }))
+        );
+
+        // Other words after a plan are the person's own prompt.
+        let recording = [
+            line("stdout", 1_000, plan),
+            line("stdin", 2_000, turn("Something else.")),
+        ]
+        .join("\n");
+        let got = inputs(read("codex_io", recording.as_bytes()).unwrap());
+        assert!(
+            matches!(
+                got.as_slice(),
+                [codex_input::Of::Mode(_), codex_input::Of::Prompt(_)]
             ),
             "{got:?}"
         );
