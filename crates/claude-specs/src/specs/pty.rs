@@ -90,6 +90,7 @@ static DEFINITIONS: &[PtySpecDef] = &[
     definition!(clear_relink, &[], clear_relink),
     definition!(question_every_shape, &[], question_every_shape),
     definition!(question_cancelled, &[], question_cancelled),
+    definition!(question_skip_reply, &[], question_skip_reply),
     definition!(subagent, &["--dangerously-skip-permissions"], subagent),
     definition!(
         background_shell,
@@ -137,7 +138,7 @@ static DEFINITIONS: &[PtySpecDef] = &[
     ),
 ];
 
-static REGISTRY: [SpecEntry; 31] = [
+static REGISTRY: [SpecEntry; 32] = [
     entry("prompt"),
     entry("prompt_multiline"),
     entry("prompt_long"),
@@ -159,6 +160,7 @@ static REGISTRY: [SpecEntry; 31] = [
     entry("clear_relink"),
     entry("question_every_shape"),
     entry("question_cancelled"),
+    entry("question_skip_reply"),
     entry("subagent"),
     entry("background_shell"),
     entry("task_list"),
@@ -1694,6 +1696,104 @@ async fn question_cancelled(session: &mut PtySpecSession) -> Result<(), String> 
     Ok(())
 }
 
+/// A form of two questions, the first skipped through the keymap's skip
+/// step and the second answered; then a second form replied to instead: the
+/// form cancelled with the interrupt key and the words typed as the next
+/// prompt.
+async fn question_skip_reply(session: &mut PtySpecSession) -> Result<(), String> {
+    const COLOUR: &str = "Which colour?";
+    const SIZE: &str = "Which size?";
+    const REPLY: &str = "Skip the shape; we are done here.";
+    let ask = question_ask(
+        session,
+        "Use the AskUserQuestion tool once, asking me two questions in that one call: \
+         'Which colour?' with the options Red and Blue, and 'Which size?' with the options \
+         Small and Large. After I answer, use it once more to ask me one question, \
+         'Which shape?' with the options Circle and Square. Then reply with the single word \
+         done. Do nothing else.",
+    )
+    .await?;
+    let shape = match &ask.kind {
+        AskKind::Question { questions } => questions
+            .iter()
+            .map(|question| (question.options, question.multi_select))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    if shape != [(2, false), (2, false)] {
+        return Err(format!("two-question ask had unexpected shape: {shape:?}"));
+    }
+    session
+        .send(Intent::Answer {
+            ask_id: ask.id,
+            answer: AskAnswer::Question(QuestionResponse {
+                answers: vec![
+                    QuestionAnswer {
+                        selected: Vec::new(),
+                        other: None,
+                    },
+                    QuestionAnswer {
+                        selected: vec![0],
+                        other: None,
+                    },
+                ],
+            }),
+        })
+        .await?;
+    // The answer's row and the next form's hook travel separate channels, so
+    // either may come first. Only the hook tells the next form apart: the
+    // first form's own row, written after its answer, asks it again, and a
+    // hook names an ask by its prompt, which both forms share.
+    let mut answered = None;
+    let mut asked_again = false;
+    while answered.is_none() || !asked_again {
+        match session.next().await? {
+            PtyEvent::Transcript { row, .. } => {
+                let row = serde_json::to_value(row).expect("a row serializes");
+                if question_result_has_answers(&row, &[(SIZE, "Small")]) {
+                    answered = Some(row);
+                }
+            }
+            PtyEvent::Hook(hooks::Payload::PermissionRequest(request))
+                if request.tool_name == "AskUserQuestion" =>
+            {
+                asked_again = true;
+            }
+            PtyEvent::Hook(hooks::Payload::Stop(_)) => {
+                return Err("Claude stopped the turn before asking again".into());
+            }
+            PtyEvent::Exited(status) => {
+                return Err(format!("Claude exited before asking again: {status:?}"));
+            }
+            _ => {}
+        }
+    }
+    let row = answered.expect("the loop ends with the answer's row");
+    if row
+        .pointer("/toolUseResult/answers")
+        .and_then(|answers| answers.get(COLOUR))
+        .is_some()
+    {
+        return Err(format!("the skipped question was answered: {row}"));
+    }
+    session.send(Intent::Interrupt).await?;
+    session
+        .wait_transcript(|row| {
+            row.get("type").and_then(serde_json::Value::as_str) == Some("user")
+                && row.to_string().contains("tool_result")
+        })
+        .await?;
+    session
+        .send(Intent::Prompt {
+            text: REPLY.to_owned(),
+        })
+        .await?;
+    session
+        .wait_transcript(|row| user_prompt_equals(row, REPLY))
+        .await?;
+    Ok(())
+}
+
 async fn subagent(session: &mut PtySpecSession) -> Result<(), String> {
     session
         .send(Intent::Prompt {
@@ -1824,6 +1924,7 @@ mod tests {
                 "clear_relink",
                 "question_every_shape",
                 "question_cancelled",
+                "question_skip_reply",
                 "subagent",
                 "background_shell",
                 "task_list",

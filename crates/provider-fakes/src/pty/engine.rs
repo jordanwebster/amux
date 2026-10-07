@@ -330,6 +330,9 @@ struct Engine {
     /// The last row written, for `parentUuid`.
     parent: Option<String>,
     prompt_id: String,
+    /// Prompts and turns so far, which Claude numbers on each prompt row.
+    prompts: u64,
+    turns: u64,
     last_text: String,
     /// The session has started: the first prompt arrived.
     started: bool,
@@ -383,6 +386,8 @@ impl Engine {
             send_now: false,
             parent: None,
             prompt_id: uuid(),
+            prompts: 0,
+            turns: 0,
             last_text: String::new(),
             started: false,
         }
@@ -666,6 +671,7 @@ impl Engine {
         } else {
             json!({ "kind": "human" })
         };
+        self.prompts += 1;
         let row = self.envelope(json!({
             "type": "user",
             "message": { "role": "user", "content": content },
@@ -674,6 +680,7 @@ impl Engine {
             "promptId": self.prompt_id,
             "promptSource": if queued.peer { "peer" } else { source },
             "turnOrigin": if queued.peer { "peer" } else { "human" },
+            "turnPosition": { "promptIndex": self.prompts, "turnIndex": self.turns },
         }));
         self.row(row);
     }
@@ -684,6 +691,7 @@ impl Engine {
         self.cut = None;
         self.send_now = false;
         self.prompt_id = uuid();
+        self.turns += 1;
         self.last_text.clear();
         self.screen(&format!("> {}", first.text));
         self.user_row(&first, "typed");
@@ -816,6 +824,14 @@ impl Engine {
         stop: &str,
         wire_inputs: Value,
     ) {
+        // Terminal Claude 2.1.292 writes the fallback credit on its thinking
+        // and tool-call rows, and how long a thinking block took on its row;
+        // no recording of it yet holds a reply's text row.
+        let thinking = block["type"] == "thinking";
+        let mut usage = turn_usage();
+        if block["type"] != "text" {
+            usage["fallback_credit"] = Value::Null;
+        }
         let mut row = self.envelope(json!({
             "type": "assistant",
             "apiBlockIndex": 0,
@@ -832,7 +848,7 @@ impl Engine {
                 "stop_reason": stop,
                 "stop_sequence": null,
                 "type": "message",
-                "usage": turn_usage(),
+                "usage": usage,
             },
             "perTurnEffort": null,
             "requestId": request,
@@ -840,6 +856,9 @@ impl Engine {
         }));
         if !wire_inputs.is_null() {
             row["wireToolInputs"] = wire_inputs;
+        }
+        if thinking {
+            row["thinkingDurationMs"] = json!(1);
         }
         self.row(row);
     }

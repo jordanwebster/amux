@@ -136,6 +136,7 @@ mod claude_pty {
         question_multi_other => "question_multi_other",
         question_other_single => "question_other_single",
         question_single => "question_single",
+        question_skip_reply => "question_skip_reply",
         question_tabs => "question_tabs",
         sign_in_problem => "sign_in_problem",
         steer_queued => "steer_queued",

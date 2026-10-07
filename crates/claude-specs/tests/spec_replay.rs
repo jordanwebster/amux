@@ -164,6 +164,7 @@ mod pty_replays {
         clear_relink,
         question_every_shape,
         question_cancelled,
+        question_skip_reply,
         subagent,
         background_shell,
         task_list,

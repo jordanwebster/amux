@@ -671,8 +671,8 @@ spec crates and sanitized so it replays offline:
 
 | Crate | Recordings |
 |---|---|
-| [`claude-specs`](../crates/claude-specs/src/lib.rs) | `fixtures/sdk/<spec>/` for headless Claude, `fixtures/pty/<spec>/` for terminal Claude, and two transcript captures in `fixtures/claude-pty/` that cannot be regenerated in the tree ([their README](../crates/claude-specs/fixtures/claude-pty/README.md)) |
-| [`codex-specs`](../crates/codex-specs/src/lib.rs) | `fixtures/runtime/<spec>/`, with the capture conditions in [`PROVENANCE.md`](../crates/codex-specs/fixtures/runtime/PROVENANCE.md) |
+| [`claude-specs`](../crates/claude-specs/src/lib.rs) | `fixtures/sdk/<spec>/` for headless Claude, `fixtures/pty/<spec>/` for terminal Claude, two transcript captures in `fixtures/claude-pty/` that cannot be regenerated in the tree ([their README](../crates/claude-specs/fixtures/claude-pty/README.md)), and the live run's captures in `fixtures/live/{sdk,pty}/<scenario>/`, driven by amux's own interpreter ([their README](../crates/claude-specs/fixtures/live/README.md)) |
+| [`codex-specs`](../crates/codex-specs/src/lib.rs) | `fixtures/runtime/<spec>/`, with the capture conditions in [`PROVENANCE.md`](../crates/codex-specs/fixtures/runtime/PROVENANCE.md), and the live run's captures in `fixtures/live/<scenario>/` ([their README](../crates/codex-specs/fixtures/live/README.md)) |
 
 A recording is a directory holding `manifest.json` (the provider, version and
 model it was recorded with, its content hashes, the fields it observed, and

@@ -1,3 +1,18 @@
+2026-10-07 — **Terminal Claude's question skip is recorded and verified.**
+The keymap moves past a skipped question with Tab, but its verified list had
+no recording of a skip. A new terminal spec, `question_skip_reply`, asks two
+questions in one form, skips the first and answers the second, then cancels
+a second form and types words instead; recorded at Claude 2.1.292 on Haiku,
+the recorder added the keymap's verified entry for it. Its first draft
+waited for the answer's transcript row and then the next form; the row and
+the form's hook travel separate channels, and the recorder's replay, on a
+threaded runtime, met the hook first and lost it. The spec now waits for
+both together, and tells the next form by its own permission hook: Claude's
+hook names an ask by its prompt, which both forms share. Being the first
+recording at 2.1.292, it moved what the terminal fake must write: prompt
+rows now carry `turnPosition`, thinking and tool-call rows the usage's
+`fallback_credit`, and thinking rows `thinkingDurationMs`.
+
 2026-10-07 — **The live run's recordings join the corpus as live captures.**
 The live qualification run records each scenario's provider traffic, but
 nothing carried those captures into the corpus the protocol tests read. A
