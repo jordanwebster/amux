@@ -431,8 +431,7 @@ private struct ChatPage: View {
             name: name.isEmpty ? agent.description : name,
             host: host?.name ?? row?.hostName ?? "",
             directory: row?.workingDirectory ?? "",
-            presence: host?.local == true ? .online : (host?.presence ?? row?.hostPresence ?? .unspecified),
-            away: host?.away)
+            reach: host?.reach ?? row?.hostReach ?? .offline)
     }
 
     private func act(_ action: ChatAction) {

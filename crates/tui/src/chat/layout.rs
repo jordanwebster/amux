@@ -163,7 +163,8 @@ impl Frame<'_> {
     /// parent is open; None when it draws nothing here.
     fn shown(&self, state: &SessionState, order: u64) -> Option<(Row, bool)> {
         let held = state.transcript().at(order)?;
-        let row = chat_rows_for(state, std::slice::from_ref(&held.item.key), &self.options()).pop()?;
+        let row =
+            chat_rows_for(state, std::slice::from_ref(&held.item.key), &self.options()).pop()?;
         let child_open = row
             .parent
             .as_ref()

@@ -46,9 +46,9 @@ key in a key line too.
 ### Home
 
 The client opens on home, and every chat returns to it. The top line is `amux` and the overall state at the
-right: hosts that are away, how many agents are working and how many need you, a daemon running another build
-(`amux 0.8.0 running · restart to update`) and, when this machine's hosts are away because it is signed out,
-`signed out · amux login`. `/` turns the top line into a filter over names, folders and hosts; Enter keeps it, Esc
+right: hosts it does not reach now, how many agents are working or starting and how many need you (agents, not
+families, folded or not), a daemon running another build (`amux 0.8.0 running · restart to update`) and, when
+this machine's hosts are away because it is signed out, `signed out · amux login`. `/` turns the top line into a filter over names, folders and hosts; Enter keeps it, Esc
 clears it, and it looks into folded sections too. It matches names, branches, folders and hosts.
 
 Below it, `+ New Agent`, then the agents in sections drawn alike (a fold marker, the label, a count, a faint rule):
@@ -125,7 +125,7 @@ Enter on a row opens its chat. From top to bottom:
   first CaughtUp, `reconnecting`, `refreshing` while a rebuilt history is on its way, or why the host is away (not
   current, this machine signed out, or the host no longer trusts this machine).
 - **The family line**, for an agent with a parent or children: the parent, the number of subagents and how many
-  need you.
+  others in the whole family need you, grandchildren and the parent's side included.
 - **The feed**, read one turn at a time, laid out upward from the newest or from wherever the reader scrolled:
   - your message is a tinted block with the time at its right; pasted text shows in place, cut after eight lines
     with `… N more lines [Show All]`;

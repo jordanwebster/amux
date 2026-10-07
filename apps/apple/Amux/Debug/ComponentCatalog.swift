@@ -389,7 +389,7 @@ enum ComponentCatalog {
                     SentPrompt(inputId: [6], text: [.text("Run the focused tests.")], lands: .queue, underway: .sending(waiting: false)),
                     SentPrompt(inputId: [7], text: [.text("Then the Windows check.")], lands: .queue, underway: .sending(waiting: true)),
                 ])),
-            composer("resume", height: 200, frame: ScriptedChat.frame(phase: .exited(cause: "code 1"), mode: .resume),
+            composer("resume", height: 200, frame: ScriptedChat.frame(phase: .exited(cause: .failed("code 1")), mode: .resume),
                      draft: "Pick up where you left off and rerun the tests."),
             composer("detached", height: 180, frame: ScriptedChat.frame(mode: .disabled(.detached), caughtUp: false, waiting: .detached),
                      draft: "Also add a test for the new string."),
@@ -878,11 +878,9 @@ enum CatalogFixtures {
     static func bytes(_ blob: BlobRef) -> Data? { images[blob.hash] }
 
     static let subject = ChatSubject(
-        name: "refactor-auth", host: "Studio", directory: "/Users/ada/src/amux", presence: .online,
-        away: nil)
+        name: "refactor-auth", host: "Studio", directory: "/Users/ada/src/amux", reach: .online(.direct))
     static let awaySubject = ChatSubject(
-        name: "refactor-auth", host: "Studio", directory: "/Users/ada/src/amux", presence: .away,
-        away: .plain)
+        name: "refactor-auth", host: "Studio", directory: "/Users/ada/src/amux", reach: .away(.plain))
 
     static let markdown = """
         Done. The three arms are **one** now:
@@ -1056,21 +1054,21 @@ enum CatalogFixtures {
     static let docsSweep = FleetCard(
         agent: AgentKey(host: Array(repeating: 1, count: 16), agent: Array(repeating: 5, count: 16)),
         name: "docs-sweep", kind: .claudeSdk, attention: .exited, cwd: "", phaseSinceMs: 0,
-        host: "Studio", hostPresence: .online, children: 0, familyAttention: .exited,
-        members: 1, membersNeedYou: 0, branch: nil, exitCause: "finished")
+        host: "Studio", hostReach: .online(.direct), children: 0, familyAttention: .exited,
+        members: 1, branch: nil, exitCause: .finished)
 
     static let family = FamilyHeader(
         children: [
             FleetCard(agent: AgentKey(host: Array(repeating: 1, count: 16), agent: Array(repeating: 3, count: 16)),
                       name: "worker-2", kind: .claudeSdk, attention: .needsYou, cwd: "", phaseSinceMs: 0,
-                      host: "Laptop", hostPresence: .online, children: 0, familyAttention: .needsYou,
-                      members: 1, membersNeedYou: 1, branch: nil, exitCause: nil),
+                      host: "Laptop", hostReach: .online(.direct), children: 0, familyAttention: .needsYou,
+                      members: 1, branch: nil, exitCause: nil),
             FleetCard(agent: AgentKey(host: Array(repeating: 1, count: 16), agent: Array(repeating: 4, count: 16)),
                       name: "worker-3", kind: .codex, attention: .working, cwd: "", phaseSinceMs: 0,
-                      host: "Studio", hostPresence: .online, children: 0, familyAttention: .working,
-                      members: 1, membersNeedYou: 0, branch: nil, exitCause: nil),
+                      host: "Studio", hostReach: .online(.direct), children: 0, familyAttention: .working,
+                      members: 1, branch: nil, exitCause: nil),
         ],
-        attention: .needsYou, parent: nil)
+        attention: .needsYou, needYou: 1, parent: nil)
 }
 
 /// A component on a fixed, production-coloured canvas.
@@ -1193,7 +1191,7 @@ extension CatalogFixtures {
         let hosts = HostsStore()
         hosts.show([HostView(
             hostId: desk.bytes, name: "desk", local: false, trusted: true, candidate: false,
-            presence: .online, away: .plain, addrs: [], via: .direct, current: true,
+            reach: .online(.direct), addrs: [], current: true,
             providers: [
                 ProviderSignIn(provider: "claude", signedIn: signedIn),
                 ProviderSignIn(provider: "codex", signedIn: true),

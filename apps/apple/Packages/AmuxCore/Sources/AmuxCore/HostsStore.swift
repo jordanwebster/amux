@@ -66,18 +66,18 @@ public final class HostsStore {
     public var online: [HostView] { hosts.filter(\.online) }
     public var offline: [HostView] { hosts.filter { !$0.online } }
 
-    public func hosts(_ reach: HostReach) -> [HostView] {
-        hosts.filter { $0.reach == reach }
+    public func hosts(_ group: HostGroup) -> [HostView] {
+        hosts.filter { $0.group == group }
     }
 
-    public func candidates(_ reach: HostReach) -> [HostView] {
-        discovered.filter { $0.reach == reach }
+    public func candidates(_ group: HostGroup) -> [HostView] {
+        discovered.filter { $0.group == group }
     }
 
     /// Trusted machines discovery can see that no route reaches.
     public var foundButUnreachable: Set<HostId> {
         let seen = Set(hosts.filter { !$0.addrs.isEmpty }.compactMap(\.id))
-        return Set(hosts.filter { $0.reach == .offline && seen.contains($0.id!) }.compactMap(\.id))
+        return Set(hosts.filter { $0.group == .offline && seen.contains($0.id!) }.compactMap(\.id))
     }
 
     public func wentOffline(_ id: HostId) -> Date? { departures[id] }

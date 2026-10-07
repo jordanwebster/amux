@@ -1093,12 +1093,12 @@ public enum Attention: String, Codable, Hashable, Sendable, CaseIterable {
     case needsYou = "NeedsYou"
 }
 
-/// Why a host is out of reach from here, as far as this machine can say.
-/// A powered-off host and a signed-out machine look the same from here, so
-/// the cause is only ever a fact about this machine, never a claim about
-/// the host.
+/// Why a host is away from here. A powered-off host and a signed-out
+/// machine look the same from here, so the cause is only ever a fact about
+/// this machine, never a claim about the host.
 public enum Away: String, Codable, Hashable, Sendable, CaseIterable {
-    /// Nothing more is known than that the host is away.
+    /// The host's link says it is away: seen, as through the relay, and not
+    /// reachable from here.
     case plain = "Plain"
     /// This machine is signed out of its account, so the relay carries
     /// nothing for it; a host only the relay reaches is away until it signs
@@ -2144,8 +2144,10 @@ public enum EnvelopeKind: String, Codable, Hashable, Sendable, CaseIterable {
     case failed = "Failed"
 }
 
-/// Why an agent ended, as far as a row distinguishes: it said it was done,
-/// it was stopped or exited cleanly, or it failed with a cause.
+/// How an agent ended, as every client tells it: it said it was done (a
+/// one-shot agent whose turn ended), it was stopped or exited cleanly, or
+/// it ended some other way, with the host's own account of why, to show as
+/// it is.
 public enum ExitCause: Codable, Hashable, Sendable {
     case finished
     case ended
@@ -2204,21 +2206,26 @@ public enum ExploreVerb: String, Codable, Hashable, Sendable, CaseIterable {
     case webSearch = "WebSearch"
 }
 
-/// A chat's family: its parent, its children, and how loud the family is.
+/// A chat's family: its parent, its children, how loud the whole family
+/// is, and how many of the family other than the chat's own agent need the
+/// person, the parent's side and grandchildren included.
 public struct FamilyHeader: Codable, Hashable, Sendable {
     public var children: [FleetCard]
     public var attention: Attention
+    public var needYou: UInt32
     public var parent: FleetCard?
 
-    public init(children: [FleetCard], attention: Attention, parent: FleetCard?) {
+    public init(children: [FleetCard], attention: Attention, needYou: UInt32, parent: FleetCard?) {
         self.children = children
         self.attention = attention
+        self.needYou = needYou
         self.parent = parent
     }
 
     private enum CodingKeys: String, CodingKey {
         case children
         case attention
+        case needYou = "need_you"
         case parent
     }
 }
@@ -2353,21 +2360,20 @@ public struct FleetCard: Codable, Hashable, Sendable {
     public var cwd: String
     public var phaseSinceMs: Int64
     public var host: String
-    public var hostPresence: Presence
+    public var hostReach: Reach
     /// Children in the fleet, and how loud the family is.
     public var children: UInt32
     public var familyAttention: Attention
-    /// The whole family below and including this agent, and how many of
-    /// them need the person: what a folded family stands for when a client
-    /// counts its fleet.
+    /// The whole family below and including this agent: what a folded
+    /// family stands for when a client counts its fleet.
     public var members: UInt32
-    public var membersNeedYou: UInt32
     /// The branch of the folder the agent started in, as of its last turn
     /// end; None on a detached head or outside a repository.
     public var branch: String?
-    public var exitCause: String?
+    /// How it ended, once it has.
+    public var exitCause: ExitCause?
 
-    public init(agent: AgentKey, name: String, kind: Kind, attention: Attention, cwd: String, phaseSinceMs: Int64, host: String, hostPresence: Presence, children: UInt32, familyAttention: Attention, members: UInt32, membersNeedYou: UInt32, branch: String?, exitCause: String?) {
+    public init(agent: AgentKey, name: String, kind: Kind, attention: Attention, cwd: String, phaseSinceMs: Int64, host: String, hostReach: Reach, children: UInt32, familyAttention: Attention, members: UInt32, branch: String?, exitCause: ExitCause?) {
         self.agent = agent
         self.name = name
         self.kind = kind
@@ -2375,11 +2381,10 @@ public struct FleetCard: Codable, Hashable, Sendable {
         self.cwd = cwd
         self.phaseSinceMs = phaseSinceMs
         self.host = host
-        self.hostPresence = hostPresence
+        self.hostReach = hostReach
         self.children = children
         self.familyAttention = familyAttention
         self.members = members
-        self.membersNeedYou = membersNeedYou
         self.branch = branch
         self.exitCause = exitCause
     }
@@ -2392,11 +2397,10 @@ public struct FleetCard: Codable, Hashable, Sendable {
         case cwd
         case phaseSinceMs = "phase_since_ms"
         case host
-        case hostPresence = "host_presence"
+        case hostReach = "host_reach"
         case children
         case familyAttention = "family_attention"
         case members
-        case membersNeedYou = "members_need_you"
         case branch
         case exitCause = "exit_cause"
     }
@@ -2451,18 +2455,23 @@ public struct FleetSection: Codable, Hashable, Sendable {
     public var kind: SectionKind
     /// How many families the section holds, folded or not.
     public var families: UInt32
+    /// Whether the section starts folded: exited agents are history,
+    /// rarely opened.
+    public var foldedByDefault: Bool
     /// Each family's head, with the members of expanded families under it.
     public var rows: [FleetRow]
 
-    public init(kind: SectionKind, families: UInt32, rows: [FleetRow]) {
+    public init(kind: SectionKind, families: UInt32, foldedByDefault: Bool, rows: [FleetRow]) {
         self.kind = kind
         self.families = families
+        self.foldedByDefault = foldedByDefault
         self.rows = rows
     }
 
     private enum CodingKeys: String, CodingKey {
         case kind
         case families
+        case foldedByDefault = "folded_by_default"
         case rows
     }
 }
@@ -2471,13 +2480,22 @@ public struct FleetSection: Codable, Hashable, Sendable {
 /// left out.
 public struct FleetView: Codable, Hashable, Sendable {
     public var sections: [FleetSection]
+    /// Agents across the whole fleet that need the person, and that are
+    /// working or starting: counted by agent, not by family, whatever is
+    /// folded or filtered out of the sections.
+    public var needYou: UInt32
+    public var working: UInt32
 
-    public init(sections: [FleetSection]) {
+    public init(sections: [FleetSection], needYou: UInt32, working: UInt32) {
         self.sections = sections
+        self.needYou = needYou
+        self.working = working
     }
 
     private enum CodingKeys: String, CodingKey {
         case sections
+        case needYou = "need_you"
+        case working
     }
 }
 
@@ -2728,12 +2746,10 @@ public struct HostView: Codable, Hashable, Sendable {
     public var trusted: Bool
     /// Found nearby and not paired.
     public var candidate: Bool
-    public var presence: Presence
-    public var away: Away
+    /// How this device reaches it now, and over which route.
+    public var reach: Reach
     /// Where discovery found it; what pairing dials.
     public var addrs: [String]
-    /// The route a live link runs over.
-    public var via: HostVia
     /// This device's copy of the host's agents has caught up with the host
     /// on a live stream: what the fleet shows for it is what it lists now.
     /// Always true for this device.
@@ -2748,16 +2764,14 @@ public struct HostView: Codable, Hashable, Sendable {
     public var signedIn: Bool?
     public var version: String?
 
-    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, presence: Presence, away: Away, addrs: [String], via: HostVia, current: Bool, providers: [ProviderSignIn], lastDialError: String?, platform: String?, signedIn: Bool?, version: String?) {
+    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, reach: Reach, addrs: [String], current: Bool, providers: [ProviderSignIn], lastDialError: String?, platform: String?, signedIn: Bool?, version: String?) {
         self.hostId = hostId
         self.name = name
         self.local = local
         self.trusted = trusted
         self.candidate = candidate
-        self.presence = presence
-        self.away = away
+        self.reach = reach
         self.addrs = addrs
-        self.via = via
         self.current = current
         self.providers = providers
         self.lastDialError = lastDialError
@@ -2772,10 +2786,8 @@ public struct HostView: Codable, Hashable, Sendable {
         case local
         case trusted
         case candidate
-        case presence
-        case away
+        case reach
         case addrs
-        case via
         case current
         case providers
         case lastDialError = "last_dial_error"
@@ -3524,7 +3536,7 @@ public enum PhaseView: Codable, Hashable, Sendable {
     case idle
     case working
     case needsYou
-    case exited(cause: String?)
+    case exited(cause: ExitCause)
 
     private enum Tag: String, CodingKey {
         case exited = "Exited"
@@ -3561,7 +3573,7 @@ public enum PhaseView: Codable, Hashable, Sendable {
             let _fields = try _container.nestedContainer(
                 keyedBy: ExitedKeys.self, forKey: .exited)
             self = .exited(
-                cause: try _fields.decodeIfPresent(String.self, forKey: .cause))
+                cause: try _fields.decode(ExitCause.self, forKey: .cause))
         }
     }
 
@@ -3582,7 +3594,7 @@ public enum PhaseView: Codable, Hashable, Sendable {
         case .exited(let cause):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: ExitedKeys.self, forKey: .exited)
-            try _fields.encodeIfPresent(cause, forKey: .cause)
+            try _fields.encode(cause, forKey: .cause)
         }
     }
 }
@@ -3633,13 +3645,6 @@ public enum PlanVerdict: String, Codable, Hashable, Sendable, CaseIterable {
     case dismissed = "Dismissed"
     /// Approved, with edits accepted without asking from then on.
     case approvedAcceptingEdits = "ApprovedAcceptingEdits"
-}
-
-public enum Presence: String, Codable, Hashable, Sendable, CaseIterable {
-    case unspecified = "Unspecified"
-    case online = "Online"
-    case offline = "Offline"
-    case away = "Away"
 }
 
 /// One of this device's profiles, one per account it signed in to, and the
@@ -3757,6 +3762,63 @@ public struct QueuedRow: Codable, Hashable, Sendable {
         case canWithdraw = "can_withdraw"
         case canSendNow = "can_send_now"
         case fromAgent = "from_agent"
+    }
+}
+
+/// How this machine reaches a host now: one answer every client words, for
+/// the host itself and for every agent on it.
+public enum Reach: Codable, Hashable, Sendable {
+    /// A link stands, over this route; this machine's own host has none.
+    case online(HostVia)
+    /// Out of reach for a reason this machine can name.
+    case away(Away)
+    /// Out of reach with no route, or not known to be reachable at all.
+    case offline
+
+    private enum Tag: String, CodingKey {
+        case online = "Online"
+        case away = "Away"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "Offline": self = .offline
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no Reach is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a Reach names exactly one variant"))
+        }
+        switch _tag {
+        case .online:
+            self = .online(try _container.decode(HostVia.self, forKey: .online))
+        case .away:
+            self = .away(try _container.decode(Away.self, forKey: .away))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .online(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .online)
+        case .away(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .away)
+        case .offline:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Offline")
+        }
     }
 }
 

@@ -162,7 +162,7 @@ public final class StoreBundle {
             }
         }
         newAgent.remember(fleet.rows)
-        saw?(fleet.machines.filter(\.trusted).count, fleet.rows.filter(\.needsYou).count)
+        saw?(fleet.machines.filter(\.trusted).count, fleet.needYou)
         applied += 1
         keepSessions()
         if hostsMoved {

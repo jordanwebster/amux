@@ -6,20 +6,20 @@ chat.row.prose | Ready when you are. | final | 18,217,366,20
 chat.prose.render |  | rendered | 18,217,366,20
 chat.row.turn-end | Worked <t> · $0.00 |  | 48,245,130,16
 chat.row.boundary | Ended · stopped |  | 18,275,366,34
-chat.header | Exited · stopped | live | 18,64,171,54
+chat.header | Exited | live | 18,64,103,54
 chat.back | Back |  | 16,68,42,46
-chat.title | helper | helper | 51,72,125,38
+chat.title | helper | helper | 51,72,58,38
 chat.more | More |  | 344,69,44,44
-chat.exited | Exited · stopped | desk | 28,720,346,20
+chat.exited | Exited | desk | 28,720,346,20
 chat.field | helper has exited · a message resumes it |  | 28,750,346,24
 chat.attach | Attach | closed | 23,779,44,44
 chat.model | claude-fake-1 · medium |  | 71,779,139,44
 chat.dictate | Dictate | idle | 228,779,44,44
 chat.resume | Resume |  | 276,779,103,44 (disabled)
  | Back |  | 16,68,42,46
- | helper, Exited · stopped |  | 51,72,125,38
+ | helper, Exited |  | 51,72,58,38
  | More |  | 344,69,44,44
- | Exited · stopped, desk |  | 29,720,345,20
+ | Exited, desk |  | 29,720,345,20
  | Attach |  | 23,779,44,44
  | claude-fake-1 |  | 71,779,139,44
  | Dictate |  | 228,779,44,44

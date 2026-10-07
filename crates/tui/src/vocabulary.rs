@@ -17,8 +17,8 @@ use ui_state::{Composer, Waiting};
 use ui_view::{
     AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CardState, Choice, ChoiceOutcome,
     Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, LineKind, OptionView,
-    PatchHead, PatchLine, PermissionGrant, PlanVerdict, QuestionView, QueuedRow, Resolution, Row,
-    RowKind, Scope, Segment, ToolStateView,
+    PatchHead, PatchLine, PermissionGrant, PlanVerdict, QuestionView, QueuedRow, Reach, Resolution,
+    Row, RowKind, Scope, Segment, ToolStateView,
 };
 use wire::{BlobRef, BoundaryKind, EnvelopeKind, SendState};
 
@@ -124,10 +124,10 @@ pub fn components(theme: Theme) -> Vec<Component> {
         "Prompts waiting above the composer: one queued, one waiting for its host, one that may not have arrived, and the queued one highlighted, its controls in place of how it waits.",
         queue(w, theme),
     );
-    for (name, shows, composer, away, draft) in composers() {
+    for (name, shows, composer, reach, draft) in composers() {
         let mut editor = Editor::default();
         editor.set(draft, Vec::new());
-        let lines = composer_lines(&editor, &composer, "fixer", "studio", away, w, theme);
+        let lines = composer_lines(&editor, &composer, "fixer", "studio", reach, w, theme);
         add(name, shows, lines);
     }
     for (name, shows, buffer) in chat_surroundings(theme)
@@ -1950,41 +1950,41 @@ fn cards() -> Vec<CardSet> {
 
 // --- the composer ----------------------------------------------------------
 
-fn composers() -> Vec<(&'static str, &'static str, Composer, Away, &'static str)> {
+fn composers() -> Vec<(&'static str, &'static str, Composer, Reach, &'static str)> {
     vec![
         (
             "composer_exited",
             "The exited composer: one Enter resumes the agent with the draft as its first prompt.",
             Composer::Resume,
-            Away::Plain,
+            Reach::Online(wire::HostVia::Direct),
             "Carry on from the failing test.",
         ),
         (
             "composer_exited_empty",
             "The exited composer before anything is typed.",
             Composer::Resume,
-            Away::Plain,
+            Reach::Online(wire::HostVia::Direct),
             "",
         ),
         (
             "composer_detached",
             "The composer while the agent's host is away: the draft is kept and sending waits.",
             Composer::Disabled(Waiting::Detached),
-            Away::Plain,
+            Reach::Offline,
             "",
         ),
         (
             "composer_detached_signed_out",
             "The composer while the agent's host is away and this machine is signed out of its account: the cause is this machine's, the draft is kept and sending waits until it signs in.",
             Composer::Disabled(Waiting::Detached),
-            Away::SignedOut,
+            Reach::Away(Away::SignedOut),
             "",
         ),
         (
             "composer_detached_revoked",
             "The composer while the agent's host has said it no longer trusts this machine: the draft is kept and sending waits until the two are paired again.",
             Composer::Disabled(Waiting::Detached),
-            Away::Revoked,
+            Reach::Away(Away::Revoked),
             "",
         ),
     ]

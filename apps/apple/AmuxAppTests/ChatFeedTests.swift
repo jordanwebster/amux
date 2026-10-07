@@ -40,7 +40,7 @@ final class ChatFeedTests: XCTestCase {
         let root = ChatScreen(
             model: model,
             subject: ChatSubject(
-                name: "flood", host: "desk", directory: "~/src", presence: .online, away: nil)
+                name: "flood", host: "desk", directory: "~/src", reach: .online(.direct))
         ) { _ in }
             .reportingIdentifiedElements(prefix: "chat.row.prose")
             .onPreferenceChange(IdentifiedElements.self) { declared in

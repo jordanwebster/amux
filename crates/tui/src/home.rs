@@ -20,10 +20,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ui_state::{ActivityKind, AgentKey, Attention, Connection, FleetState};
 use ui_view::{
-    ActivityLine, AskSubject, AskSummary, ExitCause, FleetRow, FleetView, SecondLine, SectionKind,
-    SessionLine, StuckReason,
+    ActivityLine, AskSubject, AskSummary, Away, ExitCause, FleetRow, FleetSection, FleetView,
+    Reach, SecondLine, SectionKind, SessionLine, StuckReason,
 };
-use wire::{Agent, Kind, Presence, SignInState, Trust};
+use wire::{Agent, Kind, SignInState, Trust};
 
 use crate::chat::composer::editor_lines;
 use crate::editor::Editor;
@@ -63,11 +63,6 @@ fn section_words(section: SectionKind) -> &'static str {
         SectionKind::Live => "Live",
         SectionKind::Exited => "Exited",
     }
-}
-
-/// Exited is history, rarely opened, so it starts folded.
-fn folded_by_default(section: SectionKind) -> bool {
-    section == SectionKind::Exited
 }
 
 /// What a click at a place does.
@@ -196,7 +191,8 @@ enum Confirmed {
 /// One block of the list.
 enum Item {
     New,
-    Heading(SectionKind, usize),
+    /// A section's heading: its families, and whether it is folded.
+    Heading(SectionKind, usize, bool),
     /// A blank line, unless the list already ends in one.
     Gap,
     /// A blank line, always.
@@ -403,9 +399,14 @@ impl Home {
 
     /// Home's sections from the shared fleet view, filtered by the needle.
     /// `lines` says what each agent's session knows for its second line.
-    fn view(&self, fleet: &FleetState, lines: &HashMap<AgentKey, SessionLine>) -> FleetView {
+    fn view(
+        &self,
+        fleet: &FleetState,
+        local_host: &[u8],
+        lines: &HashMap<AgentKey, SessionLine>,
+    ) -> FleetView {
         let needle = self.needle();
-        ui_view::fleet_view(fleet, lines, &self.expanded, &|agent| {
+        ui_view::fleet_view(fleet, local_host, lines, &self.expanded, &|agent| {
             needle
                 .as_ref()
                 .is_none_or(|needle| Self::matches(fleet, agent, needle))
@@ -427,8 +428,13 @@ impl Home {
             // Two blank lines between sections, one under a heading.
             items.push(Item::Gap);
             items.push(Item::Space);
-            items.push(Item::Heading(section.kind, section.families as usize));
-            if self.folded(section.kind) {
+            let folded = self.folded(&section);
+            items.push(Item::Heading(
+                section.kind,
+                section.families as usize,
+                folded,
+            ));
+            if folded {
                 continue;
             }
             items.push(Item::Gap);
@@ -442,15 +448,16 @@ impl Home {
         items
     }
 
-    /// The list's targets, which no second line changes.
+    /// The list's targets, which no second line changes, nor which host
+    /// is this machine's.
     fn targets_of(&self, fleet: &FleetState) -> Vec<Target> {
-        Self::targets(&self.items(fleet, self.view(fleet, &HashMap::new())))
+        Self::targets(&self.items(fleet, self.view(fleet, &[], &HashMap::new())))
     }
 
     /// Whether a section's agents are hidden. A filter looks through every
     /// section, folded or not.
-    fn folded(&self, section: SectionKind) -> bool {
-        self.needle().is_none() && folded_by_default(section) != self.toggled.contains(&section)
+    fn folded(&self, section: &FleetSection) -> bool {
+        self.needle().is_none() && section.folded_by_default != self.toggled.contains(&section.kind)
     }
 
     fn toggle_section(&mut self, section: SectionKind) {
@@ -466,7 +473,7 @@ impl Home {
             .filter_map(|item| match item {
                 Item::New => Some(Target::New),
                 Item::Agent(row) => Some(Target::Agent(row.card.agent.clone())),
-                Item::Heading(section, _) => Some(Target::Section(*section)),
+                Item::Heading(section, ..) => Some(Target::Section(*section)),
                 _ => None,
             })
             .collect()
@@ -985,6 +992,7 @@ impl Home {
         // A blank line above the top line keeps it off the terminal's edge.
         let mut laid: Vec<Laid> = vec![Laid::default()];
         let mut cursor;
+        let mut section_folded = false;
         // Where the new agent's composer box starts, for its flyover.
         let mut box_top = None;
         self.open_setup(place);
@@ -1023,7 +1031,7 @@ impl Home {
                 .map(|(col, row)| (col, laid.len() + row));
             laid.extend(composer);
         } else {
-            let view = self.view(fleet, lines);
+            let view = self.view(fleet, place.local_host, lines);
             let (top, at) = self.top_line(fleet, &view, width, theme, place);
             laid.push(Laid::plain(top));
             cursor = at.map(|col| (col, 1));
@@ -1033,6 +1041,10 @@ impl Home {
             let room = height.saturating_sub(5);
             let list_top = laid.len();
             let items = self.items(fleet, view);
+            section_folded = items.iter().any(|item| {
+                matches!(item, Item::Heading(section, _, true)
+                    if self.selected == Some(Target::Section(*section)))
+            });
             laid.extend(self.list(&items, now_ms, width, room, area.height, theme, place));
             // Renaming: the name is a field on its own row.
             if let Some((col, row)) = self.rename_at {
@@ -1040,7 +1052,7 @@ impl Home {
             }
         }
         laid.resize_with(height - 1, Laid::default);
-        let (hint, at) = self.hint_line(footer, width, theme, place.attach);
+        let (hint, at) = self.hint_line(footer, width, theme, place.attach, section_folded);
         if let Some(col) = at {
             cursor = Some((col, height - 1));
         }
@@ -1218,27 +1230,21 @@ impl Home {
         // line names no directory: where a new agent starts belongs to
         // starting one.
         push(&mut line, "amux", theme.emphasis(), width);
-        let need: u32 = view
-            .sections
-            .iter()
-            .filter(|section| section.kind == SectionKind::NeedsYou)
-            .map(|section| section.families)
-            .sum();
-        let working = fleet
-            .agents()
-            .filter(|agent| {
-                matches!(
-                    ui_state::attention(agent),
-                    Attention::Working | Attention::Starting
-                )
-            })
-            .count();
-        let away: Vec<&str> = fleet
+        let (need, working) = (view.need_you, view.working);
+        // Every trusted host this machine does not reach now, whatever the
+        // reason.
+        let reaches: Vec<(&str, Reach)> = fleet
             .hosts()
             .filter(|host| host.trust() == Trust::Trusted && host.host_id != local_host)
-            .filter(|host| host.presence() != Presence::Online || host.revoked == Some(true))
-            .map(|host| host.name.as_str())
+            .map(|host| {
+                (
+                    host.name.as_str(),
+                    ui_view::reach(fleet, local_host, &host.host_id),
+                )
+            })
+            .filter(|(_, reach)| !reach.online())
             .collect();
+        let away: Vec<&str> = reaches.iter().map(|(name, _)| *name).collect();
         let mut parts: Vec<(String, Style)> = Vec::new();
         // A daemon that restarted into a newer build keeps serving this
         // older client; only the person can restart it.
@@ -1254,7 +1260,10 @@ impl Home {
         }
         // Signed out, hosts out of reach can only be reached again by
         // signing in.
-        if !away.is_empty() && ui_view::signed_out(fleet, local_host) {
+        if reaches
+            .iter()
+            .any(|(_, reach)| *reach == Reach::Away(Away::SignedOut))
+        {
             parts.push(("signed out · amux login".into(), theme.warning()));
         }
         match fleet.connection() {
@@ -1347,7 +1356,7 @@ impl Home {
                         spots: vec![(Some((HEAD_COL, to)), Hit::Row(Target::New))],
                     });
                 }
-                Item::Heading(section, count) => {
+                Item::Heading(section, count, folded) => {
                     // A fold marker, the label, its count, and a faint rule
                     // to the right edge, so a section's end is visible at a
                     // glance. The label lines up with the rows' marks.
@@ -1357,7 +1366,7 @@ impl Home {
                     let chosen = selected == target;
                     let mut line = Line::default();
                     pad_to(&mut line, HEAD_COL);
-                    let marker = if self.folded(*section) { "▸" } else { "▾" };
+                    let marker = if *folded { "▸" } else { "▾" };
                     let (marker_style, label) = match (chosen, section) {
                         (true, _) => (theme.emphasis(), theme.emphasis()),
                         (false, SectionKind::NeedsYou) => (
@@ -1411,7 +1420,7 @@ impl Home {
             }
             let is_selected = match item {
                 Item::New => selected == Target::New,
-                Item::Heading(section, _) => selected == Target::Section(*section),
+                Item::Heading(section, ..) => selected == Target::Section(*section),
                 Item::Agent(row) => selected == Target::Agent(row.card.agent.clone()),
                 _ => false,
             };
@@ -1422,7 +1431,7 @@ impl Home {
             if matches!(item, Item::Agent(_)) && section_open {
                 in_view.1 = laid.len();
             }
-            if let Item::Heading(section, _) = item {
+            if let Item::Heading(section, ..) = item {
                 section_open = selected == Target::Section(*section);
             }
         }
@@ -1595,12 +1604,15 @@ impl Home {
     /// The bottom line: an open question or a notice when there is one,
     /// else the keys for what is highlighted. Returns the cursor's column
     /// while the rename field has the keys.
+    /// `section_folded`: the highlighted section heading's section is
+    /// folded.
     fn hint_line(
         &self,
         footer: Option<Line<'static>>,
         width: usize,
         theme: Theme,
         attach: bool,
+        section_folded: bool,
     ) -> (Laid, Option<usize>) {
         let mut line = Line::from(Span::raw(" ".repeat(MARGIN)));
         let key = |code| Hit::Key(plain_key(code));
@@ -1701,7 +1713,7 @@ impl Home {
             None => {
                 let mut hints = match &self.selected {
                     Some(Target::New) => vec![("enter", "start", key(KeyCode::Enter))],
-                    Some(Target::Section(section)) if self.folded(*section) => {
+                    Some(Target::Section(_)) if section_folded => {
                         vec![("enter", "show", key(KeyCode::Enter))]
                     }
                     Some(Target::Section(_)) => vec![("enter", "hide", key(KeyCode::Enter))],

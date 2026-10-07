@@ -5,49 +5,44 @@
 
 use ratatui::text::{Line, Span};
 use ui_state::FleetState;
-use wire::{HostEntry, HostVia, Presence, Trust};
+use ui_view::{Away, Reach};
+use wire::{HostEntry, HostVia, Trust};
 
 use crate::text::{self, pad_to};
 use crate::theme::Theme;
 
 /// How a trusted host is reached now, in one word: the route while it is
-/// online, else its presence. This machine's own entry has no route.
-pub fn route(entry: &HostEntry, local_host: &[u8]) -> &'static str {
-    if entry.revoked == Some(true) {
-        return "offline";
-    }
-    match entry.presence() {
-        Presence::Offline => "offline",
-        Presence::Away => "away",
-        Presence::Online | Presence::Unspecified => match entry.via() {
-            HostVia::Direct => "direct",
-            HostVia::Relay => "relay",
-            HostVia::Ssh => "ssh",
-            HostVia::Unspecified if entry.host_id == local_host => "local",
-            HostVia::Unspecified => "online",
-        },
+/// online, else whether it is away or offline. This machine's own entry has
+/// no route.
+pub fn route(reach: Reach, local: bool) -> &'static str {
+    match reach {
+        Reach::Online(HostVia::Direct) => "direct",
+        Reach::Online(HostVia::Relay) => "relay",
+        Reach::Online(HostVia::Ssh) => "ssh",
+        Reach::Online(HostVia::Unspecified) if local => "local",
+        Reach::Online(HostVia::Unspecified) => "online",
+        Reach::Away(_) => "away",
+        Reach::Offline => "offline",
     }
 }
 
 /// The overlay's words for a trusted host: its route, then what stands in
-/// its way. A host that said it no longer trusts this machine says that.
-/// While this machine is signed out, a host that is not online is away for
-/// that reason as far as anyone here can say, and the words name this
-/// machine rather than the host.
-pub fn caption(entry: &HostEntry, local: Option<&HostEntry>) -> String {
-    let local_host = local.map_or(&[][..], |local| &local.host_id[..]);
-    let here_signed_out = local.is_some_and(|local| local.signed_in == Some(false));
-    let here = local.is_some_and(|local| local.host_id == entry.host_id);
-    let mut parts = vec![format!("·{}", route(entry, local_host))];
-    let online = entry.presence() == Presence::Online && entry.revoked != Some(true);
-    // Signing in matters only for reaching a host through the relay.
-    let relay = !online || entry.via() == HostVia::Relay;
-    if entry.revoked == Some(true) {
-        parts.push("no longer trusts this machine".into());
-    } else if here_signed_out && (here || !online) {
-        parts.push("this machine is signed out".into());
-    } else if relay && entry.signed_in == Some(false) {
-        parts.push("not signed in".into());
+/// its way. A host that said it no longer trusts this machine says that;
+/// one away because this machine is signed out names this machine rather
+/// than the host.
+pub fn caption(fleet: &FleetState, entry: &HostEntry, local_host: &[u8]) -> String {
+    let reach = ui_view::reach(fleet, local_host, &entry.host_id);
+    let mut parts = vec![format!("·{}", route(reach, entry.host_id == local_host))];
+    match reach {
+        Reach::Away(Away::Revoked) => parts.push("no longer trusts this machine".into()),
+        Reach::Away(Away::SignedOut) => parts.push("this machine is signed out".into()),
+        // Signing in matters only for reaching a host through the relay.
+        Reach::Online(HostVia::Relay) | Reach::Away(Away::Plain) | Reach::Offline
+            if entry.signed_in == Some(false) =>
+        {
+            parts.push("not signed in".into());
+        }
+        Reach::Online(_) | Reach::Away(Away::Plain) | Reach::Offline => {}
     }
     if let Some(error) = entry.last_dial_error.as_ref().filter(|e| !e.is_empty()) {
         parts.push(error.clone());
@@ -83,7 +78,6 @@ pub fn listed(fleet: &FleetState) -> Vec<&HostEntry> {
 /// signed in"); what discovery found, faint, with the command that pairs
 /// it; and a faint footer on pairing another.
 pub fn modal_rows(fleet: &FleetState, local_host: &[u8], theme: Theme) -> Vec<Line<'static>> {
-    let local = fleet.host(local_host);
     let hosts = listed(fleet);
     let names: Vec<String> = hosts
         .iter()
@@ -114,7 +108,9 @@ pub fn modal_rows(fleet: &FleetState, local_host: &[u8], theme: Theme) -> Vec<Li
         let words = if entry.host_id == local_host {
             "this machine".to_owned()
         } else if trusted {
-            caption(entry, local).trim_start_matches('·').to_owned()
+            caption(fleet, entry, local_host)
+                .trim_start_matches('·')
+                .to_owned()
         } else {
             format!("found nearby · amux pair {}", shell_target(&name))
         };

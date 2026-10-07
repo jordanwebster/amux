@@ -1,3 +1,26 @@
+2026-10-07 — **The fleet's judgements come from the view, typed.**
+Both clients worked out parts of the fleet themselves, and disagreed. The
+terminal counted needing-you by family and the phone by visible row; each
+decided that Exited starts folded; both compared the host's exit cause as
+text, so a finished one-shot agent read "exited · finished" in a chat and a
+stopped one "exited · stopped"; and each decided a host's reach its own way,
+the phone checking the host before an agent's ending and ignoring the
+row's loud member. The fleet view now hands over each as a value: counts of
+agents (not families) that need the person and that are working or
+starting, across the whole fleet whatever is folded; whether each section
+starts folded; how an agent ended (finished, ended, or failed with the
+host's own account) on the card and on the chat's phase; and one reach per
+host — online over a route, away for a reason this machine can name (the
+relay sees it, this machine is signed out, the host no longer trusts it),
+or offline, which a host nobody knows about also is. The family header
+counts who needs the person across the whole family, grandchildren and
+the parent's side included. Both clients word these and decide nothing.
+Noticeable: stopped agents read "exited", finished ones "finished"; the
+terminal's hosts window says "away" for a host this machine cannot reach
+because it signed out or was distrusted; the phone puts an exited agent's
+ending before its host's state, counts starting agents as working, and
+drops the needs-you dot on an expanded family's head.
+
 2026-10-07 — **Interpreter checkpoints no longer read older shapes.**
 39 fields of the three interpreters' saved state, and of the part they
 share, carried a fallback so a checkpoint written before the field existed

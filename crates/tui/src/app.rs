@@ -765,6 +765,7 @@ impl App {
                 let setup = sibling_setup(
                     &state,
                     self.fleet.state().agent(&chat.agent),
+                    &self.config.local_host,
                     &self.config.defaults,
                 )
                 .sibling(state.kind(), self.config.chat_in);
@@ -1302,14 +1303,15 @@ impl App {
         let now = now_ms();
         let page = match &mut self.chat {
             Some(chat) => {
-                let (family, away) = {
+                let (family, reach) = {
                     let fleet = self.fleet.state();
+                    let local = &self.config.local_host;
                     (
-                        family_header(&fleet, &chat.agent.agent),
-                        ui_view::away(&fleet, &self.config.local_host, &chat.agent.host),
+                        family_header(&fleet, local, &chat.agent.agent),
+                        ui_view::reach(&fleet, local, &chat.agent.host),
                     )
                 };
-                chat.view.away = away;
+                chat.view.reach = reach;
                 let panel_due = self.leader_pending
                     && self
                         .leader_since
@@ -1417,6 +1419,7 @@ const REPORT_KEY: char = 'b';
 fn sibling_setup(
     state: &ui_state::SessionState,
     agent: Option<&wire::Agent>,
+    local_host: &[u8],
     defaults: &crate::setup::Defaults,
 ) -> crate::setup::Setup {
     let view = ui_view::settings(state);
@@ -1447,6 +1450,7 @@ fn sibling_setup(
         offered: None,
         folder: agent.map(|agent| agent.cwd.clone()).unwrap_or_default(),
         host: agent.map(|agent| agent.host_id.clone()).unwrap_or_default(),
+        local_host: local_host.to_vec(),
         worktree: false,
         defaults: defaults.clone(),
     }

@@ -16,8 +16,8 @@ enum Cards {
     static func row(
         _ index: Int, _ name: String, attention: Attention = .idle, minutesAgo: Double = 1,
         depth: UInt32 = 0, children: UInt32 = 0, family: Attention? = nil,
-        members: UInt32 = 1, membersNeedYou: UInt32? = nil, expanded: Bool = false,
-        kind: Kind = .claudeSdk, presence: Presence = .online, host: HostId = desk
+        members: UInt32 = 1, expanded: Bool = false, loud: LoudMember? = nil,
+        kind: Kind = .claudeSdk, reach: Reach = .online(.direct), host: HostId = desk
     ) -> FleetRow {
         FleetRow(
             card: FleetCard(
@@ -25,17 +25,17 @@ enum Cards {
                 cwd: "/Users/pat/source/\(name)",
                 phaseSinceMs: Int64(now.addingTimeInterval(-60 * minutesAgo)
                     .timeIntervalSince1970 * 1000),
-                host: "desk", hostPresence: presence, children: children,
+                host: "desk", hostReach: reach, children: children,
                 familyAttention: family ?? attention, members: members,
-                membersNeedYou: membersNeedYou ?? (attention == .needsYou ? 1 : 0),
-                branch: nil, exitCause: nil),
-            depth: depth, expanded: expanded, secondLine: .blank, loud: nil)
+                branch: nil, exitCause: attention == .exited ? .ended : nil),
+            depth: depth, expanded: expanded, secondLine: .blank, loud: loud)
     }
 
     /// The runtime's sections for rows listed heads first, each family's
     /// members after its head: a family sits in the section of its loudest
-    /// member, in the order given.
-    static func view(_ rows: [FleetRow]) -> FleetView {
+    /// member, in the order given. The fleet's counts are the rows' unless
+    /// given, as they are where a folded family hides somebody.
+    static func view(_ rows: [FleetRow], needYou: Int? = nil, working: Int? = nil) -> FleetView {
         var sections: [SectionKind: FleetSection] = [:]
         var kind = SectionKind.live
         for row in rows {
@@ -45,21 +45,30 @@ enum Cards {
                 case .exited: .exited
                 default: .live
                 }
-                sections[kind, default: FleetSection(kind: kind, families: 0, rows: [])].families += 1
+                sections[kind, default: section(kind)].families += 1
             }
-            sections[kind, default: FleetSection(kind: kind, families: 0, rows: [])].rows.append(row)
+            sections[kind, default: section(kind)].rows.append(row)
         }
-        return FleetView(sections: SectionKind.allCases.compactMap { sections[$0] })
+        let counted = { (wanted: Set<Attention>) in
+            UInt32(rows.filter { wanted.contains($0.card.attention) }.count)
+        }
+        return FleetView(
+            sections: SectionKind.allCases.compactMap { sections[$0] },
+            needYou: needYou.map(UInt32.init) ?? counted([.needsYou]),
+            working: working.map(UInt32.init) ?? counted([.working, .starting]))
+    }
+
+    private static func section(_ kind: SectionKind) -> FleetSection {
+        FleetSection(kind: kind, families: 0, foldedByDefault: kind == .exited, rows: [])
     }
 
     static func host(
-        _ id: HostId = desk, name: String = "desk", presence: Presence = .online,
-        via: HostVia = .direct, trusted: Bool = true, candidate: Bool = false,
-        local: Bool = false, addrs: [String] = []
+        _ id: HostId = desk, name: String = "desk", reach: Reach = .online(.direct),
+        trusted: Bool = true, candidate: Bool = false, local: Bool = false, addrs: [String] = []
     ) -> HostView {
         HostView(
             hostId: id.bytes, name: name, local: local, trusted: trusted, candidate: candidate,
-            presence: presence, away: .plain, addrs: addrs, via: via, current: true, providers: [], lastDialError: nil,
+            reach: reach, addrs: addrs, current: true, providers: [], lastDialError: nil,
             platform: nil, signedIn: nil, version: nil)
     }
 }
@@ -87,7 +96,7 @@ final class FleetStoreTests: XCTestCase {
         fleet.show(
             Cards.view([Cards.row(1, "live"), Cards.row(2, "done", attention: .exited)]), hosts: [])
         XCTAssertEqual(fleet.sections.map(\.kind), [.live, .exited])
-        XCTAssertEqual(fleet.sections.map(\.folded), [false, true])
+        XCTAssertEqual(fleet.sections.map(\.folded), [false, true], "as the runtime says")
         XCTAssertEqual(fleet.sections[1].families, 1)
         fleet.toggle(.exited)
         XCTAssertEqual(fleet.sections.map(\.folded), [false, false])
@@ -111,13 +120,22 @@ final class FleetStoreTests: XCTestCase {
     func testAFamilysMembersFollowTheirHead() {
         let fleet = FleetStore(now: Cards.now)
         fleet.show(Cards.view([
-            Cards.row(1, "parent", children: 2, family: .needsYou),
+            Cards.row(1, "parent", children: 2, family: .needsYou, expanded: true),
             Cards.row(2, "child", attention: .needsYou, depth: 1),
             Cards.row(3, "other"),
         ]), hosts: [])
         XCTAssertEqual(fleet.rows.map(\.name), ["parent", "child", "other"])
         XCTAssertEqual(fleet.rows.map(\.depth), [0, 1, 0])
-        XCTAssertTrue(fleet.rows[0].familyNeedsYou)
+        // Unfolded, the child speaks for itself.
+        XCTAssertFalse(fleet.rows[0].speaksForAMember)
+
+        // Folded, the head speaks for the member that needs the person.
+        let loud = LoudMember(agent: Cards.key(2), name: "child", secondLine: .blank)
+        fleet.show(Cards.view([
+            Cards.row(1, "parent", children: 2, family: .needsYou, loud: loud),
+            Cards.row(3, "other"),
+        ], needYou: 1), hosts: [])
+        XCTAssertTrue(fleet.rows[0].speaksForAMember)
         fleet.toggle(Cards.key(1))
         XCTAssertEqual(fleet.expanded, [Cards.key(1).agent])
         fleet.toggle(Cards.key(1))
@@ -136,6 +154,10 @@ final class FleetStoreTests: XCTestCase {
         let fleet = FleetStore(now: Cards.now)
         fleet.show(Cards.view([Cards.row(1, "a", attention: .working), Cards.row(2, "b")]), hosts: [])
         XCTAssertEqual(fleet.subtitle, "Nothing needs you · 1 working")
+        // The counts are the runtime's, whatever the rows show.
+        fleet.show(Cards.view([Cards.row(1, "a", attention: .starting)], working: 3), hosts: [])
+        XCTAssertEqual(fleet.subtitle, "Nothing needs you · 3 working")
+        XCTAssertEqual(fleet.working, 3)
         fleet.show(Cards.view([Cards.row(1, "a", attention: .needsYou), Cards.row(2, "b")]), hosts: [])
         XCTAssertEqual(fleet.subtitle, "1 need you · 2 agents")
     }
@@ -143,15 +165,13 @@ final class FleetStoreTests: XCTestCase {
     func testAFoldedFamilyCountsTheMembersItHides() {
         let fleet = FleetStore(now: Cards.now)
         // Folded: the lead stands for itself and the helper that needs you.
-        let folded = Cards.row(
-            1, "lead", children: 1, family: .needsYou, members: 2, membersNeedYou: 1)
-        fleet.show(Cards.view([folded, Cards.row(3, "other")]), hosts: [])
+        let folded = Cards.row(1, "lead", children: 1, family: .needsYou, members: 2)
+        fleet.show(Cards.view([folded, Cards.row(3, "other")], needYou: 1), hosts: [])
         XCTAssertEqual(fleet.subtitle, "1 need you · 3 agents")
+        XCTAssertEqual(fleet.needYou, 1)
 
         // Unfolded, the helper is its own row and nothing is counted twice.
-        let open = Cards.row(
-            1, "lead", children: 1, family: .needsYou, members: 2, membersNeedYou: 1,
-            expanded: true)
+        let open = Cards.row(1, "lead", children: 1, family: .needsYou, members: 2, expanded: true)
         fleet.show(
             Cards.view([open, Cards.row(2, "helper", attention: .needsYou, depth: 1), Cards.row(3, "other")]),
             hosts: [])
@@ -160,7 +180,7 @@ final class FleetStoreTests: XCTestCase {
 
     func testAnOfflineHostIsTheExceptionAndTheRelayOutranksIt() {
         let fleet = FleetStore(now: Cards.now)
-        fleet.show(Cards.view([Cards.row(1, "a")]), hosts: [Cards.host(presence: .offline, via: .unspecified)])
+        fleet.show(Cards.view([Cards.row(1, "a")]), hosts: [Cards.host(reach: .offline)])
         XCTAssertEqual(fleet.exceptions, "desk offline")
         XCTAssertEqual(fleet.unreachableHost, "desk")
         fleet.relay(.signInAgain)

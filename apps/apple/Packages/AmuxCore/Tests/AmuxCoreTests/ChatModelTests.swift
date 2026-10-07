@@ -631,7 +631,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testAnExitedAgentResumesWithTheDraft() async {
-        let source = FakeChat(rows: [], frame: frame(mode: .resume, phase: .exited(cause: nil)))
+        let source = FakeChat(rows: [], frame: frame(mode: .resume, phase: .exited(cause: .ended)))
         let model = ChatModel(source: source)
         model.draft = "Carry on."
         XCTAssertFalse(model.canSend)

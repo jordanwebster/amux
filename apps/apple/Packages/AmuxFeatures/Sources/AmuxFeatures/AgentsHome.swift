@@ -124,7 +124,7 @@ public struct AgentsHome: View {
 
     /// Whether any machine would actually run something started now.
     private var canStartAnAgent: Bool {
-        model.machines.contains { $0.reach.live }
+        model.machines.contains(where: \.online)
     }
 
     private var header: some View {
@@ -255,7 +255,7 @@ public struct AgentsHome: View {
     /// and once on the exceptions line above the rows.
     private var subtitle: String {
         if accounts.accounts.count > 1, let entry = accounts.selectedAccount {
-            let waiting = model.rows.filter(\.needsYou).count
+            let waiting = model.needYou
             return waiting == 0
                 ? "\(entry.name) · nothing needs you"
                 : "\(entry.name) · \(waiting) need you"
@@ -313,7 +313,7 @@ public struct AgentsHome: View {
     /// A row, indented under its family's head, with the head's control for
     /// listing its members beside it.
     private func agentRow(_ row: AgentRow) -> some View {
-        let state = RowState(row: row, host: model.host(row.hostId))
+        let state = RowState(row: row)
         let content = AgentRowView(
             row: row, state: state, host: PlaceNames.host(row.hostName), now: model.orderedAt,
             second: FleetWords.secondLine(row.secondLine, kind: row.card.kind, now: model.orderedAt))
@@ -357,7 +357,7 @@ public struct AgentsHome: View {
             : "Show \(row.children) started by \(row.name)"
         return Button { actions(.toggleFamily(row.id)) } label: {
             HStack(spacing: 4) {
-                if row.familyNeedsYou && !row.needsYou { NeedsYouDot() }
+                if row.speaksForAMember { NeedsYouDot() }
                 Text("\(row.children)")
                     .designFont(.monoSmall, design)
                     .foregroundStyle(design.inkMuted.color)
@@ -384,7 +384,7 @@ public struct AgentsHome: View {
         if let second = FleetWords.secondLine(row.secondLine, kind: row.card.kind, now: model.orderedAt) {
             parts.append(second.text)
         }
-        if row.familyNeedsYou && !row.needsYou { parts.append("an agent it started needs you") }
+        if row.speaksForAMember { parts.append("an agent it started needs you") }
         parts.append([PlaceNames.host(row.hostName), row.workingDirectory]
             .joined(separator: ", "))
         parts.append(row.age(at: model.orderedAt) + " ago")

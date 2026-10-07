@@ -8,30 +8,33 @@ public struct ChatSubject: Equatable, Sendable {
     public let name: String
     public let host: String
     public let directory: String
-    public let presence: Presence
-    /// Why the host is out of reach, when it is.
-    public let away: Away?
+    /// How this phone reaches the agent's host.
+    public let reach: Reach
 
-    public init(name: String, host: String, directory: String, presence: Presence, away: Away?) {
+    public init(name: String, host: String, directory: String, reach: Reach) {
         self.name = name
         self.host = host
         self.directory = directory
-        self.presence = presence
-        self.away = away
+        self.reach = reach
     }
 
-    public var reachable: Bool { presence == .online }
+    public var reachable: Bool { reach.online }
+
+    /// Why the host is away, when this phone can say.
+    public var away: Away? {
+        if case .away(let why) = reach { return why }
+        return nil
+    }
 
     /// "~/s/amux · Studio", or why the host cannot be reached.
     public var place: String {
-        if !reachable {
-            switch away {
-            case .revoked?: return String(localized: "\(host) · no longer trusts this phone")
-            case .signedOut?: return String(localized: "\(host) · this phone is signed out")
-            default: return String(localized: "\(host) · away")
-            }
+        switch reach {
+        case .online:
+            return PlaceNames.place(host: host.isEmpty ? nil : host, directory: directory)
+        case .away(.revoked): return String(localized: "\(host) · no longer trusts this phone")
+        case .away(.signedOut): return String(localized: "\(host) · this phone is signed out")
+        case .away(.plain), .offline: return String(localized: "\(host) · away")
         }
-        return PlaceNames.place(host: host.isEmpty ? nil : host, directory: directory)
     }
 
     /// "refactor-auth/studio": what another agent, a script or a terminal
@@ -169,9 +172,7 @@ public struct ChatScreen: View {
 
     private var placeLine: String {
         if detached, subject.reachable { return String(localized: "\(subject.host) · out of reach") }
-        if case .exited(let cause)? = model.frame?.phase {
-            return [String(localized: "Exited"), cause].compactMap { $0 }.joined(separator: " · ")
-        }
+        if case .exited(let cause)? = model.frame?.phase { return ChatWords.exited(cause) }
         return subject.place
     }
 

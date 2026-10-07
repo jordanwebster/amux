@@ -30,8 +30,8 @@ pub use composer::{
 };
 pub use fleet::{
     ActivityLine, AskSubject, AskSummary, Away, ExitCause, FamilyHeader, FleetCard, FleetRow,
-    FleetSection, FleetView, LoudMember, SecondLine, SectionKind, SessionLine, StuckReason, away,
-    family_header, fleet_card, fleet_view, session_line, signed_out,
+    FleetSection, FleetView, LoudMember, Reach, SecondLine, SectionKind, SessionLine, StuckReason,
+    family_header, fleet_card, fleet_view, reach, session_line,
 };
 pub use overview::{
     ChangeTotals, ChangedFile, Changes, Comparison, Folder, JobRow, Overview, ServerView, TaskLine,

@@ -228,7 +228,7 @@ fn the_chat_header_reads_the_snapshot_while_the_row_says_otherwise() {
         assert_eq!(
             state.phase(),
             PhaseView::Exited {
-                cause: Some("stopped".into())
+                cause: ui_state::ExitCause::Ended
             },
             "the entry wins on whether the process exists"
         );

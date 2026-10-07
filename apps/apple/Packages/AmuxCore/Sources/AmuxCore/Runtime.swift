@@ -295,10 +295,10 @@ public final class Profile: @unchecked Sendable {
     /// members of the families whose root agent ids `expanding` names
     /// under their heads.
     public func fleetView(expanding: [[UInt8]] = []) -> FleetView {
-        call(FleetView(sections: [])) { live in
+        call(FleetView(sections: [], needYou: 0, working: 0)) { live in
             Bridge.json(expanding).withCString {
                 Bridge.read(FleetView.self, amux_fleet_view(live, $0))
-            } ?? FleetView(sections: [])
+            } ?? FleetView(sections: [], needYou: 0, working: 0)
         }
     }
 

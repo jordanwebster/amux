@@ -20,7 +20,8 @@ pub use body::{
     AgentState, Fold, ItemBody, ItemClass, OpenAsk, ToolFacts, Usage, decode_snapshot, is_task_tool,
 };
 pub use fleet::{
-    AgentKey, Attention, Families, FleetMsg, FleetState, HostId, agent_key, attention, parent_key,
+    AgentKey, Attention, ExitCause, Families, FleetMsg, FleetState, HostId, agent_key, attention,
+    exit_cause, parent_key,
 };
 pub use inputs::{InputId, InputOutcome, InputState, InputWhat, Inputs, SentInput};
 pub use model::Key;

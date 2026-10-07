@@ -114,7 +114,7 @@ struct ComposerBox: View {
 
     /// The exited agent's state where the activity line stands while it
     /// works: that the process ended, why, and where.
-    private func exitedHead(_ cause: String?) -> some View {
+    private func exitedHead(_ cause: ExitCause) -> some View {
         let title = ChatWords.exited(cause)
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "stop.circle")

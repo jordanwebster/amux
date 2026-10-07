@@ -134,7 +134,7 @@ public struct NewAgent: View {
     }
 
     private func machine(_ host: HostView) -> some View {
-        let live = host.reach.live
+        let live = host.online
         return Button { if let id = host.id { actions(.point(id)) } } label: {
             HStack(spacing: 11) {
                 Radio(chosen: model.machine == host.id)
@@ -175,7 +175,7 @@ public struct NewAgent: View {
     }
 
     private func route(_ host: HostView) -> String {
-        switch host.reach {
+        switch host.group {
         case .onThisNetwork: "direct"
         case .throughTheRelay: "via relay"
         case .away: "away, cannot start here"

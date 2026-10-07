@@ -126,7 +126,7 @@ public struct HostsTab: View {
                 // short: nothing found on a network nobody let this app look
                 // at is not a fact about the network.
                 if model.localNetwork == .denied { refusedNetwork }
-                ForEach(HostReach.all, id: \.name) { reach in
+                ForEach(HostGroup.all, id: \.name) { reach in
                     group(reach)
                 }
                 if model.hosts.isEmpty && model.discovered.isEmpty { empty }
@@ -148,7 +148,7 @@ public struct HostsTab: View {
     /// do — an offer carries Pair and nothing else — and that is said on the
     /// row, where it is true.
     @ViewBuilder
-    private func group(_ reach: HostReach) -> some View {
+    private func group(_ reach: HostGroup) -> some View {
         let paired = model.hosts(reach)
         let offers = model.candidates(reach)
         if !paired.isEmpty || !offers.isEmpty {
@@ -168,7 +168,7 @@ public struct HostsTab: View {
         }
     }
 
-    private func title(_ reach: HostReach) -> String {
+    private func title(_ reach: HostGroup) -> String {
         switch reach {
         case .onThisNetwork: "On this network"
         case .throughTheRelay: "Through the relay"
@@ -179,7 +179,7 @@ public struct HostsTab: View {
 
     /// The one thing worth saying under a group, and nothing where there is
     /// nothing.
-    func caption(_ reach: HostReach, offers: Bool) -> String? {
+    func caption(_ reach: HostGroup, offers: Bool) -> String? {
         switch reach {
         case .onThisNetwork:
             return offers ? "Run amux pair on one of these and enter the code it prints." : nil
@@ -245,7 +245,7 @@ public struct HostsTab: View {
     private func offered(_ host: HostView) -> String {
         var parts: [String] = []
         if let platform = host.platform { parts.append(platform) }
-        parts.append(host.reach == .onThisNetwork ? "found" : "not paired")
+        parts.append(host.group == .onThisNetwork ? "found" : "not paired")
         return parts.joined(separator: " · ")
     }
 
@@ -348,7 +348,7 @@ public struct HostsTab: View {
         .identified("hosts.empty", value: "No hosts yet")
     }
 
-    private func row(_ host: HostView, _ reach: HostReach) -> some View {
+    private func row(_ host: HostView, _ reach: HostGroup) -> some View {
         Button {
             if let id = host.id { actions(.open(id)) }
         } label: {
@@ -409,7 +409,7 @@ public struct HostsTab: View {
     /// offline machine says how long it has been gone where this phone
     /// watched it go, and says that it was found here when its advertisement
     /// is on this network and no link to it will stand.
-    func status(_ host: HostView, _ reach: HostReach) -> String {
+    func status(_ host: HostView, _ reach: HostGroup) -> String {
         var parts: [String] = []
         if let platform = host.platform { parts.append(platform) }
         switch reach {
@@ -417,7 +417,7 @@ public struct HostsTab: View {
         case .throughTheRelay: parts.append("via relay")
         case .away: parts.append("away")
         case .offline:
-            if host.away == .revoked {
+            if host.reach == .away(.revoked) {
                 parts.append("no longer trusts this phone")
             } else if let id = host.id, model.foundButUnreachable.contains(id) {
                 parts.append("found, not answering")
@@ -426,7 +426,7 @@ public struct HostsTab: View {
             // anywhere but its own network whatever anybody buys, so the one
             // thing to do about it is on the machine — and offering a
             // subscription for it would be selling a fix that is not one.
-            } else if host.away == .signedOut {
+            } else if host.reach == .away(.signedOut) {
                 parts.append("offline, this phone is signed out")
             } else if let id = host.id, let gone = model.wentOffline(id) {
                 parts.append("offline for \(since(gone))")
@@ -447,7 +447,7 @@ public struct HostsTab: View {
 
     /// What a row says to somebody who cannot see it, in the order the row
     /// says it: which machine, what it is, and how it stands.
-    private func spoken(_ host: HostView, _ reach: HostReach) -> String {
+    private func spoken(_ host: HostView, _ reach: HostGroup) -> String {
         var parts = [host.name]
         if let platform = host.platform { parts.append(platform) }
         switch reach {
@@ -457,11 +457,11 @@ public struct HostsTab: View {
             parts.append("away")
             parts.append("seen by the relay and not reachable from here")
         case .offline:
-            if host.away == .revoked {
+            if host.reach == .away(.revoked) {
                 parts.append("it no longer trusts this phone, pair again to reach it")
             } else if let id = host.id, model.foundButUnreachable.contains(id) {
                 parts.append("found on this network and not answering")
-            } else if host.away == .signedOut {
+            } else if host.reach == .away(.signedOut) {
                 parts.append("offline while this phone is signed out")
             } else if let id = host.id, let gone = model.wentOffline(id) {
                 parts.append("offline for \(since(gone))")

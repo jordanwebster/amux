@@ -146,15 +146,21 @@ impl AppRuntime {
                 )
             })
             .collect();
-        ui_view::fleet_view(&self.fleet.state(), &lines, &expand, &|_| true)
+        ui_view::fleet_view(
+            &self.fleet.state(),
+            &self.local_host,
+            &lines,
+            &expand,
+            &|_| true,
+        )
     }
 
     pub fn fleet_card(&self, agent: &AgentKey) -> Option<FleetCard> {
-        ui_view::fleet_card(&self.fleet.state(), &agent.agent)
+        ui_view::fleet_card(&self.fleet.state(), &self.local_host, &agent.agent)
     }
 
     pub fn family_header(&self, agent: &AgentKey) -> Option<FamilyHeader> {
-        ui_view::family_header(&self.fleet.state(), &agent.agent)
+        ui_view::family_header(&self.fleet.state(), &self.local_host, &agent.agent)
     }
 
     pub fn hosts(&self) -> Vec<HostView> {
@@ -167,13 +173,11 @@ impl AppRuntime {
                 local: host.host_id == self.local_host,
                 trusted: host.trust() == Trust::Trusted,
                 candidate: host.trust() == Trust::Candidate,
-                presence: host.presence(),
-                away: ui_view::away(&fleet, &self.local_host, &host.host_id),
+                reach: ui_view::reach(&fleet, &self.local_host, &host.host_id),
                 platform: host.platform.clone(),
                 version: host.version.clone(),
                 last_dial_error: host.last_dial_error.clone(),
                 addrs: host.addrs.clone(),
-                via: host.via(),
                 signed_in: host.signed_in,
                 current: host.current.unwrap_or(false),
                 providers: host

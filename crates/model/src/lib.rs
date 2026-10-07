@@ -88,7 +88,18 @@ pub enum PhaseView {
     Idle,
     Working,
     NeedsYou,
-    Exited { cause: Option<String> },
+    Exited { cause: ExitCause },
+}
+
+/// How an agent ended, as every client tells it: it said it was done (a
+/// one-shot agent whose turn ended), it was stopped or exited cleanly, or
+/// it ended some other way, with the host's own account of why, to show as
+/// it is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum ExitCause {
+    Finished,
+    Ended,
+    Failed(String),
 }
 
 /// The line above the composer while the agent works. Not a row; timed
@@ -147,7 +158,8 @@ mod tests {
     #[test]
     fn every_shared_value_has_a_schema_for_the_swift_mirrors() {
         let schema = schemars::schema_for!((
-            AgentKey, Attention, Connection, BlobStatus, Composer, PhaseView, Activity, InputState
+            AgentKey, Attention, Connection, BlobStatus, Composer, PhaseView, ExitCause, Activity,
+            InputState
         ));
         let text = serde_json::to_string(&schema).unwrap();
         for name in [

@@ -765,7 +765,9 @@ fn an_exited_entry_offers_resume_with_the_draft() {
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(screen.contains("Enter resumes"), "{screen}");
-    assert!(screen.contains("exited · finished"), "{screen}");
+    // A one-shot agent that ended after its turn finished.
+    assert!(screen.contains("finished"), "{screen}");
+    assert!(!screen.contains("exited · finished"), "{screen}");
     typed(&mut view, &state, "carry on");
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     assert!(text(&buffer).contains("enter resume"));
@@ -972,7 +974,7 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
     state.update(Msg::Host(fleet.host(b"host").unwrap().clone()));
     state.update(event(session_event::Of::Detached(wire::Detached {})));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.away = ui_view::away(&fleet, b"laptop", b"host");
+    view.reach = ui_view::reach(&fleet, b"laptop", b"host");
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(
@@ -1002,7 +1004,7 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
         .collect();
     let screen = screen.join("\n");
     assert!(
-        screen.contains("offline · this machine is signed out"),
+        screen.contains("away · this machine is signed out"),
         "{screen}"
     );
     assert!(!screen.contains("not signed in"), "{screen}");
@@ -1026,7 +1028,7 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
         entry.signed_in = Some(true);
     }
     inventory(&mut fleet, signed_in);
-    view.away = ui_view::away(&fleet, b"laptop", b"host");
+    view.reach = ui_view::reach(&fleet, b"laptop", b"host");
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(screen.contains("desk away · not current"), "{screen}");
@@ -1071,7 +1073,7 @@ fn a_host_that_revoked_trust_says_so_instead_of_not_signed_in() {
         .collect();
     let screen = screen.join("\n");
     assert!(
-        screen.contains("offline · no longer trusts this machine"),
+        screen.contains("away · no longer trusts this machine"),
         "{screen}"
     );
     assert!(!screen.contains("not signed in"), "{screen}");
@@ -1080,7 +1082,7 @@ fn a_host_that_revoked_trust_says_so_instead_of_not_signed_in() {
     state.update(Msg::Host(fleet.host(b"host").unwrap().clone()));
     state.update(event(session_event::Of::Detached(wire::Detached {})));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.away = ui_view::away(&fleet, b"laptop", b"host");
+    view.reach = ui_view::reach(&fleet, b"laptop", b"host");
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(
@@ -1804,7 +1806,7 @@ fn an_exited_agent_on_an_away_host_names_why_it_is_away() {
         ..Default::default()
     }));
     let mut view = ChatView::new(b"agent".to_vec(), 0, false);
-    view.away = ui_view::Away::SignedOut;
+    view.reach = ui_view::Reach::Away(ui_view::Away::SignedOut);
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
     let screen = text(&buffer);
     assert!(
@@ -1821,8 +1823,12 @@ fn an_exited_agent_on_an_away_host_names_why_it_is_away() {
         presence: wire::Presence::Online as i32,
         ..Default::default()
     }));
+    view.reach = ui_view::Reach::Online(wire::HostVia::Direct);
     let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
-    assert!(text(&buffer).contains("exited · stopped"));
+    // Stopped is an ordinary end: the header says exited, and no more.
+    let screen = text(&buffer);
+    assert!(screen.contains("exited"), "{screen}");
+    assert!(!screen.contains("exited · "), "{screen}");
 }
 
 #[test]

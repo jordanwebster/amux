@@ -125,9 +125,10 @@ private func smoke() throws {
         let hosts = try read(amux_fleet_hosts(profile)) as? [[String: Any]] ?? []
         return hosts.first {
             $0["name"] as? String == machine && $0["trusted"] as? Bool == true
-                && $0["presence"] as? String == "Online"
+                && ($0["reach"] as? [String: Any])?["Online"] != nil
         }
     }
+    let via = (host["reach"] as? [String: Any])?["Online"] ?? "none"
     let names = try until("\(agent) in the fleet") { () -> [String]? in
         let view = try read(amux_fleet_view(profile, nil)) as? [String: Any] ?? [:]
         let sections = view["sections"] as? [[String: Any]] ?? []
@@ -136,7 +137,7 @@ private func smoke() throws {
         return names.contains(agent) ? names.sorted() : nil
     }
     print("paired=\(json(paired))")
-    print("host=\(json(["name": host["name"]!, "via": host["via"]!]))")
+    print("host=\(json(["name": host["name"]!, "via": via]))")
     print("agents=\(json(names))")
 }
 

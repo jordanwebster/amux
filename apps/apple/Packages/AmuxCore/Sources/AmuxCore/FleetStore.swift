@@ -17,14 +17,14 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     public var id: AgentKey { card.agent }
     public var name: String { card.name.isEmpty ? "agent" : card.name }
     public var attention: Attention { card.attention }
-    public var familyAttention: Attention { card.familyAttention }
     /// Zero for a family's head.
     public var depth: Int { Int(row.depth) }
     public var children: Int { Int(card.children) }
     public var expanded: Bool { row.expanded }
     public var hostId: HostId? { card.agent.hostId }
     public var hostName: String { card.host }
-    public var hostPresence: Presence { card.hostPresence }
+    /// How this phone reaches the agent's host.
+    public var hostReach: Reach { card.hostReach }
     public var workingDirectory: String { card.cwd }
     /// The branch its folder is on, when it is on one.
     public var branch: String? { card.branch }
@@ -35,8 +35,8 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     /// A kind this build knows how to open.
     public var readable: Bool { card.kind != .unspecified }
     public var needsYou: Bool { attention == .needsYou }
-    /// Somebody in this agent's family is asking for the person.
-    public var familyNeedsYou: Bool { familyAttention == .needsYou }
+    /// A folded family's head speaking for a member that needs the person.
+    public var speaksForAMember: Bool { row.loud != nil }
 
     public func age(at now: Date) -> String {
         Elapsed.spelled(max(0, now.timeIntervalSince(lastActivity)))
@@ -77,11 +77,6 @@ public struct HomeSection: Sendable, Equatable, Identifiable {
         self.rows = rows
         self.folded = folded
     }
-
-    /// Exited is history, rarely opened, so it starts folded.
-    public static func foldedByDefault(_ kind: SectionKind) -> Bool {
-        kind == .exited
-    }
 }
 
 /// The fleet as the home screen draws it: the runtime's sections, in the
@@ -92,6 +87,10 @@ public final class FleetStore {
     /// Every row on screen, families expanded where asked.
     public private(set) var rows: [AgentRow] = []
     public private(set) var sections: [HomeSection] = []
+    /// Agents across the fleet that need the person, and that are working
+    /// or starting, whatever is folded.
+    public private(set) var needYou = 0
+    public private(set) var working = 0
     /// Trusted hosts by id, this phone included.
     public private(set) var hosts: [HostId: HostView] = [:]
     /// The family heads whose members are listed under them.
@@ -104,7 +103,7 @@ public final class FleetStore {
     /// The relay link, as the account screens report it.
     public private(set) var relay: RelayLink = .off
 
-    @ObservationIgnored private var view = FleetView(sections: [])
+    @ObservationIgnored private var view = FleetView(sections: [], needYou: 0, working: 0)
     @ObservationIgnored private var seen: [AgentKey: Date] = [:]
     @ObservationIgnored private let launched: Date
     @ObservationIgnored private var markedFirstFrame = false
@@ -191,21 +190,16 @@ public final class FleetStore {
     }
 
     public var subtitle: String {
-        // A folded family stands for every member under it, so somebody it
-        // started who needs the person is counted before it is unfolded.
-        let waiting = rows.reduce(0) { $0 + ($1.expanded ? ($1.needsYou ? 1 : 0) : Int($1.card.membersNeedYou)) }
-        guard waiting > 0 else {
-            let working = rows.filter { $0.attention == .working }.count
-            return "Nothing needs you · \(working) working"
-        }
+        guard needYou > 0 else { return "Nothing needs you · \(working) working" }
+        // A folded family stands for every member under it.
         let agents = rows.reduce(0) { $0 + ($1.expanded ? 1 : Int($1.card.members)) }
-        return "\(waiting) need you · \(agents) agent\(agents == 1 ? "" : "s")"
+        return "\(needYou) need you · \(agents) agent\(agents == 1 ? "" : "s")"
     }
 
     /// One line for what is wrong with reaching the fleet, if anything.
     public var exceptions: String? {
         if let relayTrouble { return relayTrouble }
-        let offline = machines.filter { $0.reach == .offline }.map(\.name).sorted()
+        let offline = machines.filter { !$0.online }.map(\.name).sorted()
         switch offline.count {
         case 0: return nil
         case 1: return "\(offline[0]) offline"
@@ -227,11 +221,11 @@ public final class FleetStore {
 
     /// A host the relay would reach if this account paid for it.
     public var awayHost: String? {
-        machines.filter { $0.reach == .away }.map(\.name).sorted().first
+        machines.filter { $0.group == .away }.map(\.name).sorted().first
     }
 
     public var unreachableHost: String? {
-        machines.filter { $0.reach == .offline }.map(\.name).sorted().first
+        machines.filter { !$0.online }.map(\.name).sorted().first
     }
 
     private func isUnread(_ row: FleetRow) -> Bool {
@@ -244,8 +238,10 @@ public final class FleetStore {
             HomeSection(
                 kind: section.kind, families: Int(section.families),
                 rows: section.rows.map { AgentRow(row: $0, unread: isUnread($0)) },
-                folded: HomeSection.foldedByDefault(section.kind) != flipped.contains(section.kind))
+                folded: section.foldedByDefault != flipped.contains(section.kind))
         }
         rows = sections.flatMap(\.rows)
+        needYou = Int(view.needYou)
+        working = Int(view.working)
     }
 }

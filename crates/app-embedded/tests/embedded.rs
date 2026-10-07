@@ -324,7 +324,7 @@ fn found(desk: node::HostId, addrs: Vec<String>) -> app_runtime::values::Found {
 fn desk_online(app: &AppRuntime) -> bool {
     app.hosts()
         .iter()
-        .any(|host| host.name == "desk" && host.presence == wire::Presence::Online)
+        .any(|host| host.name == "desk" && host.reach.online())
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -28,8 +28,8 @@ use ui_state::{
 };
 pub use ui_view::Comparison;
 use ui_view::{
-    AskBody, AskCard, Away, CardState, ChatOptions, FamilyHeader, RowKind, ToolRows, ask_card,
-    chat_rows_for, composer, overview, queue_rows,
+    AskBody, AskCard, Away, CardState, ChatOptions, ExitCause, FamilyHeader, Reach, RowKind,
+    ToolRows, ask_card, chat_rows_for, composer, overview, queue_rows,
 };
 use wire::{Attachment, attachment};
 
@@ -219,9 +219,9 @@ pub struct ChatView {
     pub review_open: bool,
     /// Whether the agent's own interface can be attached from here.
     pub attach: bool,
-    /// Why the agent's host is away when it is, kept current by the app
+    /// How this machine reaches the agent's host, kept current by the app
     /// from the fleet.
-    pub away: Away,
+    pub reach: Reach,
     /// The leader key, for the keys the chat names.
     pub leader: char,
     /// Runs of steps the reader opened, by their ids.
@@ -343,7 +343,9 @@ impl ChatView {
             review: None,
             review_open: false,
             attach,
-            away: Away::Plain,
+            // Nothing is known against the host until the app reads the
+            // fleet, before the chat is first drawn.
+            reach: Reach::Online(wire::HostVia::Unspecified),
             leader: 'a',
             open_runs: HashSet::new(),
             tools: ToolSteps::Collapse,
@@ -1810,7 +1812,7 @@ impl ChatView {
         if let PhaseView::Exited { cause } = state.phase()
             && !ends_with_exit(state)
         {
-            tail.push(rows::rule(&exit_words(cause.as_deref()), width, theme));
+            tail.push(rows::rule(&exit_words(&cause), width, theme));
             tail.push(Line::default());
         }
         self.feed_tail = tail;
@@ -1933,7 +1935,7 @@ impl ChatView {
             // empty field still invites the draft.
             let invite = match state.composer() {
                 Composer::Disabled(_) | Composer::Resume => format!("Message {name}"),
-                composer => placeholder(&composer, &name, &host, self.away),
+                composer => placeholder(&composer, &name, &host, self.reach),
             };
             let boxed = boxed_composer(
                 editor,
@@ -1958,7 +1960,7 @@ impl ChatView {
             if pane_keys {
                 "j/k move · enter open · esc back · ctrl+o close".to_owned()
             } else {
-                turn_hint_words(state, &self.editor, self.away, self.leader)
+                turn_hint_words(state, &self.editor, self.reach, self.leader)
             }
         };
         let mut hint: Result<Line<'static>, String> = match &footer {
@@ -2102,7 +2104,7 @@ impl ChatView {
                 self.not_sent.as_deref(),
                 &state.composer(),
                 &host,
-                self.away,
+                self.reach,
                 composer::limit_reached(&overview, now_ms),
                 theme,
             );
@@ -2133,6 +2135,7 @@ impl ChatView {
         if state.transcript().is_empty() {
             lines.extend(empty_feed(
                 state,
+                self.reach,
                 feed_height,
                 now_ms - self.opened_at_ms,
                 width,
@@ -2580,7 +2583,7 @@ impl ChatView {
                 right.push(bar());
             }
         };
-        if let Some((words, style)) = problem_words(state, self.away, &host, theme) {
+        if let Some((words, style)) = problem_words(state, self.reach, &host, theme) {
             right.push(Span::styled(words, style));
         }
         if let Some(context) = ui_view::context(state) {
@@ -2720,11 +2723,11 @@ fn tokens_short(count: u64) -> String {
 /// way, or the agent exited. Working, idle and needs-you show in the feed.
 fn problem_words(
     state: &SessionState,
-    away: Away,
+    reach: Reach,
     host: &str,
     theme: Theme,
 ) -> Option<(String, ratatui::style::Style)> {
-    let (words, style) = state_words(state, away, host, theme);
+    let (words, style) = state_words(state, reach, host, theme);
     match (state.composer(), state.phase()) {
         (_, PhaseView::Exited { .. }) | (Composer::Disabled(_), _) => Some((
             words,
@@ -2760,11 +2763,13 @@ fn changeable(state: &SessionState) -> (bool, bool, bool) {
     )
 }
 
-/// "exited", or "exited · crashed": how an exited agent's feed ends.
-fn exit_words(cause: Option<&str>) -> String {
+/// "finished", "exited", or "exited · its directory is gone": how an
+/// exited agent's feed ends.
+fn exit_words(cause: &ExitCause) -> String {
     match cause {
-        Some(cause) if !cause.is_empty() && cause != "exited" => format!("exited · {cause}"),
-        _ => "exited".to_owned(),
+        ExitCause::Finished => "finished".to_owned(),
+        ExitCause::Ended => "exited".to_owned(),
+        ExitCause::Failed(cause) => format!("exited · {cause}"),
     }
 }
 
@@ -2867,12 +2872,14 @@ fn sign_in_lines(
 
 /// Why the composer cannot send while the link to the agent's host is
 /// down, for the box's edge; None when it can.
-fn waiting_words(composer: &Composer, host: &str, away: Away) -> Option<String> {
+fn waiting_words(composer: &Composer, host: &str, reach: Reach) -> Option<String> {
     Some(match composer {
-        Composer::Disabled(Waiting::Detached) => match away {
-            Away::Plain => format!("{host} is away"),
-            Away::Revoked => format!("{host} no longer trusts this machine"),
-            Away::SignedOut => format!("{host} is away · this machine is signed out"),
+        Composer::Disabled(Waiting::Detached) => match reach {
+            Reach::Away(Away::Revoked) => format!("{host} no longer trusts this machine"),
+            Reach::Away(Away::SignedOut) => format!("{host} is away · this machine is signed out"),
+            Reach::Online(_) | Reach::Away(Away::Plain) | Reach::Offline => {
+                format!("{host} is away")
+            }
         },
         Composer::Disabled(Waiting::Reconnecting) => format!("reconnecting to {host}"),
         Composer::Disabled(Waiting::CatchingUp) => "catching up".to_owned(),
@@ -2888,14 +2895,14 @@ fn edge_title(
     not_sent: Option<&str>,
     composer: &Composer,
     host: &str,
-    away: Away,
+    reach: Reach,
     limit: Option<String>,
     theme: Theme,
 ) -> Option<(String, ratatui::style::Style)> {
     if let Some(reason) = not_sent {
         return Some((reason.to_owned(), theme.error()));
     }
-    waiting_words(composer, host, away)
+    waiting_words(composer, host, reach)
         .map(|words| (words, theme.faint()))
         .or_else(|| {
             (*composer == Composer::Resume).then(|| ("Enter resumes".to_owned(), theme.muted()))
@@ -2912,13 +2919,13 @@ pub(crate) fn composer_lines(
     composer: &Composer,
     name: &str,
     host: &str,
-    away: Away,
+    reach: Reach,
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let invite = match composer {
         Composer::Disabled(_) | Composer::Resume => format!("Message {name}"),
-        composer => placeholder(composer, name, host, away),
+        composer => placeholder(composer, name, host, reach),
     };
     let edge = EdgeWords {
         model: None,
@@ -2926,7 +2933,7 @@ pub(crate) fn composer_lines(
         controls: None,
     };
     let mut lines = boxed_composer(editor, &invite, &edge, true, width, theme).lines;
-    if let Some((words, ink)) = edge_title(None, composer, host, away, None, theme)
+    if let Some((words, ink)) = edge_title(None, composer, host, reach, None, theme)
         && let Some(top) = lines.first_mut()
     {
         *top = marked_edge_in(&words, ink, width, theme);
@@ -3133,7 +3140,7 @@ fn framed(
 /// panel). What everyone knows (Enter sends, pasting attaches) is not
 /// said; Enter is named only when it does something else. Words that are
 /// not a legend start with a capital and read as a sentence.
-fn turn_hint_words(state: &SessionState, editor: &Editor, away: Away, leader: char) -> String {
+fn turn_hint_words(state: &SessionState, editor: &Editor, reach: Reach, leader: char) -> String {
     let working = state.phase() == PhaseView::Working;
     let shift_tab = next_control(state).map(|change| match change {
         ui_view::SettingChange::Mode(_) => "shift+tab mode",
@@ -3156,10 +3163,10 @@ fn turn_hint_words(state: &SessionState, editor: &Editor, away: Away, leader: ch
             }
         }
         Composer::Resume => pairs.push("enter resume".into()),
-        Composer::Disabled(Waiting::Detached) if away == Away::SignedOut => {
+        Composer::Disabled(Waiting::Detached) if reach == Reach::Away(Away::SignedOut) => {
             return "Draft kept · sending waits until this machine signs in".to_owned();
         }
-        Composer::Disabled(Waiting::Detached) if away == Away::Revoked => {
+        Composer::Disabled(Waiting::Detached) if reach == Reach::Away(Away::Revoked) => {
             return "Draft kept · sending waits until you pair again".to_owned();
         }
         Composer::Disabled(_) => return "Draft kept · sending waits".to_owned(),
@@ -3430,38 +3437,31 @@ fn mime_of(name: &str) -> &'static str {
 /// idle, exited with its cause, or why it cannot be current.
 fn state_words(
     state: &SessionState,
-    away: Away,
+    reach: Reach,
     host: &str,
     theme: Theme,
 ) -> (String, ratatui::style::Style) {
     let away_words = || {
         let host = if host.is_empty() { "host" } else { host };
-        match away {
-            Away::Plain => format!("{host} away · not current"),
-            Away::SignedOut => format!("{host} away · this machine is signed out"),
-            Away::Revoked => format!("{host} no longer trusts this machine"),
+        match reach {
+            Reach::Away(Away::SignedOut) => format!("{host} away · this machine is signed out"),
+            Reach::Away(Away::Revoked) => format!("{host} no longer trusts this machine"),
+            Reach::Online(_) | Reach::Away(Away::Plain) | Reach::Offline => {
+                format!("{host} away · not current")
+            }
         }
     };
-    // The session's host entry follows the fleet; this machine's own is
-    // always online.
-    let host_away = state
-        .host()
-        .is_some_and(|entry| entry.presence != wire::Presence::Online as i32);
     match (state.composer(), state.phase()) {
-        // Resuming asks the host, so why it is away matters more than how
+        // Resuming asks the host, so why it is away matters more than why
         // the agent ended.
-        (_, PhaseView::Exited { .. }) if host_away => {
-            (format!("exited · {}", away_words()), theme.warning())
+        (_, PhaseView::Exited { cause }) if !reach.online() => {
+            let ended = match cause {
+                ExitCause::Finished => "finished",
+                ExitCause::Ended | ExitCause::Failed(_) => "exited",
+            };
+            (format!("{ended} · {}", away_words()), theme.warning())
         }
-        (_, PhaseView::Exited { cause }) => (
-            match cause {
-                Some(cause) if !cause.is_empty() && cause != "exited" => {
-                    format!("exited · {cause}")
-                }
-                _ => "exited".to_owned(),
-            },
-            theme.muted(),
-        ),
+        (_, PhaseView::Exited { cause }) => (exit_words(&cause), theme.muted()),
         (Composer::Disabled(Waiting::Detached), _) => (away_words(), theme.warning()),
         (Composer::Disabled(Waiting::Reconnecting), _) => {
             ("reconnecting".to_owned(), theme.warning())
@@ -3488,11 +3488,7 @@ fn family_line(family: &FamilyHeader, width: usize, theme: Theme) -> Line<'stati
             if count == 1 { "" } else { "s" }
         ));
     }
-    let waiting = family
-        .children
-        .iter()
-        .filter(|child| child.attention == ui_state::Attention::NeedsYou)
-        .count();
+    let waiting = family.need_you;
     let mut line = Line::from(Span::raw("  "));
     push(&mut line, parts.join(" · "), theme.muted(), width);
     if waiting > 0 {
@@ -3562,19 +3558,14 @@ fn next_of(offered: &[(&str, bool, bool)]) -> Option<String> {
 
 fn empty_feed(
     state: &SessionState,
+    reach: Reach,
     height: usize,
     waited_ms: i64,
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![Line::default(); height];
-    let away = matches!(state.composer(), Composer::Disabled(Waiting::Detached))
-        || state.host().is_some_and(|host| {
-            matches!(
-                host.presence(),
-                wire::Presence::Offline | wire::Presence::Away
-            )
-        });
+    let away = matches!(state.composer(), Composer::Disabled(Waiting::Detached)) || !reach.online();
     let words = if away {
         Some("Its host is away, and nothing of this chat is held here yet.")
     } else if state.has_snapshot() && state.caught_up() {

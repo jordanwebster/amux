@@ -490,24 +490,38 @@ public enum ChatWords {
         count == 1 ? String(localized: "Started 1 agent") : String(localized: "Started \(count) agents")
     }
 
-    /// A started agent's state under its name.
+    /// A started agent's state under its name: how it ended once it has,
+    /// else its machine when that is out of reach, else what it is doing.
     public static func childState(_ card: FleetCard) -> String {
-        if card.hostPresence == .offline { return String(localized: "\(card.host) offline") }
+        if card.attention != .exited {
+            switch card.hostReach {
+            case .online: break
+            case .away(.plain): return String(localized: "\(card.host) away")
+            case .away(.signedOut), .away(.revoked), .offline:
+                return String(localized: "\(card.host) offline")
+            }
+        }
         switch card.attention {
         case .needsYou: return String(localized: "needs you")
         case .working: return String(localized: "working")
         case .starting: return String(localized: "starting")
         case .idle: return String(localized: "idle")
         case .exited:
-            guard let cause = card.exitCause, !cause.isEmpty else { return String(localized: "exited") }
-            return String(localized: "exited · \(cause)")
+            switch card.exitCause ?? .ended {
+            case .finished: return String(localized: "finished")
+            case .ended: return String(localized: "exited")
+            case .failed(let cause): return String(localized: "exited · \(cause)")
+            }
         }
     }
 
     /// The exited agent's head in the composer.
-    public static func exited(_ cause: String?) -> String {
-        guard let cause, !cause.isEmpty else { return String(localized: "Exited") }
-        return String(localized: "Exited · \(cause)")
+    public static func exited(_ cause: ExitCause) -> String {
+        switch cause {
+        case .finished: String(localized: "Finished")
+        case .ended: String(localized: "Exited")
+        case .failed(let cause): String(localized: "Exited · \(cause)")
+        }
     }
 
     // MARK: - Settings

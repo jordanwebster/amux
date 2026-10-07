@@ -6,8 +6,9 @@ use std::collections::{HashMap, HashSet};
 
 use schemars::JsonSchema;
 use serde::Serialize;
+pub use ui_state::ExitCause;
 use ui_state::{Activity, ActivityKind, AgentKey, Attention, FleetState, ItemBody, SessionState};
-use wire::{Agent, Kind, Presence, SignInState, UsageState};
+use wire::{Agent, HostVia, Kind, Presence, SignInState, UsageState};
 
 use crate::ask::{AskBody, ask_card};
 
@@ -17,22 +18,21 @@ pub struct FleetCard {
     pub name: String,
     pub kind: Kind,
     pub attention: Attention,
-    pub exit_cause: Option<String>,
+    /// How it ended, once it has.
+    pub exit_cause: Option<ExitCause>,
     /// The branch of the folder the agent started in, as of its last turn
     /// end; None on a detached head or outside a repository.
     pub branch: Option<String>,
     pub cwd: String,
     pub phase_since_ms: i64,
     pub host: String,
-    pub host_presence: Presence,
+    pub host_reach: Reach,
     /// Children in the fleet, and how loud the family is.
     pub children: u32,
     pub family_attention: Attention,
-    /// The whole family below and including this agent, and how many of
-    /// them need the person: what a folded family stands for when a client
-    /// counts its fleet.
+    /// The whole family below and including this agent: what a folded
+    /// family stands for when a client counts its fleet.
     pub members: u32,
-    pub members_need_you: u32,
 }
 
 /// Home's sections, computed once for every client. Empty sections are
@@ -40,6 +40,11 @@ pub struct FleetCard {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, JsonSchema)]
 pub struct FleetView {
     pub sections: Vec<FleetSection>,
+    /// Agents across the whole fleet that need the person, and that are
+    /// working or starting: counted by agent, not by family, whatever is
+    /// folded or filtered out of the sections.
+    pub need_you: u32,
+    pub working: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
@@ -47,6 +52,9 @@ pub struct FleetSection {
     pub kind: SectionKind,
     /// How many families the section holds, folded or not.
     pub families: u32,
+    /// Whether the section starts folded: exited agents are history,
+    /// rarely opened.
+    pub folded_by_default: bool,
     /// Each family's head, with the members of expanded families under it.
     pub rows: Vec<FleetRow>,
 }
@@ -160,18 +168,6 @@ pub enum StuckReason {
     /// windows that are, when the provider says.
     UsageLimit { resets_at_ms: Option<i64> },
 }
-
-/// Why an agent ended, as far as a row distinguishes: it said it was done,
-/// it was stopped or exited cleanly, or it failed with a cause.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
-pub enum ExitCause {
-    Finished,
-    Ended,
-    Failed(String),
-}
-
-/// Causes that are an ordinary end, not a failure.
-const CLEAN_EXITS: [&str; 4] = ["stopped", "exited", "aborted", "killed"];
 
 /// What one agent's session knows for its row. Read from the session alone,
 /// so a client never holds the fleet and a session at once; [`fleet_view`]
@@ -298,31 +294,21 @@ fn last_said(state: &SessionState) -> Option<String> {
         })
 }
 
-fn exit_cause(cause: Option<&str>) -> ExitCause {
-    match cause.filter(|cause| !cause.is_empty()) {
-        Some("finished") => ExitCause::Finished,
-        None => ExitCause::Ended,
-        Some(cause) if CLEAN_EXITS.contains(&cause) => ExitCause::Ended,
-        Some(cause) => ExitCause::Failed(cause.to_owned()),
-    }
-}
-
-/// A live agent's host is out of reach from here: offline, connecting, or no
-/// longer trusting this machine.
-fn host_away(fleet: &FleetState, agent: &Agent) -> bool {
-    fleet
-        .host(&agent.host_id)
-        .is_some_and(|host| host.presence() != Presence::Online || host.revoked == Some(true))
-}
-
 /// The row's second line: the state comes from the inventory row, so it
-/// agrees with the section; the words come from the agent's session.
-fn second_line(fleet: &FleetState, agent: &Agent, line: Option<&SessionLine>) -> SecondLine {
+/// agrees with the section; the words come from the agent's session. How an
+/// agent ended comes before its host's reach: an exited agent's row is
+/// history, whatever its host is doing now.
+fn second_line(
+    fleet: &FleetState,
+    local_host: &[u8],
+    agent: &Agent,
+    line: Option<&SessionLine>,
+) -> SecondLine {
     let attention = ui_state::attention(agent);
     if attention == Attention::Exited {
-        return SecondLine::Exited(exit_cause(agent.exit_cause.as_deref()));
+        return SecondLine::Exited(ui_state::exit_cause(agent.exit_cause.as_deref()));
     }
-    if host_away(fleet, agent) {
+    if !reach(fleet, local_host, &agent.host_id).online() {
         return SecondLine::HostAway;
     }
     let Some(line) = line else {
@@ -349,27 +335,26 @@ fn section_of(attention: Attention) -> SectionKind {
     }
 }
 
-fn card(fleet: &FleetState, agent: &Agent) -> FleetCard {
+fn card(fleet: &FleetState, local_host: &[u8], agent: &Agent) -> FleetCard {
     let at = ui_state::agent_key(agent);
-    let host = fleet.host(&agent.host_id);
-    let family = fleet.family(&at);
+    let attention = ui_state::attention(agent);
     FleetCard {
         name: agent.name.clone(),
         kind: agent.kind(),
-        attention: ui_state::attention(agent),
-        exit_cause: agent.exit_cause.clone(),
+        attention,
+        exit_cause: (attention == Attention::Exited)
+            .then(|| ui_state::exit_cause(agent.exit_cause.as_deref())),
         branch: agent.git.as_ref().and_then(|git| git.branch.clone()),
         cwd: agent.cwd.clone(),
         phase_since_ms: agent.phase_since_ms,
-        host: host.map(|host| host.name.clone()).unwrap_or_default(),
-        host_presence: host.map_or(Presence::Unspecified, |host| host.presence()),
+        host: fleet
+            .host(&agent.host_id)
+            .map(|host| host.name.clone())
+            .unwrap_or_default(),
+        host_reach: reach(fleet, local_host, &agent.host_id),
         children: fleet.families().children(&at).count() as u32,
         family_attention: fleet.family_attention(&at).unwrap_or(Attention::Exited),
-        members: family.len() as u32,
-        members_need_you: family
-            .iter()
-            .filter(|member| ui_state::attention(member) == Attention::NeedsYou)
-            .count() as u32,
+        members: fleet.family(&at).len() as u32,
         agent: at,
     }
 }
@@ -385,6 +370,7 @@ fn card(fleet: &FleetState, agent: &Agent) -> FleetCard {
 /// reorders rows.
 pub fn fleet_view(
     fleet: &FleetState,
+    local_host: &[u8],
     lines: &HashMap<AgentKey, SessionLine>,
     expand: &HashSet<Vec<u8>>,
     keep: &dyn Fn(&Agent) -> bool,
@@ -427,27 +413,39 @@ pub fn fleet_view(
         }
         let mut rows = Vec::new();
         for head in &heads {
-            push(fleet, lines, head, 0, expand, &mut rows);
+            push(fleet, local_host, lines, head, 0, expand, &mut rows);
         }
         Some(FleetSection {
             kind,
             families: heads.len() as u32,
+            folded_by_default: kind == SectionKind::Exited,
             rows,
         })
     })
     .collect();
-    FleetView { sections }
+    let counted = |wanted: &[Attention]| {
+        fleet
+            .agents()
+            .filter(|agent| wanted.contains(&ui_state::attention(agent)))
+            .count() as u32
+    };
+    FleetView {
+        sections,
+        need_you: counted(&[Attention::NeedsYou]),
+        working: counted(&[Attention::Working, Attention::Starting]),
+    }
 }
 
 fn push(
     fleet: &FleetState,
+    local_host: &[u8],
     lines: &HashMap<AgentKey, SessionLine>,
     agent: &Agent,
     depth: u32,
     expand: &HashSet<Vec<u8>>,
     rows: &mut Vec<FleetRow>,
 ) {
-    let card_ = card(fleet, agent);
+    let card_ = card(fleet, local_host, agent);
     let mut children: Vec<&Agent> = fleet
         .families()
         .children(&card_.agent)
@@ -474,14 +472,14 @@ fn push(
                     let key = ui_state::agent_key(member);
                     LoudMember {
                         name: member.name.clone(),
-                        second_line: second_line(fleet, member, lines.get(&key)),
+                        second_line: second_line(fleet, local_host, member, lines.get(&key)),
                         agent: key,
                     }
                 })
         })
         .flatten();
     rows.push(FleetRow {
-        second_line: second_line(fleet, agent, lines.get(&card_.agent)),
+        second_line: second_line(fleet, local_host, agent, lines.get(&card_.agent)),
         card: card_,
         depth,
         expanded,
@@ -489,19 +487,36 @@ fn push(
     });
     if expanded {
         for child in children {
-            push(fleet, lines, child, depth + 1, expand, rows);
+            push(fleet, local_host, lines, child, depth + 1, expand, rows);
         }
     }
 }
 
-/// Why a host is out of reach from here, as far as this machine can say.
-/// A powered-off host and a signed-out machine look the same from here, so
-/// the cause is only ever a fact about this machine, never a claim about
-/// the host.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
+/// How this machine reaches a host now: one answer every client words, for
+/// the host itself and for every agent on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub enum Reach {
+    /// A link stands, over this route; this machine's own host has none.
+    Online(HostVia),
+    /// Out of reach for a reason this machine can name.
+    Away(Away),
+    /// Out of reach with no route, or not known to be reachable at all.
+    Offline,
+}
+
+impl Reach {
+    pub fn online(self) -> bool {
+        matches!(self, Reach::Online(_))
+    }
+}
+
+/// Why a host is away from here. A powered-off host and a signed-out
+/// machine look the same from here, so the cause is only ever a fact about
+/// this machine, never a claim about the host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum Away {
-    /// Nothing more is known than that the host is away.
-    #[default]
+    /// The host's link says it is away: seen, as through the relay, and not
+    /// reachable from here.
     Plain,
     /// This machine is signed out of its account, so the relay carries
     /// nothing for it; a host only the relay reaches is away until it signs
@@ -514,51 +529,68 @@ pub enum Away {
 
 /// Whether this machine is signed out of the account its profile is bound
 /// to. A profile that was never bound is not signed out.
-pub fn signed_out(fleet: &FleetState, local_host: &[u8]) -> bool {
+fn signed_out(fleet: &FleetState, local_host: &[u8]) -> bool {
     fleet
         .host(local_host)
         .is_some_and(|entry| entry.signed_in == Some(false))
 }
 
-/// Why `host` is away, when it is. What the host itself said comes first.
-pub fn away(fleet: &FleetState, local_host: &[u8], host: &[u8]) -> Away {
+/// How this machine reaches `host`. Its own host is always online. What the
+/// host itself said comes first: a host that no longer trusts this machine
+/// is away for that reason whatever route still reaches it. A host this
+/// machine knows nothing about, or whose presence is unknown, is offline.
+pub fn reach(fleet: &FleetState, local_host: &[u8], host: &[u8]) -> Reach {
+    let entry = fleet.host(host);
     if host == local_host {
-        return Away::Plain;
+        return Reach::Online(entry.map_or(HostVia::Unspecified, |entry| entry.via()));
     }
-    if fleet
-        .host(host)
-        .is_some_and(|entry| entry.revoked == Some(true))
-    {
-        Away::Revoked
-    } else if signed_out(fleet, local_host) {
-        Away::SignedOut
-    } else {
-        Away::Plain
+    let Some(entry) = entry else {
+        return Reach::Offline;
+    };
+    if entry.revoked == Some(true) {
+        return Reach::Away(Away::Revoked);
+    }
+    match entry.presence() {
+        Presence::Online => Reach::Online(entry.via()),
+        _ if signed_out(fleet, local_host) => Reach::Away(Away::SignedOut),
+        Presence::Away => Reach::Away(Away::Plain),
+        Presence::Offline | Presence::Unspecified => Reach::Offline,
     }
 }
 
-pub fn fleet_card(fleet: &FleetState, agent_id: &[u8]) -> Option<FleetCard> {
-    fleet.find(agent_id).map(|agent| card(fleet, agent))
+pub fn fleet_card(fleet: &FleetState, local_host: &[u8], agent_id: &[u8]) -> Option<FleetCard> {
+    fleet
+        .find(agent_id)
+        .map(|agent| card(fleet, local_host, agent))
 }
 
-/// A chat's family: its parent, its children, and how loud the family is.
+/// A chat's family: its parent, its children, how loud the whole family
+/// is, and how many of the family other than the chat's own agent need the
+/// person, the parent's side and grandchildren included.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct FamilyHeader {
     pub parent: Option<FleetCard>,
     pub children: Vec<FleetCard>,
     pub attention: Attention,
+    pub need_you: u32,
 }
 
 /// None for an agent with no parent and no children.
-pub fn family_header(fleet: &FleetState, agent_id: &[u8]) -> Option<FamilyHeader> {
+pub fn family_header(
+    fleet: &FleetState,
+    local_host: &[u8],
+    agent_id: &[u8],
+) -> Option<FamilyHeader> {
     let agent = fleet.find(agent_id)?;
     let at = ui_state::agent_key(agent);
-    let parent = fleet.parent(&at).map(|parent| card(fleet, parent));
+    let parent = fleet
+        .parent(&at)
+        .map(|parent| card(fleet, local_host, parent));
     let children: Vec<FleetCard> = fleet
         .families()
         .children(&at)
         .filter_map(|child| fleet.agent(child))
-        .map(|child| card(fleet, child))
+        .map(|child| card(fleet, local_host, child))
         .collect();
     if parent.is_none() && children.is_empty() {
         return None;
@@ -568,5 +600,13 @@ pub fn family_header(fleet: &FleetState, agent_id: &[u8]) -> Option<FamilyHeader
         parent,
         children,
         attention: fleet.family_attention(&root).unwrap_or(Attention::Exited),
+        need_you: fleet
+            .family(&root)
+            .into_iter()
+            .filter(|member| {
+                ui_state::agent_key(member) != at
+                    && ui_state::attention(member) == Attention::NeedsYou
+            })
+            .count() as u32,
     })
 }

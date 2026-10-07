@@ -24,42 +24,48 @@ enum RowState: Equatable {
     case starting
     /// The machine that owns this agent is not answering.
     case hostOffline(String)
-    /// Listed, and not reachable from here: the row is what this phone last
-    /// held, and it stays on the list.
+    /// Seen by the relay, and not reachable from here: the row is what this
+    /// phone last held, and it stays on the list.
     case hostAway(String)
     /// A kind this build has no chat for.
     case unsupported
-    /// The agent's process ended, and why where it said.
-    case exited(String?)
+    /// The agent's process ended, and how.
+    case exited(ExitCause)
     case idle
 
     /// Read once, in one order, so the order is a thing somebody can look at.
     ///
     /// Being unreadable comes first because it is a fact about this build
     /// rather than about the agent, and it outranks anything the agent might
-    /// be doing — none of which can be acted on from here anyway. A dark
-    /// machine comes next, and above `needsYou` deliberately: what an agent
-    /// last asked for on a machine nobody can reach cannot be answered.
-    init(row: AgentRow, host: HostView? = nil) {
+    /// be doing — none of which can be acted on from here anyway. How an
+    /// agent ended comes next, as the runtime's second line has it: an exited
+    /// agent is history, whatever its machine is doing now. A dark machine
+    /// comes next, and above `needsYou` deliberately: what an agent last
+    /// asked for on a machine nobody can reach cannot be answered.
+    init(row: AgentRow) {
         if !row.readable {
             self = .unsupported
             return
         }
-        let machine = PlaceNames.host(host?.name ?? row.hostName)
-        let reach = host?.reach
-        if row.hostPresence == .offline || reach == .offline {
-            self = .hostOffline(machine)
+        if row.attention == .exited {
+            self = .exited(row.card.exitCause ?? .ended)
             return
         }
-        if row.hostPresence == .away || reach == .away {
+        let machine = PlaceNames.host(row.hostName)
+        switch row.hostReach {
+        case .online: break
+        case .away(.plain):
             self = .hostAway(machine)
+            return
+        case .away(.signedOut), .away(.revoked), .offline:
+            self = .hostOffline(machine)
             return
         }
         switch row.attention {
         case .needsYou: self = .needsYou
         case .working: self = .working
         case .starting: self = .starting
-        case .exited: self = .exited(row.card.exitCause)
+        case .exited: self = .exited(row.card.exitCause ?? .ended)
         case .idle: self = .idle
         }
     }
@@ -76,14 +82,11 @@ enum RowState: Equatable {
         case .hostOffline(let machine): "\(machine) offline"
         case .hostAway(let machine): "\(machine) away"
         case .unsupported: "Unknown agent"
-        case .exited(let cause): cause == Self.finished ? "Finished" : "Exited"
+        case .exited(.finished): "Finished"
+        case .exited: "Exited"
         case .idle: "Idle"
         }
     }
-
-    /// The exit cause the host records for a one-shot agent that exited
-    /// after its turn.
-    static let finished = "finished"
 
     /// What follows the word, where it says more than the place. Why an
     /// agent exited is the row's second line, not this.
@@ -114,7 +117,7 @@ enum RowState: Equatable {
         case .hostOffline(let machine): "\(machine) is offline"
         case .hostAway(let machine): "\(machine) is away, not live"
         case .unsupported: "Unknown agent, update amux to open it"
-        case .exited(let cause) where cause == Self.finished: "Finished"
+        case .exited(.finished): "Finished"
         case .exited: "Exited"
         case .idle: "Idle"
         }

@@ -10,10 +10,10 @@ use model::{AgentKey, Connection, InputState, Key, PhaseView, Waiting};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui_view::{
-    Away, ChangeTotals, ComposerView, ContextView, QueuedRow, RefusedPrompt, SentPrompt,
+    ChangeTotals, ComposerView, ContextView, QueuedRow, Reach, RefusedPrompt, SentPrompt,
     SignInView, ToolRows,
 };
-use wire::{BlobRef, HostVia, Kind, Presence};
+use wire::{BlobRef, HostVia, Kind};
 
 /// What an embedded runtime starts from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -318,15 +318,13 @@ pub struct HostView {
     pub trusted: bool,
     /// Found nearby and not paired.
     pub candidate: bool,
-    pub presence: Presence,
-    pub away: Away,
+    /// How this device reaches it now, and over which route.
+    pub reach: Reach,
     pub platform: Option<String>,
     pub version: Option<String>,
     pub last_dial_error: Option<String>,
     /// Where discovery found it; what pairing dials.
     pub addrs: Vec<String>,
-    /// The route a live link runs over.
-    pub via: HostVia,
     /// For this device: whether it is signed in to the account its profile
     /// is bound to; None while it was never bound.
     pub signed_in: Option<bool>,

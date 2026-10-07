@@ -305,7 +305,13 @@ these parts to a dump bundle; the daemon's part carries the content, redacted pe
 Every function in [`ui-view`](../crates/ui-view/src/lib.rs) takes a `SessionState` or `FleetState` plus explicit
 arguments (an order range, a set of keys, an option struct, an expansion set) and returns a value. No view takes
 a size, a width or a theme. Views carry typed facts; wording, wrapping, geometry, colour and animation belong to
-each renderer. A client may also read the state directly.
+each renderer.
+
+A view decides; a client presents. Any judgement both clients must agree on (whether an agent needs you, how a
+session ended, why a prompt was refused, what a model is called) is computed once in a view and handed over as a
+typed value, never as text: each client words it. Where a client's own choice changes what a view returns, such
+as folding tool steps, the client passes the choice in as an argument. A client may read plain facts from the state
+directly (a name, a path, a count the state holds), but never works out a judgement from them.
 
 | Function | Returns |
 |---|---|
@@ -319,9 +325,9 @@ each renderer. A client may also read the state directly.
 | `overview(state, diff)`, `changes(diff)`, `diff_base(state, comparison)` | The `Overview`: tasks, background jobs, failed tool servers, usage near a limit, and the changed files by folder (root files first) from a `Diff` fetched without a patch; the base a comparison asks `Diff` for. |
 | `context(state)`, `sign_in(state)`, `effort_in_force(agent)` | Context use (near full from 80%), a sign-in problem, and the effort the agent runs at. |
 | `settings(state)`, `setting_input(kind, change)` | What the agent offers to change (models, efforts, modes, commands), why a setting cannot change from here, and the input a pick sends. |
-| `fleet_view(fleet, lines, expand, keep)`, `session_line(state, now_ms)` | Home's sections (needs you, live, exited) with each family in its loudest member's section, newest since-when first, and every row's second line; what one session knows for that line. |
-| `fleet_card(fleet, agent_id)`, `family_header(fleet, agent_id)` | One agent's card (name, branch, host, family counts), and a chat's family header. |
-| `away(fleet, local_host, host)`, `signed_out(fleet, local_host)` | Why a host is out of reach, as far as this machine can say. |
+| `fleet_view(fleet, local_host, lines, expand, keep)`, `session_line(state, now_ms)` | Home's sections (needs you, live, exited) with each family in its loudest member's section, newest since-when first, whether each starts folded, and every row's second line; the fleet-wide counts of agents that need you and that are working; what one session knows for that line. |
+| `fleet_card(fleet, local_host, agent_id)`, `family_header(fleet, local_host, agent_id)` | One agent's card (name, branch, host and its reach, how it ended, family counts), and a chat's family header with how many of the family need you. |
+| `reach(fleet, local_host, host)` | How this machine reaches a host: online over a route, away for a reason this machine can name (the relay sees it, this machine is signed out, or the host no longer trusts it), or offline. |
 | `review_doc(diff, patch, comments)` | A patch parsed into files, hunks and lines, with review comments placed. |
 | `patch_head(state, key, max)` | The first lines of an edit's patch. |
 
@@ -438,8 +444,10 @@ streams. A folded family whose head does not need the person carries the member 
 Each row's second line goes by the state the inventory row says, in words its session supplies: the head ask
 when it needs you; the step it is running (the chat's activity line, with the step's command or file) when
 working; when idle, why it is stuck (signed out, a spent usage window) or else the first line of what it last
-said; nothing while starting or before its session opens; why it ended once exited; and that its host is away
-when the host is out of reach. What an agent is working on is how agents find each other and is not shown.
+said; nothing while starting or before its session opens; how it ended once exited, whatever its host is doing;
+and that its host is away when the host is out of reach. How an agent ended is typed (finished, ended, or failed
+with the host's own account of why), as on the chat's phase. What an agent is working on is how agents find each
+other and is not shown.
 A client reads each session with `session_line` on its own, then the fleet, so it never holds both at once.
 
 The fleet keeps one live session per live agent, and it is the only session that agent has: home reads it for the

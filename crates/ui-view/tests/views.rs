@@ -427,7 +427,7 @@ fn the_fleet_places_families_by_their_loudest_member_newest_first() {
     fleet.update(listed(gone));
     use SectionKind::*;
     let all = |_: &wire::Agent| true;
-    let view = fleet_view(&fleet, &no_sessions(), &HashSet::new(), &all);
+    let view = fleet_view(&fleet, b"a", &no_sessions(), &HashSet::new(), &all);
     // The parent's family needs you through its child, and is ordered by
     // when the child began to: after the asker, which began later.
     assert_eq!(
@@ -447,6 +447,17 @@ fn the_fleet_places_families_by_their_loudest_member_newest_first() {
             .collect::<Vec<_>>(),
         vec![2, 2, 1]
     );
+    // Only the exited start folded.
+    assert_eq!(
+        view.sections
+            .iter()
+            .map(|section| section.folded_by_default)
+            .collect::<Vec<_>>(),
+        vec![false, false, true]
+    );
+    // The counts are of agents, folded or not: the child and the asker
+    // need the person, and one agent works.
+    assert_eq!((view.need_you, view.working), (2, 1));
     // Folded, the parent speaks for the child that needs you.
     let parent = &view.sections[0].rows[0];
     let loud = parent.loud.as_ref().unwrap();
@@ -456,7 +467,7 @@ fn the_fleet_places_families_by_their_loudest_member_newest_first() {
         (&SecondLine::Blank, &SecondLine::Blank)
     );
     let expand: HashSet<Vec<u8>> = [b"parent".to_vec()].into();
-    let view = fleet_view(&fleet, &no_sessions(), &expand, &all);
+    let view = fleet_view(&fleet, b"a", &no_sessions(), &expand, &all);
     assert_eq!(
         home(&view)[..3],
         [
@@ -468,21 +479,26 @@ fn the_fleet_places_families_by_their_loudest_member_newest_first() {
     assert!(view.sections[0].rows[0].loud.is_none());
     // A filter keeps a family when any member matches, folded or not.
     let only_child = |agent: &wire::Agent| agent.name == "child";
-    let view = fleet_view(&fleet, &no_sessions(), &HashSet::new(), &only_child);
+    let view = fleet_view(&fleet, b"a", &no_sessions(), &HashSet::new(), &only_child);
     assert_eq!(home(&view), vec![(NeedsYou, "parent".into(), 0)]);
-    let card = fleet_card(&fleet, b"parent").unwrap();
+    // A filter leaves the counts whole.
+    assert_eq!((view.need_you, view.working), (2, 1));
+    let card = fleet_card(&fleet, b"a", b"parent").unwrap();
     assert_eq!(
         (card.attention, card.family_attention, card.children),
         (Attention::Idle, Attention::NeedsYou, 1)
     );
-    // Folded, the family still counts: two members, one needing the person.
-    assert_eq!((card.members, card.members_need_you), (2, 1));
-    let alone = fleet_card(&fleet, b"busy").unwrap();
-    assert_eq!((alone.members, alone.members_need_you), (1, 0));
+    // Folded, the family still counts its two members.
+    assert_eq!(card.members, 2);
+    let alone = fleet_card(&fleet, b"a", b"busy").unwrap();
+    assert_eq!(alone.members, 1);
     // The child's ask is not hosted in the parent's chat: the family header
-    // carries its attention and nothing more.
-    let header = family_header(&fleet, b"parent").unwrap();
-    assert_eq!(header.attention, Attention::NeedsYou);
+    // carries its attention and how many need the person, and nothing more.
+    let header = family_header(&fleet, b"a", b"parent").unwrap();
+    assert_eq!(
+        (header.attention, header.need_you),
+        (Attention::NeedsYou, 1)
+    );
     assert_eq!(
         header.children[0].agent,
         AgentKey {
@@ -490,9 +506,11 @@ fn the_fleet_places_families_by_their_loudest_member_newest_first() {
             agent: b"child".to_vec()
         }
     );
-    assert!(family_header(&fleet, b"quiet").is_none());
+    assert!(family_header(&fleet, b"a", b"quiet").is_none());
+    // The child's own ask is in its own chat, so its header counts nobody.
+    assert_eq!(family_header(&fleet, b"a", b"child").unwrap().need_you, 0);
     assert_eq!(
-        family_header(&fleet, b"child")
+        family_header(&fleet, b"a", b"child")
             .unwrap()
             .parent
             .unwrap()
@@ -997,40 +1015,76 @@ fn host_entry(host: &str, signed_in: Option<bool>) -> FleetMsg {
     }))
 }
 
+fn set_host(fleet: &mut FleetState, host: &str, change: impl FnOnce(&mut wire::HostEntry)) {
+    let FleetMsg::Event(mut event) = host_entry(host, None) else {
+        unreachable!()
+    };
+    if let Some(wire::inventory_event::Of::Host(entry)) = &mut event.of {
+        if let Some(known) = fleet.host(host.as_bytes()) {
+            *entry = known.clone();
+        }
+        change(entry);
+    }
+    fleet.update(FleetMsg::Event(event));
+}
+
 #[test]
-fn a_host_is_away_because_this_machine_signed_out_only_when_it_did() {
+fn a_host_is_reached_by_its_route_or_away_or_offline_for_what_this_machine_knows() {
     let mut fleet = FleetState::new();
     fleet.update(host_entry("desk", Some(true)));
     // A profile never bound to an account is not signed out.
     fleet.update(host_entry("laptop", None));
-    assert!(!signed_out(&fleet, b"laptop"));
-    assert_eq!(away(&fleet, b"laptop", b"desk"), Away::Plain);
+    set_host(&mut fleet, "desk", |entry| {
+        entry.via = wire::HostVia::Relay as i32
+    });
+    assert_eq!(
+        reach(&fleet, b"laptop", b"desk"),
+        Reach::Online(wire::HostVia::Relay)
+    );
+    // This machine always reaches itself, and knows nothing of a host it
+    // was never told about.
+    assert!(reach(&fleet, b"laptop", b"laptop").online());
+    assert_eq!(reach(&fleet, b"laptop", b"cabin"), Reach::Offline);
 
-    fleet.update(host_entry("laptop", Some(false)));
-    assert!(signed_out(&fleet, b"laptop"));
-    assert_eq!(away(&fleet, b"laptop", b"desk"), Away::SignedOut);
-    // The machine's own agents are never away for it.
-    assert_eq!(away(&fleet, b"laptop", b"laptop"), Away::Plain);
+    set_host(&mut fleet, "desk", |entry| {
+        entry.presence = wire::Presence::Offline as i32
+    });
+    assert_eq!(reach(&fleet, b"laptop", b"desk"), Reach::Offline);
+    set_host(&mut fleet, "desk", |entry| {
+        entry.presence = wire::Presence::Unspecified as i32
+    });
+    assert_eq!(reach(&fleet, b"laptop", b"desk"), Reach::Offline);
+    set_host(&mut fleet, "desk", |entry| {
+        entry.presence = wire::Presence::Away as i32
+    });
+    assert_eq!(reach(&fleet, b"laptop", b"desk"), Reach::Away(Away::Plain));
+
+    // Signed out, a host this machine does not reach is away for that.
+    set_host(&mut fleet, "laptop", |entry| entry.signed_in = Some(false));
+    assert_eq!(
+        reach(&fleet, b"laptop", b"desk"),
+        Reach::Away(Away::SignedOut)
+    );
+    assert!(reach(&fleet, b"laptop", b"laptop").online());
     // The desk's own sign-in says nothing about this machine.
-    assert_eq!(away(&fleet, b"desk", b"laptop"), Away::Plain);
+    assert!(reach(&fleet, b"desk", b"laptop").online());
+    // A host reached directly needs no account.
+    set_host(&mut fleet, "desk", |entry| {
+        entry.presence = wire::Presence::Online as i32;
+        entry.via = wire::HostVia::Direct as i32;
+    });
+    assert_eq!(
+        reach(&fleet, b"laptop", b"desk"),
+        Reach::Online(wire::HostVia::Direct)
+    );
 
-    fleet.update(host_entry("laptop", Some(true)));
-    assert_eq!(away(&fleet, b"laptop", b"desk"), Away::Plain);
-}
-
-#[test]
-fn a_host_that_revoked_trust_is_away_for_that_reason_first() {
-    let mut fleet = FleetState::new();
-    fleet.update(host_entry("laptop", Some(false)));
-    let FleetMsg::Event(mut desk) = host_entry("desk", Some(false)) else {
-        unreachable!()
-    };
-    if let Some(wire::inventory_event::Of::Host(entry)) = &mut desk.of {
-        entry.revoked = Some(true);
-    }
-    fleet.update(FleetMsg::Event(desk));
-    assert_eq!(away(&fleet, b"laptop", b"desk"), Away::Revoked);
-    assert_eq!(away(&fleet, b"laptop", b"laptop"), Away::Plain);
+    // A host that no longer trusts this machine says so first, whatever
+    // route still reaches it.
+    set_host(&mut fleet, "desk", |entry| entry.revoked = Some(true));
+    assert_eq!(
+        reach(&fleet, b"laptop", b"desk"),
+        Reach::Away(Away::Revoked)
+    );
 }
 
 fn settings_of(kind: Kind, body: Vec<u8>) -> SettingsView {
@@ -1814,8 +1868,14 @@ fn each_row_says_what_its_state_calls_for() {
     fleet.update(listed(ended("crashed", Some("provider crashed"))));
     // A live agent whose session has not opened says nothing yet.
     fleet.update(listed(entry("unopened", Phase::Idle)));
+    // An exited agent's row is history: how it ended, whatever its host.
+    fleet.update(listed(wire::Agent {
+        lifecycle: wire::Lifecycle::Exited as i32,
+        exit_cause: Some("exited".into()),
+        ..fleet_entry("b", "far-done", Phase::Idle, None, 1)
+    }));
 
-    let view = fleet_view(&fleet, &lines, &HashSet::new(), &|_| true);
+    let view = fleet_view(&fleet, b"a", &lines, &HashSet::new(), &|_| true);
     let said = second_lines(&view);
     assert_eq!(
         said["asker"],
@@ -1861,9 +1921,19 @@ fn each_row_says_what_its_state_calls_for() {
         SecondLine::Exited(ExitCause::Failed("provider crashed".into()))
     );
     assert_eq!(said["far"], SecondLine::HostAway);
-    let idle = fleet_card(&fleet, b"idle").unwrap();
+    assert_eq!(said["far-done"], SecondLine::Exited(ExitCause::Ended));
+    let far = fleet_card(&fleet, b"a", b"far-done").unwrap();
+    assert_eq!(
+        (far.exit_cause, far.host_reach),
+        (Some(ExitCause::Ended), Reach::Offline)
+    );
+    assert_eq!(
+        fleet_card(&fleet, b"a", b"worker").unwrap().exit_cause,
+        None
+    );
+    let idle = fleet_card(&fleet, b"a", b"idle").unwrap();
     assert_eq!(idle.branch.as_deref(), Some("fix-login"));
-    assert_eq!(fleet_card(&fleet, b"asker").unwrap().branch, None);
+    assert_eq!(fleet_card(&fleet, b"a", b"asker").unwrap().branch, None);
 }
 
 #[test]
@@ -1882,7 +1952,7 @@ fn rows_hold_their_order_while_an_agent_streams() {
     let mut state = session_on(&streamer, wire::ClaudeSdkSnapshot::default(), vec![]);
     let view = |fleet: &FleetState, state: &SessionState, now: i64| {
         let lines = HashMap::from([(key.clone(), session_line(state, now))]);
-        fleet_view(fleet, &lines, &HashSet::new(), &|_| true)
+        fleet_view(fleet, b"a", &lines, &HashSet::new(), &|_| true)
     };
     let before = home(&view(&fleet, &state, 0));
     let mut steps = HashSet::new();

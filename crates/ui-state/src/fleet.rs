@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-pub use model::{AgentKey, Attention, HostId};
+pub use model::{AgentKey, Attention, ExitCause, HostId};
 use wire::{Agent, HostEntry, InventoryEvent, inventory_event};
 
 use crate::session::Connection;
@@ -34,6 +34,19 @@ pub fn attention(agent: &Agent) -> Attention {
         wire::Phase::Idle => Attention::Idle,
         wire::Phase::Working => Attention::Working,
         wire::Phase::NeedsYou => Attention::NeedsYou,
+    }
+}
+
+/// How an agent ended, from the cause its host recorded. The host's
+/// vocabulary: "finished" for a one-shot agent that ended after its turn;
+/// "stopped", "aborted", "killed" and "exited" for an ordinary end; any other
+/// cause is the host's own account of something going wrong. A row with no
+/// cause ended without one known.
+pub fn exit_cause(cause: Option<&str>) -> ExitCause {
+    match cause.filter(|cause| !cause.is_empty()) {
+        Some("finished") => ExitCause::Finished,
+        None | Some("stopped" | "aborted" | "killed" | "exited") => ExitCause::Ended,
+        Some(cause) => ExitCause::Failed(cause.to_owned()),
     }
 }
 

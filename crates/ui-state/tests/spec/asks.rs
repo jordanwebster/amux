@@ -164,7 +164,7 @@ fn an_exited_agents_open_asks_are_drawn_dismissed() {
         assert_eq!(
             state.phase(),
             ui_state::PhaseView::Exited {
-                cause: Some("killed".into())
+                cause: ui_state::ExitCause::Ended
             }
         );
     }

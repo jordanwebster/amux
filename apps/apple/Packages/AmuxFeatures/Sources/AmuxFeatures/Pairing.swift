@@ -201,11 +201,11 @@ public struct PairByCode: View {
     private var route: String? {
         guard let machine = model.machine else { return nil }
         if machine.candidate { return "On this network" }
-        switch machine.via {
-        case .direct: return "On this network"
-        case .relay: return "Through the relay"
-        case .ssh: return "Over SSH"
-        case .unspecified: return nil
+        switch machine.reach {
+        case .online(.direct): return "On this network"
+        case .online(.relay): return "Through the relay"
+        case .online(.ssh): return "Over SSH"
+        case .online(.unspecified), .away, .offline: return nil
         }
     }
 

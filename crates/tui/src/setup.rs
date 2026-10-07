@@ -17,7 +17,8 @@ use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 use ui_state::FleetState;
-use wire::{ClaudeCreateConfig, CodexCreateConfig, CreateAgentRequest, Input, Kind, Presence};
+use ui_view::Reach;
+use wire::{ClaudeCreateConfig, CodexCreateConfig, CreateAgentRequest, Input, Kind};
 
 use crate::editor::Editor;
 use crate::text::{self, push};
@@ -150,6 +151,8 @@ pub struct Setup {
     /// Where it works, as the request names it.
     pub folder: String,
     pub host: Vec<u8>,
+    /// This machine's host, from which every other is reached or not.
+    pub local_host: Vec<u8>,
     /// Start it in a new worktree of the folder's repository.
     pub worktree: bool,
     /// What each agent starts with, for when the agent changes.
@@ -176,6 +179,7 @@ impl Setup {
             offered: None,
             folder: working_dir.to_owned(),
             host: local_host.to_vec(),
+            local_host: local_host.to_vec(),
             worktree: false,
             defaults: defaults.clone(),
         };
@@ -436,7 +440,7 @@ impl Setup {
                     choice(text::tilde(&folder), folder, current)
                 })
                 .collect(),
-            Item::Host => hosts(fleet, &self.host, true),
+            Item::Host => hosts(fleet, self, true),
             Item::Name | Item::Worktree => Vec::new(),
         }
     }
@@ -621,7 +625,8 @@ fn host_name(fleet: &FleetState, host: &[u8]) -> String {
 /// The hosts an agent can start on, the chosen one first in a list (a
 /// form's chips keep their places as the choice moves); one away cannot
 /// take a new agent, so it is listed but not picked.
-fn hosts(fleet: &FleetState, chosen: &[u8], chosen_first: bool) -> Vec<Choice> {
+fn hosts(fleet: &FleetState, setup: &Setup, chosen_first: bool) -> Vec<Choice> {
+    let chosen = &setup.host[..];
     let mut hosts: Vec<&wire::HostEntry> = fleet
         .hosts()
         .filter(|host| host.trust() == wire::Trust::Trusted || host.host_id == chosen)
@@ -636,10 +641,10 @@ fn hosts(fleet: &FleetState, chosen: &[u8], chosen_first: bool) -> Vec<Choice> {
     hosts
         .into_iter()
         .map(|host| {
-            let (detail, away) = match host.presence() {
-                Presence::Online | Presence::Unspecified => (String::new(), false),
-                Presence::Away => ("away".to_owned(), true),
-                Presence::Offline => ("offline".to_owned(), true),
+            let (detail, away) = match ui_view::reach(fleet, &setup.local_host, &host.host_id) {
+                Reach::Online(_) => (String::new(), false),
+                Reach::Away(_) => ("away".to_owned(), true),
+                Reach::Offline => ("offline".to_owned(), true),
             };
             Choice {
                 label: host_name(fleet, &host.host_id),
@@ -1188,7 +1193,7 @@ impl Form {
                 setup.pick(Item::Kind, &next.to_string());
             }
             Field::Host => {
-                let choices = hosts(fleet, &setup.host, false);
+                let choices = hosts(fleet, setup, false);
                 let at = choices.iter().position(|c| c.current).unwrap_or(0);
                 let next = Picker::step(&choices, at, step);
                 if let Some(choice) = choices.get(next) {
@@ -1418,7 +1423,7 @@ impl Form {
                     }
                 }
                 Field::Host => {
-                    for host in hosts(fleet, &setup.host, false) {
+                    for host in hosts(fleet, setup, false) {
                         let words = if host.detail.is_empty() {
                             host.label.clone()
                         } else {
