@@ -1,7 +1,7 @@
 shell |  | agents | 0,62,402,778
 home |  | ready | 0,62,402,778
 home.title |  | Agents | 18,72,86,32
-home.subtitle |  | Nothing needs you · 0 running | 18,105,209,16
+home.subtitle |  | Nothing needs you · 0 working | 18,105,209,16
 home.newAgent | New Agent |  | 345,74,44,44
 home.row.<desk-work> | desk-work, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,70
 home.row.<desk-work>.age.volatile | <volatile>
@@ -15,7 +15,7 @@ report.prompt | Report |  | 101,689,104,45
  | Hosts |  | 151,777,99,57
  | You |  | 253,777,99,57
  | Agents |  | 18,72,86,32
- | Nothing needs you · 0 running |  | 18,105,209,16
+ | Nothing needs you · 0 working |  | 18,105,209,16
  | New Agent |  | 345,74,44,44
- | RUNNING |  | 20,137,49,14
+ | LIVE |  | 20,137,28,14
  | desk-work, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,159,366,70

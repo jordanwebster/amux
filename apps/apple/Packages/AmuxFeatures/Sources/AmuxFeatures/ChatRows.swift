@@ -76,7 +76,8 @@ public struct ChatRowView: View {
                 opens: !result.isEmpty, open: expanded, toggle: toggle)
         case .fileChange(let files, let state):
             fileChange(files, state)
-        case .command(let command, let state, let outputHead, let moreLines, _, let durationMs, let exitCode):
+        case .command(
+            let command, let state, let outputHead, let moreLines, let outputTrimmed, _, let durationMs, let exitCode):
             let verb = ChatWords.verb(
                 state, row, wants: String(localized: "Wants to run"),
                 doing: String(localized: "Running"), done: String(localized: "Ran"))
@@ -87,7 +88,7 @@ public struct ChatRowView: View {
                 meta: RowMeta(ChatWords.meta(
                     commandMeta(state, exitCode: exitCode, durationMs: durationMs), row, verb: verb,
                     note: false)),
-                quote: denialNote, output: outputHead, more: moreLines)
+                quote: denialNote, output: outputHead, trimmed: outputTrimmed, more: moreLines)
         case .explore(let verb, let subject, let state):
             GridRow(
                 kind: "explore", glyph: glyph(state, "magnifyingglass"), accented: accented(state),
@@ -216,7 +217,7 @@ public struct ChatRowView: View {
     private static func anchor(_ row: Row) -> String {
         switch row.kind {
         case .explore(_, let subject, _): subject
-        case .command(let command, _, _, _, _, _, _): ChatWords.firstLine(command)
+        case .command(let command, _, _, _, _, _, _, _): ChatWords.firstLine(command)
         case .toolCall(let server, let tool, _, _, _): server.isEmpty ? tool : "\(server) · \(tool)"
         case .fileChange(let files, _): files.first?.path ?? ""
         default: ""
@@ -414,6 +415,8 @@ struct GridRow: View {
     var note: String?
     var quote: String?
     var output: [String] = []
+    /// The output's start was dropped to keep it bounded.
+    var trimmed = false
     var more: UInt = 0
     var detail: String?
     var detailFace = DetailFace.mono
@@ -529,6 +532,11 @@ struct GridRow: View {
         }
         if !output.isEmpty {
             VStack(alignment: .leading, spacing: 1) {
+                if trimmed {
+                    Text(String(localized: "··· earlier output trimmed"))
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkFaint.color)
+                }
                 ForEach(Array(output.enumerated()), id: \.offset) { _, line in
                     Text(line)
                         .designFont(.monoSmall, design)

@@ -37,13 +37,13 @@ enum Cards {
     /// member, in the order given.
     static func view(_ rows: [FleetRow]) -> FleetView {
         var sections: [SectionKind: FleetSection] = [:]
-        var kind = SectionKind.running
+        var kind = SectionKind.live
         for row in rows {
             if row.depth == 0 {
                 kind = switch row.card.familyAttention {
                 case .needsYou: .needsYou
                 case .exited: .exited
-                default: .running
+                default: .live
                 }
                 sections[kind, default: FleetSection(kind: kind, families: 0, rows: [])].families += 1
             }
@@ -69,7 +69,7 @@ final class FleetStoreTests: XCTestCase {
     func testRowsFollowTheRuntimesSectionsAndOrder() {
         let fleet = FleetStore(now: Cards.now)
         fleet.show(Cards.view([Cards.row(1, "one"), Cards.row(2, "two")]), hosts: [Cards.host()])
-        XCTAssertEqual(fleet.sections.map(\.kind), [.running])
+        XCTAssertEqual(fleet.sections.map(\.kind), [.live])
         XCTAssertEqual(fleet.rows.map(\.name), ["one", "two"])
 
         // Two asks for the person now: it moves to the section that says so,
@@ -77,7 +77,7 @@ final class FleetStoreTests: XCTestCase {
         fleet.show(
             Cards.view([Cards.row(1, "one"), Cards.row(2, "two", attention: .needsYou)]),
             hosts: [Cards.host()])
-        XCTAssertEqual(fleet.sections.map(\.kind), [.needsYou, .running])
+        XCTAssertEqual(fleet.sections.map(\.kind), [.needsYou, .live])
         XCTAssertEqual(fleet.sections.map { $0.rows.map(\.name) }, [["two"], ["one"]])
         XCTAssertEqual(fleet.rows.map(\.name), ["two", "one"])
     }
@@ -86,7 +86,7 @@ final class FleetStoreTests: XCTestCase {
         let fleet = FleetStore(now: Cards.now)
         fleet.show(
             Cards.view([Cards.row(1, "live"), Cards.row(2, "done", attention: .exited)]), hosts: [])
-        XCTAssertEqual(fleet.sections.map(\.kind), [.running, .exited])
+        XCTAssertEqual(fleet.sections.map(\.kind), [.live, .exited])
         XCTAssertEqual(fleet.sections.map(\.folded), [false, true])
         XCTAssertEqual(fleet.sections[1].families, 1)
         fleet.toggle(.exited)
@@ -135,7 +135,7 @@ final class FleetStoreTests: XCTestCase {
     func testTheSubtitleCountsWhoNeedsYou() {
         let fleet = FleetStore(now: Cards.now)
         fleet.show(Cards.view([Cards.row(1, "a", attention: .working), Cards.row(2, "b")]), hosts: [])
-        XCTAssertEqual(fleet.subtitle, "Nothing needs you · 1 running")
+        XCTAssertEqual(fleet.subtitle, "Nothing needs you · 1 working")
         fleet.show(Cards.view([Cards.row(1, "a", attention: .needsYou), Cards.row(2, "b")]), hosts: [])
         XCTAssertEqual(fleet.subtitle, "1 need you · 2 agents")
     }

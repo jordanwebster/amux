@@ -1,7 +1,7 @@
 {
   "description": "Every way a prompt goes, or doesn't. relay docs is idle and answers two seconds late, so your prompt shows on its way; flood bench is busy, so a prompt queues; theme picker's host (studio) is away, so sending waits with the draft kept. cabin backups shows a refused prompt: freeze its agent so the host cannot answer (`just tui-set sending --door '{\"Freeze\": {\"agent\": \"cabin backups\"}}'` from another terminal), send, then drop the link (`--door '{\"Sever\": {\"a\": \"laptop\", \"b\": \"cabin\"}}'`): the prompt comes back into the composer, not sent because the host is unreachable. Restore and Thaw undo it.",
   "client": "laptop",
-  "open": "relay docs",
+  "open": "relay-docs",
   "topology": {
     "hosts": [
       {
@@ -26,7 +26,7 @@
     ],
     "agents": [
       {
-        "name": "relay docs",
+        "name": "relay-docs",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -89,7 +89,7 @@
         "prompt": "Is the keepalive section of RELAY.md still right?"
       },
       {
-        "name": "flood bench",
+        "name": "flood-bench",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -140,7 +140,7 @@
         "prompt": "Measure the phone's memory under a screenshot flood, before and after the cap."
       },
       {
-        "name": "theme picker",
+        "name": "theme-picker",
         "host": "studio",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -172,7 +172,7 @@
         "prompt": "Add a light theme to the picker."
       },
       {
-        "name": "cabin backups",
+        "name": "cabin-backups",
         "host": "cabin",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -229,13 +229,13 @@
   },
   "timeline": [
     {
-      "settle": "relay docs"
+      "settle": "relay-docs"
     },
     {
-      "settle": "theme picker"
+      "settle": "theme-picker"
     },
     {
-      "settle": "cabin backups"
+      "settle": "cabin-backups"
     },
     {
       "wait_ms": 1000

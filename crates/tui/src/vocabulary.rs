@@ -51,7 +51,7 @@ pub const FRAMES: &[(&str, &str)] = &[
     ),
     (
         "home_standings",
-        "Home with every standing at 110 columns: the top line says the studio is away and counts who is working and who needs you; a headless Claude asking to run a command under Needs you; under Running, an unfolded family whose one-shot child finished, an agent on the offline studio saying so, an idle agent with what it last said and a working one; and the exited Codex folded under Exited.",
+        "Home with every standing at 110 columns: the top line says the studio is away and counts who is working and who needs you; a headless Claude asking to run a command under Needs you; under Live, an unfolded family whose one-shot child finished, an agent on the offline studio saying so, an idle agent with what it last said and a working one; and the exited Codex folded under Exited.",
     ),
     ("home_standings_80col", "The same home at 80 columns."),
     (
@@ -142,7 +142,7 @@ pub fn components(theme: Theme) -> Vec<Component> {
     }
     out.push(Component {
         name: "home_rows",
-        shows: "Home with a row in every state, each with its name (word pairs where amux named the agent), its branch where it works in a repository, and its second line: a family placed under Needs you by its child's question, a command asked for with another ask behind it; under Running a step being run, what an idle agent last said, a signed-out and a usage-limited agent, a starting agent with nothing to say yet, and an agent on a host that is away; under Exited, unfolded, one that finished and one that failed with its cause.",
+        shows: "Home with a row in every state, each with its name (word pairs where amux named the agent), its branch where it works in a repository, and its second line: a family placed under Needs you by its child's question, a command asked for with another ask behind it; under Live a step being run, what an idle agent last said, a signed-out and a usage-limited agent, a starting agent with nothing to say yet, and an agent on a host that is away; under Exited, unfolded, one that finished and one that failed with its cause.",
         buffer: home_rows(theme),
     });
     out.push(Component {
@@ -703,6 +703,7 @@ fn row_sets() -> Vec<RowSet> {
             exit_code,
             output_head: output.iter().map(|s| (*s).into()).collect(),
             more_lines: more,
+            output_trimmed: false,
             output_tail: output.iter().map(|s| (*s).into()).collect(),
             duration_ms: Some(12_400),
         })
@@ -1865,7 +1866,7 @@ fn cards() -> Vec<CardSet> {
                 AskBody::Form {
                     server: "github".into(),
                     message: "Create the issue in which repository?".into(),
-                    schema_json: r#"{"type":"object","properties":{"repository":{"type":"string","title":"Repository"},"labels":{"type":"string","enum":["bug","ios","docs"],"title":"Labels"},"assign":{"type":"boolean","title":"Assign to me"}},"required":["repository"]}"#.into(),
+                    fields: ui_view::form_fields(br#"{"type":"object","properties":{"repository":{"type":"string","title":"Repository"},"labels":{"type":"string","enum":["bug","ios","docs"],"title":"Labels"},"assign":{"type":"boolean","title":"Assign to me"}},"required":["repository"]}"#),
                 },
                 vec![
                     choice(ChoiceOutcome::Submit),

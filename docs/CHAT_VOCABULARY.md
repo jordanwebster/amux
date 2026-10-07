@@ -57,7 +57,7 @@ kind is the [`ui_view::RowKind`](../crates/ui-view/src/rows.rs) variant the view
 | Item | Row kind | How it is drawn | claude_pty | claude_sdk | codex |
 |---|---|---|---|---|---|
 | Exploring | `Explore { verb, subject, state }` | Reads, searches, listings, fetches and web searches; each is a step of its run and folds with it. | full | full | partial: web search is its own item; reads and searches are shell commands Codex labels |
-| Command | `Command { command, state, exit_code, output_head, more_lines, duration_ms }` | "Ran cmd · time" with the output's first lines (`OUTPUT_HEAD_LINES` = 3), opening to the full output. A failure shows its exit code where the provider gives one. | partial: failed flag, no exit code | partial | full: exit code, duration, streamed output |
+| Command | `Command { command, state, exit_code, output_head, more_lines, output_trimmed, duration_ms }` | "Ran cmd · time" with the output's first lines (`OUTPUT_HEAD_LINES` = 3), opening to the full output. When a long command's output lost its start to the bound, `output_trimmed` is set and a faint "earlier output trimmed" line sits above what is left. A failure shows its exit code where the provider gives one. | partial: failed flag, no exit code | partial | full: exit code, duration, streamed output |
 | File edit | `FileChange { files, state }` | Each `FileRow` as path +N −N, opening that file's diff. | full: exact patch and counts | full | partial: per-file diff |
 | File created, deleted, moved | `FileChange` with `Created { lines }`, `Deleted`, `Moved { to }` | "Created path · 38 lines", "Deleted path", "Moved a → b". | partial: create and overwrite only | partial | full |
 | Tool call | `ToolCall { server, tool, fact, state, result }` | "Used github · create_issue" plus one fact, opening to input and result. | partial: name and text result | full | full |
@@ -180,7 +180,7 @@ question: `Options(indices)` or `Other(text)`.
 | Body | Choices |
 |---|---|
 | `Plan { plan }` | `ApprovePlan { auto_accept_edits: false }`, `ApprovePlan { auto_accept_edits: true }` where the provider offers it, and `SendBack`, whose note says what should change. Codex proposes plans in plan mode with no approval step; its plan is a prose row and you reply in the composer. |
-| `Form { server, message, schema_json }` | `Submit` and `Decline`. The client draws native fields from the tool server's schema; required fields gate Submit, and `with_form_content` puts the values in the answer. |
+| `Form { server, message, fields }` | `Submit` and `Decline`. The view reads the tool server's schema once into fields in the order it writes them, each text, a number, a toggle, one choice or several picks, with its title, whether it is required and what it starts holding; the client draws native controls for them, required fields gate Submit, and `with_form_content` puts the values in the answer. |
 | `Link { server, message, url }` | `OpenLink` and `Decline`. |
 | `Access { reason, read, write, network, hosts }` | `GrantForTurn`, `GrantForSession` and `Deny` (Codex). A grant covers everything the agent asked for; the row records what was granted and for how long. |
 | `Unanswerable { reason }` | None: the provider showed something this build cannot read. The only ways out are Stop and, where the agent's own terminal is on this machine, attaching to it. |

@@ -25,7 +25,7 @@
   row    5 ask:c2a391a0-f761-498a-8006-19fc8cae11e0 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: [], resolution: Open }) attention
   ask c2a391a0-f761-498a-8006-19fc8cae11e0 -> "ask:c2a391a0-f761-498a-8006-19fc8cae11e0" 1/1 Open
     choices Submit*, Decline
-    body Form { server: "external", message: "Confirm the word PELICAN.", schema_json: "{\"properties\":{\"confirmed\":{\"type\":\"string\"}},\"required\":[\"confirmed\"],\"type\":\"object\"}" }
+    body Form { server: "external", message: "Confirm the word PELICAN.", fields: [FormField { name: "confirmed", title: "confirmed", description: "", required: true, kind: Text, initial: "" }] }
   composer Send activity=None queue=[] underway=[] refused=[]
 ## 26 recorded 25: input stdin-4
   row    5 ask:c2a391a0-f761-498a-8006-19fc8cae11e0 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: [], resolution: Cancelled })

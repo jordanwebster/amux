@@ -544,6 +544,8 @@ message SendInputRequest {
 message CreateAgentRequest {
   bytes agent_id = 1;
   optional bytes host_id = 2;
+  // Lowercase letters, digits and hyphens, starting with a letter or digit
+  // (wire::agent_name_problem); the host picks a free one when absent.
   optional string name = 3;
   optional AgentParent parent = 4;
   // The same Input as SendInput, so a first prompt carries attachments.
@@ -563,12 +565,15 @@ message CreateAgentRequest {
   // branch named after the agent, made from whatever cwd has checked out.
   // The agent's host chooses where the worktree lives; the agent's cwd is
   // the worktree. Fails the call, making no agent, when cwd is not in a
-  // repository or the branch exists.
+  // repository or the branch exists. The name is valid as a branch, so it
+  // is the branch as given.
   bool new_worktree = 12;
 }
 
 message RenameAgentRequest {
   bytes agent_id = 1;
+  // As CreateAgentRequest's name. The agent's branch keeps the name it
+  // was made with.
   string name = 2;
 }
 

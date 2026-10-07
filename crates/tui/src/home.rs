@@ -3,7 +3,7 @@
 //! names what it will be.
 //!
 //! The list is the shared fleet view's sections: the families that need
-//! you, those running, and those exited, each placed by its loudest member
+//! you, those live, and those exited, each placed by its loudest member
 //! and ordered by when it last changed state. Order moves only when an
 //! agent's state changes — a send, a turn starting or ending, an ask — never
 //! while it streams, so nothing moves under the cursor or the mouse. Hover and
@@ -60,7 +60,7 @@ enum Target {
 fn section_words(section: SectionKind) -> &'static str {
     match section {
         SectionKind::NeedsYou => "Needs you",
-        SectionKind::Running => "Running",
+        SectionKind::Live => "Live",
         SectionKind::Exited => "Exited",
     }
 }
@@ -655,7 +655,7 @@ impl Home {
                 KeyCode::Esc => vec![],
                 KeyCode::Enter => {
                     let name = editor.text().trim().to_owned();
-                    if name.is_empty() {
+                    if wire::agent_name_problem(&name).is_some() {
                         self.overlay = Some(Overlay::Rename { agent, editor });
                         return vec![];
                     }
@@ -1605,11 +1605,21 @@ impl Home {
         let mut line = Line::from(Span::raw(" ".repeat(MARGIN)));
         let key = |code| Hit::Key(plain_key(code));
         let hints: Vec<(&str, &str, Hit)> = match &self.overlay {
-            // Renaming in place: only its keys.
-            Some(Overlay::Rename { .. }) => vec![
-                ("enter", "save", key(KeyCode::Enter)),
-                ("esc", "cancel", key(KeyCode::Esc)),
-            ],
+            // Renaming in place: only its keys, or why the name will not do.
+            Some(Overlay::Rename { editor, .. }) => {
+                if let Some(problem) =
+                    wire::agent_name_problem(editor.text().trim()).filter(|_| !editor.is_empty())
+                {
+                    push(&mut line, problem, theme.warning(), width);
+                    push(&mut line, " · ", theme.muted(), width);
+                    vec![("esc", "cancel", key(KeyCode::Esc))]
+                } else {
+                    vec![
+                        ("enter", "save", key(KeyCode::Enter)),
+                        ("esc", "cancel", key(KeyCode::Esc)),
+                    ]
+                }
+            }
             // A modal carries its own keys.
             Some(Overlay::Confirm { .. }) => return (Laid::plain(line), None),
             Some(Overlay::Hosts) => return (Laid::plain(line), None),

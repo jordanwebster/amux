@@ -3481,6 +3481,18 @@
         }
       }
     },
+    "Live": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live"
+          }
+        }
+      }
+    },
     "Loading older messages…": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatScreen.swift.",
       "extractionState": "manual",
@@ -4033,14 +4045,14 @@
         }
       }
     },
-    "Nothing needs you · %@ running": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift.",
+    "Nothing needs you · %@ working": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Nothing needs you · %@ running"
+            "value": "Nothing needs you · %@ working"
           }
         }
       }
@@ -9693,6 +9705,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "··· %@ more lines"
+          }
+        }
+      }
+    },
+    "··· earlier output trimmed": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "··· earlier output trimmed"
           }
         }
       }

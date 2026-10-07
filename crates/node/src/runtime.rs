@@ -217,8 +217,8 @@ pub enum RegistryError {
     UnknownKind(i32),
     #[error("the working directory {0} is not a directory on this host")]
     BadCwd(String),
-    #[error("an agent's name cannot be empty")]
-    EmptyName,
+    #[error("{0}")]
+    BadName(String),
     #[error("starting in a new worktree: {0}")]
     Worktree(#[from] git_facts::WorktreeError),
     #[error("spawning on another host goes through that host's daemon")]
@@ -247,7 +247,7 @@ impl RegistryError {
             Self::NotFound(_) | Self::NoSpec(_) => ErrorCode::NotFound,
             Self::AlreadyExists(_) => ErrorCode::AlreadyExists,
             Self::Live(_) | Self::StillLocked(_) => ErrorCode::FailedPrecondition,
-            Self::BadId(_) | Self::UnknownKind(_) | Self::BadCwd(_) | Self::EmptyName => {
+            Self::BadId(_) | Self::UnknownKind(_) | Self::BadCwd(_) | Self::BadName(_) => {
                 ErrorCode::InvalidArgument
             }
             Self::OtherHost => ErrorCode::Unimplemented,
@@ -767,6 +767,9 @@ impl ProfileRuntime {
         };
 
         let given = request.name.clone().filter(|name| !name.is_empty());
+        if let Some(problem) = given.as_deref().and_then(wire::agent_name_problem) {
+            return Err(RegistryError::BadName(problem));
+        }
         let branches = match given {
             Some(_) => Default::default(),
             None => crate::names::branch_names(Path::new(&request.cwd)).await,
@@ -1173,8 +1176,8 @@ impl ProfileRuntime {
     /// thread takes the name; a missed word is made good at the next
     /// resume.
     pub async fn rename(&self, id: AgentId, name: &str) -> Result<Agent, RegistryError> {
-        if name.is_empty() {
-            return Err(RegistryError::EmptyName);
+        if let Some(problem) = wire::agent_name_problem(name) {
+            return Err(RegistryError::BadName(problem));
         }
         let key = self.key(id);
         let row = {

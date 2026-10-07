@@ -436,6 +436,19 @@ pub extern "C" fn amux_version() -> *const c_char {
         .as_ptr()
 }
 
+/// Why `name` cannot name an agent, as a JSON string, or JSON null when it
+/// can: the rule every host holds a create or a rename to, so a field can
+/// say so while it is typed. The caller frees the answer.
+///
+/// # Safety
+/// `name` is a NUL-terminated string that lives for the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_agent_name_problem(name: *const c_char) -> *mut c_char {
+    // SAFETY: the caller's contract above.
+    let name = unsafe { text(name) }.unwrap_or_default();
+    owned(&ui_view::agent_name_problem(name))
+}
+
 /// Starts the installation from a `StartConfig` as JSON. Blocks until every
 /// profile's store is open; `wake` is called with 0 whenever the profile
 /// list moves. Null on failure, with the reason in `error` when it is not

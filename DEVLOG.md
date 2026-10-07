@@ -1,3 +1,36 @@
+2026-10-07 — **An agent's name is a word a branch can be.**
+A worktree's branch is the agent's name as given, so a name git refuses,
+such as "fix login", failed the create. Rather than translate names into
+branches, a name is now lowercase letters, digits and hyphens, starting
+with a letter or digit, at most 64 characters (`wire::agent_name_problem`),
+so the same word is the branch, the worktree's folder and the handle on a
+command line. The daemon refuses any other name on a create and on a
+rename with `INVALID_ARGUMENT`; the spawn tool's schema states the rule; the
+terminal's name fields and the phone's rename card say why a typed name
+will not do before it is sent, and will not save it.
+
+2026-10-07 — **Home's middle section is "Live".**
+It holds starting, working and idle agents, so "Running" over a list of
+idle agents, with the phone's subtitle counting "0 running", read wrong.
+The shared view's section is now `Live` on both clients, and the phone's
+subtitle counts "working", as the terminal's top line does.
+
+2026-10-07 — **A trimmed command's output says so.**
+A long Codex command keeps only its newest output, and its row then began
+partway through with nothing to say so. The view's command row now carries
+`output_trimmed`, set when the interpreter dropped the output's start, and
+both clients draw a faint "earlier output trimmed" line above what is left.
+
+2026-10-07 — **A tool server's form is read once, in the shared view.**
+The terminal and the phone each parsed the form's JSON schema, the phone
+with a tokenizer of its own to keep the schema's order, and they had
+drifted: the phone read a field of several picks as text and sent a string
+where the server asked for an array. The view's form body now carries the
+fields, in the schema's order, each with its kind (text, number, toggle,
+one choice or several picks), title, description, whether it is required
+and what it starts holding. Both clients draw from those; the phone draws
+several picks as a switch per option and answers with an array.
+
 2026-10-07 — **The phone reads a host moving at once.**
 Spacing the phone's fleet reads 250 ms apart also delayed the read that
 shows a host has come current, so a phone reconnecting through the relay

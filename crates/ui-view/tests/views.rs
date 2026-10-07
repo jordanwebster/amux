@@ -435,8 +435,8 @@ fn the_fleet_places_families_by_their_loudest_member_newest_first() {
         vec![
             (NeedsYou, "parent".into(), 0),
             (NeedsYou, "asker".into(), 0),
-            (Running, "quiet".into(), 0),
-            (Running, "busy".into(), 0),
+            (Live, "quiet".into(), 0),
+            (Live, "busy".into(), 0),
             (Exited, "gone".into(), 0),
         ]
     );
@@ -2060,4 +2060,120 @@ fn prompts_on_their_way_follow_the_sending_rules() {
             reason: "host_unreachable".into(),
         }]
     );
+}
+
+/// A tool server's form reads once, here, for every client: its fields in
+/// the order the schema writes them (not sorted), each kind, the required
+/// ones, and what each holds before it is touched.
+#[test]
+fn a_form_reads_its_fields_in_the_schemas_order() {
+    use ui_view::{FormFieldKind, form_fields};
+    let fields = form_fields(
+        br#"{"type":"object","properties":{
+            "title":{"type":"string","title":"Title","description":"One line"},
+            "labels":{"type":"array","items":{"enum":["bug","ios"]}},
+            "team":{"enum":["core","apps"]},
+            "urgent":{"type":"boolean"},
+            "estimate":{"type":"integer","default":3},
+            "ratio":{"type":"number"}
+        },"required":["title"]}"#,
+    );
+    let read: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            (
+                field.name.as_str(),
+                field.title.as_str(),
+                field.required,
+                field.kind.clone(),
+                field.initial.as_str(),
+            )
+        })
+        .collect();
+    let options = |all: &[&str]| all.iter().map(|o| (*o).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        read,
+        vec![
+            ("title", "Title", true, FormFieldKind::Text, ""),
+            (
+                "labels",
+                "labels",
+                false,
+                FormFieldKind::Many {
+                    options: options(&["bug", "ios"])
+                },
+                ""
+            ),
+            (
+                "team",
+                "team",
+                false,
+                FormFieldKind::Choice {
+                    options: options(&["core", "apps"])
+                },
+                "core"
+            ),
+            ("urgent", "urgent", false, FormFieldKind::Toggle, "false"),
+            (
+                "estimate",
+                "estimate",
+                false,
+                FormFieldKind::Number { integer: true },
+                "3"
+            ),
+            (
+                "ratio",
+                "ratio",
+                false,
+                FormFieldKind::Number { integer: false },
+                ""
+            ),
+        ]
+    );
+    assert_eq!(fields[0].description, "One line");
+    assert!(form_fields(b"not json").is_empty());
+}
+
+/// A Codex command whose output lost its start to the bound says so on its
+/// row, so every client can say the first lines shown are not the first.
+#[test]
+fn a_codex_command_that_dropped_output_is_marked_trimmed() {
+    let command = |order: u64, dropped: u64| Item {
+        key: format!("k{order}"),
+        order,
+        revision: 1,
+        text: "test b ... ok\n".into(),
+        kind: wire::kind_tag(Kind::Codex).into(),
+        body: wire::CodexItem {
+            kind: Some(wire::codex_item::Kind::Work(wire::Work {
+                of: Some(wire::work::Of::Command(wire::CommandWork {
+                    command: "cargo test".into(),
+                    output_dropped_bytes: dropped,
+                    ..Default::default()
+                })),
+                state: ToolState::Succeeded as i32,
+                class: ToolClass::Consequential as i32,
+                ..Default::default()
+            })),
+        }
+        .encode_to_vec(),
+        at_ms: order as i64 * 1000,
+        ..Item::default()
+    };
+    let mut state = SessionState::new(agent(Kind::Codex), CAP);
+    state.update(snapshot(Kind::Codex, Phase::Idle, vec![], vec![]));
+    state.update(event(session_event::Of::Item(command(1, 4096))));
+    state.update(event(session_event::Of::Item(command(2, 0))));
+    state.update(caught_up());
+    let opts = ChatOptions {
+        tools: ToolRows::ShowAll,
+    };
+    let trimmed: Vec<bool> = all_rows(&state, &opts)
+        .into_iter()
+        .filter_map(|row| match row.kind {
+            RowKind::Command { output_trimmed, .. } => Some(output_trimmed),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(trimmed, vec![true, false]);
 }

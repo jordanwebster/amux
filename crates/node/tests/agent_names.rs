@@ -1,5 +1,5 @@
-//! Every agent has a name: the one it was given, else a word pair the
-//! daemon chose that no other agent on the host has and no branch in the
+//! Every agent has a name: the one it was given, which must be lowercase
+//! letters, digits and hyphens, else a word pair the daemon chose that no other agent on the host has and no branch in the
 //! folder's repository has, so a branch can later be named after it.
 
 mod support;
@@ -79,8 +79,31 @@ async fn a_given_name_is_kept_and_a_missing_one_is_a_word_pair() {
 
     let emptied = runtime.rename(id_of(&assigned), "").await;
     assert!(
-        matches!(emptied, Err(node::RegistryError::EmptyName)),
+        matches!(emptied, Err(node::RegistryError::BadName(_))),
         "a name cannot be taken away: {emptied:?}"
+    );
+
+    // A name is one word a branch, a folder and a command line all take as
+    // it is: "fix login" is refused, by a create and by a rename alike, and
+    // the refused create makes no agent.
+    for bad in ["fix login", "Fix-login", "-fix", "fix/login", "fix.login"] {
+        let request = create(&install.work, bad, None);
+        let id = uuid::Uuid::from_slice(&request.agent_id).unwrap();
+        let created = runtime.spawn(request, None).await;
+        assert!(
+            matches!(created, Err(node::RegistryError::BadName(_))),
+            "{bad:?} cannot name a new agent: {created:?}"
+        );
+        assert!(runtime.agent(id).await.is_err(), "{bad:?} made no agent");
+        let renamed = runtime.rename(id_of(&assigned), bad).await;
+        assert!(
+            matches!(renamed, Err(node::RegistryError::BadName(_))),
+            "{bad:?} cannot rename an agent: {renamed:?}"
+        );
+    }
+    assert_eq!(
+        runtime.agent(id_of(&assigned)).await.unwrap().name,
+        assigned.name
     );
 
     kill_all(&runtime).await;

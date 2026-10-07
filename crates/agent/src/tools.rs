@@ -778,7 +778,7 @@ fn definitions() -> Value {
         { "name": "spawn", "description": SPAWN, "inputSchema": object(json!({
             "kind": { "type": "string", "enum": ["claude_pty", "claude_sdk", "codex"] },
             "prompt": { "type": "string" },
-            "name": { "type": "string" },
+            "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": wire::AGENT_NAME_MOST, "description": "Lowercase letters, digits and hyphens; one is chosen when omitted." },
             "cwd": { "type": "string", "description": "A path on the host the child runs on." },
             "host": { "type": "string", "description": "A trusted host's name; this host when omitted." },
           }), &["kind", "prompt"]) },

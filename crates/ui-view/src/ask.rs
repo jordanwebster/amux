@@ -88,7 +88,8 @@ pub enum AskBody {
     Form {
         server: String,
         message: String,
-        schema_json: String,
+        /// The schema's fields, in the order the server wrote them.
+        fields: Vec<FormField>,
     },
     Link {
         server: String,
@@ -497,8 +498,148 @@ fn form_body(form: &wire::FormAsk) -> AskBody {
     AskBody::Form {
         server: form.server.clone(),
         message: form.message.clone(),
-        schema_json: String::from_utf8_lossy(&form.schema_json).into_owned(),
+        fields: form_fields(&form.schema_json),
     }
+}
+
+/// One field of a tool server's form, read from its JSON schema.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct FormField {
+    /// The property's name, which the answer's content is keyed by.
+    pub name: String,
+    /// The schema's title, else the name.
+    pub title: String,
+    pub description: String,
+    pub required: bool,
+    pub kind: FormFieldKind,
+    /// What the field holds before it is touched: the schema's default as
+    /// text, else "false" for a toggle and the first option for a choice.
+    pub initial: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub enum FormFieldKind {
+    Text,
+    Number {
+        integer: bool,
+    },
+    /// Yes or no.
+    Toggle,
+    /// One of the options.
+    Choice {
+        options: Vec<String>,
+    },
+    /// Any of the options: an array of enum values.
+    Many {
+        options: Vec<String>,
+    },
+}
+
+/// A JSON object's members in the order written. A parsed `Value` keeps
+/// its keys sorted, and a form asks its fields in its schema's order.
+struct Members(Vec<(String, Value)>);
+
+impl<'de> Deserialize<'de> for Members {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Members, D::Error> {
+        struct Visit;
+        impl<'de> serde::de::Visitor<'de> for Visit {
+            type Value = Members;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Members, A::Error> {
+                let mut members = Vec::new();
+                while let Some(member) = map.next_entry()? {
+                    members.push(member);
+                }
+                Ok(Members(members))
+            }
+        }
+        deserializer.deserialize_map(Visit)
+    }
+}
+
+/// A form schema's fields, in the schema's own order; none when it is not
+/// an object schema with properties.
+pub fn form_fields(schema_json: &[u8]) -> Vec<FormField> {
+    #[derive(Deserialize)]
+    struct Schema {
+        #[serde(default)]
+        properties: Option<Members>,
+        #[serde(default)]
+        required: Vec<String>,
+    }
+    let Ok(Schema {
+        properties: Some(Members(properties)),
+        required,
+    }) = serde_json::from_slice::<Schema>(schema_json)
+    else {
+        return Vec::new();
+    };
+    let names = |options: &Vec<Value>| {
+        options
+            .iter()
+            .map(|option| match option {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect::<Vec<_>>()
+    };
+    properties
+        .iter()
+        .map(|(name, property)| {
+            let many = property
+                .get("items")
+                .and_then(|items| items.get("enum"))
+                .and_then(Value::as_array)
+                .filter(|_| property.get("type").and_then(Value::as_str) == Some("array"));
+            let kind = if let Some(options) = many {
+                FormFieldKind::Many {
+                    options: names(options),
+                }
+            } else if let Some(options) = property.get("enum").and_then(Value::as_array) {
+                FormFieldKind::Choice {
+                    options: names(options),
+                }
+            } else {
+                match property.get("type").and_then(Value::as_str) {
+                    Some("boolean") => FormFieldKind::Toggle,
+                    Some("number") => FormFieldKind::Number { integer: false },
+                    Some("integer") => FormFieldKind::Number { integer: true },
+                    _ => FormFieldKind::Text,
+                }
+            };
+            let initial = match (property.get("default"), &kind) {
+                (Some(Value::String(s)), _) => s.clone(),
+                (Some(Value::Bool(b)), _) => b.to_string(),
+                (Some(Value::Number(n)), _) => n.to_string(),
+                (_, FormFieldKind::Toggle) => "false".into(),
+                (_, FormFieldKind::Choice { options }) => {
+                    options.first().cloned().unwrap_or_default()
+                }
+                _ => String::new(),
+            };
+            FormField {
+                title: property
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or(name)
+                    .to_owned(),
+                description: property
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                required: required.contains(name),
+                name: name.clone(),
+                kind,
+                initial,
+            }
+        })
+        .collect()
 }
 
 fn link_body(link: &wire::LinkAsk) -> AskBody {

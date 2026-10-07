@@ -946,7 +946,7 @@ final class ChatModelTests: XCTestCase {
         func card(_ key: String) -> AskCard {
             AskCard(
                 kind: .claudeSdk, key: key, itemKey: "", position: 1, count: 1,
-                body: .form(server: "linear", message: "File an issue", schemaJson: "{}"),
+                body: .form(server: "linear", message: "File an issue", fields: []),
                 choices: [], questionNote: false, questionSkip: false, questionReply: false,
                 stopsTurn: true, state: .open)
         }

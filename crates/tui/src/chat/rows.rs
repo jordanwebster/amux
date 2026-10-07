@@ -196,6 +196,19 @@ fn hung(text: &str, width: usize, style: Style, limit: usize, theme: Theme) -> V
     hang(detail(text, width.saturating_sub(2), style, limit, theme))
 }
 
+/// Above a long command's output whose start was dropped to keep it
+/// bounded: the lines below are not the command's first.
+fn trimmed_line(width: usize, theme: Theme) -> Line<'static> {
+    let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
+    push(
+        &mut line,
+        "··· earlier output trimmed",
+        theme.faint(),
+        width.saturating_sub(2),
+    );
+    line
+}
+
 /// Puts the hook before the first of these indented lines and aligns the
 /// rest under its text.
 fn hang(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
@@ -617,6 +630,7 @@ fn body(
             exit_code,
             output_head,
             more_lines,
+            output_trimmed,
             duration_ms,
             ..
         } => {
@@ -644,13 +658,14 @@ fn body(
             } else {
                 theme.muted()
             };
-            let mut out: Vec<Line<'static>> = output_head
-                .iter()
-                .map(|out| {
+            let mut out: Vec<Line<'static>> = output_trimmed
+                .then(|| trimmed_line(width, theme))
+                .into_iter()
+                .chain(output_head.iter().map(|out| {
                     let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
                     push(&mut line, out, style, width.saturating_sub(2));
                     line
-                })
+                }))
                 .collect();
             if *more_lines > 0 {
                 let mut line = Line::from(Span::raw(" ".repeat(INDENT)));

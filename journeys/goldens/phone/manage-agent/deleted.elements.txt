@@ -1,7 +1,7 @@
 shell |  | agents | 0,62,402,778
 home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
-home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
+home.subtitle |  | Nothing needs you · 0 working | 60,105,209,16
 home.newAgent | New Agent |  | 345,74,44,44
 home.row.<decision-pty> | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,70
 home.row.<decision-pty>.age.volatile | <volatile>
@@ -33,9 +33,9 @@ tab.you | You | not selected | 253,777,99,57
  | Hosts |  | 151,777,99,57
  | You |  | 253,777,99,57
  | Agents, switch account |  | 60,65,104,46
- | Nothing needs you · 0 running |  | 60,105,209,16
+ | Nothing needs you · 0 working |  | 60,105,209,16
  | New Agent |  | 345,74,44,44
- | RUNNING |  | 20,137,49,14
+ | LIVE |  | 20,137,28,14
  | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,159,366,70
  | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,230,366,70
  | keeper, Idle, The recovery state is safely stored., desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,300,366,91

@@ -92,7 +92,7 @@
   row    7 ask:1 Ask(Form { server: "<REDACTED_IDENTIFIER>", message: "Confirm the word BLUE.", fields: [], resolution: Open }) attention
   ask 1 -> "ask:1" 1/1 Open
     choices Submit*, Decline
-    body Form { server: "<REDACTED_IDENTIFIER>", message: "Confirm the word BLUE.", schema_json: "{\"properties\":{\"confirmed\":{\"type\":\"string\"}},\"required\":[\"confirmed\"],\"type\":\"object\"}" }
+    body Form { server: "<REDACTED_IDENTIFIER>", message: "Confirm the word BLUE.", fields: [FormField { name: "confirmed", title: "confirmed", description: "", required: true, kind: Text, initial: "" }] }
   composer Send activity=None queue=[] underway=[] refused=[]
 ## 107 recorded 106: input stdin-6
   row    7 ask:1 Ask(Form { server: "<REDACTED_IDENTIFIER>", message: "Confirm the word BLUE.", fields: ["confirmed"], resolution: Answered })

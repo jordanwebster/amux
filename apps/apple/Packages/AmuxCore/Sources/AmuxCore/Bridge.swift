@@ -9,4 +9,10 @@ extension Bridge {
         guard let version = amux_version() else { return "" }
         return String(cString: version)
     }
+
+    /// Why `name` cannot name an agent, or nil when it can: the rule every
+    /// host holds a create or a rename to.
+    public static func agentNameProblem(_ name: String) -> String? {
+        name.withCString { Bridge.read(String.self, amux_agent_name_problem($0)) }
+    }
 }

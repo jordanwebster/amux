@@ -1703,6 +1703,29 @@ fn call_row(kind: ui_view::RowKind) -> ui_view::Row {
     }
 }
 
+/// A long command whose output lost its start says so above what is left,
+/// so the first lines shown are not taken for the command's first.
+#[test]
+fn a_trimmed_commands_output_says_its_start_was_dropped() {
+    use ui_view::{RowKind, ToolStateView};
+    let command = |output_trimmed| {
+        call_row(RowKind::Command {
+            command: "cargo test".into(),
+            state: ToolStateView::Running,
+            exit_code: None,
+            output_head: vec!["test b ... ok".into()],
+            more_lines: 0,
+            output_trimmed,
+            output_tail: vec!["test b ... ok".into()],
+            duration_ms: None,
+        })
+    };
+    let screen = row_text(&command(true));
+    let notice = screen.find("earlier output trimmed").expect(&screen);
+    assert!(notice < screen.find("test b ... ok").unwrap(), "{screen}");
+    assert!(!row_text(&command(false)).contains("trimmed"));
+}
+
 #[test]
 fn a_call_row_leads_with_what_happened_to_it() {
     use ui_view::{Decision, DecisionView, RowKind, ToolStateView};
@@ -1713,6 +1736,7 @@ fn a_call_row_leads_with_what_happened_to_it() {
             exit_code: None,
             output_head: vec![],
             more_lines: 0,
+            output_trimmed: false,
             output_tail: vec![],
             duration_ms: None,
         })
@@ -2162,14 +2186,18 @@ fn q_and_question_mark_reach_an_open_fleet_overlay_first() {
         view.key(&fleet, key(KeyCode::Esc));
     }
 
-    // Rename types both, even into an empty field.
+    // Rename types both, even into an empty field. "q?" is no name, so
+    // Enter keeps the field and says why; without the "?" it saves.
     view.key(&fleet, key(KeyCode::Char('r')));
     view.key(&fleet, ctrl('u'));
     assert_eq!(view.key(&fleet, q), vec![]);
     assert_eq!(view.key(&fleet, help), vec![]);
+    assert_eq!(view.key(&fleet, key(KeyCode::Enter)), vec![]);
+    assert!(fleet_screen(&mut view, &fleet).contains("lowercase letters, digits and hyphens"));
+    view.key(&fleet, key(KeyCode::Backspace));
     let effects = view.key(&fleet, key(KeyCode::Enter));
     assert!(
-        matches!(effects.as_slice(), [FleetEffect::Rename { name, .. }] if name == "q?"),
+        matches!(effects.as_slice(), [FleetEffect::Rename { name, .. }] if name == "q"),
         "{effects:?}"
     );
 }
@@ -2334,7 +2362,7 @@ fn home_leads_with_what_needs_you_and_folds_the_exited() {
         "{screen}"
     );
     assert!(
-        row_of(&screen, "Needs you 1") < row_of(&screen, "Running 2"),
+        row_of(&screen, "Needs you 1") < row_of(&screen, "Live 2"),
         "{screen}"
     );
     assert!(screen.contains("Exited 1"), "{screen}");

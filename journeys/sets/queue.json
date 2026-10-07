@@ -1,7 +1,7 @@
 {
   "description": "An agent part way through a long turn, with its task list on the row above the composer and prompts queued behind it: two of yours and one queued by another agent (relay keepalive, through amux's send tool). Type and send while it works to queue more; ↑ in the empty composer reaches the queue (send now, withdraw). A memory watch runs in the background beside it. ctrl+x ends the turn and the queue drains; or release the running command and the watch with `just tui-set queue --door '{\"OpenGate\": {\"name\": \"flood-done\"}}'`.",
   "client": "laptop",
-  "open": "flood bench",
+  "open": "flood-bench",
   "topology": {
     "hosts": [
       {
@@ -10,7 +10,7 @@
     ],
     "agents": [
       {
-        "name": "flood bench",
+        "name": "flood-bench",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -220,7 +220,7 @@
         }
       },
       {
-        "name": "relay keepalive",
+        "name": "relay-keepalive",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -244,7 +244,7 @@
                 "name": "mcp__amux__send",
                 "class": "consequential",
                 "input": {
-                  "to": "flood bench",
+                  "to": "flood-bench",
                   "text": "The relay keepalive is merged; rebase onto main before the next run."
                 }
               }
@@ -264,11 +264,11 @@
   },
   "timeline": [
     {
-      "settle": "flood bench"
+      "settle": "flood-bench"
     },
     {
       "send": {
-        "agent": "flood bench",
+        "agent": "flood-bench",
         "text": "Cap it at 64 MiB and measure the phone before and after under a screenshot flood."
       }
     },
@@ -277,13 +277,13 @@
     },
     {
       "send": {
-        "agent": "flood bench",
+        "agent": "flood-bench",
         "text": "Also record the peak for the 300-screenshot run."
       }
     },
     {
       "send": {
-        "agent": "relay keepalive",
+        "agent": "relay-keepalive",
         "text": "Tell flood bench the keepalive is merged."
       }
     },
@@ -292,7 +292,7 @@
     },
     {
       "send": {
-        "agent": "flood bench",
+        "agent": "flood-bench",
         "text": "Then write the numbers into notes/flood.md."
       }
     },

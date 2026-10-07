@@ -359,7 +359,7 @@ private struct AskBodyView: View {
     @State private var autoAccept = false
     @State private var forSession = false
     @State private var opened = false
-    @State private var fields: [FormField]?
+    @State private var fields: [FormEntry]?
 
     init(
         card: AskCard, preset: AskPreset?, questions: QuestionKeeping, form: FormKeeping,
@@ -494,8 +494,8 @@ private struct AskBodyView: View {
             planChoices
         case .access:
             accessChoices
-        case .form(_, _, let schema):
-            formChoices(schema)
+        case .form(_, _, let asked):
+            formChoices(asked)
         case .link(_, _, let url):
             linkChoices(url)
         case .unanswerable:
@@ -631,18 +631,18 @@ private struct AskBodyView: View {
 
     /// Native fields from the tool server's schema; required ones gate Submit.
     @ViewBuilder
-    private func formChoices(_ schema: String) -> some View {
-        let current = fields ?? FormField.parse(schema, kept: form.kept)
+    private func formChoices(_ asked: [FormField]) -> some View {
+        let current = fields ?? FormEntry.entries(asked, kept: form.kept)
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(current.enumerated()), id: \.offset) { index, field in
-                FormFieldView(field: field) { value in
+                FormFieldView(entry: field) { value in
                     // From the form as it is now: a control can hold on to
                     // this closure from an earlier drawing (a menu's
                     // choices), and the copy drawn then lacks later answers.
-                    var edited = fields ?? FormField.parse(schema, kept: form.kept)
+                    var edited = fields ?? FormEntry.entries(asked, kept: form.kept)
                     edited[index].value = value
                     fields = edited
-                    form.keep(FormField.values(edited))
+                    form.keep(FormEntry.values(edited))
                 }
             }
             ButtonPair {
@@ -651,7 +651,7 @@ private struct AskBodyView: View {
                         choiceButton(
                             String(localized: "Submit"), kind: .primary, id: "ask.submit",
                             enabled: current.allSatisfy(\.valid)
-                        ) { act(.submit(index, content: FormField.content(current))) }
+                        ) { act(.submit(index, content: FormEntry.content(current))) }
                     } else {
                         choiceButton(
                             ChatWords.choice(choice), kind: .outline, id: "ask.choice.\(index)"
@@ -817,76 +817,37 @@ struct DiffPreview: View {
     }
 }
 
-/// One field of a tool server's form, from its JSON schema.
-struct FormField: Equatable {
-    enum Kind: Equatable {
-        case text
-        case number(integer: Bool)
-        case toggle
-        case choice([String])
-    }
-
-    let name: String
-    let title: String
-    let required: Bool
-    let kind: Kind
-    /// Text, number and choice values; "true" or "false" for a toggle.
+/// One field of a tool server's form, as the shared view reads it from the
+/// schema, with what it holds now.
+struct FormEntry: Equatable {
+    let field: FormField
+    /// Text, number and choice values; "true" or "false" for a toggle; for
+    /// several picks, the picked options a line each.
     var value: String
 
-    static func parse(_ schema: String) -> [FormField] {
-        guard let object = try? JSONSerialization.jsonObject(with: Data(schema.utf8)) as? [String: Any],
-              let properties = object["properties"] as? [String: Any]
-        else { return [] }
-        let required = Set(object["required"] as? [String] ?? [])
-        // In the order the server wrote them, as every client asks them; a
-        // name the text could not be read for goes last.
-        let written = Self.written(schema).filter { properties[$0] != nil }
-        let names = written + properties.keys.filter { !written.contains($0) }.sorted()
-        return names.compactMap { name in
-            guard let property = properties[name] as? [String: Any] else { return nil }
-            let kind: Kind
-            if let options = property["enum"] as? [Any] {
-                kind = .choice(options.map { "\($0)" })
-            } else {
-                switch property["type"] as? String {
-                case "boolean": kind = .toggle
-                case "number": kind = .number(integer: false)
-                case "integer": kind = .number(integer: true)
-                default: kind = .text
-                }
-            }
-            var value = ""
-            switch (property["default"], kind) {
-            case (let text as String, _): value = text
-            case (let flag as Bool, _): value = flag ? "true" : "false"
-            case (let number as NSNumber, _): value = number.stringValue
-            case (_, .toggle): value = "false"
-            case (_, .choice(let options)): value = options.first ?? ""
-            default: break
-            }
-            return FormField(
-                name: name, title: property["title"] as? String ?? name,
-                required: required.contains(name), kind: kind, value: value)
-        }
-    }
+    var name: String { field.name }
+    var title: String { field.title }
+    var required: Bool { field.required }
+    var kind: FormFieldKind { field.kind }
 
-    /// The schema's fields holding the values kept from an earlier drawing.
-    static func parse(_ schema: String, kept: [String: String]?) -> [FormField] {
-        var fields = parse(schema)
-        for index in fields.indices {
-            if let value = kept?[fields[index].name] { fields[index].value = value }
-        }
-        return fields
+    /// The form's fields, each holding what was kept from an earlier drawing,
+    /// else what it starts with.
+    static func entries(_ fields: [FormField], kept: [String: String]? = nil) -> [FormEntry] {
+        fields.map { FormEntry(field: $0, value: kept?[$0.name] ?? $0.initial) }
     }
 
     /// The values by field name, as a form keeps them.
-    static func values(_ fields: [FormField]) -> [String: String] {
-        Dictionary(fields.map { ($0.name, $0.value) }, uniquingKeysWith: { _, last in last })
+    static func values(_ entries: [FormEntry]) -> [String: String] {
+        Dictionary(entries.map { ($0.name, $0.value) }, uniquingKeysWith: { _, last in last })
     }
+
+    /// The picked options of a field that takes several.
+    var picked: [String] { value.split(separator: "\n").map(String.init) }
 
     var json: Any? {
         switch kind {
         case .toggle: return value == "true"
+        case .many: return value.isEmpty ? nil : picked
         case _ where value.isEmpty: return nil
         case .number(integer: true): return Int(value)
         case .number(integer: false): return Double(value)
@@ -903,66 +864,9 @@ struct FormField: Equatable {
         }
     }
 
-    private enum Token: Equatable {
-        case string(String)
-        case mark(Character)
-    }
-
-    /// The names of the schema's top-level properties in the order its
-    /// text writes them, which a decoded dictionary no longer has.
-    static func written(_ schema: String) -> [String] {
-        let tokens = tokens(schema)
-        var names: [String] = []
-        var depth = 0
-        var inside = false
-        for (index, token) in tokens.enumerated() {
-            switch token {
-            case .mark("{"), .mark("["):
-                if depth == 1, token == .mark("{"), index >= 2,
-                   tokens[index - 1] == .mark(":"), tokens[index - 2] == .string("properties") {
-                    inside = true
-                }
-                depth += 1
-            case .mark("}"), .mark("]"):
-                depth -= 1
-                if depth < 2 { inside = false }
-            case .string(let name):
-                if inside, depth == 2, index > 0, [.mark("{"), .mark(",")].contains(tokens[index - 1]),
-                   index + 1 < tokens.count, tokens[index + 1] == .mark(":") {
-                    names.append(name)
-                }
-            default:
-                break
-            }
-        }
-        return names
-    }
-
-    /// Strings and structural marks; everything else in JSON is skipped.
-    private static func tokens(_ schema: String) -> [Token] {
-        var tokens: [Token] = []
-        var characters = schema.makeIterator()
-        while let character = characters.next() {
-            if character == "\"" {
-                var word = ""
-                while let next = characters.next(), next != "\"" {
-                    if next == "\\", let escaped = characters.next() {
-                        word.append(escaped)
-                    } else {
-                        word.append(next)
-                    }
-                }
-                tokens.append(.string(word))
-            } else if "{}[]:,".contains(character) {
-                tokens.append(.mark(character))
-            }
-        }
-        return tokens
-    }
-
-    static func content(_ fields: [FormField]) -> String {
+    static func content(_ entries: [FormEntry]) -> String {
         var object: [String: Any] = [:]
-        for field in fields { if let json = field.json { object[field.name] = json } }
+        for entry in entries { if let json = entry.json { object[entry.name] = json } }
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
             ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
@@ -971,40 +875,65 @@ struct FormField: Equatable {
 
 private struct FormFieldView: View {
     @Environment(\.design) private var design
-    let field: FormField
+    let entry: FormEntry
     let set: (String) -> Void
 
     private var on: Binding<Bool> {
-        Binding(get: { field.value == "true" }, set: { set($0 ? "true" : "false") })
+        Binding(get: { entry.value == "true" }, set: { set($0 ? "true" : "false") })
+    }
+
+    /// One option of a field that takes several, on or off.
+    private func picks(_ option: String, of options: [String]) -> Binding<Bool> {
+        Binding(
+            get: { entry.picked.contains(option) },
+            set: { on in
+                let picked = options.filter { $0 == option ? on : entry.picked.contains($0) }
+                set(picked.joined(separator: "\n"))
+            })
     }
 
     var body: some View {
-        switch field.kind {
+        switch entry.kind {
         case .toggle:
             Toggle(isOn: on) {
-                Text(field.title).designFont(.body, design)
+                Text(entry.title).designFont(.body, design)
             }
             .tint(design.ink.color)
-            .oneSwitch(field.title, isOn: on)
-            .identified("ask.field.\(field.name)", value: field.value)
+            .oneSwitch(entry.title, isOn: on)
+            .identified("ask.field.\(entry.name)", value: entry.value)
         case .choice(let options):
             HStack {
-                Text(field.title).designFont(.body, design)
+                Text(entry.title).designFont(.body, design)
                 Spacer()
-                Picker(field.title, selection: Binding(get: { field.value }, set: { set($0) })) {
+                Picker(entry.title, selection: Binding(get: { entry.value }, set: { set($0) })) {
                     ForEach(options, id: \.self) { Text($0).tag($0) }
                 }
                 .pickerStyle(.menu)
                 .tint(design.ink.color)
             }
-            .identified("ask.field.\(field.name)", value: field.value)
-        case .text, .number:
+            .identified("ask.field.\(entry.name)", value: entry.value)
+        case .many(let options):
             VStack(alignment: .leading, spacing: 4) {
-                Text(field.required ? "\(field.title) *" : field.title)
+                Text(entry.required ? "\(entry.title) *" : entry.title)
                     .designFont(.detail, design)
                     .foregroundStyle(design.inkMuted.color)
-                TextField(field.title, text: Binding(get: { field.value }, set: { set($0) }))
-                    .keyboardType(field.kind == .text ? .default : .decimalPad)
+                ForEach(options, id: \.self) { option in
+                    let picked = picks(option, of: options)
+                    Toggle(isOn: picked) {
+                        Text(option).designFont(.body, design)
+                    }
+                    .tint(design.ink.color)
+                    .oneSwitch(option, isOn: picked)
+                }
+            }
+            .identified("ask.field.\(entry.name)", value: entry.value)
+        case .text, .number:
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.required ? "\(entry.title) *" : entry.title)
+                    .designFont(.detail, design)
+                    .foregroundStyle(design.inkMuted.color)
+                TextField(entry.title, text: Binding(get: { entry.value }, set: { set($0) }))
+                    .keyboardType(entry.kind == .text ? .default : .decimalPad)
                     .designFont(.body, design)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -1013,7 +942,7 @@ private struct FormFieldView: View {
                             .fill(design.raised.color)
                             .strokeBorder(design.hairline.color, lineWidth: 1)
                     }
-                    .identified("ask.field.\(field.name)", value: field.value)
+                    .identified("ask.field.\(entry.name)", value: entry.value)
             }
         }
     }

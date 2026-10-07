@@ -5684,6 +5684,8 @@ pub struct CreateAgentRequest {
     pub agent_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", optional, tag = "2")]
     pub host_id: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    /// Lowercase letters, digits and hyphens, starting with a letter or digit
+    /// (wire::agent_name_problem); the host picks a free one when absent.
     #[prost(string, optional, tag = "3")]
     pub name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "4")]
@@ -5705,7 +5707,8 @@ pub struct CreateAgentRequest {
     /// branch named after the agent, made from whatever cwd has checked out.
     /// The agent's host chooses where the worktree lives; the agent's cwd is
     /// the worktree. Fails the call, making no agent, when cwd is not in a
-    /// repository or the branch exists.
+    /// repository or the branch exists. The name is valid as a branch, so it
+    /// is the branch as given.
     #[prost(bool, tag = "12")]
     pub new_worktree: bool,
     #[prost(oneof = "create_agent_request::Config", tags = "10, 11")]
@@ -5735,6 +5738,8 @@ impl ::prost::Name for CreateAgentRequest {
 pub struct RenameAgentRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub agent_id: ::prost::alloc::vec::Vec<u8>,
+    /// As CreateAgentRequest's name. The agent's branch keeps the name it
+    /// was made with.
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
 }

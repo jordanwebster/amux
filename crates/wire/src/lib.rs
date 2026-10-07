@@ -92,6 +92,30 @@ pub fn kind_from_tag(tag: &str) -> Option<Kind> {
     }
 }
 
+/// The longest name an agent can have.
+pub const AGENT_NAME_MOST: usize = 64;
+
+/// Why `name` cannot name an agent, or None when it can. A name is
+/// lowercase letters, digits and hyphens, starting with a letter or digit,
+/// so the same word serves as the agent's branch, its worktree's folder and
+/// its handle on a command line, with nothing to translate.
+pub fn agent_name_problem(name: &str) -> Option<String> {
+    if name.is_empty() {
+        return Some("a name cannot be empty".to_owned());
+    }
+    if name.len() > AGENT_NAME_MOST {
+        return Some(format!("a name is at most {AGENT_NAME_MOST} characters"));
+    }
+    let fits = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    if !name.starts_with(fits) || !name.chars().all(|c| fits(c) || c == '-') {
+        return Some(
+            "a name is lowercase letters, digits and hyphens, starting with a letter or digit"
+                .to_owned(),
+        );
+    }
+    None
+}
+
 pub const DESCRIPTOR_SET: &[u8] = include_bytes!("generated/amux.v1.bin");
 
 #[cfg(test)]

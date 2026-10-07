@@ -10,7 +10,7 @@
       wants to run cargo test -p │                                          │
                                  │ desk     direct                          │
                                  │ laptop   this machine                    │
-  ▾ Running 4 ───────────────────│ studio   offline · not signed in         │───────────────────────────────
+  ▾ Live 4 ──────────────────────│ studio   offline · not signed in         │───────────────────────────────
                                  │                                          │
   › ○ planner ▾ 1  Claude · / · d│ Pair another machine with amux pair      │                          [x]
       The specs are updated.     │ esc close                                │

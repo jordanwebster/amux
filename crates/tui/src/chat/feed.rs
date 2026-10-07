@@ -1322,6 +1322,7 @@ fn step_detail(row: &Row, facts: &RowFacts, width: usize, theme: Theme) -> Vec<L
         RowKind::Command {
             output_head,
             more_lines,
+            output_trimmed,
             output_tail,
             state,
             ..
@@ -1335,6 +1336,12 @@ fn step_detail(row: &Row, facts: &RowFacts, width: usize, theme: Theme) -> Vec<L
             };
             let earlier = (output_head.len() + more_lines).saturating_sub(output_tail.len());
             let mut lines = Vec::new();
+            if *output_trimmed {
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled("… earlier output trimmed", theme.faint()),
+                ]));
+            }
             if earlier > 0 {
                 let s = if earlier == 1 { "" } else { "s" };
                 lines.push(Line::from(vec![

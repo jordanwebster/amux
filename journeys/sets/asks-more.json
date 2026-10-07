@@ -1,7 +1,7 @@
 {
   "description": "The rest of the asks, one agent each: a tool server's form with several fields and one with one field, a sign-in link (from Codex: headless Claude refuses link requests), a Codex access grant, a dialog only Claude's own terminal can answer, and a Codex question with a secret answer.",
   "client": "laptop",
-  "open": "linear triage",
+  "open": "linear-triage",
   "topology": {
     "hosts": [
       {
@@ -11,7 +11,7 @@
     "settle": true,
     "agents": [
       {
-        "name": "linear triage",
+        "name": "linear-triage",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "File the reconnect flake we found today in Linear.",
@@ -107,7 +107,7 @@
         }
       },
       {
-        "name": "branch name",
+        "name": "branch-name",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Open a pull request for the keepalive change.",
@@ -170,7 +170,7 @@
         }
       },
       {
-        "name": "relay errors",
+        "name": "relay-errors",
         "host": "laptop",
         "kind": "codex",
         "prompt": "Check the relay's error rate for the last day.",
@@ -212,7 +212,7 @@
         }
       },
       {
-        "name": "cargo cache",
+        "name": "cargo-cache",
         "host": "laptop",
         "kind": "codex",
         "prompt": "Vendor the dependencies so the build works offline.",
@@ -264,7 +264,7 @@
         }
       },
       {
-        "name": "mcp dialog",
+        "name": "mcp-dialog",
         "host": "laptop",
         "kind": "claude_pty",
         "prompt": "Connect to the new tool server and list what it offers.",
@@ -296,7 +296,7 @@
         }
       },
       {
-        "name": "deploy token",
+        "name": "deploy-token",
         "host": "laptop",
         "kind": "codex",
         "prompt": "Deploy the relay to staging.",

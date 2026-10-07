@@ -13,7 +13,7 @@
       ↳ nimble-wren · Should the old specs be deleted or kept?
 
 
-  ▾ Running 6 ────────────────────────────────────────────────────────────────────────────────────
+  ▾ Live 6 ───────────────────────────────────────────────────────────────────────────────────────
 
     ○ pale-moth  main  Claude · /home/sam/src/amux                                           now
 

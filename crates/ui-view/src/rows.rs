@@ -103,6 +103,9 @@ pub enum RowKind {
         exit_code: Option<i32>,
         output_head: Vec<String>,
         more_lines: usize,
+        /// The output's start was dropped to keep a long command's output
+        /// bounded, so its first lines here are not the command's first.
+        output_trimmed: bool,
         /// The output's last lines, for a step opened to show how it
         /// ended; the lines before them number `more_lines` plus the head,
         /// less these.
@@ -989,6 +992,7 @@ fn claude_tool(
                     exit_code: tool.exit_code,
                     output_head,
                     more_lines,
+                    output_trimmed: false,
                     output_tail: output_tail(&tool.outcome_text),
                     duration_ms,
                 }
@@ -1142,6 +1146,7 @@ fn codex_work(
                     exit_code: command.exit_code,
                     output_head,
                     more_lines,
+                    output_trimmed: command.output_dropped_bytes > 0,
                     output_tail: output_tail(&held.item.text),
                     duration_ms: duration(held, work.ended_at_ms),
                 }

@@ -52,7 +52,7 @@ right: hosts that are away, how many agents are working and how many need you, a
 clears it, and it looks into folded sections too. It matches names, branches, folders and hosts.
 
 Below it, `+ New Agent`, then the agents in sections drawn alike (a fold marker, the label, a count, a faint rule):
-**Needs you**, **Running** (working and idle) and **Exited**, folded until opened. Within a section agents are
+**Needs you**, **Live** (starting, working and idle) and **Exited**, folded until opened. Within a section agents are
 listed by when each last changed state (a turn starting or ending, an ask opening or answered), newest first, so a
 row never moves while an agent streams. The sections, their order and each row's second line come from the shared
 fleet view every client draws. A family sits in its loudest member's section;

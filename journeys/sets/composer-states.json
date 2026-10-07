@@ -1,7 +1,7 @@
 {
   "description": "The composer when something stands in the way. relay soak crashed (type and Enter resumes it, or Enter alone); pricing copy is at its usage limit (sending still works); docs pass's Claude was refused its credential, and upload retries' Codex is refused its sign-in; phone layout and relay panic are for drafts: paste a screenshot or a long log (relay panic's sent message shows a pasted log as text).",
   "client": "laptop",
-  "open": "relay soak",
+  "open": "relay-soak",
   "topology": {
     "hosts": [
       {
@@ -35,7 +35,7 @@
     ],
     "agents": [
       {
-        "name": "relay soak",
+        "name": "relay-soak",
         "host": "laptop",
         "kind": "claude_pty",
         "cwd": "amux",
@@ -86,7 +86,7 @@
         "prompt": "Soak the relay for an hour with 200 idle tunnels."
       },
       {
-        "name": "pricing copy",
+        "name": "pricing-copy",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -143,7 +143,7 @@
         "prompt": "Rewrite the pricing page's FAQ in plain words."
       },
       {
-        "name": "docs pass",
+        "name": "docs-pass",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -180,7 +180,7 @@
         "prompt": "Tidy the pairing section of TERMINAL.md."
       },
       {
-        "name": "upload retries",
+        "name": "upload-retries",
         "host": "laptop",
         "kind": "codex",
         "cwd": "amux",
@@ -210,7 +210,7 @@
         "prompt": "Retry failed uploads with backoff."
       },
       {
-        "name": "phone layout",
+        "name": "phone-layout",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -250,7 +250,7 @@
         "prompt": "Why does the composer clip on small phones?"
       },
       {
-        "name": "relay panic",
+        "name": "relay-panic",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -293,31 +293,31 @@
   },
   "timeline": [
     {
-      "settle": "relay soak"
+      "settle": "relay-soak"
     },
     {
-      "settle": "pricing copy"
+      "settle": "pricing-copy"
     },
     {
-      "settle": "docs pass"
+      "settle": "docs-pass"
     },
     {
-      "settle": "upload retries"
+      "settle": "upload-retries"
     },
     {
-      "settle": "phone layout"
+      "settle": "phone-layout"
     },
     {
-      "settle": "relay panic"
+      "settle": "relay-panic"
     },
     {
       "send": {
-        "agent": "docs pass",
+        "agent": "docs-pass",
         "text": "Then check the links in docs/RELAY.md."
       }
     },
     {
-      "settle": "docs pass"
+      "settle": "docs-pass"
     }
   ]
 }

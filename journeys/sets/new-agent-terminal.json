@@ -97,7 +97,7 @@
     "settle": true,
     "agents": [
       {
-        "name": "release notes",
+        "name": "release-notes",
         "host": "studio",
         "kind": "claude_pty",
         "cwd": "marketing",
@@ -129,7 +129,7 @@
         }
       },
       {
-        "name": "phone layout",
+        "name": "phone-layout",
         "host": "studio",
         "kind": "claude_sdk",
         "cwd": "amuxapp",
@@ -161,7 +161,7 @@
         }
       },
       {
-        "name": "pricing api",
+        "name": "pricing-api",
         "host": "laptop",
         "kind": "codex",
         "cwd": "amuxcloud",
@@ -194,7 +194,7 @@
         }
       },
       {
-        "name": "relay keepalive",
+        "name": "relay-keepalive",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",

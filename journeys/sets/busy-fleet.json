@@ -32,7 +32,7 @@
     ],
     "agents": [
       {
-        "name": "sensor logger",
+        "name": "sensor-logger",
         "host": "garage-pi",
         "kind": "codex",
         "prompt": "Log the garage sensor every minute.",
@@ -72,7 +72,7 @@
         "branch": "licensing-page"
       },
       {
-        "name": "marketing copy",
+        "name": "marketing-copy",
         "host": "desk",
         "kind": "codex",
         "prompt": "Write three taglines.",
@@ -109,7 +109,7 @@
         "branch": "changelog"
       },
       {
-        "name": "docs pass",
+        "name": "docs-pass",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Tighten HOW_IT_WORKS.md.",
@@ -173,7 +173,7 @@
         "branch": "docs-pass"
       },
       {
-        "name": "rearchitect flight",
+        "name": "rearchitect-flight",
         "host": "laptop",
         "kind": "claude_pty",
         "prompt": "Babysit the rearchitect flight to landing.",
@@ -211,7 +211,7 @@
         "branch": "rearchitect"
       },
       {
-        "name": "implementer · task 199",
+        "name": "implementer-task-199",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Re-record the flood ingest-cost baseline in a proven reference state.",
@@ -233,12 +233,12 @@
             }
           ]
         },
-        "parent": "rearchitect flight",
+        "parent": "rearchitect-flight",
         "cwd": "amux",
         "branch": "rearchitect"
       },
       {
-        "name": "closer · audit 3",
+        "name": "closer-audit-3",
         "host": "laptop",
         "kind": "codex",
         "prompt": "Audit milestone 11 against the contract.",
@@ -254,12 +254,12 @@
             "turn_end"
           ]
         },
-        "parent": "rearchitect flight",
+        "parent": "rearchitect-flight",
         "cwd": "amux",
         "branch": "rearchitect"
       },
       {
-        "name": "pricing page",
+        "name": "pricing-page",
         "host": "desk",
         "kind": "codex",
         "prompt": "Rework the pricing page for the new tiers.",
@@ -279,7 +279,7 @@
         "branch": "pricing-tiers"
       },
       {
-        "name": "iOS goldens",
+        "name": "ios-goldens",
         "host": "studio",
         "kind": "claude_pty",
         "prompt": "Re-record the chat goldens after the transparency change.",
@@ -302,7 +302,7 @@
         "branch": "goldens-transparency"
       },
       {
-        "name": "e2e reconnect flake",
+        "name": "e2e-reconnect-flake",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "The reconnect e2e test flakes. Find out why.",
@@ -338,28 +338,28 @@
   },
   "timeline": [
     {
-      "settle": "sensor logger"
+      "settle": "sensor-logger"
     },
     {
       "settle": "licensing"
     },
     {
-      "settle": "marketing copy"
+      "settle": "marketing-copy"
     },
     {
-      "settle": "docs pass"
+      "settle": "docs-pass"
     },
     {
-      "settle": "closer · audit 3"
+      "settle": "closer-audit-3"
     },
     {
-      "settle": "pricing page"
+      "settle": "pricing-page"
     },
     {
       "settle": "changelog"
     },
     {
-      "settle": "e2e reconnect flake"
+      "settle": "e2e-reconnect-flake"
     },
     {
       "wait_ms": 1500
@@ -385,7 +385,7 @@
     },
     {
       "send": {
-        "agent": "docs pass",
+        "agent": "docs-pass",
         "text": "One more pass on the relay section, please."
       }
     },

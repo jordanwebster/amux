@@ -396,7 +396,7 @@ public struct AgentsHome: View {
     static func title(_ kind: SectionKind) -> String {
         switch kind {
         case .needsYou: String(localized: "Needs you")
-        case .running: String(localized: "Running")
+        case .live: String(localized: "Live")
         case .exited: String(localized: "Exited")
         }
     }

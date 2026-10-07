@@ -1,7 +1,7 @@
 {
   "description": "A chat that plays a whole turn live two seconds after launch: thinking, reads, streaming prose, edits and a permission ask mid-turn, so motion and the working line can be judged. Answer the ask to see the turn finish.",
   "client": "laptop",
-  "open": "docs pass",
+  "open": "docs-pass",
   "topology": {
     "hosts": [
       {
@@ -10,7 +10,7 @@
     ],
     "agents": [
       {
-        "name": "docs pass",
+        "name": "docs-pass",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Tighten the wording in HOW_IT_WORKS.md; it reads like a spec.",
@@ -194,7 +194,7 @@
   },
   "timeline": [
     {
-      "settle": "docs pass"
+      "settle": "docs-pass"
     },
     "launch",
     {
@@ -202,7 +202,7 @@
     },
     {
       "send": {
-        "agent": "docs pass",
+        "agent": "docs-pass",
         "text": "Go ahead."
       }
     }

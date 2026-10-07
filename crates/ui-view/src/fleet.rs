@@ -51,11 +51,12 @@ pub struct FleetSection {
     pub rows: Vec<FleetRow>,
 }
 
-/// Where a family sits: by its loudest member.
+/// Where a family sits: by its loudest member. Live holds the starting,
+/// working and idle: alive, whether or not busy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 pub enum SectionKind {
     NeedsYou,
-    Running,
+    Live,
     Exited,
 }
 
@@ -344,7 +345,7 @@ fn section_of(attention: Attention) -> SectionKind {
     match attention {
         Attention::NeedsYou => SectionKind::NeedsYou,
         Attention::Exited => SectionKind::Exited,
-        Attention::Idle | Attention::Starting | Attention::Working => SectionKind::Running,
+        Attention::Idle | Attention::Starting | Attention::Working => SectionKind::Live,
     }
 }
 
@@ -411,7 +412,7 @@ pub fn fleet_view(
     });
     let sections = [
         SectionKind::NeedsYou,
-        SectionKind::Running,
+        SectionKind::Live,
         SectionKind::Exited,
     ]
     .into_iter()

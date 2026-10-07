@@ -1,7 +1,7 @@
 {
   "description": "One agent waiting on each kind of ask, across terminal Claude, headless Claude and Codex: permissions for commands and edits (some long), questions (several, with previews, one alone, from Codex), a plan, a tool server's form and link, and a dialog only Claude's own terminal can answer. A tool server's link comes from Codex: headless Claude refuses link requests.",
   "client": "laptop",
-  "open": "flaky e2e",
+  "open": "flaky-e2e",
   "topology": {
     "hosts": [
       {
@@ -20,7 +20,7 @@
     "settle": true,
     "agents": [
       {
-        "name": "flaky e2e",
+        "name": "flaky-e2e",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "The reconnect e2e test flakes about one run in ten. Can you find out why and fix it?",
@@ -117,7 +117,7 @@
         }
       },
       {
-        "name": "pricing copy",
+        "name": "pricing-copy",
         "host": "desk",
         "kind": "codex",
         "prompt": "Change the pricing page to say $7.99 a month and mention the free tier.",
@@ -175,7 +175,7 @@
         }
       },
       {
-        "name": "release notes",
+        "name": "release-notes",
         "host": "laptop",
         "kind": "codex",
         "prompt": "Draft release notes from the commits since the last tag.",
@@ -210,7 +210,7 @@
         }
       },
       {
-        "name": "flood bench",
+        "name": "flood-bench",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Measure the phone's memory under a screenshot flood, before and after the cap.",
@@ -252,7 +252,7 @@
         }
       },
       {
-        "name": "reconnect backoff",
+        "name": "reconnect-backoff",
         "host": "laptop",
         "kind": "codex",
         "prompt": "Make the reconnect backoff jittered and capped.",
@@ -302,7 +302,7 @@
         }
       },
       {
-        "name": "attach redesign",
+        "name": "attach-redesign",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Redesign what happens when you leave an attached terminal.",
@@ -415,7 +415,7 @@
         }
       },
       {
-        "name": "settings screen",
+        "name": "settings-screen",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Add a settings screen to the terminal client for the relay and the theme.",
@@ -510,7 +510,7 @@
         }
       },
       {
-        "name": "release notes 0.7.2",
+        "name": "release-notes-0-7-2",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Write the release notes for 0.7.2.",
@@ -573,7 +573,7 @@
         }
       },
       {
-        "name": "retry budget",
+        "name": "retry-budget",
         "host": "laptop",
         "kind": "codex",
         "prompt": "Add retries to the blob uploader.",
@@ -655,7 +655,7 @@
         }
       },
       {
-        "name": "journal compaction",
+        "name": "journal-compaction",
         "host": "laptop",
         "kind": "claude_pty",
         "prompt": "Plan how we'd compact journal segments older than a week.",
@@ -704,7 +704,7 @@
         }
       },
       {
-        "name": "linear triage",
+        "name": "linear-triage",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "File the three bugs we found today in Linear.",
@@ -760,7 +760,7 @@
         }
       },
       {
-        "name": "cloud sign-in",
+        "name": "cloud-sign-in",
         "host": "laptop",
         "kind": "codex",
         "prompt": "Check the relay's error rate for the last day.",
@@ -794,7 +794,7 @@
         }
       },
       {
-        "name": "mcp dialog",
+        "name": "mcp-dialog",
         "host": "laptop",
         "kind": "claude_pty",
         "prompt": "Connect to the new tool server and list what it offers.",

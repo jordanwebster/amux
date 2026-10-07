@@ -203,8 +203,8 @@ public final class FleetStore {
         // started who needs the person is counted before it is unfolded.
         let waiting = rows.reduce(0) { $0 + ($1.expanded ? ($1.needsYou ? 1 : 0) : Int($1.card.membersNeedYou)) }
         guard waiting > 0 else {
-            let running = rows.filter { $0.attention == .working }.count
-            return "Nothing needs you · \(running) running"
+            let working = rows.filter { $0.attention == .working }.count
+            return "Nothing needs you · \(working) working"
         }
         let agents = rows.reduce(0) { $0 + ($1.expanded ? 1 : Int($1.card.members)) }
         return "\(waiting) need you · \(agents) agent\(agents == 1 ? "" : "s")"

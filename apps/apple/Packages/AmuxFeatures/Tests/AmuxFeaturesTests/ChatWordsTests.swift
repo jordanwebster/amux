@@ -241,45 +241,51 @@ final class ChatWordsTests: XCTestCase {
         XCTAssertFalse(ChatWords.skipped(AnswerView(picked: [], hidden: true, note: nil, other: nil)))
     }
 
-    func testFormFieldsComeFromTheSchemaAndRequiredOnesGateSubmit() {
-        let fields = FormField.parse("""
-            {"required":["repo"],"properties":{"repo":{"type":"string","title":"Repository"},
-            "count":{"type":"integer"},"assign":{"type":"boolean","default":true}}}
-            """)
-        // In the order the server wrote them.
-        XCTAssertEqual(fields.map(\.name), ["repo", "count", "assign"])
-        XCTAssertFalse(fields[0].valid)
-        var filled = fields
+    private func field(
+        _ name: String, _ kind: FormFieldKind, required: Bool = false, initial: String = ""
+    ) -> FormField {
+        FormField(name: name, title: name, description: "", required: required, kind: kind, initial: initial)
+    }
+
+    private var asked: [FormField] {
+        [
+            field("repo", .text, required: true),
+            field("count", .number(integer: true)),
+            field("assign", .toggle, initial: "true"),
+        ]
+    }
+
+    func testRequiredFieldsGateSubmitAndTheContentIsTyped() {
+        let entries = FormEntry.entries(asked)
+        XCTAssertEqual(entries.map(\.name), ["repo", "count", "assign"])
+        XCTAssertFalse(entries[0].valid)
+        var filled = entries
         filled[0].value = "jlw/amux"
         filled[1].value = "3"
         XCTAssertTrue(filled.allSatisfy(\.valid))
-        XCTAssertEqual(FormField.content(filled), #"{"assign":true,"count":3,"repo":"jlw\/amux"}"#)
+        XCTAssertEqual(FormEntry.content(filled), #"{"assign":true,"count":3,"repo":"jlw\/amux"}"#)
+    }
+
+    func testAFieldOfSeveralPicksAnswersWithAnArray() {
+        var entries = FormEntry.entries([field("labels", .many(options: ["bug", "ios", "docs"]), required: true)])
+        XCTAssertFalse(entries[0].valid, "a required field with nothing picked")
+        XCTAssertEqual(FormEntry.content(entries), "{}")
+        entries[0].value = "bug\ndocs"
+        XCTAssertTrue(entries[0].valid)
+        XCTAssertEqual(FormEntry.content(entries), #"{"labels":["bug","docs"]}"#)
     }
 
     func testAFormDrawnAgainRestoresTheValuesItKept() {
-        let schema = """
-            {"required":["repo"],"properties":{"repo":{"type":"string"},
-            "count":{"type":"integer"},"assign":{"type":"boolean","default":true}}}
-            """
-        var typed = FormField.parse(schema)
+        var typed = FormEntry.entries(asked)
         typed[0].value = "jlw/amux"
         typed[2].value = "false"
-        let kept = FormField.values(typed)
+        let kept = FormEntry.values(typed)
         XCTAssertEqual(kept, ["repo": "jlw/amux", "count": "", "assign": "false"])
-        XCTAssertEqual(FormField.parse(schema, kept: kept), typed, "drawn again, it holds what was typed")
-        XCTAssertEqual(FormField.parse(schema, kept: nil), FormField.parse(schema), "a new form starts as written")
+        XCTAssertEqual(FormEntry.entries(asked, kept: kept), typed, "drawn again, it holds what was typed")
+        XCTAssertEqual(FormEntry.entries(asked, kept: nil), FormEntry.entries(asked), "a new form starts as written")
         XCTAssertEqual(
-            FormField.parse(schema, kept: ["repo": "jlw/amux", "gone": "x"]).map(\.value), ["jlw/amux", "", "true"],
-            "a kept name the schema lacks is ignored, and a field never typed keeps its default")
-    }
-
-    func testFormFieldsKeepTheServersOrderPastNestedTitles() {
-        let schema = #"""
-            {"type":"object","properties":{"team":{"type":"string","title":"Team","enum":["FOX","CORE"]},
-            "title":{"type":"string","title":"Ti\"tle"},"estimate":{"type":"integer"}},"required":["title","team"]}
-            """#
-        XCTAssertEqual(FormField.written(schema), ["team", "title", "estimate"])
-        XCTAssertEqual(FormField.parse(schema).map(\.name), ["team", "title", "estimate"])
+            FormEntry.entries(asked, kept: ["repo": "jlw/amux", "gone": "x"]).map(\.value), ["jlw/amux", "", "true"],
+            "a kept name the form lacks is ignored, and a field never typed keeps its default")
     }
 
     func testTheReviewSaysHowMuchChangedAndWhatAttachingCarries() {

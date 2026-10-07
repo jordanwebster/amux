@@ -338,7 +338,7 @@ public enum AskBody: Codable, Hashable, Sendable {
     case tool(server: String, tool: String, arguments: String)
     case question([QuestionView])
     case plan(plan: String)
-    case form(server: String, message: String, schemaJson: String)
+    case form(server: String, message: String, fields: [FormField])
     case link(server: String, message: String, url: String)
     case access(reason: String, read: [String], write: [String], network: Bool, hosts: [String])
     /// The provider asks something this build cannot read: the only ways out
@@ -387,7 +387,7 @@ public enum AskBody: Codable, Hashable, Sendable {
     private enum FormKeys: String, CodingKey {
         case server
         case message
-        case schemaJson = "schema_json"
+        case fields
     }
 
     private enum LinkKeys: String, CodingKey {
@@ -456,7 +456,7 @@ public enum AskBody: Codable, Hashable, Sendable {
             self = .form(
                 server: try _fields.decode(String.self, forKey: .server),
                 message: try _fields.decode(String.self, forKey: .message),
-                schemaJson: try _fields.decode(String.self, forKey: .schemaJson))
+                fields: try _fields.decode([FormField].self, forKey: .fields))
         case .link:
             let _fields = try _container.nestedContainer(
                 keyedBy: LinkKeys.self, forKey: .link)
@@ -513,12 +513,12 @@ public enum AskBody: Codable, Hashable, Sendable {
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: PlanKeys.self, forKey: .plan)
             try _fields.encode(plan, forKey: .plan)
-        case .form(let server, let message, let schemaJson):
+        case .form(let server, let message, let fields):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: FormKeys.self, forKey: .form)
             try _fields.encode(server, forKey: .server)
             try _fields.encode(message, forKey: .message)
-            try _fields.encode(schemaJson, forKey: .schemaJson)
+            try _fields.encode(fields, forKey: .fields)
         case .link(let server, let message, let url):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: LinkKeys.self, forKey: .link)
@@ -2492,6 +2492,129 @@ public struct Folder: Codable, Hashable, Sendable {
     }
 }
 
+/// One field of a tool server's form, read from its JSON schema.
+public struct FormField: Codable, Hashable, Sendable {
+    /// The property's name, which the answer's content is keyed by.
+    public var name: String
+    /// The schema's title, else the name.
+    public var title: String
+    public var description: String
+    public var required: Bool
+    public var kind: FormFieldKind
+    /// What the field holds before it is touched: the schema's default as
+    /// text, else "false" for a toggle and the first option for a choice.
+    public var initial: String
+
+    public init(name: String, title: String, description: String, required: Bool, kind: FormFieldKind, initial: String) {
+        self.name = name
+        self.title = title
+        self.description = description
+        self.required = required
+        self.kind = kind
+        self.initial = initial
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case title
+        case description
+        case required
+        case kind
+        case initial
+    }
+}
+
+public enum FormFieldKind: Codable, Hashable, Sendable {
+    case text
+    case number(integer: Bool)
+    /// Yes or no.
+    case toggle
+    /// One of the options.
+    case choice(options: [String])
+    /// Any of the options: an array of enum values.
+    case many(options: [String])
+
+    private enum Tag: String, CodingKey {
+        case number = "Number"
+        case choice = "Choice"
+        case many = "Many"
+    }
+
+    private enum NumberKeys: String, CodingKey {
+        case integer
+    }
+
+    private enum ChoiceKeys: String, CodingKey {
+        case options
+    }
+
+    private enum ManyKeys: String, CodingKey {
+        case options
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "Text": self = .text
+            case "Toggle": self = .toggle
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no FormFieldKind is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a FormFieldKind names exactly one variant"))
+        }
+        switch _tag {
+        case .number:
+            let _fields = try _container.nestedContainer(
+                keyedBy: NumberKeys.self, forKey: .number)
+            self = .number(
+                integer: try _fields.decode(Bool.self, forKey: .integer))
+        case .choice:
+            let _fields = try _container.nestedContainer(
+                keyedBy: ChoiceKeys.self, forKey: .choice)
+            self = .choice(
+                options: try _fields.decode([String].self, forKey: .options))
+        case .many:
+            let _fields = try _container.nestedContainer(
+                keyedBy: ManyKeys.self, forKey: .many)
+            self = .many(
+                options: try _fields.decode([String].self, forKey: .options))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .text:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Text")
+        case .number(let integer):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: NumberKeys.self, forKey: .number)
+            try _fields.encode(integer, forKey: .integer)
+        case .toggle:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Toggle")
+        case .choice(let options):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: ChoiceKeys.self, forKey: .choice)
+            try _fields.encode(options, forKey: .options)
+        case .many(let options):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: ManyKeys.self, forKey: .many)
+            try _fields.encode(options, forKey: .options)
+        }
+    }
+}
+
 /// A machine the phone's own browser found on the local network.
 public struct Found: Codable, Hashable, Sendable {
     public var hostId: [UInt8]
@@ -3828,7 +3951,7 @@ public enum RowKind: Codable, Hashable, Sendable {
     case thinking(text: String, open: Bool, durationMs: Int64?)
     case toolCall(server: String, tool: String, fact: String, state: ToolStateView, result: String)
     case fileChange(files: [FileRow], state: ToolStateView)
-    case command(command: String, state: ToolStateView, outputHead: [String], moreLines: UInt, outputTail: [String], durationMs: Int64?, exitCode: Int32?)
+    case command(command: String, state: ToolStateView, outputHead: [String], moreLines: UInt, outputTrimmed: Bool, outputTail: [String], durationMs: Int64?, exitCode: Int32?)
     case explore(verb: ExploreVerb, subject: String, state: ToolStateView)
     case subagent(description: String, running: Bool, toolCount: UInt32, lastTool: String, answer: String, durationMs: Int64?)
     case background(command: String, running: Bool, durationMs: Int64?)
@@ -3905,6 +4028,7 @@ public enum RowKind: Codable, Hashable, Sendable {
         case state
         case outputHead = "output_head"
         case moreLines = "more_lines"
+        case outputTrimmed = "output_trimmed"
         case outputTail = "output_tail"
         case durationMs = "duration_ms"
         case exitCode = "exit_code"
@@ -4058,6 +4182,7 @@ public enum RowKind: Codable, Hashable, Sendable {
                 state: try _fields.decode(ToolStateView.self, forKey: .state),
                 outputHead: try _fields.decode([String].self, forKey: .outputHead),
                 moreLines: try _fields.decode(UInt.self, forKey: .moreLines),
+                outputTrimmed: try _fields.decode(Bool.self, forKey: .outputTrimmed),
                 outputTail: try _fields.decode([String].self, forKey: .outputTail),
                 durationMs: try _fields.decodeIfPresent(Int64.self, forKey: .durationMs),
                 exitCode: try _fields.decodeIfPresent(Int32.self, forKey: .exitCode))
@@ -4198,13 +4323,14 @@ public enum RowKind: Codable, Hashable, Sendable {
             var _fields = _container.nestedContainer(keyedBy: FileChangeKeys.self, forKey: .fileChange)
             try _fields.encode(files, forKey: .files)
             try _fields.encode(state, forKey: .state)
-        case .command(let command, let state, let outputHead, let moreLines, let outputTail, let durationMs, let exitCode):
+        case .command(let command, let state, let outputHead, let moreLines, let outputTrimmed, let outputTail, let durationMs, let exitCode):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: CommandKeys.self, forKey: .command)
             try _fields.encode(command, forKey: .command)
             try _fields.encode(state, forKey: .state)
             try _fields.encode(outputHead, forKey: .outputHead)
             try _fields.encode(moreLines, forKey: .moreLines)
+            try _fields.encode(outputTrimmed, forKey: .outputTrimmed)
             try _fields.encode(outputTail, forKey: .outputTail)
             try _fields.encodeIfPresent(durationMs, forKey: .durationMs)
             try _fields.encodeIfPresent(exitCode, forKey: .exitCode)
@@ -4540,10 +4666,11 @@ public enum SecondLine: Codable, Hashable, Sendable {
     }
 }
 
-/// Where a family sits: by its loudest member.
+/// Where a family sits: by its loudest member. Live holds the starting,
+/// working and idle: alive, whether or not busy.
 public enum SectionKind: String, Codable, Hashable, Sendable, CaseIterable {
     case needsYou = "NeedsYou"
-    case running = "Running"
+    case live = "Live"
     case exited = "Exited"
 }
 

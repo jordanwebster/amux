@@ -1,7 +1,7 @@
 {
   "description": "One headless-Claude chat whose replies use every markdown construct an agent writes (headings, nested and numbered lists, a table, fenced code, quotes, links, long URLs, rules, emphasis). A second reply streams in a second after launch, a table growing row by row.",
   "client": "laptop",
-  "open": "relay retries",
+  "open": "relay-retries",
   "topology": {
     "hosts": [
       {
@@ -10,7 +10,7 @@
     ],
     "agents": [
       {
-        "name": "relay retries",
+        "name": "relay-retries",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Why does the relay drop idle tunnels, and what should we change?",
@@ -83,7 +83,7 @@
   },
   "timeline": [
     {
-      "settle": "relay retries"
+      "settle": "relay-retries"
     },
     "launch",
     {
@@ -91,7 +91,7 @@
     },
     {
       "send": {
-        "agent": "relay retries",
+        "agent": "relay-retries",
         "text": "Compare the options side by side, and list the crates the keepalive touches."
       }
     }

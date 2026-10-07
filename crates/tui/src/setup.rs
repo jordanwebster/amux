@@ -912,6 +912,9 @@ impl Picker {
             } else {
                 cursor = Some((at + self.field.cursor_chars(), 0));
                 push(&mut field, self.field.text(), theme.text(), wide);
+                if self.shape == Shape::Text {
+                    name_problem(&mut field, self.field.text(), theme);
+                }
             }
             lines.push(field);
             rows.push(None);
@@ -1391,6 +1394,9 @@ impl Form {
                         push(&mut line, hint, theme.faint(), wide);
                     } else {
                         push(&mut line, editor.text(), theme.text(), wide);
+                        if field == Field::Name {
+                            name_problem(&mut line, editor.text(), theme);
+                        }
                     }
                     if current && self.typing {
                         cursor = Some((at + editor.cursor_chars(), rows.len()));
@@ -1536,6 +1542,14 @@ impl Form {
             hits,
             cursor.map(|(col, line)| ((2 + col).min(inner + 1), 1 + line)),
         )
+    }
+}
+
+/// After a typed agent name, why the host will refuse it, if it will.
+fn name_problem(line: &mut Line<'static>, typed: &str, theme: Theme) {
+    if let Some(problem) = wire::agent_name_problem(typed.trim()) {
+        line.spans.push(Span::styled(" · ", theme.muted()));
+        line.spans.push(Span::styled(problem, theme.warning()));
     }
 }
 

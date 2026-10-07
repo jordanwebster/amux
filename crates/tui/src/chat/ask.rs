@@ -12,8 +12,9 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde_json::{Map, Value};
 use ui_view::{
-    AskBody, AskCard, CardState, Choice, ChoiceOutcome, PermissionGrant, Pick, QuestionResponse,
-    QuestionView, Scope, answer_input, question_answer, reply_answer, with_form_content,
+    AskBody, AskCard, CardState, Choice, ChoiceOutcome, FormField as Field,
+    FormFieldKind as FieldKind, PermissionGrant, Pick, QuestionResponse, QuestionView, Scope,
+    answer_input, question_answer, reply_answer, with_form_content,
 };
 
 use crate::editor::Editor;
@@ -64,29 +65,6 @@ impl QuestionPick {
             note: self.note.trim().to_owned(),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum FieldKind {
-    Text,
-    Number {
-        integer: bool,
-    },
-    Toggle,
-    Choice(Vec<String>),
-    /// An array of enum values: several picks.
-    Many(Vec<String>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct Field {
-    name: String,
-    title: String,
-    required: bool,
-    kind: FieldKind,
-    /// Text, number and choice values; "true"/"false" for a toggle.
-    value: String,
-    description: String,
 }
 
 /// This client's state for the head ask.
@@ -246,116 +224,6 @@ pub fn choice_label(choice: &Choice) -> String {
     }
 }
 
-/// A JSON object's members in the order written. A parsed `Value` keeps
-/// its keys sorted, and a form asks its fields in its schema's order.
-struct Members(Vec<(String, Value)>);
-
-impl<'de> serde::Deserialize<'de> for Members {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Members, D::Error> {
-        struct Visit;
-        impl<'de> serde::de::Visitor<'de> for Visit {
-            type Value = Members;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("an object")
-            }
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<Members, A::Error> {
-                let mut members = Vec::new();
-                while let Some(member) = map.next_entry()? {
-                    members.push(member);
-                }
-                Ok(Members(members))
-            }
-        }
-        deserializer.deserialize_map(Visit)
-    }
-}
-
-/// A form schema's fields, in the schema's own order.
-fn form_fields(schema_json: &str) -> Vec<Field> {
-    #[derive(serde::Deserialize)]
-    struct Schema {
-        #[serde(default)]
-        properties: Option<Members>,
-        #[serde(default)]
-        required: Vec<String>,
-    }
-    let Ok(Schema {
-        properties: Some(Members(properties)),
-        required,
-    }) = serde_json::from_str::<Schema>(schema_json)
-    else {
-        return Vec::new();
-    };
-    properties
-        .iter()
-        .map(|(name, property)| {
-            let names = |options: &Vec<Value>| {
-                options
-                    .iter()
-                    .map(|option| match option {
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let many = property
-                .get("items")
-                .and_then(|items| items.get("enum"))
-                .and_then(Value::as_array)
-                .filter(|_| property.get("type").and_then(Value::as_str) == Some("array"));
-            let kind = if let Some(options) = many {
-                FieldKind::Many(names(options))
-            } else if let Some(options) = property.get("enum").and_then(Value::as_array) {
-                FieldKind::Choice(
-                    options
-                        .iter()
-                        .map(|option| match option {
-                            Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        })
-                        .collect(),
-                )
-            } else {
-                match property.get("type").and_then(Value::as_str) {
-                    Some("boolean") => FieldKind::Toggle,
-                    Some("number") => FieldKind::Number { integer: false },
-                    Some("integer") => FieldKind::Number { integer: true },
-                    _ => FieldKind::Text,
-                }
-            };
-            let value = match (property.get("default"), &kind) {
-                (Some(Value::String(s)), _) => s.clone(),
-                (Some(Value::Bool(b)), _) => b.to_string(),
-                (Some(Value::Number(n)), _) => n.to_string(),
-                (_, FieldKind::Toggle) => "false".into(),
-                (_, FieldKind::Choice(options)) => options.first().cloned().unwrap_or_default(),
-                _ => String::new(),
-            };
-            Field {
-                title: property
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .unwrap_or(name)
-                    .to_owned(),
-                required: required.contains(name),
-                name: name.clone(),
-                kind,
-                value,
-                description: property
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            }
-        })
-        .collect()
-}
-
-impl Field {}
-
 impl AskUi {
     /// Keeps this state if it belongs to `card`'s ask, else starts fresh.
     pub fn sync(&mut self, card: &AskCard) {
@@ -374,8 +242,8 @@ impl AskUi {
                     .first()
                     .is_some_and(|q| q.options.is_empty() && q.allow_other);
             }
-            AskBody::Form { schema_json, .. } => {
-                self.fields = form_fields(schema_json);
+            AskBody::Form { fields, .. } => {
+                self.fields = fields.clone();
                 self.picks = vec![QuestionPick::default(); self.fields.len()];
                 self.noting = form_questions(&self.fields)
                     .first()
@@ -2389,8 +2257,10 @@ fn form_questions(fields: &[Field]) -> Vec<QuestionView> {
         .iter()
         .map(|field| {
             let (options, multi_select): (Vec<&str>, bool) = match &field.kind {
-                FieldKind::Choice(options) => (options.iter().map(String::as_str).collect(), false),
-                FieldKind::Many(options) => (options.iter().map(String::as_str).collect(), true),
+                FieldKind::Choice { options } => {
+                    (options.iter().map(String::as_str).collect(), false)
+                }
+                FieldKind::Many { options } => (options.iter().map(String::as_str).collect(), true),
                 FieldKind::Toggle => (vec!["Yes", "No"], false),
                 FieldKind::Text | FieldKind::Number { .. } => (Vec::new(), false),
             };
@@ -2476,12 +2346,12 @@ impl AskUi {
             let typed = pick.other.clone().unwrap_or_default();
             let at = |i: &u32| *i as usize;
             let value = match &field.kind {
-                FieldKind::Choice(options) => pick
+                FieldKind::Choice { options } => pick
                     .selected
                     .first()
                     .and_then(|i| options.get(at(i)))
                     .map(|v| Value::String(v.clone())),
-                FieldKind::Many(options) => Some(Value::Array(
+                FieldKind::Many { options } => Some(Value::Array(
                     pick.selected
                         .iter()
                         .filter_map(|i| options.get(at(i)))

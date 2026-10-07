@@ -1,7 +1,7 @@
 {
   "description": "Three idle agents to plan with: headless Claude, Claude in its own terminal and Codex. Press shift+tab into plan mode, send any prompt, and decide the plan each way; a plan arrives whole (headless Claude writes it to its plan file first).",
   "client": "laptop",
-  "open": "relay keepalive",
+  "open": "relay-keepalive",
   "topology": {
     "hosts": [
       {
@@ -11,7 +11,7 @@
     "settle": true,
     "agents": [
       {
-        "name": "relay keepalive",
+        "name": "relay-keepalive",
         "host": "laptop",
         "kind": "claude_sdk",
         "cwd": "amux",
@@ -212,7 +212,7 @@
         }
       },
       {
-        "name": "fleet sections",
+        "name": "fleet-sections",
         "host": "laptop",
         "kind": "claude_pty",
         "cwd": "amux",
@@ -362,7 +362,7 @@
         }
       },
       {
-        "name": "upload retries",
+        "name": "upload-retries",
         "host": "laptop",
         "kind": "codex",
         "cwd": "amux",

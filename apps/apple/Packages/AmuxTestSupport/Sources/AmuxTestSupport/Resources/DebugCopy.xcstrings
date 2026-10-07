@@ -205,6 +205,18 @@
         }
       }
     },
+    "Assign to me": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Assign to me"
+          }
+        }
+      }
+    },
     "Auto-approved curl localhost:8080": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -685,6 +697,18 @@
         }
       }
     },
+    "Labels": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Labels"
+          }
+        }
+      }
+    },
     "Laptop": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -993,6 +1017,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Report what changed"
+          }
+        }
+      }
+    },
+    "Repository": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repository"
           }
         }
       }
@@ -1789,6 +1825,18 @@
         }
       }
     },
+    "assign": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "assign"
+          }
+        }
+      }
+    },
     "assignee": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -1857,6 +1905,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "boundary"
+          }
+        }
+      }
+    },
+    "bug": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "bug"
           }
         }
       }
@@ -2865,6 +2925,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "init"
+          }
+        }
+      }
+    },
+    "ios": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ios"
+          }
+        }
+      }
+    },
+    "jlw/amux": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "jlw/amux"
           }
         }
       }
@@ -4533,18 +4617,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "{\n  \"repo\": \"jlw/amux\",\n  \"title\": \"Pairing copy\"\n}"
-          }
-        }
-      }
-    },
-    "{\"type\":\"object\",\"required\":[\"repository\"],\"properties\":{\n  \"repository\":{\"type\":\"string\",\"title\":\"Repository\",\"default\":\"jlw/amux\"},\n  \"labels\":{\"type\":\"string\",\"title\":\"Labels\",\"enum\":[\"bug\",\"ios\",\"docs\"]},\n  \"assign\":{\"type\":\"boolean\",\"title\":\"Assign to me\",\"default\":true}}}": {
-      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "{\"type\":\"object\",\"required\":[\"repository\"],\"properties\":{\n  \"repository\":{\"type\":\"string\",\"title\":\"Repository\",\"default\":\"jlw/amux\"},\n  \"labels\":{\"type\":\"string\",\"title\":\"Labels\",\"enum\":[\"bug\",\"ios\",\"docs\"]},\n  \"assign\":{\"type\":\"boolean\",\"title\":\"Assign to me\",\"default\":true}}}"
           }
         }
       }

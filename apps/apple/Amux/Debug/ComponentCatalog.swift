@@ -117,33 +117,33 @@ enum ComponentCatalog {
             row("command", height: 150, r("x1", 11, .command(
                 command: "cargo test -p amux-ui", state: .succeeded,
                 outputHead: ["running 42 tests", "test pairing::copy ok", "test result: ok. 42 passed"],
-                moreLines: 118, outputTail: [], durationMs: 4_200, exitCode: 0))),
+                moreLines: 118, outputTrimmed: false, outputTail: [], durationMs: 4_200, exitCode: 0))),
             row("command-failed", height: 150, r("x2", 12, .command(
                 command: "cargo check -p amux-ui", state: .failed,
-                outputHead: ["error[E0308]: mismatched types"], moreLines: 214, outputTail: [], durationMs: 4_200,
+                outputHead: ["error[E0308]: mismatched types"], moreLines: 214, outputTrimmed: false, outputTail: [], durationMs: 4_200,
                 exitCode: 101))),
             row("command-denied", r("x3", 13, .command(
-                command: "rm -rf target", state: .denied, outputHead: [], moreLines: 0, outputTail: [], durationMs: nil,
+                command: "rm -rf target", state: .denied, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [], durationMs: nil,
                 exitCode: nil),
                 decision: Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean instead"))),
             row("command-allowed", r("x4", 14, .command(
-                command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTail: [],
+                command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
                 durationMs: 12_000, exitCode: 0),
                 decision: Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil))),
             row("command-allowed-always", r("x8", 14, .command(
-                command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTail: [],
+                command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
                 durationMs: 12_000, exitCode: 0),
                 decision: Decision(outcome: .allowed, elsewhere: false, granted: .claude(
                     subjects: ["cargo test"], directories: [], mode: "", modeName: "", savedTo: .project), note: nil))),
             row("command-allowed-prefix", r("x9", 14, .command(
-                command: "curl -s localhost:8080/health", state: .succeeded, outputHead: [], moreLines: 0, outputTail: [],
+                command: "curl -s localhost:8080/health", state: .succeeded, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
                 durationMs: 300, exitCode: 0),
                 decision: Decision(outcome: .allowed, elsewhere: false, granted: .commandPrefix(words: ["curl", "-s"]), note: nil))),
             row("command-elsewhere", r("x5", 15, .toolCall(
                 server: "github", tool: "create_issue", fact: "", state: .succeeded, result: ""),
                 decision: Decision(outcome: .allowed, elsewhere: true, granted: nil, note: nil))),
             row("command-asking", r("x6", 16, .command(
-                command: "cargo test -p amux-ui", state: .pending, outputHead: [], moreLines: 0, outputTail: [],
+                command: "cargo test -p amux-ui", state: .pending, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
                 durationMs: nil, exitCode: nil), attention: true)),
             row("explore", r("e1", 17, .explore(verb: .read, subject: "crates/wire/src/codes.rs", state: .succeeded))),
             row("run", r("e2", 18, .explore(verb: .search, subject: "INVALID_PIN", state: .succeeded),
@@ -294,7 +294,7 @@ enum ComponentCatalog {
             ])),
             ask("plan-codex", height: 220, F.card(.codex, .plan(plan: F.plan), F.codexPlanChoices)),
             ask("form", height: 520, F.card(.claudeSdk, .form(
-                server: "github", message: "Create the issue in which repository?", schemaJson: F.formSchema), [
+                server: "github", message: "Create the issue in which repository?", fields: F.formFields), [
                     Choice(outcome: .submit, primary: true, takesNote: false),
                     Choice(outcome: .decline, primary: false, takesNote: false),
                 ])),
@@ -914,12 +914,19 @@ enum CatalogFixtures {
            }
         """
 
-    static let formSchema = """
-        {"type":"object","required":["repository"],"properties":{
-          "repository":{"type":"string","title":"Repository","default":"jlw/amux"},
-          "labels":{"type":"string","title":"Labels","enum":["bug","ios","docs"]},
-          "assign":{"type":"boolean","title":"Assign to me","default":true}}}
-        """
+    /// As the shared view reads a schema with a defaulted repository, a
+    /// choice of labels and a defaulted toggle.
+    static let formFields = [
+        FormField(
+            name: "repository", title: "Repository", description: "", required: true, kind: .text,
+            initial: "jlw/amux"),
+        FormField(
+            name: "labels", title: "Labels", description: "", required: false,
+            kind: .choice(options: ["bug", "ios", "docs"]), initial: "bug"),
+        FormField(
+            name: "assign", title: "Assign to me", description: "", required: false, kind: .toggle,
+            initial: "true"),
+    ]
 
     static let redactionQuestion = QuestionView(
         header: "Owner", question: "Which crate should own the redaction table?", multiSelect: false,
@@ -1002,11 +1009,11 @@ enum CatalogFixtures {
     }
 
     static let runningCommand = ScriptedChat.row("rc", 50, .command(
-        command: "cargo test -p amux-ui", state: .running, outputHead: [], moreLines: 0, outputTail: [],
+        command: "cargo test -p amux-ui", state: .running, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
         durationMs: nil, exitCode: nil))
 
     static let askedCommand = ScriptedChat.row("x6", 60, .command(
-        command: "cargo test -p amux-ui", state: .pending, outputHead: [], moreLines: 0, outputTail: [],
+        command: "cargo test -p amux-ui", state: .pending, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [],
         durationMs: nil, exitCode: nil), attention: true)
 
     static let conversation: [Row] = {
@@ -1023,11 +1030,11 @@ enum CatalogFixtures {
             r("c04", 4, .explore(verb: .search, subject: "INVALID_PIN", state: .succeeded),
               run: Run(first: "c04", last: "c04", steps: 6, live: false, openBelow: false, unresolvedFailure: false, counts: RunCounts(commands: 0, edits: 0, reads: 4, searches: 2, subagents: 0, other: 0), recent: nil)),
             r("c05", 5, .fileChange(files: [FileRow(path: "crates/amux-ui/src/pairing.rs", change: .edited, added: 9, removed: 14, line: nil)], state: .succeeded)),
-            r("c06", 6, .command(command: "cargo check -p amux-ui", state: .failed, outputHead: ["error[E0308]: mismatched types"], moreLines: 214, outputTail: [], durationMs: 4_200, exitCode: 101)),
-            r("c07", 7, .command(command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTail: [], durationMs: 12_000, exitCode: 0),
+            r("c06", 6, .command(command: "cargo check -p amux-ui", state: .failed, outputHead: ["error[E0308]: mismatched types"], moreLines: 214, outputTrimmed: false, outputTail: [], durationMs: 4_200, exitCode: 101)),
+            r("c07", 7, .command(command: "cargo test -p amux-ui", state: .succeeded, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [], durationMs: 12_000, exitCode: 0),
               decision: Decision(outcome: .allowed, elsewhere: false, granted: .session, note: nil)),
             r("c08", 8, .fileChange(files: [FileRow(path: "crates/amux-ui/tests/spec/pairing_copy.rs", change: .created(lines: 38), added: 38, removed: 0, line: nil)], state: .succeeded)),
-            r("c09", 9, .command(command: "rm -rf target", state: .denied, outputHead: [], moreLines: 0, outputTail: [], durationMs: nil, exitCode: nil),
+            r("c09", 9, .command(command: "rm -rf target", state: .denied, outputHead: [], moreLines: 0, outputTrimmed: false, outputTail: [], durationMs: nil, exitCode: nil),
               decision: Decision(outcome: .denied, elsewhere: false, granted: nil, note: "Use cargo clean instead")),
             r("c10", 10, .prose(text: [.text("Done. The three arms are one now, and the new test asserts on the single string.")], streaming: false, workingNote: false)),
             r("c11", 11, .turnEnd(failed: false, costUsd: nil, durationMs: 102_000)),

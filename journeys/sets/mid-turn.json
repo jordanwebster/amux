@@ -1,7 +1,7 @@
 {
   "description": "A chat caught mid-turn: a finished turn that left a failure unresolved, then a turn whose text and tool steps interleave and whose newest stretch is still running (its command never finishes), for judging how stretches fold, open and show live steps.",
   "client": "laptop",
-  "open": "docs pass",
+  "open": "docs-pass",
   "topology": {
     "hosts": [
       {
@@ -10,7 +10,7 @@
     ],
     "agents": [
       {
-        "name": "docs pass",
+        "name": "docs-pass",
         "host": "laptop",
         "kind": "claude_sdk",
         "prompt": "Check the docs' links before we touch anything.",
@@ -172,11 +172,11 @@
   },
   "timeline": [
     {
-      "settle": "docs pass"
+      "settle": "docs-pass"
     },
     {
       "send": {
-        "agent": "docs pass",
+        "agent": "docs-pass",
         "text": "Tighten the wording in HOW_IT_WORKS.md; it reads like a spec."
       }
     },

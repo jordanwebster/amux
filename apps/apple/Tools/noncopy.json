@@ -1133,7 +1133,8 @@
       {"literal": "\"Now run the Windows check.\"", "context": "SentPrompt(inputId: [8], text: [.text(\"Now run the Windows check.\")], lands: .feed, underway: .sending(waiting: false)),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"landing-waiting\"", "context": "chat(\"landing-waiting\", chat: {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"Now run the Windows check.\"", "context": "SentPrompt(inputId: [8], text: [.text(\"Now run the Windows check.\")], lands: .feed, underway: .sending(waiting: true)),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"OAuth token has expired.\"", "context": "signIn: SignInView(state: .expired, account: \"ada@example.com\", message: \"OAuth token has expired.\"))),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+      {"literal": "\"OAuth token has expired.\"", "context": "signIn: SignInView(state: .expired, account: \"ada@example.com\", message: \"OAuth token has expired.\"))),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"true\"", "context": "initial: \"true\"),", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift": [
       {"literal": "\"arrow.up.circle\"", "context": "Image(systemName: \"arrow.up.circle\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
@@ -1180,22 +1181,8 @@
       {"literal": "\"@@\"", "context": "if line.hasPrefix(\"@@\") { return design.inkFaint.color }", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"+\"", "context": "if line.hasPrefix(\"+\") { return design.added.color.opacity(0.18) }", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"-\"", "context": "if line.hasPrefix(\"-\") { return design.removed.color.opacity(0.18) }", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"properties\"", "context": "let properties = object[\"properties\"] as? [String: Any]", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"required\"", "context": "let required = Set(object[\"required\"] as? [String] ?? [])", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"enum\"", "context": "if let options = property[\"enum\"] as? [Any] {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"\\($0)\"", "context": "kind = .choice(options.map { \"\\($0)\" })", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"type\"", "context": "switch property[\"type\"] as? String {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"boolean\"", "context": "case \"boolean\": kind = .toggle", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"number\"", "context": "case \"number\": kind = .number(integer: false)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"integer\"", "context": "case \"integer\": kind = .number(integer: true)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"default\"", "context": "switch (property[\"default\"], kind) {", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"true\"", "context": "case (let flag as Bool, _): value = flag ? \"true\" : \"false\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"false\"", "context": "case (let flag as Bool, _): value = flag ? \"true\" : \"false\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"false\"", "context": "case (_, .toggle): value = \"false\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"title\"", "context": "name: name, title: property[\"title\"] as? String ?? name,", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"true\"", "context": "case .toggle: return value == \"true\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"{}\"", "context": "?? Data(\"{}\".utf8)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"ask.field.\\(field.name)\"", "context": ".identified(\"ask.field.\\(field.name)\", value: field.value)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 3},
       {"literal": "\"ask.step.review\"", "context": ".identified(\"ask.step.review\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.question\"", "context": ".identified(\"ask.question\", label: question.question)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.preview\"", "context": ".identified(\"ask.preview\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
@@ -1218,21 +1205,9 @@
       {"literal": "\"ask.reply.back\"", "context": ".identified(\"ask.reply.back\", label: String(localized: \"Back\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.reply.text\"", "context": ".identified(\"ask.reply.text\", value: replyText)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.reply.send\"", "context": "String(localized: \"Send reply\"), kind: .primary, id: \"ask.reply.send\", enabled: !blank", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"{\"", "context": "case .mark(\"{\"), .mark(\"[\"):", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"[\"", "context": "case .mark(\"{\"), .mark(\"[\"):", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"{\"", "context": "if depth == 1, token == .mark(\"{\"), index >= 2,", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\":\"", "context": "tokens[index - 1] == .mark(\":\"), tokens[index - 2] == .string(\"properties\") {", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"}\"", "context": "case .mark(\"}\"), .mark(\"]\"):", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"]\"", "context": "case .mark(\"}\"), .mark(\"]\"):", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"{\"", "context": "if inside, depth == 2, index > 0, [.mark(\"{\"), .mark(\",\")].contains(tokens[index - 1]),", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\",\"", "context": "if inside, depth == 2, index > 0, [.mark(\"{\"), .mark(\",\")].contains(tokens[index - 1]),", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\":\"", "context": "index + 1 < tokens.count, tokens[index + 1] == .mark(\":\") {", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"\\\"\"", "context": "if character == \"\\\"\" {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
-      {"literal": "\"\\\"\"", "context": "while let next = characters.next(), next != \"\\\"\" {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
-      {"literal": "\"\\\\\"", "context": "if next == \"\\\\\", let escaped = characters.next() {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
-      {"literal": "\"{}[]:,\"", "context": "} else if \"{}[]:,\".contains(character) {", "reason": "JSON syntax read off a schema, not interface copy.", "count": 1},
-      {"literal": "\"true\"", "context": "Binding(get: { field.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 2},
-      {"literal": "\"false\"", "context": "Binding(get: { field.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
+      {"literal": "\"true\"", "context": "Binding(get: { entry.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 2},
+      {"literal": "\"false\"", "context": "Binding(get: { entry.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"ask.field.\\(entry.name)\"", "context": ".identified(\"ask.field.\\(entry.name)\", value: entry.value)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 4}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatComposer.swift": [
       {"literal": "\"chat.field\"", "context": ".identified(\"chat.field\", label: placeholder, value: model.draft)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
@@ -1337,7 +1312,8 @@
       {"literal": "\"chat.changes\"", "context": "\"chat.changes\", label: \"+\\(changes.added) \\u{2212}\\(changes.removed)\",", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"list.bullet.rectangle\"", "context": "MenuItem(title: String(localized: \"Overview\"), systemImage: \"list.bullet.rectangle\") {", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"chat.landing.\\(index)\"", "context": "id: \"chat.landing.\\(index)\", text: prompt.text,", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"sign-in\"", "context": "kind: \"sign-in\", title: ChatWords.needsSignIn(kind),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
+      {"literal": "\"sign-in\"", "context": "kind: \"sign-in\", title: ChatWords.needsSignIn(kind),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.rename.problem\"", "context": ".identified(\"chat.rename.problem\", value: problem)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift": [
       {"literal": "\"%.1fs\"", "context": "return String(format: \"%.1fs\", Double(ms) / 1_000)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},

@@ -949,3 +949,15 @@ fn an_act_that_finishes_answers_once_with_its_result() {
     // SAFETY: the pool is down; nothing holds the context now.
     drop(unsafe { Box::from_raw(context as *mut mpsc::Sender<String>) });
 }
+
+#[test]
+fn a_name_field_hears_the_hosts_rule_while_it_is_typed() {
+    let problem = |name: &str| {
+        let name = CString::new(name).unwrap();
+        // SAFETY: the string lives for the call.
+        take(unsafe { amux_agent_name_problem(name.as_ptr()) })
+    };
+    assert_eq!(problem("fix-login"), Value::Null);
+    assert!(problem("fix login").as_str().unwrap().contains("lowercase"));
+    assert!(problem("").as_str().unwrap().contains("empty"));
+}

@@ -1,7 +1,7 @@
 {
   "description": "A Codex agent part way through a long test run whose log runs to about 300 KB, printed a piece at a time. Focus the command's row and open it (ctrl+a k, ctrl+a o): it ends with the newest crate, and the count of earlier lines it holds stays bounded however much more the run prints. Release the run with `just tui-set long-command --door '{\"OpenGate\": {\"name\": \"tests-done\"}}'`.",
   "client": "laptop",
-  "open": "test sweep",
+  "open": "test-sweep",
   "topology": {
     "hosts": [
       {
@@ -10,7 +10,7 @@
     ],
     "agents": [
       {
-        "name": "test sweep",
+        "name": "test-sweep",
         "host": "laptop",
         "kind": "codex",
         "cwd": "amux",

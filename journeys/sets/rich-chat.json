@@ -1,7 +1,7 @@
 {
   "description": "One long headless-Claude chat with every common row kind: thinking (not drawn), reads and searches, a subagent, edits across thirty files, commands that pass and fail, a web search, a task list, usage near its limit, two tool servers that need signing in and one that failed. Its model is Claude's Default, which stands for Opus 5. Its edits are real, in a git repository, so [Diff] opens the review page on a real working-tree diff. Send anything for a scripted reply.",
   "client": "laptop",
-  "open": "blob cache eviction",
+  "open": "blob-cache-eviction",
   "topology": {
     "hosts": [
       {
@@ -57,7 +57,7 @@
     ],
     "agents": [
       {
-        "name": "blob cache eviction",
+        "name": "blob-cache-eviction",
         "host": "laptop",
         "kind": "claude_sdk",
         "repository": "amux",
@@ -942,25 +942,25 @@
   },
   "timeline": [
     {
-      "settle": "blob cache eviction"
+      "settle": "blob-cache-eviction"
     },
     {
       "send": {
-        "agent": "blob cache eviction",
+        "agent": "blob-cache-eviction",
         "text": "Does the cap apply per chat or across all chats?"
       }
     },
     {
-      "settle": "blob cache eviction"
+      "settle": "blob-cache-eviction"
     },
     {
       "send": {
-        "agent": "blob cache eviction",
+        "agent": "blob-cache-eviction",
         "text": "Keep it per chat, but add the parameter to the docs table."
       }
     },
     {
-      "settle": "blob cache eviction"
+      "settle": "blob-cache-eviction"
     }
   ]
 }
