@@ -1364,11 +1364,6 @@ fn server_health<'a>(
     }
 }
 
-/// A usage window by the short name Codex windows carry too ("5h", "7d"), so both
-/// providers' limits read alike; a window this build does not know keeps its own
-/// words.
-/// The meter of the window Claude calls `name`, added the first time it
-/// is named.
 /// One window's use and reset as reported; a reset later than the one held
 /// means the window has reset, which ends the status stated for it.
 fn report_window(meter: &mut UsageMeter, utilization: Option<f64>, resets_at_ms: Option<i64>) {
@@ -1381,6 +1376,8 @@ fn report_window(meter: &mut UsageMeter, utilization: Option<f64>, resets_at_ms:
     meter.resets_at_ms = resets_at_ms;
 }
 
+/// The meter of the window Claude calls `name`, added the first time it
+/// is named.
 fn claude_window<'a>(usage: &'a mut ClaudeUsage, name: &str) -> &'a mut UsageMeter {
     let at = match usage
         .windows

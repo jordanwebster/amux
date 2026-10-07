@@ -1,3 +1,9 @@
+2026-10-07 — **Headless Claude's usage-window helpers each say what they do.**
+The usage-reset fix slid its new helper under the comment of the one after
+it, leaving one stacked comment over three ideas, one of them about window
+labels that now live elsewhere. Each helper carries its own comment again
+and the stray paragraph is gone; no code changed.
+
 2026-10-07 — **The phone keeps what was typed into a tool server's form.**
 A question card's picks and note were kept on the chat and survived leaving
 it, but a tool server's form held its values in the card itself, so going
