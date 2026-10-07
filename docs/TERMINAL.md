@@ -205,7 +205,10 @@ behind it and comes back after. The plan or the call it is about stays in the fe
   and end on a review that lists each answer and sends them all. Options read `label · recommended ·
   description`; several picks are `[ ]` boxes under `Select all that apply`; options with previews show the
   highlighted one's preview beside them. `Something else · enter to type` opens a field for an answer of your own.
-  Secret answers type as dots.
+  Secret answers type as dots. `Skip` leaves a question unanswered and Tab adds a note to it, each where the agent
+  takes one; `Reply instead` sends your own words in place of the answers. Terminal Claude takes no note, and a
+  skip only when it asks several questions: Claude's own form has a review screen only then, and submits a lone
+  question as soon as it is answered.
 - **A tool server's form** (`● linear needs details`): its message, then each field as a step in the server's
   order (a choice, Yes / No, boxes, or a typed value, numbers checked), required ones marked, and a review with
   Submit; `Decline` is the way out.
@@ -361,7 +364,8 @@ may not have arrived, resend or discard it. Esc or typing returns to the compose
 | ↑ ↓, `j` `k`, `1`–`9` | Move, or pick at once by number |
 | Enter | Choose; on a text field, answer and move on |
 | Space | Tick a box where several can be picked |
-| Tab, Shift+Tab, ← → | The next or previous question or field, skipping without answering |
+| ← →, Tab, Shift+Tab | The next or previous question or field, moving on without answering |
+| Tab on a question | Add a note to it, where the agent takes notes; ← → still move between questions |
 | Tab on a refusal | Add a note to it |
 | Esc | To the way out (`No`, `Decline`); in an open field, clear and close it |
 | `f` | Open or close the whole diff or command inside the box |

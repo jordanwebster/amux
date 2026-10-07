@@ -875,3 +875,199 @@ tests = [
   "agent/lifecycle::the_agent_exits_on_its_child_exit_while_a_straggler_holds_the_terminal",
   "agent/attach::two_clients_read_terminal_claude_from_its_files_and_type_into_it",
 ]
+
+# --- Provider protocols, fleet facts, plans and asks -------------------------
+
+[[contract]]
+id = "provider-messages-are-typed"
+source = "invariant"
+section = "Provider protocols"
+claim = "Every message recorded from Claude and Codex, live captures included, decodes to a known type and encodes back to the same JSON; a message no type knows is Unknown, never an error, and fails the strict decode."
+tests = [
+  "codex-protocol/corpus::every_recorded_line_is_known",
+  "codex-protocol/corpus::every_recorded_line_encodes_back_to_the_same_json",
+  "codex-protocol/corpus::an_invented_method_is_unknown_and_fails_strict",
+  "claude-protocol/stream_corpus::every_recorded_line_is_known",
+  "claude-protocol/pty_corpus::every_recorded_row_and_payload_is_known",
+  "claude-protocol/pty_corpus::an_invented_row_or_payload_is_unknown_and_fails_strict",
+]
+
+[[contract]]
+id = "codex-app-codrives"
+source = "invariant"
+section = "Provider protocols"
+claim = "Codex's own app attaches to a Codex agent's live app server, before its first turn too, and drives it beside amux with no locking: a prompt from the app shows in amux's chat and an approval is answered from either side."
+tests = [
+  "amux/codex_attach::codex_app_attaches_to_a_fresh_agent_and_codrives_it_with_amux",
+  "provider-fakes/codex::socket::codexs_app_joins_a_thread_with_no_turn_once_it_is_read_with_its_turns",
+  "agent/providers::a_codex_agent_is_one_client_of_a_server_on_its_private_socket",
+  "agent/codex_thread_name::the_thread_is_named_after_the_agent_at_start_and_on_rename",
+]
+
+[[contract]]
+id = "fleet-row-facts"
+source = "invariant"
+section = "Fleet"
+claim = "Every agent has a name, a word pair when none was given; its since-when moves only when its phase does, so home keeps its order while agents stream; families sit in their loudest member's section, newest first."
+tests = [
+  "node/agent_names::a_given_name_is_kept_and_a_missing_one_is_a_word_pair",
+  "node/agent_names::an_assigned_name_avoids_other_agents_and_the_repositorys_branches",
+  "interpret/lib::shared::tests::since_when_moves_only_when_the_phase_changes",
+  "ui-view/views::the_fleet_places_families_by_their_loudest_member_newest_first",
+  "tui/lib::tests::home_keeps_its_order_while_agents_stream_and_moves_one_whose_turn_ended",
+]
+
+[[contract]]
+id = "one-session-per-agent"
+source = "invariant"
+section = "Fleet"
+claim = "The fleet keeps one session per live agent, shared by home and the chat, so one agent never has two subscriptions; an exited agent has a session only while a chat shows it; home wakes for what is outside the rows; the phone closes and reopens every session with the foreground."
+tests = [
+  "ui-runtime/fleet::home_and_the_chat_share_one_session_per_live_agent_and_never_subscribe_twice",
+  "ui-runtime/fleet::an_agent_that_exits_loses_its_session_unless_a_chat_shows_it",
+  "ui-runtime/fleet::home_wakes_for_what_is_outside_the_rows_and_not_for_rows",
+  "app-runtime/runtime::a_chat_catches_up_after_the_app_returns_to_the_foreground",
+]
+
+[[contract]]
+id = "append-for-nothing-held-is-dropped"
+source = "invariant"
+section = "Session state"
+claim = "A client holding nothing for an append's key drops the append, since it has let the item go and fetches it whole if it comes back into view; a held item at the wrong revision still fetches."
+tests = [
+  "ui-state/spec::window::an_append_for_a_key_not_held_is_dropped",
+  "ui-state/spec::window::a_held_item_at_the_wrong_revision_fetches",
+]
+
+[[contract]]
+id = "git-facts-and-changed-files"
+source = "invariant"
+section = "Chat surroundings"
+claim = "The row carries the folder's git facts from start and after each turn; the header counts the comparison the person chose; Diff lists the changed files and builds a patch only when asked, and the overview groups them by folder without one."
+tests = [
+  "agent/lifecycle::the_snapshot_carries_the_folders_git_facts_from_start_and_after_each_turn",
+  "git-facts/facts::a_comparison_lists_each_file_and_builds_a_patch_only_when_asked",
+  "git-facts/facts::on_the_base_branch_its_uncommitted_work_is_what_is_on_the_branch",
+  "git-facts/facts::untracked_paths_past_the_command_line_limit_still_count",
+  "tui/lib::tests::the_header_counts_the_comparison_chosen",
+  "tui/lib::tests::the_overview_fetches_its_changed_files_once_per_comparison_and_totals",
+  "app-runtime/runtime::opening_the_overview_lists_the_changed_files_by_folder",
+]
+
+[[contract]]
+id = "background-jobs-listed-and-cleared"
+source = "invariant"
+section = "Interpreter"
+claim = "Each interpreter publishes the provider's background jobs as a list, and the list empties when the provider exits."
+tests = [
+  "interpret/claude_sdk::the_job_list_empties_when_headless_claude_exits",
+  "interpret/claude_pty::the_job_list_empties_when_terminal_claude_exits",
+  "interpret/codex::the_job_list_empties_when_codex_exits",
+  "tui/lib::tests::the_overview_lists_jobs_files_by_folder_and_usage_windows",
+]
+
+[[contract]]
+id = "command-output-streams-bounded"
+source = "invariant"
+section = "Interpreter"
+claim = "A command's output streams as appends to its own item while newer items open below it, and a command that prints without end keeps bounded state."
+tests = [
+  "interpret/codex::a_command_below_the_newest_item_streams_its_output_as_appends",
+  "interpret/codex::a_command_that_prints_without_end_keeps_bounded_state",
+]
+
+[[contract]]
+id = "catalogue-once-per-version"
+source = "invariant"
+section = "Catalogue"
+claim = "What an agent offers is a catalogue written by hash outside the snapshot, fetched once per hash by a chat on screen and never by home; a host says what its providers offer with no agent running, and a new agent is configured from it."
+tests = [
+  "agent/providers::the_catalogue_a_snapshot_names_is_in_the_agent_directory",
+  "ui-runtime/fleet::a_chat_on_screen_fetches_its_catalogue_once_per_hash_and_home_never_does",
+  "node/catalogue::a_paired_host_reads_its_peers_catalogue_keeps_a_copy_and_follows_a_new_hash",
+  "node/host_catalogue::a_host_says_what_its_providers_offer_with_no_agent_running",
+  "interpret/claude_sdk::a_commands_changed_event_rebuilds_the_offered_commands",
+  "tui/lib::tests::a_new_agent_offers_what_its_host_offers",
+  "tui/lib::tests::a_new_agent_says_when_its_provider_is_not_signed_in",
+]
+
+[[contract]]
+id = "permissions-and-modes"
+source = "invariant"
+section = "Catalogue"
+claim = "Permission and mode are set only to values the agent offers; shift+tab moves through modes where the agent has them and through the permissions that still ask otherwise; Codex settings matching no named permission read custom."
+tests = [
+  "interpret/claude_sdk::a_permission_claude_does_not_offer_is_refused",
+  "interpret/claude_sdk::claude_offers_never_ask_only_when_launched_allowing_it",
+  "interpret/codex::the_settings_notice_names_the_mode_and_who_answers_approvals",
+  "interpret/codex::a_mode_chosen_at_creation_is_set_by_the_first_turn",
+  "tui/lib::tests::shift_tab_moves_claude_to_the_next_permission_that_still_asks",
+  "tui/lib::tests::codex_moves_mode_with_shift_tab_and_permission_from_the_settings_key",
+  "tui/lib::tests::codex_settings_outside_every_permission_read_custom",
+]
+
+[[contract]]
+id = "plans-are-items"
+source = "invariant"
+section = "Plans and asks"
+claim = "A plan is an item with its typed verdict for every kind, decided from amux or from Codex's own app; the file Claude writes its plan to draws nothing."
+tests = [
+  "interpret/claude_sdk::plans_are_items_with_their_verdict",
+  "interpret/claude_pty::plans_are_items_with_their_verdict",
+  "interpret/codex::plans_open_a_decision_amux_answers",
+  "interpret/codex::a_plan_is_decided_from_codexs_own_app",
+  "tui/lib::tests::a_plan_reads_under_its_heading_and_folds_once_decided",
+  "journey:terminal/decide-plan-codex",
+  "journey:phone/decide-plan-codex",
+]
+
+[[contract]]
+id = "questions-skip-note-reply"
+source = "invariant"
+section = "Plans and asks"
+claim = "A question can be skipped, noted and replied to instead, for every kind; terminal Claude takes no note and a skip only on a form of several questions, whose review screen submits with some unanswered."
+tests = [
+  "interpret/claude_sdk::questions_are_skipped_noted_or_replied_to",
+  "interpret/codex::questions_are_skipped_noted_or_replied_to",
+  "interpret/claude_pty::a_question_of_several_can_be_skipped",
+  "interpret/claude_pty::a_question_takes_a_reply_instead",
+  "claude/lib::pty::keymap::interpret::a_lone_question_cannot_be_skipped",
+  "agent/providers::terminal_claude_takes_a_skipped_question_through_its_review_screen",
+  "tui/lib::tests::terminal_claude_offers_skip_only_on_a_form_of_several_questions",
+  "tui/lib::tests::a_question_is_noted_with_tab_and_the_next_skipped",
+  "tui/lib::tests::a_question_is_replied_to_instead_with_what_was_answered_so_far",
+  "journey:terminal/answer-questions",
+  "journey:phone/answer-questions",
+]
+
+[[contract]]
+id = "forwarded-send-verdicts"
+source = "worked failure"
+section = "Sending"
+claim = "A send to another host with no link never leaves and is rejected; one cut off after it left reads may not have arrived, and settles once the link returns, arriving once."
+tests = [
+  "node/forwarded_send::a_send_with_no_link_never_leaves_and_is_rejected",
+  "node/forwarded_send::a_send_cut_off_after_it_left_is_uncertain_and_arrives_once",
+  "tui/lib::tests::an_unconfirmed_prompt_offers_resend_and_discard",
+  "journey:terminal/send-rejected",
+  "journey:terminal/send-may-not-have-arrived",
+]
+
+[[contract]]
+id = "agent-in-new-worktree"
+source = "invariant"
+section = "Sending"
+claim = "A new agent can start in a fresh git worktree branched from what its folder has checked out; an existing branch or folder is refused rather than reused."
+tests = [
+  "git-facts/facts::a_worktree_branches_from_what_the_folder_has_checked_out",
+  "git-facts/facts::a_worktree_is_refused_rather_than_reusing_a_branch_or_a_folder",
+  "app-runtime/runtime::a_new_agent_starts_from_the_hosts_catalogue_in_a_worktree_of_its_own",
+  "journey:terminal/new-agent-worktree",
+]
+
+[[contract]]
+id = "terminal-wait-fails-fast"
+source = "testing page"
+section = "Time and absence"
+claim = "A terminal test whose wait fails ends instead of hanging."
+tests = ["amux/term_fails_fast::a_failing_terminal_wait_ends_its_test"]

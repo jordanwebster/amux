@@ -222,6 +222,13 @@ abandoned, not joined. Before the exit is recorded, the agent feeds the
 interpreter everything the provider said first: events already queued, then
 any transcript rows a follower has not read yet.
 
+A provider's background jobs do not outlive a clean exit: Codex and headless
+Claude end them when their input closes. A provider process killed on its
+own leaves them running, orphaned, and terminal Claude's `/exit` lets the
+person move the session and its jobs into Claude's own background, where
+they keep running after the pane closes. Either way the agent's list of
+jobs is emptied at the exit ([background jobs](INTERPRETERS.md#background-jobs)).
+
 | Kind | Child | Facts | Input |
 |---|---|---|---|
 | `claude_pty` | `claude` in a pseudo-terminal | Hook payloads on `private/hooks.sock`, transcript rows, and the agent's own launch, trust-dialog and ready facts | Keystrokes, typed through the keymap resolved for the running Claude |
@@ -558,7 +565,7 @@ the system.
 | Codex attach, live | `just live codex attach` | The same against the real Codex, from amux's client and Codex's app in two terminals: a timed capture of each (`app.cast`, `amux.cast`, raw bytes), a text frame of both per step and a verdict, in `target/live/codex-attach/` |
 | Codex thread name | `just test-crate agent -- --test codex_thread_name` | The thread is named after the agent at start and on rename |
 | Dump | `just test-crate agent -- --test dump` | The dump part carries no planted secret |
-| Tool server | `just test-crate agent -- --test tools` | Tool calls reach a stand-in daemon on `tools.sock`, retry across an update window, and come back as the items the interpreter draws |
+| Tool server | `just test-crate agent -- --test tools` | Tool calls reach a scripted daemon on `tools.sock`, retry across an update window, and come back as the items the interpreter draws |
 
 These run the real process code against the scripted fake providers in
 [`crates/provider-fakes`](../crates/provider-fakes/src/lib.rs) and recorded

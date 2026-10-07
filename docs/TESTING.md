@@ -131,8 +131,10 @@ production code, and small authored scenarios. Ordinary runs compare and never r
 
 | Fixture | Where | Updated by |
 | --- | --- | --- |
-| Terminal Claude (played back on Unix only) and headless Claude recordings | `crates/claude-specs/fixtures` | `claude-probe record (--sdk\|--pty) <spec>` |
+| Terminal Claude (played back on Unix only) and headless Claude recordings | `crates/claude-specs/fixtures/pty`, `crates/claude-specs/fixtures/sdk` | `claude-probe record (--sdk\|--pty) <spec>` |
 | Codex recordings | `crates/codex-specs/fixtures/runtime` | `codex-probe record <spec>` |
+| Live-run captures: sessions amux's own interpreter drove on the installed provider, which no spec produced or replays | `crates/claude-specs/fixtures/live/{sdk,pty}`, `crates/codex-specs/fixtures/live` | `just live <kind>`, then `claude-probe join` or `codex-probe join` from `target/live/recordings/<kind>/<scenario>`; see each README |
+| Terminal Claude transcripts no recording covers | `crates/claude-specs/fixtures/claude-pty` | a new capture; see its README |
 | Agent-process replays cut from those recordings | `crates/agent/tests/replay` | by hand; see its README |
 | Interpreter emission goldens (`*.json` input, `*.golden` output) per kind | `crates/interpret/fixtures` | `INTERPRET_UPDATE_GOLDENS=1` |
 | View data goldens | `crates/ui-view/tests/goldens` | `UI_VIEW_UPDATE_GOLDENS=1` |
@@ -146,7 +148,9 @@ production code, and small authored scenarios. Ordinary runs compare and never r
 | A dump bundle replayed through its three stages | `crates/replay-support/tests/fixtures/bundle` | a fresh `amux dump`; see [Debugging](DEBUGGING.md) |
 | Performance baselines | `perf/baselines` | `just perf --baseline` and `just ios perf --baseline`; see [Performance](PERFORMANCE.md) |
 
-Every update is reviewed as a diff before it is committed. The phone's pictures with their glass on are review
+The recordings and live captures are read by the protocol crates' strict decode tests (every message decodes to a
+known type), the fakes' conformance run and the interpreters' `recorded_*` goldens, so a capture from a newer
+provider shows at once what changed. Every update is reviewed as a diff before it is committed. The phone's pictures with their glass on are review
 captures written wherever they are asked for (`just ios goldens -- --review DIR`, `just ios component-snapshots --
 --review DIR`) and are never compared or committed; [the iPhone app](IOS.md#compared-pictures-are-drawn-flat) says
 why.

@@ -162,9 +162,16 @@ question: `Options(indices)` or `Other(text)`.
 
 - One pick-one question without previews answers on the pick.
 - Several picks, several questions, previews and "Something else" collect picks and send from a review screen,
-  where every answer shows before sending and an unanswered question blocks Send.
+  where every answer shows before sending.
 - Several questions go one at a time, with the headers as steps.
-- A note may go out with the answers (`question_note`); terminal Claude has no place to type one.
+- A question may be skipped where the agent takes one (`question_skip`): the review reads it skipped and the
+  answer leaves it out. Where it takes none, an unanswered question blocks Send.
+- A note may go out with each question's answer (`question_note`).
+- Instead of answering, the person may reply in their own words (`question_reply`); the answer carries the words
+  and whatever was answered so far, and the row reads replied instead.
+- Terminal Claude, as a limit of Claude's own form: it takes no note, since the form has nowhere to type one, and
+  it takes a skip only when it asks several questions, whose form ends in a review screen that submits with some
+  unanswered. A lone single-select question is submitted by answering it, so it cannot be skipped.
 
 ![One pick-one question with the recommended option tagged and Something else last.](figures/vocabulary/ask_question_single.light.png)
 
@@ -267,7 +274,7 @@ files and network; secret answers to questions; image generation; automatic revi
 reroutes; working notes marked apart from the final answer.
 
 **Terminal Claude's limits** follow from reading a terminal: replies arrive whole, thinking has no live phase, a
-denial always stops the turn, the question card takes no note, a tool server's form is unanswerable from a client
+denial always stops the turn, a question takes no note and is skipped only in a form of several, a tool server's form is unanswerable from a client
 (its escape card sends you to Claude's own terminal), and usage, tool-server health and model switches are not
 reported.
 

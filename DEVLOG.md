@@ -1,3 +1,24 @@
+2026-10-07 — **The documents describe what now exists, and the contracts name its tests.**
+The testing page's fixtures table now lists the live-run captures beside the
+recorded corpora, with how a live run joins them, and the terminal Claude
+transcripts no recording covers; it says the protocol crates' strict decode
+tests, the fakes' conformance run and the interpreter goldens read all of
+them. The agent process page states what the probes found about background
+jobs at a provider's exit: a clean exit of Codex or headless Claude ends
+them, a provider killed on its own leaves them orphaned, and terminal
+Claude's `/exit` can move them into Claude's own background; the list is
+emptied either way. The chat vocabulary and the terminal's keymap say how a
+question is skipped, noted and replied to, and that terminal Claude, as a
+limit of Claude's own form, takes no note and a skip only on a form of
+several questions, which ends in a review screen. Fifteen new contracts name
+the tests holding the typed provider messages, Codex's app co-driving, the
+fleet's row facts and one session per agent, the append rule, git facts and
+changed files, background jobs, bounded command output, the catalogue,
+permissions and modes, plans, questions, forwarded sends, worktrees and the
+terminal test that fails rather than hangs. The wire's recorded baseline
+picks up three added fields it had missed: a question ask's
+`provider_dialog`, the spec's `base_branch` and `CreateAgent.new_worktree`.
+
 2026-10-07 — **Terminal Claude's question skip is recorded and verified.**
 The keymap moves past a skipped question with Tab, but its verified list had
 no recording of a skip. A new terminal spec, `question_skip_reply`, asks two

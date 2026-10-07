@@ -171,8 +171,8 @@ when it was first listed. The list is emptied when the provider exits, and a
 new incarnation starts with none. A clean exit of Codex or headless Claude
 ends their jobs; a provider killed alone can leave them running, orphaned,
 and terminal Claude's `/exit` can move the session and its jobs into
-Claude's own background. Nothing reports on such jobs any more, so amux
-lists none.
+Claude's own background. Once the provider has exited nothing reports on
+such jobs, so amux lists none.
 
 ## The catalogue
 
