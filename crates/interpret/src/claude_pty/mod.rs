@@ -541,6 +541,11 @@ pub struct State {
     slash: Option<Slash>,
     /// The running turn began with a local command, not a model request.
     local_turn: bool,
+    /// The row that ended the last turn as interrupted. Claude follows it
+    /// with that turn's duration row, which must not end the turn begun
+    /// since (a reply typed the moment the interruption landed).
+    #[serde(default)]
+    interruption: Option<String>,
     running: Vec<Running>,
     /// The text of each prompt typed through amux and not yet reflected,
     /// by input id: a prompt Claude folds into a running turn is reflected
@@ -592,6 +597,7 @@ impl State {
             agents: BTreeMap::new(),
             slash: None,
             local_turn: false,
+            interruption: None,
             running: Vec::new(),
             submitted: Vec::new(),
             announced_plans: Vec::new(),

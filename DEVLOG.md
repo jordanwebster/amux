@@ -1,3 +1,16 @@
+2026-10-07 — **A reply typed after an interruption keeps its turn running on terminal Claude.**
+Claude 2.1.292 follows the row that says a turn was interrupted with that
+turn's duration row, which 2.1.251 did not write. When amux replies instead
+of answering a question, it cancels Claude's menu and types the words the
+moment the interruption ends the turn, so the late duration row ended the
+reply's new turn as completed: the chat read the reply finished and the
+agent idle while Claude was still working on it. A duration row that
+follows the interruption row now ends nothing more. The reply-instead
+fixture carries the row. The live questions scenario now waits for the
+reply's turn to end, and compares its phases knowing that a replay of
+terminal Claude's capture, which holds none of amux's keys, reads idle
+between the interruption and the reply's own prompt row.
+
 2026-10-07 — **The probes reach the real provider past a wrapper on the PATH.**
 Standing in for `claude` or `codex` first on the PATH, a probe ran the real
 provider with the PATH it was given. A wrapper further along that runs the

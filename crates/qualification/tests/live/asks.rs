@@ -323,10 +323,11 @@ impl Install {
         {
             return Err(format!("no record reads replied instead: {records:?}"));
         }
-        judge(
-            &self.captured(Scenario::Questions)?.shape(kind),
-            &live.shape(kind),
-        )?;
+        let mut recorded = self.captured(Scenario::Questions)?.shape(kind);
+        if kind == Kind::ClaudePty {
+            recorded.reply_typed_at_once();
+        }
+        judge(&recorded, &live.shape(kind))?;
         Ok(Verdict::Pass)
     }
 }

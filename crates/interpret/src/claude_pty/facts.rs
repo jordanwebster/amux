@@ -1195,7 +1195,7 @@ impl State {
         self.shared.item(
             emit,
             ItemDraft {
-                key,
+                key: key.clone(),
                 body: item_body(Kind::Interruption(wire::Interruption {})),
                 at_ms,
                 complete: true,
@@ -1203,6 +1203,7 @@ impl State {
             },
         );
         self.end_turn(emit, TurnOutcome::Interrupted, at_ms, None);
+        self.interruption = Some(key);
     }
 
     fn end_turn(
@@ -1376,6 +1377,11 @@ impl State {
     fn system_row(&mut self, emit: &mut Emit, row: &SystemRow, at_ms: Option<i64>) {
         match row {
             SystemRow::TurnDuration(turn) => {
+                if turn.envelope.parent_uuid.is_some()
+                    && turn.envelope.parent_uuid == self.interruption
+                {
+                    return;
+                }
                 self.close_all_unknown(emit);
                 let duration = turn.duration_ms.map(|duration| duration as i64);
                 self.end_turn(emit, TurnOutcome::Completed, at_ms, duration);

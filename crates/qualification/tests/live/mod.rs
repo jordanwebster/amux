@@ -1366,6 +1366,23 @@ struct Shape {
     asks: Vec<String>,
 }
 
+impl Shape {
+    /// Terminal Claude's capture carries none of amux's keys, so its replay
+    /// reads idle from the interruption that cancels the last question until
+    /// the row of the reply amux typed in its place; the session, which typed
+    /// the reply the moment the interruption landed, reads working throughout.
+    fn reply_typed_at_once(&mut self) {
+        if let Some(at) = self
+            .phases
+            .iter()
+            .rposition(|phase| *phase == Phase::NeedsYou)
+            && self.phases[at + 1..].starts_with(&[Phase::Working, Phase::Idle, Phase::Working])
+        {
+            self.phases.drain(at + 2..at + 4);
+        }
+    }
+}
+
 /// The live shape matches the recording's. A recording that stops before
 /// its turn ends (terminal Claude's permission recording ends at the tool
 /// result) judges the live run only as far as it goes; the scenario checks

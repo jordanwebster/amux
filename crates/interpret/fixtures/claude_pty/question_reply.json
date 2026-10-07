@@ -322,6 +322,26 @@
       "fact": {
         "channel": "transcript",
         "json": {
+          "type": "system",
+          "subtype": "turn_duration",
+          "uuid": "d1",
+          "parentUuid": "i1",
+          "timestamp": "2027-01-15T08:00:00.027Z",
+          "sessionId": "s1",
+          "durationMs": 17,
+          "messageCount": 4,
+          "isMeta": false
+        }
+      },
+      "expect": {
+        "items": []
+      },
+      "note": "Claude follows the interruption with the interrupted turn's duration; the reply's turn, begun as its words were typed, runs on"
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
           "type": "user",
           "uuid": "u2",
           "timestamp": "2027-01-15T08:00:00.040Z",
