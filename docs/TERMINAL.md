@@ -212,8 +212,10 @@ behind it and comes back after. The plan or the call it is about stays in the fe
   skip only when it asks several questions: Claude's own form has a review screen only then, and submits a lone
   question as soon as it is answered.
 - **A tool server's form** (`● linear needs details`): its message, then each field as a step in the server's
-  order (a choice, Yes / No, boxes, or a typed value, numbers checked), required ones marked, and a review with
-  Submit; `Decline` is the way out.
+  order (a choice, Yes / No, boxes, or a typed value), starting from the server's defaults with Yes / No on No,
+  required ones marked, and a review with Submit; `Decline` is the way out. A value the form cannot take says
+  why beside it (`needs a whole number`, `needs at least 1`), and the review names the first field that keeps the
+  form back.
 - **A tool server's link** (`● grafana sent a link`): the server's own message and the address, `1. Open the
   link` (the box stays), `2. Done`, and `Decline`. The provider says nothing of what a link is for, so the
   record after it (`Opened grafana's link`) carries the message's first line.

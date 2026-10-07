@@ -41,6 +41,8 @@ pub fn definitions() -> Map<String, Value> {
         ui_view::AgentNameProblem,
         ui_view::Pick,
         ui_view::QuestionResponse,
+        ui_view::FormValue,
+        ui_view::FormProblem,
         ui_view::Overview,
         ui_view::Comparison,
         ui_view::ComposerView,
@@ -491,14 +493,16 @@ fn tagged_enum(name: &str, schemas: &[Value]) -> Result<String> {
                     variant.swift, variant.json
                 );
             }
-            Payload::Value(ty) => {
+            // Always `encode`, even for an optional: the tag is the value,
+            // so a none must still name its variant (`{"Choice": null}`),
+            // where `encodeIfPresent` would write `{}`, which serde refuses.
+            Payload::Value(_) => {
                 let _ = writeln!(
                     out,
                     "        case .{0}(let _value):\n            \
                      var _container = encoder.container(keyedBy: Tag.self)\n            \
-                     try _container.{1}(_value, forKey: .{0})",
+                     try _container.encode(_value, forKey: .{0})",
                     variant.swift,
-                    encode_call(ty)
                 );
             }
             Payload::Fields(fields) => {

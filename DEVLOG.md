@@ -1,3 +1,38 @@
+2026-10-08 — **Forms are checked and encoded by the view, typed.**
+Each client turned a tool server's form into the answer itself, and the two
+disagreed. Defaults: the phone started each field from the view's text
+`initial` (the schema's default, else "false" for a toggle and the first
+option for a choice), so a required choice was answered before the person
+chose anything; the terminal ignored `initial` and started every field
+empty, defaults included. Toggles: the phone always sent one; the terminal
+left an untouched toggle out, and refused a required one as "is required".
+Numbers: the terminal refused text that was not a number at Enter, the phone
+held Submit back; both read "inf" and "NaN" as numbers, the terminal then
+sending null and the phone dropping the whole content to `{}`; the terminal
+sent a whole number for a decimal field as `3.0`. Text: the terminal trimmed
+it, the phone sent spaces and let a field of spaces satisfy "required".
+Neither checked the limits a schema can set. Now each `FormField` carries
+its limits (text length, a number's range, how many picks) and an `initial`
+`FormValue` (typed text, a toggle, a choice or picks by position) from the
+schema's default only, a toggle off and a choice unchosen. `form_problems`
+gives each field's typed `FieldProblem` (required and empty, not a number,
+not whole, below or above the range, too short or long, too few or many
+picked) and `form_answer` builds the Submit with the JSON object the schema
+describes: text trimmed, a whole number sent whole, picks in the options'
+order, an untouched toggle off, empty optional fields left out. The phone
+reaches the check through a new bridge call, holds Submit back on it and says
+a changed field's problem under it; it submits values, not JSON, and Rust
+encodes them. The terminal calls both directly and words the problems beside
+the field and on the review. Both clients' own encoding is gone. The Swift
+generator now writes `null` for a variant holding an optional, which it
+wrote as `{}` before; serde refused that, so a new agent's "back to the
+default" pick never parsed. Noticeable: the phone's choices start unchosen
+(a "Choose" row) unless the server named a default; the terminal starts
+fields at their defaults, toggles on No and ticked; the phone's number
+keyboard takes a minus sign; problems read "needs a whole number", "needs at
+least 1" in the terminal and "Enter a whole number", "At least 1" on the
+phone.
+
 2026-10-08 — **Settings, model names and the new-agent pickers come from the view, typed.**
 Each client worked out parts of an agent's settings for itself. The running
 model's name: the terminal preferred the interpreter's name, the phone

@@ -310,7 +310,7 @@ each renderer.
 A view decides; a client presents. Any judgement both clients must agree on (whether an agent needs you, how a
 session ended, why a prompt was refused, what a model is called, how a setting can change, which settings the
 composer mentions, what a new agent's pickers hold and what a pick there does, where a tool call stands, what a plan's
-title is, which lines an edit changes) is computed once in a view and handed over as a
+title is, which lines an edit changes, whether a form's answers can go and what they send) is computed once in a view and handed over as a
 typed value, never as text: each client words it. Where a client's own choice changes what a view returns, such
 as folding tool steps, the client passes the choice in as an argument. A client may read plain facts from the state
 directly (a name, a path, a count the state holds), but never works out a judgement from them.
@@ -320,7 +320,8 @@ directly (a name, a path, a count the state holds), but never works out a judgem
 | `chat_rows(state, range, opts)` | One `Row` per held item whose order is in `range`, widened to include any run that crosses either edge. The terminal's call, for what is on screen. |
 | `chat_rows_for(state, keys, opts)` | Rows for these keys, in order. The phone's call, for the cells an update changed. |
 | `ask_card(state)` | The head ask as an `AskCard`, with its count, or `None`. |
-| `answer_input(card, answer, note)`, `question_answer(card, picks, note)`, `with_form_content(answer, json)` | The input that answers the card in its kind's arm. |
+| `answer_input(card, answer, note)`, `question_answer(card, picks, note)` | The input that answers the card in its kind's arm. |
+| `form_problems(fields, values)`, `form_answer(card, values)` | A tool server's form, checked and encoded once for every client: given one `FormValue` per field (typed text, a toggle, a choice or picks by position), each field's `FieldProblem` (required and empty, not a number or not a whole one, out of the schema's range, too short or long, too few or many picked), or the Submit carrying the JSON object the schema describes. |
 | `composer(state, now_ms)`, `waiting(state)` | The composer mode and the activity line inside it; the waiting reason. |
 | `composer_tokens(draft, attachments)`, `segments(text, attachments)` | Text runs and attachment chips at their placeholder positions. |
 | `queue_rows(state)`, `sends_to_feed(state)`, `prompts_underway(state, in_feed)`, `refused_prompts(state)` | Queued prompts (withdraw, send now); whether a new prompt lands at the feed's end or in the queue; this client's prompts on their way, each where it was first drawn, sending or may not have arrived; the prompts the agent refused, with why. |
@@ -419,11 +420,12 @@ incarnation's first prompt, one tap.
 
 `ask_card` builds the card for the head ask. Each `Choice` carries its `ChoiceOutcome` and the answer body it
 sends; the client passes the chosen answer (with a note, for choices that take one) to `answer_input`, then to
-`Session::answer`. An answer names its ask by key, so any queued ask can be answered from any client. While the
+`Session::answer`. A form's values go to `form_answer` instead, which refuses them with each field's problem or
+builds the Submit; both clients say what keeps a form back from the same `form_problems`. An answer names its ask by key, so any queued ask can be answered from any client. While the
 answer is in flight the card's `CardState` is `Sending`; a rejection brings it back as `Rejected(reason)`; a lost
 connection leaves it `NotConfirmed` with resend and discard; an exited agent's asks are `Dismissed`. On the phone,
-answers never carry a provider's answer body across the bridge: the phone names a choice by position, or gives one
-`Pick` per question, and the answer is built in Rust.
+answers never carry a provider's answer body across the bridge: the phone names a choice by position, gives one
+`Pick` per question, or gives a form one `FormValue` per field, and the answer is built in Rust.
 
 ### Attachments
 

@@ -147,7 +147,7 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
         kept.append(open)
         return open.map { key in ordered.first { $0.id == key }?.run?.last ?? key }
     }
-    func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? { .done }
+    func answerForm(_ ask: String, values: [FormValue]) async -> ActOutcome? { .done }
 
     func withdraw(_ input: [UInt8]) async -> ActOutcome? {
         withdrawn.append(input)
@@ -955,7 +955,7 @@ final class ChatModelTests: XCTestCase {
         source.card = card("ask:1")
         let model = ChatModel(source: source)
         await settle()
-        let typed = ["title": "Fleet rows lose their branch", "team": "FOX"]
+        let typed: [FormValue] = [.text("Fleet rows lose their branch"), .choice(0)]
         model.keep(form: typed, onAsk: "ask:1")
         model.keep(form: typed, onAsk: "ask:2")
         XCTAssertEqual(model.formDraft(onAsk: "ask:1"), typed)

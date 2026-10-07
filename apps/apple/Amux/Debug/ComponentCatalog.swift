@@ -919,14 +919,14 @@ enum CatalogFixtures {
     /// choice of labels and a defaulted toggle.
     static let formFields = [
         FormField(
-            name: "repository", title: "Repository", description: "", required: true, kind: .text,
-            initial: "jlw/amux"),
+            name: "repository", title: "Repository", description: "", required: true,
+            kind: .text(maxLength: nil, minLength: nil), initial: .text("jlw/amux")),
         FormField(
             name: "labels", title: "Labels", description: "", required: false,
-            kind: .choice(options: ["bug", "ios", "docs"]), initial: "bug"),
+            kind: .choice(options: ["bug", "ios", "docs"]), initial: .choice(0)),
         FormField(
             name: "assign", title: "Assign to me", description: "", required: false, kind: .toggle,
-            initial: "true"),
+            initial: .toggle(true)),
     ]
 
     static let redactionQuestion = QuestionView(

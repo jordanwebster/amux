@@ -10,11 +10,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use serde_json::{Map, Value};
 use ui_view::{
-    AskBody, AskCard, CardState, Choice, ChoiceOutcome, EditLine, FormField as Field,
-    FormFieldKind as FieldKind, LineKind, PermissionGrant, Pick, QuestionResponse, QuestionView,
-    Scope, answer_input, question_answer, reply_answer, with_form_content,
+    AskBody, AskCard, CardState, Choice, ChoiceOutcome, EditLine, FieldProblem, FormField as Field,
+    FormFieldKind as FieldKind, FormValue, LineKind, PermissionGrant, Pick, QuestionResponse,
+    QuestionView, Scope, answer_input, form_answer, form_problems, question_answer, reply_answer,
 };
 
 use crate::editor::Editor;
@@ -94,8 +93,8 @@ pub struct AskUi {
     /// The agent's own terminal can be attached, for what this client
     /// cannot answer.
     attach: bool,
-    /// The open field's text was refused (a form's number that is not one).
-    invalid: bool,
+    /// Why the open form field's value was refused, until it changes.
+    invalid: Option<FieldProblem>,
     /// Per question, what was typed in its field but not answered with:
     /// kept when Tab moves on, so coming back shows it.
     drafts: Vec<String>,
@@ -243,8 +242,13 @@ impl AskUi {
                     .is_some_and(|q| q.options.is_empty() && q.allow_other);
             }
             AskBody::Form { fields, .. } => {
+                // Each field starts where the shared view says: its default,
+                // a toggle off.
                 self.fields = fields.clone();
-                self.picks = vec![QuestionPick::default(); self.fields.len()];
+                self.picks = fields
+                    .iter()
+                    .map(|field| form_pick(field, &field.initial))
+                    .collect();
                 self.noting = form_questions(&self.fields)
                     .first()
                     .is_some_and(|q| q.options.is_empty() && q.allow_other);
@@ -1102,7 +1106,7 @@ impl AskUi {
         // A tab that is only a text field has it live from the start.
         let question = &questions[self.step];
         self.noting = question.options.is_empty() && question.allow_other;
-        self.invalid = false;
+        self.invalid = None;
         self.other = Editor::default();
         self.other.secret = questions[self.step].secret;
         match &pick.other {
@@ -1131,6 +1135,7 @@ impl AskUi {
     fn send_boxed(&mut self, card: &AskCard, questions: &[QuestionView]) -> AskAction {
         if let Some(missing) = self.missing(card) {
             self.question_goto(questions, missing);
+            self.invalid = self.field_problem(missing);
             return AskAction::None;
         }
         if matches!(card.body, AskBody::Form { .. }) {
@@ -1140,11 +1145,11 @@ impl AskUi {
     }
 
     /// The first question that must be answered before sending and is
-    /// not: a form's required field, or with an agent that takes no
+    /// not: a form's field with a problem, or with an agent that takes no
     /// question unanswered, any.
     fn missing(&self, card: &AskCard) -> Option<usize> {
         match card.body {
-            AskBody::Form { .. } => self.missing_field(),
+            AskBody::Form { .. } => self.form_problems().first().map(|p| p.field as usize),
             AskBody::Question(_) if !card.question_skip => {
                 self.picks.iter().position(|pick| !pick.answered())
             }
@@ -1221,8 +1226,8 @@ impl AskUi {
                 self.noting = true;
                 return AskAction::None;
             }
-            if !self.field_takes(&typed) {
-                self.invalid = true;
+            if let Some(problem) = self.typed_problem(&typed) {
+                self.invalid = Some(problem);
                 return AskAction::None;
             }
             if confirm && !typed.is_empty() {
@@ -1351,7 +1356,7 @@ impl AskUi {
                     if let Some(draft) = self.drafts.get_mut(self.step) {
                         draft.clear();
                     }
-                    self.invalid = false;
+                    self.invalid = None;
                     if !text_only {
                         self.noting = false;
                     } else if empty && let Some(out) = rows.out.or(rows.skip) {
@@ -1371,7 +1376,7 @@ impl AskUi {
                     return self.question_row(card, questions, self.selected, true);
                 }
                 _ => {
-                    self.invalid = false;
+                    self.invalid = None;
                     self.other.key(key);
                 }
             }
@@ -1762,17 +1767,13 @@ impl AskUi {
                 width,
             );
             if let Some(at) = missing {
+                let words = match self.field_problem(at) {
+                    Some(problem) => problem_words(&problem),
+                    None => "is not answered".to_owned(),
+                };
                 push(
                     &mut send,
-                    format!(
-                        " · {} {}",
-                        question_name(&questions[at], at),
-                        if form.is_some() {
-                            "is required"
-                        } else {
-                            "is not answered"
-                        }
-                    ),
+                    format!(" · {} {words}", question_name(&questions[at], at)),
                     theme.faint(),
                     width,
                 );
@@ -1792,10 +1793,23 @@ impl AskUi {
         }
         // A form's field: required, and what it is for.
         if let Some(field) = form.and(self.fields.get(self.step)) {
-            if field.required
-                && let Some(last) = out.lines.last_mut()
-            {
-                push(last, " · required", theme.faint(), width);
+            if let Some(last) = out.lines.last_mut() {
+                if field.required {
+                    push(last, " · required", theme.faint(), width);
+                }
+                // A typed field says what is wrong beside the text; one of
+                // options says it here.
+                if let Some(problem) = &self.invalid
+                    && !question.options.is_empty()
+                    && *problem != FieldProblem::Required
+                {
+                    push(
+                        last,
+                        format!(" · {}", problem_words(problem)),
+                        theme.attention(),
+                        width,
+                    );
+                }
             }
             for part in text::wrap(&field.description, width.max(1)) {
                 let mut line = Line::default();
@@ -2130,8 +2144,13 @@ impl AskUi {
             }
             if lit && self.noting {
                 out.cursor = Some((out.lines.len(), col + text::str_width(&shown)));
-                if self.invalid {
-                    push(&mut row, " · a number", theme.faint(), width);
+                if let Some(problem) = &self.invalid {
+                    push(
+                        &mut row,
+                        format!(" · {}", problem_words(problem)),
+                        theme.faint(),
+                        width,
+                    );
                 }
             }
             out.spots
@@ -2156,8 +2175,13 @@ impl AskUi {
                 if open {
                     out.cursor = Some((out.lines.len(), col + text::str_width(&shown)));
                 }
-                if open && self.invalid {
-                    push(&mut row, " · a number", theme.faint(), width);
+                if open && let Some(problem) = &self.invalid {
+                    push(
+                        &mut row,
+                        format!(" · {}", problem_words(problem)),
+                        theme.faint(),
+                        width,
+                    );
                 }
             } else {
                 push(&mut row, name, ink, width);
@@ -2257,9 +2281,11 @@ fn form_questions(fields: &[Field]) -> Vec<QuestionView> {
                 FieldKind::Choice { options } => {
                     (options.iter().map(String::as_str).collect(), false)
                 }
-                FieldKind::Many { options } => (options.iter().map(String::as_str).collect(), true),
+                FieldKind::Many { options, .. } => {
+                    (options.iter().map(String::as_str).collect(), true)
+                }
                 FieldKind::Toggle => (vec!["Yes", "No"], false),
-                FieldKind::Text | FieldKind::Number { .. } => (Vec::new(), false),
+                FieldKind::Text { .. } | FieldKind::Number { .. } => (Vec::new(), false),
             };
             QuestionView {
                 header: field.title.clone(),
@@ -2271,6 +2297,64 @@ fn form_questions(fields: &[Field]) -> Vec<QuestionView> {
             }
         })
         .collect()
+}
+
+/// A form field's value as its question's pick: a toggle is "Yes" (the
+/// first row) or "No", a choice or several its options, and text or a
+/// number what is typed.
+fn form_pick(field: &Field, value: &FormValue) -> QuestionPick {
+    let mut pick = QuestionPick::default();
+    match (&field.kind, value) {
+        (FieldKind::Toggle, FormValue::Toggle(on)) => pick.selected = vec![u32::from(!*on)],
+        (FieldKind::Choice { .. }, FormValue::Choice(Some(at))) => pick.selected = vec![*at],
+        (FieldKind::Many { .. }, FormValue::Many(picked)) => pick.selected = picked.clone(),
+        (FieldKind::Text { .. } | FieldKind::Number { .. }, FormValue::Text(typed))
+            if !typed.is_empty() =>
+        {
+            pick.other = Some(typed.clone())
+        }
+        _ => {}
+    }
+    pick
+}
+
+/// A form field's question pick back as the value the shared view checks.
+fn form_value(field: &Field, pick: &QuestionPick) -> FormValue {
+    match &field.kind {
+        FieldKind::Toggle => FormValue::Toggle(pick.selected.first() == Some(&0)),
+        FieldKind::Choice { .. } => FormValue::Choice(pick.selected.first().copied()),
+        FieldKind::Many { .. } => FormValue::Many(pick.selected.clone()),
+        FieldKind::Text { .. } | FieldKind::Number { .. } => {
+            FormValue::Text(pick.other.clone().unwrap_or_default())
+        }
+    }
+}
+
+/// What is wrong with a form field, said after its name: "is required",
+/// "needs a whole number", "needs at least 3".
+fn problem_words(problem: &FieldProblem) -> String {
+    let plural = |n: u32, one: &str| {
+        if n == 1 {
+            format!("1 {one}")
+        } else {
+            format!("{n} {one}s")
+        }
+    };
+    match problem {
+        FieldProblem::Required => "is required".to_owned(),
+        FieldProblem::NotANumber => "needs a number".to_owned(),
+        FieldProblem::NotWholeNumber => "needs a whole number".to_owned(),
+        FieldProblem::BelowMinimum { minimum } => format!("needs at least {minimum}"),
+        FieldProblem::AboveMaximum { maximum } => format!("needs at most {maximum}"),
+        FieldProblem::TooShort { min_length } => {
+            format!("needs at least {}", plural(*min_length, "character"))
+        }
+        FieldProblem::TooLong { max_length } => {
+            format!("takes at most {}", plural(*max_length, "character"))
+        }
+        FieldProblem::TooFew { min_items } => format!("needs at least {min_items} picked"),
+        FieldProblem::TooMany { max_items } => format!("takes at most {max_items} picked"),
+    }
 }
 
 /// "write target/, read ~/.cargo · the network (api.github.com)": what an
@@ -2307,21 +2391,39 @@ fn middle_cut(text: &str, max: usize) -> String {
 }
 
 impl AskUi {
-    /// The first required field of a form still empty.
-    fn missing_field(&self) -> Option<usize> {
+    /// The form's values as the person left them, in field order.
+    fn form_values(&self) -> Vec<FormValue> {
         self.fields
             .iter()
             .zip(&self.picks)
-            .position(|(field, pick)| field.required && !pick.answered())
+            .map(|(field, pick)| form_value(field, pick))
+            .collect()
     }
 
-    /// Whether the open field takes `typed`: a form's number must be one.
-    fn field_takes(&self, typed: &str) -> bool {
-        match self.fields.get(self.step).map(|field| &field.kind) {
-            Some(FieldKind::Number { integer: true }) => typed.parse::<i64>().is_ok(),
-            Some(FieldKind::Number { integer: false }) => typed.parse::<f64>().is_ok(),
-            _ => true,
-        }
+    /// Every field's problem, as the shared view checks the form.
+    fn form_problems(&self) -> Vec<ui_view::FormProblem> {
+        form_problems(&self.fields, &self.form_values())
+    }
+
+    /// The problem of the form's field `at`, if it has one.
+    fn field_problem(&self, at: usize) -> Option<FieldProblem> {
+        self.form_problems()
+            .into_iter()
+            .find(|problem| problem.field as usize == at)
+            .map(|problem| problem.problem)
+    }
+
+    /// Why the open form field cannot take `typed`, checked as the shared
+    /// view checks the whole form; never for a question's own text.
+    fn typed_problem(&self, typed: &str) -> Option<FieldProblem> {
+        let field = self.fields.get(self.step)?;
+        form_problems(
+            std::slice::from_ref(field),
+            &[FormValue::Text(typed.to_owned())],
+        )
+        .into_iter()
+        .next()
+        .map(|problem| problem.problem)
     }
 
     /// The answer of the card's choice with `outcome`.
@@ -2333,48 +2435,14 @@ impl AskUi {
             .map_or(AskAction::None, |input| AskAction::Answer(Box::new(input)))
     }
 
-    /// Submits the form with what was given for each field.
+    /// Submits the form with what was given for each field, as the shared
+    /// view encodes it.
     fn submit_form(&mut self, card: &AskCard) -> AskAction {
-        let mut content = Map::new();
-        for (field, pick) in self.fields.iter().zip(&self.picks) {
-            if !pick.answered() {
-                continue;
-            }
-            let typed = pick.other.clone().unwrap_or_default();
-            let at = |i: &u32| *i as usize;
-            let value = match &field.kind {
-                FieldKind::Choice { options } => pick
-                    .selected
-                    .first()
-                    .and_then(|i| options.get(at(i)))
-                    .map(|v| Value::String(v.clone())),
-                FieldKind::Many { options } => Some(Value::Array(
-                    pick.selected
-                        .iter()
-                        .filter_map(|i| options.get(at(i)))
-                        .map(|v| Value::String(v.clone()))
-                        .collect(),
-                )),
-                FieldKind::Toggle => Some(Value::Bool(pick.selected.first() == Some(&0))),
-                FieldKind::Number { integer: true } => typed.parse::<i64>().ok().map(Value::from),
-                FieldKind::Number { integer: false } => typed.parse::<f64>().ok().map(Value::from),
-                FieldKind::Text => Some(Value::String(typed)),
-            };
-            if let Some(value) = value {
-                content.insert(field.name.clone(), value);
-            }
+        match form_answer(card, &self.form_values()) {
+            Ok(Some(answer)) => answer_input(card, &answer, "")
+                .map_or(AskAction::None, |input| AskAction::Answer(Box::new(input))),
+            Ok(None) | Err(_) => AskAction::None,
         }
-        let Some(choice) = card
-            .choices
-            .iter()
-            .find(|choice| choice.outcome == ChoiceOutcome::Submit)
-        else {
-            return AskAction::None;
-        };
-        let bytes = serde_json::to_vec(&Value::Object(content)).unwrap_or_default();
-        let answer = with_form_content(&choice.answer, bytes);
-        answer_input(card, &answer, "")
-            .map_or(AskAction::None, |input| AskAction::Answer(Box::new(input)))
     }
 
     /// A link's rows: open it, say it is done, and the Decline footer.
@@ -2527,5 +2595,146 @@ impl AskUi {
             out.lines.push(row);
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use prost::Message as _;
+
+    use super::*;
+
+    /// An authored form card with a Submit that sends Claude's accept.
+    fn form_card(schema: &[u8]) -> AskCard {
+        AskCard {
+            kind: wire::Kind::ClaudeSdk,
+            key: "ask".into(),
+            item_key: "item".into(),
+            position: 1,
+            count: 1,
+            body: AskBody::Form {
+                server: "linear".into(),
+                message: "Details".into(),
+                fields: ui_view::form_fields(schema),
+            },
+            choices: vec![Choice {
+                outcome: ChoiceOutcome::Submit,
+                primary: true,
+                takes_note: false,
+                answer: ui_view::Answer::Claude(wire::ClaudeAnswer {
+                    of: Some(wire::claude_answer::Of::Form(wire::FormAnswer {
+                        action: wire::FormAction::Accept as i32,
+                        content_json: vec![],
+                    })),
+                }),
+            }],
+            question_note: false,
+            question_skip: false,
+            question_reply: false,
+            stops_turn: true,
+            state: CardState::Open,
+        }
+    }
+
+    fn press(ui: &mut AskUi, card: &AskCard, code: KeyCode) -> AskAction {
+        ui.box_key(card, KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn typed(ui: &mut AskUi, card: &AskCard, text: &str) {
+        for c in text.chars() {
+            press(ui, card, KeyCode::Char(c));
+        }
+    }
+
+    fn screen(ui: &AskUi, card: &AskCard) -> String {
+        ui.box_lines(card, 100, Theme::default())
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn content(action: AskAction) -> serde_json::Value {
+        let AskAction::Answer(input) = action else {
+            panic!("{action:?}");
+        };
+        let Some(wire::input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(wire::claude_sdk_input::Of::Answer(answer)),
+        })) = input.of
+        else {
+            panic!("{input:?}");
+        };
+        let Some(wire::claude_answer::Of::Form(form)) =
+            wire::ClaudeAnswer::decode(answer.body.as_slice())
+                .unwrap()
+                .of
+        else {
+            panic!("not a form");
+        };
+        serde_json::from_slice(&form.content_json).unwrap()
+    }
+
+    /// Fields start at the schema's defaults and a toggle off, so a form
+    /// whose defaults answer it goes as it stands, the untouched toggle
+    /// sent off rather than left out.
+    #[test]
+    fn a_form_starts_from_its_defaults_and_sends_an_untouched_toggle_off() {
+        let card = form_card(
+            br#"{"type":"object","properties":{
+                "team":{"enum":["core","apps"],"default":"apps"},
+                "estimate":{"type":"integer","default":2},
+                "urgent":{"type":"boolean"}
+            },"required":["team","urgent"]}"#,
+        );
+        let mut ui = AskUi::default();
+        ui.sync(&card);
+        // Every tab is answered from the start; Tab past them reaches the
+        // review, and Enter there submits.
+        assert!(screen(&ui, &card).contains("✓ team   ✓ estimate   ✓ urgent"));
+        press(&mut ui, &card, KeyCode::Tab);
+        press(&mut ui, &card, KeyCode::Tab);
+        press(&mut ui, &card, KeyCode::Tab);
+        let review = screen(&ui, &card);
+        assert!(
+            review.contains("→ apps") && review.contains("→ No"),
+            "{review}"
+        );
+        assert_eq!(
+            content(press(&mut ui, &card, KeyCode::Enter)),
+            serde_json::json!({"team": "apps", "estimate": 2, "urgent": false})
+        );
+    }
+
+    /// What the shared check refuses is said on the field and on the review,
+    /// in the problem's own words.
+    #[test]
+    fn a_fields_problem_is_worded_where_the_person_is() {
+        let card = form_card(
+            br#"{"type":"object","properties":{
+                "estimate":{"type":"integer","minimum":1,"title":"Estimate"},
+                "team":{"enum":["core","apps"],"title":"Team"}
+            },"required":["team"]}"#,
+        );
+        let mut ui = AskUi::default();
+        ui.sync(&card);
+        typed(&mut ui, &card, "2.5");
+        assert_eq!(press(&mut ui, &card, KeyCode::Enter), AskAction::None);
+        assert!(screen(&ui, &card).contains("2.5 · needs a whole number"));
+        // Typing again clears it; a number under the minimum is refused too.
+        press(&mut ui, &card, KeyCode::Esc);
+        press(&mut ui, &card, KeyCode::Up);
+        typed(&mut ui, &card, "0");
+        press(&mut ui, &card, KeyCode::Enter);
+        assert!(screen(&ui, &card).contains("0 · needs at least 1"));
+        // The review names the first field that keeps the form back.
+        press(&mut ui, &card, KeyCode::Tab);
+        press(&mut ui, &card, KeyCode::Tab);
+        assert!(screen(&ui, &card).contains("Submit · Team is required"));
     }
 }

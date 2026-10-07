@@ -2420,19 +2420,22 @@ fn prompts_on_their_way_follow_the_sending_rules() {
 }
 
 /// A tool server's form reads once, here, for every client: its fields in
-/// the order the schema writes them (not sorted), each kind, the required
-/// ones, and what each holds before it is touched.
+/// the order the schema writes them (not sorted), each kind with its
+/// limits, the required ones, and what each holds before it is touched:
+/// the schema's default, else nothing, with a toggle off.
 #[test]
 fn a_form_reads_its_fields_in_the_schemas_order() {
-    use ui_view::{FormFieldKind, form_fields};
+    use ui_view::{FormFieldKind, FormValue, form_fields};
     let fields = form_fields(
         br#"{"type":"object","properties":{
-            "title":{"type":"string","title":"Title","description":"One line"},
-            "labels":{"type":"array","items":{"enum":["bug","ios"]}},
+            "title":{"type":"string","title":"Title","description":"One line","maxLength":80},
+            "labels":{"type":"array","items":{"enum":["bug","ios"]},"maxItems":1,"default":["ios"]},
             "team":{"enum":["core","apps"]},
             "urgent":{"type":"boolean"},
-            "estimate":{"type":"integer","default":3},
-            "ratio":{"type":"number"}
+            "estimate":{"type":"integer","default":3,"minimum":1},
+            "ratio":{"type":"number"},
+            "lane":{"enum":["core","apps"],"default":"apps"},
+            "notify":{"type":"boolean","default":true}
         },"required":["title"]}"#,
     );
     let read: Vec<_> = fields
@@ -2443,23 +2446,35 @@ fn a_form_reads_its_fields_in_the_schemas_order() {
                 field.title.as_str(),
                 field.required,
                 field.kind.clone(),
-                field.initial.as_str(),
+                field.initial.clone(),
             )
         })
         .collect();
     let options = |all: &[&str]| all.iter().map(|o| (*o).to_owned()).collect::<Vec<_>>();
+    let text = |s: &str| FormValue::Text(s.to_owned());
     assert_eq!(
         read,
         vec![
-            ("title", "Title", true, FormFieldKind::Text, ""),
+            (
+                "title",
+                "Title",
+                true,
+                FormFieldKind::Text {
+                    min_length: None,
+                    max_length: Some(80)
+                },
+                text("")
+            ),
             (
                 "labels",
                 "labels",
                 false,
                 FormFieldKind::Many {
-                    options: options(&["bug", "ios"])
+                    options: options(&["bug", "ios"]),
+                    min_items: None,
+                    max_items: Some(1),
                 },
-                ""
+                FormValue::Many(vec![1])
             ),
             (
                 "team",
@@ -2468,27 +2483,229 @@ fn a_form_reads_its_fields_in_the_schemas_order() {
                 FormFieldKind::Choice {
                     options: options(&["core", "apps"])
                 },
-                "core"
+                FormValue::Choice(None)
             ),
-            ("urgent", "urgent", false, FormFieldKind::Toggle, "false"),
+            (
+                "urgent",
+                "urgent",
+                false,
+                FormFieldKind::Toggle,
+                FormValue::Toggle(false)
+            ),
             (
                 "estimate",
                 "estimate",
                 false,
-                FormFieldKind::Number { integer: true },
-                "3"
+                FormFieldKind::Number {
+                    integer: true,
+                    minimum: Some(1.0),
+                    maximum: None
+                },
+                text("3")
             ),
             (
                 "ratio",
                 "ratio",
                 false,
-                FormFieldKind::Number { integer: false },
-                ""
+                FormFieldKind::Number {
+                    integer: false,
+                    minimum: None,
+                    maximum: None
+                },
+                text("")
+            ),
+            (
+                "lane",
+                "lane",
+                false,
+                FormFieldKind::Choice {
+                    options: options(&["core", "apps"])
+                },
+                FormValue::Choice(Some(1))
+            ),
+            (
+                "notify",
+                "notify",
+                false,
+                FormFieldKind::Toggle,
+                FormValue::Toggle(true)
             ),
         ]
     );
     assert_eq!(fields[0].description, "One line");
     assert!(form_fields(b"not json").is_empty());
+}
+
+/// Whether a form can go, and what goes, is decided once for every client:
+/// each field's problem, else the JSON object the schema describes, with
+/// fields left empty left out and an untouched toggle sent off.
+#[test]
+fn a_form_is_checked_and_encoded_once_for_every_client() {
+    use ui_view::{FieldProblem, FormProblem, FormValue, form_fields, form_problems};
+    let fields = form_fields(
+        br#"{"type":"object","properties":{
+            "title":{"type":"string","minLength":3,"maxLength":10},
+            "team":{"enum":["core","apps"]},
+            "estimate":{"type":"integer","minimum":1,"maximum":8},
+            "ratio":{"type":"number"},
+            "labels":{"type":"array","items":{"enum":["bug","ios","docs"]},"minItems":2,"maxItems":2},
+            "urgent":{"type":"boolean"}
+        },"required":["title","team","urgent"]}"#,
+    );
+    let text = |s: &str| FormValue::Text(s.to_owned());
+    let problems = |values: &[FormValue]| {
+        form_problems(&fields, values)
+            .into_iter()
+            .map(|FormProblem { field, problem }| (field, problem))
+            .collect::<Vec<_>>()
+    };
+    // Untouched: the required text and choice are missing; the required
+    // toggle is answered, off.
+    assert_eq!(
+        problems(&[]),
+        vec![(0, FieldProblem::Required), (1, FieldProblem::Required)]
+    );
+    // Spaces alone are nothing entered.
+    assert_eq!(problems(&[text("   ")])[0], (0, FieldProblem::Required));
+    assert_eq!(
+        problems(&[
+            text("ab"),
+            FormValue::Choice(Some(0)),
+            text("2.5"),
+            text("inf"),
+            FormValue::Many(vec![0]),
+        ]),
+        vec![
+            (0, FieldProblem::TooShort { min_length: 3 }),
+            (2, FieldProblem::NotWholeNumber),
+            (3, FieldProblem::NotANumber),
+            (4, FieldProblem::TooFew { min_items: 2 }),
+        ]
+    );
+    assert_eq!(
+        problems(&[
+            text("a much longer title"),
+            FormValue::Choice(Some(0)),
+            text("9"),
+            text(""),
+            FormValue::Many(vec![0, 1, 2]),
+        ]),
+        vec![
+            (0, FieldProblem::TooLong { max_length: 10 }),
+            (2, FieldProblem::AboveMaximum { maximum: 8.0 }),
+            (4, FieldProblem::TooMany { max_items: 2 }),
+        ]
+    );
+    assert_eq!(
+        problems(&[text("flake"), FormValue::Choice(Some(1)), text("0")]),
+        vec![(2, FieldProblem::BelowMinimum { minimum: 1.0 })]
+    );
+    // A value of another field's shape, or an option out of range, is
+    // nothing entered.
+    assert_eq!(
+        problems(&[FormValue::Toggle(true), FormValue::Choice(Some(7))]),
+        vec![(0, FieldProblem::Required), (1, FieldProblem::Required)]
+    );
+}
+
+/// The answer a form sends carries the object the schema describes, and
+/// is refused with the problems while any field has one.
+#[test]
+fn a_forms_answer_carries_the_checked_values() {
+    use ui_view::{FieldProblem, FormProblem, FormValue, form_answer, form_fields};
+    let schema = br#"{"type":"object","properties":{
+        "title":{"type":"string"},
+        "team":{"enum":["core","apps"]},
+        "estimate":{"type":"integer"},
+        "ratio":{"type":"number"},
+        "labels":{"type":"array","items":{"enum":["bug","ios","docs"]}},
+        "urgent":{"type":"boolean"},
+        "note":{"type":"string"}
+    },"required":["title","team"]}"#;
+    let card = |kind: wire::Kind| {
+        let accept = wire::FormAnswer {
+            action: wire::FormAction::Accept as i32,
+            content_json: vec![],
+        };
+        AskCard {
+            kind,
+            key: "ask".into(),
+            item_key: "item".into(),
+            position: 1,
+            count: 1,
+            body: ui_view::AskBody::Form {
+                server: "linear".into(),
+                message: "Details".into(),
+                fields: form_fields(schema),
+            },
+            choices: vec![ui_view::Choice {
+                outcome: ui_view::ChoiceOutcome::Submit,
+                primary: true,
+                takes_note: false,
+                answer: match kind {
+                    wire::Kind::Codex => ui_view::Answer::Codex(wire::CodexAnswer {
+                        of: Some(wire::codex_answer::Of::Form(accept)),
+                    }),
+                    _ => ui_view::Answer::Claude(wire::ClaudeAnswer {
+                        of: Some(wire::claude_answer::Of::Form(accept)),
+                    }),
+                },
+            }],
+            question_note: false,
+            question_skip: false,
+            question_reply: false,
+            stops_turn: true,
+            state: ui_view::CardState::Open,
+        }
+    };
+    let text = |s: &str| FormValue::Text(s.to_owned());
+    let values = [
+        text("  Reconnect flake "),
+        FormValue::Choice(Some(1)),
+        text("3"),
+        text("2"),
+        FormValue::Many(vec![2, 0, 2]),
+    ];
+    let content = |answer: ui_view::Answer| {
+        let form = match answer {
+            ui_view::Answer::Claude(wire::ClaudeAnswer {
+                of: Some(wire::claude_answer::Of::Form(form)),
+            })
+            | ui_view::Answer::Codex(wire::CodexAnswer {
+                of: Some(wire::codex_answer::Of::Form(form)),
+            }) => form,
+            other => panic!("not a form answer: {other:?}"),
+        };
+        assert_eq!(form.action(), wire::FormAction::Accept);
+        serde_json::from_slice::<serde_json::Value>(&form.content_json).unwrap()
+    };
+    for kind in [wire::Kind::ClaudeSdk, wire::Kind::Codex] {
+        let answer = form_answer(&card(kind), &values).unwrap().unwrap();
+        assert_eq!(
+            content(answer.clone()),
+            serde_json::json!({
+                "title": "Reconnect flake",
+                "team": "apps",
+                "estimate": 3,
+                "ratio": 2,
+                "labels": ["bug", "docs"],
+                "urgent": false,
+            }),
+            "{kind:?}: trimmed, whole numbers whole, picks in the options' order, the untouched toggle off, the empty note left out"
+        );
+        let input = ui_view::answer_input(&card(kind), &answer, "").unwrap();
+        assert!(!input.encode_to_vec().is_empty());
+    }
+    assert_eq!(
+        form_answer(&card(wire::Kind::ClaudeSdk), &[text("Flake")]),
+        Err(vec![FormProblem {
+            field: 1,
+            problem: FieldProblem::Required
+        }])
+    );
+    let mut question = card(wire::Kind::ClaudeSdk);
+    question.body = ui_view::AskBody::Question(vec![]);
+    assert_eq!(form_answer(&question, &values), Ok(None), "not a form");
 }
 
 /// A Codex command whose output lost its start to the bound says so on its

@@ -79,7 +79,7 @@
   row    9 ask:"elicit-2" Ask(Form { server: "docs", message: "Which space?", fields: [], resolution: Open }) attention
   ask "elicit-2" -> "ask:\"elicit-2\"" 1/1 Open
     choices Submit*, Decline
-    body Form { server: "docs", message: "Which space?", fields: [FormField { name: "space", title: "space", description: "", required: false, kind: Text, initial: "" }] }
+    body Form { server: "docs", message: "Which space?", fields: [FormField { name: "space", title: "space", description: "", required: false, kind: Text { min_length: None, max_length: None }, initial: Text("") }] }
   composer Send activity=None queue=[] underway=[] refused=[]
 ## 22 input {"answer":{"answer":{"form":{"action":"accept","content":{"space":"eng"}}},"ask":"\"elicit-2\""},"id":"a9"}
   row    9 ask:"elicit-2" Ask(Form { server: "docs", message: "Which space?", fields: ["space"], resolution: Answered })

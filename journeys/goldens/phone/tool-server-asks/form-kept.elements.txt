@@ -11,7 +11,7 @@ chat.more | More |  | 344,69,44,44
 ask | linear needs details | open | 12,468,378,362
 ask.more | More |  | 338,476,44,44
 ask.field.title |  | Reconnect flake in e2e | 28,595,346,41
-ask.field.team |  | FOX | 28,648,346,34
+ask.field.team |  | FOX | 301,648,73,34
 ask.field.estimate |  | 3 | 28,717,346,41
 ask.submit | Submit |  | 28,770,169,44
 ask.choice.1 | Decline |  | 205,770,169,44
@@ -22,7 +22,7 @@ ask.choice.1 | Decline |  | 205,770,169,44
  | More |  | 338,476,44,44
  | Linear needs a few details before it can create the issue. |  | 28,524,313,37
  | Title * |  | 28,572,40,18
- | Team |  | 28,655,41,20
+ | Team * |  | 28,655,51,20
  | Team, FOX |  | 301,648,73,34
  | FOX |  | 312,655,33,20
  | Estimate |  | 28,694,61,18

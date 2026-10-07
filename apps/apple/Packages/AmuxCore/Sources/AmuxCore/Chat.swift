@@ -192,13 +192,13 @@ public final class Chat: ChatSource, @unchecked Sendable {
         }
     }
 
-    /// Submits a form ask by the position of its Submit on the card, with
-    /// the person's field values as a JSON object.
-    public func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? {
+    /// Submits a form ask with the person's values, one per field in the
+    /// form's order; the shared view checks and encodes them.
+    public func answerForm(_ ask: String, values: [FormValue]) async -> ActOutcome? {
         await value(ActOutcome.self) { live, callback, context in
             ask.withCString { ask in
-                content.withCString {
-                    amux_session_answer_form(live, ask, UInt32(choice), $0, callback, context)
+                Bridge.json(values).withCString {
+                    amux_session_answer_form(live, ask, $0, callback, context)
                 }
             }
         }

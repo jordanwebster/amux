@@ -996,3 +996,34 @@ fn a_new_agents_settings_and_picks_come_from_the_shared_view() {
     // SAFETY: the strings live for the call.
     assert!(unsafe { amux_new_agent_settings(broken.as_ptr(), chosen.as_ptr()) }.is_null());
 }
+
+#[test]
+fn a_forms_problems_come_from_the_shared_view() {
+    let fields = c(&json!([
+        {"name": "title", "title": "Title", "description": "", "required": true,
+         "kind": {"Text": {"min_length": null, "max_length": null}}, "initial": {"Text": ""}},
+        {"name": "estimate", "title": "Estimate", "description": "", "required": false,
+         "kind": {"Number": {"integer": true, "minimum": 1.0, "maximum": null}}, "initial": {"Text": ""}},
+        {"name": "urgent", "title": "Urgent", "description": "", "required": true,
+         "kind": "Toggle", "initial": {"Toggle": false}},
+    ])
+    .to_string());
+    let values = c(r#"[{"Text": " "}, {"Text": "2.5"}]"#);
+    // SAFETY: the strings live for the call.
+    let problems = take(unsafe { amux_form_problems(fields.as_ptr(), values.as_ptr()) });
+    assert_eq!(
+        problems,
+        json!([
+            {"field": 0, "problem": "Required"},
+            {"field": 1, "problem": "NotWholeNumber"},
+        ]),
+        "an untouched required toggle is answered, off"
+    );
+    let filled = c(r#"[{"Text": "Flake"}, {"Text": "3"}, {"Toggle": true}]"#);
+    // SAFETY: the strings live for the call.
+    let none = take(unsafe { amux_form_problems(fields.as_ptr(), filled.as_ptr()) });
+    assert_eq!(none, json!([]));
+    let broken = c("{");
+    // SAFETY: the strings live for the call.
+    assert!(unsafe { amux_form_problems(fields.as_ptr(), broken.as_ptr()) }.is_null());
+}

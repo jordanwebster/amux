@@ -158,7 +158,7 @@ private final class StubChat: ChatSource, @unchecked Sendable {
         open.contains(member) ? open.filter { $0 != member } : open + [member]
     }
     func keepOpenRuns(_ open: [String]) -> [String] { open }
-    func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? { nil }
+    func answerForm(_ ask: String, values: [FormValue]) async -> ActOutcome? { nil }
     func withdraw(_ input: [UInt8]) async -> ActOutcome? { nil }
     func draft(of input: [UInt8]) -> Draft? { nil }
     func sendNow(_ input: [UInt8]) async -> ActOutcome? { nil }

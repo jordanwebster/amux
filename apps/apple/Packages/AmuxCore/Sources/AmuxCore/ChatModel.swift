@@ -28,7 +28,7 @@ public protocol ChatSource: AnyObject, Sendable {
     func toggleRun(_ member: String, open: [String]) -> [String]
     /// The open set with each open run re-held on its newest step.
     func keepOpenRuns(_ open: [String]) -> [String]
-    func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome?
+    func answerForm(_ ask: String, values: [FormValue]) async -> ActOutcome?
     func withdraw(_ input: [UInt8]) async -> ActOutcome?
     /// A queued or sent prompt as the draft it came from, attachments whole.
     func draft(of input: [UInt8]) -> Draft?
@@ -138,9 +138,9 @@ public final class ChatModel {
     /// not sent, kept like the draft so leaving the chat loses none of it,
     /// until that ask closes.
     @ObservationIgnored private var questionKept: (ask: String, draft: QuestionDraft)?
-    /// What the person typed into the head ask's tool server form and has
-    /// not submitted, by field name, kept the same way.
-    @ObservationIgnored private var formKept: (ask: String, values: [String: String])?
+    /// What the person entered in the head ask's tool server form and has
+    /// not submitted, one value per field, kept the same way.
+    @ObservationIgnored private var formKept: (ask: String, values: [FormValue])?
     /// The tasks, background jobs, failed tool servers and usage near a
     /// limit around the chat.
     public private(set) var overview: Overview?
@@ -569,14 +569,14 @@ public final class ChatModel {
         questionKept?.ask == key ? questionKept?.draft : nil
     }
 
-    /// Keeps the tool server form's values, by field name, on the head ask.
-    public func keep(form values: [String: String], onAsk key: String) {
+    /// Keeps the tool server form's values, one per field, on the head ask.
+    public func keep(form values: [FormValue], onAsk key: String) {
         guard ask?.key == key else { return }
         formKept = (key, values)
     }
 
     /// The values kept on this ask's form, if any.
-    public func formDraft(onAsk key: String) -> [String: String]? {
+    public func formDraft(onAsk key: String) -> [FormValue]? {
         formKept?.ask == key ? formKept?.values : nil
     }
 
@@ -914,9 +914,11 @@ public final class ChatModel {
         act({ await $0.replyInstead(ask.key, text: text, soFar: soFar) })
     }
 
-    public func submit(choice: Int, content: String) {
+    /// Submits the head form with one value per field, which the shared
+    /// view checks and encodes.
+    public func submit(form values: [FormValue]) {
         guard let ask else { return }
-        act({ await $0.answerForm(ask.key, choice: choice, content: content) })
+        act({ await $0.answerForm(ask.key, values: values) })
     }
 
     /// Sends the head ask's answer again after the connection dropped.

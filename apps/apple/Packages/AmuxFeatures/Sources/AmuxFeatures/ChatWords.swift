@@ -17,6 +17,25 @@ public enum ChatWords {
         }
     }
 
+    /// What is wrong with a form field's value, under the field.
+    public static func fieldProblem(_ problem: FieldProblem) -> String {
+        switch problem {
+        case .required: String(localized: "Required")
+        case .notANumber: String(localized: "Enter a number")
+        case .notWholeNumber: String(localized: "Enter a whole number")
+        case .belowMinimum(let minimum): String(localized: "At least \(minimum.formatted())")
+        case .aboveMaximum(let maximum): String(localized: "At most \(maximum.formatted())")
+        case .tooShort(let length):
+            length == 1
+                ? String(localized: "At least 1 character") : String(localized: "At least \(length) characters")
+        case .tooLong(let length):
+            length == 1
+                ? String(localized: "At most 1 character") : String(localized: "At most \(length) characters")
+        case .tooFew(let count): String(localized: "Pick at least \(count)")
+        case .tooMany(let count): String(localized: "Pick at most \(count)")
+        }
+    }
+
     public static func duration(_ ms: Int64) -> String {
         let ms = max(0, ms)
         if ms < 1_000 { return "\(ms)ms" }

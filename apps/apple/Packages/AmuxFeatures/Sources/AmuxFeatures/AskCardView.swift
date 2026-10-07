@@ -13,8 +13,8 @@ public enum AskAction: Equatable, Sendable {
     /// The person's own words instead of answering, with what they had
     /// answered so far.
     case reply(String, soFar: [QuestionResponse])
-    /// A form's Submit at this position, with the fields as a JSON object.
-    case submit(Int, content: String)
+    /// A form's Submit, with one value per field in the form's order.
+    case submit([FormValue])
     /// The interrupt: the turn ends, the ask is dismissed, the agent stays.
     case stop
     /// The answer was not confirmed: send it again, or forget it.
@@ -52,13 +52,13 @@ public struct QuestionKeeping: Sendable {
     public static let none = QuestionKeeping(kept: nil) { _ in }
 }
 
-/// Where a tool server's form keeps what was typed: the values it was left
-/// at by field name, and where each change goes.
+/// Where a tool server's form keeps what was entered: the values it was
+/// left at, one per field, and where each change goes.
 public struct FormKeeping: Sendable {
-    let kept: [String: String]?
-    let keep: @MainActor @Sendable ([String: String]) -> Void
+    let kept: [FormValue]?
+    let keep: @MainActor @Sendable ([FormValue]) -> Void
 
-    public init(kept: [String: String]?, keep: @escaping @MainActor @Sendable ([String: String]) -> Void) {
+    public init(kept: [FormValue]?, keep: @escaping @MainActor @Sendable ([FormValue]) -> Void) {
         self.kept = kept
         self.keep = keep
     }
@@ -630,20 +630,23 @@ private struct AskBodyView: View {
         }
     }
 
-    /// Native fields from the tool server's schema; required ones gate Submit.
+    /// Native fields from the tool server's schema. Whether the form can go,
+    /// and what is wrong with a field, is the shared view's check.
     @ViewBuilder
     private func formChoices(_ asked: [FormField]) -> some View {
         let current = fields ?? FormEntry.entries(asked, kept: form.kept)
+        let values = current.map(\.value)
+        let problems = Bridge.formProblems(asked, values)
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(current.enumerated()), id: \.offset) { index, field in
-                FormFieldView(entry: field) { value in
+                FormFieldView(entry: field, problem: FormEntry.shown(problems, at: index, of: field)) { value in
                     // From the form as it is now: a control can hold on to
                     // this closure from an earlier drawing (a menu's
                     // choices), and the copy drawn then lacks later answers.
                     var edited = fields ?? FormEntry.entries(asked, kept: form.kept)
                     edited[index].value = value
                     fields = edited
-                    form.keep(FormEntry.values(edited))
+                    form.keep(edited.map(\.value))
                 }
             }
             ButtonPair {
@@ -651,8 +654,8 @@ private struct AskBodyView: View {
                     if choice.outcome == .submit {
                         choiceButton(
                             String(localized: "Submit"), kind: .primary, id: "ask.submit",
-                            enabled: current.allSatisfy(\.valid)
-                        ) { act(.submit(index, content: FormEntry.content(current))) }
+                            enabled: problems?.isEmpty == true
+                        ) { act(.submit(values)) }
                     } else {
                         choiceButton(
                             ChatWords.choice(choice), kind: .outline, id: "ask.choice.\(index)"
@@ -836,9 +839,7 @@ struct DiffPreview: View {
 /// schema, with what it holds now.
 struct FormEntry: Equatable {
     let field: FormField
-    /// Text, number and choice values; "true" or "false" for a toggle; for
-    /// several picks, the picked options a line each.
-    var value: String
+    var value: FormValue
 
     var name: String { field.name }
     var title: String { field.title }
@@ -846,68 +847,96 @@ struct FormEntry: Equatable {
     var kind: FormFieldKind { field.kind }
 
     /// The form's fields, each holding what was kept from an earlier drawing,
-    /// else what it starts with.
-    static func entries(_ fields: [FormField], kept: [String: String]? = nil) -> [FormEntry] {
-        fields.map { FormEntry(field: $0, value: kept?[$0.name] ?? $0.initial) }
-    }
-
-    /// The values by field name, as a form keeps them.
-    static func values(_ entries: [FormEntry]) -> [String: String] {
-        Dictionary(entries.map { ($0.name, $0.value) }, uniquingKeysWith: { _, last in last })
-    }
-
-    /// The picked options of a field that takes several.
-    var picked: [String] { value.split(separator: "\n").map(String.init) }
-
-    var json: Any? {
-        switch kind {
-        case .toggle: return value == "true"
-        case .many: return value.isEmpty ? nil : picked
-        case _ where value.isEmpty: return nil
-        case .number(integer: true): return Int(value)
-        case .number(integer: false): return Double(value)
-        case .text, .choice: return value
+    /// else what the shared view starts it at.
+    static func entries(_ fields: [FormField], kept: [FormValue]? = nil) -> [FormEntry] {
+        // Kept values belong to this form only while there is one per field.
+        let kept = kept?.count == fields.count ? kept : nil
+        return fields.enumerated().map { index, field in
+            FormEntry(field: field, value: kept?[index] ?? field.initial)
         }
     }
 
-    var valid: Bool {
-        switch kind {
-        case .toggle: return true
-        case _ where value.isEmpty: return !required
-        case .number: return json != nil
-        default: return true
-        }
+    /// The problem to show under a field: one the person can act on in the
+    /// field itself, once it was changed. A required field left empty is
+    /// marked on its label and holds Submit back instead.
+    static func shown(_ problems: [FormProblem]?, at index: Int, of entry: FormEntry) -> FieldProblem? {
+        guard entry.value != entry.field.initial,
+              let problem = problems?.first(where: { Int($0.field) == index })?.problem,
+              problem != .required
+        else { return nil }
+        return problem
     }
 
-    static func content(_ entries: [FormEntry]) -> String {
-        var object: [String: Any] = [:]
-        for entry in entries { if let json = entry.json { object[entry.name] = json } }
-        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
-            ?? Data("{}".utf8)
-        return String(decoding: data, as: UTF8.self)
+    /// Typed text, for a text or number field.
+    var typed: String {
+        if case .text(let text) = value { return text }
+        return ""
+    }
+
+    var on: Bool {
+        if case .toggle(let on) = value { return on }
+        return false
+    }
+
+    var chosen: UInt32? {
+        if case .choice(let at) = value { return at }
+        return nil
+    }
+
+    var picked: [UInt32] {
+        if case .many(let picked) = value { return picked }
+        return []
+    }
+
+    /// What the field holds, as the driver reads it: the text, "true" or
+    /// "false", the chosen option, or the picked ones a line each.
+    var reading: String {
+        switch kind {
+        case .text, .number: return typed
+        case .toggle: return on ? "true" : "false"
+        case .choice(let options): return chosen.flatMap { options.indices.contains(Int($0)) ? options[Int($0)] : nil } ?? ""
+        case .many(let options, _, _):
+            return picked.filter { options.indices.contains(Int($0)) }.map { options[Int($0)] }.joined(separator: "\n")
+        }
     }
 }
 
 private struct FormFieldView: View {
     @Environment(\.design) private var design
     let entry: FormEntry
-    let set: (String) -> Void
+    let problem: FieldProblem?
+    let set: (FormValue) -> Void
 
     private var on: Binding<Bool> {
-        Binding(get: { entry.value == "true" }, set: { set($0 ? "true" : "false") })
+        Binding(get: { entry.on }, set: { set(.toggle($0)) })
     }
 
     /// One option of a field that takes several, on or off.
-    private func picks(_ option: String, of options: [String]) -> Binding<Bool> {
+    private func picks(_ option: UInt32) -> Binding<Bool> {
         Binding(
             get: { entry.picked.contains(option) },
             set: { on in
-                let picked = options.filter { $0 == option ? on : entry.picked.contains($0) }
-                set(picked.joined(separator: "\n"))
+                let rest = entry.picked.filter { $0 != option }
+                set(.many((on ? rest + [option] : rest).sorted()))
             })
     }
 
+    private var label: String { entry.required ? "\(entry.title) *" : entry.title }
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            control
+            if let problem {
+                Text(ChatWords.fieldProblem(problem))
+                    .designFont(.detail, design)
+                    .foregroundStyle(design.accent.color)
+                    .identified("ask.field.\(entry.name).problem")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var control: some View {
         switch entry.kind {
         case .toggle:
             Toggle(isOn: on) {
@@ -915,40 +944,45 @@ private struct FormFieldView: View {
             }
             .tint(design.ink.color)
             .oneSwitch(entry.title, isOn: on)
-            .identified("ask.field.\(entry.name)", value: entry.value)
+            .identified("ask.field.\(entry.name)", value: entry.reading)
         case .choice(let options):
             HStack {
-                Text(entry.title).designFont(.body, design)
+                Text(label).designFont(.body, design)
                 Spacer()
-                Picker(entry.title, selection: Binding(get: { entry.value }, set: { set($0) })) {
-                    ForEach(options, id: \.self) { Text($0).tag($0) }
+                // Nothing is chosen until the person chooses, unless the
+                // server named a default.
+                Picker(entry.title, selection: Binding(get: { entry.chosen }, set: { set(.choice($0)) })) {
+                    Text(String(localized: "Choose")).tag(UInt32?.none)
+                    ForEach(options.indices, id: \.self) { Text(options[$0]).tag(UInt32?(UInt32($0))) }
                 }
                 .pickerStyle(.menu)
                 .tint(design.ink.color)
+                .identified("ask.field.\(entry.name)", value: entry.reading)
             }
-            .identified("ask.field.\(entry.name)", value: entry.value)
-        case .many(let options):
+        case .many(let options, _, _):
             VStack(alignment: .leading, spacing: 4) {
-                Text(entry.required ? "\(entry.title) *" : entry.title)
+                Text(label)
                     .designFont(.detail, design)
                     .foregroundStyle(design.inkMuted.color)
-                ForEach(options, id: \.self) { option in
-                    let picked = picks(option, of: options)
+                ForEach(options.indices, id: \.self) { index in
+                    let picked = picks(UInt32(index))
                     Toggle(isOn: picked) {
-                        Text(option).designFont(.body, design)
+                        Text(options[index]).designFont(.body, design)
                     }
                     .tint(design.ink.color)
-                    .oneSwitch(option, isOn: picked)
+                    .oneSwitch(options[index], isOn: picked)
                 }
             }
-            .identified("ask.field.\(entry.name)", value: entry.value)
+            .identified("ask.field.\(entry.name)", value: entry.reading)
         case .text, .number:
             VStack(alignment: .leading, spacing: 4) {
-                Text(entry.required ? "\(entry.title) *" : entry.title)
+                Text(label)
                     .designFont(.detail, design)
                     .foregroundStyle(design.inkMuted.color)
-                TextField(entry.title, text: Binding(get: { entry.value }, set: { set($0) }))
-                    .keyboardType(entry.kind == .text ? .default : .decimalPad)
+                TextField(entry.title, text: Binding(get: { entry.typed }, set: { set(.text($0)) }))
+                    // Digits with a sign and a point whatever the region: the
+                    // shared check reads a number as "-2.5".
+                    .keyboardType(entry.kind.isNumber ? .numbersAndPunctuation : .default)
                     .designFont(.body, design)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -957,9 +991,16 @@ private struct FormFieldView: View {
                             .fill(design.raised.color)
                             .strokeBorder(design.hairline.color, lineWidth: 1)
                     }
-                    .identified("ask.field.\(entry.name)", value: entry.value)
+                    .identified("ask.field.\(entry.name)", value: entry.reading)
             }
         }
+    }
+}
+
+private extension FormFieldKind {
+    var isNumber: Bool {
+        if case .number = self { return true }
+        return false
     }
 }
 

@@ -2424,6 +2424,150 @@ public struct FamilyHeader: Codable, Hashable, Sendable {
     }
 }
 
+/// Why a field's value cannot go as it is.
+public enum FieldProblem: Codable, Hashable, Sendable {
+    /// Required, and nothing was entered or chosen.
+    case required
+    /// Typed text that reads as no finite number.
+    case notANumber
+    /// A number where the field takes only whole ones.
+    case notWholeNumber
+    case belowMinimum(minimum: Double)
+    case aboveMaximum(maximum: Double)
+    /// Fewer characters than the field takes.
+    case tooShort(minLength: UInt32)
+    case tooLong(maxLength: UInt32)
+    /// Fewer options picked than the field takes.
+    case tooFew(minItems: UInt32)
+    case tooMany(maxItems: UInt32)
+
+    private enum Tag: String, CodingKey {
+        case belowMinimum = "BelowMinimum"
+        case aboveMaximum = "AboveMaximum"
+        case tooShort = "TooShort"
+        case tooLong = "TooLong"
+        case tooFew = "TooFew"
+        case tooMany = "TooMany"
+    }
+
+    private enum BelowMinimumKeys: String, CodingKey {
+        case minimum
+    }
+
+    private enum AboveMaximumKeys: String, CodingKey {
+        case maximum
+    }
+
+    private enum TooShortKeys: String, CodingKey {
+        case minLength = "min_length"
+    }
+
+    private enum TooLongKeys: String, CodingKey {
+        case maxLength = "max_length"
+    }
+
+    private enum TooFewKeys: String, CodingKey {
+        case minItems = "min_items"
+    }
+
+    private enum TooManyKeys: String, CodingKey {
+        case maxItems = "max_items"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "Required": self = .required
+            case "NotANumber": self = .notANumber
+            case "NotWholeNumber": self = .notWholeNumber
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no FieldProblem is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a FieldProblem names exactly one variant"))
+        }
+        switch _tag {
+        case .belowMinimum:
+            let _fields = try _container.nestedContainer(
+                keyedBy: BelowMinimumKeys.self, forKey: .belowMinimum)
+            self = .belowMinimum(
+                minimum: try _fields.decode(Double.self, forKey: .minimum))
+        case .aboveMaximum:
+            let _fields = try _container.nestedContainer(
+                keyedBy: AboveMaximumKeys.self, forKey: .aboveMaximum)
+            self = .aboveMaximum(
+                maximum: try _fields.decode(Double.self, forKey: .maximum))
+        case .tooShort:
+            let _fields = try _container.nestedContainer(
+                keyedBy: TooShortKeys.self, forKey: .tooShort)
+            self = .tooShort(
+                minLength: try _fields.decode(UInt32.self, forKey: .minLength))
+        case .tooLong:
+            let _fields = try _container.nestedContainer(
+                keyedBy: TooLongKeys.self, forKey: .tooLong)
+            self = .tooLong(
+                maxLength: try _fields.decode(UInt32.self, forKey: .maxLength))
+        case .tooFew:
+            let _fields = try _container.nestedContainer(
+                keyedBy: TooFewKeys.self, forKey: .tooFew)
+            self = .tooFew(
+                minItems: try _fields.decode(UInt32.self, forKey: .minItems))
+        case .tooMany:
+            let _fields = try _container.nestedContainer(
+                keyedBy: TooManyKeys.self, forKey: .tooMany)
+            self = .tooMany(
+                maxItems: try _fields.decode(UInt32.self, forKey: .maxItems))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .required:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Required")
+        case .notANumber:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("NotANumber")
+        case .notWholeNumber:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("NotWholeNumber")
+        case .belowMinimum(let minimum):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: BelowMinimumKeys.self, forKey: .belowMinimum)
+            try _fields.encode(minimum, forKey: .minimum)
+        case .aboveMaximum(let maximum):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: AboveMaximumKeys.self, forKey: .aboveMaximum)
+            try _fields.encode(maximum, forKey: .maximum)
+        case .tooShort(let minLength):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: TooShortKeys.self, forKey: .tooShort)
+            try _fields.encode(minLength, forKey: .minLength)
+        case .tooLong(let maxLength):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: TooLongKeys.self, forKey: .tooLong)
+            try _fields.encode(maxLength, forKey: .maxLength)
+        case .tooFew(let minItems):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: TooFewKeys.self, forKey: .tooFew)
+            try _fields.encode(minItems, forKey: .minItems)
+        case .tooMany(let maxItems):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: TooManyKeys.self, forKey: .tooMany)
+            try _fields.encode(maxItems, forKey: .maxItems)
+        }
+    }
+}
+
 public enum FileChangeView: Codable, Hashable, Sendable {
     case edited
     case deleted
@@ -2720,11 +2864,11 @@ public struct FormField: Codable, Hashable, Sendable {
     public var description: String
     public var required: Bool
     public var kind: FormFieldKind
-    /// What the field holds before it is touched: the schema's default as
-    /// text, else "false" for a toggle and the first option for a choice.
-    public var initial: String
+    /// What the field holds before it is touched: the schema's default,
+    /// else nothing entered, nothing chosen, and a toggle off.
+    public var initial: FormValue
 
-    public init(name: String, title: String, description: String, required: Bool, kind: FormFieldKind, initial: String) {
+    public init(name: String, title: String, description: String, required: Bool, kind: FormFieldKind, initial: FormValue) {
         self.name = name
         self.title = title
         self.description = description
@@ -2743,24 +2887,35 @@ public struct FormField: Codable, Hashable, Sendable {
     }
 }
 
+/// What a field takes, with the limits its schema sets.
 public enum FormFieldKind: Codable, Hashable, Sendable {
-    case text
-    case number(integer: Bool)
+    /// Typed text, its length in characters.
+    case text(maxLength: UInt32?, minLength: UInt32?)
+    /// A typed number; `integer` when it must be whole.
+    case number(integer: Bool, maximum: Double?, minimum: Double?)
     /// Yes or no.
     case toggle
     /// One of the options.
     case choice(options: [String])
     /// Any of the options: an array of enum values.
-    case many(options: [String])
+    case many(options: [String], maxItems: UInt32?, minItems: UInt32?)
 
     private enum Tag: String, CodingKey {
+        case text = "Text"
         case number = "Number"
         case choice = "Choice"
         case many = "Many"
     }
 
+    private enum TextKeys: String, CodingKey {
+        case maxLength = "max_length"
+        case minLength = "min_length"
+    }
+
     private enum NumberKeys: String, CodingKey {
         case integer
+        case maximum
+        case minimum
     }
 
     private enum ChoiceKeys: String, CodingKey {
@@ -2769,6 +2924,8 @@ public enum FormFieldKind: Codable, Hashable, Sendable {
 
     private enum ManyKeys: String, CodingKey {
         case options
+        case maxItems = "max_items"
+        case minItems = "min_items"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -2776,7 +2933,6 @@ public enum FormFieldKind: Codable, Hashable, Sendable {
            let _name = try? _single.decode(String.self)
         {
             switch _name {
-            case "Text": self = .text
             case "Toggle": self = .toggle
             default:
                 throw DecodingError.dataCorruptedError(
@@ -2792,11 +2948,19 @@ public enum FormFieldKind: Codable, Hashable, Sendable {
                     debugDescription: "a FormFieldKind names exactly one variant"))
         }
         switch _tag {
+        case .text:
+            let _fields = try _container.nestedContainer(
+                keyedBy: TextKeys.self, forKey: .text)
+            self = .text(
+                maxLength: try _fields.decodeIfPresent(UInt32.self, forKey: .maxLength),
+                minLength: try _fields.decodeIfPresent(UInt32.self, forKey: .minLength))
         case .number:
             let _fields = try _container.nestedContainer(
                 keyedBy: NumberKeys.self, forKey: .number)
             self = .number(
-                integer: try _fields.decode(Bool.self, forKey: .integer))
+                integer: try _fields.decode(Bool.self, forKey: .integer),
+                maximum: try _fields.decodeIfPresent(Double.self, forKey: .maximum),
+                minimum: try _fields.decodeIfPresent(Double.self, forKey: .minimum))
         case .choice:
             let _fields = try _container.nestedContainer(
                 keyedBy: ChoiceKeys.self, forKey: .choice)
@@ -2806,19 +2970,25 @@ public enum FormFieldKind: Codable, Hashable, Sendable {
             let _fields = try _container.nestedContainer(
                 keyedBy: ManyKeys.self, forKey: .many)
             self = .many(
-                options: try _fields.decode([String].self, forKey: .options))
+                options: try _fields.decode([String].self, forKey: .options),
+                maxItems: try _fields.decodeIfPresent(UInt32.self, forKey: .maxItems),
+                minItems: try _fields.decodeIfPresent(UInt32.self, forKey: .minItems))
         }
     }
 
     public func encode(to encoder: any Encoder) throws {
         switch self {
-        case .text:
-            var _container = encoder.singleValueContainer()
-            try _container.encode("Text")
-        case .number(let integer):
+        case .text(let maxLength, let minLength):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: TextKeys.self, forKey: .text)
+            try _fields.encodeIfPresent(maxLength, forKey: .maxLength)
+            try _fields.encodeIfPresent(minLength, forKey: .minLength)
+        case .number(let integer, let maximum, let minimum):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: NumberKeys.self, forKey: .number)
             try _fields.encode(integer, forKey: .integer)
+            try _fields.encodeIfPresent(maximum, forKey: .maximum)
+            try _fields.encodeIfPresent(minimum, forKey: .minimum)
         case .toggle:
             var _container = encoder.singleValueContainer()
             try _container.encode("Toggle")
@@ -2826,10 +2996,86 @@ public enum FormFieldKind: Codable, Hashable, Sendable {
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: ChoiceKeys.self, forKey: .choice)
             try _fields.encode(options, forKey: .options)
-        case .many(let options):
+        case .many(let options, let maxItems, let minItems):
             var _container = encoder.container(keyedBy: Tag.self)
             var _fields = _container.nestedContainer(keyedBy: ManyKeys.self, forKey: .many)
             try _fields.encode(options, forKey: .options)
+            try _fields.encodeIfPresent(maxItems, forKey: .maxItems)
+            try _fields.encodeIfPresent(minItems, forKey: .minItems)
+        }
+    }
+}
+
+/// A field's problem, the field by its position in the form.
+public struct FormProblem: Codable, Hashable, Sendable {
+    public var field: UInt32
+    public var problem: FieldProblem
+
+    public init(field: UInt32, problem: FieldProblem) {
+        self.field = field
+        self.problem = problem
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case field
+        case problem
+    }
+}
+
+/// What a field holds as the person left it.
+public enum FormValue: Codable, Hashable, Sendable {
+    /// A text or number field's characters as typed. A number is held as
+    /// typed so a half-typed one ("3.", "-") survives, and is read only when
+    /// the form is checked.
+    case text(String)
+    /// A toggle: untouched it is off, and off is an answer.
+    case toggle(Bool)
+    /// A choice's option by position; none while nothing is chosen.
+    case choice(UInt32?)
+    /// The picked options of a field that takes several, by position.
+    case many([UInt32])
+
+    private enum Tag: String, CodingKey {
+        case text = "Text"
+        case toggle = "Toggle"
+        case choice = "Choice"
+        case many = "Many"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a FormValue names exactly one variant"))
+        }
+        switch _tag {
+        case .text:
+            self = .text(try _container.decode(String.self, forKey: .text))
+        case .toggle:
+            self = .toggle(try _container.decode(Bool.self, forKey: .toggle))
+        case .choice:
+            self = .choice(try _container.decodeIfPresent(UInt32.self, forKey: .choice))
+        case .many:
+            self = .many(try _container.decode([UInt32].self, forKey: .many))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .text(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .text)
+        case .toggle(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .toggle)
+        case .choice(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .choice)
+        case .many(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .many)
         }
     }
 }
@@ -3323,16 +3569,16 @@ public enum NewAgentPick: Codable, Hashable, Sendable {
         switch self {
         case .model(let _value):
             var _container = encoder.container(keyedBy: Tag.self)
-            try _container.encodeIfPresent(_value, forKey: .model)
+            try _container.encode(_value, forKey: .model)
         case .effort(let _value):
             var _container = encoder.container(keyedBy: Tag.self)
-            try _container.encodeIfPresent(_value, forKey: .effort)
+            try _container.encode(_value, forKey: .effort)
         case .permission(let _value):
             var _container = encoder.container(keyedBy: Tag.self)
-            try _container.encodeIfPresent(_value, forKey: .permission)
+            try _container.encode(_value, forKey: .permission)
         case .mode(let _value):
             var _container = encoder.container(keyedBy: Tag.self)
-            try _container.encodeIfPresent(_value, forKey: .mode)
+            try _container.encode(_value, forKey: .mode)
         }
     }
 }

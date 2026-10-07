@@ -154,8 +154,9 @@ cargo run -p xtask -- swift-types --check  # fail when the committed file differ
 `ui-view` and `app-runtime::values`; everything they hold comes along. The
 schemas come from `schemars`. A struct becomes a Swift struct with the Rust
 field names as coding keys; a string-only enum becomes a raw-value enum; any
-other enum is serde's externally tagged form with its `Codable` written out.
-A schema shape outside those fails the generation rather than producing a
+other enum is serde's externally tagged form with its `Codable` written out;
+a variant holding an optional value writes `null` for none, so the variant is
+still named. A schema shape outside those fails the generation rather than producing a
 mirror that decodes wrongly. Byte strings, such as agent and input ids, are
 JSON arrays of numbers.
 

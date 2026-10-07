@@ -41,4 +41,15 @@ extension Bridge {
             }
         }
     }
+
+    /// Each field's problem with the values entered, one per field in the
+    /// form's order, as the shared view checks a form; empty when it can be
+    /// submitted.
+    public static func formProblems(_ fields: [FormField], _ values: [FormValue]) -> [FormProblem]? {
+        Bridge.json(fields).withCString { fields in
+            Bridge.json(values).withCString { values in
+                Bridge.read([FormProblem].self, amux_form_problems(fields, values))
+            }
+        }
+    }
 }

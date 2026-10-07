@@ -583,7 +583,7 @@ public struct ChatStanding: View {
         case .choose(let index, let note): model.answer(choice: index, note: note)
         case .respond(let responses): model.answer(responses: responses)
         case .reply(let text, let soFar): model.replyInstead(text, soFar: soFar)
-        case .submit(let index, let content): model.submit(choice: index, content: content)
+        case .submit(let values): model.submit(form: values)
         case .stop: model.interrupt()
         case .resend: model.resendAnswer()
         case .discard: model.discardAnswer()

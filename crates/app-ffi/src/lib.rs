@@ -497,6 +497,29 @@ pub unsafe extern "C" fn amux_new_agent_pick(
     })
 }
 
+/// The problems of a form's values, as the shared view checks them: the
+/// form's `FormField`s and the person's `FormValue`s, both JSON arrays in
+/// the form's order, give a JSON array of `FormProblem`, empty when the
+/// form can be submitted; null when either does not parse. The caller
+/// frees the answer.
+///
+/// # Safety
+/// The strings are NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_form_problems(
+    fields: *const c_char,
+    values: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let fields: Option<Vec<ui_view::FormField>> = unsafe { parse(fields) };
+    // SAFETY: the caller's contract.
+    let values: Option<Vec<ui_view::FormValue>> = unsafe { parse(values) };
+    guard(std::ptr::null_mut(), || match (fields, values) {
+        (Some(fields), Some(values)) => owned(&ui_view::form_problems(&fields, &values)),
+        _ => std::ptr::null_mut(),
+    })
+}
+
 /// Starts the installation from a `StartConfig` as JSON. Blocks until every
 /// profile's store is open; `wake` is called with 0 whenever the profile
 /// list moves. Null on failure, with the reason in `error` when it is not
@@ -1822,9 +1845,9 @@ pub unsafe extern "C" fn amux_session_answer(
     }
 }
 
-/// Submits the head form ask with the choice at `index` on its card and
-/// the person's field values, a JSON object as the form's schema describes
-/// it. The callback gets an `ActOutcome`.
+/// Submits the head form ask with the person's values, a JSON array of
+/// `FormValue`, one per field in the form's order; the shared view checks
+/// and encodes them. The callback gets an `ActOutcome`.
 ///
 /// # Safety
 /// As for `amux_session_answer`.
@@ -1832,19 +1855,21 @@ pub unsafe extern "C" fn amux_session_answer(
 pub unsafe extern "C" fn amux_session_answer_form(
     chat: *const AmuxChat,
     ask_key: *const c_char,
-    index: u32,
-    content: *const c_char,
+    values: *const c_char,
     callback: AmuxCallback,
     context: *mut c_void,
 ) {
     // SAFETY: the caller's contract.
     let ask_key = unsafe { text(ask_key) }.unwrap_or_default().to_owned();
     // SAFETY: the caller's contract.
-    let content = unsafe { text(content) }.unwrap_or("{}").to_owned();
+    let values: Option<Vec<ui_view::FormValue>> = unsafe { parse(values) };
     // SAFETY: the caller's contract.
     unsafe {
         act(chat, callback, context, move |chat| async move {
-            chat.answer_form(&ask_key, index as usize, &content).await
+            match values {
+                Some(values) => chat.answer_form(&ask_key, &values).await,
+                None => ActOutcome::Failed("the values are not a list of FormValue".into()),
+            }
         })
     }
 }

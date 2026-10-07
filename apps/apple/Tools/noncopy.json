@@ -1129,7 +1129,6 @@
       {"literal": "\"landing-waiting\"", "context": "chat(\"landing-waiting\", chat: {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"Now run the Windows check.\"", "context": "SentPrompt(inputId: [8], text: [.text(\"Now run the Windows check.\")], lands: .feed, underway: .sending(waiting: true)),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"OAuth token has expired.\"", "context": "signIn: SignInView(state: .expired, account: \"ada@example.com\", message: \"OAuth token has expired.\"))),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"true\"", "context": "initial: \"true\"),", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"Sonnet 5\"", "context": "models: [ModelChoice(value: \"claude-sonnet-5\", displayName: \"Sonnet 5\", description: \"\", efforts: [], current: true, unlisted: true, defaultEffort: nil)],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"/model\"", "context": "model: .byTyping(\"/model\"), effort: .byTyping(\"/effort\"), permission: .cycle, mode: .notOffered),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"/effort\"", "context": "model: .byTyping(\"/model\"), effort: .byTyping(\"/effort\"), permission: .cycle, mode: .notOffered),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
@@ -1176,8 +1175,10 @@
       {"literal": "\"ask.note.back\"", "context": ".identified(\"ask.note.back\", label: String(localized: \"Back\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"+\"", "context": "case .added: \"+\" + line.text", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
       {"literal": "\"-\"", "context": "case .removed: \"-\" + line.text", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"true\"", "context": "case .toggle: return value == \"true\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"{}\"", "context": "?? Data(\"{}\".utf8)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"true\"", "context": "case .toggle: return on ? \"true\" : \"false\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"false\"", "context": "case .toggle: return on ? \"true\" : \"false\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"ask.field.\\(entry.name)\"", "context": ".identified(\"ask.field.\\(entry.name)\", value: entry.reading)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 4},
+      {"literal": "\"ask.field.\\(entry.name).problem\"", "context": ".identified(\"ask.field.\\(entry.name).problem\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.step.review\"", "context": ".identified(\"ask.step.review\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.question\"", "context": ".identified(\"ask.question\", label: question.question)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.preview\"", "context": ".identified(\"ask.preview\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
@@ -1199,10 +1200,7 @@
       {"literal": "\"ask.reply\"", "context": "textLink(String(localized: \"Reply instead\"), id: \"ask.reply\") { replying = true }", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.reply.back\"", "context": ".identified(\"ask.reply.back\", label: String(localized: \"Back\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"ask.reply.text\"", "context": ".identified(\"ask.reply.text\", value: replyText)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"ask.reply.send\"", "context": "String(localized: \"Send reply\"), kind: .primary, id: \"ask.reply.send\", enabled: !blank", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"true\"", "context": "Binding(get: { entry.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 2},
-      {"literal": "\"false\"", "context": "Binding(get: { entry.value == \"true\" }, set: { set($0 ? \"true\" : \"false\") })", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
-      {"literal": "\"ask.field.\\(entry.name)\"", "context": ".identified(\"ask.field.\\(entry.name)\", value: entry.value)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 4}
+      {"literal": "\"ask.reply.send\"", "context": "String(localized: \"Send reply\"), kind: .primary, id: \"ask.reply.send\", enabled: !blank", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatComposer.swift": [
       {"literal": "\"chat.field\"", "context": ".identified(\"chat.field\", label: placeholder, value: model.draft)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},

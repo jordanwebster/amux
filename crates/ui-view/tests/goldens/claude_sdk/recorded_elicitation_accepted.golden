@@ -25,7 +25,7 @@
   row    5 ask:864d404c-3373-4c07-a136-f5e9eb9cf488 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: [], resolution: Open }) attention
   ask 864d404c-3373-4c07-a136-f5e9eb9cf488 -> "ask:864d404c-3373-4c07-a136-f5e9eb9cf488" 1/1 Open
     choices Submit*, Decline
-    body Form { server: "external", message: "Confirm the word PELICAN.", fields: [FormField { name: "confirmed", title: "confirmed", description: "", required: true, kind: Text, initial: "" }] }
+    body Form { server: "external", message: "Confirm the word PELICAN.", fields: [FormField { name: "confirmed", title: "confirmed", description: "", required: true, kind: Text { min_length: None, max_length: None }, initial: Text("") }] }
   composer Send activity=None queue=[] underway=[] refused=[]
 ## 26 recorded 25: input stdin-4
   row    5 ask:864d404c-3373-4c07-a136-f5e9eb9cf488 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: ["confirmed"], resolution: Answered })

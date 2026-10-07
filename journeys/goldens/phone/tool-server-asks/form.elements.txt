@@ -11,7 +11,7 @@ chat.more | More |  | 344,69,44,44
 ask | linear needs details | open | 12,466,378,364
 ask.more | More |  | 338,474,44,44
 ask.field.title |  |  | 28,593,346,42
-ask.field.team |  | FOX | 28,647,346,34
+ask.field.team |  |  | 275,647,99,34
 ask.field.estimate |  |  | 28,716,346,42
 ask.submit | Submit |  | 28,770,169,44 (disabled)
 ask.choice.1 | Decline |  | 205,770,169,44
@@ -23,9 +23,9 @@ ask.choice.1 | Decline |  | 205,770,169,44
  | Linear needs a few details before it can create the issue. |  | 28,522,313,37
  | Title * |  | 28,571,40,18
  | Title |  | 40,604,322,20
- | Team |  | 28,655,41,20
- | Team, FOX |  | 301,647,73,34
- | FOX |  | 312,654,33,20
+ | Team * |  | 28,655,51,20
+ | Team, Choose |  | 275,647,99,34
+ | Choose |  | 287,654,58,20
  | Estimate |  | 28,694,61,18
  | Estimate |  | 40,727,322,20
  | Submit |  | 28,770,169,44 (disabled)

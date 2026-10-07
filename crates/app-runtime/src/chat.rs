@@ -10,7 +10,8 @@ use tokio::task::JoinHandle;
 use ui_runtime::{Fleet, InputError, PageError, Session};
 use ui_state::{InputOutcome, InputState, Key, RefusalReason, SessionState};
 use ui_view::{
-    AskCard, ChatOptions, Comparison, Overview, QuestionResponse, Row, SettingChange, SettingsView,
+    AskCard, ChatOptions, Comparison, FormValue, Overview, QuestionResponse, Row, SettingChange,
+    SettingsView,
 };
 use wire::{BlobRef, send_input_response};
 
@@ -238,23 +239,6 @@ impl Chat {
     /// Answers the head ask with its choice at `index`; `note` goes back
     /// with a choice that takes one.
     pub async fn answer_choice(&self, ask_key: &str, index: usize, note: &str) -> ActOutcome {
-        self.answer_with(ask_key, index, note, None).await
-    }
-
-    /// Submits the head form ask with its choice at `index` and the
-    /// person's field values as a JSON object.
-    pub async fn answer_form(&self, ask_key: &str, index: usize, content_json: &str) -> ActOutcome {
-        self.answer_with(ask_key, index, "", Some(content_json.as_bytes().to_vec()))
-            .await
-    }
-
-    async fn answer_with(
-        &self,
-        ask_key: &str,
-        index: usize,
-        note: &str,
-        content: Option<Vec<u8>>,
-    ) -> ActOutcome {
         let input = {
             let Some(card) = self.card_for(ask_key) else {
                 return moved_on();
@@ -262,11 +246,29 @@ impl Chat {
             let Some(choice) = card.choices.get(index) else {
                 return ActOutcome::Failed(format!("the ask has no choice {index}"));
             };
-            let answer = match content {
-                Some(content) => ui_view::with_form_content(&choice.answer, content),
-                None => choice.answer.clone(),
+            ui_view::answer_input(&card, &choice.answer, note)
+        };
+        self.answer(input).await
+    }
+
+    /// Submits the head form ask with the person's values, one per field
+    /// in the form's order, checked and encoded by the shared view. A form
+    /// with a problem is not sent: the phone holds Submit back until the
+    /// same check passes, so reaching here with one is a caller's mistake.
+    pub async fn answer_form(&self, ask_key: &str, values: &[FormValue]) -> ActOutcome {
+        let input = {
+            let Some(card) = self.card_for(ask_key) else {
+                return moved_on();
             };
-            ui_view::answer_input(&card, &answer, note)
+            match ui_view::form_answer(&card, values) {
+                Ok(Some(answer)) => ui_view::answer_input(&card, &answer, ""),
+                Ok(None) => return ActOutcome::Failed("the ask is not a form".into()),
+                Err(problems) => {
+                    return ActOutcome::Failed(format!(
+                        "the form's fields have problems: {problems:?}"
+                    ));
+                }
+            }
         };
         self.answer(input).await
     }

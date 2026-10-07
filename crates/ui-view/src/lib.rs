@@ -11,6 +11,7 @@
 mod ask;
 mod composer;
 mod fleet;
+mod form;
 mod overview;
 mod review;
 mod rows;
@@ -19,9 +20,8 @@ mod segments;
 mod settings;
 
 pub use ask::{
-    Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, FormField, FormFieldKind,
-    OptionView, Pick, QuestionResponse, QuestionView, Scope, answer_input, ask_card, form_fields,
-    question_answer, reply_answer, with_form_content,
+    Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, OptionView, Pick, QuestionResponse,
+    QuestionView, Scope, answer_input, ask_card, question_answer, reply_answer,
 };
 pub use composer::{
     CONTEXT_NEAR_FULL_PERCENT, ComposerView, ContextView, Lands, QueuedRow, RefusedPrompt,
@@ -32,6 +32,10 @@ pub use fleet::{
     ActivityLine, AskSubject, AskSummary, Away, ExitCause, FamilyHeader, FleetCard, FleetRow,
     FleetSection, FleetView, LoudMember, Reach, SecondLine, SectionKind, SessionLine, StuckReason,
     family_header, fleet_card, fleet_view, reach, session_line,
+};
+pub use form::{
+    FieldProblem, FormField, FormFieldKind, FormProblem, FormValue, form_answer, form_fields,
+    form_problems,
 };
 pub use overview::{
     ChangeTotals, ChangedFile, Changes, Comparison, Folder, JobRow, Overview, ServerView, TaskLine,

@@ -259,7 +259,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
         open.contains(member) ? open.filter { $0 != member } : open + [member]
     }
     public func keepOpenRuns(_ open: [String]) -> [String] { open }
-    public func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? { .done }
+    public func answerForm(_ ask: String, values: [FormValue]) async -> ActOutcome? { .done }
     public func withdraw(_ input: [UInt8]) async -> ActOutcome? { .done }
     public func sendNow(_ input: [UInt8]) async -> ActOutcome? { .done }
     public func resend(_ input: [UInt8]) async -> SendOutcome? { nil }

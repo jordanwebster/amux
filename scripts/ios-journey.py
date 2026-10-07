@@ -613,6 +613,8 @@ def tool_server_asks(journey: PhoneJourney) -> list[str]:
     reopen_card(journey, filer, lambda drawn: "ask.field.title" in drawn)
     journey.screen("form")
     journey.type("ask.field.title", FORM["title"])
+    # A choice with no default starts unchosen: the person opens it and picks.
+    journey.tap("ask.field.team")
     journey.choose(FORM["team"])
     journey.wait(lambda drawn: drawn.get("ask.field.team", {}).get("value") == FORM["team"], "the team picked")
     journey.type("ask.field.estimate", str(FORM["estimate"]))

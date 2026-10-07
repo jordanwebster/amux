@@ -245,50 +245,58 @@ final class ChatWordsTests: XCTestCase {
     }
 
     private func field(
-        _ name: String, _ kind: FormFieldKind, required: Bool = false, initial: String = ""
+        _ name: String, _ kind: FormFieldKind, required: Bool = false, initial: FormValue = .text("")
     ) -> FormField {
         FormField(name: name, title: name, description: "", required: required, kind: kind, initial: initial)
     }
 
     private var asked: [FormField] {
         [
-            field("repo", .text, required: true),
-            field("count", .number(integer: true)),
-            field("assign", .toggle, initial: "true"),
+            field("repo", .text(maxLength: nil, minLength: nil), required: true),
+            field("count", .number(integer: true, maximum: nil, minimum: 1)),
+            field("assign", .toggle, initial: .toggle(true)),
         ]
     }
 
-    func testRequiredFieldsGateSubmitAndTheContentIsTyped() {
+    /// The phone holds values and words problems; whether the form can go is
+    /// the shared view's check, reached through the bridge.
+    func testTheSharedCheckGatesSubmitAndAChangedFieldSaysWhy() throws {
         let entries = FormEntry.entries(asked)
-        XCTAssertEqual(entries.map(\.name), ["repo", "count", "assign"])
-        XCTAssertFalse(entries[0].valid)
+        XCTAssertEqual(entries.map(\.value), [.text(""), .text(""), .toggle(true)])
+        let untouched = try XCTUnwrap(Bridge.formProblems(asked, entries.map(\.value)))
+        XCTAssertEqual(untouched, [FormProblem(field: 0, problem: .required)])
+        XCTAssertNil(FormEntry.shown(untouched, at: 0, of: entries[0]), "a required field says so on its label")
         var filled = entries
-        filled[0].value = "jlw/amux"
-        filled[1].value = "3"
-        XCTAssertTrue(filled.allSatisfy(\.valid))
-        XCTAssertEqual(FormEntry.content(filled), #"{"assign":true,"count":3,"repo":"jlw\/amux"}"#)
-    }
-
-    func testAFieldOfSeveralPicksAnswersWithAnArray() {
-        var entries = FormEntry.entries([field("labels", .many(options: ["bug", "ios", "docs"]), required: true)])
-        XCTAssertFalse(entries[0].valid, "a required field with nothing picked")
-        XCTAssertEqual(FormEntry.content(entries), "{}")
-        entries[0].value = "bug\ndocs"
-        XCTAssertTrue(entries[0].valid)
-        XCTAssertEqual(FormEntry.content(entries), #"{"labels":["bug","docs"]}"#)
+        filled[0].value = .text("jlw/amux")
+        filled[1].value = .text("0")
+        let low = try XCTUnwrap(Bridge.formProblems(asked, filled.map(\.value)))
+        XCTAssertEqual(FormEntry.shown(low, at: 1, of: filled[1]), .belowMinimum(minimum: 1))
+        filled[1].value = .text("3")
+        XCTAssertEqual(Bridge.formProblems(asked, filled.map(\.value)), [])
     }
 
     func testAFormDrawnAgainRestoresTheValuesItKept() {
         var typed = FormEntry.entries(asked)
-        typed[0].value = "jlw/amux"
-        typed[2].value = "false"
-        let kept = FormEntry.values(typed)
-        XCTAssertEqual(kept, ["repo": "jlw/amux", "count": "", "assign": "false"])
+        typed[0].value = .text("jlw/amux")
+        typed[2].value = .toggle(false)
+        let kept = typed.map(\.value)
         XCTAssertEqual(FormEntry.entries(asked, kept: kept), typed, "drawn again, it holds what was typed")
         XCTAssertEqual(FormEntry.entries(asked, kept: nil), FormEntry.entries(asked), "a new form starts as written")
         XCTAssertEqual(
-            FormEntry.entries(asked, kept: ["repo": "jlw/amux", "gone": "x"]).map(\.value), ["jlw/amux", "", "true"],
-            "a kept name the form lacks is ignored, and a field never typed keeps its default")
+            FormEntry.entries(asked, kept: [.text("jlw/amux")]).map(\.value), [.text(""), .text(""), .toggle(true)],
+            "values kept for another shape of form are not this one's")
+    }
+
+    func testEveryFieldProblemHasWords() {
+        let problems: [FieldProblem] = [
+            .required, .notANumber, .notWholeNumber, .belowMinimum(minimum: 1), .aboveMaximum(maximum: 2.5),
+            .tooShort(minLength: 1), .tooLong(maxLength: 80), .tooFew(minItems: 2), .tooMany(maxItems: 3),
+        ]
+        for problem in problems {
+            XCTAssertFalse(ChatWords.fieldProblem(problem).isEmpty, "\(problem)")
+        }
+        XCTAssertEqual(ChatWords.fieldProblem(.tooShort(minLength: 1)), "At least 1 character")
+        XCTAssertEqual(ChatWords.fieldProblem(.aboveMaximum(maximum: 2.5)), "At most 2.5")
     }
 
     func testEveryNameProblemHasWords() {

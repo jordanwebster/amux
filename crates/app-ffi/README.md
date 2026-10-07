@@ -24,8 +24,8 @@ terminal renders; `ChatFrame`, `ChatChanges`, `Draft`, `RowOptions`,
 `HostView` and the act outcomes are `app-runtime::values`. Byte strings such
 as agent and input ids are JSON arrays of numbers. Answers never carry a
 provider's answer body: the phone names a choice by its position on the
-card, or gives one `QuestionResponse` (a `Pick` and a note) per question, and the
-answer is built in Rust.
+card, gives one `QuestionResponse` (a `Pick` and a note) per question, or
+gives a form one `FormValue` per field, and the answer is built in Rust.
 
 ## Lifecycle
 
@@ -80,7 +80,12 @@ Reads return at once: `amux_session_keys`, `amux_session_rows_for`,
 `amux_session_keep_open_runs` (a folding view's open set, opened or closed on
 one run, and re-held on each open run's newest step before rows are read),
 `amux_fleet_view` (home's sections), `amux_fleet_card`, `amux_fleet_family`, `amux_fleet_hosts`,
-`amux_runtime_profiles`, `amux_runtime_source_policy_listed`.
+`amux_runtime_profiles`, `amux_runtime_source_policy_listed`. Some reads need
+no handle, because they are the shared rules applied to values the phone
+already holds: `amux_agent_name_problem` (why a name cannot name an agent),
+`amux_new_agent_settings` and `amux_new_agent_pick` (a new agent's pickers
+from a host's catalogue), and `amux_form_problems` (each field's
+`FieldProblem` for a form's `FormField`s and the `FormValue`s entered).
 
 Rows are handed out by item key, which never moves. The host's id sequence
 changes only at its two edges: `amux_session_new_keys_above(chat, newest)` for
@@ -110,7 +115,8 @@ does the work in the wake.
 Acts that wait on the agent take a callback, called once on a worker thread
 with a JSON result the callback borrows until it returns:
 `amux_session_send`, `amux_session_answer` (by choice index),
-`amux_session_answer_questions`, `amux_session_reply_instead`, `amux_session_change_setting` (a pick from
+`amux_session_answer_questions`, `amux_session_reply_instead`, `amux_session_answer_form`
+(one `FormValue` per field, checked and encoded in Rust), `amux_session_change_setting` (a pick from
 the settings view), `amux_session_withdraw`,
 `amux_session_send_now`, `amux_session_resend`, `amux_session_interrupt`,
 `amux_session_resume` (the exited composer's draft), `amux_session_page_older`,
