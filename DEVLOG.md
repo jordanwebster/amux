@@ -1,3 +1,12 @@
+2026-10-07 — **A phone story checks the branch on the fleet.**
+No phone capture showed a row's branch: every served agent's folder was
+not a repository. The attachment-or-review story already makes the
+reviewer's folder a repository on main and restarts the reviewer, so it now
+goes back to the fleet afterwards, waits for the reviewer's row to report
+its branch as main (a wrong branch fails the same check), and photographs
+that fleet. The row's branch label now reports the branch as its value, so
+the driver can read it.
+
 2026-10-07 — **A phone chat that catches up holds what it caught up on before it can send.**
 The leave-and-recover phone story once saw the composer ready to send
 before the turn the phone had missed was on screen. The phone reads a

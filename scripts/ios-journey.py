@@ -989,6 +989,13 @@ def chips(drawn: dict) -> list[str]:
     ]
 
 
+def on_branch(drawn: dict, agent_id: str, branch: str) -> None:
+    """The fleet's row for the agent names the branch its folder is on."""
+    reported = drawn.get(f"home.row.{agent_id}.branch", {}).get("value")
+    if reported != branch:
+        raise RuntimeError(f"the row reports branch {reported!r}, not {branch!r}")
+
+
 def attachment_or_review(journey: PhoneJourney) -> list[str]:
     # The reviewer's working tree on the desk: one commit and an edit.
     work = Path(journey.ready["root"]) / "desk" / "work"
@@ -1069,6 +1076,19 @@ def attachment_or_review(journey: PhoneJourney) -> list[str]:
     # Opened again, the chat shows what was sent and the reply.
     reopen(journey, reviewer, lambda drawn: labelled(drawn, "I read the review.") and "chat.row.turn-end" in drawn)
     journey.screen("reopened", volatile=("chat.row.turn-end",))
+
+    # Back on the fleet, the reviewer's row names the branch its folder is
+    # on beside its name, above what it last said.
+    journey.tap("chat.back")
+    back_to_row(journey, reviewer, lambda drawn: "chat" not in drawn)
+    drawn = journey.wait(
+        lambda drawn: drawn.get(f"home.row.{reviewer}.branch", {}).get("value") == "main"
+        and f"home.row.{reviewer}.second" in drawn,
+        "the reviewer's row on its branch",
+    )
+    on_branch(drawn, reviewer, "main")
+    branch_control = negative_control(on_branch, drawn, reviewer, "develop")
+    journey.screen("fleet-branch")
     return [
         "the prompt reached the desk as the text, then the paste, then the review, as the composer showed them",
         "the paste arrived as one attachment holding exactly the twelve lines pasted",
@@ -1076,6 +1096,8 @@ def attachment_or_review(journey: PhoneJourney) -> list[str]:
         control,
         "the review names a patch the desk computed; its bytes on the desk hash to that name and hold the edit",
         "the chat opened again shows what was sent and the reply",
+        "the fleet's row for the reviewer names its folder's branch, main, beside its name and above what it said",
+        branch_control,
     ]
 
 

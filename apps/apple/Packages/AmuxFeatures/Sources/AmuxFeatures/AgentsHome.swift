@@ -676,7 +676,7 @@ struct AgentRowView: View {
                         .foregroundStyle(design.inkMuted.color)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .reported("home.row.\(row.id).branch")
+                        .reported("home.row.\(row.id).branch", value: branch)
                 }
                 Spacer(minLength: 4)
                 Text(row.age(at: now))
