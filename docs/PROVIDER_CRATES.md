@@ -28,7 +28,8 @@ links can depend on it. It holds no process, socket or async code.
   stream (`stream`: the frames it prints and the control requests and
   answers in both directions), the rows of the transcript file it writes in a
   terminal (`transcript`), and the payloads its hook command forwards
-  (`hooks`).
+  (`hooks`). It also types the two lines amux writes to Claude's messaging
+  socket (`messaging`).
 
 Decoding is tolerant, because a provider update must not stop a running
 agent. A message the crate does not know is kept whole as `Unknown`; an
@@ -87,4 +88,4 @@ specification.
 | Specification replay | `codex-specs/tests/spec_replay.rs`, `claude-specs/tests/spec_replay.rs` | The clients, on the protocol types, send exactly what the recordings show. |
 | Fakes' shape check | [`provider-fakes/src/shape.rs`](../crates/provider-fakes/src/shape.rs) | Every frame a fake provider composes has a recorded shape and decodes strictly with its protocol crate. The fakes never use the host crates, so a host bug cannot hide behind code the fakes share. |
 | Dependency policy | `scripts/check-dependency-policy.py` | The protocol crates stay pure, and only the crates listed there use them. |
-| Typed provider check | [`scripts/typed-provider-check.py`](../scripts/typed-provider-check.py) | The interpreters and the agent's provider handshake build and read no provider JSON by hand; each place that keeps a tool payload as JSON is listed with its reason. |
+| Typed provider check | [`scripts/typed-provider-check.py`](../scripts/typed-provider-check.py) | The interpreters, the agent's provider handshake and Claude's messaging socket build and read no provider JSON by hand; each place that keeps a tool payload as JSON is listed with its reason. |

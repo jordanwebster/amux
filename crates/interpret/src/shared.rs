@@ -1037,9 +1037,7 @@ pub fn sent_message(arguments_json: &[u8], outcome: SendOutcome<'_>) -> (String,
     (field("text"), body)
 }
 
-/// An agent-message body as the goldens print it; a sent one adds its
-/// recipient and how the send went.
-/// A usage state as goldens print it.
+/// A usage state as goldens print it: `?` while unknown, else its name.
 pub(crate) fn describe_usage_state(state: i32) -> &'static str {
     match wire::UsageState::try_from(state).unwrap_or_default() {
         wire::UsageState::Unknown => "?",
@@ -1088,6 +1086,8 @@ pub(crate) fn describe_plan(plan: &wire::Plan) -> String {
     out
 }
 
+/// An agent-message body as the goldens print it; a sent one adds its
+/// recipient and how the send went.
 pub(crate) fn describe_agent_message(message: &AgentMessage) -> String {
     let mut out = format!("envelope={}", serde_pb::to_hex(&message.envelope_id));
     if message.send_state != wire::SendState::Unspecified as i32 {

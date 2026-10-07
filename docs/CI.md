@@ -182,7 +182,7 @@ stopping at the first failure:
 | `codegen-check` | The committed protobuf output matches the schemas |
 | `proto-check` | The protos keep everything the committed baseline has |
 | `dependency-policy` | Production and test-infrastructure dependency boundaries ([`scripts/check-dependency-policy.py`](../scripts/check-dependency-policy.py)) |
-| `typed-provider-check` | The interpreters and the agent's provider handshake read and write provider messages only through the protocol crates: no `json!`, field looked up by name or untyped `Value` outside the listed tool payloads ([`scripts/typed-provider-check.py`](../scripts/typed-provider-check.py)) |
+| `typed-provider-check` | The interpreters, the agent's provider handshake and Claude's messaging socket read and write provider messages only through the protocol crates: no `json!`, field looked up by name or untyped `Value` outside the listed tool payloads ([`scripts/typed-provider-check.py`](../scripts/typed-provider-check.py)) |
 | `deletion-ledger-check` | No code, config, proto, recipe, script, workflow or doc names a mechanism amux removed |
 | `stand-ins-check` | The terminal client builds no feature from lesser facts: no stand-in module, client-written option lists, model-id tidying, old context strip or second way to fold tool steps; the syntax highlighter and the notice for an agent's terminal on another host remain ([`scripts/stand-ins-check.py`](../scripts/stand-ins-check.py)) |
 | `docs-check` | Every link, image and heading anchor under `docs/` resolves, every figure is referenced and standalone, and `docs/README.md` lists every page once ([`scripts/docs-check.py`](../scripts/docs-check.py)) |

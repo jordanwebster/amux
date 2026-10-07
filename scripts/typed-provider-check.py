@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Fail when an interpreter or the agent's provider handshake handles
-provider JSON by hand.
+"""Fail when an interpreter, the agent's provider handshake or Claude's
+messaging socket handles provider JSON by hand.
 
 The interpreters read and write Codex's and Claude's messages through the
-`codex-protocol` and `claude-protocol` crates, and the agent process builds
-its handshake from them. This check searches those sources for the ways of
-going around the types: building JSON with `json!`, looking a field up by its
-name (`.get("…")`, `["…"]`, `.pointer(…)`, `.remove("…")`), opening a value
-as an object or array, and parsing bytes into a `serde_json::Value`.
+`codex-protocol` and `claude-protocol` crates, the agent process builds its
+handshake from them, and the `claude` crate writes Claude's messaging socket
+from them. This check searches those sources for the ways of going around the
+types: building JSON with `json!`, looking a field up by its name
+(`.get("…")`, `["…"]`, `.pointer(…)`, `.remove("…")`, or a path of names
+passed as `&["…", …]`), opening a value as an object or array, and parsing
+bytes into a `serde_json::Value`.
 
 Some JSON is not a provider message and stays a value on purpose: a tool's
-input and result are whatever the tool wrote, a tool server's form content is
-whatever its schema asks for, and Claude's settings file and Codex's
-`--config` arguments are launch configuration. Each such place is an
-exemption below, naming the function, the code it allows and why. An
+input and result are whatever the tool wrote, a tool server's form schema and
+content are whatever the server wrote and asks for, and Claude's settings file
+and Codex's `--config` arguments are launch configuration. Each such place is
+an exemption below, naming the function, the code it allows and why. An
 exemption that no longer matches anything fails the check too, so the list
 cannot outlive the code it describes. Test modules are not searched.
 """
@@ -34,6 +36,7 @@ SOURCES = [
     "crates/interpret/src/claude_pty",
     "crates/interpret/src/claude_common.rs",
     "crates/agent/src/provider.rs",
+    "crates/claude/src/messaging.rs",
 ]
 
 # What going around the types looks like.
@@ -42,6 +45,7 @@ PATTERNS = [
     ("a field looked up by name", re.compile(r"\.(get|get_mut|remove)\(\s*\"")),
     ("a field looked up by name", re.compile(r"[\w)\]]\[\s*\"")),
     ("a field looked up by path", re.compile(r"\.pointer(_mut)?\(")),
+    ("a field looked up by path", re.compile(r"[(,]\s*&\[\s*\"")),
     ("a value opened as an object or array", re.compile(r"\.as_(object|array)(_mut)?\(")),
     ("a value opened as an object or array", re.compile(r"\bValue::(Object|Array)\b")),
     (
@@ -114,6 +118,18 @@ EXEMPTIONS = [
         "codex_answer_response",
         r"Value::Object\(Default::default\(\)\)",
         "a tool server's form content is whatever its schema asks for",
+    ),
+    Exemption(
+        "crates/interpret/src/codex/facts.rs",
+        "elicitation",
+        r"json_as_written\(payload, &\[\"params\", \"requestedSchema\"\]\)",
+        "a tool server's form schema is kept as the server wrote it; a Value would sort its keys and so the form's fields",
+    ),
+    Exemption(
+        "crates/interpret/src/claude_sdk/facts.rs",
+        "control_request_in",
+        r"json_as_written\(payload, &\[\"request\", \"requested_schema\"\]\)",
+        "a tool server's form schema is kept as the server wrote it; a Value would sort its keys and so the form's fields",
     ),
     Exemption(
         "crates/interpret/src/codex/facts.rs",

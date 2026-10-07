@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+#[cfg(unix)]
+use claude_protocol::messaging::{Auth, UserMessage};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -26,8 +28,8 @@ impl MessagingSocket {
         use tokio::io::AsyncWriteExt;
 
         let mut stream = tokio::net::UnixStream::connect(path).await?;
-        let auth = serde_json::json!({"type":"auth","token":token});
-        stream.write_all(auth.to_string().as_bytes()).await?;
+        let auth = serde_json::to_vec(&Auth::new(token)).map_err(std::io::Error::other)?;
+        stream.write_all(&auth).await?;
         stream.write_all(b"\n").await?;
         Ok(Self { stream })
     }
@@ -42,13 +44,8 @@ impl MessagingSocket {
         use tokio::io::AsyncWriteExt;
 
         let id = MessageId(Uuid::new_v4());
-        let message = serde_json::json!({
-            "type":"user",
-            "message":{"role":"user","content":text},
-        });
-        self.stream
-            .write_all(message.to_string().as_bytes())
-            .await?;
+        let message = serde_json::to_vec(&UserMessage::new(text)).map_err(std::io::Error::other)?;
+        self.stream.write_all(&message).await?;
         self.stream.write_all(b"\n").await?;
         self.stream.shutdown().await?;
         Ok(id)
@@ -78,16 +75,17 @@ mod tests {
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut lines = tokio::io::BufReader::new(stream).lines();
-            let auth: serde_json::Value =
-                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
-            let message: serde_json::Value =
-                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            let auth = lines.next_line().await.unwrap().unwrap();
+            let message = lines.next_line().await.unwrap().unwrap();
             (auth, message)
         });
         let mut socket = MessagingSocket::connect(&path, "secret").await.unwrap();
         socket.send("hello").await.unwrap();
         let (auth, message) = server.await.unwrap();
-        assert_eq!(auth, serde_json::json!({"type":"auth","token":"secret"}));
-        assert_eq!(message["message"]["content"], "hello");
+        assert_eq!(auth, r#"{"token":"secret","type":"auth"}"#);
+        assert_eq!(
+            message,
+            r#"{"message":{"content":"hello","role":"user"},"type":"user"}"#
+        );
     }
 }

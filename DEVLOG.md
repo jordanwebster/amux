@@ -1,3 +1,12 @@
+2026-10-07 — **Claude's messaging socket writes typed lines.**
+The auth line and the user message amux writes to terminal Claude's
+messaging socket are now types in `claude-protocol` that serialize to the
+same bytes as before, and the `claude` crate builds them with no `json!`.
+The typed provider check now covers that file and catches a path of field
+names passed as a slice; the two places that keep a tool server's form
+schema as written (so its fields keep the server's order) are listed
+exemptions.
+
 2026-10-07 — **The shared views have goldens for the live captures.**
 The view goldens render every interpreter fixture, and the live captures
 joined as `recorded_live_*` fixtures, with terminal Claude's

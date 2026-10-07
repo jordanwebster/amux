@@ -60,6 +60,7 @@ class TypedProviderCheckTest(unittest.TestCase):
             'let kind = row.get("type");',
             'let kind = row["type"].as_str();',
             'let kind = row.pointer("/message/id");',
+            'let schema = json_as_written(payload, &["request", "requested_schema"]);',
             "let fields = row.as_object();",
             "let row = serde_json::from_slice::<Value>(&bytes);",
             "let row: Value = serde_json::from_slice(&bytes).unwrap();",
