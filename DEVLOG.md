@@ -1,3 +1,13 @@
+2026-10-07 — **The shared views have goldens for the live captures.**
+The view goldens render every interpreter fixture, and the live captures
+joined as `recorded_live_*` fixtures, with terminal Claude's
+`recorded_question_skip_reply`, had none, so the view tests failed. Their
+goldens are now committed after review: a skipped question reads as skipped
+beside the answered one, a reply typed over an open form dismisses it and
+starts a new prompt, and each provider's plan is approved where the capture
+approved it. Terminal Claude's `question_reply` golden renumbers one frame
+because its fixture gained the interrupted turn's duration row.
+
 2026-10-07 — **The documents describe what now exists, and the contracts name its tests.**
 The testing page's fixtures table now lists the live-run captures beside the
 recorded corpora, with how a live run joins them, and the terminal Claude
