@@ -5,7 +5,8 @@
 //! the inputs that would make this interpreter write the same: a turn with
 //! text is a prompt, after the model, effort, permission and mode changes
 //! it carries, a steer a prompt then its send-now, an injected item an agent
-//! message, an interrupt an interrupt, a compaction a `/compact` prompt, and
+//! message, an interrupt an interrupt (with a question waiting and the next
+//! turn's words, a reply instead), a compaction a `/compact` prompt, and
 //! a response to a server request an answer. The handshake and the host's
 //! own introspection are left out; their responses stay in as facts. An
 //! empty turn after an inject is the interpreter's own kick and is left out
@@ -113,7 +114,14 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
     let mut inputs = 0;
     let mut injected_while_idle = false;
     let mut busy = false;
-    for recorded in &lines {
+    // Server requests the host answered, by key.
+    let mut responded = std::collections::BTreeSet::<String>::new();
+    // Turn starts read as part of a reply instead.
+    let mut replied = std::collections::BTreeSet::<usize>::new();
+    for (at, recorded) in lines.iter().enumerate() {
+        if replied.contains(&at) {
+            continue;
+        }
         let Some(line) = parsed(recorded) else {
             continue;
         };
@@ -171,149 +179,198 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
         inputs += 1;
         let numbered = format!("stdin-{inputs}").into_bytes();
         let input_id = sent_as(&message).unwrap_or(numbered);
-        let arm = match message {
-            ClientMessage::Request {
-                request: ClientRequest::TurnStart(params),
-                ..
-            } => {
-                let text = input_text(&params.input);
-                if text.is_empty() && std::mem::take(&mut injected_while_idle) {
-                    continue;
-                }
-                // Overrides the host put on the turn are inputs before it.
-                if let Some(model) = params.model {
-                    push(Event::Input(Input {
-                        input_id: format!("stdin-{inputs}-model").into_bytes(),
-                        of: Some(input::Of::Codex(CodexInput {
-                            of: Some(codex_input::Of::Model(wire::SetModel {
-                                model: Some(model),
+        let arm =
+            match message {
+                ClientMessage::Request {
+                    request: ClientRequest::TurnStart(params),
+                    ..
+                } => {
+                    let text = input_text(&params.input);
+                    if text.is_empty() && std::mem::take(&mut injected_while_idle) {
+                        continue;
+                    }
+                    // Overrides the host put on the turn are inputs before it.
+                    if let Some(model) = params.model {
+                        push(Event::Input(Input {
+                            input_id: format!("stdin-{inputs}-model").into_bytes(),
+                            of: Some(input::Of::Codex(CodexInput {
+                                of: Some(codex_input::Of::Model(wire::SetModel {
+                                    model: Some(model),
+                                })),
                             })),
-                        })),
-                    }));
-                }
-                if let Some(Some(effort)) = params.effort {
-                    push(Event::Input(Input {
-                        input_id: format!("stdin-{inputs}-effort").into_bytes(),
-                        of: Some(input::Of::Codex(CodexInput {
-                            of: Some(codex_input::Of::Effort(wire::SetEffort {
-                                effort: Some(effort.as_str().to_owned()),
+                        }));
+                    }
+                    if let Some(Some(effort)) = params.effort {
+                        push(Event::Input(Input {
+                            input_id: format!("stdin-{inputs}-effort").into_bytes(),
+                            of: Some(input::Of::Codex(CodexInput {
+                                of: Some(codex_input::Of::Effort(wire::SetEffort {
+                                    effort: Some(effort.as_str().to_owned()),
+                                })),
                             })),
-                        })),
-                    }));
-                }
-                if let (Some(approval), Some(sandbox)) =
-                    (&params.approval_policy, &params.sandbox_policy)
-                    && let Some(value) = super::facts::named_permission(
-                        approval,
-                        sandbox,
-                        params
-                            .approvals_reviewer
-                            .as_ref()
-                            .map(|reviewer| reviewer.as_str()),
-                    )
-                {
-                    push(Event::Input(Input {
-                        input_id: format!("stdin-{inputs}-permission").into_bytes(),
-                        of: Some(input::Of::Codex(CodexInput {
-                            of: Some(codex_input::Of::Permission(wire::SetPermission {
-                                value: value.to_owned(),
+                        }));
+                    }
+                    if let (Some(approval), Some(sandbox)) =
+                        (&params.approval_policy, &params.sandbox_policy)
+                        && let Some(value) = super::facts::named_permission(
+                            approval,
+                            sandbox,
+                            params
+                                .approvals_reviewer
+                                .as_ref()
+                                .map(|reviewer| reviewer.as_str()),
+                        )
+                    {
+                        push(Event::Input(Input {
+                            input_id: format!("stdin-{inputs}-permission").into_bytes(),
+                            of: Some(input::Of::Codex(CodexInput {
+                                of: Some(codex_input::Of::Permission(wire::SetPermission {
+                                    value: value.to_owned(),
+                                })),
                             })),
-                        })),
-                    }));
-                }
-                if let Some(collaboration) = &params.collaboration_mode {
-                    push(Event::Input(Input {
-                        input_id: format!("stdin-{inputs}-mode").into_bytes(),
-                        of: Some(input::Of::Codex(CodexInput {
-                            of: Some(codex_input::Of::Mode(wire::SetMode {
-                                value: collaboration.mode.as_str().to_owned(),
+                        }));
+                    }
+                    if let Some(collaboration) = &params.collaboration_mode {
+                        push(Event::Input(Input {
+                            input_id: format!("stdin-{inputs}-mode").into_bytes(),
+                            of: Some(input::Of::Codex(CodexInput {
+                                of: Some(codex_input::Of::Mode(wire::SetMode {
+                                    value: collaboration.mode.as_str().to_owned(),
+                                })),
                             })),
-                        })),
-                    }));
-                }
-                codex_input::Of::Prompt(PromptInput {
-                    text,
-                    ..Default::default()
-                })
-            }
-            ClientMessage::Request {
-                request: ClientRequest::TurnSteer(params),
-                ..
-            } => {
-                let queued = params
-                    .client_user_message_id
-                    .as_deref()
-                    .and_then(|id| crate::from_hex(id).ok())
-                    .unwrap_or_else(|| format!("stdin-{inputs}-queued").into_bytes());
-                push(Event::Input(Input {
-                    input_id: queued.clone(),
-                    of: Some(input::Of::Codex(CodexInput {
-                        of: Some(codex_input::Of::Prompt(PromptInput {
-                            text: input_text(&params.input),
-                            ..Default::default()
-                        })),
-                    })),
-                }));
-                codex_input::Of::SendNow(wire::SendQueuedNow {
-                    queued_input_id: queued,
-                })
-            }
-            ClientMessage::Request {
-                request: ClientRequest::TurnInterrupt(_),
-                ..
-            } => codex_input::Of::Interrupt(Interrupt {}),
-            ClientMessage::Request {
-                request: ClientRequest::ThreadCompactStart(_),
-                ..
-            } => codex_input::Of::Prompt(PromptInput {
-                text: "/compact".into(),
-                ..Default::default()
-            }),
-            ClientMessage::Request {
-                request: ClientRequest::ThreadInjectItems(params),
-                ..
-            } => {
-                injected_while_idle = !busy;
-                let text = params
-                    .items
-                    .iter()
-                    .flat_map(|item| match item {
-                        InjectedItem::Message(message) => message.content.as_slice(),
-                        InjectedItem::Unknown(_) => &[],
-                    })
-                    .map(|part| match part {
-                        InjectedContent::InputText(text) => text.text.as_str(),
-                        InjectedContent::Unknown(_) => "",
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                push(Event::Input(Input {
-                    input_id: input_id.clone(),
-                    of: Some(input::Of::AgentMessage(Envelope {
-                        id: input_id,
-                        kind: EnvelopeKind::Message as i32,
+                        }));
+                    }
+                    codex_input::Of::Prompt(PromptInput {
                         text,
                         ..Default::default()
-                    })),
-                }));
-                continue;
-            }
-            ClientMessage::Response {
-                id,
-                response: Ok(response),
-                ..
-            } => {
-                let key = key(&id);
-                match asked
-                    .get(&key)
-                    .and_then(|asked| answer(asked, key, &response))
-                {
-                    Some(arm) => arm,
-                    None => continue,
+                    })
                 }
-            }
-            _ => continue,
-        };
+                ClientMessage::Request {
+                    request: ClientRequest::TurnSteer(params),
+                    ..
+                } => {
+                    let queued = params
+                        .client_user_message_id
+                        .as_deref()
+                        .and_then(|id| crate::from_hex(id).ok())
+                        .unwrap_or_else(|| format!("stdin-{inputs}-queued").into_bytes());
+                    push(Event::Input(Input {
+                        input_id: queued.clone(),
+                        of: Some(input::Of::Codex(CodexInput {
+                            of: Some(codex_input::Of::Prompt(PromptInput {
+                                text: input_text(&params.input),
+                                ..Default::default()
+                            })),
+                        })),
+                    }));
+                    codex_input::Of::SendNow(wire::SendQueuedNow {
+                        queued_input_id: queued,
+                    })
+                }
+                ClientMessage::Request {
+                    request: ClientRequest::TurnInterrupt(_),
+                    ..
+                } => {
+                    // An interrupt while a question waits, then the next turn's
+                    // words, is how amux replies instead of answering.
+                    let open = asked.iter().find(|(key, request)| {
+                        matches!(request, ServerRequest::RequestUserInput(_))
+                            && !responded.contains(*key)
+                    });
+                    let next_turn = lines.iter().enumerate().skip(at + 1).find_map(
+                        |(later, line)| match parsed(line)? {
+                            Line::Host(ClientMessage::Request {
+                                request: ClientRequest::TurnStart(params),
+                                ..
+                            }) => Some((later, params)),
+                            _ => None,
+                        },
+                    );
+                    match (open, next_turn) {
+                        (Some((key, _)), Some((later, params)))
+                            if !input_text(&params.input).is_empty() =>
+                        {
+                            let key = key.clone();
+                            responded.insert(key.clone());
+                            replied.insert(later);
+                            let sent = params
+                                .client_user_message_id
+                                .as_deref()
+                                .and_then(|id| crate::from_hex(id).ok());
+                            push(Event::Input(Input {
+                                input_id: sent.unwrap_or(input_id),
+                                of: Some(input::Of::Codex(CodexInput {
+                                    of: Some(codex_input::Of::Answer(AnswerInput {
+                                        ask_key: key,
+                                        kind: "codex".into(),
+                                        body: CodexAnswer {
+                                            of: Some(codex_answer::Of::Reply(wire::ReplyInstead {
+                                                text: input_text(&params.input),
+                                                answers_so_far: Vec::new(),
+                                            })),
+                                        }
+                                        .encode_to_vec(),
+                                    })),
+                                })),
+                            }));
+                            continue;
+                        }
+                        _ => codex_input::Of::Interrupt(Interrupt {}),
+                    }
+                }
+                ClientMessage::Request {
+                    request: ClientRequest::ThreadCompactStart(_),
+                    ..
+                } => codex_input::Of::Prompt(PromptInput {
+                    text: "/compact".into(),
+                    ..Default::default()
+                }),
+                ClientMessage::Request {
+                    request: ClientRequest::ThreadInjectItems(params),
+                    ..
+                } => {
+                    injected_while_idle = !busy;
+                    let text = params
+                        .items
+                        .iter()
+                        .flat_map(|item| match item {
+                            InjectedItem::Message(message) => message.content.as_slice(),
+                            InjectedItem::Unknown(_) => &[],
+                        })
+                        .map(|part| match part {
+                            InjectedContent::InputText(text) => text.text.as_str(),
+                            InjectedContent::Unknown(_) => "",
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    push(Event::Input(Input {
+                        input_id: input_id.clone(),
+                        of: Some(input::Of::AgentMessage(Envelope {
+                            id: input_id,
+                            kind: EnvelopeKind::Message as i32,
+                            text,
+                            ..Default::default()
+                        })),
+                    }));
+                    continue;
+                }
+                ClientMessage::Response {
+                    id,
+                    response: Ok(response),
+                    ..
+                } => {
+                    let key = key(&id);
+                    responded.insert(key.clone());
+                    match asked
+                        .get(&key)
+                        .and_then(|asked| answer(asked, key, &response))
+                    {
+                        Some(arm) => arm,
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
         push(Event::Input(Input {
             input_id,
             of: Some(input::Of::Codex(CodexInput { of: Some(arm) })),
@@ -471,5 +528,129 @@ fn answer(
             }
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(dir: &str, us: i64, message: serde_json::Value) -> String {
+        serde_json::json!({"us": us, "dir": dir, "line": message.to_string()}).to_string()
+    }
+
+    fn inputs(events: Vec<Event>) -> Vec<codex_input::Of> {
+        events
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::Input(Input {
+                    of: Some(input::Of::Codex(CodexInput { of: Some(of) })),
+                    ..
+                }) => Some(of),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// amux replies instead of answering Codex's question by interrupting
+    /// the turn and starting the next with the person's words; read back,
+    /// that is the reply, under the id the words were sent with.
+    #[test]
+    fn an_interrupt_while_a_question_waits_then_words_is_a_reply_instead() {
+        let question = serde_json::json!({
+            "id": 0,
+            "method": "item/tool/requestUserInput",
+            "params": {
+                "threadId": "t1",
+                "turnId": "turn-1",
+                "itemId": "q1",
+                "questions": [{"id": "shape", "header": "Shape", "question": "Which shape?"}],
+            },
+        });
+        let interrupt = serde_json::json!({
+            "id": "host-1",
+            "method": "turn/interrupt",
+            "params": {"threadId": "t1", "turnId": "turn-1"},
+        });
+        let words = serde_json::json!({
+            "id": "host-2",
+            "method": "turn/start",
+            "params": {
+                "threadId": "t1",
+                "clientUserMessageId": "7231",
+                "input": [{"type": "text", "text": "Never mind.", "text_elements": []}],
+            },
+        });
+        let recording = [
+            line("stdout", 1_000, question),
+            line("stdin", 2_000, interrupt.clone()),
+            line("stdin", 3_000, words),
+        ]
+        .join("\n");
+        let got = inputs(read("codex_io", recording.as_bytes()).unwrap());
+        let [codex_input::Of::Answer(answer)] = got.as_slice() else {
+            panic!("one answer, not {got:?}");
+        };
+        assert_eq!(answer.ask_key, "0");
+        let body = CodexAnswer::decode(answer.body.as_slice()).unwrap();
+        assert_eq!(
+            body.of,
+            Some(codex_answer::Of::Reply(wire::ReplyInstead {
+                text: "Never mind.".into(),
+                answers_so_far: Vec::new(),
+            }))
+        );
+
+        // With the question answered first, an interrupt is an interrupt.
+        let answered = serde_json::json!({"id": 0, "result": {"answers": {}}});
+        let recording = [
+            line(
+                "stdout",
+                1_000,
+                serde_json::json!({
+                    "id": 0,
+                    "method": "item/tool/requestUserInput",
+                    "params": {"threadId": "t1", "turnId": "turn-1", "itemId": "q1", "questions": []},
+                }),
+            ),
+            line("stdin", 1_500, answered),
+            line("stdin", 2_000, interrupt),
+        ]
+        .join("\n");
+        let got = inputs(read("codex_io", recording.as_bytes()).unwrap());
+        assert!(
+            matches!(got.last(), Some(codex_input::Of::Interrupt(_))),
+            "{got:?}"
+        );
+    }
+
+    /// A turn that carries a permission and a mode is those changes, then
+    /// the prompt.
+    #[test]
+    fn a_turns_permission_and_mode_are_inputs_before_its_prompt() {
+        let turn = serde_json::json!({
+            "id": "host-1",
+            "method": "turn/start",
+            "params": {
+                "threadId": "t1",
+                "approvalPolicy": "on-request",
+                "approvalsReviewer": "user",
+                "sandboxPolicy": {"type": "readOnly"},
+                "collaborationMode": {"mode": "plan", "settings": {"model": "m"}},
+                "input": [{"type": "text", "text": "pong", "text_elements": []}],
+            },
+        });
+        let got = inputs(read("codex_io", line("stdin", 1_000, turn).as_bytes()).unwrap());
+        assert!(
+            matches!(
+                got.as_slice(),
+                [
+                    codex_input::Of::Permission(permission),
+                    codex_input::Of::Mode(mode),
+                    codex_input::Of::Prompt(_),
+                ] if permission.value == "read-only" && mode.value == "plan"
+            ),
+            "{got:?}"
+        );
     }
 }

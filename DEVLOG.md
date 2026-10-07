@@ -1,3 +1,12 @@
+2026-10-07 — **A Codex recording reads amux's reply instead back as a reply.**
+amux replies instead of answering Codex's question by interrupting the turn
+and starting the next with the person's words. Codex's recording reader saw
+only an interrupt and a prompt, so a recording of that replayed the question
+as dismissed. While a question waits, an interrupt followed by the next
+turn's words now reads as the reply, under the id the words were sent with.
+Unit tests pin it, the turn's permission and mode, and headless Claude's
+reply.
+
 2026-10-07 — **The live lane covers plans, questions, usage, catalogues and Codex's settings, and records its traffic.**
 `just live <kind> all` now also decides a plan, skips one of two questions
 and replies instead to a third (terminal Claude's skip goes through its form
