@@ -182,7 +182,15 @@ final class DoorHost {
             guard let seen = Self.permission(permission) else {
                 return .error("no local network permission named \(permission)")
             }
-            stores?.hosts.sawLocalNetwork(seen)
+            // The stand-in holds for the rest of this launch: the real
+            // browser stops reporting, and the profile, which hands its
+            // stores the permission last reported when it comes up, is
+            // waited for so it cannot overwrite the stand-in either.
+            composition?.runtime.discovery?.permissionChanged = nil
+            guard case .ack = await until(30, "the account running", { self.stores?.profile != nil }),
+                  let stores
+            else { return .error("nothing is running") }
+            stores.hosts.sawLocalNetwork(seen)
             return .ack
         case .revoke(let host):
             guard let id = HostId(host) else { return .error("no host named \(host)") }

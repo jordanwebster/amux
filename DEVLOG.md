@@ -1,3 +1,13 @@
+2026-10-07 — **The phone's local-network story holds its refusal.**
+The journey refuses the local network through the debug door, which set
+the Hosts store's permission once. The real browser kept reporting its own
+state, and the account's profile coming up handed the store the
+permission last reported, so either could overwrite the refusal before the
+screen was taken, and the story failed whenever they landed after the door.
+The door's stand-in now holds for the launch: the real browser stops
+reporting and the door waits for the profile before it sets the
+permission.
+
 2026-10-07 — **An agent's name is a word a branch can be.**
 A worktree's branch is the agent's name as given, so a name git refuses,
 such as "fix login", failed the create. Rather than translate names into
