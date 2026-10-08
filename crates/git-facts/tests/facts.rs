@@ -193,15 +193,17 @@ async fn a_repository_without_commits_counts_everything_as_uncommitted() {
 #[tokio::test]
 async fn untracked_paths_past_the_command_line_limit_still_count() {
     // More path text than one command line holds: 32 KiB on Windows, about
-    // 1 MiB on macOS and usually 2 MiB on Linux.
-    let (files, path_text) = if cfg!(windows) {
-        (400, 64 * 1024)
+    // 1 MiB on macOS and usually 2 MiB on Linux. Windows names stay short
+    // enough that the temporary folder and a name together fit in its
+    // 260-character path limit, which git there keeps by default.
+    let (files, path_text, padding) = if cfg!(windows) {
+        (800, 64 * 1024, 100)
     } else {
-        (13_000, 5 * 1024 * 1024 / 2)
+        (13_000, 5 * 1024 * 1024 / 2, 200)
     };
     let repo = repository();
     let dir = repo.path();
-    let padding = "x".repeat(200);
+    let padding = "x".repeat(padding);
     let mut written = 0;
     for n in 0..files {
         let name = format!("{n:05}-{padding}.txt");

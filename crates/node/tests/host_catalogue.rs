@@ -13,8 +13,8 @@ use support::synthetic::*;
 use support::*;
 use wire::client_service_server::ClientService as _;
 use wire::{
-    Catalogue, ClaudeCreateConfig, CreateAgentRequest, GetCatalogueRequest, HostProvider, Kind,
-    ProviderOnHost, create_agent_request, get_catalogue_request, inventory_event, session_event,
+    Catalogue, GetCatalogueRequest, HostProvider, ProviderOnHost, get_catalogue_request,
+    inventory_event,
 };
 
 fn model(value: &str) -> OfferedModel {
@@ -346,8 +346,13 @@ async fn a_paired_host_answers_for_its_peers_providers() {
     laptop_daemon.shutdown().await.unwrap();
 }
 
+// Unix only: Windows does not host terminal Claude (see docs/ARCHITECTURE.md,
+// "Windows, as a stated cost").
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn terminal_claude_offers_what_its_hosts_claude_offers() {
+    use wire::{ClaudeCreateConfig, CreateAgentRequest, Kind, create_agent_request, session_event};
+
     let host = Host::new(&Script {
         models: vec![model("opus"), model("haiku")],
         commands: vec![command("review")],

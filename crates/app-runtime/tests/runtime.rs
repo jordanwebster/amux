@@ -467,9 +467,18 @@ async fn a_settings_pick_reaches_the_agent_and_the_frame_shows_it() {
     let net = Net::start(topology()).await.unwrap();
     let (runtime, mut host) = open(&net).await;
     let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
-    until(&mut host, &chat, "the first turn", |chat| {
-        chat.frame().caught_up && says(chat, "turn one")
-    })
+    // The host's catalogue is fetched once the snapshot names it, and can
+    // land after the first turn does.
+    until(
+        &mut host,
+        &chat,
+        "the first turn and the catalogue",
+        |chat| {
+            chat.frame().caught_up
+                && says(chat, "turn one")
+                && chat.settings().models.iter().any(|model| !model.unlisted)
+        },
+    )
     .await;
     let view = chat.settings();
     assert!(

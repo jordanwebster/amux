@@ -2,7 +2,7 @@
   worker                                                                           [Diff] │ [Home]
 
 
-    Leave the README alone.                                                                09:00
+    Leave the README alone.                                                                08:00
 
 
   ▸ Plan · Write the colour · sent back ──────────────────────────────────────────────────────────
@@ -10,7 +10,7 @@
     Worked 1s
 
 
-    One more pass on the plan.                                                             09:00
+    One more pass on the plan.                                                             08:00
 
 
   ▸ Plan · Write the colour · dismissed ──────────────────────────────────────────────────────────
@@ -18,7 +18,7 @@
     Worked 1s
 
 
-    Forget the plan; just write Blue.                                                      09:00
+    Forget the plan; just write Blue.                                                      08:00
 
 
     Working · 0ms

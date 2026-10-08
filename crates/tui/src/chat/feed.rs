@@ -1370,10 +1370,21 @@ fn worked(ms: i64) -> String {
 
 /// "14:07": the local time a row was written.
 pub fn clock(at_ms: i64) -> String {
-    use chrono::TimeZone;
-    chrono::Local
-        .timestamp_millis_opt(at_ms)
-        .single()
+    local_time(at_ms)
         .map(|at| at.format("%H:%M").to_string())
         .unwrap_or_default()
+}
+
+/// A moment as the person reads it: on this machine's clock. The crate's
+/// own tests read UTC instead, so a golden drawn from a recording's real
+/// timestamps reads the same in every time zone.
+pub(crate) fn local_time(at_ms: i64) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    use chrono::TimeZone;
+    #[cfg(test)]
+    let zone = chrono::Utc;
+    #[cfg(not(test))]
+    let zone = chrono::Local;
+    zone.timestamp_millis_opt(at_ms)
+        .single()
+        .map(|at| at.fixed_offset())
 }

@@ -1,3 +1,17 @@
+2026-10-08 — **CI's first run of the merged work, fixed where the tests were wrong.**
+The terminal's plan frames replay recordings with real timestamps and print
+them on the machine's clock, so they read 09:00 where they were recorded and
+08:00 on CI; the terminal's own tests now read clocks in UTC (`local_time`),
+the fixed rows' time is 14:07 UTC, and the plan goldens read 08:00 in any
+zone. A settings test read the model list before the host's catalogue had
+arrived, which it may after the first turn; it waits for both. On Windows,
+three tests ran what Windows does not host: terminal Claude's catalogue, both
+attach tests (terminal Claude, and Codex's own app, macOS and Linux only), and
+the live Codex recordings, made over Codex's socket where Windows uses stdio;
+they are Unix only. The untracked-paths test wrote names that, under Windows'
+temporary folder, passed its 260-character path limit, so git saw no files;
+its Windows names are shorter and more numerous.
+
 2026-10-08 — **Main's usage events are merged with the protocol-gaps work.**
 Main's usage events met this branch's new answers: an answer's ask is now
 also read from a reply in place of answering (a question) and from Codex's

@@ -193,8 +193,7 @@ pub fn limit_reached(overview: &Overview, now_ms: i64) -> Option<String> {
 
 /// When a limit resets: the time today, else the weekday.
 pub(crate) fn resets(at_ms: i64, now_ms: i64) -> String {
-    use chrono::TimeZone;
-    let Some(at) = chrono::Local.timestamp_millis_opt(at_ms).single() else {
+    let Some(at) = super::feed::local_time(at_ms) else {
         return String::new();
     };
     if at_ms - now_ms < 20 * 3_600_000 {

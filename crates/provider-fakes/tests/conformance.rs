@@ -209,6 +209,9 @@ mod claude_pty_live {
     });
 }
 
+// Unix only: these were recorded over Codex's socket, which amux uses only on
+// Unix; a Windows host speaks to Codex over stdio.
+#[cfg(unix)]
 mod codex_live {
     use super::*;
 

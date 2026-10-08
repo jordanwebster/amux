@@ -603,14 +603,12 @@ fn row(kind: RowKind) -> Row {
     }
 }
 
-/// When every row was written: 14:07 on the machine's clock, so a row's
-/// time reads the same in every time zone.
+/// When every row was written: 14:07, which the crate's tests read in UTC.
 fn written_at() -> i64 {
     use chrono::TimeZone;
-    chrono::Local
+    chrono::Utc
         .with_ymd_and_hms(2026, 1, 15, 14, 7, 0)
-        .single()
-        .expect("14:07 on a winter day exists in every time zone")
+        .unwrap()
         .timestamp_millis()
 }
 

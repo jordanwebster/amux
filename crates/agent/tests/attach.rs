@@ -1,6 +1,10 @@
 //! Raw attach on pty.sock, against the fake providers: terminal Claude's
 //! one terminal read from its files by two clients at once, and Codex's
 //! views, one `codex resume` per connection on the agent's one thread.
+//! Unix only: Windows hosts neither, terminal Claude by choice (see
+//! docs/ARCHITECTURE.md, "Windows, as a stated cost") and Codex's own app
+//! because it attaches only on macOS and Linux.
+#![cfg(unix)]
 
 mod support;
 
@@ -64,9 +68,6 @@ impl Screen {
     }
 }
 
-// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
-// docs/ARCHITECTURE.md, "Windows, as a stated cost").
-#[cfg(unix)]
 #[test]
 fn two_clients_read_terminal_claude_from_its_files_and_type_into_it() {
     terminal_test(async {
