@@ -231,7 +231,6 @@ tests = [
   "agent/providers::terminal_claude_without_a_socket_has_the_message_pasted",
   "agent/providers::headless_claude_takes_an_agent_message_on_stdin",
   "agent/providers::codex_takes_an_agent_message_as_injected_items",
-  "interpret/lib::shared::tests::an_agent_message_without_a_carrier_queues_labelled_with_its_sender",
 ]
 
 # --- Invariants: daemon -----------------------------------------------------

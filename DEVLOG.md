@@ -1,3 +1,12 @@
+2026-10-08 — **CI's second run: a stale contract name and three late settlers.**
+The contracts check named an interpreter test the protocol-gaps cleanup
+deleted with the queue it held (every provider now has a carrier for agent
+messages); the name is gone from the contract. Three phone components, the
+resume composer, the composer holding a review and the overview's
+uncommitted comparison, changed after reporting ready on a CI runner (a
+two-point settle of their text), which IOS.md says to mark `settlesLate`;
+they are marked.
+
 2026-10-08 — **Terminal journeys lay out alike on macOS and Linux.**
 On macOS /tmp is a link to /private/tmp, and a program prints the physical
 path, eight cells longer than Linux's. The driver respelled the path text,

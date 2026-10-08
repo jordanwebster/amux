@@ -398,7 +398,7 @@ enum ComponentCatalog {
                     SentPrompt(inputId: [7], text: [.text("Then the Windows check.")], lands: .queue, underway: .sending(waiting: true)),
                 ])),
             composer("resume", height: 200, frame: ScriptedChat.frame(phase: .exited(cause: .failed("code 1")), mode: .resume),
-                     draft: "Pick up where you left off and rerun the tests."),
+                     draft: "Pick up where you left off and rerun the tests.", settlesLate: true),
             composer("detached", height: 180, frame: ScriptedChat.frame(mode: .disabled(.detached), caughtUp: false, waiting: .detached),
                      draft: "Also add a test for the new string."),
             composer("catching-up", height: 160, frame: ScriptedChat.frame(mode: .disabled(.catchingUp), caughtUp: false, waiting: .catchingUp)),
@@ -456,7 +456,7 @@ enum ComponentCatalog {
                 model.heard("tighten the retry path")
             },
             composer("review-token", height: 200, frame: ScriptedChat.frame(phase: .idle),
-                     draft: "Please address these before the next run.") {
+                     draft: "Please address these before the next run.", settlesLate: true) {
                 $0.attach(F.writtenReview())
             },
             composer("strip-trouble", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
@@ -595,17 +595,18 @@ extension ComponentCatalog {
     fileprivate static let overview: [ComponentExample] = {
         typealias F = CatalogFixtures
         return [
-            overview("uncommitted") { F.surroundings },
+            overview("uncommitted", settlesLate: true) { F.surroundings },
         ]
     }()
 
     private static func overview(
-        _ id: String, comparison: Comparison = .uncommitted,
+        _ id: String, comparison: Comparison = .uncommitted, settlesLate: Bool = false,
         strip: @escaping @MainActor () -> ScriptedChat.Surroundings
     ) -> ComponentExample {
         ComponentExample(
             id: "overview.\(id)", family: .chat, canvas: CGSize(width: 390, height: 844),
-            readinessIdentifier: "chat.overview.comparison", readinessValue: comparison.rawValue
+            readinessIdentifier: "chat.overview.comparison", readinessValue: comparison.rawValue,
+            settlesLate: settlesLate
         ) {
             CatalogChat(source: ScriptedChat(
                 rows: CatalogFixtures.conversation, frame: ScriptedChat.frame(phase: .working),
