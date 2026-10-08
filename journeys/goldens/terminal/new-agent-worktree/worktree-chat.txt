@@ -1,5 +1,5 @@
 
-  site-redesign │ site-redesign /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/data/worktrees/sit…  1 │ [Diff] │ [Home]
+  site-redesign │ site-redesign /tmp/journey/aj-xxxxxxxx/net/desk/data/worktrees/site/…  1 │ [Diff] │ [Home]
 
 
 

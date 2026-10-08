@@ -1,5 +1,5 @@
 
-  desk-work │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                            1 │ [Diff] │ [Home]
+  desk-work │ /tmp/journey/aj-xxxxxxxx/net/desk/work · desk                              1 │ [Diff] │ [Home]
 
 
 

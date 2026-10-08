@@ -1,5 +1,5 @@
 
-  helper │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                             exited │ 1 │ [Diff] │ [Home]
+  helper │ /tmp/journey/aj-xxxxxxxx/net/desk/work                               exited │ 1 │ [Diff] │ [Home]
 
 
 

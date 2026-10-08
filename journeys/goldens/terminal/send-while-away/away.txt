@@ -1,5 +1,5 @@
 
-  backups │ /tmp/aj-xxxxxxxx/testnetxxxxxx/cabin/work · cabin     cabin away · not current │ [Diff] │ [Home]
+  backups │ /tmp/journey/aj-xxxxxxxx/net/cabin/work · cabin       cabin away · not current │ [Diff] │ [Home]
 
 
 

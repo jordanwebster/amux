@@ -1,5 +1,5 @@
 
-  asker │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                1 │ [Diff] │ [Home]
+  asker │ /tmp/journey/aj-xxxxxxxx/net/desk/work · desk                                  1 │ [Diff] │ [Home]
 
     Add a settings screen.                                                                           hh:mm
 

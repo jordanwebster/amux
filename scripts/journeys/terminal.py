@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import difflib
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -20,7 +21,6 @@ import shlex
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 import unicodedata
 from typing import Callable
@@ -203,20 +203,38 @@ def normalize(text: str) -> str:
 DURATION = re.compile(r"(?<= )(\d+m \d+s|\d+(?:\.\d+)?(?:ms|s))(?= · |$)")
 
 
-def logical_paths(
-    texts: list[str], styles: list[list[str]], physical: str, logical: str
-) -> tuple[list[str], list[list[str]]]:
-    """Spell the scratch root as the driver named it wherever a program
-    printed its physical path instead. A program reading its own working
-    directory gets the physical path, and on macOS /tmp is a link to
-    /private/tmp: without this a frame recorded there would never match one
-    from Linux. The dropped prefix's cells come back as blanks in the first
-    gap of two or more blanks after the path, as they would had the program
-    printed the shorter path into a padded line: a box's edge or right-aligned
-    text keeps its place. With no such gap they come back at the row's end."""
-    if physical == logical or not physical.endswith(logical[1:]):
-        return texts, styles
-    return respell(texts, styles, physical, logical)
+# Where every terminal journey runs: one fixed folder, so nothing in a frame
+# is random, under a prefix of one physical width on every platform. A
+# program reading its own working directory prints the physical path, and on
+# macOS /tmp is a link to /private/tmp; Linux pads /tmp to the same width, so
+# every screen is laid out alike, where respelling a longer path afterwards
+# cannot move what was laid out around it (a right-aligned edge, a picker
+# opened under one of its fields). Frames spell the prefix one way, whole or
+# in the pieces a dialog leaves showing. Journeys in other checkouts wait for
+# it on the lock.
+TMP = os.path.realpath("/tmp")
+PREFIX = TMP if TMP != "/tmp" else "/tmp/journey"
+SPELLED_PREFIX = "/tmp/journey"
+SCRATCH_ROOT = Path(PREFIX) / "aj-terminal"
+SCRATCH_LOCK = Path("/tmp/amux-terminal-journey.lock")
+
+
+def spell_root(text: str) -> str:
+    """`text` with the physical prefix spelled SPELLED_PREFIX, whole or the
+    piece of it a dialog left showing on either side. Both are the same
+    width, so nothing moves."""
+    if PREFIX == SPELLED_PREFIX:
+        return text
+    text = text.replace(PREFIX, SPELLED_PREFIX)
+    tail = SCRATCH_ROOT.as_posix()[len(PREFIX):]
+    for size in range(len(PREFIX) - 1, 3, -1):
+        # Cut on the right: the prefix's start, then something it does not
+        # continue with.
+        head = PREFIX[:size]
+        text = re.sub(re.escape(head) + f"(?!{re.escape(PREFIX[size])})", SPELLED_PREFIX[:size], text)
+        # Cut on the left: the prefix's end, then the rest of the root.
+        text = text.replace(PREFIX[-size:] + tail, SPELLED_PREFIX[-size:] + tail)
+    return text
 
 
 # What an assigned agent name is drawn as: a host gives an agent created
@@ -335,10 +353,11 @@ class TerminalJourney:
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
-        # Short: daemons bind Unix sockets under it, and those paths are
-        # limited to about a hundred bytes.
-        self.scratch_owner = tempfile.TemporaryDirectory(prefix="aj-", dir="/tmp")
-        self.scratch = Path(self.scratch_owner.name)
+        self.lock = open(SCRATCH_LOCK, "w")
+        fcntl.flock(self.lock, fcntl.LOCK_EX)
+        shutil.rmtree(SCRATCH_ROOT, ignore_errors=True)
+        SCRATCH_ROOT.mkdir(parents=True)
+        self.scratch = SCRATCH_ROOT
         self.server = f"amux-journey-{os.getpid()}"
         self.process: subprocess.Popen[bytes] | None = None
         self.ready: dict = {}
@@ -350,7 +369,7 @@ class TerminalJourney:
         env = {k: v for k, v in os.environ.items() if k not in ("AMUX_LOG", "AMUX_CONFIG")}
         env.update({key: str(self.scratch) for key in ("TMPDIR", "TMP", "TEMP")})
         self.process = subprocess.Popen(
-            [str(TESTNET), "serve", str(topology)],
+            [str(TESTNET), "serve", str(topology), "--root-in", str(self.scratch)],
             cwd=ROOT,
             env=env,
             stdout=subprocess.PIPE,
@@ -556,9 +575,7 @@ class TerminalJourney:
         reviewed golden."""
         dump = self.tmux("capture-pane", "-p", "-e", "-t", pane).stdout
         texts, styles = parse_styled(dump.removesuffix("\n"), COLS)
-        texts, styles = logical_paths(
-            texts, styles, os.path.realpath(self.scratch), str(self.scratch)
-        )
+        texts = [spell_root(text) for text in texts]
         for name in self.assigned:
             texts, styles = respell(texts, styles, name, ASSIGNED)
         texts, styles = mask_durations(texts, styles)
@@ -654,7 +671,8 @@ class TerminalJourney:
                 raise RuntimeError("the door stayed open after teardown")
             (self.output / "actions.txt").write_text("\n".join(self.actions) + "\n")
         finally:
-            self.scratch_owner.cleanup()
+            shutil.rmtree(self.scratch, ignore_errors=True)
+            self.lock.close()
 
 
 def story(name: str) -> dict:

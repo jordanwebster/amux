@@ -1,5 +1,5 @@
 
-  reviewer │ main /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                  1 │ [Diff +2 −1] │ [Home]
+  reviewer │ main /tmp/journey/aj-xxxxxxxx/net/desk/work · desk                    1 │ [Diff +2 −1] │ [Home]
 
 
 

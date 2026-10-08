@@ -1,5 +1,5 @@
 
-  expired │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                              1 │ [Diff] │ [Home]
+  expired │ /tmp/journey/aj-xxxxxxxx/net/desk/work · desk                                1 │ [Diff] │ [Home]
 
     Tidy the pairing section.                                                                        hh:mm
 

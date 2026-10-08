@@ -1,5 +1,5 @@
 
-  keeper │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk     desk away · not current │ 1 │ [Diff] │ [Home]
+  keeper │ /tmp/journey/aj-xxxxxxxx/net/desk/work · desk       desk away · not current │ 1 │ [Diff] │ [Home]
 
 
 

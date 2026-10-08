@@ -1,5 +1,5 @@
 
-  decision-codex │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                  [Diff] │ [Home]
+  decision-codex │ /tmp/journey/aj-xxxxxxxx/net/desk/work                                    [Diff] │ [Home]
 
 
 

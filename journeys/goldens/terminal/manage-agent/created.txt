@@ -1,5 +1,5 @@
 
-  <name> │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                      1 │ [Diff] │ [Home]
+  <name> │ /tmp/journey/aj-xxxxxxxx/net/desk/work                                        1 │ [Diff] │ [Home]
 
 
 

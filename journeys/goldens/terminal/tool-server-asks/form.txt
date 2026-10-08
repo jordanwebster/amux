@@ -1,5 +1,5 @@
 
-  filer │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                1 │ [Diff] │ [Home]
+  filer │ /tmp/journey/aj-xxxxxxxx/net/desk/work · desk                                  1 │ [Diff] │ [Home]
 
 
 

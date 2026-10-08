@@ -1,5 +1,5 @@
 
-  planner-pty │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                          1 │ [Diff] │ [Home]
+  planner-pty │ /tmp/journey/aj-xxxxxxxx/net/desk/work · desk                            1 │ [Diff] │ [Home]
 
 
 

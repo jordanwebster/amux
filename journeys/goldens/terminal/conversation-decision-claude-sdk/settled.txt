@@ -1,5 +1,5 @@
 
-  decision-sdk │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                1 │ [Diff] │ [Home]
+  decision-sdk │ /tmp/journey/aj-xxxxxxxx/net/desk/work                                  1 │ [Diff] │ [Home]
 
 
 

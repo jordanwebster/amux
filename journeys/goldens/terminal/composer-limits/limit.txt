@@ -1,5 +1,5 @@
 
-  limited │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                              1 │ [Diff] │ [Home]
+  limited │ /tmp/journey/aj-xxxxxxxx/net/desk/work · desk                                1 │ [Diff] │ [Home]
 
 
 

@@ -1,5 +1,5 @@
 
-  decision-pty │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                1 │ [Diff] │ [Home]
+  decision-pty │ /tmp/journey/aj-xxxxxxxx/net/desk/work                                  1 │ [Diff] │ [Home]
 
 
 

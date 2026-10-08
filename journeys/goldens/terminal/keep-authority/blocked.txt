@@ -1,5 +1,5 @@
 
-  guarded │ /tmp/aj-xxxxxxxx/testnetxxxxxx/de…  desk away · this machine is signed out │ 1 │ [Diff] │ [Home]
+  guarded │ /tmp/journey/aj-xxxxxxxx/net/desk…  desk away · this machine is signed out │ 1 │ [Diff] │ [Home]
 
 
 

@@ -1,5 +1,5 @@
 
-  linker │ /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work · desk                                   [Diff] │ [Home]
+  linker │ /tmp/journey/aj-xxxxxxxx/net/desk/work · desk                                     [Diff] │ [Home]
 
 
 

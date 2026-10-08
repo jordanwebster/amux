@@ -6,19 +6,19 @@
 
   ▾ Live 6 ─────────────────────────────────────────────────────────────────────────────────────────────────
 
-  › ○ helper  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                        [x]
+  › ○ helper  Claude · /tmp/journey/aj-xxxxxxxx/net/desk/work                                          [x]
       Ready when you are.         ╭─ Stop ────────────────────────────────╮
                                   │                                       │
-    ○ decision-pty  Claude (termin│ Stop helper? It can be resumed later. │/work                       now
+    ○ decision-pty  Claude (termin│ Stop helper? It can be resumed later. │ork                         now
                                   │                                       │
-    ○ reviewer  Claude · /tmp/aj-x│ [Stop]  [Cancel]                      │                            now
+    ○ reviewer  Claude · /tmp/jour│ [Stop]  [Cancel]                      │                            now
                                   │ enter stop   esc cancel               │
-    ○ keeper  Claude · /tmp/aj-xxx╰───────────────────────────────────────╯                            now
+    ○ keeper  Claude · /tmp/journe╰───────────────────────────────────────╯                            now
       The recovery state is safely stored.
 
-    ○ decision-codex  Codex · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                 now
+    ○ decision-codex  Codex · /tmp/journey/aj-xxxxxxxx/net/desk/work                                   now
 
-    ○ decision-sdk  Claude · /tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work                                  now
+    ○ decision-sdk  Claude · /tmp/journey/aj-xxxxxxxx/net/desk/work                                    now
 
 
 

@@ -1,5 +1,5 @@
 
-  reviewer │ /tmp/aj-xxxxxxxx/testnetxxxxxx/…  review · working tree at 3134fb6 │ 1 file · +2 −1 · 1 comment
+  reviewer │ /tmp/journey/aj-xxxxxxxx/net/de…  review · working tree at 3134fb6 │ 1 file · +2 −1 · 1 comment
 
   Files 1                  │  deploy.sh  +2 −1 ─────────────────────────────────────────────────────────────
                            │

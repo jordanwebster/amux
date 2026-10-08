@@ -1,3 +1,16 @@
+2026-10-08 — **Terminal journeys lay out alike on macOS and Linux.**
+On macOS /tmp is a link to /private/tmp, and a program prints the physical
+path, eight cells longer than Linux's. The driver respelled the path text,
+but cannot move what was laid out around it: the new agent's composer edge
+is right-aligned and its model picker opens under the model field, so that
+screen sat eight columns apart on the two platforms. Terminal journeys now
+run in one fixed folder whose prefix is the same physical width everywhere
+(/private/tmp on macOS, /tmp/journey on Linux), with the test network's
+fixed `net` folder inside it, so nothing on screen is random; frames spell
+the prefix /tmp/journey, whole or in the pieces a dialog leaves showing.
+Journeys in other checkouts wait on a lock, as the phone's do. Every
+terminal golden showing a path is re-recorded for the new spelling.
+
 2026-10-08 — **CI's first run of the merged work, fixed where the tests were wrong.**
 The terminal's plan frames replay recordings with real timestamps and print
 them on the machine's clock, so they read 09:00 where they were recorded and
