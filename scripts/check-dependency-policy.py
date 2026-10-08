@@ -13,6 +13,9 @@ ALLOWED_LOCAL = {
     # mirrors are generated from them, so they depend on nothing.
     "model": set(),
     "settings": set(),
+    # The typed events a device may send and their uploader: a leaf, so the
+    # daemon, the phone bridge and the CLI share one definition.
+    "analytics": set(),
     "attachments": {"wire"},
     "journal": {"wire"},
     "store": {"wire"},
@@ -41,8 +44,8 @@ ALLOWED_LOCAL = {
     # provider in its graph.
     # interpret only for the dump path's per-kind redactor: the one stated
     # exception to "the daemon interprets nothing".
-    "node": {"agent-dir", "git-facts", "interpret", "journal", "release", "settings", "store", "version-stamp", "wire"},
-    "amux": {"agent", "agent-dir", "claude", "client", "node", "settings", "store", "tui", "wire"},
+    "node": {"agent-dir", "analytics", "git-facts", "interpret", "journal", "release", "settings", "store", "version-stamp", "wire"},
+    "amux": {"agent", "agent-dir", "analytics", "claude", "client", "node", "settings", "store", "tui", "wire"},
     # The version stamp a release tool can rewrite in a built binary, and the
     # release manifest the tool signs and the daemon verifies; the xtask
     # shares both without building the daemon.
@@ -60,7 +63,7 @@ ALLOWED_LOCAL = {
     # The phone's chats and fleet over the local runtime, with no node.
     "app-runtime": {"client", "model", "ui-runtime", "ui-state", "ui-view", "wire"},
     # The daemon's profile runtime hosted in the phone's process.
-    "app-embedded": {"app-runtime", "client", "node", "wire"},
+    "app-embedded": {"analytics", "app-runtime", "client", "node", "wire"},
     # The C ABI over both.
     "app-ffi": {"app-embedded", "app-runtime", "client", "model", "node", "ui-view"},
     # The terminal client composes the views over the drivers' state.

@@ -28,6 +28,7 @@ use crate::install::{InstallationLock, LockError, REPORTS, STORE, private_dir};
 use crate::outbox::PushSender;
 use crate::profiles::{self, PROFILE_SOCKET, ProfileEntry, ProfileId, Registry};
 use crate::runtime::{Launch, Looked, Profile, ProfileRuntime, RegistryError, SweepReport};
+use crate::telemetry::{self, Telemetry};
 
 pub struct StartOptions {
     pub data_dir: PathBuf,
@@ -44,6 +45,8 @@ pub struct StartOptions {
     pub front_door: Option<PathBuf>,
     /// What each profile's network edge serves.
     pub edge: EdgeOptions,
+    /// Whether profiles record product analytics, and where it goes.
+    pub analytics: Telemetry,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -102,6 +105,8 @@ pub(crate) struct Installation {
     pub(crate) events: broadcast::Sender<(u64, ProfileEvent)>,
     pub(crate) sequence: Mutex<u64>,
     shutdown: watch::Sender<bool>,
+    /// Where profiles record analytics; unset records nothing.
+    analytics: std::sync::OnceLock<Arc<dyn analytics::Sink>>,
 }
 
 pub(crate) struct Hosted {
@@ -146,6 +151,10 @@ impl Installation {
             push: self.push.clone(),
             reports: self.data_dir.join(REPORTS),
             daemon_log: self.daemon_log.clone(),
+            analytics: match self.analytics.get() {
+                Some(sink) => analytics::Analytics::new(host, sink.clone()),
+                None => analytics::Analytics::off(),
+            },
             worktrees: Arc::new(crate::worktree::GitWorktrees::new(
                 self.data_dir.join(crate::worktree::WORKTREES),
             )),
@@ -164,7 +173,7 @@ impl Installation {
         })?;
         Ok(Some(grpc::serve_client(
             listener,
-            ClientApi::new(runtime, None),
+            ClientApi::new(runtime, None).opened_as(analytics::Client::Terminal),
         )))
     }
 
@@ -275,11 +284,91 @@ impl Installation {
     pub(crate) fn request_shutdown(&self) {
         self.shutdown.send_replace(true);
     }
+
+    /// The oldest profile's analytics, which records what happens to the
+    /// installation as a whole.
+    fn first_analytics(&self) -> Option<analytics::Analytics> {
+        self.hosted
+            .lock()
+            .unwrap()
+            .values()
+            .min_by_key(|hosted| hosted.position)
+            .map(|hosted| hosted.runtime.analytics().clone())
+    }
+
+    /// Starts recording analytics: into a test's sink, or into an uploader
+    /// this installation runs. Analytics never stops a start: an id that
+    /// cannot be written leaves the installation recording nothing.
+    fn start_analytics(self: &Arc<Self>, telemetry: Telemetry) -> Option<analytics::Uploader> {
+        let (sink, uploader) = match telemetry {
+            Telemetry::Off => return None,
+            Telemetry::Record(sink) => (sink, None),
+            Telemetry::Upload {
+                endpoint,
+                channel,
+                gate,
+            } => {
+                let installation_id = match crate::install::installation_id(&self.data_dir) {
+                    Ok((id, _)) => id,
+                    Err(error) => {
+                        tracing::warn!(%error, "no installation id; recording no analytics");
+                        return None;
+                    }
+                };
+                let uploader = analytics::Uploader::start(
+                    analytics::Upload {
+                        installation_id,
+                        context: analytics::Context::detect(crate::version(), channel),
+                        endpoint,
+                        default_base: settings::DEFAULT_CLOUD_URL.to_owned(),
+                        gate,
+                    },
+                    Arc::new(telemetry::Profiles(Arc::downgrade(self))),
+                    Arc::new(analytics::Http::new(
+                        analytics::Params::default().request_timeout,
+                    )),
+                    analytics::Params::default(),
+                );
+                (uploader.sink(), Some(uploader))
+            }
+        };
+        let _ = self.analytics.set(sink);
+        uploader
+    }
+}
+
+/// What a start says about the run before it, from the generation file
+/// that run left: a first start, a crash, or another build.
+fn since_last_run(
+    last: Option<&Generation>,
+    boot_id: &str,
+    version: &str,
+) -> Vec<analytics::Event> {
+    use analytics::Event;
+    let Some(last) = last else {
+        return vec![Event::Installed];
+    };
+    let mut events = Vec::new();
+    let previous = semver::Version::parse(&last.version).ok();
+    if last.crashed_before(boot_id) {
+        events.push(Event::DaemonCrashed {
+            version: previous.clone(),
+        });
+    }
+    if let (Some(from), Ok(to)) = (previous, semver::Version::parse(version)) {
+        if to > from {
+            events.push(Event::Updated { from, to });
+        } else if to < from {
+            events.push(Event::UpdateRolledBack { from, to });
+        }
+    }
+    events
 }
 
 pub struct Daemon {
     installation: Arc<Installation>,
     generation: Generation,
+    uploader: Option<analytics::Uploader>,
     sweep: BTreeMap<ProfileId, SweepReport>,
     supervisor: Option<ActivationPipe>,
     front_door: Option<JoinHandle<()>>,
@@ -318,6 +407,7 @@ pub async fn start(
         daemon_log,
         front_door,
         edge,
+        analytics: telemetry,
     } = options;
     let lock = InstallationLock::acquire(&data_dir)?;
     let boot_id = match boot_id {
@@ -326,7 +416,8 @@ pub async fn start(
     };
     // Before anything is served: a peer must never see this run's
     // revisions under the previous generation.
-    let generation = Generation::start(&data_dir, &boot_id).map_err(StartError::Generation)?;
+    let (generation, last_run) =
+        Generation::start(&data_dir, &boot_id, crate::version()).map_err(StartError::Generation)?;
 
     let installation = Arc::new(Installation {
         data_dir,
@@ -342,7 +433,9 @@ pub async fn start(
         events: broadcast::channel(256).0,
         sequence: Mutex::new(0),
         shutdown: watch::Sender::new(false),
+        analytics: std::sync::OnceLock::new(),
     });
+    let uploader = installation.start_analytics(telemetry);
 
     let registry = Registry::read(&installation.data_dir).map_err(StartError::Registry)?;
     let mut opened: Vec<(ProfileEntry, Arc<ProfileRuntime>, Looked)> = Vec::new();
@@ -392,10 +485,16 @@ pub async fn start(
         Some(path) => Some(bind_front_door(&installation, path)?),
         None => None,
     };
+    if let Some(analytics) = installation.first_analytics() {
+        for event in since_last_run(last_run.as_ref(), &boot_id, crate::version()) {
+            analytics.record(event);
+        }
+    }
 
     Ok(Daemon {
         installation,
         generation,
+        uploader,
         sweep,
         supervisor,
         front_door,
@@ -464,6 +563,11 @@ impl Daemon {
         self.supervisor.take()
     }
 
+    /// What sends the analytics waiting, when this installation uploads.
+    pub fn analytics_flusher(&self) -> Option<analytics::Flusher> {
+        self.uploader.as_ref().map(analytics::Uploader::flusher)
+    }
+
     /// Resolves once a client has asked the daemon to shut down.
     pub async fn shutdown_requested(&self) {
         let mut shutdown = self.installation.shutdown.subscribe();
@@ -478,6 +582,11 @@ impl Daemon {
     pub async fn shutdown(mut self) -> io::Result<()> {
         if let Some(front_door) = self.front_door.take() {
             front_door.abort();
+        }
+        // While the profiles are still hosted: the uploader asks them for
+        // their accounts.
+        if let Some(flusher) = self.analytics_flusher() {
+            flusher.flush(telemetry::SHUTDOWN_FLUSH).await;
         }
         let hosted = std::mem::take(&mut *self.installation.hosted.lock().unwrap());
         for hosted in hosted.values() {

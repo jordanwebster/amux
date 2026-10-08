@@ -169,6 +169,15 @@ agent's source. Put away, the browser stops and forgets what it found, and
 only the chats a push opens keep a source. Coming back to the front starts
 the browser again and lists every agent again.
 
+The same two moments drive [product analytics](ANALYTICS.md), which the
+runtime keeps and sends: coming to the front counts the app as opened (at
+most once an hour), and going to the back sends what is waiting before the
+system may suspend the app. The paywall opening and a purchase starting are
+seen only by the app, which records them on the account on screen
+(`RuntimeCoordinator.record`). **Share Usage** under **You** turns it off; the
+choice is kept in the app's defaults and handed to the runtime at start and
+on every change. Only the App Store build sends.
+
 A "needs you" notification's payload names a host and an agent under its
 `amux` key (`PushPayload`). When one wakes the app in the background,
 `RuntimeCoordinator.warm` brings the account whose profile trusts that host
@@ -396,10 +405,15 @@ Comparisons use Point-Free's SnapshotTesting under the allowance every
 compared phone picture shares (`RoundingImageDiff`; see
 [What a compared picture may differ by](#what-a-compared-picture-may-differ-by)).
 Each example is drawn flat (see above) in a
-window of its own, on screen, and photographed once it reports ready and its
-photographs have stayed unchanged for a second: a few take one more change
-after they report ready (a chat feed moving to its newest row, an attachment
-chip, a focused field's caret), which has come within half a second. An
+window of its own, on screen, and photographed once it reports ready and two
+photographs a display frame apart agree. A few take one more change after
+they report ready (an attachment chip replacing "Attaching", a focused
+field's caret appearing), which has come up to 2.8 s later on a CI runner;
+those are marked `settlesLate` in the catalogue and photographed only once
+their photographs have stayed unchanged for a second. `--settle-all` waits
+like that for every example and fails one that changed without the mark; the
+nightly captures run and every `--record` use it, so a new example that
+changes late is caught when its baseline is written. An
 example whose window still holds glass or material when it is photographed
 fails by name, so a surface that reaches glass without the flag is a plain
 failure, never a flaky one. These in-process images say nothing about system
@@ -496,7 +510,7 @@ prose are judged on their name only and listed in the record, which lands in
 
 | Recipe | Runs |
 | --- | --- |
-| `just ios gate` | The iOS graph checks, lint, script tests, bridge graph check, bridge, simulator, app, component snapshots, loopback smoke and unit suites. What CI runs on every push. |
+| `just ios gate` | Lint, script tests, bridge graph check, bridge, simulator, one build of the app and every unit and component suite, then component snapshots, loopback smoke and unit suites. What CI runs on every push that touches the phone's paths ([CI](CI.md)). |
 | `just ios captures` | Goldens and their perturbation, the store suite on the simulator, journeys and the accessibility audit. Nightly and on demand in CI. |
 | `just ios shipping` | The shipping XCFramework and the Release scope audit. `just ios release` depends on both. |
 | `just ios measured` | The phone measured on this Mac: `just ios perf`, on an enrolled Mac only ([Performance](PERFORMANCE.md)). |

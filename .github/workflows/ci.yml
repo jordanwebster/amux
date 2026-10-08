@@ -78,7 +78,10 @@ jobs:
         shell: bash
         run: scripts/no-update-flags.sh
       - uses: dtolnay/rust-toolchain@1.98.0
+      # Named, because the weekly offline tests restore the macOS one.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
       - uses: extractions/setup-just@v2
       - name: Run workspace tests
         # Report every failing test binary, not only the first: a platform
@@ -216,8 +219,40 @@ jobs:
       - name: Check iOS device and simulator graphs
         run: just mobile-check
 
+  # A change reaches the phone only through these paths. Whatever else the
+  # bridge reads crosses to Swift as the generated mirrors in apps/apple,
+  # which a workspace test holds to the Rust definitions, so a shape change
+  # upstream cannot land without touching the app. Behaviour upstream is the
+  # workspace tests' to judge; the iOS target check above compiles the
+  # bridge's graph on every push.
+  ios-changes:
+    name: iOS changes
+    runs-on: ubuntu-latest
+    outputs:
+      phone: ${{ steps.filter.outputs.phone }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            phone:
+              - 'apps/apple/**'
+              - 'crates/app-ffi/**'
+              - 'crates/app-embedded/**'
+              - 'crates/app-runtime/**'
+              - 'crates/xtask/**'
+              - 'scripts/**'
+              - 'justfile'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yml'
+
   ios-gate:
     name: iOS gate
+    needs: ios-changes
+    if: needs.ios-changes.outputs.phone == 'true'
     runs-on: macos-26
     # The gate builds the app and runs the suites one simulator can answer.
     # The capture suites are not here: see `just ios captures`.
@@ -239,7 +274,10 @@ jobs:
         with:
           components: clippy
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      # Named, because the nightly iOS captures job restores it.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ios-gate
       - uses: extractions/setup-just@v2
       - name: Install build tools
         run: brew install xcodegen

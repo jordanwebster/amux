@@ -49,6 +49,7 @@ mod sources;
 mod spec;
 #[cfg(not(target_os = "ios"))]
 pub mod supervisor;
+mod telemetry;
 mod transport;
 mod trust;
 mod worktree;
@@ -101,6 +102,7 @@ pub use serve::{InventorySubscription, MAX_PAGE, ServeError, Subscription};
 pub use sources::{
     InventoryHook, NO_LONGER_LISTED, NOT_TRUSTED, SourceHook, SourcePolicy, SourceVerdict,
 };
+pub use telemetry::Telemetry;
 pub use worktree::{GitWorktrees, MakeWorktree, WORKTREES};
 
 /// Internals the testnet harness assembles topologies from. Hidden and

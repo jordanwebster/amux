@@ -70,6 +70,10 @@ final class ComponentSnapshotTests: XCTestCase {
 
         let recording = environment["AMUX_RECORD_SNAPSHOTS"] == "1"
         let perturbing = environment["AMUX_SNAPSHOT_PERTURB"] == "1"
+        // Recording settles every example, so no baseline is ever an early
+        // picture; asked for, an ordinary run does the same and fails any
+        // example that changed without being marked to settle.
+        let settlingAll = recording || environment["AMUX_SNAPSHOT_SETTLE_ALL"] == "1"
         let review = environment["AMUX_SNAPSHOT_REVIEW"].flatMap {
             $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
         }
@@ -78,6 +82,7 @@ final class ComponentSnapshotTests: XCTestCase {
                 + (requested.isEmpty ? "all" : requested.sorted().joined(separator: ","))
                 + " record=\(recording ? 1 : 0) perturb=\(perturbing ? 1 : 0)"
                 + " review=\(review == nil ? 0 : 1)"
+                + " settle-all=\(settlingAll ? 1 : 0)"
                 + " host=\(environment["AMUX_COMPONENT_SNAPSHOTS"] == "1" ? 1 : 0)"
         )
         let suiteStarted = ProcessInfo.processInfo.systemUptime
@@ -95,7 +100,8 @@ final class ComponentSnapshotTests: XCTestCase {
                         example: example,
                         appearance: appearance,
                         recording: recording,
-                        perturbing: perturbing
+                        perturbing: perturbing,
+                        settlingAll: settlingAll
                     )
                 }
                 print(String(
@@ -125,20 +131,40 @@ final class ComponentSnapshotTests: XCTestCase {
         example: ComponentExample,
         appearance: Appearance,
         recording: Bool,
-        perturbing: Bool
+        perturbing: Bool,
+        settlingAll: Bool
     ) async {
         let name = "\(example.id).\(appearance.name)"
         await showing(example, appearance, reducesTransparency: true, perturbing: perturbing) {
             controller, window, deadline in
-            guard let settled = await settledPhotograph(
-                of: controller.view, traits: Self.traits(appearance), deadline: deadline, name: name)
-            else {
-                XCTFail(
-                    "Timed out waiting for \(name) to settle: its photographs were still changing "
-                        + "5 s after it showed (plus its quiet window)"
-                )
-                return
+            let traits = Self.traits(appearance)
+            var picture: UIImage?
+            if !example.settlesLate && !settlingAll {
+                picture = await steadyPhotograph(of: controller.view, traits: traits)
+                if picture == nil {
+                    print("AMUX_SNAPSHOT_TIMING component=\(name) changed-unmarked")
+                }
             }
+            if picture == nil {
+                guard let (settledPicture, changes) = await settledPhotograph(
+                    of: controller.view, traits: traits, deadline: deadline, name: name)
+                else {
+                    XCTFail(
+                        "Timed out waiting for \(name) to settle: its photographs were still changing "
+                            + "5 s after it showed (plus its quiet window)"
+                    )
+                    return
+                }
+                if settlingAll && !example.settlesLate, let first = changes.first {
+                    XCTFail(
+                        "\(name) changed \(first) s after it reported ready, so an ordinary run would "
+                            + "photograph it before it settles: mark it settlesLate in ComponentCatalog"
+                    )
+                    return
+                }
+                picture = settledPicture
+            }
+            guard let settled = picture else { return }
             let frosted = Self.frostedLayers(in: window.layer)
             guard frosted == 0 else {
                 XCTFail(
@@ -312,14 +338,18 @@ final class ComponentSnapshotTests: XCTestCase {
         return readiness.contains(identifier: identifier, value: value)
     }
 
-    /// The picture compared is one the screen has settled on: the first
+    /// The picture of an example marked to settle late: the first
     /// photograph that stays unchanged for ``quiet``. Drawn flat, most
     /// examples are final at their first photograph. A few take one more
-    /// change after they report ready, content that lands a pass later: a
-    /// chat feed moving to its newest row, an attachment chip replacing
-    /// "Attaching", a focused field's caret appearing. On a local simulator
-    /// that change has come up to 0.45 s after readiness, once and never
-    /// again after it.
+    /// change after they report ready, content that lands a pass later: an
+    /// attachment chip replacing "Attaching", a focused field's caret
+    /// appearing. On a CI runner that change has come up to 2.8 s after
+    /// readiness, each one less than ``quiet`` after the one before.
+    ///
+    /// Waiting a quiet second for every example cost most of the batch, so
+    /// only those marked `settlesLate` wait; a run asked to settle all of
+    /// them (`--settle-all`, and every recording) is what proves no other
+    /// example changes after it reports ready.
     ///
     /// The deadline bounds how long the example may take to become ready
     /// and stop changing; the quiet window that proves it stopped is added
@@ -330,7 +360,7 @@ final class ComponentSnapshotTests: XCTestCase {
         traits: UITraitCollection,
         deadline: TimeInterval,
         name: String
-    ) async -> UIImage? {
+    ) async -> (UIImage, [String])? {
         let started = ProcessInfo.processInfo.systemUptime
         var settled = photograph(view, traits: traits)
         var since = started
@@ -347,10 +377,22 @@ final class ComponentSnapshotTests: XCTestCase {
                 if !changes.isEmpty {
                     print("AMUX_SNAPSHOT_TIMING component=\(name) changes=\(changes.joined(separator: ","))")
                 }
-                return settled
+                return (settled, changes)
             }
         } while ProcessInfo.processInfo.systemUptime < deadline + Self.quiet
         return nil
+    }
+
+    /// The picture of an example that is final once it reports ready: two
+    /// photographs a whole display frame apart that agree. Nil when they
+    /// differ, which an example not marked to settle should never do; the
+    /// caller then settles it the slow way rather than compare a picture
+    /// taken mid-change.
+    private func steadyPhotograph(of view: UIView, traits: UITraitCollection) async -> UIImage? {
+        let first = photograph(view, traits: traits)
+        await DisplayFrame.pass()
+        let second = photograph(view, traits: traits)
+        return Self.pixels(of: first) == Self.pixels(of: second) ? second : nil
     }
 
     /// Over twice the longest wait seen for a flat example's late change,

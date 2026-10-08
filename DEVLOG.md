@@ -1,3 +1,12 @@
+2026-10-08 — **Main's usage events are merged with the protocol-gaps work.**
+Main's usage events met this branch's new answers: an answer's ask is now
+also read from a reply in place of answering (a question) and from Codex's
+plan answer (a plan), which the event's classifier did not know. The rest
+was both sides kept: the daemon carries both its analytics and the worktree
+maker, a forwarded send records its usage and settles a never-sent forward
+as host unreachable, the phone's shell takes the Share Usage switch, and the
+catalogue's home filter string, gone with the filter, stays gone.
+
 2026-10-08 — **A report's picture of the screen masks what moves with the run.**
 The phone's `report` journey failed on most runs: its "refused" screen shows
 the frozen fleet as a picture, and the agent's age in that picture ("1s" when
@@ -1892,6 +1901,107 @@ on a thread of its own. A new test target, `term_fails_fast`, runs a
 deliberately failing wait in a child test process and requires it to
 exit non-zero within a minute; before the fix it was still running at
 the minute.
+2026-10-07 — **The nightly and weekly runs pass again, on warm caches.**
+The nightly iOS captures run had been green once since 18 September. A stale
+golden accounted for a week of it; the rest were bounds a cold runner
+overran. Neither scheduled job ever had a Rust cache to restore: each was
+keyed to its own job, saved only after a green run, and evicted before the
+next one. The nightly now restores the iOS gate's cache and the weekly the
+macOS test job's, without saving their own. The nightly also boots only the
+golden simulator, since nothing it runs uses the small one, which took
+seven minutes, and the `--settle-all` snapshot bound is sized from the
+nightly's own 487 s, 800 s, where 500 s left it 13 s to spare. The weekly
+offline run skips the one test that loads a LaunchAgent: launchd refuses to
+load one for a sandboxed process. A trial of the nightly's path took 25
+minutes, where this morning's took 57, with the test host starting in 67 s.
+
+2026-10-07 — **The iOS gate builds once and stops waiting on pictures
+that are already final.** Every component snapshot used to wait a quiet
+second before its picture; 230 of them made the batch four and a half
+minutes on a runner. Only the four examples seen changing after they report
+ready (the draft's attachment chip, and the focused fields of rename,
+review page and comment) are marked `settlesLate` and wait now; the rest are
+photographed once two frames agree. `--settle-all`, used by the nightly
+captures run and every recording, still waits on all of them and fails an
+unmarked one that changed. The app and every unit and component suite are
+built once by the new `ios test-build` into one `AmuxTests` scheme, and the
+suites run with `--skip-build`, where before the app was compiled three
+times and each package scheme rebuilt the packages beneath it. The gate
+boots the simulator while that build runs (re-asking the device settings a
+busy runner answers slowly), and leaves `mobile-check` to the iOS target
+check job that already runs it. On a runner the gate step went from a
+median of 28.5 minutes over the last twelve green runs on main to 20.3 and
+21.8; the single build, nine to twelve minutes, is now most of what is left.
+
+2026-10-06 — **The iPhone app carries a privacy manifest.** The Share Usage
+switch put UserDefaults into release code, and Apple refuses an upload that
+uses it without a declared reason, so `PrivacyInfo.xcprivacy` declares it
+along with the file-timestamp and disk-space calls the Rust core and SQLite
+make, and lists the data the app collects for its own functions and for
+analytics, none for tracking. RELEASE.md says the manifest and the App
+Privacy answers move together.
+
+2026-10-06 — **`DO_NOT_TRACK` is described as far as it reaches.** A
+daemon started at login sees only the environment its login item gives
+it, never a shell profile's, so `amux config telemetry` no longer reports
+telemetry off because the shell it runs in has `DO_NOT_TRACK` set; it says
+which daemons that covers and points at the setting, and the public page
+says the same.
+
+2026-10-05 — **Nothing recorded while sharing is off is sent later.** The
+uploader checked the telemetry setting only when a batch went out, so on
+the phone, turning Share Usage off and back on within the minute sent what
+happened in between. It now checks as each event arrives and drops it while
+sharing is off. The desktop wording says what actually happens: off stops a
+running daemon at once, on resumes one that started on, and a daemon that
+started off waits for its next start.
+
+2026-10-05 — **Two event properties no longer collide with what amux.sh
+adds.** amux.sh puts the upload's `version` and the token's `client` on
+every event, so `daemon_crashed` now names the version that stopped
+`crashed_version` and `client_opened` names the terminal or phone
+`surface`; before, one value silently replaced the other.
+
+2026-10-05 — **The phone has a Share Usage switch and reports its
+paywall.** **Share Usage** sits under **You**, in **This phone**, on until
+turned off; the choice is kept in the app's defaults and handed to the
+runtime at start and on every change, and off holds back what is already
+waiting. Coming to the front counts the app as opened and going to the back
+flushes what is waiting. Opening the subscription page and starting a
+purchase are recorded on the account on screen, with the tab it was opened
+from and the billing interval chosen.
+
+2026-10-05 — **amux records usage events and sends them to amux.sh.**
+A new `analytics` crate holds every event a device may send as one typed
+enum whose fields are enums, counts, bools, versions and host ids only, so
+no prompt, name or path fits in one; `docs/ANALYTICS.md` lists them for
+users, and a test fails when an event or property is missing from it. Each
+profile records through a cheap handle into one uploader per installation,
+which batches per host (every minute or 50 events), posts to
+`<account service>/api/events` with the profile's bearer when it is bound
+there, retries twice and then drops, and flushes on shutdown. The daemon
+records at its choke points on the machine where a person acted: agent
+creation, accepted prompts and answers (a forwarded one counts on the
+sender only), pairing on both sides, sign-in and sign-out, the relay's
+free-tier refusal, the terminal opening (from its first fleet
+subscription), a daily check-in per profile, and install, update, rollback
+and crash from the generation file, which now carries the version. Only a
+published build sends; `AMUX_ANALYTICS_URL` points any build at a server,
+`DO_NOT_TRACK` and `amux config telemetry off` stop it. The phone's runtime
+takes the setting in `StartConfig.telemetry` and gains calls to change it,
+count a foreground, flush on background and record the paywall and
+purchase events only the app sees.
+
+2026-10-05 — **The iOS gate runs only when a push touches the phone.**
+It took 18 to 27 minutes on a macOS runner for every push, including the
+terminal, provider and docs work that cannot change what the phone does.
+A new `iOS changes` job now lets it run only for `apps/apple`, the `app-*`
+crates, `xtask`, `scripts`, the root justfile and Cargo manifests, the
+toolchain pin and `ci.yml`. The rest of the bridge's Rust needs no entry:
+what it hands Swift crosses as the generated mirrors in `AmuxValues`, which
+a workspace test holds to the Rust definitions, so a shape change upstream
+lands with an app change. The iOS target check still compiles the bridge's
+graph on every push.
 
 2026-10-05 — **Terminal journey frames recorded on macOS match Linux
 where a row shows a path.** On macOS a program reading its working

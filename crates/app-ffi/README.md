@@ -72,6 +72,18 @@ the system may browse, to every profile.
 every listed agent of the profile on screen in the foreground, and only for
 the chats that open for every other profile and in the background.
 
+Product analytics ([what is sent](../../docs/ANALYTICS.md)) is the
+runtime's; the app tells it what only the app knows.
+`amux_runtime_set_telemetry(rt, on)` follows the app's Share Usage setting
+(the start's `StartConfig.telemetry` is its first value), and off holds back
+what is waiting too. `amux_runtime_foreground(rt)` says the app came to the
+front, counted at most once an hour. `amux_runtime_background(rt, callback,
+context)` sends what is waiting, for a few seconds at most, then calls the
+callback with `null`. `amux_runtime_record(rt, profile, event_json)` records a
+`UsageEvent` (the paywall opening, a purchase starting) on that profile, or on
+every profile when `profile` is null. Only a published build sends; every
+other build records nothing unless `AMUX_ANALYTICS_URL` names a server.
+
 ## Reads and changes
 
 Reads return at once: `amux_session_keys`, `amux_session_rows_for`,

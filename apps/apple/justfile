@@ -82,8 +82,16 @@ simulator *NAMES:
 build: rust
     {{bounded}} 1800 {{python}} -B scripts/ios-build.py
 
-# The package unit suites. Arguments are xcodebuild's; a `-only-testing:`
-# selector picks the package that owns the named target.
+# The app and every suite `unit` and `component-snapshots` run, built once for
+# any simulator, so both can then run with `--skip-build`. The gate builds
+# this way rather than letting each recipe compile the app again.
+# Build the app and every unit and component suite once.
+test-build: rust
+    {{bounded}} 1800 {{python}} -B scripts/ios-build.py --tests
+
+# The package and app-hosted unit suites. Arguments are xcodebuild's, and a
+# `-only-testing:` selector picks suites; `--skip-build` runs what the last
+# build left behind.
 # Run the package and app-hosted unit suites on the golden simulator.
 unit *ARGS: rust
     if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 1800 {{python}} -B scripts/ios-unit.py "$@"

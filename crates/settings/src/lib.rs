@@ -497,6 +497,9 @@ pub struct InstallationConfig {
     /// Where channel manifests live: the supervisor reads
     /// `<releases_url>/<channel>.json`.
     pub releases_url: String,
+    /// Whether a published build sends product analytics to amux.sh. The
+    /// `DO_NOT_TRACK` environment variable turns it off as well.
+    pub telemetry: Switch,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -519,6 +522,7 @@ impl Default for InstallationConfig {
             ui: UiSettings::default(),
             new_agent: NewAgentSettings::default(),
             releases_url: format!("{DEFAULT_CLOUD_URL}/releases"),
+            telemetry: Switch::On,
             path: None,
         }
     }
@@ -932,17 +936,22 @@ mod tests {
         assert_eq!(defaults.supervisor, Switch::Off);
         assert_eq!(defaults.channel, Channel::Stable);
         assert_eq!(defaults.keep_awake, Switch::On);
+        assert_eq!(defaults.telemetry, Switch::On);
 
-        let set = installation("supervisor: on\nchannel: preview\nkeep_awake: off\n").unwrap();
+        let set =
+            installation("supervisor: on\nchannel: preview\nkeep_awake: off\ntelemetry: off\n")
+                .unwrap();
         assert_eq!(set.supervisor, Switch::On);
         assert_eq!(set.channel, Channel::Preview);
         assert_eq!(set.keep_awake, Switch::Off);
+        assert_eq!(set.telemetry, Switch::Off);
 
         for bad in [
             "supervisor: yes\n",
             "updates: sometimes\n",
             "channel: beta\n",
             "keep_awake: true\n",
+            "telemetry: false\n",
         ] {
             assert!(installation(bad).is_err(), "{bad}");
         }

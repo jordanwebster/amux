@@ -45,7 +45,7 @@ fn ios_verify_fixture() -> tempfile::TempDir {
         "graph-check",
         "rust",
         "simulator",
-        "build",
+        "test-build",
         "loopback-smoke",
         "component-snapshots",
         "unit",
@@ -69,6 +69,11 @@ fn ios_verify_fixture() -> tempfile::TempDir {
         &dir.path().join("just"),
         r#"#!/bin/sh
 echo "$*" >> calls
+if [ "$*" = "ios simulator golden" ]; then
+    # Slower than the stage it runs beside, so the run must wait for it.
+    sleep 1
+    echo "simulator booted" >> calls
+fi
 [ "$*" != "$FAIL_RECIPE" ] || exit 1
 if [ "$*" = "ios journey" ]; then
     for id in reach-host conversation-decision-claude-pty conversation-decision-claude-sdk conversation-decision-codex leave-and-recover decide-plan-claude-sdk decide-plan-claude-pty decide-plan-codex answer-questions tool-server-asks queue-and-steer send-while-away composer-limits manage-agent attachment-or-review keep-authority account-sign-in purchase-restore report accessibility local-network push-wake; do
@@ -96,6 +101,7 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
         ("", "", true, "ios perf"),
         ("fmt-check", "", false, "fmt-check"),
         ("mobile-check", "", false, "mobile-check"),
+        ("ios simulator golden", "", false, "ios test-build"),
         ("ios accessibility", "", false, "ios accessibility"),
         ("", "reach-host", false, "ios journey"),
         ("", "leave-and-recover", false, "ios journey"),
@@ -114,16 +120,37 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        // The simulator boots beside the test build, so which of the two
+        // reached the log first is a race; everything else is in order.
+        let calls = std::fs::read_to_string(dir.path().join("calls"))
+            .unwrap()
+            .replace(
+                "ios test-build\nios simulator golden\n",
+                "ios simulator golden\nios test-build\n",
+            );
+        let calls = calls.trim_end_matches("simulator booted\n");
         assert!(calls.ends_with(&format!("{last}\n")), "{calls}");
-        assert!(
-            !calls.contains("--"),
-            "verification must not filter, update or record: {calls}"
-        );
+        for forbidden in [
+            "--record",
+            "--update",
+            "--only",
+            "--negative-control",
+            "--review",
+        ] {
+            assert!(
+                !calls.contains(forbidden),
+                "verification must not filter, update or record: {calls}"
+            );
+        }
         if success {
             assert_eq!(
-                calls,
-                "fmt-check\nlint\ntest\nspec\nmobile-check\nios lint\nios script-tests\nios graph-check\nios rust\nios simulator golden\nios build\nios component-snapshots\nios loopback-smoke\nios unit\nios goldens\nios goldens-perturb\ntest-store-ios\nios journey\nios accessibility\nios package\nios scope-audit\nios perf\n"
+                calls.replace("simulator booted\n", ""),
+                "fmt-check\nlint\ntest\nspec\nmobile-check\nios lint\nios script-tests\nios graph-check\nios rust\nios simulator golden\nios test-build\nios component-snapshots --skip-build\nios loopback-smoke\nios unit --skip-build\nios goldens\nios goldens-perturb\ntest-store-ios\nios journey\nios accessibility\nios package\nios scope-audit\nios perf\n"
+            );
+            let booted = calls.find("simulator booted").unwrap();
+            assert!(
+                booted < calls.find("ios component-snapshots").unwrap(),
+                "a stage that needs the simulator started before it booted: {calls}"
             );
         }
         if !skip.is_empty() {

@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::thread::JoinHandle;
 
 // Ordering matters: build the bridge and app before simulator checks. Destructive
 // baseline updates are separate developer commands. Each entry is a `just`
@@ -13,9 +14,9 @@ use std::process::{Command, Stdio};
 /// Someone running one command before pushing wants these first, because a
 /// bridge built from a workspace that does not compile is not worth
 /// photographing. Continuous integration already runs every one of them as
-/// its own job, on three operating systems, so it asks for the phone stages
-/// alone rather than paying for a second copy of the same fourteen minutes.
-const WORKSPACE: &[&str] = &["fmt-check", "lint", "test", "spec"];
+/// its own job (the phone's target graphs in the iOS target check), so it
+/// asks for the phone stages alone rather than paying for a second copy.
+const WORKSPACE: &[&str] = &["fmt-check", "lint", "test", "spec", "mobile-check"];
 
 /// Everything about the phone that building it can settle.
 ///
@@ -24,18 +25,28 @@ const WORKSPACE: &[&str] = &["fmt-check", "lint", "test", "spec"];
 /// build, whether the packaged framework links and loads, and what the unit
 /// suites say. Component images render in-process against a pinned native
 /// environment; photographs of the full simulator display run separately.
+///
+/// The app and every suite are built once, by `ios test-build`, and the
+/// suites then run what it built: built by each recipe in turn, the app was
+/// compiled three times and every package once per package beneath it.
 const GATE: &[&str] = &[
-    "mobile-check",
     "ios lint",
     "ios script-tests",
     "ios graph-check",
     "ios rust",
     "ios simulator golden",
-    "ios build",
-    "ios component-snapshots",
+    "ios test-build",
+    "ios component-snapshots --skip-build",
     "ios loopback-smoke",
-    "ios unit",
+    "ios unit --skip-build",
 ];
+
+/// Stages that run in the background while the stage after them does,
+/// joined before anything later starts. Booting a fresh runner's simulator
+/// is minutes of waiting on CoreSimulator and building needs no device, so
+/// neither waits for the other. The background stage's output is held and
+/// printed whole once it finishes, so the two logs do not interleave.
+const ALONGSIDE: &[(&str, &str)] = &[("ios simulator golden", "ios test-build")];
 
 /// What the shipping bundle is held to: every slice built under the
 /// size-optimised profile, and the audit of what that bundle turned out to
@@ -244,33 +255,93 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         eprintln!("Required iOS journeys: {}", REQUIRED_JOURNEYS.join(", "));
     }
     eprintln!("iOS verification: {}", selected.join(", "));
-    for recipe in selected {
-        eprintln!("Running just {recipe}");
-        // Recipes own their individual deadlines. The outer deadline also
-        // bounds dependencies without cutting off a longer recipe early.
-        let mut child = recipe_command(crate::BOUNDED)
-            .arg("12600")
-            .arg("just")
-            .args(recipe.split(' '))
-            .stdout(Stdio::piped())
+    let mut background: Option<Background> = None;
+    for (index, recipe) in selected.iter().copied().enumerate() {
+        if background.is_none()
+            && ALONGSIDE
+                .iter()
+                .any(|(first, then)| *first == recipe && selected.get(index + 1) == Some(then))
+        {
+            eprintln!("Starting just {recipe} alongside the next stage");
+            background = Some(Background::start(recipe)?);
+            continue;
+        }
+        let result = run_stage(recipe);
+        let joined = background.take().map_or(Ok(()), Background::finish);
+        result?;
+        joined?;
+    }
+    Ok(())
+}
+
+/// The bounded `just` invocation for one stage. Recipes own their individual
+/// deadlines; the outer deadline also bounds dependencies without cutting off
+/// a longer recipe early.
+fn stage_command(recipe: &str) -> Command {
+    let mut command = recipe_command(crate::BOUNDED);
+    command.arg("12600").arg("just").args(recipe.split(' '));
+    command
+}
+
+/// A stage running in the background, its output held until it finishes.
+struct Background {
+    recipe: &'static str,
+    child: Child,
+    output: JoinHandle<std::io::Result<String>>,
+}
+
+impl Background {
+    fn start(recipe: &'static str) -> Result<Self, Box<dyn Error>> {
+        let (reader, writer) = std::io::pipe()?;
+        // The command owns the pipe's write ends and is dropped once the
+        // stage is spawned, so the pipe closes when the stage does.
+        let child = stage_command(recipe)
+            .stdout(writer.try_clone()?)
+            .stderr(writer)
             .spawn()?;
-        let mut completed = BTreeSet::new();
-        for line in BufReader::new(child.stdout.take().ok_or("no recipe stdout")?).lines() {
-            let line = line?;
-            println!("{line}");
-            if recipe == "ios journey"
-                && let Some(id) = line.strip_suffix(": passed")
-            {
-                completed.insert(id.to_owned());
-            }
-        }
-        let status = child.wait()?;
+        let output = std::thread::spawn(move || std::io::read_to_string(reader));
+        Ok(Self {
+            recipe,
+            child,
+            output,
+        })
+    }
+
+    /// Wait for the stage, print what it said and fail if it failed.
+    fn finish(mut self) -> Result<(), Box<dyn Error>> {
+        let status = self.child.wait()?;
+        let output = self
+            .output
+            .join()
+            .map_err(|_| "background output reader panicked")??;
+        eprintln!("Output of just {} (ran alongside):", self.recipe);
+        print!("{output}");
         if !status.success() {
-            return Err(format!("just {recipe} failed: {status}").into());
+            return Err(format!("just {} failed: {status}", self.recipe).into());
         }
-        if recipe == "ios journey" {
-            check_completed_journeys(&completed)?;
+        Ok(())
+    }
+}
+
+fn run_stage(recipe: &str) -> Result<(), Box<dyn Error>> {
+    eprintln!("Running just {recipe}");
+    let mut child = stage_command(recipe).stdout(Stdio::piped()).spawn()?;
+    let mut completed = BTreeSet::new();
+    for line in BufReader::new(child.stdout.take().ok_or("no recipe stdout")?).lines() {
+        let line = line?;
+        println!("{line}");
+        if recipe == "ios journey"
+            && let Some(id) = line.strip_suffix(": passed")
+        {
+            completed.insert(id.to_owned());
         }
+    }
+    let status = child.wait()?;
+    if !status.success() {
+        return Err(format!("just {recipe} failed: {status}").into());
+    }
+    if recipe == "ios journey" {
+        check_completed_journeys(&completed)?;
     }
     Ok(())
 }
@@ -452,8 +523,9 @@ mod tests {
                 "{photographed} compares pictures and cannot gate a push"
             );
         }
-        assert!(gate.contains(&"ios unit"), "the gate stopped running units");
-        assert!(gate.contains(&"ios component-snapshots"));
+        let runs = |name: &str| gate.iter().any(|stage| recipe_name(stage) == name);
+        assert!(runs("unit"), "the gate stopped running units");
+        assert!(runs("component-snapshots"));
         for shipping in SHIPPING {
             assert!(
                 !gate.contains(shipping),
@@ -464,6 +536,19 @@ mod tests {
             !gate.iter().any(|stage| WORKSPACE.contains(stage)),
             "the gate repeats workspace jobs continuous integration already runs"
         );
+    }
+
+    /// A stage run alongside another is joined before the next one, so it
+    /// must sit directly before its partner in every phase that has both.
+    #[test]
+    fn background_stages_sit_directly_before_their_partner() {
+        for phases in [Phases::Everything, Phases::Gate] {
+            let selected = recipes(phases, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap();
+            for (first, then) in ALONGSIDE {
+                let at = selected.iter().position(|stage| stage == first).unwrap();
+                assert_eq!(selected.get(at + 1), Some(then));
+            }
+        }
     }
 
     /// Between them the parts are the whole thing, in the same order, so

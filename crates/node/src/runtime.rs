@@ -369,6 +369,9 @@ pub struct ProfileRuntime {
     pub(crate) hosts: Mutex<crate::hosts::HostSet>,
     /// The directories this profile's agents were started in.
     recent: Arc<Mutex<crate::repositories::Recent>>,
+    analytics: analytics::Analytics,
+    /// Turns ended since the last check-in.
+    turns: crate::telemetry::Turns,
     /// What each provider offers on this host.
     offers: crate::offers::Offers,
     /// What each trusted host last said its providers offer, from its own
@@ -518,6 +521,8 @@ pub struct Profile {
     pub reports: PathBuf,
     /// The daemon's own log, which a dump includes.
     pub daemon_log: Option<PathBuf>,
+    /// Where the profile records product analytics.
+    pub analytics: analytics::Analytics,
     /// What makes the worktree an agent asked to start in one starts in.
     pub worktrees: Arc<dyn crate::worktree::MakeWorktree>,
 }
@@ -536,6 +541,7 @@ impl ProfileRuntime {
             push,
             reports,
             daemon_log,
+            analytics,
             worktrees,
         } = profile;
         Arc::new_cyclic(|me| Self {
@@ -570,6 +576,8 @@ impl ProfileRuntime {
             offers: crate::offers::Offers::load(&dir),
             peer_providers: Mutex::new(HashMap::new()),
             dir,
+            analytics,
+            turns: crate::telemetry::Turns::default(),
         })
     }
 
@@ -582,9 +590,14 @@ impl ProfileRuntime {
         if let Some(edge) = self.edge.get() {
             return Ok(edge.clone());
         }
-        let edge =
-            crate::edge::Edge::start(&self.dir, options, self.clock.clone(), Arc::downgrade(self))
-                .await?;
+        let edge = crate::edge::Edge::start(
+            &self.dir,
+            options,
+            self.clock.clone(),
+            Arc::downgrade(self),
+            self.analytics.clone(),
+        )
+        .await?;
         let edge = self.edge.get_or_init(|| edge).clone();
         self.start_replication();
         Ok(edge)
@@ -605,6 +618,15 @@ impl ProfileRuntime {
 
     pub fn profile(&self) -> ProfileId {
         self.profile
+    }
+
+    /// Where this profile records product analytics.
+    pub fn analytics(&self) -> &analytics::Analytics {
+        &self.analytics
+    }
+
+    pub(crate) fn take_turns(&self) -> analytics::Counts<analytics::Kind> {
+        self.turns.take()
     }
 
     pub fn host(&self) -> Uuid {
@@ -1393,6 +1415,31 @@ impl ProfileRuntime {
             .lock()
             .unwrap()
             .extend([deliveries, notifications]);
+        if self.analytics.is_on() {
+            let check_ins = self.start_check_ins();
+            self.background.lock().unwrap().push(check_ins);
+        }
+    }
+
+    /// Records the profile's check-in once a day while it runs.
+    fn start_check_ins(&self) -> JoinHandle<()> {
+        let runtime = self.me.clone();
+        let clock = self.clock.clone();
+        let mut due = crate::telemetry::next_check_in(
+            crate::telemetry::last_check_in(&self.dir),
+            clock.now_ms(),
+        );
+        tokio::spawn(async move {
+            loop {
+                clock.sleep_until(due).await;
+                let Some(me) = runtime.upgrade() else { return };
+                let check_in = me.check_in().await;
+                me.analytics.record(analytics::Event::CheckedIn(check_in));
+                let now = clock.now_ms();
+                crate::telemetry::mark_checked_in(&me.dir, now);
+                due = now + crate::telemetry::CHECK_IN_EVERY_MS;
+            }
+        })
     }
 
     /// Stops every task of this run without waiting, as a crash would:
@@ -1508,8 +1555,20 @@ impl ProfileRuntime {
             self.wrote();
             self.ingested_frames
                 .fetch_add(batch.frames.len() as u64, Ordering::Relaxed);
-            if batch.frames.iter().any(|(_, step)| step.turn_end.is_some()) {
+            let turns = batch
+                .frames
+                .iter()
+                .filter(|(_, step)| step.turn_end.is_some())
+                .count();
+            if turns > 0 {
                 self.deliveries_due.notify_one();
+                if self.analytics.is_on()
+                    && let Some(kind) = store
+                        .agent(&key)?
+                        .and_then(|row| crate::telemetry::kind_named(&row.kind))
+                {
+                    self.turns.add(kind, turns as u32);
+                }
             }
             // Only now, with the transaction committed: a subscriber never
             // sees a revision the store could not serve it.

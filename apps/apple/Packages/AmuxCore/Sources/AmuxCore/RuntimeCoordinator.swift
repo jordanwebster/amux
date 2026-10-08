@@ -83,6 +83,11 @@ public final class RuntimeCoordinator {
     @ObservationIgnored private let support: URL
     @ObservationIgnored private let options: Options
     @ObservationIgnored private let starter: Starter
+    /// Whether the published app sends product analytics, as the person
+    /// set it; a running installation follows a change at once.
+    public var shareUsage = true {
+        didSet { if shareUsage != oldValue { runtime?.setTelemetry(shareUsage) } }
+    }
     /// Whether somebody is in front of the app, as the app last said.
     @ObservationIgnored public private(set) var active = true
     @ObservationIgnored private var found: [FoundHost] = []
@@ -153,7 +158,7 @@ public final class RuntimeCoordinator {
             discoveryScope: options.discoveryScope, lan: true, lanBind: options.lanBind,
             logPath: directory.appendingPathComponent("runtime.log").path,
             relayQuic: options.relayQUIC, relayRoot: options.relayRoot,
-            relayTcp: options.relayTCP, tail: nil)
+            relayTcp: options.relayTCP, tail: nil, telemetry: shareUsage)
         let starter = starter
         launch += 1
         let expected = launch
@@ -187,6 +192,9 @@ public final class RuntimeCoordinator {
             self.runtime = runtime
             failure = nil
             storeFailure = nil
+            // The setting may have moved while the runtime was starting.
+            runtime.setTelemetry(shareUsage)
+            if active { runtime.foreground() }
             if !found.isEmpty { runtime.discovered(found.map(\.found)) }
             profilesMoved()
             answer(runtime)
@@ -431,10 +439,17 @@ public final class RuntimeCoordinator {
         steer()
         if active {
             discovery?.start()
+            runtime?.foreground()
             start()
         } else {
             discovery?.stop()
+            if let runtime { Task.detached { await runtime.background() } }
         }
+    }
+
+    /// Records what only the app sees, on the account on screen.
+    public func record(_ event: UsageEvent) {
+        runtime?.record(event, profile: registry.profile)
     }
 
     /// Brings one agent's chat current for a push, under an account whose

@@ -73,6 +73,7 @@ version = "0.8.0"
 dependencies = [
  "agent",
  "agent-dir",
+ "analytics",
  "anyhow",
  "async-trait",
  "base64 0.22.1",
@@ -112,6 +113,21 @@ dependencies = [
  "version-stamp",
  "vt100",
  "wire",
+]
+
+[[package]]
+name = "analytics"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "libc",
+ "reqwest",
+ "semver",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -183,6 +199,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "app-embedded"
 version = "0.2.0"
 dependencies = [
+ "analytics",
  "app-runtime",
  "client",
  "futures-util",
@@ -2335,6 +2352,7 @@ name = "node"
 version = "0.8.0"
 dependencies = [
  "agent-dir",
+ "analytics",
  "async-trait",
  "base64 0.22.1",
  "bytes",
@@ -4439,6 +4457,7 @@ name = "testnet"
 version = "0.1.0"
 dependencies = [
  "agent-dir",
+ "analytics",
  "anyhow",
  "bytes",
  "chrono",

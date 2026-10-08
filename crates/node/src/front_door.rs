@@ -89,6 +89,31 @@ pub(crate) fn info(hosted: &Hosted) -> ProfileInfo {
     }
 }
 
+/// The analytics a sign-in's outcome is recorded on: the profile it bound
+/// or named, else the oldest.
+fn sign_in_analytics(
+    installation: &Installation,
+    profile: Option<crate::ProfileId>,
+) -> Option<analytics::Analytics> {
+    let hosted = installation.hosted.lock().unwrap();
+    profile
+        .and_then(|profile| hosted.get(&profile))
+        .or_else(|| hosted.values().min_by_key(|hosted| hosted.position))
+        .map(|hosted| hosted.runtime.analytics().clone())
+}
+
+/// Why a sign-in failed, as analytics reads the refusal.
+fn sign_in_failure(status: &Status) -> analytics::SignInFailure {
+    use analytics::SignInFailure;
+    match crate::net_error::code_of(status) {
+        Some(ErrorCode::Unauthenticated) => SignInFailure::Rejected,
+        Some(ErrorCode::Unavailable) => SignInFailure::Unreachable,
+        Some(ErrorCode::AlreadyExists) => SignInFailure::AccountElsewhere,
+        Some(ErrorCode::FailedPrecondition) => SignInFailure::ProfileConflict,
+        _ => SignInFailure::Other,
+    }
+}
+
 /// Serves the profile and installation services on the front door until
 /// the task is aborted.
 pub(crate) fn serve(listener: LocalListener, installation: Weak<Installation>) -> JoinHandle<()> {
@@ -414,7 +439,19 @@ impl ProfileService for FrontDoor {
         let installation = self.installation()?;
         let request = request.into_inner();
         let explicit = request.profile_id.as_deref().map(profile_id).transpose()?;
-        let id = account::bind(&installation, explicit, request).await?;
+        let bound = account::bind(&installation, explicit, request).await;
+        // A failure that named no profile is the installation's: its oldest
+        // profile records it.
+        let profile = bound.as_ref().ok().copied().or(explicit);
+        if let Some(analytics) = sign_in_analytics(&installation, profile) {
+            analytics.record(match &bound {
+                Ok(_) => analytics::Event::SignedIn,
+                Err(status) => analytics::Event::SignInFailed {
+                    reason: sign_in_failure(status),
+                },
+            });
+        }
+        let id = bound?;
         installation.republish(id);
         Ok(Response::new(Self::one(&installation, id)?))
     }
@@ -428,6 +465,7 @@ impl ProfileService for FrontDoor {
         edge.sign_out()
             .await
             .map_err(|error| failed(ErrorCode::Internal, error.to_string()))?;
+        edge.analytics().record(analytics::Event::SignedOut);
         installation.republish(id);
         Ok(Response::new(Self::one(&installation, id)?))
     }

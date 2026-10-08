@@ -41,5 +41,6 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
+analytics = { workspace = true }
 interpret = { workspace = true }
 ui-state = { workspace = true }

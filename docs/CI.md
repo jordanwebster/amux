@@ -12,8 +12,8 @@ recipes; [Testing](TESTING.md) describes the suites they run.
 | Workflow | File | When | What |
 | --- | --- | --- | --- |
 | CI | [`ci.yml`](../.github/workflows/ci.yml) | Pushes to `main`; pull requests into `main` | Every check a change is held to, on Linux, macOS and Windows, plus the iOS gate |
-| Weekly offline tests | [`offline.yml`](../.github/workflows/offline.yml) | Sundays 04:00 UTC, and by hand | The workspace tests with no external network |
-| iOS captures | [`ios-captures.yml`](../.github/workflows/ios-captures.yml) | Nightly 03:00 UTC, and by hand | The phone's photographed suites |
+| Weekly offline tests | [`offline.yml`](../.github/workflows/offline.yml) | Sundays 04:00 UTC (GitHub often starts it hours late), and by hand | The workspace tests with no external network |
+| iOS captures | [`ios-captures.yml`](../.github/workflows/ios-captures.yml) | Nightly 03:00 UTC (GitHub often starts it hours late), and by hand | The phone's photographed suites |
 | Release | [`release.yml`](../.github/workflows/release.yml) | A pushed `v*` tag | The `amux` release binaries; see [Release](RELEASE.md) |
 
 Every workflow sets `CARGO_INCREMENTAL=0`, and every job has a
@@ -31,7 +31,7 @@ Every workflow sets `CARGO_INCREMENTAL=0`, and every job has a
 | Terminal journeys | `ubuntu-latest`, `macos-latest` | Installs `tmux`, then `just journey terminal all`: every terminal story in the manifest |
 | Embedded client | `ubuntu-latest` | `just embedded-check`, `just embedded-test` |
 | iOS target check | `macos-latest` | `just mobile-check` |
-| iOS gate | `macos-26` | `just ios gate` on Xcode 26.6 |
+| iOS gate | `macos-26` | `just ios gate` on Xcode 26.6, when a push touches the phone's paths |
 
 The test job runs with `--no-fail-fast`, so a platform reports every failing
 test binary, not only the first. Its matrix does not fail fast either: a
@@ -101,23 +101,36 @@ crate on the macOS runner; that pushed the macOS run from 449 s to past its
 
 ### The iOS gate
 
+The iOS gate runs only when a push or pull request touches a path that
+reaches the phone: `apps/apple`, the three `app-*` crates, `xtask`,
+`scripts`, the root justfile and Cargo manifests, the toolchain pin or
+`ci.yml` itself (the `iOS changes` job decides). The rest of the bridge's
+Rust graph needs no entry: everything it hands Swift crosses as the
+generated mirrors in `apps/apple/Packages/AmuxCore/Sources/AmuxValues`,
+which a workspace test holds to the Rust definitions, so a change to their
+shape cannot land without touching the app. The iOS target check still
+compiles the bridge's graph on every push.
+
 The iOS gate job selects Xcode 26.6, asserts that the iOS 26.5 simulator
 runtime and the iPhone 17 Pro device type are available, installs XcodeGen,
 the stable toolchain with both ARM iOS targets, and runs `just ios gate`: the
 half of the phone's verification that building the app can settle.
 
-`just ios gate` runs, in order and stopping at the first failure:
-`just mobile-check`, then `just ios` `lint`, `script-tests`, `graph-check`,
-`rust`, `simulator golden`, `build`, `component-snapshots`, `loopback-smoke`
-and `unit`. None of it compares a photograph of the whole display, so it
-answers the same on any machine. The component snapshot batch runs under its
-own bound, sized by the rule above from a clean run: 247 s on a local Mac
-(the 230 pictures, each drawn flat and held until it has not changed for a
-second), so 400 s. No CI runner has run the batch since the pictures were
-drawn flat; its first clean run there gives the runner's number, and the
-bound follows from the slower of the two. The job uploads the component
-snapshot comparisons and the shipped-scope audit directory to the run,
-whether it passed or not.
+`just ios gate` runs, in order and stopping at the first failure,
+`just ios` `lint`, `script-tests`, `graph-check`, `rust`, `simulator golden`,
+`test-build`, `component-snapshots --skip-build`, `loopback-smoke` and
+`unit --skip-build`. The simulator boots while `test-build` compiles the app
+and every unit and component suite once, for any simulator, and the gate
+waits for both before the suites run what was built. `mobile-check` is left
+to the iOS target check, which runs it on every push. None of it compares a
+photograph of the whole display, so it answers the same on any machine. The
+component snapshot batch runs under its own bound, sized by the rule above
+from a clean CI run: 144 s with only the examples marked to settle late
+waiting, so 300 s, and 487 s in the nightly captures run, where every one
+of the 230 pictures waits a quiet second (`--settle-all`, also used by
+every recording), so 800 s. The job uploads the component snapshot
+comparisons and the shipped-scope audit directory to the run, whether it
+passed or not.
 
 `just ios verify` is the whole sequence a developer runs before pushing a
 phone change: the workspace's `fmt-check`, `lint`, `test` and `spec`, then the
@@ -129,8 +142,12 @@ and `just ios shipping` run those halves alone.
 
 ### iOS captures
 
-The nightly workflow boots both pinned simulators on `macos-26`, compares the
-native component snapshots, and compares the whole-screen goldens. Run by
+The nightly workflow boots the golden simulator on `macos-26`, compares the
+native component snapshots, and compares the whole-screen goldens. Nothing
+it runs uses the small simulator, which took seven minutes to boot. It
+restores the iOS gate's Rust cache and never saves its own: a cache keyed to
+the nightly job was saved only after a green run and evicted before the next
+one, so every night built the Rust bridge and tools from nothing. Run by
 hand, it instead runs `just ios captures` — goldens, journeys and the
 accessibility sweep. It uploads the golden comparisons, the journey evidence
 and the component snapshots. [The iPhone app](IOS.md) explains what those

@@ -16,8 +16,8 @@ jobs:
   captures:
     name: iOS captures
     runs-on: macos-26
-    # The capture suites boot both pinned devices and drive the app through
-    # served networks. Leave room for the uploads.
+    # The capture suites drive the app on the golden device through served
+    # networks. Leave room for the uploads.
     timeout-minutes: 270
     steps:
       - uses: actions/checkout@v4
@@ -32,14 +32,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      # The gate's cache: this job builds the same bridge and tools, and a
+      # cache of its own was evicted between the green runs that saved it.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ios-gate
+          save-if: false
       - uses: extractions/setup-just@v2
       - name: Install build tools
         run: brew install xcodegen
-      - name: Boot both pinned simulators
-        run: just ios simulator
+      # Every suite here drives the golden device; the small one is not used.
+      - name: Boot the golden simulator
+        run: just ios simulator golden
       - name: Compare native component snapshots
-        run: just ios component-snapshots
+        # Every example waits to stop changing here, which is what proves the
+        # ones the gate photographs at once never change after they are ready.
+        run: just ios component-snapshots --settle-all
       - name: Compare whole-screen goldens
         if: github.event_name == 'schedule'
         run: just ios goldens

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/agent",
+    "crates/analytics",
     "crates/app-embedded",
     "crates/app-ffi",
     "crates/app-runtime",
@@ -50,6 +51,7 @@ license = "FSL-1.1-ALv2"
 # Internal
 agent = { path = "crates/agent" }
 agent-dir = { path = "crates/agent-dir" }
+analytics = { path = "crates/analytics" }
 app-embedded = { path = "crates/app-embedded" }
 app-ffi = { path = "crates/app-ffi" }
 app-runtime = { path = "crates/app-runtime" }

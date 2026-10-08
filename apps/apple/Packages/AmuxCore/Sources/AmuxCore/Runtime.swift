@@ -198,6 +198,41 @@ public final class Runtime: @unchecked Sendable {
         }
     }
 
+    // MARK: - Product analytics
+
+    /// Whether the published app may send product analytics, as the person
+    /// set it; off holds back what is waiting as well as what comes next.
+    public func setTelemetry(_ on: Bool) {
+        call(()) { amux_runtime_set_telemetry($0, on) }
+    }
+
+    /// Somebody brought the app to the front; counted at most once an hour.
+    public func foreground() {
+        call(()) { amux_runtime_foreground($0) }
+    }
+
+    /// The app is leaving the screen: sends what analytics is waiting, for
+    /// a few seconds at most, before the system may suspend it.
+    public func background() async {
+        _ = await Bridge.value(Nothing?.self) { callback, context in
+            let ran = call(false) { live in
+                amux_runtime_background(live, callback, context)
+                return true
+            }
+            if !ran { Bridge.stopped(callback, context) }
+        }
+    }
+
+    /// Records what only the app sees, on the profile it concerns, or on
+    /// every profile when nil.
+    public func record(_ event: UsageEvent, profile: String?) {
+        call(()) { live in
+            Bridge.optional(profile) { profile in
+                Bridge.json(event).withCString { amux_runtime_record(live, profile, $0) }
+            }
+        }
+    }
+
     // MARK: - Profiles
 
     /// Opens a profile's fleet; blocks until it has caught up with the

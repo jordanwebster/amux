@@ -20,6 +20,7 @@ pub struct ConnectionManager {
     channels: Arc<ChannelPool>,
     trusted_connections: TrustedPeerConnections,
     state: RwLock<ConnectionState>,
+    analytics: analytics::Analytics,
 }
 
 #[derive(Default)]
@@ -46,7 +47,14 @@ impl ConnectionManager {
             channels,
             trusted_connections: TrustedPeerConnections::default(),
             state: RwLock::new(ConnectionState::default()),
+            analytics: analytics::Analytics::off(),
         }
+    }
+
+    /// Records the relay refusing traffic for the account's tier.
+    pub(crate) fn with_analytics(mut self, analytics: analytics::Analytics) -> Self {
+        self.analytics = analytics;
+        self
     }
 
     pub(crate) fn trusted_connections(&self) -> TrustedPeerConnections {
@@ -87,6 +95,22 @@ impl ConnectionManager {
             .route_to(peer)
             .await
             .ok_or(ChannelError::NoRoute { host_id: peer })?;
+        let opened = self.open_route(peer, route, class).await;
+        if let Err(ChannelError::Refused(wire::pb::StreamRefusal::PaymentRequired)) = &opened {
+            self.analytics.record_at_most_every(
+                crate::telemetry::RELAY_REFUSED_EVERY,
+                analytics::Event::RelayRefused,
+            );
+        }
+        opened
+    }
+
+    async fn open_route(
+        &self,
+        peer: HostId,
+        route: Route,
+        class: ChannelClass,
+    ) -> Result<Channel, ChannelError> {
         match self.activate_route(peer, route, class).await {
             // A direct link can close under a call that just chose it: the
             // preferred of two crossed dials supersedes the other, or the

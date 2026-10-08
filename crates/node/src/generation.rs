@@ -32,6 +32,10 @@ pub struct Generation {
     pub clean: bool,
     /// The host's generation, carried on its host row.
     pub counter: u64,
+    /// The version of the build that wrote the file, so the next start can
+    /// tell an update, a rollback or a crash of which build.
+    #[serde(default)]
+    pub version: String,
 }
 
 impl Generation {
@@ -48,10 +52,15 @@ impl Generation {
 
     /// The start-time write: bumps the counter when the machine rebooted
     /// under a daemon that never shut down cleanly, then records this boot
-    /// with the flag cleared. Returns what it wrote; nothing may be served
-    /// before it returns.
-    pub fn start(data_dir: &Path, boot_id: &str) -> io::Result<Self> {
-        let counter = match Self::read(data_dir)? {
+    /// and `version` with the flag cleared. Returns what it wrote and what
+    /// was there before; nothing may be served before it returns.
+    pub fn start(
+        data_dir: &Path,
+        boot_id: &str,
+        version: &str,
+    ) -> io::Result<(Self, Option<Self>)> {
+        let last = Self::read(data_dir)?;
+        let counter = match &last {
             None => 1,
             Some(last) if last.boot_id != boot_id && !last.clean => last.counter + 1,
             Some(last) => last.counter,
@@ -60,9 +69,16 @@ impl Generation {
             boot_id: boot_id.to_owned(),
             clean: false,
             counter,
+            version: version.to_owned(),
         };
         now.write(data_dir)?;
-        Ok(now)
+        Ok((now, last))
+    }
+
+    /// Whether this run crashed, as a later start on `boot_id` reads it: it
+    /// never shut down cleanly and the machine did not reboot under it.
+    pub fn crashed_before(&self, boot_id: &str) -> bool {
+        !self.clean && self.boot_id == boot_id
     }
 
     /// The last write of a clean shutdown, after every store is flushed.

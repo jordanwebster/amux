@@ -31,7 +31,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 
 use app_embedded::{
-    EdgeOverrides, EmbeddedRuntime, PairRequest, ProfileEvent, ProfileId, StartConfig,
+    EdgeOverrides, EmbeddedRuntime, PairRequest, ProfileEvent, ProfileId, StartConfig, UsageEvent,
 };
 use app_runtime::values::{ActOutcome, AgentAct, Draft, Found, FrozenReview, NewAgent, RowOptions};
 use app_runtime::{AppRuntime, Chat, Wake};
@@ -293,7 +293,13 @@ pub fn open_profile(
 }
 
 fn overrides(config: &StartConfig) -> EdgeOverrides {
-    let mut overrides = EdgeOverrides::default();
+    let mut overrides = EdgeOverrides {
+        // Only the app as shipped sends analytics: the bridge built
+        // optimised and without the driving tools, which development,
+        // simulators and test runs always carry.
+        published: !cfg!(debug_assertions) && !cfg!(feature = "debug-tools"),
+        ..EdgeOverrides::default()
+    };
     // A driving build may keep direct links on loopback, so a simulator
     // run never listens on the machine's network.
     if cfg!(feature = "debug-tools")
@@ -1027,6 +1033,87 @@ pub unsafe extern "C" fn amux_runtime_refresh_entitlement(
             },
         )
     }
+}
+
+// --- analytics -------------------------------------------------------------
+
+/// The app's telemetry setting changed: off stops anything still waiting
+/// from being sent.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_set_telemetry(runtime: *const AmuxRuntime, on: bool) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        if let Some(runtime) = unsafe { live_runtime(runtime) } {
+            runtime.embedded().set_telemetry(on);
+        }
+    });
+}
+
+/// The app came to the front; counted at most once an hour.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_foreground(runtime: *const AmuxRuntime) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        if let Some(runtime) = unsafe { live_runtime(runtime) } {
+            let _entered = runtime.handle().enter();
+            runtime.embedded().client_opened();
+        }
+    });
+}
+
+/// The app is leaving the screen: sends the analytics waiting, then calls
+/// the callback with `null`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_background(
+    runtime: *const AmuxRuntime,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            callback(context, c"null".as_ptr());
+            return;
+        };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            embedded.flush_analytics().await;
+        });
+    });
+}
+
+/// Records what only the app sees, a `UsageEvent` as JSON, on the profile it
+/// concerns, or on every profile when `profile` is null or not hosted.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`; `profile` is null or a
+/// NUL-terminated string; `event` is a NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_record(
+    runtime: *const AmuxRuntime,
+    profile: *const c_char,
+    event: *const c_char,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let (profile, event) = unsafe { (profile_id(profile), parse::<UsageEvent>(event)) };
+        if let Some(event) = event {
+            runtime.embedded().record(profile, event);
+        }
+    });
 }
 
 // --- one profile ---------------------------------------------------------

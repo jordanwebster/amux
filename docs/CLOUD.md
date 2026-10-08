@@ -50,6 +50,7 @@ the client `cli` with the device flow and the same scopes.
 | `/api/account` | DELETE | app | Deletes the account. `409` while a subscription is still set to renew. |
 | `/api/billing/stripe/portal` | POST | app | A one-time link to stop a web subscription, asked for only when a deletion is blocked, because the link expires. |
 | `/api/reports` | POST | app | A report bundle, below. |
+| `/api/events` | POST | profile runtime | Usage events, batched per host, with the account's bearer when the profile is signed in to this service and none otherwise. `202` on success; the runtime retries `408`, `429` and `5xx` twice and drops anything else. The body and every event are in [what amux sends](ANALYTICS.md). |
 | `/.well-known/openid-configuration/jwks` | GET | relay | The keys relay credentials are signed with. |
 
 Every call except the sign-in endpoints carries `Authorization: Bearer <access

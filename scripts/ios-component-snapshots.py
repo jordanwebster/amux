@@ -20,14 +20,18 @@ ARTIFACTS = Path("target/ios/component-snapshots").resolve()
 RESULT = Path("target/ios/ComponentSnapshots.xcresult").resolve()
 TIMINGS = ARTIFACTS / "timing.json"
 PROJECT = "apps/apple/Amux.xcodeproj"
-SCHEME = "AmuxComponentSnapshots"
+SCHEME = "AmuxTests"
 TARGET = "AmuxComponentSnapshotTests"
 NEGATIVE_DEFAULT = "row.prompt"
 MISMATCH = "does not match reference"
 # Hang detector for one test-without-building batch (startup and every
-# example), sized by docs/CI.md's rule: the slowest clean run (247 s on a
-# local Mac) times 1.5, rounded up to the hundred.
-BATCH_BOUND = 400
+# example), sized by docs/CI.md's rule: the slowest clean run times 1.5,
+# rounded up to the hundred. An ordinary batch, where only the examples
+# marked to settle late wait, took 144 s on a CI runner; one that settles
+# every example (--settle-all, and every recording) took 487 s in the nightly
+# captures run, whose test host took 180 s of that to start.
+BATCH_BOUND = 300
+SETTLED_BOUND = 800
 # The same for a batch of review captures, every frosted example held 2.5 s
 # for its glass: 372 s for all of them on a local Mac.
 REVIEW_BOUND = 600
@@ -47,6 +51,11 @@ def arguments(argv: list[str]) -> Namespace:
         help="run the already-built test bundle (the warm iteration path)",
     )
     parser.add_argument(
+        "--settle-all", action="store_true",
+        help="wait for every example to stop changing, not only those marked settlesLate, and "
+        "fail any unmarked example that changed after it reported ready",
+    )
+    parser.add_argument(
         "--negative-control", action="store_true",
         help="first verify, then perturb a selected component and require an image mismatch",
     )
@@ -63,13 +72,13 @@ def arguments(argv: list[str]) -> Namespace:
     return parsed
 
 
-def command(action: str, udid: str) -> list[str]:
+def command(action: str, destination: list[str]) -> list[str]:
     return [
         "xcodebuild", action,
         "-project", PROJECT,
         "-scheme", SCHEME,
         "-configuration", "Debug",
-        "-destination", f"id={udid}",
+        *destination,
         "-derivedDataPath", str(DERIVED_DATA),
         f"-only-testing:{TARGET}",
         "-enableCodeCoverage", "NO",
@@ -79,9 +88,12 @@ def command(action: str, udid: str) -> list[str]:
     ]
 
 
-def build(udid: str) -> float:
+def build() -> float:
     started = time.monotonic()
-    subprocess.run(command("build-for-testing", udid), check=True, timeout=1800)
+    # Built as `ios build` and `ios test-build` build, so the three share one
+    # set of build products and none waits for a device.
+    subprocess.run(
+        command("build-for-testing", ios_project.SIMULATOR_BUILD), check=True, timeout=1800)
     elapsed = time.monotonic() - started
     print(f"component snapshot timing: build={elapsed:.3f}s", flush=True)
     return elapsed
@@ -107,7 +119,8 @@ def forwarded(udid: str, variables: dict[str, str]):
             )
 
 
-def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool = False, review: Path | None = None):
+def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool = False,
+        review: Path | None = None, settle_all: bool = False):
     shutil.rmtree(ARTIFACTS, ignore_errors=True)
     shutil.rmtree(RESULT, ignore_errors=True)
     ARTIFACTS.mkdir(parents=True)
@@ -116,6 +129,7 @@ def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool =
         "AMUX_SNAPSHOT_ONLY": ",".join(selected),
         "AMUX_RECORD_SNAPSHOTS": "1" if record else "0",
         "AMUX_SNAPSHOT_PERTURB": "1" if perturb else "0",
+        "AMUX_SNAPSHOT_SETTLE_ALL": "1" if settle_all else "0",
         # The simulator shares the Mac's file system, so the test writes the
         # review captures straight into the directory asked for.
         "AMUX_SNAPSHOT_REVIEW": str(review.resolve()) if review else "",
@@ -127,14 +141,16 @@ def run(udid: str, selected: list[str], *, record: bool = False, perturb: bool =
         f"AMUX_SNAPSHOT_CONFIGURATION selected={','.join(sorted(selected)) or 'all'} "
         f"record={values['AMUX_RECORD_SNAPSHOTS']} "
         f"perturb={values['AMUX_SNAPSHOT_PERTURB']} "
-        f"review={1 if review else 0} host=1"
+        f"review={1 if review else 0} "
+        f"settle-all={1 if settle_all or record else 0} host=1"
     )
-    bound = REVIEW_BOUND if review else BATCH_BOUND
+    bound = REVIEW_BOUND if review else SETTLED_BOUND if settle_all or record else BATCH_BOUND
     with forwarded(udid, values | {"AMUX_SNAPSHOT_RUNNER_STARTED": str(time.monotonic())}):
         started = time.monotonic()
         try:
             completed = subprocess.run(
-                [*command("test-without-building", udid), "-resultBundlePath", str(RESULT)],
+                [*command("test-without-building", ["-destination", f"id={udid}"]),
+                 "-resultBundlePath", str(RESULT)],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -188,6 +204,7 @@ def write_timings(options: Namespace, stages: dict) -> None:
         "components": options.components or "all",
         "recording": options.record,
         "warm_without_build": options.skip_build,
+        "settle_all": options.settle_all,
         "negative_control": options.negative_control,
         "review": str(options.review) if options.review else None,
         **stages,
@@ -206,14 +223,15 @@ def main(argv: list[str] | None = None) -> int:
     ready_seconds = time.monotonic() - ready_started
     build_seconds = None
     if not options.skip_build:
-        build_seconds = build(udid)
+        build_seconds = build()
 
     selected = options.components
     if options.negative_control and not selected:
         selected = [NEGATIVE_DEFAULT]
     if options.review:
         shutil.rmtree(options.review, ignore_errors=True)
-    ordinary = run(udid, selected, record=options.record, review=options.review)
+    ordinary = run(udid, selected, record=options.record, review=options.review,
+                   settle_all=options.settle_all)
     stages = {
         "components": selected or "all",
         "project_generation_seconds": generated_seconds,

@@ -5,6 +5,7 @@
 //!   installation.lock     exclusive; one daemon per data dir
 //!   registry              which profiles exist
 //!   generation            boot id, clean-shutdown flag, generation counter
+//!   installation_id       this installation's random id, written once
 //!   reports/              debug bundles
 //!   profiles/<profile_id>/
 //!     host_id             this profile's host id, written once
@@ -27,6 +28,25 @@ pub const HOST_ID: &str = "host_id";
 pub const STORE: &str = "store.sqlite";
 pub const AGENTS: &str = "agents";
 pub const REPLICAS: &str = "replicas";
+pub const INSTALLATION_ID: &str = "installation_id";
+
+/// The installation's id, minted at its first start: what counts an install,
+/// apart from the host ids of its profiles. True when this call minted it.
+pub(crate) fn installation_id(data_dir: &Path) -> io::Result<(uuid::Uuid, bool)> {
+    let path = data_dir.join(INSTALLATION_ID);
+    match fs::read_to_string(&path) {
+        Ok(text) => match text.trim().parse() {
+            Ok(id) => return Ok((id, false)),
+            // Unreadable is as good as missing: the id only counts installs.
+            Err(_) => tracing::warn!(path = %path.display(), "minting a new installation id"),
+        },
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let id = uuid::Uuid::new_v4();
+    write_durably(&path, id.to_string().as_bytes())?;
+    Ok((id, true))
+}
 
 /// The installation's exclusive lock, held for the daemon's lifetime. The
 /// file is never removed: unlinking it would let a second opener lock a
