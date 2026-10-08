@@ -1542,8 +1542,7 @@ def report(journey: PhoneJourney) -> list[str]:
 
     # The system photographs the app, and the app offers to report what was
     # on screen, over the frame it froze.
-    journey.app({"kind": "screenshot"})
-    journey.actions.append("the system took a screenshot")
+    journey.system_screenshot()
     journey.wait_for("report.prompt")
     journey.screen("offer")
     journey.tap("report.prompt")

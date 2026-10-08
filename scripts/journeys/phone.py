@@ -162,6 +162,34 @@ def volatile_masks(
     return masks
 
 
+def pictured(elements: list[dict], frozen: list[dict], display: tuple[int, int], scale: int = SCALE) -> list[dict]:
+    """The volatile surfaces of a screen the app froze, where the report
+    draws its picture of that screen (`report.frame`, the whole display
+    shrunk to fit). They are pixels in a picture there, not elements, so the
+    picture of an age moves with the run as the age itself does."""
+    frame = next((element["frame"] for element in elements if element["identifier"] == "report.frame"), None)
+    if frame is None or not frozen:
+        return []
+    shrink = frame["width"] / (display[0] / scale)
+    return [
+        {
+            "identifier": f"report.frame:{element['identifier']}{VOLATILE}",
+            "frame": {
+                "x": frame["x"] + element["frame"]["x"] * shrink,
+                "y": frame["y"] + element["frame"]["y"] * shrink,
+                "width": element["frame"]["width"] * shrink,
+                "height": element["frame"]["height"] * shrink,
+            },
+        }
+        for element in frozen
+    ]
+
+
+def png_size(png: Path) -> tuple[int, int]:
+    header = png.read_bytes()[16:24]
+    return int.from_bytes(header[:4], "big"), int.from_bytes(header[4:], "big")
+
+
 def named_ids(text: str, ids: dict[str, str]) -> str:
     """Every id the net made this run, as the name it was declared by; any
     other id as <id>."""
@@ -258,6 +286,9 @@ class PhoneJourney:
         self.observations: dict[str, object] = {}
         self.process: subprocess.Popen[bytes] | None = None
         self.ready: dict = {}
+        # The volatile surfaces on screen when the system last photographed
+        # the app, masked again wherever a report shows that photograph.
+        self.frozen: list[dict] = []
         self.port = 0
         self.env = {k: v for k, v in os.environ.items() if k not in ("AMUX_LOG", "AMUX_CONFIG")}
         self.env.update({key: str(self.scratch) for key in ("TMPDIR", "TMP", "TEMP")})
@@ -435,6 +466,18 @@ class PhoneJourney:
     def query(self) -> dict:
         return self.app({"kind": "query"})["state"]
 
+    def system_screenshot(self) -> None:
+        """The system photographs the app, as a person's screenshot does.
+        What on screen moves with the run is remembered, for a report that
+        shows the photograph."""
+        state = self.query()
+        self.frozen = [
+            element for element in uncovered(state["elements"])
+            if is_volatile(element["identifier"], OWN_IDENTITY) and on_screen(element["identifier"], state.get("screen"))
+        ]
+        self.app({"kind": "screenshot"})
+        self.actions.append("the system took a screenshot")
+
     def elements(self) -> dict[str, dict]:
         """What is drawn by name; a name drawn again (every prompt row is
         chat.row.prompt) gets #2, #3 in drawing order."""
@@ -530,6 +573,7 @@ class PhoneJourney:
         geometry_label = geometry_label or label
         (actual / f"{geometry_label}.elements.txt").write_text(drawn)
         masks = volatile_masks(elements, volatile, screen=state.get("screen"))
+        masks += volatile_masks(pictured(elements, self.frozen, png_size(png)))
         self.actions.append(f"captured {label}")
         if self.update and os.environ.get("CI"):
             raise RuntimeError("rewriting goldens is refused in CI")

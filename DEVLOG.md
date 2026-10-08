@@ -1,3 +1,14 @@
+2026-10-08 — **A report's picture of the screen masks what moves with the run.**
+The phone's `report` journey failed on most runs: its "refused" screen shows
+the frozen fleet as a picture, and the agent's age in that picture ("1s" when
+recorded, "2s" or more since) is pixels, not an element, so the age's own
+volatile mark could not reach it. The journey now remembers the volatile
+surfaces on screen when the system photographs the app, and masks them again,
+shrunk, wherever `report.frame` draws that photograph. A run with the age at
+"7s" against the recorded "1s" passes. Pinning the phone's clock was
+rejected: an age compares the host's real start time with the phone's clock,
+so it would mean faking time in both, inside the product.
+
 2026-10-08 — **Forms are checked and encoded by the view, typed.**
 Each client turned a tool server's form into the answer itself, and the two
 disagreed. Defaults: the phone started each field from the view's text

@@ -88,6 +88,13 @@ class ComparingScreens(unittest.TestCase):
         self.assertEqual(phone.volatile_masks(elements, named, screen="chat"), ["0,60,3,3"])
         self.assertEqual(len(phone.volatile_masks(elements, named, screen="hosts")), 2)
 
+    def test_a_reported_photograph_masks_what_moved_on_the_frozen_screen(self):
+        frozen = [element(f"home.row.{AGENT}.age.volatile", 300, 160, 40, 20)]
+        # The whole 400-point display, drawn at half size from (100, 50).
+        drawn = [element("report.frame", 100, 50, 200, 437)]
+        self.assertEqual(phone.volatile_masks(phone.pictured(drawn, frozen, (1200, 2622))), ["750,390,60,30"])
+        self.assertEqual(phone.pictured([], frozen, (1200, 2622)), [])
+
     def test_geometry_names_ids_and_drops_volatile_words(self):
         elements = [
             element(f"home.row.{AGENT}", 0, 100.4, 390, 60, label="desk-work, Idle, desk, 34s ago", value="idle"),
