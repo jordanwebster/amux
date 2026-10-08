@@ -138,8 +138,10 @@ fn each_codex_client_gets_its_own_view_on_the_agents_thread() {
         first.until("> from the first").await;
         second.attached.keys(b"from the second\r").await.unwrap();
         second.until("> from the second").await;
+        // The thread's items reach both views ("user: from the first"); the
+        // line typed into one is that view's own.
         assert!(
-            !second.drawn.contains("from the first"),
+            !second.drawn.contains("> from the first"),
             "two views are two processes:\n{}",
             second.drawn
         );

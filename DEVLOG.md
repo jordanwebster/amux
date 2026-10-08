@@ -1,3 +1,10 @@
+2026-10-08 — **The Codex views test no longer races the thread.**
+Two attached views of one Codex agent share its thread, so the second view
+draws the thread's "user: from the first" whenever that arrives. The test
+looked for any "from the first" in the second view and failed on Linux when
+the thread's item landed first; it now checks only for the first view's
+typed line, which is that view's own.
+
 2026-10-08 — **CI's second run: a stale contract name and three late settlers.**
 The contracts check named an interpreter test the protocol-gaps cleanup
 deleted with the queue it held (every provider now has a carrier for agent
