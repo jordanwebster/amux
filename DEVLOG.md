@@ -1,3 +1,9 @@
+2026-10-09 — **The check-in test waits for the check-in to be written down.**
+The daemon records its daily check-in and then writes the time to the
+profile's `checked_in` file. The test read the file as soon as it saw the
+event, and on a Windows runner the write had not landed yet; it now waits
+for the file to hold the check-in's time.
+
 2026-10-09 — **Smaller shipped binaries, built for speed, with their symbols kept.**
 The `release` profile is now what ships, for the daemon and the phone alike,
 and what perf runs measure: fat LTO, one codegen unit and line tables. The

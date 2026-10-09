@@ -273,10 +273,16 @@ async fn a_profile_checks_in_a_minute_after_start_and_daily_after_that() {
     assert_eq!(check_in.turns_24h.get(Kind::ClaudeSdk), 2);
     assert_eq!(check_in.paired_hosts, 0);
     assert!(!check_in.signed_in);
-    assert_eq!(
-        std::fs::read_to_string(install.profile_dir().join("checked_in")).unwrap(),
-        first.to_string()
-    );
+    // The event is recorded before the time is written down.
+    let marked = install.profile_dir().join("checked_in");
+    until("the check-in to be written down", || async {
+        let read = std::fs::read_to_string(&marked).unwrap_or_default();
+        (read == first.to_string())
+            .then_some(())
+            .ok_or(format!("{read:?}"))
+    })
+    .await
+    .unwrap();
 
     let second = first + 24 * 60 * 60 * 1000;
     clock.armed(second).await;
