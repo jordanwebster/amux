@@ -136,7 +136,7 @@ socket2 = "0.6"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0.101"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 tracing-appender = "0.2"
 tempfile = "3"
 crossterm = "0.29"
@@ -166,12 +166,27 @@ vt100 = "0.15"
 # The Apple-only rustflag lives in .cargo/config.toml so Windows never receives
 # a split-debuginfo value it does not support. Development and tests share this
 # profile so each workspace crate has one reusable configuration.
+#
+# No debug info at all, even line tables: every test and tool binary then got
+# a dSYM, 5.7 GiB of the canonical's 17 GiB target, and each wt tree rewrites
+# them all whenever a core crate changes. Panic and assert messages still name
+# their file and line; that comes from the panic, not from debug info. Use the
+# full-debug profile for a debugger.
 [profile.dev]
-debug = "line-tables-only"
+debug = false
 incremental = true
 panic = "unwind"
 
+# What a release ships, for the daemon and the phone alike, and what perf runs
+# measure, so the numbers are the shipped binary's. Whole-program optimisation
+# (fat LTO over one codegen unit) makes the binaries smaller and no slower, at
+# the cost of a much longer build. Line tables are split from the daemon when
+# the release workflow strips it, and published beside it so a crash can be
+# symbolicated later; the app's linker leaves them out of the phone's binary.
 [profile.release]
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only"
 panic = "abort"
 incremental = false
 
@@ -179,14 +194,12 @@ incremental = false
 inherits = "dev"
 debug = 2
 
-# The native app's shipping library: only `just ios package` and release use it.
-[profile.mobile]
+# The bridge every development build of the phone app links. Optimised like a
+# release, but without LTO: whole-program optimisation would take a core edit's
+# rebuild from about 30 seconds to about 100, and keep a copy of every crate's
+# LLVM bitcode beside its code, five times the library's size on disk.
+[profile.phone-dev]
 inherits = "release"
-lto = "fat"
-codegen-units = 1
-opt-level = "s"
-panic = "abort"
-
-# Workspace crates keep full debuginfo; dependencies drop theirs.
-[profile.dev.package."*"]
+lto = false
+codegen-units = 16
 debug = false

@@ -1,3 +1,30 @@
+2026-10-09 — **Smaller shipped binaries, built for speed, with their symbols kept.**
+The `release` profile is now what ships, for the daemon and the phone alike,
+and what perf runs measure: fat LTO, one codegen unit and line tables. The
+separate `mobile` profile, which optimised the phone's Rust for size, is gone;
+the phone's Rust is optimised for speed like the daemon's. The phone had
+never actually had LTO: the bridge crate was also built as an rlib, and with
+an rlib alongside, rustc keeps each crate's object in the static library and
+skips the merge, so the bridge is now a static library only (one merged
+object, 9.2 MB of code). The Release app links with `-no_exported_symbols`,
+because the linker treated every global Rust symbol the bridge exported as
+live and could not dead-strip it (3.2 MB of export table alone). The bundled
+SQLite leaves out full-text search, R-trees, JSON, statistics tables and
+loadable extensions, none of which the store uses, and the phone's log
+filter parses `RUST_LOG` with `Targets` instead of `EnvFilter`, dropping the
+regex engine; the journeys' directives parse the same. The phone's binary is
+16.9 MB, as before, now speed-optimised (6.98 → 7.95 MB zipped; the same
+build with size optimisation would be 13.5 MB, 6.47 MB zipped). The macOS
+daemon goes from 28.7 MB (v0.8.0) to 22.1 MB. Releases strip each binary and
+publish its symbols beside it (`scripts/release-symbols.sh`: a debuglinked
+`.debug` on Linux, a dSYM zip on macOS, the PDB on Windows); a stripped macOS
+address symbolicates to file and line through the published dSYM. The
+phone's development builds link a new `phone-dev` profile, the release
+profile without LTO, because LTO took a core edit's bridge rebuild from 30 s
+to 1:39 and the library from 89 MB to 478 MB of embedded bitcode and line
+tables. `dev` builds carry no debug information at all: line tables gave
+every test and tool binary a dSYM, a third of a tree's `target/`.
+
 2026-10-08 — **The Codex views test no longer races the thread.**
 Two attached views of one Codex agent share its thread, so the second view
 draws the thread's "user: from the first" whenever that arrives. The test

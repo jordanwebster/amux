@@ -43,11 +43,17 @@ jobs:
       - name: Build release
         run: just release-check -- --target ${{ matrix.target }}
 
+      # The shipped binary without symbols, and its symbols beside it under
+      # the asset's name, so a crash in a release can be symbolicated.
+      - name: Split symbols
+        shell: bash
+        run: scripts/release-symbols.sh ${{ matrix.target }} ${{ matrix.artifact }}${{ runner.os == 'Windows' && '.exe' || '' }} out
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.os == 'windows-latest' && format('target/{0}/release/amux.exe', matrix.target) || format('target/{0}/release/amux', matrix.target) }}
+          path: out/
 
   release:
     name: Create Release
@@ -62,11 +68,8 @@ jobs:
         with:
           path: artifacts
 
-      - name: Rename binaries
-        run: |
-          mv artifacts/amux-linux-x86_64/amux amux-linux-x86_64
-          mv artifacts/amux-macos-arm64/amux amux-macos-arm64
-          mv artifacts/amux-windows-x86_64/amux.exe amux-windows-x86_64.exe
+      - name: Collect files
+        run: mv artifacts/*/* .
 
       - name: Generate checksums
         run: sha256sum amux-linux-x86_64 amux-macos-arm64 amux-windows-x86_64.exe > checksums.txt
@@ -78,5 +81,8 @@ jobs:
             amux-linux-x86_64
             amux-macos-arm64
             amux-windows-x86_64.exe
+            amux-linux-x86_64.debug
+            amux-macos-arm64.dSYM.zip
+            amux-windows-x86_64.pdb
             checksums.txt
           generate_release_notes: true

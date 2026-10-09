@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build every shipping slice of the bridge and assemble the XCFramework.
 
-Simulator and device, under the size-optimised `mobile` profile, without the
+Simulator and device, under the `release` profile every shipped binary uses, without the
 driving tools. The result is what the Swift package's binary target links and
 what a Release archive ships, so the linkage smoke runs against it here and
 the release recipes depend on this one.
@@ -26,7 +26,7 @@ def main() -> None:
     lines = []
     staged_dirs = []
     for triple in bridge.SHIPPING_TRIPLES:
-        built = bridge.cargo_build(triple, profile="mobile", features=(),
+        built = bridge.cargo_build(triple, profile=bridge.SHIPPING_PROFILE, features=(),
                                    log=bridge.OUTPUT / f"{triple}-build.jsonl")
         directory = bridge.OUTPUT / triple
         staged_dirs.append(directory)
@@ -42,8 +42,8 @@ def main() -> None:
     # was already current. Only the development recipe creates this marker.
     bridge.stand_in_marker(framework).unlink(missing_ok=True)
 
-    profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"]["mobile"]
-    text = bridge.write_size_report(lines, {"name": "mobile", **profile})
+    profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"][bridge.SHIPPING_PROFILE]
+    text = bridge.write_size_report(lines, {"name": bridge.SHIPPING_PROFILE, **profile})
     print(text, end="", flush=True)
     if not linkage.is_file():
         # The smoke runs on a device, so it takes the phone lease for its own

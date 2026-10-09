@@ -11,7 +11,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Once};
 
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::{LevelFilter, Targets};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 /// The most the log file holds.
 pub const LOG_CAP: u64 = 8 << 20;
@@ -29,13 +31,22 @@ pub(crate) fn write_to(path: &Path) -> io::Result<()> {
     let capped = Capped::open(path, LOG_CAP, LOG_KEEP)?;
     *SINK.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(capped);
     INSTALL.call_once(|| {
+        // `RUST_LOG` takes `level` and `target=level` directives, which is
+        // all a journey sets through the simulator. `Targets` parses those
+        // without the regex engine `EnvFilter` brings, which is size the
+        // phone does not need.
+        let filter = std::env::var("RUST_LOG")
+            .ok()
+            .and_then(|directives| directives.parse::<Targets>().ok())
+            .unwrap_or_else(|| Targets::new().with_default(LevelFilter::INFO));
         // An app that set its own subscriber keeps it.
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        let _ = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(|| Sink),
             )
-            .with_ansi(false)
-            .with_writer(|| Sink)
+            .with(filter)
             .try_init();
     });
     Ok(())

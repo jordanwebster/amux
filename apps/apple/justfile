@@ -37,14 +37,14 @@ lint:
     {{bounded}} 300 sh -c 'sh apps/apple/Tools/feature-lint.sh && apps/apple/Tools/strings-lint.sh'
 
 # The one bridge slice a development build links: the simulator, with the
-# driving tools, under the ordinary development profile. Repackages only when
+# driving tools, under the `phone-dev` profile (release without LTO). Repackages only when
 # the library or its generated header changed; runs no cargo at all when no
 # Rust input changed, so a Swift-only edit pays nothing here.
 # Build the one bridge slice a development build links.
 rust:
     {{bounded}} 1800 {{python}} -B scripts/ios-rust.py
 
-# Every shipping slice under the size-optimised `mobile` profile, assembled
+# Every shipping slice under the `release` profile, assembled
 # into the XCFramework the app packages ship with, then linked from Swift and
 # run on the pinned simulator to prove it loads. What the release recipes use.
 # Build every shipping bridge slice into the XCFramework and prove it links.

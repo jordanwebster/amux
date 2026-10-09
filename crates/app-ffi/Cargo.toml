@@ -6,8 +6,11 @@ license.workspace = true
 description = "The C ABI the phone calls: the embedded runtime, its chats and fleet, with view values as JSON"
 publish = false
 
+# A static library and nothing else. With an rlib alongside, rustc keeps each
+# crate's own object in the archive and never runs the LTO the release profile
+# asks for, so the phone would ship without whole-program optimisation.
 [lib]
-crate-type = ["staticlib", "rlib"]
+crate-type = ["staticlib"]
 
 [features]
 default = []

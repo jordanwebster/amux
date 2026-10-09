@@ -49,7 +49,7 @@ const GATE: &[&str] = &[
 const ALONGSIDE: &[(&str, &str)] = &[("ios simulator golden", "ios test-build")];
 
 /// What the shipping bundle is held to: every slice built under the
-/// size-optimised profile, and the audit of what that bundle turned out to
+/// release profile, and the audit of what that bundle turned out to
 /// contain.
 ///
 /// Off the push path because of what it costs against what it can catch. It

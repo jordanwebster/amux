@@ -38,26 +38,35 @@ Four profiles are defined in the workspace [`Cargo.toml`](../Cargo.toml):
 
 | Profile | Purpose |
 | --- | --- |
-| `dev` | Routine builds and tests: incremental, line-table debug information, and unwinding panics |
-| `release` | Optimized shipping builds with incremental compilation disabled and aborting panics |
+| `dev` | Routine builds and tests: incremental, no debug information, and unwinding panics |
+| `release` | What ships, for the desktop binary and the iPhone app alike, and what `just perf` measures: fat LTO, one codegen unit, line tables, aborting panics, and no incremental compilation |
 | `full-debug` | A `dev` build with complete debug information for debugger sessions |
-| `mobile` | The iPhone app's shipping library: size optimization, fat LTO, one codegen unit, and aborting panics |
+| `phone-dev` | The bridge every development build of the iPhone app links: `release` without LTO or debug information |
 
-`mobile` is used only by `just ios package` and the app release; it is not an
-alternate profile for ordinary Rust tests. There is no separate `test` or CI
+`release` builds are slow, since whole-program optimisation runs over the
+whole binary at once; nothing on the routine edit-and-test path uses it.
+`phone-dev` exists for the same reason: LTO would make every Rust edit's
+rebuild of the app's development bridge three to four times slower, and keep
+a copy of each crate's LLVM bitcode beside its code, about five times the
+library's size on disk. There is no separate `test` or CI
 profile, so one development configuration of each workspace crate serves
 product builds, focused tests, and the full test build. CI disables
 incremental compilation through its environment (`CARGO_INCREMENTAL=0`).
 
-In `dev`, dependencies omit debug information and workspace crates keep line
-tables. On Apple targets, [`.cargo/config.toml`](../.cargo/config.toml) sets
-`split-debuginfo=packed`, which keeps debugger symbols in dSYM bundles
-instead of leaving every incremental object beside its Cargo unit. Use `just
-full-debug` when a debugger needs complete file and line information.
+`dev` builds carry no debug information: line tables gave every test and
+tool binary a dSYM bundle, about a third of a tree's `target/`. Panic and
+assert messages still name their file and line. Use `just full-debug` when a
+debugger needs file and line information. On Apple targets,
+[`.cargo/config.toml`](../.cargo/config.toml) sets `split-debuginfo=packed`,
+so a profile that does carry debug information keeps it in one dSYM per
+binary instead of leaving every incremental object beside its Cargo unit.
 
 Desktop builds name the `bundled` feature explicitly, which compiles SQLite
 into the binary; the recipes pass `--features bundled` so a command that
-disables default features cannot silently switch SQLite linkage.
+disables default features cannot silently switch SQLite linkage. The same
+config file's `LIBSQLITE3_FLAGS` compiles the bundled SQLite without the
+extensions the store never uses (full-text search, R-trees, JSON, statistics
+tables, loadable extensions).
 
 ## Recipes
 

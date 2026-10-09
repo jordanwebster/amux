@@ -233,7 +233,7 @@ API key. The last three are produced once and then reused; the
 
 `just ios release` depends on two other recipes, so they run first whether or
 not anybody ran them: `just ios package` builds every shipping slice of the
-Rust bridge under the `mobile` profile into
+Rust bridge under the `release` profile into
 `target/ios/AmuxApp.xcframework`, which the Release configuration links, and
 `just ios scope-audit` inspects the release bundle, so a bundle carrying a
 debug surface or an excluded platform stops the release before an archive
@@ -587,24 +587,34 @@ of the same version. Versions are plain; there is no preview version,
 only a preview deployment, and a bad preview is fixed by cutting the next
 version.
 
-`just release-check` builds the shipping binary —
-`cargo build --release -p amux --bins --no-default-features --features bundled`
-— and runs [`scripts/release-policy-check.sh`](../scripts/release-policy-check.sh)
+`just release-check` builds the shipping binary under the `release` profile —
+`cargo build --release -p amux --bins --no-default-features --features bundled`,
+whole-program optimised (fat LTO, one codegen unit) with line tables — and
+runs [`scripts/release-policy-check.sh`](../scripts/release-policy-check.sh)
 on it, which fails if the binary's help mentions the debug command, if it
 accepts `amux debug`, or if its SQLite linkage breaks policy
 (`scripts/sqlite_linkage.py`).
 
 The pushed tag starts the Release workflow
 ([`.github/workflows/release.yml`](../.github/workflows/release.yml)). It
-runs `just release-check -- --target <triple>` for three targets and
-publishes a GitHub Release with the three binaries, a `checksums.txt` of
-their SHA-256 sums, and notes GitHub generates from the commits:
+runs `just release-check -- --target <triple>` for three targets, splits
+each binary's symbols from it with
+[`scripts/release-symbols.sh`](../scripts/release-symbols.sh), and
+publishes a GitHub Release with the three stripped binaries, their symbols,
+a `checksums.txt` of the binaries' SHA-256 sums, and notes GitHub generates
+from the commits:
 
 | Runner | Target | File |
 | --- | --- | --- |
 | `ubuntu-latest` | `x86_64-unknown-linux-gnu` | `amux-linux-x86_64` |
 | `macos-latest` | `aarch64-apple-darwin` | `amux-macos-arm64` |
 | `windows-latest` | `x86_64-pc-windows-msvc` | `amux-windows-x86_64.exe` |
+
+Each binary's symbols are published beside it: `amux-linux-x86_64.debug`
+(found through the binary's GNU debuglink), `amux-macos-arm64.dSYM.zip`
+(matched by Mach-O UUID) and `amux-windows-x86_64.pdb`. They hold function
+names and line tables, enough to symbolicate a crash address from a shipped
+binary; the binaries themselves carry no symbols.
 
 ## The daemon's release feed
 

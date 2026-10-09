@@ -217,15 +217,17 @@ just ios package   # every shipping slice, and the linkage check
 ```
 
 - `just ios rust` builds the simulator slice with `debug-tools` under the
-  `release` profile, into `target/ios/AmuxAppDebugTools.xcframework`, which
+  `phone-dev` profile (`release` without LTO, so a Rust edit rebuilds
+  quickly), into `target/ios/AmuxAppDebugTools.xcframework`, which
   the Debug and Measured app configurations force-load. It also stages that
   slice as `target/ios/AmuxApp.xcframework`, so the Swift packages' unit
   tests link current Rust. When no Rust input changed since its last run it
   runs no cargo at all, so a Swift-only edit pays nothing here. `just ios
   build` and `just ios unit` depend on it.
 - `just ios package` builds the simulator and device slices without
-  `debug-tools` under the `mobile` profile (fat LTO, one codegen unit,
-  `opt-level = "s"`, `panic = "abort"`), assembles
+  `debug-tools` under the `release` profile (fat LTO, one codegen unit,
+  `panic = "abort"`, optimised for speed; the Release app links with
+  `-no_exported_symbols` so the linker can dead-strip the bridge), assembles
   `target/ios/AmuxApp.xcframework`, and links it from Swift on the pinned
   simulator to prove it loads and carries SQLite statically. Release and the
   shipping recipes depend on it.

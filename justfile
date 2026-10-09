@@ -84,7 +84,7 @@ codegen-check:
 
 # Build the shipping binary and enforce the release dependency policy.
 release-check *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p amux --bins --no-default-features {{desktop_features}} "$@"
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2400 cargo build --locked --release -p amux --bins --no-default-features {{desktop_features}} "$@"
     if [ "${1-}" = -- ]; then shift; fi; scripts/release-policy-check.sh "$@"
 
 # `just release 0.8.0` writes the version, checks the release build, commits,
@@ -244,4 +244,4 @@ live *ARGS:
 # Qualify desktop performance on an enrolled machine. Pass --baseline to
 # record the current release medians after every absolute budget passes.
 perf *ARGS:
-    set -e; if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p qualification --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"
+    set -e; if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2400 cargo build --locked --release -p qualification --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"

@@ -188,6 +188,13 @@ targets:
           # reach a shipped binary by way of a stray reference outside a
           # conditional. `just ios scope-audit` checks the built binary.
           EXCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/*"
+          # The bridge's static library marks thousands of Rust symbols
+          # global, and the linker treats every exported symbol as live, so
+          # it could neither drop their export table nor dead-strip the code
+          # behind them: measured at 3.8 MB of a 14.8 MB binary. An app
+          # exports nothing anyone calls. Release only, because the
+          # app-hosted unit tests link against the Debug app's symbols.
+          OTHER_LDFLAGS: -Wl,-no_exported_symbols
     dependencies:
       - package: AmuxCore
         product: AmuxCore

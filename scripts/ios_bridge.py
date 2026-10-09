@@ -32,8 +32,12 @@ DEBUG_TOOLS_FEATURE = "debug-tools"
 # Every development-time simulator consumer uses this optimized bridge. A
 # Debug Swift build still carries symbols and testability of its own; giving a
 # standalone smoke a different Cargo profile only recompiles the same Rust
-# source and features without covering a different binary boundary.
-DRIVING_PROFILE = "release"
+# source and features without covering a different binary boundary. It is the
+# release build without whole-program optimisation, which would make every
+# Rust edit's rebuild several times slower for a library nobody ships.
+DRIVING_PROFILE = "phone-dev"
+# What the app packages ship with: the profile every release builds under.
+SHIPPING_PROFILE = "release"
 DRIVING_FEATURES = (DEBUG_TOOLS_FEATURE,)
 
 # The served test network a simulator connects to, as `just ios tools` builds

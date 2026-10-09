@@ -85,9 +85,9 @@ class DevelopmentBuildTests(unittest.TestCase):
             shipping = output / bridge.FRAMEWORK / bridge.DRIVING_SLICE
             shipping.mkdir(parents=True)
             (shipping / bridge.LIBRARY).write_bytes(b"a")
-            bridge.stand_in_marker(output / bridge.FRAMEWORK).write_text("same:release:debug-tools\n")
+            bridge.stand_in_marker(output / bridge.FRAMEWORK).write_text("same:phone-dev:debug-tools\n")
             stamp = output / "rust-stamp.json"
-            stamp.write_text("same:release:debug-tools\n")
+            stamp.write_text("same:phone-dev:debug-tools\n")
             with mock.patch.object(bridge, "OUTPUT", output), \
                     mock.patch.object(ios_rust, "STAMP", stamp), \
                     mock.patch.object(bridge, "source_fingerprint", return_value="same"), \
@@ -152,12 +152,12 @@ class DevelopmentBuildTests(unittest.TestCase):
                     mock.patch("builtins.print"):
                 ios_rust.main()
             self.assertEqual(packaged, [bridge.DRIVING_FRAMEWORK, bridge.FRAMEWORK])
-            self.assertEqual(stamp.read_text().strip(), "v1:release:debug-tools")
+            self.assertEqual(stamp.read_text().strip(), "v1:phone-dev:debug-tools")
             self.assertEqual(
                 bridge.stand_in_marker(output / bridge.FRAMEWORK).read_text().strip(),
-                "v1:release:debug-tools",
+                "v1:phone-dev:debug-tools",
             )
-            self.assertIn("release, debug tools", (output / "size.txt").read_text())
+            self.assertIn("phone-dev, debug tools", (output / "size.txt").read_text())
 
     def test_a_changed_bridge_restages_a_shipping_stand_in(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -168,9 +168,9 @@ class DevelopmentBuildTests(unittest.TestCase):
             shipping_slice.mkdir(parents=True)
             (shipping_slice / bridge.LIBRARY).write_bytes(b"old")
             marker = bridge.stand_in_marker(shipping)
-            marker.write_text("old:release:debug-tools\n")
+            marker.write_text("old:phone-dev:debug-tools\n")
             stamp = output / "rust-stamp.json"
-            stamp.write_text("old:release:debug-tools\n")
+            stamp.write_text("old:phone-dev:debug-tools\n")
             built = bridge.Slice("t", output / "lib.a", output / "h.h")
             built.library.write_bytes(b"new")
             built.header.write_text("void new_symbol(void);")
@@ -199,7 +199,7 @@ class DevelopmentBuildTests(unittest.TestCase):
                     (bridge.FRAMEWORK, "void new_symbol(void);"),
                 ],
             )
-            self.assertEqual(marker.read_text().strip(), "new:release:debug-tools")
+            self.assertEqual(marker.read_text().strip(), "new:phone-dev:debug-tools")
 
     def test_a_changed_bridge_replaces_older_shipping_rust_for_package_tests(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -211,7 +211,7 @@ class DevelopmentBuildTests(unittest.TestCase):
             library = shipping_slice / bridge.LIBRARY
             library.write_bytes(b"shipping")
             stamp = output / "rust-stamp.json"
-            stamp.write_text("old:release:debug-tools\n")
+            stamp.write_text("old:phone-dev:debug-tools\n")
             built = bridge.Slice("t", output / "lib.a", output / "h.h")
             built.library.write_bytes(b"new")
             built.header.write_text("void new_symbol(void);")
@@ -234,7 +234,7 @@ class DevelopmentBuildTests(unittest.TestCase):
             self.assertEqual(packaged, [bridge.DRIVING_FRAMEWORK, bridge.FRAMEWORK])
             self.assertEqual(library.read_bytes(), b"new")
             self.assertEqual(bridge.stand_in_marker(shipping).read_text().strip(),
-                             "new:release:debug-tools")
+                             "new:phone-dev:debug-tools")
 
 
     def test_a_shipping_build_in_the_stand_in_place_is_replaced_although_the_stamp_is_current(self):
@@ -252,7 +252,7 @@ class DevelopmentBuildTests(unittest.TestCase):
             # `ios package` removed the marker when it put its library here.
             self.assertFalse(bridge.stand_in_marker(shipping).is_file())
             stamp = output / "rust-stamp.json"
-            stamp.write_text("v1:release:debug-tools\n")
+            stamp.write_text("v1:phone-dev:debug-tools\n")
             built = bridge.Slice("t", output / "lib.a", output / "h.h")
             built.library.write_bytes(b"dev")
             built.header.write_text("void dev_symbol(void);")
@@ -278,7 +278,7 @@ class DevelopmentBuildTests(unittest.TestCase):
             self.assertIn(bridge.FRAMEWORK, packaged)
             self.assertEqual(library.read_bytes(), b"dev")
             self.assertEqual(bridge.stand_in_marker(shipping).read_text().strip(),
-                             "v1:release:debug-tools")
+                             "v1:phone-dev:debug-tools")
 
 
 class ShippingBuildTests(unittest.TestCase):
@@ -288,7 +288,7 @@ class ShippingBuildTests(unittest.TestCase):
             output.mkdir()
             framework = output / bridge.FRAMEWORK
             marker = bridge.stand_in_marker(framework)
-            marker.write_text("old:release:debug-tools\n")
+            marker.write_text("old:phone-dev:debug-tools\n")
             built = bridge.Slice("t", output / "lib.a", output / "h.h")
             built.library.write_bytes(b"shipping")
             built.header.write_text("void shipping_symbol(void);")

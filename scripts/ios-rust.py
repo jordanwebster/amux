@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Build the one bridge slice a driven simulator build of the app links.
 
-The simulator slice, with the driving tools compiled in, under the ordinary
-release profile: what `ios build`, `ios unit` and every recipe that drives an
-app need. Debug app configurations still carry symbols and testability on the
-Swift side; the Rust bridge is built optimised. Nothing here builds for a phone or optimises for
-size; that is `ios-package.py`, and only the shipping recipes pay for it.
+The simulator slice, with the driving tools compiled in, under the
+`phone-dev` profile: what `ios build`, `ios unit` and every recipe that drives
+an app need. Debug app configurations still carry symbols and testability on
+the Swift side; the Rust bridge is built optimised, but without the
+whole-program optimisation a release gets. Nothing here builds for a phone;
+that is `ios-package.py`, and only the shipping recipes pay for it.
 
 When no Rust input has changed since the last run, cargo is not invoked and the
 framework is left untouched, so a Swift-only edit costs no Rust work at all.
